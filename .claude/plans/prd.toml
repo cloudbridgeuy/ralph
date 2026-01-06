@@ -1,0 +1,448 @@
+# Ralph Run Command - Product Requirements Document
+#
+# Stories are organized in implementation layers:
+# 1. Core Loop + Basic Storage (first milestone)
+# 2. CLI Interface
+# 3. Output Formatting
+# 4. Error Handling
+# 5. Auxiliary Commands
+
+# =============================================================================
+# Layer 1: Core Loop + Basic Storage
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Parse PRD file and count pending stories"
+steps = [
+  "Read TOML file from specified path",
+  "Deserialize into structure with [[stories]] array",
+  "Extract `passed` boolean from each story",
+  "Count stories where passed = false",
+  "Return count and raw file content for snapshot"
+]
+passes = false
+acceptance = [
+  "Returns error if file doesn't exist",
+  "Returns error if TOML is malformed",
+  "Returns error if no [[stories]] entries exist",
+  "Ignores all fields except `passed`"
+]
+
+[[stories]]
+category = "functional"
+description = "Touch missing context files on initialization"
+steps = [
+  "Check if design doc exists at path",
+  "Check if progress file exists at path",
+  "Create empty file for each missing one",
+  "Print notice to stderr for each created file"
+]
+passes = false
+acceptance = [
+  "PRD is NOT created if missing (error instead)",
+  "Design doc created at default .claude/designs/design.md",
+  "Progress file created at default .claude/plans/progress.txt",
+  "Parent directories created if needed"
+]
+
+[[stories]]
+category = "functional"
+description = "Generate memorable session slugs"
+steps = [
+  "Maintain list of adjectives (quiet, fuzzy, bright, etc.)",
+  "Maintain list of nouns (mountain, walrus, river, etc.)",
+  "Combine random adjective + noun",
+  "Check uniqueness against sessions.toml",
+  "Regenerate if collision detected"
+]
+passes = false
+acceptance = [
+  "Slugs are lowercase with hyphen separator",
+  "At least 50 adjectives and 50 nouns for variety",
+  "Collision check prevents duplicates"
+]
+
+[[stories]]
+category = "functional"
+description = "Initialize session directory and metadata"
+steps = [
+  "Create directory at ~/.config/ralph/sessions/<slug>/",
+  "Write session.toml with initial metadata",
+  "Append entry to ~/.config/ralph/sessions.toml",
+  "Set outcome to 'in_progress'"
+]
+passes = false
+acceptance = [
+  "Directory created with proper permissions",
+  "sessions.toml created if it doesn't exist",
+  "Metadata includes: slug, project path, started_at, outcome"
+]
+
+[[stories]]
+category = "functional"
+description = "Invoke LLM subprocess and capture output"
+steps = [
+  "Build command string from template",
+  "Spawn subprocess with stdout/stderr capture",
+  "Stream stdout to terminal in real-time",
+  "Capture full output for storage",
+  "Wait for process completion",
+  "Return exit code and captured output"
+]
+passes = false
+acceptance = [
+  "Subprocess inherits stdin for interactive prompts",
+  "stdout streams to terminal as it arrives",
+  "stderr captured separately",
+  "Exit code available after completion"
+]
+
+[[stories]]
+category = "functional"
+description = "Write iteration log after each iteration"
+steps = [
+  "Create iteration-N.toml in session directory",
+  "Record sequence number and timestamps",
+  "Store raw output as single prose chunk",
+  "Record exit code",
+  "Record pending_before and pending_after counts"
+]
+passes = false
+acceptance = [
+  "File written immediately after iteration completes",
+  "TOML format matches architecture spec",
+  "Content preserved exactly (no transformation yet)"
+]
+
+[[stories]]
+category = "functional"
+description = "Detect PRD changes between iterations"
+steps = [
+  "Snapshot PRD content before iteration",
+  "Re-read PRD content after iteration",
+  "Compare byte-for-byte",
+  "Return whether content changed"
+]
+passes = false
+acceptance = [
+  "Comparison is exact (not semantic)",
+  "Whitespace changes count as changes",
+  "File must be re-read from disk (not cached)"
+]
+
+[[stories]]
+category = "functional"
+description = "Detect completion conditions"
+steps = [
+  "Check if pending story count is zero",
+  "Scan output for completion marker string",
+  "Return completion reason if either condition met"
+]
+passes = false
+acceptance = [
+  "Default marker is <promise>COMPLETE</promise>",
+  "Marker can be customized via flag",
+  "Zero pending stories triggers completion",
+  "Marker in output triggers completion"
+]
+
+[[stories]]
+category = "functional"
+description = "Capture git diff after each iteration"
+steps = [
+  "Check if current directory is a git repository",
+  "Run git diff to capture uncommitted changes",
+  "Write diff output to iteration-N.diff",
+  "Warn and continue if git unavailable"
+]
+passes = false
+acceptance = [
+  "Captures both staged and unstaged changes",
+  "Empty diff file is valid (no changes)",
+  "Non-git directory logs warning, doesn't fail",
+  "Diff file stored alongside iteration log"
+]
+
+[[stories]]
+category = "functional"
+description = "Execute iteration loop with all checks"
+steps = [
+  "Pre-check: exit if zero pending stories",
+  "Snapshot PRD content",
+  "Invoke LLM subprocess",
+  "Write iteration log",
+  "Capture git diff",
+  "Post-check: error if PRD unchanged",
+  "Post-check: exit if zero pending or marker found",
+  "Increment iteration counter and loop"
+]
+passes = false
+acceptance = [
+  "Loop respects max iteration count",
+  "Loop exits cleanly on completion",
+  "Loop errors on stuck state (PRD unchanged)",
+  "Session outcome updated on exit"
+]
+
+# =============================================================================
+# Layer 2: CLI Interface
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Implement ralph run subcommand with arguments"
+steps = [
+  "Add Run variant to SubCommands enum",
+  "Define RunApp struct with clap derives",
+  "Add optional iterations positional argument",
+  "Add --slug, --prompt, --command flags",
+  "Add --design, --prd, --progress path flags",
+  "Add --retry and --completion-marker flags",
+  "Wire up to run module entry point"
+]
+passes = false
+acceptance = [
+  "All flags documented with help text",
+  "Default values match architecture spec",
+  "Iterations defaults to pending count if omitted"
+]
+
+[[stories]]
+category = "functional"
+description = "Substitute placeholders in prompt template"
+steps = [
+  "Load prompt template (built-in or from file/stdin)",
+  "Replace {design_file} with resolved path",
+  "Replace {prd_file} with resolved path",
+  "Replace {progress_file} with resolved path",
+  "Return substituted prompt string"
+]
+passes = false
+acceptance = [
+  "Built-in default template used if no --prompt",
+  "File path reads template from disk",
+  "Dash (-) reads from stdin",
+  "Unknown placeholders left unchanged"
+]
+
+[[stories]]
+category = "functional"
+description = "Substitute placeholders in command template"
+steps = [
+  "Load command template (built-in or from flag)",
+  "Replace {prompt} with the substituted prompt",
+  "Return final command string for execution"
+]
+passes = false
+acceptance = [
+  "Default command is: claude --permission-mode acceptEdits -p {prompt}",
+  "Prompt value properly escaped for shell",
+  "Custom commands can use any structure"
+]
+
+# =============================================================================
+# Layer 3: Output Formatting
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Parse output stream into typed chunks"
+steps = [
+  "Scan output for fenced code blocks (```)",
+  "Detect language hint after opening fence",
+  "Scan for diff patterns (explicit ```diff or heuristic)",
+  "Classify remaining content as prose",
+  "Return ordered list of typed chunks"
+]
+passes = false
+acceptance = [
+  "Code blocks extracted with language metadata",
+  "Explicit ```diff fences detected",
+  "Heuristic diff detection for unfenced unified diffs",
+  "Prose chunks contain markdown content"
+]
+
+[[stories]]
+category = "functional"
+description = "Buffer incomplete chunks during streaming"
+steps = [
+  "Accumulate output in buffer",
+  "Detect chunk boundaries (fence open/close, diff headers)",
+  "Emit complete chunks immediately",
+  "Hold incomplete chunks until boundary found",
+  "Flush remaining buffer on stream end"
+]
+passes = false
+acceptance = [
+  "Code blocks not emitted until closing ``` seen",
+  "Diff blocks buffered until non-diff line seen",
+  "Prose streams more eagerly (line-by-line)",
+  "Final flush handles unterminated blocks"
+]
+
+[[stories]]
+category = "functional"
+description = "Apply syntax highlighting to code chunks"
+steps = [
+  "Detect if stdout is a terminal",
+  "Use giallo library for syntax highlighting",
+  "Select syntax based on language hint",
+  "Render highlighted code to terminal",
+  "Fall back to plain output if not a terminal"
+]
+passes = false
+acceptance = [
+  "Common languages highlighted (rust, python, js, etc.)",
+  "Unknown languages rendered without highlighting",
+  "Piped output is plain text (no ANSI codes)",
+  "Highlighting doesn't break code content"
+]
+
+[[stories]]
+category = "functional"
+description = "Apply diff highlighting with fallback chain"
+steps = [
+  "Check if delta is installed (which delta)",
+  "If found, pipe diff through delta --paging=never",
+  "If not, check for diff with --color support",
+  "If not, apply basic +/- line coloring inline",
+  "Render result to terminal"
+]
+passes = false
+acceptance = [
+  "Delta used when available",
+  "No pager mode (--paging=never)",
+  "Graceful fallback to simpler tools",
+  "Basic coloring works without external tools"
+]
+
+[[stories]]
+category = "functional"
+description = "Store typed chunks in iteration logs"
+steps = [
+  "Update iteration-N.toml to use [[chunks]] array",
+  "Record type field (prose, code, diff)",
+  "Record language field for code chunks",
+  "Record content field with raw text"
+]
+passes = false
+acceptance = [
+  "Chunks stored in order they appeared",
+  "Language metadata preserved for replay",
+  "Content stored exactly as captured"
+]
+
+# =============================================================================
+# Layer 4: Error Handling
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Implement retry logic on subprocess failure"
+steps = [
+  "Detect non-zero exit code from LLM",
+  "Print captured stdout and stderr",
+  "Decrement retry counter",
+  "Re-invoke subprocess if retries remain",
+  "Proceed to interactive prompt if exhausted"
+]
+passes = false
+acceptance = [
+  "Default retry count is 3",
+  "Configurable via --retry flag",
+  "Each retry prints attempt number",
+  "Output from failed attempt shown before retry"
+]
+
+[[stories]]
+category = "functional"
+description = "Prompt user on unrecoverable failure"
+steps = [
+  "Display failure summary",
+  "Prompt: Retry or Abort?",
+  "On Retry: reset retry counter, re-invoke",
+  "On Abort: update session outcome, exit"
+]
+passes = false
+acceptance = [
+  "Prompt only shown after retries exhausted",
+  "Interactive prompt works in terminal",
+  "Non-interactive mode (piped stdin) aborts",
+  "Session marked as 'failed' or 'aborted' appropriately"
+]
+
+[[stories]]
+category = "functional"
+description = "Error on stuck state when PRD unchanged"
+steps = [
+  "Compare PRD snapshot to post-iteration content",
+  "If identical, print error message",
+  "Suggest checking progress.txt for notes",
+  "Update session outcome to 'failed'",
+  "Exit loop immediately"
+]
+passes = false
+acceptance = [
+  "Clear error message explains the problem",
+  "Actionable suggestion for debugging",
+  "Session properly finalized",
+  "Iteration log still written for debugging"
+]
+
+# =============================================================================
+# Layer 5: Auxiliary Commands
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Implement ralph replay command"
+steps = [
+  "Add Replay variant to SubCommands",
+  "Accept session slug as argument",
+  "Look up session in sessions.toml",
+  "Read iteration logs in sequence",
+  "Re-render chunks with syntax highlighting"
+]
+passes = false
+acceptance = [
+  "Error if session not found",
+  "Iterations displayed in order",
+  "Formatting matches original output",
+  "Works with sessions from any project"
+]
+
+[[stories]]
+category = "functional"
+description = "Implement ralph sessions command"
+steps = [
+  "Add Sessions variant to SubCommands",
+  "Read ~/.config/ralph/sessions.toml",
+  "List all sessions with key metadata",
+  "Format as table: slug, project, date, iterations, outcome"
+]
+passes = false
+acceptance = [
+  "Shows all sessions across all projects",
+  "Sorted by date (most recent first)",
+  "Truncates long project paths gracefully",
+  "Empty state shows helpful message"
+]
+
+[[stories]]
+category = "internal"
+description = "Write default prompt template"
+steps = [
+  "Draft prompt based on original bash script",
+  "Include placeholders for context files",
+  "Include instructions for single-feature focus",
+  "Include PRD update and progress.txt instructions",
+  "Include commit instruction without attribution",
+  "Include completion marker instruction"
+]
+passes = false
+acceptance = [
+  "Prompt works with claude CLI out of the box",
+  "All placeholders documented",
+  "Instructions are clear and actionable"
+]

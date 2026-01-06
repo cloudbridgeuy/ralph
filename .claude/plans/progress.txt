@@ -1,0 +1,8 @@
+# Progress Notes
+#
+# This file tracks progress across LLM iterations.
+# Each iteration should append notes about what was accomplished
+# and any context useful for the next iteration.
+#
+# Format: Use markdown with timestamps.
+
