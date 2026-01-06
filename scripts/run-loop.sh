@@ -116,10 +116,20 @@ ONLY WORK ON A SINGLE FEATURE.
 
 If, while implementing the feature, you notice all stories in the PRD are complete, output $COMPLETION_MARKER."
 
-	# Run claude
-	result=$(claude --permission-mode acceptEdits -p "$PROMPT" 2>&1) || {
-		error "Claude exited with non-zero status"
-		echo "$result"
+	# Run claude with streaming output
+	TEMP_OUTPUT=$(mktemp)
+	trap "rm -f '$TEMP_OUTPUT'" EXIT
+
+	set +e  # Temporarily disable exit on error
+	claude --permission-mode acceptEdits -p "$PROMPT" 2>&1 | tee "$TEMP_OUTPUT"
+	exit_code=${PIPESTATUS[0]}
+	set -e
+
+	result=$(cat "$TEMP_OUTPUT")
+	rm -f "$TEMP_OUTPUT"
+
+	if [[ "$exit_code" -ne 0 ]]; then
+		error "Claude exited with non-zero status (exit code: $exit_code)"
 		echo ""
 		read -p "Retry this iteration? [y/N] " -n 1 -r
 		echo ""
@@ -130,9 +140,7 @@ If, while implementing the feature, you notice all stories in the PRD are comple
 			error "Aborting."
 			exit 1
 		fi
-	}
-
-	echo "$result"
+	fi
 
 	# Check for completion marker
 	if [[ "$result" == *"$COMPLETION_MARKER"* ]]; then
