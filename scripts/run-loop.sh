@@ -116,13 +116,21 @@ ONLY WORK ON A SINGLE FEATURE.
 
 If, while implementing the feature, you notice all stories in the PRD are complete, output $COMPLETION_MARKER."
 
-	# Run claude with streaming output
+	# Run claude with streaming output using script to preserve TTY
 	TEMP_OUTPUT=$(mktemp)
 	trap "rm -f '$TEMP_OUTPUT'" EXIT
 
 	set +e  # Temporarily disable exit on error
-	claude --permission-mode acceptEdits -p "$PROMPT" 2>&1 | tee "$TEMP_OUTPUT"
-	exit_code=${PIPESTATUS[0]}
+	# Use script to preserve TTY behavior while capturing output
+	if [[ "$(uname)" == "Darwin" ]]; then
+		# macOS version of script
+		script -q "$TEMP_OUTPUT" claude --permission-mode acceptEdits -p "$PROMPT"
+		exit_code=$?
+	else
+		# Linux version of script
+		script -q -c "claude --permission-mode acceptEdits -p \"$PROMPT\"" "$TEMP_OUTPUT"
+		exit_code=$?
+	fi
 	set -e
 
 	result=$(cat "$TEMP_OUTPUT")
@@ -142,7 +150,7 @@ If, while implementing the feature, you notice all stories in the PRD are comple
 		fi
 	fi
 
-	# Check for completion marker
+	# Check for completion marker in captured output
 	if [[ "$result" == *"$COMPLETION_MARKER"* ]]; then
 		success "Completion marker detected. PRD complete!"
 		break
