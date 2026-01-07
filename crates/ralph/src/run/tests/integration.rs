@@ -127,7 +127,7 @@ fn get_session_dir(_temp_dir: &TempDir, slug: &str) -> std::path::PathBuf {
 #[test]
 fn test_run_loop_parses_metadata() {
     // Lock the mutex to prevent concurrent HOME modifications
-    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
@@ -191,7 +191,7 @@ fn test_run_loop_parses_metadata() {
 #[test]
 fn test_run_loop_correlates_tool_calls() {
     // Lock the mutex to prevent concurrent HOME modifications
-    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
@@ -238,7 +238,7 @@ fn test_run_loop_correlates_tool_calls() {
 #[test]
 fn test_run_loop_parses_chunks() {
     // Lock the mutex to prevent concurrent HOME modifications
-    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
@@ -288,7 +288,7 @@ fn test_run_loop_parses_chunks() {
 #[test]
 fn test_run_loop_handles_missing_metadata_gracefully() {
     // Lock the mutex to prevent concurrent HOME modifications
-    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     // Stream-json output with minimal/missing metadata
     let minimal_stream_json = r#"{"type":"assistant","message":{"id":"msg_01","content":[{"type":"text","text":"Just some text"}]}}
@@ -322,7 +322,7 @@ fn test_run_loop_handles_missing_metadata_gracefully() {
 #[test]
 fn test_run_loop_handles_malformed_json_lines() {
     // Lock the mutex to prevent concurrent HOME modifications
-    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     // Mix of valid and invalid JSON lines - should log warning but continue
     let mixed_stream_json = r#"{"type":"system","session_id":"abc"}
@@ -373,7 +373,7 @@ another invalid line
 #[test]
 fn test_run_loop_session_finalization() {
     // Lock the mutex to prevent concurrent HOME modifications
-    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
 
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
@@ -405,4 +405,128 @@ fn test_run_loop_session_finalization() {
             "Session should have outcome"
         );
     }
+}
+
+/// PRD content with multiple pending stories for iteration limit testing.
+const MULTI_STORY_PRD: &str = r#"
+[[stories]]
+description = "Story 1"
+passes = false
+
+[[stories]]
+description = "Story 2"
+passes = false
+
+[[stories]]
+description = "Story 3"
+passes = false
+"#;
+
+/// Test that iteration limit is respected when starting_iteration > 0.
+/// This is the key test for the bug fix.
+#[test]
+fn test_iteration_limit_with_starting_iteration() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    let temp_dir = TempDir::new().unwrap();
+    let paths = create_test_paths(&temp_dir);
+    let prd_path_str = paths.prd.display().to_string();
+
+    // Use a script that marks one story complete per iteration
+    // This way we can track how many iterations actually ran
+    let mock_script = create_mock_script_updating_prd(&prd_path_str, MOCK_STREAM_JSON);
+    let (paths, script_path) = setup_test_env(&temp_dir, &mock_script);
+
+    // Write multi-story PRD
+    fs::write(&paths.prd, MULTI_STORY_PRD).unwrap();
+
+    std::env::set_var("HOME", temp_dir.path());
+
+    // Configure: max 3 iterations total, but starting at 2 (meaning 2 already done)
+    // Should only run 1 more iteration (3 - 2 = 1)
+    let mut config = create_test_config(paths.clone(), script_path);
+    config.max_iterations = Some(3);
+    config.starting_iteration = 2; // Simulate 2 iterations already completed
+
+    let result = run(config);
+
+    // Clean up env var before assertions
+    std::env::remove_var("HOME");
+
+    assert!(result.is_ok(), "Run failed: {:?}", result);
+
+    let result = result.unwrap();
+
+    // Should have completed 1 iteration (the 3rd one)
+    assert_eq!(
+        result.iterations_completed, 1,
+        "Should have run exactly 1 iteration (max 3 - starting 2 = 1 remaining)"
+    );
+
+    // Optionally verify iteration log file placement if accessible
+    // (path may vary by platform due to dirs::config_dir() behavior)
+    let session_dir = get_session_dir(&temp_dir, &result.slug);
+    let log_3_path = session_dir.join("iteration-3.toml");
+    let log_4_path = session_dir.join("iteration-4.toml");
+
+    // If the log exists, verify it's iteration-3 not iteration-4
+    if log_3_path.exists() {
+        assert!(
+            !log_4_path.exists(),
+            "Should NOT have iteration-4.toml (would exceed limit)"
+        );
+    }
+}
+
+/// Test that starting_iteration at limit produces zero iterations.
+#[test]
+fn test_no_iterations_when_at_limit() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+
+    let temp_dir = TempDir::new().unwrap();
+    let paths = create_test_paths(&temp_dir);
+
+    // Create PRD with pending stories
+    fs::create_dir_all(paths.prd.parent().unwrap()).unwrap();
+    fs::write(&paths.prd, MULTI_STORY_PRD).unwrap();
+
+    // Create design directory
+    fs::create_dir_all(paths.design.parent().unwrap()).unwrap();
+
+    std::env::set_var("HOME", temp_dir.path());
+
+    // max_iterations = 3, starting_iteration = 3: should run 0 iterations
+    let config = RunConfig {
+        max_iterations: Some(3),
+        slug: Some("test-at-limit".to_string()),
+        command: "echo 'should not run'".to_string(),
+        completion_marker: "<promise>COMPLETE</promise>".to_string(),
+        context_paths: paths,
+        retry_count: 0,
+        starting_iteration: 3, // Already at limit
+        timeout_secs: 30,
+        theme_config: None,
+        custom_prd_path: None,
+        custom_design_path: None,
+        custom_progress_path: None,
+        custom_command: false,
+        custom_prompt: false,
+        custom_completion_marker: false,
+    };
+
+    let result = run(config);
+
+    // Clean up env var before assertions
+    std::env::remove_var("HOME");
+
+    // Should succeed with 0 iterations (not an error, just nothing to do)
+    assert!(result.is_ok(), "Run failed: {:?}", result);
+
+    let result = result.unwrap();
+    assert_eq!(
+        result.iterations_completed, 0,
+        "Should have run 0 iterations when at limit"
+    );
 }

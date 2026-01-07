@@ -235,7 +235,11 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
     // Calculate iteration numbers: if continuing a session, offset by starting_iteration
     let iteration_offset = config.starting_iteration;
 
-    for relative_iteration in 1..=max_iterations {
+    // Calculate remaining iterations: respect the total limit across session continuations
+    // If max_iterations is 5 and we've already done 2 (iteration_offset), only run 3 more
+    let remaining_iterations = max_iterations.saturating_sub(iteration_offset);
+
+    for relative_iteration in 1..=remaining_iterations {
         // The actual iteration number includes any completed iterations from prior retries
         let iteration = iteration_offset + relative_iteration;
         // Pre-iteration check: re-read PRD and count pending
@@ -249,9 +253,10 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         }
 
         // Display iteration header before starting work
+        // max_iterations is the total user-specified limit (not adjusted for offset)
         let header = IterationHeader {
             iteration,
-            max_iterations: Some(max_iterations + iteration_offset),
+            max_iterations: Some(max_iterations),
             pending_stories: pending_before,
         };
         display_iteration_header(&header);

@@ -105,3 +105,61 @@ fn test_no_pending_stories_error_display() {
     let msg = format!("{}", err);
     assert!(msg.contains("No pending stories"));
 }
+
+/// Test that remaining_iterations calculation is correct.
+/// This is a unit test for the logic fix in the run loop.
+#[test]
+fn test_remaining_iterations_calculation() {
+    // Verify the saturating_sub behavior that's now in the run loop
+    let max_iterations: usize = 5;
+
+    // Case 1: Fresh start (no prior iterations)
+    let iteration_offset: usize = 0;
+    let remaining = max_iterations.saturating_sub(iteration_offset);
+    assert_eq!(remaining, 5, "Fresh start should allow all 5 iterations");
+
+    // Case 2: Partial progress (2 iterations completed)
+    let iteration_offset: usize = 2;
+    let remaining = max_iterations.saturating_sub(iteration_offset);
+    assert_eq!(
+        remaining, 3,
+        "With 2 completed, only 3 should remain (iterations 3, 4, 5)"
+    );
+
+    // Case 3: Almost done (4 iterations completed)
+    let iteration_offset: usize = 4;
+    let remaining = max_iterations.saturating_sub(iteration_offset);
+    assert_eq!(remaining, 1, "With 4 completed, only 1 should remain");
+
+    // Case 4: Exactly at limit (5 iterations completed)
+    let iteration_offset: usize = 5;
+    let remaining = max_iterations.saturating_sub(iteration_offset);
+    assert_eq!(remaining, 0, "At limit, no iterations should remain");
+
+    // Case 5: Over limit (shouldn't happen but handle gracefully)
+    let iteration_offset: usize = 7;
+    let remaining = max_iterations.saturating_sub(iteration_offset);
+    assert_eq!(
+        remaining, 0,
+        "Over limit should saturate to 0, not underflow"
+    );
+}
+
+/// Test that iteration numbering is correct with offset.
+#[test]
+fn test_iteration_numbering_with_offset() {
+    let max_iterations: usize = 5;
+    let iteration_offset: usize = 2;
+    let remaining_iterations = max_iterations.saturating_sub(iteration_offset);
+
+    // Collect the actual iteration numbers that would be produced
+    let iterations: Vec<usize> = (1..=remaining_iterations)
+        .map(|rel| iteration_offset + rel)
+        .collect();
+
+    assert_eq!(
+        iterations,
+        vec![3, 4, 5],
+        "Should produce iterations 3, 4, 5 (not 3, 4, 5, 6, 7)"
+    );
+}
