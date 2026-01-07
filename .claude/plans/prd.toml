@@ -488,7 +488,7 @@ steps = [
   "Hold incomplete chunks until boundary found",
   "Flush remaining buffer on stream end",
 ]
-passes = false
+passes = true
 acceptance = [
   "Code blocks not emitted until closing ``` seen",
   "Diff blocks buffered until non-diff line seen",

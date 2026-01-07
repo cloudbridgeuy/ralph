@@ -996,3 +996,54 @@
   - Story: Store typed chunks in iteration logs
 - After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
 
+## 2026-01-07 - Buffer Incomplete Chunks During Streaming Complete
+
+### What was accomplished
+- Implemented Story: "Buffer incomplete chunks during streaming" (Layer 3 Output Formatting)
+- Added `StreamingChunkBuffer` struct to `crates/core/src/chunk.rs` with the following features:
+  - `BufferState` enum tracking Prose vs Code block state
+  - `new()` and `Default` implementations
+  - `is_empty()` - check if buffer has pending content
+  - `is_in_code_block()` - check if currently inside a fenced block
+  - `emitted_count()` - track number of chunks emitted
+  - `process_line()` - process a single line, returning complete chunks
+  - `process_text()` - convenience method for multi-line text
+  - `finish()` - flush remaining content (handles unterminated blocks)
+  - `reset()` - reset to initial state
+  - `buffered_content()` - inspect current buffer (for debugging)
+- All acceptance criteria met:
+  - Code blocks not emitted until closing ``` seen
+  - Diff blocks buffered (treated as code blocks with ```diff fence)
+  - Prose streams more eagerly (line-by-line emission)
+  - Final flush handles unterminated blocks via `finish()`
+- Added 25 comprehensive tests covering:
+  - Buffer creation and state
+  - Prose immediate emission
+  - Code block buffering until close
+  - Diff block handling
+  - Unterminated block flush
+  - Multiple code blocks
+  - Indented fences
+  - Empty and whitespace lines
+  - Process text with mixed content
+  - Reset functionality
+- Updated module documentation with streaming examples
+- All 352 tests pass (88 core, 264 ralph)
+
+### Implementation details
+- Pure types in Functional Core (ralph_core) - no I/O operations
+- Uses existing `parse_fence_open()` and `is_fence_close()` functions
+- State machine approach: Prose state emits eagerly, Code state buffers
+- Empty lines skipped in prose mode to reduce noise
+- Whitespace-only lines emitted as prose (preserved for formatting)
+- Follows established patterns from chunk module
+
+### Context for next iteration
+- **Layer 3 story #2 is now complete**
+- Next priorities for Layer 3:
+  - Story: Apply syntax highlighting to code chunks (giallo library)
+  - Story: Apply diff highlighting with fallback chain (delta → diff → basic)
+  - Story: Store typed chunks in iteration logs
+- After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
+- The `StreamingChunkBuffer` is ready to be used by subprocess output processing
+
