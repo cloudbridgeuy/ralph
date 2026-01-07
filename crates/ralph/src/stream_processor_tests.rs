@@ -1,0 +1,779 @@
+//! Tests for stream processor functionality.
+
+use super::*;
+
+#[test]
+fn test_stream_processor_new() {
+    let processor = StreamProcessor::new();
+    assert!(processor.raw_text().is_empty());
+    assert!(processor.parse_errors().is_empty());
+}
+
+#[test]
+fn test_stream_processor_with_highlighting() {
+    let processor = StreamProcessor::with_highlighting(true);
+    assert!(processor.is_highlighting_enabled());
+
+    let processor = StreamProcessor::with_highlighting(false);
+    assert!(!processor.is_highlighting_enabled());
+}
+
+#[test]
+fn test_process_empty_line() {
+    let mut processor = StreamProcessor::new();
+    let output = processor.process_line("");
+    assert!(output.is_none());
+
+    let output = processor.process_line("   ");
+    assert!(output.is_none());
+}
+
+#[test]
+fn test_process_malformed_json() {
+    let mut processor = StreamProcessor::new();
+    let output = processor.process_line("not json");
+    assert!(output.is_none());
+    assert_eq!(processor.parse_errors().len(), 1);
+}
+
+#[test]
+fn test_process_system_event() {
+    let mut processor = StreamProcessor::new();
+    let line = r#"{"type":"system","subtype":"init","session_id":"abc-123","model":"claude"}"#;
+    let _output = processor.process_line(line);
+    // System events don't produce output - processor stores them for metadata extraction
+}
+
+#[test]
+fn test_process_assistant_text_event() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+    let line = r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Hello, world!"}]}}"#;
+    let _output = processor.process_line(line);
+
+    // Text should be captured
+    assert!(processor.raw_text().contains("Hello, world!"));
+}
+
+#[test]
+fn test_process_result_event() {
+    let mut processor = StreamProcessor::new();
+    let line = r#"{"type":"result","duration_ms":1000,"total_cost_usd":0.05,"usage":{"input_tokens":100,"output_tokens":50}}"#;
+    let output = processor.process_line(line);
+    assert!(output.is_none()); // Result events don't produce output
+}
+
+#[test]
+fn test_finish_extracts_metadata() {
+    let mut processor = StreamProcessor::new();
+    processor.process_line(
+        r#"{"type":"system","subtype":"init","session_id":"test-session","model":"claude-3"}"#,
+    );
+    processor.process_line(
+        r#"{"type":"result","duration_ms":5000,"total_cost_usd":0.10,"usage":{"input_tokens":200,"output_tokens":100}}"#,
+    );
+
+    let result = processor.finish();
+    assert_eq!(result.metadata.session_id.as_deref(), Some("test-session"));
+    assert_eq!(result.metadata.model.as_deref(), Some("claude-3"));
+    assert_eq!(result.costs.cost_usd, Some(0.10));
+    assert_eq!(result.costs.duration_ms, Some(5000));
+}
+
+#[test]
+fn test_finish_returns_accumulated_text() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"First "}]}}"#,
+    );
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Second"}]}}"#,
+    );
+
+    let result = processor.finish();
+    assert!(result.raw_text.contains("First"));
+    assert!(result.raw_text.contains("Second"));
+}
+
+#[test]
+fn test_tool_interaction_correlation() {
+    let mut processor = StreamProcessor::new();
+
+    // Tool invocation
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"/test"}}]}}"#,
+    );
+
+    // Tool result
+    processor.process_line(
+        r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"file contents"}]}}"#,
+    );
+
+    let result = processor.finish();
+    assert_eq!(result.tool_interactions.len(), 1);
+    assert_eq!(result.tool_interactions[0].name, "Read");
+    assert!(result.tool_interactions[0].result.is_some());
+}
+
+#[test]
+fn test_code_block_detection() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // Send text with a code block
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Here is code:"}]}}"#,
+    );
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"\n```rust\nfn main() {}\n```"}]}}"#,
+    );
+
+    let result = processor.finish();
+    assert!(!result.chunks.is_empty());
+    // Should have captured the code block
+    let has_code = result
+        .chunks
+        .iter()
+        .any(|c| matches!(c.chunk_type, ChunkType::Code { .. }));
+    assert!(has_code, "Should have detected code block");
+}
+
+#[test]
+fn test_diff_block_detection() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```diff\n+added\n-removed\n```"}]}}"#,
+    );
+
+    let result = processor.finish();
+    let has_diff = result
+        .chunks
+        .iter()
+        .any(|c| matches!(c.chunk_type, ChunkType::Diff));
+    assert!(has_diff, "Should have detected diff block");
+}
+
+#[test]
+fn test_multiple_messages() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // First message
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First message"}]}}"#,
+    );
+
+    // Second message (different ID)
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Second message"}]}}"#,
+    );
+
+    let result = processor.finish();
+    assert!(result.raw_text.contains("First message"));
+    assert!(result.raw_text.contains("Second message"));
+}
+
+#[test]
+fn test_empty_finish() {
+    let processor = StreamProcessor::new();
+    let result = processor.finish();
+    assert!(result.chunks.is_empty());
+    assert!(result.raw_text.is_empty());
+    assert!(result.tool_interactions.is_empty());
+}
+
+// ==========================================================================
+// Whitespace preservation tests
+// ==========================================================================
+
+#[test]
+fn test_whitespace_blank_lines_preserved_between_paragraphs() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // Simulate: "Paragraph 1.\n\nParagraph 2."
+    let output1 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Paragraph 1.\n\nParagraph 2."}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    // Should have three chunks: Paragraph 1, blank line, Paragraph 2
+    assert_eq!(result.chunks.len(), 3);
+    assert_eq!(result.chunks[0].content, "Paragraph 1.");
+    assert_eq!(result.chunks[1].content, ""); // blank line preserved
+    assert_eq!(result.chunks[2].content, "Paragraph 2.");
+
+    // raw_text should preserve the original
+    assert_eq!(result.raw_text, "Paragraph 1.\n\nParagraph 2.");
+
+    // Output should have correct newlines
+    if let Some(out) = output1 {
+        // Each chunk gets a newline, so: "Paragraph 1.\n" + "\n" + "Paragraph 2.\n"
+        assert_eq!(out, "Paragraph 1.\n\nParagraph 2.\n");
+    }
+}
+
+#[test]
+fn test_whitespace_multiple_blank_lines_preserved() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Text\n\n\nMore text"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    // Should have: Text, blank, blank, More text
+    assert_eq!(result.chunks.len(), 4);
+    assert_eq!(result.chunks[0].content, "Text");
+    assert_eq!(result.chunks[1].content, "");
+    assert_eq!(result.chunks[2].content, "");
+    assert_eq!(result.chunks[3].content, "More text");
+}
+
+#[test]
+fn test_whitespace_code_block_content_preserved() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // Code with internal blank line
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```rust\nfn a() {}\n\nfn b() {}\n```"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    // Find the code chunk
+    let code_chunk = result
+        .chunks
+        .iter()
+        .find(|c| matches!(c.chunk_type, ChunkType::Code { .. }))
+        .expect("Should have code chunk");
+
+    // Internal blank line should be preserved
+    assert_eq!(code_chunk.content, "fn a() {}\n\nfn b() {}");
+}
+
+#[test]
+fn test_whitespace_indentation_preserved_in_code() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```python\ndef foo():\n    x = 1\n        nested = 2\n```"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    let code_chunk = result
+        .chunks
+        .iter()
+        .find(|c| matches!(c.chunk_type, ChunkType::Code { .. }))
+        .expect("Should have code chunk");
+
+    // Indentation preserved exactly
+    assert_eq!(
+        code_chunk.content,
+        "def foo():\n    x = 1\n        nested = 2"
+    );
+}
+
+#[test]
+fn test_whitespace_trailing_newline_in_text() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // Text with trailing newline
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Line 1\nLine 2\n"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    // Should preserve trailing newline as empty chunk
+    assert_eq!(result.chunks.len(), 3);
+    assert_eq!(result.chunks[0].content, "Line 1");
+    assert_eq!(result.chunks[1].content, "Line 2");
+    assert_eq!(result.chunks[2].content, ""); // trailing newline
+}
+
+#[test]
+fn test_whitespace_leading_spaces_preserved() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"    indented line"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].content, "    indented line");
+}
+
+#[test]
+fn test_whitespace_list_indentation_preserved() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"- Item 1\n  - Nested item\n    - Deeply nested"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    assert_eq!(result.chunks.len(), 3);
+    assert_eq!(result.chunks[0].content, "- Item 1");
+    assert_eq!(result.chunks[1].content, "  - Nested item");
+    assert_eq!(result.chunks[2].content, "    - Deeply nested");
+}
+
+#[test]
+fn test_whitespace_blank_line_before_code_block() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Here's code:\n\n```rust\nfn main() {}\n```"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    // Should have: prose ("Here's code:"), blank line, code block
+    assert_eq!(result.chunks.len(), 3);
+    assert_eq!(result.chunks[0].content, "Here's code:");
+    assert_eq!(result.chunks[1].content, ""); // blank line before code
+    assert!(matches!(
+        result.chunks[2].chunk_type,
+        ChunkType::Code { .. }
+    ));
+}
+
+#[test]
+fn test_whitespace_blank_line_after_code_block() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```rust\nfn main() {}\n```\n\nDone."}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    // Should have: code block, blank line, prose ("Done.")
+    assert_eq!(result.chunks.len(), 3);
+    assert!(matches!(
+        result.chunks[0].chunk_type,
+        ChunkType::Code { .. }
+    ));
+    assert_eq!(result.chunks[1].content, ""); // blank line after code
+    assert_eq!(result.chunks[2].content, "Done.");
+}
+
+#[test]
+fn test_whitespace_raw_text_matches_original() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    let original = "Hello\n\nWorld\n\n```rust\ncode\n```\n\nDone";
+    processor.process_line(&format!(
+        r#"{{"type":"assistant","message":{{"id":"1","content":[{{"type":"text","text":"{}"}}]}}}}"#,
+        original.replace('\n', "\\n")
+    ));
+
+    let result = processor.finish();
+
+    // raw_text should match original exactly
+    assert_eq!(result.raw_text, original);
+}
+
+#[test]
+fn test_whitespace_across_multiple_events() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // First event ends mid-paragraph
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Hello "}]}}"#,
+    );
+
+    // Second event continues
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"World\n\nNext paragraph"}]}}"#,
+    );
+
+    let result = processor.finish();
+
+    // raw_text should be "Hello World\n\nNext paragraph"
+    assert_eq!(result.raw_text, "Hello World\n\nNext paragraph");
+}
+
+// ==========================================================================
+// Tool invocation display tests
+// ==========================================================================
+
+#[test]
+fn test_tool_invocation_displayed() {
+    let mut processor = StreamProcessor::with_options(false, true);
+
+    // Process an assistant event with a tool use
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/src/main.rs"}}]}}"#,
+    );
+
+    // Should return formatted tool invocation
+    assert!(output.is_some());
+    let out = output.unwrap();
+    assert!(out.contains("Read"));
+    assert!(out.contains("/src/main.rs"));
+}
+
+#[test]
+fn test_tool_invocation_not_displayed_when_disabled() {
+    let mut processor = StreamProcessor::with_options(false, false);
+
+    // Process an assistant event with a tool use
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/src/main.rs"}}]}}"#,
+    );
+
+    // Should return None because tool display is disabled
+    assert!(output.is_none());
+}
+
+#[test]
+fn test_tool_result_displayed() {
+    let mut processor = StreamProcessor::with_options(false, true);
+
+    // First, process the tool call
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/src/main.rs"}}]}}"#,
+    );
+
+    // Then process the tool result
+    let output = processor.process_line(
+        r#"{"type":"user","message":{"id":"user_01","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"fn main() {}","is_error":false}]}}"#,
+    );
+
+    // Should return formatted result
+    assert!(output.is_some());
+    let out = output.unwrap();
+    assert!(out.contains("fn main()"));
+}
+
+#[test]
+fn test_tool_error_displayed_distinctly() {
+    let mut processor = StreamProcessor::with_options(true, true);
+
+    // First, process the tool call
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/nonexistent"}}]}}"#,
+    );
+
+    // Then process an error result
+    let output = processor.process_line(
+        r#"{"type":"user","message":{"id":"user_01","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"File not found","is_error":true}]}}"#,
+    );
+
+    // Should return formatted error with red color
+    assert!(output.is_some());
+    let out = output.unwrap();
+    assert!(out.contains("Error"));
+    assert!(out.contains("\x1b[31m")); // Red color code
+}
+
+#[test]
+fn test_multiple_concurrent_tools() {
+    let mut processor = StreamProcessor::with_options(false, true);
+
+    // Process an assistant event with multiple tool uses
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"toolu_01","name":"Glob","input":{"pattern":"*.rs"}},{"type":"tool_use","id":"toolu_02","name":"Grep","input":{"pattern":"fn main"}}]}}"#,
+    );
+
+    // Should return both tool invocations
+    assert!(output.is_some());
+    let out = output.unwrap();
+    assert!(out.contains("Glob"));
+    assert!(out.contains("*.rs"));
+    assert!(out.contains("Grep"));
+    assert!(out.contains("fn main"));
+}
+
+#[test]
+fn test_with_options_constructor() {
+    let processor = StreamProcessor::with_options(true, false);
+    assert!(processor.is_highlighting_enabled());
+    assert!(!processor.is_showing_tool_invocations());
+
+    let processor = StreamProcessor::with_options(false, true);
+    assert!(!processor.is_highlighting_enabled());
+    assert!(processor.is_showing_tool_invocations());
+}
+
+#[test]
+fn test_tool_text_mixed_content() {
+    let mut processor = StreamProcessor::with_options(false, true);
+
+    // Process an assistant event with both text and tool use
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Let me read the file."},{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/src/main.rs"}}]}}"#,
+    );
+
+    // Should return both text and tool invocation
+    assert!(output.is_some());
+    let out = output.unwrap();
+    assert!(out.contains("Let me read the file"));
+    assert!(out.contains("Read"));
+}
+
+#[test]
+fn test_extract_key_argument_read() {
+    let input = serde_json::json!({"file_path": "/src/main.rs"});
+    let arg = extract_key_argument("Read", &input);
+    assert_eq!(arg, Some("/src/main.rs".to_string()));
+}
+
+#[test]
+fn test_extract_key_argument_glob() {
+    let input = serde_json::json!({"pattern": "**/*.rs"});
+    let arg = extract_key_argument("Glob", &input);
+    assert_eq!(arg, Some("**/*.rs".to_string()));
+}
+
+#[test]
+fn test_extract_key_argument_bash() {
+    let input = serde_json::json!({"command": "cargo test"});
+    let arg = extract_key_argument("Bash", &input);
+    assert_eq!(arg, Some("cargo test".to_string()));
+}
+
+#[test]
+fn test_extract_key_argument_unknown_tool() {
+    // Unknown tool with file_path should still extract it
+    let input = serde_json::json!({"file_path": "/some/path"});
+    let arg = extract_key_argument("UnknownTool", &input);
+    assert_eq!(arg, Some("/some/path".to_string()));
+}
+
+#[test]
+fn test_truncate_string_short() {
+    let s = "Hello";
+    assert_eq!(truncate_string(s, 10), "Hello");
+}
+
+#[test]
+fn test_truncate_string_long() {
+    let s = "This is a very long string that should be truncated";
+    let truncated = truncate_string(s, 20);
+    assert_eq!(truncated, "This is a very lo...");
+    assert!(truncated.ends_with("..."));
+}
+
+#[test]
+fn test_truncate_string_newlines() {
+    let s = "Line 1\nLine 2\nLine 3";
+    let truncated = truncate_string(s, 50);
+    assert!(!truncated.contains('\n'));
+    assert!(truncated.contains("Line 1 Line 2 Line 3"));
+}
+
+#[test]
+fn test_plain_text_tool_display() {
+    let mut processor = StreamProcessor::with_options(false, true);
+
+    // Process an assistant event with a tool use
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/src/main.rs"}}]}}"#,
+    );
+
+    // Should use plain text format (no ANSI codes)
+    assert!(output.is_some());
+    let out = output.unwrap();
+    assert!(out.starts_with(">"));
+    assert!(!out.contains("\x1b[")); // No ANSI escape codes
+}
+
+// ==========================================================================
+// Visual separation tests
+// ==========================================================================
+
+#[test]
+fn test_visual_separation_between_responses() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // First response
+    let output1 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First response"}]}}"#,
+    );
+    assert!(output1.is_some());
+    assert!(processor.has_emitted_output());
+    assert_eq!(processor.response_count(), 1);
+
+    // Second response (different message ID)
+    let output2 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Second response"}]}}"#,
+    );
+
+    // Should have separator before second response
+    assert!(output2.is_some());
+    let out2 = output2.unwrap();
+    assert!(
+        out2.starts_with('\n'),
+        "Should have separator before second response: {:?}",
+        out2
+    );
+    assert_eq!(processor.response_count(), 2);
+}
+
+#[test]
+fn test_no_separator_for_first_response() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // First response should have no leading separator
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First response"}]}}"#,
+    );
+
+    assert!(output.is_some());
+    let out = output.unwrap();
+    // First response should not start with extra separator
+    assert!(
+        !out.starts_with("\n\n"),
+        "First response should not have leading separator"
+    );
+    assert_eq!(processor.response_count(), 1);
+}
+
+#[test]
+fn test_no_separator_for_same_message_id() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // First event
+    let output1 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First "}]}}"#,
+    );
+    assert!(output1.is_some());
+
+    // Second event with same message ID (continuation)
+    let output2 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Second"}]}}"#,
+    );
+
+    // Should NOT have separator (same message)
+    assert!(output2.is_some());
+    let out2 = output2.unwrap();
+    assert!(
+        !out2.starts_with('\n'),
+        "Continuation should not have separator: {:?}",
+        out2
+    );
+    // Still only one response
+    assert_eq!(processor.response_count(), 1);
+}
+
+#[test]
+fn test_separator_after_tool_use_cycle() {
+    let mut processor = StreamProcessor::with_options(false, false); // No tool display
+
+    // First response with text
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Let me check"}]}}"#,
+    );
+
+    // Tool invocation (same message)
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{}}]}}"#,
+    );
+
+    // Tool result
+    processor.process_line(
+        r#"{"type":"user","message":{"id":"user_01","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"file content"}]}}"#,
+    );
+
+    // New assistant response (different message ID)
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Based on the file"}]}}"#,
+    );
+
+    // Should have separator
+    assert!(output.is_some());
+    let out = output.unwrap();
+    assert!(
+        out.starts_with('\n'),
+        "Should have separator after tool cycle: {:?}",
+        out
+    );
+    assert_eq!(processor.response_count(), 2);
+}
+
+#[test]
+fn test_multiple_responses_with_separators() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    // Three distinct responses
+    let out1 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"One"}]}}"#,
+    );
+    let out2 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Two"}]}}"#,
+    );
+    let out3 = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-3","content":[{"type":"text","text":"Three"}]}}"#,
+    );
+
+    // First has no separator, second and third have separators
+    assert!(!out1.unwrap().starts_with('\n'));
+    assert!(out2.unwrap().starts_with('\n'));
+    assert!(out3.unwrap().starts_with('\n'));
+    assert_eq!(processor.response_count(), 3);
+}
+
+#[test]
+fn test_response_count_increments_correctly() {
+    let mut processor = StreamProcessor::with_highlighting(false);
+
+    assert_eq!(processor.response_count(), 0);
+    assert!(!processor.has_emitted_output());
+
+    // First message
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First"}]}}"#,
+    );
+    assert_eq!(processor.response_count(), 1);
+    assert!(processor.has_emitted_output());
+
+    // Same message (continuation)
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":" more"}]}}"#,
+    );
+    assert_eq!(processor.response_count(), 1); // Still 1
+
+    // New message
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Second"}]}}"#,
+    );
+    assert_eq!(processor.response_count(), 2);
+}
+
+#[test]
+fn test_no_separator_if_no_output_yet() {
+    let mut processor = StreamProcessor::with_options(false, false); // No tool display
+
+    // First message is tool-only (no text, tools hidden)
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{}}]}}"#,
+    );
+    // No visible output yet
+    assert!(!processor.has_emitted_output());
+
+    // Tool result (also no visible output)
+    processor.process_line(
+        r#"{"type":"user","message":{"id":"user_01","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"result"}]}}"#,
+    );
+    assert!(!processor.has_emitted_output());
+
+    // New message with text - should NOT have separator since nothing was shown
+    let output = processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Now with text"}]}}"#,
+    );
+
+    assert!(output.is_some());
+    let out = output.unwrap();
+    // Should NOT start with separator since there was no visible output before
+    assert!(
+        !out.starts_with('\n'),
+        "Should not have separator if no prior visible output: {:?}",
+        out
+    );
+}

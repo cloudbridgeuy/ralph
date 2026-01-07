@@ -31,8 +31,9 @@ use ralph_core::chunk::{
 use ralph_core::stream::{
     correlate_tool_interactions, extract_costs_from_events_or_default,
     extract_metadata_from_events_or_default, parse_stream_line, IterationCosts, IterationMetadata,
-    ParsedLine, StreamEvent, ToolInteraction,
+    ParsedLine, StreamEvent, ToolCorrelator, ToolInteraction,
 };
+use serde_json::Value;
 use std::io::IsTerminal;
 
 /// Result of processing a complete stream.
@@ -59,6 +60,8 @@ pub struct StreamProcessorResult {
 /// - Chunk detection (prose/code/diff boundaries)
 /// - Syntax highlighting
 /// - Metadata extraction
+/// - Tool invocation display
+/// - Visual separation between distinct assistant responses
 pub struct StreamProcessor {
     /// Collected stream events for post-processing.
     events: Vec<StreamEvent>,
@@ -73,12 +76,20 @@ pub struct StreamProcessor {
     diff_highlighter: DiffHighlighter,
     /// Whether highlighting is enabled (terminal detection).
     highlighting_enabled: bool,
+    /// Whether to display tool invocations.
+    show_tool_invocations: bool,
     /// Current message ID for accumulation.
     current_message_id: Option<String>,
     /// Chunks collected during streaming.
     collected_chunks: Vec<ParsedChunk>,
     /// Parse errors encountered.
     parse_errors: Vec<(String, String)>,
+    /// Tool correlator for tracking tool calls and results.
+    tool_correlator: ToolCorrelator,
+    /// Whether we've emitted any output (for visual separation).
+    has_emitted_output: bool,
+    /// Count of distinct assistant responses processed.
+    response_count: usize,
 }
 
 impl Default for StreamProcessor {
@@ -91,6 +102,7 @@ impl StreamProcessor {
     /// Create a new stream processor.
     ///
     /// Automatically detects terminal support for highlighting.
+    /// Tool invocations are displayed by default when highlighting is enabled.
     ///
     /// # Example
     ///
@@ -100,25 +112,46 @@ impl StreamProcessor {
     /// let processor = StreamProcessor::new();
     /// ```
     pub fn new() -> Self {
+        let is_terminal = std::io::stdout().is_terminal();
         Self {
             events: Vec::new(),
             text_buffer: String::new(),
             chunk_buffer: StreamingChunkBuffer::new(),
             code_highlighter: Highlighter::new(),
             diff_highlighter: DiffHighlighter::new(),
-            highlighting_enabled: std::io::stdout().is_terminal(),
+            highlighting_enabled: is_terminal,
+            show_tool_invocations: is_terminal,
             current_message_id: None,
             collected_chunks: Vec::new(),
             parse_errors: Vec::new(),
+            tool_correlator: ToolCorrelator::new(),
+            has_emitted_output: false,
+            response_count: 0,
         }
     }
 
     /// Create a processor with highlighting explicitly enabled/disabled.
     ///
     /// Useful for testing or when output will be displayed later.
+    /// Tool invocations display follows the highlighting setting.
     pub fn with_highlighting(enabled: bool) -> Self {
         Self {
             highlighting_enabled: enabled,
+            show_tool_invocations: enabled,
+            ..Self::new()
+        }
+    }
+
+    /// Create a processor with custom settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `highlighting` - Whether to apply syntax highlighting
+    /// * `show_tools` - Whether to display tool invocations
+    pub fn with_options(highlighting: bool, show_tools: bool) -> Self {
+        Self {
+            highlighting_enabled: highlighting,
+            show_tool_invocations: show_tools,
             ..Self::new()
         }
     }
@@ -164,36 +197,129 @@ impl StreamProcessor {
 
     /// Handle a parsed stream event.
     fn handle_event(&mut self, event: StreamEvent) -> Option<String> {
-        let output = match &event {
+        let mut output_parts: Vec<String> = Vec::new();
+
+        match &event {
             StreamEvent::Assistant(assistant_event) => {
                 // Check if this is a new message
                 let new_message_id = assistant_event.message.id.clone();
-                if new_message_id != self.current_message_id && self.current_message_id.is_some() {
+                let is_new_response =
+                    new_message_id != self.current_message_id && self.current_message_id.is_some();
+
+                if is_new_response {
                     // New message - flush any pending content
-                    let _ = self.flush_pending_chunks();
+                    if let Some(flushed) = self.flush_pending_chunks() {
+                        output_parts.push(flushed);
+                    }
+                    // Insert visual separator between distinct assistant responses
+                    // (but only if we've already emitted some output)
+                    if self.has_emitted_output {
+                        output_parts.push("\n".to_string());
+                    }
+                    self.response_count += 1;
+                } else if self.current_message_id.is_none() {
+                    // First response
+                    self.response_count = 1;
                 }
                 self.current_message_id = new_message_id;
+
+                // Display tool invocations if enabled
+                if self.show_tool_invocations {
+                    let tool_invocations = assistant_event.extract_tool_invocations();
+                    for invocation in &tool_invocations {
+                        let formatted = self.format_tool_invocation(invocation);
+                        output_parts.push(formatted);
+                    }
+                }
 
                 // Extract text from this event
                 let text = assistant_event.extract_text();
                 if !text.is_empty() {
                     self.text_buffer.push_str(&text);
                     // Process through chunk buffer and output
-                    self.process_text_for_output(&text)
-                } else {
-                    None
+                    if let Some(text_output) = self.process_text_for_output(&text) {
+                        output_parts.push(text_output);
+                    }
                 }
             }
-            StreamEvent::System(_) | StreamEvent::User(_) | StreamEvent::Result(_) => {
-                // Non-assistant events don't produce output
-                None
+            StreamEvent::User(user_event) => {
+                // Display tool results if enabled
+                if self.show_tool_invocations {
+                    for result in &user_event.message.content {
+                        let formatted = self.format_tool_result(result);
+                        output_parts.push(formatted);
+                    }
+                }
             }
-        };
+            StreamEvent::System(_) | StreamEvent::Result(_) => {
+                // System and result events don't produce visible output
+            }
+        }
+
+        // Track tool calls/results through correlator
+        self.tool_correlator.process_event(&event);
 
         // Store event for post-processing
         self.events.push(event);
 
-        output
+        if output_parts.is_empty() {
+            None
+        } else {
+            // Mark that we've emitted output (for visual separation tracking)
+            self.has_emitted_output = true;
+            Some(output_parts.join(""))
+        }
+    }
+
+    /// Format a tool invocation for display.
+    fn format_tool_invocation(&self, invocation: &ralph_core::stream::ToolInvocation) -> String {
+        let key_arg = extract_key_argument(&invocation.name, &invocation.input);
+
+        if self.highlighting_enabled {
+            // Use colors for terminal display
+            format!(
+                "\x1b[36m▶ {}\x1b[0m{}\n",
+                invocation.name,
+                if let Some(arg) = key_arg {
+                    format!(" \x1b[90m{}\x1b[0m", truncate_string(&arg, 60))
+                } else {
+                    String::new()
+                }
+            )
+        } else {
+            // Plain text for non-terminal
+            format!(
+                "> {} {}\n",
+                invocation.name,
+                key_arg.map(|a| truncate_string(&a, 60)).unwrap_or_default()
+            )
+        }
+    }
+
+    /// Format a tool result for display.
+    fn format_tool_result(&self, result: &ralph_core::stream::ToolResult) -> String {
+        let truncated_content = result
+            .content
+            .as_ref()
+            .map(|c| truncate_string(c, 200))
+            .unwrap_or_else(|| "(no output)".to_string());
+
+        if self.highlighting_enabled {
+            if result.is_error {
+                // Red for errors
+                format!("\x1b[31m✗ Error:\x1b[0m {}\n", truncated_content)
+            } else {
+                // Green check for success (dim output)
+                format!("\x1b[32m✓\x1b[0m \x1b[90m{}\x1b[0m\n", truncated_content)
+            }
+        } else {
+            // Plain text for non-terminal
+            if result.is_error {
+                format!("! Error: {}\n", truncated_content)
+            } else {
+                format!("  {}\n", truncated_content)
+            }
+        }
     }
 
     /// Process text through the chunk buffer and generate highlighted output.
@@ -306,405 +432,89 @@ impl StreamProcessor {
     pub fn parse_errors(&self) -> &[(String, String)] {
         &self.parse_errors
     }
+
+    /// Check if tool invocation display is enabled.
+    pub fn is_showing_tool_invocations(&self) -> bool {
+        self.show_tool_invocations
+    }
+
+    /// Get the count of distinct assistant responses processed.
+    ///
+    /// This increments each time a new message ID is seen after a previous
+    /// message has started. Useful for testing and debugging.
+    pub fn response_count(&self) -> usize {
+        self.response_count
+    }
+
+    /// Check if any output has been emitted.
+    ///
+    /// Used for visual separation logic - we only add separators between
+    /// responses if there's been output to separate.
+    pub fn has_emitted_output(&self) -> bool {
+        self.has_emitted_output
+    }
+}
+
+/// Extract the most relevant argument from a tool invocation for display.
+///
+/// Different tools have different key arguments:
+/// - Read/Edit/Write: file_path
+/// - Glob: pattern
+/// - Grep: pattern
+/// - Bash: command
+fn extract_key_argument(tool_name: &str, input: &Value) -> Option<String> {
+    let obj = input.as_object()?;
+
+    // Tool-specific key arguments
+    let key = match tool_name {
+        "Read" | "Edit" | "Write" => "file_path",
+        "Glob" => "pattern",
+        "Grep" => "pattern",
+        "Bash" => "command",
+        "WebFetch" => "url",
+        "Task" => "prompt",
+        _ => {
+            // For unknown tools, try common field names
+            if obj.contains_key("file_path") {
+                "file_path"
+            } else if obj.contains_key("path") {
+                "path"
+            } else if obj.contains_key("pattern") {
+                "pattern"
+            } else if obj.contains_key("command") {
+                "command"
+            } else {
+                // Return the first string value
+                for (_, v) in obj {
+                    if let Some(s) = v.as_str() {
+                        return Some(s.to_string());
+                    }
+                }
+                return None;
+            }
+        }
+    };
+
+    obj.get(key).and_then(|v| v.as_str()).map(String::from)
+}
+
+/// Truncate a string to a maximum length, adding ellipsis if needed.
+fn truncate_string(s: &str, max_len: usize) -> String {
+    // First, replace newlines with spaces for cleaner display
+    let single_line: String = s
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+
+    // Then truncate if needed
+    if single_line.len() <= max_len {
+        single_line
+    } else {
+        let truncated: String = single_line.chars().take(max_len - 3).collect();
+        format!("{}...", truncated)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_stream_processor_new() {
-        let processor = StreamProcessor::new();
-        assert!(processor.raw_text().is_empty());
-        assert!(processor.parse_errors().is_empty());
-    }
-
-    #[test]
-    fn test_stream_processor_with_highlighting() {
-        let processor = StreamProcessor::with_highlighting(true);
-        assert!(processor.is_highlighting_enabled());
-
-        let processor = StreamProcessor::with_highlighting(false);
-        assert!(!processor.is_highlighting_enabled());
-    }
-
-    #[test]
-    fn test_process_empty_line() {
-        let mut processor = StreamProcessor::new();
-        let output = processor.process_line("");
-        assert!(output.is_none());
-
-        let output = processor.process_line("   ");
-        assert!(output.is_none());
-    }
-
-    #[test]
-    fn test_process_malformed_json() {
-        let mut processor = StreamProcessor::new();
-        let output = processor.process_line("not json");
-        assert!(output.is_none());
-        assert_eq!(processor.parse_errors().len(), 1);
-    }
-
-    #[test]
-    fn test_process_system_event() {
-        let mut processor = StreamProcessor::new();
-        let line = r#"{"type":"system","subtype":"init","session_id":"abc-123","model":"claude"}"#;
-        let _output = processor.process_line(line);
-        // System events don't produce output - processor stores them for metadata extraction
-    }
-
-    #[test]
-    fn test_process_assistant_text_event() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-        let line = r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Hello, world!"}]}}"#;
-        let _output = processor.process_line(line);
-
-        // Text should be captured
-        assert!(processor.raw_text().contains("Hello, world!"));
-    }
-
-    #[test]
-    fn test_process_result_event() {
-        let mut processor = StreamProcessor::new();
-        let line = r#"{"type":"result","duration_ms":1000,"total_cost_usd":0.05,"usage":{"input_tokens":100,"output_tokens":50}}"#;
-        let output = processor.process_line(line);
-        assert!(output.is_none()); // Result events don't produce output
-    }
-
-    #[test]
-    fn test_finish_extracts_metadata() {
-        let mut processor = StreamProcessor::new();
-        processor.process_line(
-            r#"{"type":"system","subtype":"init","session_id":"test-session","model":"claude-3"}"#,
-        );
-        processor.process_line(
-            r#"{"type":"result","duration_ms":5000,"total_cost_usd":0.10,"usage":{"input_tokens":200,"output_tokens":100}}"#,
-        );
-
-        let result = processor.finish();
-        assert_eq!(result.metadata.session_id.as_deref(), Some("test-session"));
-        assert_eq!(result.metadata.model.as_deref(), Some("claude-3"));
-        assert_eq!(result.costs.cost_usd, Some(0.10));
-        assert_eq!(result.costs.duration_ms, Some(5000));
-    }
-
-    #[test]
-    fn test_finish_returns_accumulated_text() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"First "}]}}"#,
-        );
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Second"}]}}"#,
-        );
-
-        let result = processor.finish();
-        assert!(result.raw_text.contains("First"));
-        assert!(result.raw_text.contains("Second"));
-    }
-
-    #[test]
-    fn test_tool_interaction_correlation() {
-        let mut processor = StreamProcessor::new();
-
-        // Tool invocation
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"/test"}}]}}"#,
-        );
-
-        // Tool result
-        processor.process_line(
-            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"file contents"}]}}"#,
-        );
-
-        let result = processor.finish();
-        assert_eq!(result.tool_interactions.len(), 1);
-        assert_eq!(result.tool_interactions[0].name, "Read");
-        assert!(result.tool_interactions[0].result.is_some());
-    }
-
-    #[test]
-    fn test_code_block_detection() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        // Send text with a code block
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Here is code:"}]}}"#,
-        );
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"\n```rust\nfn main() {}\n```"}]}}"#,
-        );
-
-        let result = processor.finish();
-        assert!(!result.chunks.is_empty());
-        // Should have captured the code block
-        let has_code = result
-            .chunks
-            .iter()
-            .any(|c| matches!(c.chunk_type, ChunkType::Code { .. }));
-        assert!(has_code, "Should have detected code block");
-    }
-
-    #[test]
-    fn test_diff_block_detection() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```diff\n+added\n-removed\n```"}]}}"#,
-        );
-
-        let result = processor.finish();
-        let has_diff = result
-            .chunks
-            .iter()
-            .any(|c| matches!(c.chunk_type, ChunkType::Diff));
-        assert!(has_diff, "Should have detected diff block");
-    }
-
-    #[test]
-    fn test_multiple_messages() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        // First message
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First message"}]}}"#,
-        );
-
-        // Second message (different ID)
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Second message"}]}}"#,
-        );
-
-        let result = processor.finish();
-        assert!(result.raw_text.contains("First message"));
-        assert!(result.raw_text.contains("Second message"));
-    }
-
-    #[test]
-    fn test_empty_finish() {
-        let processor = StreamProcessor::new();
-        let result = processor.finish();
-        assert!(result.chunks.is_empty());
-        assert!(result.raw_text.is_empty());
-        assert!(result.tool_interactions.is_empty());
-    }
-
-    // ==========================================================================
-    // Whitespace preservation tests
-    // ==========================================================================
-
-    #[test]
-    fn test_whitespace_blank_lines_preserved_between_paragraphs() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        // Simulate: "Paragraph 1.\n\nParagraph 2."
-        let output1 = processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Paragraph 1.\n\nParagraph 2."}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        // Should have three chunks: Paragraph 1, blank line, Paragraph 2
-        assert_eq!(result.chunks.len(), 3);
-        assert_eq!(result.chunks[0].content, "Paragraph 1.");
-        assert_eq!(result.chunks[1].content, ""); // blank line preserved
-        assert_eq!(result.chunks[2].content, "Paragraph 2.");
-
-        // raw_text should preserve the original
-        assert_eq!(result.raw_text, "Paragraph 1.\n\nParagraph 2.");
-
-        // Output should have correct newlines
-        if let Some(out) = output1 {
-            // Each chunk gets a newline, so: "Paragraph 1.\n" + "\n" + "Paragraph 2.\n"
-            assert_eq!(out, "Paragraph 1.\n\nParagraph 2.\n");
-        }
-    }
-
-    #[test]
-    fn test_whitespace_multiple_blank_lines_preserved() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Text\n\n\nMore text"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        // Should have: Text, blank, blank, More text
-        assert_eq!(result.chunks.len(), 4);
-        assert_eq!(result.chunks[0].content, "Text");
-        assert_eq!(result.chunks[1].content, "");
-        assert_eq!(result.chunks[2].content, "");
-        assert_eq!(result.chunks[3].content, "More text");
-    }
-
-    #[test]
-    fn test_whitespace_code_block_content_preserved() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        // Code with internal blank line
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```rust\nfn a() {}\n\nfn b() {}\n```"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        // Find the code chunk
-        let code_chunk = result
-            .chunks
-            .iter()
-            .find(|c| matches!(c.chunk_type, ChunkType::Code { .. }))
-            .expect("Should have code chunk");
-
-        // Internal blank line should be preserved
-        assert_eq!(code_chunk.content, "fn a() {}\n\nfn b() {}");
-    }
-
-    #[test]
-    fn test_whitespace_indentation_preserved_in_code() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```python\ndef foo():\n    x = 1\n        nested = 2\n```"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        let code_chunk = result
-            .chunks
-            .iter()
-            .find(|c| matches!(c.chunk_type, ChunkType::Code { .. }))
-            .expect("Should have code chunk");
-
-        // Indentation preserved exactly
-        assert_eq!(
-            code_chunk.content,
-            "def foo():\n    x = 1\n        nested = 2"
-        );
-    }
-
-    #[test]
-    fn test_whitespace_trailing_newline_in_text() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        // Text with trailing newline
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Line 1\nLine 2\n"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        // Should preserve trailing newline as empty chunk
-        assert_eq!(result.chunks.len(), 3);
-        assert_eq!(result.chunks[0].content, "Line 1");
-        assert_eq!(result.chunks[1].content, "Line 2");
-        assert_eq!(result.chunks[2].content, ""); // trailing newline
-    }
-
-    #[test]
-    fn test_whitespace_leading_spaces_preserved() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"    indented line"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        assert_eq!(result.chunks.len(), 1);
-        assert_eq!(result.chunks[0].content, "    indented line");
-    }
-
-    #[test]
-    fn test_whitespace_list_indentation_preserved() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"- Item 1\n  - Nested item\n    - Deeply nested"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        assert_eq!(result.chunks.len(), 3);
-        assert_eq!(result.chunks[0].content, "- Item 1");
-        assert_eq!(result.chunks[1].content, "  - Nested item");
-        assert_eq!(result.chunks[2].content, "    - Deeply nested");
-    }
-
-    #[test]
-    fn test_whitespace_blank_line_before_code_block() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Here's code:\n\n```rust\nfn main() {}\n```"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        // Should have: prose ("Here's code:"), blank line, code block
-        assert_eq!(result.chunks.len(), 3);
-        assert_eq!(result.chunks[0].content, "Here's code:");
-        assert_eq!(result.chunks[1].content, ""); // blank line before code
-        assert!(matches!(
-            result.chunks[2].chunk_type,
-            ChunkType::Code { .. }
-        ));
-    }
-
-    #[test]
-    fn test_whitespace_blank_line_after_code_block() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"```rust\nfn main() {}\n```\n\nDone."}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        // Should have: code block, blank line, prose ("Done.")
-        assert_eq!(result.chunks.len(), 3);
-        assert!(matches!(
-            result.chunks[0].chunk_type,
-            ChunkType::Code { .. }
-        ));
-        assert_eq!(result.chunks[1].content, ""); // blank line after code
-        assert_eq!(result.chunks[2].content, "Done.");
-    }
-
-    #[test]
-    fn test_whitespace_raw_text_matches_original() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        let original = "Hello\n\nWorld\n\n```rust\ncode\n```\n\nDone";
-        processor.process_line(&format!(
-            r#"{{"type":"assistant","message":{{"id":"1","content":[{{"type":"text","text":"{}"}}]}}}}"#,
-            original.replace('\n', "\\n")
-        ));
-
-        let result = processor.finish();
-
-        // raw_text should match original exactly
-        assert_eq!(result.raw_text, original);
-    }
-
-    #[test]
-    fn test_whitespace_across_multiple_events() {
-        let mut processor = StreamProcessor::with_highlighting(false);
-
-        // First event ends mid-paragraph
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Hello "}]}}"#,
-        );
-
-        // Second event continues
-        processor.process_line(
-            r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"World\n\nNext paragraph"}]}}"#,
-        );
-
-        let result = processor.finish();
-
-        // raw_text should be "Hello World\n\nNext paragraph"
-        assert_eq!(result.raw_text, "Hello World\n\nNext paragraph");
-    }
-}
+#[path = "stream_processor_tests.rs"]
+mod tests;
