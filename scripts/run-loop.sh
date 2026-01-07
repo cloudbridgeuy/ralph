@@ -118,7 +118,11 @@ If, while implementing the feature, you notice all stories in the PRD are comple
 
 	# Run claude directly (no capture, pure streaming)
 	set +e
-	claude --permission-mode acceptEdits -p "$PROMPT" --allowedTools "Read,Edit,Bash" --output-format stream-json --verbose | jq
+	docker sandbox run \
+		-v /Users/guzmanmonne/.claude:/home/agent/.claude:ro \
+		-v /Users/guzmanmonne/.claude.json:/home/agent/.claude.json:ro \
+		-v /Users/guzmanmonne/.claude.json.backup:/home/agent/.claude.json.backup:ro \
+		claude --permission-mode acceptEdits -p "$PROMPT" --allowedTools "Read,Edit,Bash" --output-format stream-json --verbose
 	exit_code=$?
 	set -e
 
