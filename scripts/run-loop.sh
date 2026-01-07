@@ -118,7 +118,7 @@ If, while implementing the feature, you notice all stories in the PRD are comple
 
 	# Run claude directly (no capture, pure streaming)
 	set +e
-	claude --permission-mode acceptEdits -p "$PROMPT"
+	claude --permission-mode acceptEdits -p "$PROMPT" --allowedTools "Read,Edit,Bash" --output-format stream-json --verbose | jq
 	exit_code=$?
 	set -e
 
