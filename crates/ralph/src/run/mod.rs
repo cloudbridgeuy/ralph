@@ -68,6 +68,8 @@ pub struct RunConfig {
     pub custom_prompt: bool,
     /// Whether user provided custom completion marker.
     pub custom_completion_marker: bool,
+    /// Whether user provided additional prompt instructions.
+    pub custom_additional_prompt: bool,
 }
 
 /// Result of running the iteration loop.
@@ -265,6 +267,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             custom_command: config.custom_command,
             custom_prompt: config.custom_prompt,
             custom_completion_marker: config.custom_completion_marker,
+            custom_additional_prompt: config.custom_additional_prompt,
             session_dir: session_dir.clone(),
         };
         display_startup_info(&startup_info);

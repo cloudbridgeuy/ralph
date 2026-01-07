@@ -65,7 +65,7 @@ pub struct SessionsArgs {
 
     /// Filter sessions by outcome status.
     ///
-    /// Valid values: in_progress, completed, aborted, failed
+    /// Valid values: in_progress, completed, aborted, failed, interrupted
     #[arg(long)]
     pub outcome: Option<String>,
 }
@@ -205,6 +205,14 @@ pub struct RunArgs {
     /// Can also be set via RALPH_NO_BACKGROUND environment variable.
     #[arg(long)]
     pub no_background: bool,
+
+    /// Additional instructions to append to the prompt.
+    ///
+    /// Appends custom instructions to the main prompt template.
+    /// Supports file path, `-` for stdin, or inline string.
+    /// Useful for adding project-specific or one-off instructions.
+    #[arg(short = 'a', long)]
+    pub additional_prompt: Option<String>,
 }
 
 #[cfg(test)]
@@ -404,6 +412,51 @@ mod tests {
         assert!(help.contains("ITERATIONS"));
     }
 
+    #[test]
+    fn test_run_with_additional_prompt() {
+        let cli = Cli::try_parse_from([
+            "ralph",
+            "run",
+            "--additional-prompt",
+            "Extra instructions here",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(
+                    args.additional_prompt,
+                    Some("Extra instructions here".to_string())
+                );
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_additional_prompt_short_flag() {
+        let cli = Cli::try_parse_from(["ralph", "run", "-a", "Extra instructions"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(
+                    args.additional_prompt,
+                    Some("Extra instructions".to_string())
+                );
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_without_additional_prompt() {
+        let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert!(args.additional_prompt.is_none());
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
     // Sessions command tests
 
     #[test]
@@ -461,6 +514,17 @@ mod tests {
             Commands::Sessions(args) => {
                 assert_eq!(args.project, Some("myproject".to_string()));
                 assert_eq!(args.outcome, Some("in_progress".to_string()));
+            }
+            _ => panic!("Expected Sessions command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_with_interrupted_outcome() {
+        let cli = Cli::try_parse_from(["ralph", "sessions", "--outcome", "interrupted"]).unwrap();
+        match cli.command {
+            Commands::Sessions(args) => {
+                assert_eq!(args.outcome, Some("interrupted".to_string()));
             }
             _ => panic!("Expected Sessions command"),
         }

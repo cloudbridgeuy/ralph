@@ -37,6 +37,8 @@ pub struct StartupInfo {
     pub custom_prompt: bool,
     /// Whether a custom completion marker is used.
     pub custom_completion_marker: bool,
+    /// Whether an additional prompt was provided.
+    pub custom_additional_prompt: bool,
     /// Session directory path.
     pub session_dir: PathBuf,
 }
@@ -50,6 +52,7 @@ impl StartupInfo {
             || self.custom_command
             || self.custom_prompt
             || self.custom_completion_marker
+            || self.custom_additional_prompt
     }
 }
 
@@ -117,6 +120,9 @@ fn display_startup_terminal(info: &StartupInfo) {
         if info.custom_completion_marker {
             println!("  \x1b[2m--completion-marker (custom)\x1b[0m");
         }
+        if info.custom_additional_prompt {
+            println!("  \x1b[2m--additional-prompt (custom)\x1b[0m");
+        }
     }
 
     // Session directory
@@ -177,6 +183,9 @@ fn display_startup_plain(info: &StartupInfo) {
         }
         if info.custom_completion_marker {
             println!("  --completion-marker (custom)");
+        }
+        if info.custom_additional_prompt {
+            println!("  --additional-prompt (custom)");
         }
     }
 
@@ -625,6 +634,7 @@ mod tests {
             custom_command: false,
             custom_prompt: false,
             custom_completion_marker: false,
+            custom_additional_prompt: false,
             session_dir: PathBuf::from("/home/user/.config/ralph/sessions/test-session"),
         }
     }
@@ -692,6 +702,13 @@ mod tests {
         info.custom_command = true;
         info.custom_prompt = true;
         info.custom_prd_path = Some(PathBuf::from("/custom/prd.toml"));
+        assert!(info.has_custom_config());
+    }
+
+    #[test]
+    fn test_has_custom_config_additional_prompt() {
+        let mut info = create_test_info();
+        info.custom_additional_prompt = true;
         assert!(info.has_custom_config());
     }
 

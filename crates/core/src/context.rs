@@ -45,6 +45,7 @@ pub mod defaults {
     /// - `{prd_file}` - Path to the PRD file
     /// - `{progress_file}` - Path to the progress notes file
     /// - `{completion_marker}` - The marker string to output when all stories are complete
+    /// - `{additional_prompt}` - Additional instructions appended to the prompt (optional)
     ///
     /// # Notes
     ///
@@ -71,7 +72,7 @@ pub mod defaults {
 ONLY WORK ON A SINGLE FEATURE.
 
 IF YOU NOTICE A FILE GOING OVER 1000 LINES CONSIDER UPDATING IT INTO A MODULE OR MOVING THE TESTS TO A DIFFERENT FILE, AND USE THE #[path = ...] PATTERN.
-
+{additional_prompt}
 If, while implementing the feature, you notice all stories in the PRD are complete, output {completion_marker}."#;
 }
 
@@ -126,12 +127,14 @@ impl ContextPaths {
 /// - `{prd_file}` - Replaced with the PRD file path
 /// - `{progress_file}` - Replaced with the progress file path
 /// - `{completion_marker}` - Replaced with the completion marker string
+/// - `{additional_prompt}` - Replaced with additional prompt instructions
 ///
 /// # Arguments
 ///
 /// * `template` - The prompt template containing placeholders
 /// * `paths` - The context paths to substitute
 /// * `completion_marker` - The completion marker string
+/// * `additional_prompt` - Additional instructions to append
 ///
 /// # Returns
 ///
@@ -145,7 +148,7 @@ impl ContextPaths {
 ///
 /// let paths = ContextPaths::new(Path::new("/project"), None, None, None);
 /// let template = "Read @{design_file} and @{prd_file}";
-/// let result = substitute_template_placeholders(template, &paths, "<promise>COMPLETE</promise>");
+/// let result = substitute_template_placeholders(template, &paths, "<promise>COMPLETE</promise>", "");
 ///
 /// assert!(result.contains("/project/.local/designs/design.md"));
 /// assert!(result.contains("/project/.local/plans/prd.toml"));
@@ -154,12 +157,14 @@ pub fn substitute_template_placeholders(
     template: &str,
     paths: &ContextPaths,
     completion_marker: &str,
+    additional_prompt: &str,
 ) -> String {
     template
         .replace("{design_file}", &paths.design.display().to_string())
         .replace("{prd_file}", &paths.prd.display().to_string())
         .replace("{progress_file}", &paths.progress.display().to_string())
         .replace("{completion_marker}", completion_marker)
+        .replace("{additional_prompt}", additional_prompt)
 }
 
 /// Result of checking which context files need to be touched.
@@ -422,12 +427,13 @@ mod tests {
             progress: PathBuf::from("/project/progress.txt"),
         };
 
-        let template = "{design_file} {prd_file} {progress_file} {completion_marker}";
-        let result = substitute_template_placeholders(template, &paths, "DONE");
+        let template =
+            "{design_file} {prd_file} {progress_file} {completion_marker} {additional_prompt}";
+        let result = substitute_template_placeholders(template, &paths, "DONE", "extra");
 
         assert_eq!(
             result,
-            "/project/design.md /project/prd.toml /project/progress.txt DONE"
+            "/project/design.md /project/prd.toml /project/progress.txt DONE extra"
         );
     }
 
@@ -440,7 +446,7 @@ mod tests {
         };
 
         let template = "{design_file} {unknown_placeholder} {another}";
-        let result = substitute_template_placeholders(template, &paths, "DONE");
+        let result = substitute_template_placeholders(template, &paths, "DONE", "");
 
         assert!(result.contains("/design.md"));
         assert!(result.contains("{unknown_placeholder}"));
@@ -456,7 +462,7 @@ mod tests {
         };
 
         let result =
-            substitute_template_placeholders(defaults::PROMPT_TEMPLATE, &paths, "COMPLETE");
+            substitute_template_placeholders(defaults::PROMPT_TEMPLATE, &paths, "COMPLETE", "");
 
         assert!(result.contains("@/my/design.md"));
         assert!(result.contains("@/my/prd.toml"));
@@ -477,7 +483,7 @@ mod tests {
             progress: PathBuf::from("/progress.txt"),
         };
 
-        let result = substitute_template_placeholders("", &paths, "DONE");
+        let result = substitute_template_placeholders("", &paths, "DONE", "");
         assert_eq!(result, "");
     }
 
@@ -490,7 +496,7 @@ mod tests {
         };
 
         let template = "No placeholders here";
-        let result = substitute_template_placeholders(template, &paths, "DONE");
+        let result = substitute_template_placeholders(template, &paths, "DONE", "");
         assert_eq!(result, "No placeholders here");
     }
 
@@ -503,7 +509,7 @@ mod tests {
         };
 
         let template = "{design_file} and also {design_file}";
-        let result = substitute_template_placeholders(template, &paths, "DONE");
+        let result = substitute_template_placeholders(template, &paths, "DONE", "");
         assert_eq!(result, "/design.md and also /design.md");
     }
 
@@ -516,10 +522,41 @@ mod tests {
         };
 
         let template = "{design_file}|{prd_file}|{progress_file}";
-        let result = substitute_template_placeholders(template, &paths, "DONE");
+        let result = substitute_template_placeholders(template, &paths, "DONE", "");
 
         assert!(result.contains("/path with spaces/design.md"));
         assert!(result.contains("/special!@#$/prd.toml"));
         assert!(result.contains("/unicode/进度.txt"));
+    }
+
+    #[test]
+    fn test_substitute_additional_prompt() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/design.md"),
+            prd: PathBuf::from("/prd.toml"),
+            progress: PathBuf::from("/progress.txt"),
+        };
+
+        let template = "Main instructions\n\n{additional_prompt}";
+        let result =
+            substitute_template_placeholders(template, &paths, "DONE", "Custom extra instructions");
+
+        assert!(result.contains("Main instructions"));
+        assert!(result.contains("Custom extra instructions"));
+        assert!(!result.contains("{additional_prompt}"));
+    }
+
+    #[test]
+    fn test_substitute_empty_additional_prompt() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/design.md"),
+            prd: PathBuf::from("/prd.toml"),
+            progress: PathBuf::from("/progress.txt"),
+        };
+
+        let template = "Instructions{additional_prompt}";
+        let result = substitute_template_placeholders(template, &paths, "DONE", "");
+
+        assert_eq!(result, "Instructions");
     }
 }

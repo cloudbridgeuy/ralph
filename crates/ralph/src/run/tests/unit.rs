@@ -31,6 +31,7 @@ fn create_test_config(paths: ContextPaths) -> RunConfig {
         custom_command: false,
         custom_prompt: false,
         custom_completion_marker: false,
+        custom_additional_prompt: false,
     }
 }
 

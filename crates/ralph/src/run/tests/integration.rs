@@ -72,6 +72,7 @@ fn create_test_config(paths: ContextPaths, command: String) -> RunConfig {
         custom_command: false,
         custom_prompt: false,
         custom_completion_marker: false,
+        custom_additional_prompt: false,
     }
 }
 
@@ -514,6 +515,7 @@ fn test_no_iterations_when_at_limit() {
         custom_command: false,
         custom_prompt: false,
         custom_completion_marker: false,
+        custom_additional_prompt: false,
     };
 
     let result = run(config);

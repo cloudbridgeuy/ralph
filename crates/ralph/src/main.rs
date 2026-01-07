@@ -84,8 +84,16 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         .clone()
         .unwrap_or_else(|| defaults::COMPLETION_MARKER.to_string());
 
-    // Resolve prompt template and substitute placeholders
-    let prompt = resolve_prompt(args.prompt.as_deref(), &context_paths, &completion_marker)?;
+    // Resolve additional prompt (file, stdin, inline, or empty)
+    let additional_prompt = resolve_additional_prompt(args.additional_prompt.as_deref())?;
+
+    // Resolve prompt template and substitute placeholders (including additional_prompt)
+    let prompt = resolve_prompt(
+        args.prompt.as_deref(),
+        &context_paths,
+        &completion_marker,
+        &additional_prompt,
+    )?;
 
     // Substitute {prompt} in command template
     let command = substitute_prompt_in_command(&command_template, &prompt);
@@ -128,6 +136,7 @@ fn execute_run_with_prompting(
     let custom_command = args.command.is_some();
     let custom_prompt = args.prompt.is_some();
     let custom_completion_marker = args.completion_marker.is_some();
+    let custom_additional_prompt = args.additional_prompt.is_some();
 
     loop {
         // Build run config, using the established session slug if we have one
@@ -148,6 +157,7 @@ fn execute_run_with_prompting(
             custom_command,
             custom_prompt,
             custom_completion_marker,
+            custom_additional_prompt,
         };
 
         // Execute the run loop
@@ -470,10 +480,12 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
 /// - `{prd_file}` - Path to the PRD file
 /// - `{progress_file}` - Path to the progress notes file
 /// - `{completion_marker}` - The completion marker string
+/// - `{additional_prompt}` - Additional instructions appended to the prompt
 fn resolve_prompt(
     prompt_arg: Option<&str>,
     context_paths: &ContextPaths,
     completion_marker: &str,
+    additional_prompt: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let template = match prompt_arg {
         Some("-") => {
@@ -504,7 +516,43 @@ fn resolve_prompt(
         &template,
         context_paths,
         completion_marker,
+        additional_prompt,
     ))
+}
+
+/// Resolve additional prompt from various sources.
+///
+/// Loads additional prompt instructions from:
+/// - A file path (if the argument is a path to an existing file)
+/// - Stdin (if the argument is "-")
+/// - An inline string (if the argument doesn't match a file)
+/// - Empty string (if no argument is provided)
+fn resolve_additional_prompt(
+    additional_arg: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    match additional_arg {
+        Some("-") => {
+            // Read from stdin
+            use std::io::Read;
+            let mut content = String::new();
+            std::io::stdin().read_to_string(&mut content)?;
+            Ok(content)
+        }
+        Some(value) => {
+            // Check if it's a file path
+            let path = Path::new(value);
+            if path.exists() && path.is_file() {
+                Ok(std::fs::read_to_string(path)?)
+            } else {
+                // Treat as inline string
+                Ok(value.to_string())
+            }
+        }
+        None => {
+            // No additional prompt - return empty string
+            Ok(String::new())
+        }
+    }
 }
 
 /// Substitute {prompt} placeholder in command template.
