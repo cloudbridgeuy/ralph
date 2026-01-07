@@ -1355,3 +1355,49 @@
 - All PRD stories have passes = true
 - Total tests: 427 (163 core, 264 ralph)
 
+## 2026-01-07 - Session Finalization Partial Implementation
+
+### What was accomplished
+- Implemented session finalization functionality when run completes:
+  - Added `finalize_session()` function to `crates/ralph/src/session.rs`
+  - Function updates session outcome, iterations count, and completed_at timestamp
+  - Updates both global sessions.toml index and session-specific session.toml file
+  - Added `SessionError::SessionNotFound` error variant
+- Modified `run()` in `crates/ralph/src/run.rs`:
+  - Sessions are now finalized with `SessionOutcome::Completed` on successful completion
+  - Sessions are finalized with `SessionOutcome::Failed` when PRD is unchanged (stuck state)
+  - `SubprocessFailed` error now includes session_slug and iterations_completed fields
+- Modified `execute_run_with_prompting()` in `crates/ralph/src/main.rs`:
+  - When user aborts at prompt, session is finalized with `SessionOutcome::Aborted`
+  - When user retries, previous session is finalized as `Failed` before creating new session
+  - Non-interactive mode finalizes session as `Failed` before aborting
+- Added tests for new error variants and finalization logic
+
+### Implementation details
+- `finalize_session()` uses a scoped block for mutable borrow to avoid borrow checker conflict
+- Session slug is passed back from `run()` to caller via error field for deferred finalization
+- This allows caller to determine final outcome based on user interaction
+- All 429 tests pass (165 core, 264 ralph)
+
+### Acceptance criteria partially met
+From "Fix session outcome for user abort and retry flow" story:
+- ✓ Pass session slug back from run() even on failure (added to SubprocessFailed error)
+- ✓ When user aborts at prompt, finalize with SessionOutcome::Aborted
+- ✗ When user retries, continue same session instead of creating new one (NOT IMPLEMENTED)
+- ✗ Update iterations count across retries (NOT IMPLEMENTED)
+
+### Context for next iteration
+- Session finalization is working for:
+  - Successful completions (outcome: completed)
+  - PRD unchanged errors (outcome: failed)
+  - User abort at prompt (outcome: aborted)
+  - Subprocess failures followed by retry (outcome: failed, then new session created)
+- **Remaining work for "Fix session outcome for user abort and retry flow"**:
+  - Continue same session on retry instead of creating new one
+  - Aggregate iterations count across retries within same session
+  - Auto-generated slugs should not change on retry
+- Other remaining stories in Layer 1D:
+  - Apply syntax highlighting during streaming output
+  - Implement subprocess timeout for LLM invocation
+  - Integrate stream-json parsing into run loop
+

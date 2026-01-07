@@ -108,6 +108,8 @@ fn execute_run_with_prompting(
                 attempts,
                 stdout: _,
                 stderr: _,
+                session_slug,
+                iterations_completed,
             }) => {
                 // Subprocess failed after exhausting retries - prompt user
                 let summary = format!(
@@ -117,16 +119,39 @@ fn execute_run_with_prompting(
 
                 match prompt_on_failure(&summary) {
                     Some(FailureAction::Retry) => {
+                        // Finalize the current session as failed before retrying
+                        // (The retry will create a new session)
+                        if let Err(e) = session::finalize_session(
+                            &session_slug,
+                            iterations_completed as u32,
+                            SessionOutcome::Failed,
+                        ) {
+                            eprintln!("Warning: Failed to finalize session: {}", e);
+                        }
                         eprintln!("\nRetrying run...\n");
                         // Continue loop to retry
                         continue;
                     }
                     Some(FailureAction::Abort) => {
-                        // User chose to abort
+                        // User chose to abort - finalize session as aborted
+                        if let Err(e) = session::finalize_session(
+                            &session_slug,
+                            iterations_completed as u32,
+                            SessionOutcome::Aborted,
+                        ) {
+                            eprintln!("Warning: Failed to finalize session: {}", e);
+                        }
                         return Err("Aborted by user".into());
                     }
                     None => {
-                        // Non-interactive mode or EOF - abort automatically
+                        // Non-interactive mode or EOF - finalize as failed and abort
+                        if let Err(e) = session::finalize_session(
+                            &session_slug,
+                            iterations_completed as u32,
+                            SessionOutcome::Failed,
+                        ) {
+                            eprintln!("Warning: Failed to finalize session: {}", e);
+                        }
                         eprintln!("Non-interactive mode - aborting.");
                         return Err(format!(
                             "LLM subprocess failed with exit code {} after {} attempt(s)",

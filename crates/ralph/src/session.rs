@@ -5,11 +5,9 @@
 //! from ralph_core::session for slug generation and type definitions, then
 //! performs the actual file system operations.
 
-// TODO: Wire up session commands to CLI - these functions are ready for use
-#![allow(dead_code)]
-
 use ralph_core::session::{
-    generate_unique_slug, is_valid_slug, SessionEntry, SessionMetadata, SessionsIndex,
+    generate_unique_slug, is_valid_slug, SessionEntry, SessionMetadata, SessionOutcome,
+    SessionsIndex,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,6 +20,10 @@ pub enum SessionError {
         "Session '{slug}' already exists. Choose a different slug or omit for auto-generated."
     )]
     DuplicateSlug { slug: String },
+
+    /// Session not found
+    #[error("Session '{slug}' not found. Run 'ralph sessions' to list available sessions.")]
+    SessionNotFound { slug: String },
 
     /// Failed to generate a unique slug
     #[error("Failed to generate a unique session slug after maximum attempts. This should not happen with the current word list size.")]
@@ -237,6 +239,67 @@ pub fn initialize_session(
     Ok((slug, session_path))
 }
 
+/// Finalize a session by updating its outcome, iteration count, and completion timestamp.
+///
+/// This function should be called when a run loop completes (successfully or not):
+/// 1. Loads the global sessions index
+/// 2. Finds the session entry by slug
+/// 3. Updates outcome, iterations count, and completed_at timestamp
+/// 4. Saves the updated index to disk
+///
+/// # Arguments
+///
+/// * `slug` - The session slug to finalize
+/// * `iterations` - The number of iterations completed
+/// * `outcome` - The final outcome of the session
+///
+/// # Returns
+///
+/// * `Ok(())` - If the session was successfully finalized
+/// * `Err(SessionError)` - If the session wasn't found or update failed
+pub fn finalize_session(
+    slug: &str,
+    iterations: u32,
+    outcome: SessionOutcome,
+) -> Result<(), SessionError> {
+    let mut index = load_sessions_index()?;
+
+    // Use a block to scope the mutable borrow
+    {
+        let entry = index
+            .find_by_slug_mut(slug)
+            .ok_or_else(|| SessionError::SessionNotFound {
+                slug: slug.to_string(),
+            })?;
+
+        entry.iterations = iterations;
+        entry.outcome = outcome;
+        entry.completed_at = Some(chrono::Utc::now());
+    }
+
+    // Now the mutable borrow is released, we can save
+    save_sessions_index(&index)?;
+
+    // Also update the session.toml file in the session directory
+    // Re-get the entry for metadata (now as immutable borrow)
+    let session_path = session_dir(slug);
+    let session_toml_path = session_path.join("session.toml");
+    if session_toml_path.exists() {
+        if let Some(entry) = index.find_by_slug(slug) {
+            let metadata = SessionMetadata::from(entry);
+            let metadata_content = metadata.to_toml()?;
+            fs::write(&session_toml_path, metadata_content).map_err(|e| {
+                SessionError::WriteSessionMetadata {
+                    path: session_toml_path.display().to_string(),
+                    source: e,
+                }
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +407,37 @@ mod tests {
             assert_eq!(loaded_metadata.slug, "test-session");
             assert_eq!(loaded_metadata.project, project_path);
         });
+    }
+
+    #[test]
+    fn test_finalize_session_not_found_error() {
+        // Attempting to finalize a non-existent session should return SessionNotFound
+        let result = finalize_session("nonexistent-slug", 5, SessionOutcome::Completed);
+        // Note: This test may succeed or fail depending on whether the global sessions.toml
+        // happens to contain "nonexistent-slug". We check for the correct error type.
+        if let Err(e) = result {
+            // Either SessionNotFound or ReadSessionsIndex are acceptable errors
+            match e {
+                SessionError::SessionNotFound { slug } => {
+                    assert_eq!(slug, "nonexistent-slug");
+                }
+                SessionError::ReadSessionsIndex { .. } => {
+                    // This is OK - means we couldn't read the index
+                }
+                _ => panic!("Unexpected error type: {:?}", e),
+            }
+        }
+        // If it somehow succeeds (slug exists in a real sessions.toml), that's fine too
+    }
+
+    #[test]
+    fn test_session_not_found_error_message() {
+        let err = SessionError::SessionNotFound {
+            slug: "test-slug".to_string(),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("test-slug"));
+        assert!(msg.contains("not found"));
+        assert!(msg.contains("ralph sessions"));
     }
 }

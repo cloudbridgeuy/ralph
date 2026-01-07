@@ -8,11 +8,12 @@
 use crate::git::capture_and_write_diff;
 use crate::init::{initialize_context_files, InitError};
 use crate::iteration::{write_iteration_log, Chunk, IterationError, IterationLog};
-use crate::session::{initialize_session, SessionError};
+use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::subprocess::{invoke_subprocess, SubprocessError};
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::context::ContextPaths;
 use ralph_core::prd::{count_pending_stories, has_prd_changed, PrdError};
+use ralph_core::session::SessionOutcome;
 use std::fs;
 use std::path::PathBuf;
 
@@ -70,6 +71,10 @@ pub enum RunError {
         attempts: usize,
         stdout: String,
         stderr: String,
+        /// Session slug for later finalization
+        session_slug: String,
+        /// Number of iterations completed before failure
+        iterations_completed: usize,
     },
 
     /// Iteration log writing failed
@@ -160,7 +165,28 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         let prd_snapshot = prd_before.clone();
 
         // Invoke LLM subprocess with retry logic
-        let result = invoke_with_retries(&config.command, config.retry_count, iteration)?;
+        let result = match invoke_with_retries(&config.command, config.retry_count, iteration) {
+            Ok(r) => r,
+            Err(RunError::SubprocessFailed {
+                exit_code,
+                attempts,
+                stdout,
+                stderr,
+                ..
+            }) => {
+                // Subprocess failed - return error with session info for caller to finalize
+                // The caller will determine whether to mark as "failed" or "aborted"
+                return Err(RunError::SubprocessFailed {
+                    exit_code,
+                    attempts,
+                    stdout,
+                    stderr,
+                    session_slug,
+                    iterations_completed,
+                });
+            }
+            Err(e) => return Err(e),
+        };
 
         // Write iteration log
         // Note: metadata will be populated from JSON streaming output in a future story
@@ -189,6 +215,12 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
 
         // Error if PRD unchanged (stuck state)
         if !has_prd_changed(&prd_snapshot, &prd_after) {
+            // Finalize session as failed before returning error
+            if let Err(e) =
+                finalize_session(&session_slug, iteration as u32, SessionOutcome::Failed)
+            {
+                eprintln!("Warning: Failed to finalize session: {}", e);
+            }
             return Err(RunError::PrdUnchanged);
         }
 
@@ -210,6 +242,15 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         }
 
         iterations_completed = iteration;
+    }
+
+    // Finalize session as completed
+    if let Err(e) = finalize_session(
+        &session_slug,
+        iterations_completed as u32,
+        SessionOutcome::Completed,
+    ) {
+        eprintln!("Warning: Failed to finalize session: {}", e);
     }
 
     // Return result
@@ -284,12 +325,15 @@ fn invoke_with_retries(
         if attempt < max_attempts {
             eprintln!("\nRetrying...\n");
         } else {
-            // All retries exhausted
+            // All retries exhausted - return error with placeholder session info
+            // The caller will fill in the actual session_slug and iterations_completed
             return Err(RunError::SubprocessFailed {
                 exit_code: result.exit_code,
                 attempts: max_attempts,
                 stdout: result.stdout,
                 stderr: result.stderr,
+                session_slug: String::new(),
+                iterations_completed: 0,
             });
         }
     }
@@ -432,6 +476,8 @@ mod tests {
             attempts: 3,
             stdout: "output".to_string(),
             stderr: "error".to_string(),
+            session_slug: "test-slug".to_string(),
+            iterations_completed: 2,
         };
         let msg = format!("{}", err);
         assert!(msg.contains("exit code 42"));
