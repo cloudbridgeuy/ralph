@@ -11,6 +11,7 @@ mod git;
 pub mod highlight;
 mod init;
 pub mod iteration;
+pub mod iterations;
 pub mod markdown;
 pub mod paths;
 mod prompt;
@@ -23,7 +24,7 @@ pub mod stream_processor;
 pub mod subprocess;
 
 use clap::Parser;
-use cli::{Cli, Commands, ReplayArgs, RunArgs, SessionsArgs};
+use cli::{Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
 use prompt::{prompt_on_failure, FailureAction};
 use ralph_core::context::{defaults, substitute_template_placeholders, ContextPaths};
 use ralph_core::session::SessionOutcome;
@@ -37,6 +38,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Commands::Run(args) => execute_run(args),
         Commands::Sessions(args) => execute_sessions(args),
+        Commands::Iterations(args) => execute_iterations(args),
         Commands::Replay(args) => execute_replay(args),
         Commands::Themes => execute_themes(),
     };
@@ -367,6 +369,22 @@ fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>
     // Print summary
     println!();
     println!("Total: {} session(s)", sessions.len());
+
+    Ok(())
+}
+
+/// Execute the iterations command.
+///
+/// Lists all iterations across all sessions, optionally filtered by
+/// session, project, or outcome.
+fn execute_iterations(args: IterationsArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let filter = iterations::IterationsFilter {
+        session: args.session,
+        project: args.project,
+        outcome: args.outcome,
+    };
+
+    iterations::list_iterations(filter)?;
 
     Ok(())
 }

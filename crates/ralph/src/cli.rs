@@ -36,6 +36,12 @@ pub enum Commands {
     /// start date, iteration count, and outcome status.
     Sessions(SessionsArgs),
 
+    /// List all iterations across all sessions.
+    ///
+    /// Displays a table of iterations with session, sequence number,
+    /// project path, timestamp, duration, exit code, and optionally cost.
+    Iterations(IterationsArgs),
+
     /// Replay a session's output with syntax highlighting.
     ///
     /// Re-renders the captured output from a previous session, applying
@@ -60,6 +66,24 @@ pub struct SessionsArgs {
     /// Filter sessions by outcome status.
     ///
     /// Valid values: in_progress, completed, aborted, failed
+    #[arg(long)]
+    pub outcome: Option<String>,
+}
+
+/// Arguments for the `iterations` subcommand.
+#[derive(clap::Args, Debug)]
+pub struct IterationsArgs {
+    /// Filter iterations by session slug.
+    #[arg(long)]
+    pub session: Option<String>,
+
+    /// Filter iterations by project path (substring match).
+    #[arg(long)]
+    pub project: Option<String>,
+
+    /// Filter iterations by outcome.
+    ///
+    /// Valid values: completed (exit_code 0), failed (non-zero exit_code)
     #[arg(long)]
     pub outcome: Option<String>,
 }
@@ -492,5 +516,83 @@ mod tests {
         // Replay without slug should fail
         let result = Cli::try_parse_from(["ralph", "replay"]);
         assert!(result.is_err());
+    }
+
+    // Iterations command tests
+
+    #[test]
+    fn test_cli_parses_iterations_command() {
+        let cli = Cli::try_parse_from(["ralph", "iterations"]).unwrap();
+        assert!(matches!(cli.command, Commands::Iterations(_)));
+    }
+
+    #[test]
+    fn test_iterations_without_args() {
+        let cli = Cli::try_parse_from(["ralph", "iterations"]).unwrap();
+        match cli.command {
+            Commands::Iterations(args) => {
+                assert!(args.session.is_none());
+                assert!(args.project.is_none());
+                assert!(args.outcome.is_none());
+            }
+            _ => panic!("Expected Iterations command"),
+        }
+    }
+
+    #[test]
+    fn test_iterations_with_session_filter() {
+        let cli =
+            Cli::try_parse_from(["ralph", "iterations", "--session", "quiet-mountain"]).unwrap();
+        match cli.command {
+            Commands::Iterations(args) => {
+                assert_eq!(args.session, Some("quiet-mountain".to_string()));
+            }
+            _ => panic!("Expected Iterations command"),
+        }
+    }
+
+    #[test]
+    fn test_iterations_with_project_filter() {
+        let cli = Cli::try_parse_from(["ralph", "iterations", "--project", "/my/project"]).unwrap();
+        match cli.command {
+            Commands::Iterations(args) => {
+                assert_eq!(args.project, Some("/my/project".to_string()));
+            }
+            _ => panic!("Expected Iterations command"),
+        }
+    }
+
+    #[test]
+    fn test_iterations_with_outcome_filter() {
+        let cli = Cli::try_parse_from(["ralph", "iterations", "--outcome", "completed"]).unwrap();
+        match cli.command {
+            Commands::Iterations(args) => {
+                assert_eq!(args.outcome, Some("completed".to_string()));
+            }
+            _ => panic!("Expected Iterations command"),
+        }
+    }
+
+    #[test]
+    fn test_iterations_with_all_filters() {
+        let cli = Cli::try_parse_from([
+            "ralph",
+            "iterations",
+            "--session",
+            "my-session",
+            "--project",
+            "myproject",
+            "--outcome",
+            "failed",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Iterations(args) => {
+                assert_eq!(args.session, Some("my-session".to_string()));
+                assert_eq!(args.project, Some("myproject".to_string()));
+                assert_eq!(args.outcome, Some("failed".to_string()));
+            }
+            _ => panic!("Expected Iterations command"),
+        }
     }
 }
