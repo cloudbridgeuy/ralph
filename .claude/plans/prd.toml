@@ -324,7 +324,7 @@ steps = [
   "Extract usage object with token counts",
   "Return IterationCosts struct",
 ]
-passes = false
+passes = true
 acceptance = [
   "Total cost captured in USD",
   "Duration recorded in milliseconds",

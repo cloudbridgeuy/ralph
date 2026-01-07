@@ -608,3 +608,40 @@
   - Story #22: Update default command template for JSON output
 - The `IterationMetadata` struct will be used by Story #19 to extend iteration logs
 
+## 2026-01-07 - Extract Costs and Usage from Result Event Complete
+
+### What was accomplished
+- Implemented Story #18: Extract costs and usage from result event in `crates/core/src/stream.rs`
+- Added the following types, methods, and functions:
+  - `IterationCosts` struct with `cost_usd`, `duration_ms`, and `usage` fields
+  - `IterationCosts::new()` - Create empty costs struct
+  - `IterationCosts::is_empty()` - Check if any fields are populated
+  - `ResultEvent::extract_costs()` - Extract costs from a result event
+  - `extract_costs_from_events(&[StreamEvent])` - Find result event and extract costs
+  - `extract_costs_from_events_or_default(&[StreamEvent])` - Same but returns default if not found
+- Added 18 comprehensive tests covering:
+  - IterationCosts creation and is_empty checks
+  - ResultEvent extract_costs with full data, alternative cost field, preference handling
+  - extract_costs_from_events with result present, missing, empty, multiple results
+  - extract_costs_from_events_or_default behavior
+  - Serialization round-trip and empty field skipping
+  - Realistic stream scenarios with result at end
+- Marked story #18 as passes = true
+
+### Implementation details
+- Pure types and functions in Functional Core (ralph_core) - no I/O operations
+- `IterationCosts` uses serde with `skip_serializing_if` for clean JSON/TOML output
+- Uses existing `ResultEvent::get_cost_usd()` to handle both `total_cost_usd` and `cost_usd` fields
+- `extract_costs_from_events` uses `find_map` for efficient first-match extraction
+- Comprehensive documentation with examples in docstrings
+- Follows patterns established by `IterationMetadata` from Story #17
+
+### Context for next iteration
+- Story #18 is complete, Layer 1C continues
+- Next priorities for Layer 1C:
+  - Story #19: Store metadata in iteration logs (extends iteration-N.toml schema)
+  - Story #20: Correlate tool calls with tool results
+  - Story #21: Store tool interactions in iteration logs
+  - Story #22: Update default command template for JSON output
+- The `IterationCosts` struct will be used by Story #19 alongside `IterationMetadata` to store full session data in iteration logs
+
