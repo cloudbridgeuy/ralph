@@ -15,9 +15,10 @@ path = "src/lib.rs"
 
 [dependencies]
 # Core dependencies for pure transformation functions
-serde = { workspace = true }
-toml = { workspace = true }
-thiserror = { workspace = true }
+chrono = { workspace = true }
 rand = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
 
 [dev-dependencies]

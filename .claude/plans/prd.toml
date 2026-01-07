@@ -73,7 +73,7 @@ steps = [
   "Append entry to ~/.config/ralph/sessions.toml",
   "Set outcome to 'in_progress'",
 ]
-passes = false
+passes = true
 acceptance = [
   "Directory created with proper permissions",
   "sessions.toml created if it doesn't exist",

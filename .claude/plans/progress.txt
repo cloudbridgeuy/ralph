@@ -27,3 +27,36 @@
   - Story #6: Write iteration log after each iteration
 - Note: cargo is not available in the docker sandbox environment, so linting may need alternative approach
 
+## 2026-01-07 - Session Directory Initialization Complete
+
+### What was accomplished
+- Created `crates/ralph/src/session.rs` with shell layer implementation for session management
+- Implemented the following functions:
+  - `sessions_dir()` and `sessions_index_path()` for config directory paths
+  - `session_dir()` for session-specific directory paths
+  - `load_sessions_index()` and `save_sessions_index()` for index management
+  - `resolve_session_slug()` for validating user slugs or generating unique ones
+  - `initialize_session_directory()` for creating session directories with metadata
+  - `initialize_session()` as the main orchestration entry point
+- Added SessionError enum with thiserror for error handling
+- Added dependencies: dirs (5.0), rand, and toml to ralph crate
+- Marked story #4 (Initialize session directory and metadata) as passes = true
+
+### Implementation details
+- Session directories created at `~/.config/ralph/sessions/<slug>/`
+- Each session has a `session.toml` file with metadata (slug, project path, started_at, iterations, outcome)
+- Global sessions index at `~/.config/ralph/sessions.toml` tracks all sessions
+- Follows Functional Core / Imperative Shell pattern (I/O in ralph, logic in ralph_core)
+- Module marked with `#[allow(dead_code)]` until CLI commands are wired up
+
+### Context for next iteration
+- Session infrastructure is ready but not yet connected to CLI commands
+- Next priorities for Layer 1:
+  - Story #5: Invoke LLM subprocess and capture output
+  - Story #6: Write iteration log after each iteration
+  - Story #7: Detect PRD changes between iterations
+  - Story #8: Detect completion conditions
+  - Story #9: Capture git diff after each iteration
+  - Story #10: Execute iteration loop with all checks
+- After Layer 1, need to wire up CLI interface (Layer 2)
+

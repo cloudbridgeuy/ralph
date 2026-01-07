@@ -25,6 +25,9 @@ anstream = "0.6"
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 
+# Configuration directories
+dirs = "5.0"
+
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
 

@@ -1,12 +1,19 @@
-//! Session slug generation and validation.
+//! Session management types and slug generation.
 //!
-//! This module provides pure functions for generating memorable session slugs
-//! in the format "adjective-noun" (e.g., "quiet-mountain", "fuzzy-walrus").
-//! Following the Functional Core pattern, uniqueness checks against existing
-//! sessions happen at the shell layer.
+//! This module provides:
+//! - Pure functions for generating memorable session slugs in the format
+//!   "adjective-noun" (e.g., "quiet-mountain", "fuzzy-walrus")
+//! - Type definitions for session metadata and the global sessions index
+//!
+//! Following the Functional Core pattern, I/O operations (file creation,
+//! uniqueness checks against disk) happen at the shell layer.
 
+use chrono::{DateTime, Utc};
 use rand::seq::SliceRandom;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::PathBuf;
 
 /// Adjectives used for slug generation.
 /// At least 50 adjectives for variety as per acceptance criteria.
@@ -379,6 +386,191 @@ pub fn total_slug_combinations() -> usize {
     ADJECTIVES.len() * NOUNS.len()
 }
 
+// =============================================================================
+// Session Management Types
+// =============================================================================
+
+/// The outcome/status of a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionOutcome {
+    /// Session is currently running
+    InProgress,
+    /// Session completed successfully (all stories done)
+    Completed,
+    /// Session was manually aborted by the user
+    Aborted,
+    /// Session failed due to an error
+    Failed,
+}
+
+impl Default for SessionOutcome {
+    fn default() -> Self {
+        Self::InProgress
+    }
+}
+
+impl std::fmt::Display for SessionOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionOutcome::InProgress => write!(f, "in_progress"),
+            SessionOutcome::Completed => write!(f, "completed"),
+            SessionOutcome::Aborted => write!(f, "aborted"),
+            SessionOutcome::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+/// An entry in the global sessions.toml index.
+///
+/// This represents a single session across all projects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEntry {
+    /// Unique session identifier (e.g., "quiet-mountain")
+    pub slug: String,
+    /// Absolute path to the project directory
+    pub project: PathBuf,
+    /// When the session started
+    pub started_at: DateTime<Utc>,
+    /// When the session completed (if finished)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+    /// Number of iterations run
+    #[serde(default)]
+    pub iterations: u32,
+    /// Current status of the session
+    #[serde(default)]
+    pub outcome: SessionOutcome,
+}
+
+impl SessionEntry {
+    /// Create a new session entry with initial values.
+    ///
+    /// Sets started_at to now, iterations to 0, and outcome to InProgress.
+    pub fn new(slug: String, project: PathBuf) -> Self {
+        Self {
+            slug,
+            project,
+            started_at: Utc::now(),
+            completed_at: None,
+            iterations: 0,
+            outcome: SessionOutcome::InProgress,
+        }
+    }
+}
+
+/// The global sessions index stored at ~/.config/ralph/sessions.toml.
+///
+/// Contains entries for all sessions across all projects.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionsIndex {
+    /// All session entries
+    #[serde(default)]
+    pub sessions: Vec<SessionEntry>,
+}
+
+impl SessionsIndex {
+    /// Create an empty sessions index.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Get all existing slugs as a HashSet for collision checking.
+    pub fn existing_slugs(&self) -> HashSet<String> {
+        self.sessions.iter().map(|s| s.slug.clone()).collect()
+    }
+
+    /// Check if a slug already exists in the index.
+    pub fn slug_exists(&self, slug: &str) -> bool {
+        self.sessions.iter().any(|s| s.slug == slug)
+    }
+
+    /// Add a new session entry to the index.
+    pub fn add_session(&mut self, entry: SessionEntry) {
+        self.sessions.push(entry);
+    }
+
+    /// Find a session by slug.
+    pub fn find_by_slug(&self, slug: &str) -> Option<&SessionEntry> {
+        self.sessions.iter().find(|s| s.slug == slug)
+    }
+
+    /// Find a session by slug (mutable).
+    pub fn find_by_slug_mut(&mut self, slug: &str) -> Option<&mut SessionEntry> {
+        self.sessions.iter_mut().find(|s| s.slug == slug)
+    }
+
+    /// Serialize the index to TOML string.
+    pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
+        toml::to_string_pretty(self)
+    }
+
+    /// Deserialize from TOML string.
+    pub fn from_toml(content: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str(content)
+    }
+}
+
+/// Metadata for a single session, stored in session.toml within the session directory.
+///
+/// This contains the same information as SessionEntry but is stored locally
+/// in the session directory for self-contained session data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMetadata {
+    /// Unique session identifier
+    pub slug: String,
+    /// Absolute path to the project directory
+    pub project: PathBuf,
+    /// When the session started
+    pub started_at: DateTime<Utc>,
+    /// When the session completed (if finished)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+    /// Number of iterations run
+    #[serde(default)]
+    pub iterations: u32,
+    /// Current status of the session
+    #[serde(default)]
+    pub outcome: SessionOutcome,
+}
+
+impl SessionMetadata {
+    /// Create new session metadata with initial values.
+    pub fn new(slug: String, project: PathBuf) -> Self {
+        Self {
+            slug,
+            project,
+            started_at: Utc::now(),
+            completed_at: None,
+            iterations: 0,
+            outcome: SessionOutcome::InProgress,
+        }
+    }
+
+    /// Serialize to TOML string.
+    pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
+        toml::to_string_pretty(self)
+    }
+
+    /// Deserialize from TOML string.
+    pub fn from_toml(content: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str(content)
+    }
+}
+
+impl From<&SessionEntry> for SessionMetadata {
+    fn from(entry: &SessionEntry) -> Self {
+        Self {
+            slug: entry.slug.clone(),
+            project: entry.project.clone(),
+            started_at: entry.started_at,
+            completed_at: entry.completed_at,
+            iterations: entry.iterations,
+            outcome: entry.outcome,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +768,149 @@ mod tests {
                 slug
             );
         }
+    }
+
+    // =========================================================================
+    // Session Management Tests
+    // =========================================================================
+
+    #[test]
+    fn test_session_outcome_default() {
+        assert_eq!(SessionOutcome::default(), SessionOutcome::InProgress);
+    }
+
+    #[test]
+    fn test_session_outcome_display() {
+        assert_eq!(SessionOutcome::InProgress.to_string(), "in_progress");
+        assert_eq!(SessionOutcome::Completed.to_string(), "completed");
+        assert_eq!(SessionOutcome::Aborted.to_string(), "aborted");
+        assert_eq!(SessionOutcome::Failed.to_string(), "failed");
+    }
+
+    #[test]
+    fn test_session_outcome_serialization() {
+        // Test via a wrapper struct since TOML requires table context
+        #[derive(Serialize, Deserialize)]
+        struct Wrapper {
+            outcome: SessionOutcome,
+        }
+
+        // Serialize
+        let wrapper = Wrapper {
+            outcome: SessionOutcome::InProgress,
+        };
+        let serialized = toml::to_string(&wrapper).unwrap();
+        assert!(serialized.contains("in_progress"));
+
+        // Deserialize
+        let parsed: Wrapper = toml::from_str("outcome = \"completed\"").unwrap();
+        assert_eq!(parsed.outcome, SessionOutcome::Completed);
+    }
+
+    #[test]
+    fn test_session_entry_new() {
+        let entry = SessionEntry::new("quiet-mountain".to_string(), PathBuf::from("/test/project"));
+
+        assert_eq!(entry.slug, "quiet-mountain");
+        assert_eq!(entry.project, PathBuf::from("/test/project"));
+        assert_eq!(entry.iterations, 0);
+        assert_eq!(entry.outcome, SessionOutcome::InProgress);
+        assert!(entry.completed_at.is_none());
+    }
+
+    #[test]
+    fn test_sessions_index_empty() {
+        let index = SessionsIndex::new();
+        assert!(index.sessions.is_empty());
+        assert!(index.existing_slugs().is_empty());
+    }
+
+    #[test]
+    fn test_sessions_index_add_and_find() {
+        let mut index = SessionsIndex::new();
+        let entry = SessionEntry::new("fuzzy-walrus".to_string(), PathBuf::from("/test"));
+
+        index.add_session(entry);
+
+        assert!(index.slug_exists("fuzzy-walrus"));
+        assert!(!index.slug_exists("quiet-mountain"));
+        assert!(index.find_by_slug("fuzzy-walrus").is_some());
+        assert!(index.find_by_slug("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_sessions_index_existing_slugs() {
+        let mut index = SessionsIndex::new();
+        index.add_session(SessionEntry::new("one-fish".to_string(), PathBuf::from("/a")));
+        index.add_session(SessionEntry::new("two-fish".to_string(), PathBuf::from("/b")));
+
+        let slugs = index.existing_slugs();
+        assert_eq!(slugs.len(), 2);
+        assert!(slugs.contains("one-fish"));
+        assert!(slugs.contains("two-fish"));
+    }
+
+    #[test]
+    fn test_sessions_index_toml_roundtrip() {
+        let mut index = SessionsIndex::new();
+        index.add_session(SessionEntry::new(
+            "quiet-mountain".to_string(),
+            PathBuf::from("/test/project"),
+        ));
+
+        let toml_str = index.to_toml().unwrap();
+        let parsed = SessionsIndex::from_toml(&toml_str).unwrap();
+
+        assert_eq!(parsed.sessions.len(), 1);
+        assert_eq!(parsed.sessions[0].slug, "quiet-mountain");
+    }
+
+    #[test]
+    fn test_session_metadata_new() {
+        let meta = SessionMetadata::new("bright-river".to_string(), PathBuf::from("/my/project"));
+
+        assert_eq!(meta.slug, "bright-river");
+        assert_eq!(meta.project, PathBuf::from("/my/project"));
+        assert_eq!(meta.iterations, 0);
+        assert_eq!(meta.outcome, SessionOutcome::InProgress);
+    }
+
+    #[test]
+    fn test_session_metadata_toml_roundtrip() {
+        let meta = SessionMetadata::new("calm-ocean".to_string(), PathBuf::from("/test"));
+
+        let toml_str = meta.to_toml().unwrap();
+        let parsed = SessionMetadata::from_toml(&toml_str).unwrap();
+
+        assert_eq!(parsed.slug, "calm-ocean");
+        assert_eq!(parsed.project, PathBuf::from("/test"));
+    }
+
+    #[test]
+    fn test_session_metadata_from_entry() {
+        let entry = SessionEntry::new("gentle-breeze".to_string(), PathBuf::from("/project"));
+        let meta = SessionMetadata::from(&entry);
+
+        assert_eq!(meta.slug, entry.slug);
+        assert_eq!(meta.project, entry.project);
+        assert_eq!(meta.iterations, entry.iterations);
+        assert_eq!(meta.outcome, entry.outcome);
+    }
+
+    #[test]
+    fn test_sessions_index_find_by_slug_mut() {
+        let mut index = SessionsIndex::new();
+        index.add_session(SessionEntry::new("test-slug".to_string(), PathBuf::from("/test")));
+
+        // Modify through mutable reference
+        if let Some(entry) = index.find_by_slug_mut("test-slug") {
+            entry.iterations = 5;
+            entry.outcome = SessionOutcome::Completed;
+        }
+
+        // Verify modification
+        let entry = index.find_by_slug("test-slug").unwrap();
+        assert_eq!(entry.iterations, 5);
+        assert_eq!(entry.outcome, SessionOutcome::Completed);
     }
 }
