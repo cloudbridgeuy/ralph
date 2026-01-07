@@ -81,28 +81,28 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Substitute {prompt} in command template
     let command = substitute_prompt_in_command(&command_template, &prompt);
 
-    // Execute run loop with retry prompting on failure
+    // Execute run loop with failure recovery prompting
     execute_run_with_prompting(args, context_paths, command, completion_marker)
 }
 
-/// Execute run loop with interactive retry prompting on unrecoverable failures.
+/// Execute run loop with interactive failure recovery prompting.
 ///
 /// This function handles the case where the LLM subprocess fails after exhausting
-/// all automatic retries. If stdin is interactive, it prompts the user to either
-/// retry the entire run or abort. Non-interactive sessions abort automatically.
+/// all automatic recovery attempts. If stdin is interactive, it prompts the user
+/// to either continue recovery or abort. Non-interactive sessions abort automatically.
 ///
-/// When the user chooses to retry, the same session is continued rather than
-/// creating a new one. The session slug is preserved across retries, and
-/// iterations are aggregated within the same session.
+/// When the user chooses to continue recovery, the same session is continued
+/// rather than creating a new one. The session slug is preserved across recovery
+/// attempts, and iterations are aggregated within the same session.
 fn execute_run_with_prompting(
     args: RunArgs,
     context_paths: ContextPaths,
     command: String,
     completion_marker: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Track the session slug across retries. Once a session is created, we reuse it.
+    // Track the session slug across recovery attempts. Once a session is created, we reuse it.
     let mut current_session_slug: Option<String> = None;
-    // Track total iterations completed across retries within the same session.
+    // Track total iterations completed across recovery attempts within the same session.
     let mut total_iterations_completed: usize = 0;
 
     // Build theme configuration from config file, env vars, and CLI args
@@ -128,7 +128,7 @@ fn execute_run_with_prompting(
             command: command.clone(),
             completion_marker: completion_marker.clone(),
             context_paths: context_paths.clone(),
-            retry_count: args.retry,
+            max_attempts: args.max_attempts,
             // Pass the starting iteration number for session continuation
             starting_iteration: total_iterations_completed,
             timeout_secs: args.timeout,
@@ -167,12 +167,12 @@ fn execute_run_with_prompting(
                 session_slug,
                 iterations_completed,
             }) => {
-                // Track the session slug for potential retry
+                // Track the session slug for potential recovery
                 if current_session_slug.is_none() {
                     current_session_slug = Some(session_slug.clone());
                 }
 
-                // Subprocess failed after exhausting retries - prompt user
+                // Subprocess failed after exhausting all attempts - prompt user
                 let summary = format!(
                     "LLM subprocess failed with exit code {} after {} attempt(s).",
                     exit_code, attempts
@@ -180,13 +180,10 @@ fn execute_run_with_prompting(
 
                 match prompt_on_failure(&summary) {
                     Some(FailureAction::Retry) => {
-                        // Continue the same session on retry - don't finalize, just accumulate iterations
+                        // Continue the same session - don't finalize, just accumulate iterations
                         total_iterations_completed += iterations_completed;
-                        eprintln!(
-                            "\nRetrying run (continuing session '{}')...\n",
-                            session_slug
-                        );
-                        // Continue loop to retry with the same session
+                        eprintln!("\nContinuing run (session '{}')...\n", session_slug);
+                        // Continue loop with the same session
                         continue;
                     }
                     Some(FailureAction::Abort) => {
@@ -228,12 +225,12 @@ fn execute_run_with_prompting(
                 session_slug,
                 iterations_completed,
             }) => {
-                // Track the session slug for potential retry
+                // Track the session slug for potential recovery
                 if current_session_slug.is_none() {
                     current_session_slug = Some(session_slug.clone());
                 }
 
-                // Subprocess timed out after exhausting retries - prompt user
+                // Subprocess timed out after exhausting all attempts - prompt user
                 let summary = format!(
                     "LLM subprocess timed out after {} seconds ({} attempt(s)).",
                     timeout_secs, attempts
@@ -241,13 +238,10 @@ fn execute_run_with_prompting(
 
                 match prompt_on_failure(&summary) {
                     Some(FailureAction::Retry) => {
-                        // Continue the same session on retry - don't finalize, just accumulate iterations
+                        // Continue the same session - don't finalize, just accumulate iterations
                         total_iterations_completed += iterations_completed;
-                        eprintln!(
-                            "\nRetrying run (continuing session '{}')...\n",
-                            session_slug
-                        );
-                        // Continue loop to retry with the same session
+                        eprintln!("\nContinuing run (session '{}')...\n", session_slug);
+                        // Continue loop with the same session
                         continue;
                     }
                     Some(FailureAction::Abort) => {

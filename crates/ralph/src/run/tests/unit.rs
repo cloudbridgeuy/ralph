@@ -21,7 +21,7 @@ fn create_test_config(paths: ContextPaths) -> RunConfig {
         command: "echo 'test'".to_string(),
         completion_marker: "<promise>COMPLETE</promise>".to_string(),
         context_paths: paths,
-        retry_count: 3,
+        max_attempts: 3,
         starting_iteration: 0,
         timeout_secs: 600,
         theme_config: None,

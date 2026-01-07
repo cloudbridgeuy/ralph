@@ -62,7 +62,7 @@ fn create_test_config(paths: ContextPaths, command: String) -> RunConfig {
         command,
         completion_marker: "<promise>COMPLETE</promise>".to_string(),
         context_paths: paths,
-        retry_count: 0,
+        max_attempts: 0,
         starting_iteration: 0,
         timeout_secs: 30,
         theme_config: None,
@@ -504,7 +504,7 @@ fn test_no_iterations_when_at_limit() {
         command: "echo 'should not run'".to_string(),
         completion_marker: "<promise>COMPLETE</promise>".to_string(),
         context_paths: paths,
-        retry_count: 0,
+        max_attempts: 0,
         starting_iteration: 3, // Already at limit
         timeout_secs: 30,
         theme_config: None,

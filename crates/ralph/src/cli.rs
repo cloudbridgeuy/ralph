@@ -168,12 +168,12 @@ pub struct RunArgs {
     #[arg(long, value_name = "PATH")]
     pub progress: Option<PathBuf>,
 
-    /// Auto-retry count on failure.
+    /// Maximum failure recovery attempts.
     ///
-    /// Number of times to automatically retry if the LLM subprocess fails.
-    /// After exhausting retries, prompts user for action.
+    /// Number of times to automatically re-attempt if the LLM subprocess fails.
+    /// After exhausting all attempts, prompts user for action.
     #[arg(long, default_value_t = 3)]
-    pub retry: usize,
+    pub max_attempts: usize,
 
     /// Custom completion marker.
     ///
@@ -296,22 +296,22 @@ mod tests {
     }
 
     #[test]
-    fn test_run_with_retry() {
-        let cli = Cli::try_parse_from(["ralph", "run", "--retry", "5"]).unwrap();
+    fn test_run_with_max_attempts() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--max-attempts", "5"]).unwrap();
         match cli.command {
             Commands::Run(args) => {
-                assert_eq!(args.retry, 5);
+                assert_eq!(args.max_attempts, 5);
             }
             _ => panic!("Expected Run command"),
         }
     }
 
     #[test]
-    fn test_run_default_retry() {
+    fn test_run_default_max_attempts() {
         let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
         match cli.command {
             Commands::Run(args) => {
-                assert_eq!(args.retry, 3);
+                assert_eq!(args.max_attempts, 3);
             }
             _ => panic!("Expected Run command"),
         }
@@ -368,7 +368,7 @@ mod tests {
             "/p.toml",
             "--progress",
             "/pr.txt",
-            "--retry",
+            "--max-attempts",
             "2",
             "--completion-marker",
             "END",
@@ -385,7 +385,7 @@ mod tests {
                 assert_eq!(args.design, Some(PathBuf::from("/d.md")));
                 assert_eq!(args.prd, Some(PathBuf::from("/p.toml")));
                 assert_eq!(args.progress, Some(PathBuf::from("/pr.txt")));
-                assert_eq!(args.retry, 2);
+                assert_eq!(args.max_attempts, 2);
                 assert_eq!(args.completion_marker, Some("END".to_string()));
                 assert_eq!(args.timeout, 120);
             }

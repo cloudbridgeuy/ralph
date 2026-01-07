@@ -42,9 +42,10 @@ pub struct RunConfig {
     pub completion_marker: String,
     /// Context file paths.
     pub context_paths: ContextPaths,
-    /// Number of automatic retries on subprocess failure.
-    pub retry_count: usize,
-    /// Starting iteration number (for session continuation after retries).
+    /// Maximum number of attempts when subprocess fails.
+    /// A value of 3 means up to 4 total attempts (1 initial + 3 recovery attempts).
+    pub max_attempts: usize,
+    /// Starting iteration number (for session continuation after failure recovery).
     /// When continuing a session, this indicates how many iterations were
     /// already completed in previous run attempts.
     pub starting_iteration: usize,
@@ -285,9 +286,9 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Invoke LLM subprocess with retry logic, timeout, spinner, and stream processing
         // Pass accumulated session time for spinner display
         let session_elapsed_ms = total_duration_ms.unwrap_or(0);
-        let result = match invoke_with_retries(
+        let result = match invoke_with_failure_recovery(
             &config.command,
-            config.retry_count,
+            config.max_attempts,
             config.timeout_secs,
             iteration,
             config.theme_config.as_ref(),
@@ -472,19 +473,19 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
     })
 }
 
-/// Invoke subprocess with automatic retries on failure and timeout support.
+/// Invoke subprocess with automatic failure recovery and timeout support.
 ///
 /// This function wraps `invoke_subprocess_with_spinner` or `invoke_subprocess_with_timeout`
-/// with retry logic:
-/// - On non-zero exit code, prints raw text/stderr and retries
-/// - On timeout, prints partial output and retries
-/// - Prints attempt number for each retry
-/// - Returns error with captured output if all retries exhausted
+/// with failure recovery logic:
+/// - On non-zero exit code, prints raw text/stderr and re-attempts
+/// - On timeout, prints partial output and re-attempts
+/// - Prints attempt number for each attempt
+/// - Returns error with captured output if all attempts exhausted
 ///
 /// # Arguments
 ///
 /// * `command` - The command to execute
-/// * `retry_count` - Number of retries (0 means run once with no retries)
+/// * `max_attempts` - Maximum attempts (3 means up to 4 total: 1 initial + 3 recovery)
 /// * `timeout_secs` - Timeout in seconds for each subprocess invocation
 /// * `iteration` - Current iteration number (for logging context)
 /// * `theme_config` - Optional theme configuration for syntax highlighting
@@ -493,17 +494,17 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 /// # Returns
 ///
 /// Returns the `StreamingSubprocessResult` on success (exit code 0).
-fn invoke_with_retries(
+fn invoke_with_failure_recovery(
     command: &str,
-    retry_count: usize,
+    max_attempts: usize,
     timeout_secs: u64,
     iteration: usize,
     theme_config: Option<&ThemeConfig>,
     session_elapsed_ms: u64,
 ) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
-    let max_attempts = retry_count + 1; // retry_count of 3 means 4 total attempts
+    let total_attempts = max_attempts + 1; // max_attempts of 3 means 4 total attempts (1 initial + 3 recovery)
 
-    for attempt in 1..=max_attempts {
+    for attempt in 1..=total_attempts {
         // Use spinner-aware subprocess if theme config provided, otherwise use default
         let result = match theme_config {
             Some(config) => {
@@ -529,7 +530,7 @@ fn invoke_with_retries(
                 // Timeout occurred
                 eprintln!(
                     "\n[Iteration {}] LLM subprocess timed out after {} seconds (attempt {}/{})",
-                    iteration, ts, attempt, max_attempts
+                    iteration, ts, attempt, total_attempts
                 );
 
                 // Print partial output from timed out attempt
@@ -550,14 +551,14 @@ fn invoke_with_retries(
                     }
                 }
 
-                if attempt < max_attempts {
-                    eprintln!("\nRetrying...\n");
+                if attempt < total_attempts {
+                    eprintln!("\nRe-attempting...\n");
                     continue;
                 } else {
-                    // All retries exhausted due to timeout
+                    // All attempts exhausted due to timeout
                     return Err(RunError::SubprocessTimedOut {
                         timeout_secs: ts,
-                        attempts: max_attempts,
+                        attempts: total_attempts,
                         raw_text: partial_result.stream_result.raw_text,
                         stderr: partial_result.stderr,
                         session_slug: String::new(),
@@ -572,10 +573,10 @@ fn invoke_with_retries(
             return Ok(result);
         }
 
-        // Non-zero exit code - handle retry
+        // Non-zero exit code - handle failure recovery
         eprintln!(
             "\n[Iteration {}] LLM subprocess failed with exit code {} (attempt {}/{})",
-            iteration, result.exit_code, attempt, max_attempts
+            iteration, result.exit_code, attempt, total_attempts
         );
 
         // Print captured output from failed attempt
@@ -596,14 +597,14 @@ fn invoke_with_retries(
             }
         }
 
-        if attempt < max_attempts {
-            eprintln!("\nRetrying...\n");
+        if attempt < total_attempts {
+            eprintln!("\nRe-attempting...\n");
         } else {
-            // All retries exhausted - return error with placeholder session info
+            // All attempts exhausted - return error with placeholder session info
             // The caller will fill in the actual session_slug and iterations_completed
             return Err(RunError::SubprocessFailed {
                 exit_code: result.exit_code,
-                attempts: max_attempts,
+                attempts: total_attempts,
                 raw_text: result.stream_result.raw_text,
                 stderr: result.stderr,
                 session_slug: String::new(),

@@ -9,7 +9,7 @@ use std::io::{self, IsTerminal, Write};
 /// User's choice when prompted after an unrecoverable failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FailureAction {
-    /// Retry the operation from the beginning.
+    /// Continue recovery - re-attempt the operation.
     Retry,
     /// Abort and exit the program.
     Abort,
@@ -41,7 +41,7 @@ pub fn is_interactive() -> bool {
 /// ```ignore
 /// if let Some(action) = prompt_on_failure("LLM subprocess failed after 4 attempts") {
 ///     match action {
-///         FailureAction::Retry => println!("Retrying..."),
+///         FailureAction::Retry => println!("Continuing recovery..."),
 ///         FailureAction::Abort => println!("Aborting..."),
 ///     }
 /// } else {
