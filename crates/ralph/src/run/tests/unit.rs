@@ -13,12 +13,9 @@ fn create_test_paths(temp_dir: &TempDir) -> ContextPaths {
     }
 }
 
-#[test]
-fn test_run_error_when_no_prd() {
-    let temp_dir = TempDir::new().unwrap();
-    let paths = create_test_paths(&temp_dir);
-
-    let config = RunConfig {
+/// Create a default RunConfig for tests with the given paths.
+fn create_test_config(paths: ContextPaths) -> RunConfig {
+    RunConfig {
         max_iterations: Some(1),
         slug: Some("test-slug".to_string()),
         command: "echo 'test'".to_string(),
@@ -27,7 +24,22 @@ fn test_run_error_when_no_prd() {
         retry_count: 3,
         starting_iteration: 0,
         timeout_secs: 600,
-    };
+        theme_config: None,
+        custom_prd_path: None,
+        custom_design_path: None,
+        custom_progress_path: None,
+        custom_command: false,
+        custom_prompt: false,
+        custom_completion_marker: false,
+    }
+}
+
+#[test]
+fn test_run_error_when_no_prd() {
+    let temp_dir = TempDir::new().unwrap();
+    let paths = create_test_paths(&temp_dir);
+
+    let config = create_test_config(paths);
 
     let result = run(config);
     assert!(matches!(result, Err(RunError::Init(_))));
@@ -43,16 +55,7 @@ fn test_run_error_when_no_pending_stories() {
     fs::create_dir_all(paths.prd.parent().unwrap()).unwrap();
     fs::write(&paths.prd, prd_content).unwrap();
 
-    let config = RunConfig {
-        max_iterations: Some(1),
-        slug: Some("test-slug".to_string()),
-        command: "echo 'test'".to_string(),
-        completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths,
-        retry_count: 3,
-        starting_iteration: 0,
-        timeout_secs: 600,
-    };
+    let config = create_test_config(paths);
 
     let result = run(config);
     assert!(matches!(result, Err(RunError::NoPendingStories)));

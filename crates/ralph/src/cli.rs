@@ -42,6 +42,12 @@ pub enum Commands {
     /// syntax highlighting to code blocks and diff highlighting to diffs.
     /// Works with sessions from any project.
     Replay(ReplayArgs),
+
+    /// List available syntax highlighting themes.
+    ///
+    /// Shows all built-in themes that can be used with the --theme flag.
+    /// Custom .tmTheme files can also be loaded by specifying a file path.
+    Themes,
 }
 
 /// Arguments for the `sessions` subcommand.
@@ -73,6 +79,19 @@ pub struct ReplayArgs {
     /// If omitted, all iterations are replayed in order.
     #[arg(short, long, value_name = "N")]
     pub iteration: Option<u32>,
+
+    /// Syntax highlighting theme.
+    ///
+    /// Use a built-in theme name or a path to a custom .tmTheme file.
+    /// Can also be set via RALPH_THEME environment variable.
+    #[arg(long, value_name = "NAME")]
+    pub theme: Option<String>,
+
+    /// Disable background colors in syntax highlighting.
+    ///
+    /// Can also be set via RALPH_NO_BACKGROUND environment variable.
+    #[arg(long)]
+    pub no_background: bool,
 }
 
 /// Arguments for the `run` subcommand.
@@ -146,6 +165,22 @@ pub struct RunArgs {
     /// Default: 600 seconds (10 minutes)
     #[arg(long, default_value_t = 600)]
     pub timeout: u64,
+
+    /// Syntax highlighting theme.
+    ///
+    /// Use a built-in theme name (e.g., "Monokai Extended", "Solarized (dark)")
+    /// or a path to a custom .tmTheme file. Run 'ralph themes' to list available themes.
+    /// Can also be set via RALPH_THEME environment variable.
+    #[arg(long, value_name = "NAME")]
+    pub theme: Option<String>,
+
+    /// Disable background colors in syntax highlighting.
+    ///
+    /// When set, theme background colors are not applied, allowing the
+    /// terminal's default background to show through.
+    /// Can also be set via RALPH_NO_BACKGROUND environment variable.
+    #[arg(long)]
+    pub no_background: bool,
 }
 
 #[cfg(test)]

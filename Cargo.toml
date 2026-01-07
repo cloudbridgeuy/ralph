@@ -2,6 +2,11 @@
 members = ["xtask/", "crates/*"]
 resolver = "2"
 
+[workspace.lints.clippy]
+# Note: unwrap_used and expect_used are enabled in lib.rs/main.rs via #![deny(...)]
+# rather than here, so test code can still use .unwrap() for brevity.
+# See crates/*/src/lib.rs and crates/*/src/main.rs for the denials.
+
 [workspace.package]
 edition = "2021"
 license = "MIT"
@@ -54,6 +59,9 @@ serde = { version = "1.0", features = ["derive"] }
 
 # Syntax highlighting
 syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+
+# Markdown terminal rendering
+termimad = "0.30"
 
 # JSON
 serde_json = "1.0"

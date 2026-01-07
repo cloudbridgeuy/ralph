@@ -7,6 +7,8 @@
 //! # Features
 //!
 //! - Syntax highlighting for common programming languages
+//! - Configurable themes (built-in and custom .tmTheme files)
+//! - Optional background color control
 //! - Terminal detection for automatic color support
 //! - Graceful fallback to plain text when not supported
 //! - ANSI 24-bit true color output
@@ -14,7 +16,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use ralph::highlight::{highlight_code, is_highlighting_supported};
+//! use ralph::highlight::{highlight_code, is_highlighting_supported, ThemeConfig};
 //!
 //! if is_highlighting_supported() {
 //!     let highlighted = highlight_code("fn main() {}", Some("rust"));
@@ -22,21 +24,207 @@
 //! } else {
 //!     print!("fn main() {{}}");
 //! }
+//!
+//! // With custom theme configuration
+//! use ralph::highlight::Highlighter;
+//! let config = ThemeConfig::new().with_theme("Monokai Extended");
+//! let highlighter = Highlighter::with_config(config);
+//! let highlighted = highlighter.highlight("fn main() {}", Some("rust"));
 //! ```
 
 use std::io::IsTerminal;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
+use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+
+/// Default theme name used when no theme is specified.
+pub const DEFAULT_THEME: &str = "base16-ocean.dark";
+
+/// Environment variable for theme selection.
+pub const RALPH_THEME_ENV: &str = "RALPH_THEME";
+
+/// Environment variable for disabling background colors.
+pub const RALPH_NO_BACKGROUND_ENV: &str = "RALPH_NO_BACKGROUND";
+
+/// Error type for theme operations.
+#[derive(Debug, thiserror::Error)]
+pub enum ThemeError {
+    /// The requested theme was not found in the available themes.
+    #[error("Theme '{name}' not found. Available themes: {available}")]
+    ThemeNotFound { name: String, available: String },
+
+    /// Failed to load a theme file from disk.
+    #[error("Failed to load theme file '{path}': {source}")]
+    LoadThemeFile {
+        path: String,
+        #[source]
+        source: syntect::LoadingError,
+    },
+}
+
+/// Configuration for syntax highlighting themes.
+///
+/// This struct provides a builder pattern for configuring the theme used
+/// by the highlighter. It supports:
+/// - Built-in syntect themes (e.g., "base16-ocean.dark", "Monokai Extended")
+/// - Custom .tmTheme files from disk
+/// - Controlling whether background colors are applied
+///
+/// # Example
+///
+/// ```
+/// use ralph::highlight::ThemeConfig;
+///
+/// // Use default theme
+/// let config = ThemeConfig::new();
+///
+/// // Use a specific built-in theme
+/// let config = ThemeConfig::new().with_theme("Monokai Extended");
+///
+/// // Load a custom theme file
+/// let config = ThemeConfig::new().with_theme_file("/path/to/theme.tmTheme");
+///
+/// // Disable background colors
+/// let config = ThemeConfig::new().with_no_background(true);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ThemeConfig {
+    /// Theme name or path. None uses the default.
+    theme: Option<String>,
+    /// Whether to disable background colors.
+    no_background: bool,
+}
+
+impl ThemeConfig {
+    /// Create a new theme configuration with defaults.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a theme configuration from environment variables only.
+    ///
+    /// Reads from:
+    /// - `RALPH_THEME` - Theme name or file path
+    /// - `RALPH_NO_BACKGROUND` - Set to any non-empty value to disable backgrounds
+    ///
+    /// Note: For full configuration precedence (config file + env), use `from_config_and_env()`.
+    pub fn from_env() -> Self {
+        let theme = std::env::var(RALPH_THEME_ENV).ok();
+        let no_background = std::env::var(RALPH_NO_BACKGROUND_ENV)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+
+        Self {
+            theme,
+            no_background,
+        }
+    }
+
+    /// Create a theme configuration from config file and environment variables.
+    ///
+    /// Loads configuration in this order (higher priority sources override lower):
+    /// 1. Environment variables (`RALPH_THEME`, `RALPH_NO_BACKGROUND`)
+    /// 2. Config file (`~/.config/ralph/config.toml`)
+    /// 3. Default values
+    ///
+    /// If the config file doesn't exist or fails to parse, falls back to env + defaults.
+    pub fn from_config_and_env() -> Self {
+        // Start with config file settings (if available)
+        let config_theme = crate::config::AppConfig::load()
+            .ok()
+            .and_then(|c| c.theme.name);
+        let config_no_background = crate::config::AppConfig::load()
+            .ok()
+            .map(|c| c.theme.no_background)
+            .unwrap_or(false);
+
+        // Get environment variable values
+        let env_theme = std::env::var(RALPH_THEME_ENV).ok();
+        let env_no_background = std::env::var(RALPH_NO_BACKGROUND_ENV)
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+
+        // Env vars take precedence over config file
+        let theme = env_theme.or(config_theme);
+        let no_background = env_no_background || config_no_background;
+
+        Self {
+            theme,
+            no_background,
+        }
+    }
+
+    /// Set the theme name or file path.
+    ///
+    /// If the value looks like a file path (contains `/` or `\`, or ends in `.tmTheme`),
+    /// it will be treated as a custom theme file. Otherwise, it's treated as a
+    /// built-in theme name.
+    pub fn with_theme(mut self, theme: impl Into<String>) -> Self {
+        self.theme = Some(theme.into());
+        self
+    }
+
+    /// Set the theme from a file path.
+    ///
+    /// The file should be a valid TextMate .tmTheme file.
+    pub fn with_theme_file(self, path: impl Into<String>) -> Self {
+        self.with_theme(path)
+    }
+
+    /// Set whether to disable background colors.
+    ///
+    /// When enabled, the theme's background colors are not applied,
+    /// allowing the terminal's default background to show through.
+    pub fn with_no_background(mut self, no_background: bool) -> Self {
+        self.no_background = no_background;
+        self
+    }
+
+    /// Get the theme name or path, if set.
+    pub fn theme(&self) -> Option<&str> {
+        self.theme.as_deref()
+    }
+
+    /// Check if background colors should be disabled.
+    pub fn no_background(&self) -> bool {
+        self.no_background
+    }
+
+    /// Check if the theme looks like a file path.
+    pub fn is_theme_file(&self) -> bool {
+        self.theme
+            .as_ref()
+            .map(|t| t.contains('/') || t.contains('\\') || t.ends_with(".tmTheme"))
+            .unwrap_or(false)
+    }
+
+    /// Merge with CLI options, where CLI takes precedence.
+    ///
+    /// This allows layering: config file -> env var -> CLI flag
+    pub fn merge_cli(mut self, theme: Option<&str>, no_background: bool) -> Self {
+        if let Some(t) = theme {
+            self.theme = Some(t.to_string());
+        }
+        if no_background {
+            self.no_background = true;
+        }
+        self
+    }
+}
 
 /// A code highlighter using syntect.
 ///
 /// This struct lazily loads syntax definitions and themes on first use,
-/// caching them for subsequent highlighting operations.
+/// caching them for subsequent highlighting operations. It supports
+/// configurable themes including built-in themes and custom .tmTheme files.
+#[derive(Debug)]
 pub struct Highlighter {
     syntax_set: SyntaxSet,
-    theme_set: ThemeSet,
+    /// The resolved theme to use for highlighting.
+    theme: Theme,
+    /// Whether to include background colors in output.
+    use_background: bool,
 }
 
 impl Default for Highlighter {
@@ -50,6 +238,7 @@ impl Highlighter {
     ///
     /// This loads the bundled syntect defaults which include support for
     /// many common languages like Rust, Python, JavaScript, Go, etc.
+    /// Uses the default theme (base16-ocean.dark).
     ///
     /// # Example
     ///
@@ -59,10 +248,106 @@ impl Highlighter {
     /// let highlighter = Highlighter::new();
     /// ```
     pub fn new() -> Self {
+        let theme_set = ThemeSet::load_defaults();
+        let theme = theme_set.themes[DEFAULT_THEME].clone();
         Self {
             syntax_set: SyntaxSet::load_defaults_newlines(),
-            theme_set: ThemeSet::load_defaults(),
+            theme,
+            use_background: true,
         }
+    }
+
+    /// Create a highlighter with custom theme configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Theme configuration specifying theme name/path and background option
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Highlighter)` - Successfully configured highlighter
+    /// * `Err(ThemeError)` - If the theme was not found or failed to load
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::highlight::{Highlighter, ThemeConfig};
+    ///
+    /// let config = ThemeConfig::new().with_theme("Monokai Extended");
+    /// let highlighter = Highlighter::with_config(config).unwrap();
+    /// ```
+    pub fn with_config(config: ThemeConfig) -> Result<Self, ThemeError> {
+        let theme_set = ThemeSet::load_defaults();
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+
+        let theme = match config.theme() {
+            Some(theme_name) if config.is_theme_file() => {
+                // Load from file
+                ThemeSet::get_theme(theme_name).map_err(|e| ThemeError::LoadThemeFile {
+                    path: theme_name.to_string(),
+                    source: e,
+                })?
+            }
+            Some(theme_name) => {
+                // Look up built-in theme
+                theme_set.themes.get(theme_name).cloned().ok_or_else(|| {
+                    ThemeError::ThemeNotFound {
+                        name: theme_name.to_string(),
+                        available: Self::format_available_themes(&theme_set),
+                    }
+                })?
+            }
+            None => theme_set.themes[DEFAULT_THEME].clone(),
+        };
+
+        Ok(Self {
+            syntax_set,
+            theme,
+            use_background: !config.no_background(),
+        })
+    }
+
+    /// Create a highlighter with a specific theme name.
+    ///
+    /// This is a convenience method for creating a highlighter with just a theme name.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::highlight::Highlighter;
+    ///
+    /// let highlighter = Highlighter::with_theme("Monokai Extended").unwrap();
+    /// ```
+    pub fn with_theme(theme_name: &str) -> Result<Self, ThemeError> {
+        Self::with_config(ThemeConfig::new().with_theme(theme_name))
+    }
+
+    /// Get a list of available built-in theme names.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::highlight::Highlighter;
+    ///
+    /// let themes = Highlighter::available_themes();
+    /// assert!(themes.contains(&"base16-ocean.dark".to_string()));
+    /// ```
+    pub fn available_themes() -> Vec<String> {
+        let theme_set = ThemeSet::load_defaults();
+        let mut themes: Vec<_> = theme_set.themes.keys().cloned().collect();
+        themes.sort();
+        themes
+    }
+
+    /// Format available themes as a comma-separated string for error messages.
+    fn format_available_themes(theme_set: &ThemeSet) -> String {
+        let mut themes: Vec<_> = theme_set.themes.keys().collect();
+        themes.sort();
+        themes
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Highlight code with optional language hint.
@@ -105,16 +390,13 @@ impl Highlighter {
             None => return code.to_string(),
         };
 
-        // Use a dark theme suitable for terminals (base16-ocean.dark)
-        let theme = &self.theme_set.themes["base16-ocean.dark"];
-
-        let mut highlighter = HighlightLines::new(syntax, theme);
+        let mut highlighter = HighlightLines::new(syntax, &self.theme);
         let mut output = String::new();
 
         for line in LinesWithEndings::from(code) {
             match highlighter.highlight_line(line, &self.syntax_set) {
                 Ok(ranges) => {
-                    let escaped = as_24_bit_terminal_escaped(&ranges[..], true);
+                    let escaped = as_24_bit_terminal_escaped(&ranges[..], self.use_background);
                     output.push_str(&escaped);
                 }
                 Err(_) => {
@@ -447,5 +729,115 @@ mod tests {
     fn strip_ansi_codes(s: &str) -> String {
         let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
         re.replace_all(s, "").to_string()
+    }
+
+    #[test]
+    fn test_theme_config_new() {
+        let config = ThemeConfig::new();
+        assert!(config.theme().is_none());
+        assert!(!config.no_background());
+    }
+
+    #[test]
+    fn test_theme_config_with_theme() {
+        let config = ThemeConfig::new().with_theme("Monokai Extended");
+        assert_eq!(config.theme(), Some("Monokai Extended"));
+    }
+
+    #[test]
+    fn test_theme_config_with_no_background() {
+        let config = ThemeConfig::new().with_no_background(true);
+        assert!(config.no_background());
+    }
+
+    #[test]
+    fn test_theme_config_is_theme_file_with_path() {
+        let config = ThemeConfig::new().with_theme("/path/to/theme.tmTheme");
+        assert!(config.is_theme_file());
+    }
+
+    #[test]
+    fn test_theme_config_is_theme_file_with_name() {
+        let config = ThemeConfig::new().with_theme("Monokai Extended");
+        assert!(!config.is_theme_file());
+    }
+
+    #[test]
+    fn test_theme_config_is_theme_file_with_tmtheme_extension() {
+        let config = ThemeConfig::new().with_theme("custom.tmTheme");
+        assert!(config.is_theme_file());
+    }
+
+    #[test]
+    fn test_theme_config_merge_cli_overrides_theme() {
+        let config = ThemeConfig::new()
+            .with_theme("base16-ocean.dark")
+            .merge_cli(Some("Monokai Extended"), false);
+
+        assert_eq!(config.theme(), Some("Monokai Extended"));
+    }
+
+    #[test]
+    fn test_theme_config_merge_cli_preserves_theme_when_none() {
+        let config = ThemeConfig::new()
+            .with_theme("base16-ocean.dark")
+            .merge_cli(None, false);
+
+        assert_eq!(config.theme(), Some("base16-ocean.dark"));
+    }
+
+    #[test]
+    fn test_theme_config_merge_cli_overrides_no_background() {
+        let config = ThemeConfig::new()
+            .with_no_background(false)
+            .merge_cli(None, true);
+
+        assert!(config.no_background());
+    }
+
+    #[test]
+    fn test_theme_config_merge_cli_preserves_no_background_when_false() {
+        let config = ThemeConfig::new()
+            .with_no_background(true)
+            .merge_cli(None, false);
+
+        // merge_cli only overrides if the CLI value is true
+        assert!(config.no_background());
+    }
+
+    #[test]
+    fn test_highlighter_with_config_valid_theme() {
+        let config = ThemeConfig::new().with_theme("base16-ocean.dark");
+        let highlighter = Highlighter::with_config(config);
+        assert!(highlighter.is_ok());
+    }
+
+    #[test]
+    fn test_highlighter_with_config_invalid_theme() {
+        let config = ThemeConfig::new().with_theme("nonexistent-theme");
+        let result = Highlighter::with_config(config);
+        assert!(result.is_err());
+
+        // Verify the error message contains expected text
+        let err_str = result.unwrap_err().to_string();
+        assert!(err_str.contains("nonexistent-theme"));
+        assert!(err_str.contains("not found"));
+    }
+
+    #[test]
+    fn test_highlighter_with_config_no_background() {
+        let config = ThemeConfig::new().with_no_background(true);
+        let highlighter = Highlighter::with_config(config).unwrap();
+
+        // Verify highlighting still works
+        let highlighted = highlighter.highlight("fn test() {}", Some("rust"));
+        assert!(highlighted.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_available_themes_not_empty() {
+        let themes = Highlighter::available_themes();
+        assert!(!themes.is_empty());
+        assert!(themes.contains(&DEFAULT_THEME.to_string()));
     }
 }

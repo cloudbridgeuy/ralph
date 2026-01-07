@@ -6,12 +6,20 @@
 //! - Correlates tool calls with results
 //! - Stores typed chunks in iteration logs
 //! - Handles edge cases gracefully
+//!
+//! Note: These tests modify the HOME environment variable, which is global state.
+//! We use a static mutex to ensure tests run sequentially and don't interfere.
 
 use crate::iteration::IterationLog;
 use crate::run::{run, RunConfig};
 use ralph_core::context::ContextPaths;
 use std::fs;
+use std::sync::Mutex;
 use tempfile::TempDir;
+
+/// Mutex to serialize tests that modify the HOME environment variable.
+/// This prevents race conditions when multiple tests try to set HOME concurrently.
+static HOME_ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 /// Sample stream-json output that mimics Claude CLI's `--output-format stream-json`.
 /// This represents a successful iteration that updates the PRD.
@@ -43,6 +51,27 @@ fn create_test_paths(temp_dir: &TempDir) -> ContextPaths {
         design: temp_dir.path().join(".local/designs/design.md"),
         prd: temp_dir.path().join(".local/plans/prd.toml"),
         progress: temp_dir.path().join(".local/plans/progress.txt"),
+    }
+}
+
+/// Create a default RunConfig for integration tests.
+fn create_test_config(paths: ContextPaths, command: String) -> RunConfig {
+    RunConfig {
+        max_iterations: Some(1),
+        slug: None,
+        command,
+        completion_marker: "<promise>COMPLETE</promise>".to_string(),
+        context_paths: paths,
+        retry_count: 0,
+        starting_iteration: 0,
+        timeout_secs: 30,
+        theme_config: None,
+        custom_prd_path: None,
+        custom_design_path: None,
+        custom_progress_path: None,
+        custom_command: false,
+        custom_prompt: false,
+        custom_completion_marker: false,
     }
 }
 
@@ -88,15 +117,18 @@ cat > '{}' << 'PRDEOF'
     )
 }
 
-/// Helper to get session directory from slug - works across platforms
-fn get_session_dir(temp_dir: &TempDir, slug: &str) -> std::path::PathBuf {
-    // On macOS, dirs::config_dir returns ~/Library/Application Support
-    // But our test sets HOME to temp_dir, so it becomes temp_dir/.config/ralph/sessions
-    temp_dir.path().join(".config/ralph/sessions").join(slug)
+/// Helper to get session directory from slug - uses the actual session_dir function
+fn get_session_dir(_temp_dir: &TempDir, slug: &str) -> std::path::PathBuf {
+    // Use the actual session_dir function to ensure we use the same path logic
+    // Note: This relies on HOME being set before calling session_dir
+    crate::session::session_dir(slug)
 }
 
 #[test]
 fn test_run_loop_parses_metadata() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
     let prd_path_str = paths.prd.display().to_string();
@@ -111,18 +143,12 @@ fn test_run_loop_parses_metadata() {
     // Set config dir for session storage
     std::env::set_var("HOME", temp_dir.path());
 
-    let config = RunConfig {
-        max_iterations: Some(1),
-        slug: None, // Let system generate a valid slug
-        command: script_path,
-        completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths.clone(),
-        retry_count: 0,
-        starting_iteration: 0,
-        timeout_secs: 30,
-    };
+    let config = create_test_config(paths.clone(), script_path);
 
     let result = run(config);
+
+    // Clean up env var before assertions (in case they fail)
+    std::env::remove_var("HOME");
 
     // Should complete (PRD changes, so it completes after one iteration)
     assert!(result.is_ok(), "Run failed: {:?}", result);
@@ -160,13 +186,13 @@ fn test_run_loop_parses_metadata() {
             }
         }
     }
-
-    // Clean up env var
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn test_run_loop_correlates_tool_calls() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
     let prd_path_str = paths.prd.display().to_string();
@@ -176,18 +202,13 @@ fn test_run_loop_correlates_tool_calls() {
 
     std::env::set_var("HOME", temp_dir.path());
 
-    let config = RunConfig {
-        max_iterations: Some(1),
-        slug: None,
-        command: script_path,
-        completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths,
-        retry_count: 0,
-        starting_iteration: 0,
-        timeout_secs: 30,
-    };
+    let config = create_test_config(paths, script_path);
 
     let result = run(config);
+
+    // Clean up env var before assertions
+    std::env::remove_var("HOME");
+
     assert!(result.is_ok(), "Run failed: {:?}", result);
 
     let result = result.unwrap();
@@ -212,12 +233,13 @@ fn test_run_loop_correlates_tool_calls() {
         assert!(tool_call.result.is_some());
         assert!(tool_call.result.as_ref().unwrap().contains("fn main()"));
     }
-
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn test_run_loop_parses_chunks() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
     let prd_path_str = paths.prd.display().to_string();
@@ -227,18 +249,13 @@ fn test_run_loop_parses_chunks() {
 
     std::env::set_var("HOME", temp_dir.path());
 
-    let config = RunConfig {
-        max_iterations: Some(1),
-        slug: None,
-        command: script_path,
-        completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths,
-        retry_count: 0,
-        starting_iteration: 0,
-        timeout_secs: 30,
-    };
+    let config = create_test_config(paths, script_path);
 
     let result = run(config);
+
+    // Clean up env var before assertions
+    std::env::remove_var("HOME");
+
     assert!(result.is_ok(), "Run failed: {:?}", result);
 
     let result = result.unwrap();
@@ -266,12 +283,13 @@ fn test_run_loop_parses_chunks() {
             log.chunks
         );
     }
-
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn test_run_loop_handles_missing_metadata_gracefully() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+
     // Stream-json output with minimal/missing metadata
     let minimal_stream_json = r#"{"type":"assistant","message":{"id":"msg_01","content":[{"type":"text","text":"Just some text"}]}}
 {"type":"result","duration_ms":1000}
@@ -286,30 +304,26 @@ fn test_run_loop_handles_missing_metadata_gracefully() {
 
     std::env::set_var("HOME", temp_dir.path());
 
-    let config = RunConfig {
-        max_iterations: Some(1),
-        slug: None,
-        command: script_path,
-        completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths,
-        retry_count: 0,
-        starting_iteration: 0,
-        timeout_secs: 30,
-    };
+    let config = create_test_config(paths, script_path);
 
     // Should not crash despite missing metadata fields
     let result = run(config);
+
+    // Clean up env var before assertions
+    std::env::remove_var("HOME");
+
     assert!(
         result.is_ok(),
         "Run should succeed even with missing metadata: {:?}",
         result
     );
-
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn test_run_loop_handles_malformed_json_lines() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+
     // Mix of valid and invalid JSON lines - should log warning but continue
     let mixed_stream_json = r#"{"type":"system","session_id":"abc"}
 not valid json at all
@@ -327,19 +341,14 @@ another invalid line
 
     std::env::set_var("HOME", temp_dir.path());
 
-    let config = RunConfig {
-        max_iterations: Some(1),
-        slug: None,
-        command: script_path,
-        completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths,
-        retry_count: 0,
-        starting_iteration: 0,
-        timeout_secs: 30,
-    };
+    let config = create_test_config(paths, script_path);
 
     // Should not crash despite malformed JSON lines
     let result = run(config);
+
+    // Clean up env var before assertions
+    std::env::remove_var("HOME");
+
     assert!(
         result.is_ok(),
         "Run should succeed even with malformed JSON lines: {:?}",
@@ -359,12 +368,13 @@ another invalid line
         // Should have captured some text despite errors
         assert!(!log.chunks.is_empty(), "Should have parsed valid events");
     }
-
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn test_run_loop_session_finalization() {
+    // Lock the mutex to prevent concurrent HOME modifications
+    let _guard = HOME_ENV_MUTEX.lock().unwrap();
+
     let temp_dir = TempDir::new().unwrap();
     let paths = create_test_paths(&temp_dir);
     let prd_path_str = paths.prd.display().to_string();
@@ -374,18 +384,13 @@ fn test_run_loop_session_finalization() {
 
     std::env::set_var("HOME", temp_dir.path());
 
-    let config = RunConfig {
-        max_iterations: Some(1),
-        slug: None,
-        command: script_path,
-        completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths,
-        retry_count: 0,
-        starting_iteration: 0,
-        timeout_secs: 30,
-    };
+    let config = create_test_config(paths, script_path);
 
     let result = run(config);
+
+    // Clean up env var before assertions
+    std::env::remove_var("HOME");
+
     assert!(result.is_ok(), "Run failed: {:?}", result);
 
     let result = result.unwrap();
@@ -400,6 +405,4 @@ fn test_run_loop_session_finalization() {
             "Session should have outcome"
         );
     }
-
-    std::env::remove_var("HOME");
 }

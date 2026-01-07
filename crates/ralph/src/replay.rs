@@ -17,7 +17,7 @@
 //! ```
 
 use crate::diff_highlight::highlight_with_basic_colors;
-use crate::highlight::Highlighter;
+use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::iteration::IterationLog;
 use crate::session::{load_sessions_index, session_dir};
 use std::fs;
@@ -68,6 +68,10 @@ pub enum ReplayError {
     /// Failed to load sessions index.
     #[error("Failed to load sessions index: {0}")]
     LoadSessionsIndex(#[from] crate::session::SessionError),
+
+    /// Failed to configure theme.
+    #[error("Failed to configure theme: {0}")]
+    ThemeError(#[from] ThemeError),
 }
 
 /// Result of a replay operation.
@@ -107,6 +111,23 @@ pub struct ReplayResult {
 /// replay_session("my-session", Some(2)).unwrap();
 /// ```
 pub fn replay_session(slug: &str, iteration: Option<u32>) -> Result<ReplayResult, ReplayError> {
+    replay_session_with_theme(slug, iteration, None)
+}
+
+/// Replay a session's output with custom theme configuration.
+///
+/// Like [`replay_session`], but allows specifying a custom theme.
+///
+/// # Arguments
+///
+/// * `slug` - Session identifier to replay
+/// * `iteration` - Optional specific iteration to replay (1-indexed)
+/// * `theme_config` - Optional theme configuration. If None, uses environment variables.
+pub fn replay_session_with_theme(
+    slug: &str,
+    iteration: Option<u32>,
+    theme_config: Option<ThemeConfig>,
+) -> Result<ReplayResult, ReplayError> {
     // Look up session in sessions index
     let index = load_sessions_index()?;
 
@@ -145,8 +166,9 @@ pub fn replay_session(slug: &str, iteration: Option<u32>) -> Result<ReplayResult
         iteration_logs
     };
 
-    // Replay each iteration
-    let highlighter = Highlighter::new();
+    // Use provided theme config or fall back to config file + environment variables
+    let effective_theme = theme_config.unwrap_or_else(ThemeConfig::from_config_and_env);
+    let highlighter = Highlighter::with_config(effective_theme)?;
     let is_terminal = std::io::stdout().is_terminal();
 
     for (seq, path) in &logs_to_replay {

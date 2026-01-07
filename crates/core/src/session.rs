@@ -282,11 +282,17 @@ const NOUNS: &[&str] = &[
 /// assert!(slug.contains('-'));
 /// assert_eq!(slug, slug.to_lowercase());
 /// ```
+#[allow(clippy::expect_used)] // Intentional: ADJECTIVES/NOUNS are compile-time non-empty arrays
 pub fn generate_slug<R: Rng + ?Sized>(rng: &mut R) -> String {
+    // SAFETY: ADJECTIVES and NOUNS are compile-time static arrays with 100+ elements each.
+    // These expect() calls cannot fail at runtime since the arrays are guaranteed non-empty.
+    // This is an intentional invariant assertion, not error handling.
     let adjective = ADJECTIVES
         .choose(rng)
-        .expect("adjectives list is not empty");
-    let noun = NOUNS.choose(rng).expect("nouns list is not empty");
+        .expect("compile-time invariant: ADJECTIVES array is non-empty");
+    let noun = NOUNS
+        .choose(rng)
+        .expect("compile-time invariant: NOUNS array is non-empty");
     format!("{}-{}", adjective, noun)
 }
 

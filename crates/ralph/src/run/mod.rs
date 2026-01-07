@@ -6,15 +6,21 @@
 //! and git diff capture.
 
 use crate::git::capture_and_write_diff;
+use crate::highlight::ThemeConfig;
 use crate::init::{initialize_context_files, InitError};
 use crate::iteration::{
     write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata, LogToolCall,
 };
 use crate::session::{finalize_session, initialize_session, SessionError};
-use crate::subprocess::{invoke_subprocess_with_timeout, SubprocessError};
+use crate::startup::{
+    display_iteration_header, display_startup_info, IterationHeader, StartupInfo,
+};
+use crate::subprocess::{
+    invoke_subprocess_with_theme, invoke_subprocess_with_timeout, SubprocessError,
+};
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::context::ContextPaths;
-use ralph_core::prd::{count_pending_stories, has_prd_changed, PrdError};
+use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
 use std::fs;
 use std::path::PathBuf;
@@ -44,6 +50,21 @@ pub struct RunConfig {
     /// Timeout in seconds for LLM subprocess (default: 600 = 10 minutes).
     /// If exceeded, the subprocess is killed and treated as a failure.
     pub timeout_secs: u64,
+    /// Configuration for syntax highlighting themes.
+    /// If None, uses environment variables or default theme.
+    pub theme_config: Option<ThemeConfig>,
+    /// Whether user provided custom PRD path (for startup display).
+    pub custom_prd_path: Option<PathBuf>,
+    /// Whether user provided custom design path (for startup display).
+    pub custom_design_path: Option<PathBuf>,
+    /// Whether user provided custom progress path (for startup display).
+    pub custom_progress_path: Option<PathBuf>,
+    /// Whether user provided custom command template.
+    pub custom_command: bool,
+    /// Whether user provided custom prompt.
+    pub custom_prompt: bool,
+    /// Whether user provided custom completion marker.
+    pub custom_completion_marker: bool,
 }
 
 /// Result of running the iteration loop.
@@ -157,17 +178,18 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
     // 1. Initialize context files (touch missing design/progress, verify PRD exists)
     initialize_context_files(&config.context_paths)?;
 
-    // 2. Read PRD and count pending stories
+    // 2. Read PRD and analyze stories
     let prd_content = read_prd_file(&config.context_paths.prd)?;
-    let pending_count = count_pending_stories(&prd_content)?;
+    let prd_analysis = parse_prd(&prd_content)?;
 
     // Pre-check: exit if zero pending stories
-    if pending_count == 0 {
+    if prd_analysis.pending_count == 0 {
         return Err(RunError::NoPendingStories);
     }
 
     // 3. Determine max iterations (use provided or default to pending count)
-    let max_iterations = config.max_iterations.unwrap_or(pending_count);
+    let max_iterations = config.max_iterations.unwrap_or(prd_analysis.pending_count);
+    let iterations_from_arg = config.max_iterations.is_some();
 
     // 4. Initialize or continue session
     let project_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -186,7 +208,27 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         initialize_session(config.slug.as_deref(), &project_path)?
     };
 
-    // 5. Execute iteration loop
+    // 5. Display startup information (only on first run, not retries)
+    if config.starting_iteration == 0 {
+        let startup_info = StartupInfo {
+            slug: session_slug.clone(),
+            total_stories: prd_analysis.total_stories,
+            pending_stories: prd_analysis.pending_count,
+            completed_stories: prd_analysis.completed_count,
+            max_iterations,
+            iterations_from_arg,
+            custom_prd_path: config.custom_prd_path.clone(),
+            custom_design_path: config.custom_design_path.clone(),
+            custom_progress_path: config.custom_progress_path.clone(),
+            custom_command: config.custom_command,
+            custom_prompt: config.custom_prompt,
+            custom_completion_marker: config.custom_completion_marker,
+            session_dir: session_dir.clone(),
+        };
+        display_startup_info(&startup_info);
+    }
+
+    // 6. Execute iteration loop
     let mut iterations_completed = 0;
     let mut completion_reason = None;
 
@@ -206,6 +248,14 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             break;
         }
 
+        // Display iteration header before starting work
+        let header = IterationHeader {
+            iteration,
+            max_iterations: Some(max_iterations + iteration_offset),
+            pending_stories: pending_before,
+        };
+        display_iteration_header(&header);
+
         // Snapshot PRD content for change detection
         let prd_snapshot = prd_before.clone();
 
@@ -215,6 +265,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             config.retry_count,
             config.timeout_secs,
             iteration,
+            config.theme_config.as_ref(),
         ) {
             Ok(r) => r,
             Err(RunError::SubprocessFailed {
@@ -358,7 +409,8 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 
 /// Invoke subprocess with automatic retries on failure and timeout support.
 ///
-/// This function wraps `invoke_subprocess_with_timeout` with retry logic:
+/// This function wraps `invoke_subprocess_with_timeout` or `invoke_subprocess_with_theme`
+/// with retry logic:
 /// - On non-zero exit code, prints raw text/stderr and retries
 /// - On timeout, prints partial output and retries
 /// - Prints attempt number for each retry
@@ -370,6 +422,7 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 /// * `retry_count` - Number of retries (0 means run once with no retries)
 /// * `timeout_secs` - Timeout in seconds for each subprocess invocation
 /// * `iteration` - Current iteration number (for logging context)
+/// * `theme_config` - Optional theme configuration for syntax highlighting
 ///
 /// # Returns
 ///
@@ -379,11 +432,23 @@ fn invoke_with_retries(
     retry_count: usize,
     timeout_secs: u64,
     iteration: usize,
+    theme_config: Option<&ThemeConfig>,
 ) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
     let max_attempts = retry_count + 1; // retry_count of 3 means 4 total attempts
 
     for attempt in 1..=max_attempts {
-        let result = match invoke_subprocess_with_timeout(command, timeout_secs) {
+        // Use theme-aware subprocess if config provided, otherwise use default
+        let result = match theme_config {
+            Some(config) => {
+                match invoke_subprocess_with_theme(command, timeout_secs, config.clone()) {
+                    Ok(r) => Ok(r),
+                    Err(e) => Err(e),
+                }
+            }
+            None => invoke_subprocess_with_timeout(command, timeout_secs),
+        };
+
+        let result = match result {
             Ok(r) => r,
             Err(SubprocessError::Timeout {
                 timeout_secs: ts,

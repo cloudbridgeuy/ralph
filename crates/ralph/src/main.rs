@@ -1,13 +1,22 @@
+// Deny .unwrap() and .expect() in non-test code to ensure proper error handling.
+// Test code may still use them for brevity.
+// Any intentional uses must be documented with #[allow(...)] and comments.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+
 mod cli;
+pub mod config;
 pub mod diff_highlight;
 mod git;
 pub mod highlight;
 mod init;
 pub mod iteration;
+pub mod markdown;
 mod prompt;
 pub mod replay;
 mod run;
 mod session;
+pub mod startup;
 pub mod stream_processor;
 pub mod subprocess;
 
@@ -27,6 +36,7 @@ fn main() -> ExitCode {
         Commands::Run(args) => execute_run(args),
         Commands::Sessions(args) => execute_sessions(args),
         Commands::Replay(args) => execute_replay(args),
+        Commands::Themes => execute_themes(),
     };
 
     match result {
@@ -91,6 +101,21 @@ fn execute_run_with_prompting(
     // Track total iterations completed across retries within the same session.
     let mut total_iterations_completed: usize = 0;
 
+    // Build theme configuration from config file, env vars, and CLI args
+    // Priority: CLI flag > environment variable > config file > default
+    let theme_config = Some(
+        highlight::ThemeConfig::from_config_and_env()
+            .merge_cli(args.theme.as_deref(), args.no_background),
+    );
+
+    // Track custom config flags for startup display
+    let custom_prd_path = args.prd.clone();
+    let custom_design_path = args.design.clone();
+    let custom_progress_path = args.progress.clone();
+    let custom_command = args.command.is_some();
+    let custom_prompt = args.prompt.is_some();
+    let custom_completion_marker = args.completion_marker.is_some();
+
     loop {
         // Build run config, using the established session slug if we have one
         let config = RunConfig {
@@ -103,6 +128,13 @@ fn execute_run_with_prompting(
             // Pass the starting iteration number for session continuation
             starting_iteration: total_iterations_completed,
             timeout_secs: args.timeout,
+            theme_config: theme_config.clone(),
+            custom_prd_path: custom_prd_path.clone(),
+            custom_design_path: custom_design_path.clone(),
+            custom_progress_path: custom_progress_path.clone(),
+            custom_command,
+            custom_prompt,
+            custom_completion_marker,
         };
 
         // Execute the run loop
@@ -338,7 +370,13 @@ fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>
 /// Replays a session's output with syntax highlighting. Reads iteration logs
 /// from the session directory and re-renders the chunks.
 fn execute_replay(args: ReplayArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let result = replay::replay_session(&args.slug, args.iteration)?;
+    // Build theme configuration from config file, env vars, and CLI args
+    let theme_config = Some(
+        highlight::ThemeConfig::from_config_and_env()
+            .merge_cli(args.theme.as_deref(), args.no_background),
+    );
+
+    let result = replay::replay_session_with_theme(&args.slug, args.iteration, theme_config)?;
 
     // Print summary
     println!();
@@ -347,6 +385,30 @@ fn execute_replay(args: ReplayArgs) -> Result<(), Box<dyn std::error::Error>> {
         "Replayed {} iteration(s) from session '{}'",
         result.iterations_replayed, result.slug
     );
+
+    Ok(())
+}
+
+/// Execute the themes command.
+///
+/// Lists all available syntax highlighting themes.
+fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
+    let themes = highlight::Highlighter::available_themes();
+
+    println!("Available syntax highlighting themes:\n");
+    for theme in &themes {
+        if *theme == highlight::DEFAULT_THEME {
+            println!("  {} (default)", theme);
+        } else {
+            println!("  {}", theme);
+        }
+    }
+
+    println!();
+    println!("Use --theme <NAME> to select a theme for 'ralph run'.");
+    println!("Or set the RALPH_THEME environment variable.");
+    println!();
+    println!("You can also load custom .tmTheme files by specifying a file path.");
 
     Ok(())
 }

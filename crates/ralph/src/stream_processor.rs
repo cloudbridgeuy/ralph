@@ -24,7 +24,8 @@
 //! ```
 
 use crate::diff_highlight::{highlight_with_basic_colors, DiffHighlighter};
-use crate::highlight::Highlighter;
+use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
+use crate::markdown::MarkdownRenderer;
 use ralph_core::chunk::{
     split_lines_preserve_trailing, ChunkType, ParsedChunk, StreamingChunkBuffer,
 };
@@ -74,6 +75,8 @@ pub struct StreamProcessor {
     /// Diff highlighter (cached for efficiency).
     #[allow(dead_code)]
     diff_highlighter: DiffHighlighter,
+    /// Markdown renderer for prose output.
+    markdown_renderer: MarkdownRenderer,
     /// Whether highlighting is enabled (terminal detection).
     highlighting_enabled: bool,
     /// Whether to display tool invocations.
@@ -119,6 +122,7 @@ impl StreamProcessor {
             chunk_buffer: StreamingChunkBuffer::new(),
             code_highlighter: Highlighter::new(),
             diff_highlighter: DiffHighlighter::new(),
+            markdown_renderer: MarkdownRenderer::new(),
             highlighting_enabled: is_terminal,
             show_tool_invocations: is_terminal,
             current_message_id: None,
@@ -154,6 +158,85 @@ impl StreamProcessor {
             show_tool_invocations: show_tools,
             ..Self::new()
         }
+    }
+
+    /// Create a processor with custom theme configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `theme_config` - Configuration for syntax highlighting theme
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StreamProcessor)` - Successfully configured processor
+    /// * `Err(ThemeError)` - If the theme was not found or failed to load
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::stream_processor::StreamProcessor;
+    /// use ralph::highlight::ThemeConfig;
+    ///
+    /// let config = ThemeConfig::new().with_theme("Monokai Extended");
+    /// let processor = StreamProcessor::with_theme_config(config).unwrap();
+    /// ```
+    pub fn with_theme_config(theme_config: ThemeConfig) -> Result<Self, ThemeError> {
+        let is_terminal = std::io::stdout().is_terminal();
+        let highlighter = Highlighter::with_config(theme_config)?;
+
+        Ok(Self {
+            events: Vec::new(),
+            text_buffer: String::new(),
+            chunk_buffer: StreamingChunkBuffer::new(),
+            code_highlighter: highlighter,
+            diff_highlighter: DiffHighlighter::new(),
+            markdown_renderer: MarkdownRenderer::new(),
+            highlighting_enabled: is_terminal,
+            show_tool_invocations: is_terminal,
+            current_message_id: None,
+            collected_chunks: Vec::new(),
+            parse_errors: Vec::new(),
+            tool_correlator: ToolCorrelator::new(),
+            has_emitted_output: false,
+            response_count: 0,
+        })
+    }
+
+    /// Create a processor with full configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `theme_config` - Configuration for syntax highlighting theme
+    /// * `highlighting` - Whether to apply syntax highlighting (overrides terminal detection)
+    /// * `show_tools` - Whether to display tool invocations
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StreamProcessor)` - Successfully configured processor
+    /// * `Err(ThemeError)` - If the theme was not found or failed to load
+    pub fn with_full_config(
+        theme_config: ThemeConfig,
+        highlighting: bool,
+        show_tools: bool,
+    ) -> Result<Self, ThemeError> {
+        let highlighter = Highlighter::with_config(theme_config)?;
+
+        Ok(Self {
+            events: Vec::new(),
+            text_buffer: String::new(),
+            chunk_buffer: StreamingChunkBuffer::new(),
+            code_highlighter: highlighter,
+            diff_highlighter: DiffHighlighter::new(),
+            markdown_renderer: MarkdownRenderer::new(),
+            highlighting_enabled: highlighting,
+            show_tool_invocations: show_tools,
+            current_message_id: None,
+            collected_chunks: Vec::new(),
+            parse_errors: Vec::new(),
+            tool_correlator: ToolCorrelator::new(),
+            has_emitted_output: false,
+            response_count: 0,
+        })
     }
 
     /// Check if highlighting is enabled.
@@ -353,9 +436,21 @@ impl StreamProcessor {
     ///
     /// For code blocks, this wraps the highlighted content with visible fences
     /// to make the block boundaries clear in the terminal output.
+    ///
+    /// For prose, markdown formatting is applied using termimad when terminal
+    /// output is enabled. This renders headers, bold, italic, inline code,
+    /// and lists with appropriate ANSI styling.
     fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
         match &chunk.chunk_type {
-            ChunkType::Prose => chunk.content.clone(),
+            ChunkType::Prose => {
+                if self.highlighting_enabled {
+                    // Render markdown formatting with termimad
+                    self.markdown_renderer.render_line(&chunk.content)
+                } else {
+                    // Plain text for non-terminal output
+                    chunk.content.clone()
+                }
+            }
             ChunkType::Code { language } => {
                 // Format the opening fence with language hint
                 let opening_fence = match language {
