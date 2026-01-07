@@ -157,7 +157,7 @@ steps = [
   "Write diff output to iteration-N.diff",
   "Warn and continue if git unavailable",
 ]
-passes = false
+passes = true
 acceptance = [
   "Captures both staged and unstaged changes",
   "Empty diff file is valid (no changes)",

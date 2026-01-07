@@ -1,3 +1,4 @@
+mod git;
 mod init;
 mod iteration;
 mod session;

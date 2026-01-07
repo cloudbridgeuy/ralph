@@ -208,3 +208,42 @@
 - After Layer 1, Layer 1C will add JSON streaming support for metadata extraction
 - Note: cargo not available in Docker sandbox (known limitation)
 
+## 2026-01-07 - Git Diff Capture Complete
+
+### What was accomplished
+- Implemented Story #9: Capture git diff after each iteration in `crates/ralph/src/git.rs`
+- Created the following functions:
+  - `is_git_repository()` - Checks if current directory is a git repository
+  - `capture_git_diff()` - Captures both staged and unstaged changes using `git diff HEAD`
+  - `write_diff_file()` - Writes diff content to a file with parent directory creation
+  - `capture_and_write_diff()` - Convenience function combining capture and write operations
+- Created `GitDiff` struct to hold diff content and repository status
+- Created `GitError` enum with thiserror for error handling
+- Added comprehensive test suite with 7 tests covering:
+  - Git repository detection in non-git directories
+  - Diff capture in non-git directories
+  - Diff file writing with parent directory creation
+  - Empty diff file handling
+  - File overwriting behavior
+  - End-to-end capture and write in non-git directories
+  - GitDiff structure validation
+- Module follows Imperative Shell pattern (I/O operations in ralph crate)
+- Added module to `main.rs`
+- Marked story #9 (Capture git diff after each iteration) as passes = true
+
+### Implementation details
+- Diff files stored as `iteration-N.diff` in session directory (alongside iteration logs)
+- Uses `git diff HEAD` to capture both staged and unstaged changes (as per architecture spec)
+- Non-git directories write empty diff file and print warning to stderr (doesn't fail)
+- Empty diff files are valid when there are no changes
+- Parent directories created automatically if they don't exist
+- Comprehensive documentation with usage examples
+- Ready for integration into iteration loop (Story #10)
+
+### Context for next iteration
+- Git diff capture is complete and ready for use in the iteration loop
+- Layer 1 (Core Loop + Basic Storage) is now complete except for Story #10
+- Next priority: Story #10: Execute iteration loop with all checks (integrates all Layer 1 features)
+- After Layer 1 is complete, Layer 1C will add JSON streaming support for enhanced metadata extraction
+- Note: cargo not available in Docker sandbox (known limitation)
+
