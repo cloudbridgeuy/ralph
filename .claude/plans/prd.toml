@@ -343,7 +343,7 @@ steps = [
   "Add duration_ms field",
   "Add usage subsection with token counts",
 ]
-passes = false
+passes = true
 acceptance = [
   "Metadata section present in iteration logs",
   "All fields populated from JSON events",

@@ -645,3 +645,55 @@
   - Story #22: Update default command template for JSON output
 - The `IterationCosts` struct will be used by Story #19 alongside `IterationMetadata` to store full session data in iteration logs
 
+## 2026-01-07 - Store Metadata in Iteration Logs Complete
+
+### What was accomplished
+- Implemented Story #19: Store metadata in iteration logs in `crates/ralph/src/iteration.rs`
+- Added `LogMetadata` struct that combines session and cost information:
+  - `claude_session_id` - Unique identifier for Claude session
+  - `model` - Claude model name (e.g., "claude-opus-4-5-20251101")
+  - `cost_usd` - Total cost in USD for the iteration
+  - `duration_ms` - Duration in milliseconds
+  - `usage` - Token usage statistics (input, output, cache read/creation tokens)
+- Added `LogMetadata::from_extracted()` constructor to build from `IterationMetadata` and `IterationCosts`
+- Extended `IterationLog` struct with optional `metadata` field
+- Added 12 new tests covering:
+  - LogMetadata creation and is_empty checks
+  - LogMetadata::from_extracted() functionality
+  - Serialization and deserialization with full metadata
+  - Empty fields skipped in serialization
+  - Iteration logs with and without metadata
+  - Backward compatibility for old logs without metadata section
+  - File writing with metadata
+- Updated `run.rs` to include placeholder for metadata field (will be populated in future stories)
+- All tests pass (259 total)
+- Marked story #19 as passes = true
+
+### Implementation details
+- `LogMetadata` uses `#[serde(skip_serializing_if = "Option::is_none")]` for clean TOML output
+- Old logs without `[metadata]` section still parse (backward compatible via `#[serde(default)]`)
+- TOML output format matches architecture spec exactly:
+  ```toml
+  [metadata]
+  claude_session_id = "abc-123"
+  model = "claude-opus-4-5"
+  cost_usd = 0.05
+  duration_ms = 10000
+
+  [metadata.usage]
+  input_tokens = 100
+  output_tokens = 200
+  cache_read_input_tokens = 50
+  cache_creation_input_tokens = 25
+  ```
+- Follows Imperative Shell pattern (I/O in ralph crate, uses types from ralph_core)
+
+### Context for next iteration
+- Story #19 is complete, Layer 1C continues
+- The `LogMetadata` struct is ready to be populated from JSON streaming output
+- Next priorities for Layer 1C:
+  - Story #20: Correlate tool calls with tool results
+  - Story #21: Store tool interactions in iteration logs
+  - Story #22: Update default command template for JSON output
+- After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
+

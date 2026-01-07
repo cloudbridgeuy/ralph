@@ -156,6 +156,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         let result = invoke_subprocess(&config.command_template)?;
 
         // Write iteration log
+        // Note: metadata will be populated from JSON streaming output in a future story
         let iteration_log = IterationLog {
             sequence: iteration as u32,
             started_at: chrono::Utc::now(),
@@ -163,6 +164,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             exit_code: result.exit_code,
             pending_before,
             pending_after: 0, // Will be updated below
+            metadata: None,   // TODO: Extract from JSON streaming output (Story #20+)
             chunks: vec![Chunk::prose(result.stdout.clone())],
         };
 
