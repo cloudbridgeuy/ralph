@@ -109,7 +109,7 @@ steps = [
   "Record exit code",
   "Record pending_before and pending_after counts",
 ]
-passes = false
+passes = true
 acceptance = [
   "File written immediately after iteration completes",
   "TOML format matches architecture spec",

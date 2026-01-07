@@ -171,3 +171,40 @@
 - The subprocess module will be used by the iteration loop to invoke claude CLI
 - Note: cargo not available in Docker sandbox, but implementation follows established patterns
 
+## 2026-01-07 - Iteration Log Writing Complete
+
+### What was accomplished
+- Implemented Story #6: Write iteration log after each iteration in `crates/ralph/src/iteration.rs`
+- Created the following types and functions:
+  - `IterationLog` struct with sequence, timestamps, exit_code, pending counts, and chunks
+  - `Chunk` struct for storing output (prose/code/diff types)
+  - `Chunk::prose()`, `Chunk::code()`, and `Chunk::diff()` constructors
+  - `write_iteration_log()` function for writing logs to `iteration-N.toml` files
+  - `IterationError` enum with thiserror for error handling
+- Added comprehensive test suite with 11 tests covering:
+  - Chunk creation for prose, code, and diff types
+  - Serialization and deserialization of iteration logs
+  - Writing single and multiple iteration logs to disk
+  - TOML format verification
+  - Edge cases (empty chunks, language field omission)
+- Module follows Imperative Shell pattern (I/O operations in ralph crate)
+- Added module to `main.rs`
+- Marked story #6 (Write iteration log after each iteration) as passes = true
+
+### Implementation details
+- Iteration logs stored as `iteration-N.toml` in session directory
+- TOML format matches architecture spec (sequence, timestamps, exit_code, pending counts, chunks array)
+- Currently stores raw output as single prose chunk (per Layer 1 requirements)
+- Layer 1C will extend with metadata extraction (session_id, model, costs, usage)
+- Layer 3 will enhance chunk parsing (typed code blocks, diff blocks)
+- Comprehensive documentation with usage examples
+- Ready for integration into iteration loop
+
+### Context for next iteration
+- Iteration log writing is complete and ready for use in the iteration loop
+- Next priorities for Layer 1:
+  - Story #9: Capture git diff after each iteration
+  - Story #10: Execute iteration loop with all checks (integrates all Layer 1 features)
+- After Layer 1, Layer 1C will add JSON streaming support for metadata extraction
+- Note: cargo not available in Docker sandbox (known limitation)
+
