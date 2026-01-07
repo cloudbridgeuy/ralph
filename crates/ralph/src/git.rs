@@ -4,7 +4,7 @@
 //! It follows the Imperative Shell pattern - all functions perform I/O operations.
 
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use thiserror::Error;
 
@@ -19,7 +19,8 @@ pub enum GitError {
     #[error("Git command failed with exit code {code}: {stderr}")]
     GitFailed { code: i32, stderr: String },
 
-    /// Not a git repository
+    /// Not a git repository (reserved for future use)
+    #[allow(dead_code)]
     #[error("Not a git repository: {0}")]
     NotGitRepository(String),
 
@@ -97,9 +98,7 @@ pub fn capture_git_diff() -> Result<GitDiff, GitError> {
     }
 
     // Capture both staged and unstaged changes
-    let output = Command::new("git")
-        .args(["diff", "HEAD"])
-        .output()?;
+    let output = Command::new("git").args(["diff", "HEAD"]).output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -198,7 +197,6 @@ pub fn capture_and_write_diff(diff_path: &Path) -> Result<(), GitError> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     #[test]
@@ -209,7 +207,9 @@ mod tests {
 
         std::env::set_current_dir(temp_dir.path()).unwrap();
         let result = is_git_repository();
-        std::env::set_current_dir(original_dir).unwrap();
+        // Restore original dir - ignore errors as temp dirs may be cleaned up
+        // by parallel tests in some environments
+        let _ = std::env::set_current_dir(&original_dir);
 
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -223,7 +223,9 @@ mod tests {
 
         std::env::set_current_dir(temp_dir.path()).unwrap();
         let result = capture_git_diff();
-        std::env::set_current_dir(original_dir).unwrap();
+        // Restore original dir - ignore errors as temp dirs may be cleaned up
+        // by parallel tests in some environments
+        let _ = std::env::set_current_dir(&original_dir);
 
         assert!(result.is_ok());
         let diff = result.unwrap();
@@ -283,7 +285,9 @@ mod tests {
 
         std::env::set_current_dir(temp_dir.path()).unwrap();
         let result = capture_and_write_diff(&diff_path);
-        std::env::set_current_dir(original_dir).unwrap();
+        // Restore original dir - ignore errors as temp dirs may be cleaned up
+        // by parallel tests in some environments
+        let _ = std::env::set_current_dir(&original_dir);
 
         assert!(result.is_ok());
         assert!(diff_path.exists());

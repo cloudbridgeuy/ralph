@@ -8,3 +8,4 @@ pub mod completion;
 pub mod context;
 pub mod prd;
 pub mod session;
+pub mod stream;

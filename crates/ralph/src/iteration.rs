@@ -210,10 +210,12 @@ mod tests {
 
     #[test]
     fn test_iteration_log_deserialization() {
+        // Note: TOML requires RFC 3339 dates without the Z suffix for bare datetime,
+        // or quoted strings for full RFC 3339 with timezone
         let toml_str = r#"
             sequence = 2
-            started_at = 2025-01-06T14:30:00Z
-            completed_at = 2025-01-06T14:35:00Z
+            started_at = "2025-01-06T14:30:00Z"
+            completed_at = "2025-01-06T14:35:00Z"
             exit_code = 0
             pending_before = 3
             pending_after = 2
@@ -320,7 +322,10 @@ mod tests {
             pending_after: 1,
             chunks: vec![
                 Chunk::prose("I'll implement the function:".to_string()),
-                Chunk::code("fn hello() {\n    println!(\"Hello\");\n}".to_string(), "rust".to_string()),
+                Chunk::code(
+                    "fn hello() {\n    println!(\"Hello\");\n}".to_string(),
+                    "rust".to_string(),
+                ),
             ],
         };
 

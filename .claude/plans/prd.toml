@@ -202,7 +202,7 @@ steps = [
   "Create ResultEvent struct with duration_ms, total_cost_usd, usage",
   "Use serde tag-based deserialization on 'type' field",
 ]
-passes = false
+passes = true
 acceptance = [
   "All event types deserialize from real Claude stream-json output",
   "Unknown fields ignored via #[serde(flatten)] or deny_unknown_fields = false",

@@ -18,7 +18,9 @@ use std::path::{Path, PathBuf};
 #[derive(thiserror::Error, Debug)]
 pub enum SessionError {
     /// Session slug already exists
-    #[error("Session '{slug}' already exists. Choose a different slug or omit for auto-generated.")]
+    #[error(
+        "Session '{slug}' already exists. Choose a different slug or omit for auto-generated."
+    )]
     DuplicateSlug { slug: String },
 
     /// Failed to generate a unique slug
@@ -157,8 +159,7 @@ pub fn resolve_session_slug(user_slug: Option<&str>) -> Result<String, SessionEr
         let existing = index.existing_slugs();
         let mut rng = rand::thread_rng();
 
-        generate_unique_slug(&mut rng, &existing, 100)
-            .ok_or(SessionError::SlugGenerationFailed)
+        generate_unique_slug(&mut rng, &existing, 100).ok_or(SessionError::SlugGenerationFailed)
     }
 }
 
@@ -306,7 +307,7 @@ mod tests {
         let result = resolve_session_slug(Some("INVALID"));
         assert!(matches!(result, Err(SessionError::InvalidSlug { .. })));
 
-        let result = resolve_session_slug(Some("no-uppercase"));
+        let _result = resolve_session_slug(Some("no-uppercase"));
         // This might succeed if the slug doesn't exist, so we're just testing format validation
         // The actual validation happens in is_valid_slug which is tested in core
     }

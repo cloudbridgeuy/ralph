@@ -131,12 +131,8 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
     let max_iterations = config.max_iterations.unwrap_or(pending_count);
 
     // 4. Initialize session directory and metadata
-    let project_path = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .display()
-        .to_string();
-    let session_slug = initialize_session(config.slug.as_deref(), &project_path)?;
-    let session_dir = crate::session::session_dir(&session_slug);
+    let project_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (session_slug, session_dir) = initialize_session(config.slug.as_deref(), &project_path)?;
 
     // 5. Execute iteration loop
     let mut iterations_completed = 0;
@@ -195,11 +191,9 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         write_iteration_log(&session_dir, &updated_log)?;
 
         // Check completion conditions
-        if let Some(reason) = check_completion(
-            pending_after,
-            &result.stdout,
-            &config.completion_marker,
-        ) {
+        if let Some(reason) =
+            check_completion(pending_after, &result.stdout, &config.completion_marker)
+        {
             completion_reason = Some(reason);
             iterations_completed = iteration;
             break;

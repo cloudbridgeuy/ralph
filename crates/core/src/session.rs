@@ -391,10 +391,11 @@ pub fn total_slug_combinations() -> usize {
 // =============================================================================
 
 /// The outcome/status of a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionOutcome {
     /// Session is currently running
+    #[default]
     InProgress,
     /// Session completed successfully (all stories done)
     Completed,
@@ -402,12 +403,6 @@ pub enum SessionOutcome {
     Aborted,
     /// Session failed due to an error
     Failed,
-}
-
-impl Default for SessionOutcome {
-    fn default() -> Self {
-        Self::InProgress
-    }
 }
 
 impl std::fmt::Display for SessionOutcome {
@@ -841,8 +836,14 @@ mod tests {
     #[test]
     fn test_sessions_index_existing_slugs() {
         let mut index = SessionsIndex::new();
-        index.add_session(SessionEntry::new("one-fish".to_string(), PathBuf::from("/a")));
-        index.add_session(SessionEntry::new("two-fish".to_string(), PathBuf::from("/b")));
+        index.add_session(SessionEntry::new(
+            "one-fish".to_string(),
+            PathBuf::from("/a"),
+        ));
+        index.add_session(SessionEntry::new(
+            "two-fish".to_string(),
+            PathBuf::from("/b"),
+        ));
 
         let slugs = index.existing_slugs();
         assert_eq!(slugs.len(), 2);
@@ -900,7 +901,10 @@ mod tests {
     #[test]
     fn test_sessions_index_find_by_slug_mut() {
         let mut index = SessionsIndex::new();
-        index.add_session(SessionEntry::new("test-slug".to_string(), PathBuf::from("/test")));
+        index.add_session(SessionEntry::new(
+            "test-slug".to_string(),
+            PathBuf::from("/test"),
+        ));
 
         // Modify through mutable reference
         if let Some(entry) = index.find_by_slug_mut("test-slug") {

@@ -292,3 +292,55 @@
 - After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
 - Note: cargo not available in Docker sandbox (known limitation) - code follows established patterns
 
+## 2026-01-06 - Stream-JSON Types Complete
+
+### What was accomplished
+- Implemented Story #11: Define Rust types for stream-json events in `crates/core/src/stream.rs`
+- Created comprehensive type definitions for Claude CLI's `--output-format stream-json` output:
+  - `StreamEvent` enum with `System`, `Assistant`, `User`, `Result` variants using `#[serde(tag = "type")]`
+  - `SystemEvent` struct with `session_id`, `model`, `tools` fields for session initialization
+  - `AssistantEvent` with `AssistantMessage` containing `content` array
+  - `ContentBlock` enum with `Text` and `ToolUse` variants for message content
+  - `UserEvent` with `UserMessage` and `ToolResult` for tool execution results
+  - `ResultEvent` with `total_cost_usd`, `duration_ms`, `usage` for session costs
+  - `Usage` struct for token counts (input, output, cache read/creation)
+  - `Tool` struct for tool metadata in system events
+- Added 13 comprehensive tests covering:
+  - System init event parsing with tools array
+  - Assistant text events
+  - Assistant tool use events with JSON input
+  - User tool result events (success and error cases)
+  - Result event with costs and usage
+  - Alternative cost field names
+  - Empty content arrays
+  - Missing optional fields
+  - Usage defaults
+  - Round-trip serialization for events and content blocks
+- Added `serde_json` dependency to `ralph_core` crate
+- Fixed several pre-existing issues in the codebase:
+  - Added missing `chrono` and `serde` dependencies to ralph crate
+  - Fixed `initialize_session` call in `run.rs` (type mismatches)
+  - Fixed unused imports in `git.rs`
+  - Fixed clippy error for `SessionOutcome` Default impl
+  - Fixed TOML date parsing in iteration log test
+  - Fixed flaky subprocess tests with shell-init warnings
+  - Fixed parallel test issues with current directory changes
+- Marked story #11 as passes = true
+
+### Implementation details
+- Types follow Functional Core pattern (pure types in ralph_core, no I/O)
+- Uses serde's tag-based enum deserialization (`#[serde(tag = "type", rename_all = "snake_case")]`)
+- All optional fields use `#[serde(default)]` for forward compatibility
+- `ResultEvent` has helper method `get_cost_usd()` to handle both `total_cost_usd` and `cost_usd` field names
+- Comprehensive documentation with examples in module docstring
+- Module exported from `crates/core/src/lib.rs`
+
+### Context for next iteration
+- Story #11 is complete, Layer 1C is now started
+- Next priority: Story #12 - Parse newline-delimited JSON from stream-json output
+  - Will build on the types defined in this story
+  - Needs to handle line-by-line parsing from subprocess stdout
+  - Should gracefully handle malformed JSON
+- Remaining Layer 1C stories (#13-20) will use these types for metadata extraction
+- After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
+
