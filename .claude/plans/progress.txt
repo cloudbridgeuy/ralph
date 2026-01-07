@@ -344,3 +344,45 @@
 - Remaining Layer 1C stories (#13-20) will use these types for metadata extraction
 - After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
 
+## 2026-01-06 - NDJSON Stream Parsing Complete
+
+### What was accomplished
+- Implemented Story #12: Parse newline-delimited JSON from stream-json output in `crates/core/src/stream.rs`
+- Added three new functions/types for parsing stream-json output:
+  - `ParsedLine` enum with `Event`, `Empty`, and `Error` variants for parse results
+  - `parse_stream_line(line: &str) -> ParsedLine` - Parse a single line of NDJSON
+  - `parse_stream_output(output: &str) -> (Vec<StreamEvent>, Vec<(usize, String, String)>)` - Parse complete output
+  - `StreamParser<I>` - Iterator-based parser for streaming scenarios
+- All functions handle malformed JSON gracefully (return errors, don't crash)
+- Empty lines are skipped automatically
+- Added 20 comprehensive tests covering:
+  - Parsing all event types (system, assistant, user, result)
+  - Empty line handling
+  - Malformed JSON handling
+  - Partial/incomplete lines
+  - Unknown event types
+  - Whitespace handling
+  - Multiple events in order
+  - Real Claude output simulation
+  - Iterator-based streaming parser
+- Marked story #12 as passes = true
+
+### Implementation details
+- Pure functions in Functional Core (ralph_core) - no I/O operations
+- `parse_stream_line` trims whitespace and handles empty lines gracefully
+- `parse_stream_output` returns both successful events and errors with line numbers
+- `StreamParser` wraps any `Iterator<Item = String>` for streaming scenarios
+- Uses serde_json for JSON parsing, leveraging the types from Story #11
+- Errors include original line content and error message for debugging
+
+### Context for next iteration
+- Story #12 is complete
+- Next priorities for Layer 1C:
+  - Story #13: Extract text content from assistant events
+  - Story #14: Extract tool invocations from assistant events
+  - Story #15: Accumulate text across streaming assistant events
+  - Story #16: Parse accumulated text into typed chunks
+  - Story #17-20: Metadata extraction and storage
+- The parsing functions are ready to be used by subsequent stories
+- Shell layer (ralph crate) can use StreamParser with BufReader lines for real-time parsing
+

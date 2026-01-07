@@ -220,7 +220,7 @@ steps = [
   "Yield parsed events to caller",
   "Handle malformed JSON gracefully (log warning, continue)",
 ]
-passes = false
+passes = true
 acceptance = [
   "Parses all event types from Claude stream-json output",
   "Handles partial/incomplete lines at stream end",

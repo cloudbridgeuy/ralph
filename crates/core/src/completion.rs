@@ -94,7 +94,11 @@ mod tests {
 
     #[test]
     fn test_no_completion_when_stories_remain_and_no_marker() {
-        let result = check_completion(3, "Still working on features", "<promise>COMPLETE</promise>");
+        let result = check_completion(
+            3,
+            "Still working on features",
+            "<promise>COMPLETE</promise>",
+        );
         assert_eq!(result, None);
     }
 
