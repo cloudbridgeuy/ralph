@@ -1541,3 +1541,37 @@ From "Fix session outcome for user abort and retry flow" story:
 - The run command now has robust timeout handling for LLM subprocess invocations
 - Timeout errors trigger the same retry/prompt flow as other subprocess failures
 
+## 2026-01-07 - Stream-JSON Parsing Integration Verified Complete
+
+### What was accomplished
+- Verified Story: "Integrate stream-json parsing into run loop" (Layer 1D) was already implemented
+- All acceptance criteria confirmed met:
+  - `IterationLog.metadata` populated with session_id, model, cost_usd, duration_ms, usage (run.rs:256-279)
+  - `IterationLog.tool_calls` contains all tool invocations with correlated results (run.rs:262)
+  - `IterationLog.chunks` contains parsed prose/code/diff chunks (run.rs:265)
+  - Replay command displays rich metadata (model, cost, duration) (replay.rs:225-237)
+  - Parsing errors handled gracefully without crashing (stream_processor.rs:156-159)
+  - Graceful degradation via extract_*_or_default functions
+- All 450 tests pass (186 core, 264 ralph)
+- Marked story as passes = true
+
+### Implementation verification
+- The implementation was completed in prior iteration "Syntax Highlighting During Streaming Output Complete"
+- `run.rs` uses `invoke_subprocess_with_timeout()` which internally uses `StreamProcessor`
+- Metadata extraction: `LogMetadata::from_extracted(result.stream_result.metadata, costs)`
+- Tool call extraction: `LogToolCall::from_interactions(&result.stream_result.tool_interactions)`
+- Chunk conversion: `Chunk::from_parsed_chunks(&result.stream_result.chunks)`
+- Parse errors stored in `StreamProcessor.parse_errors` vector (don't crash the loop)
+
+### Context for next iteration
+- **ALL PRD STORIES ARE NOW COMPLETE** - Layer 1D is finished
+- The run command architecture is feature complete:
+  - Layer 1: Core Loop + Basic Storage ✅
+  - Layer 1C: JSON Streaming Support ✅
+  - Layer 1D: Stream-JSON Integration ✅
+  - Layer 2: CLI Interface ✅
+  - Layer 3: Output Formatting ✅
+  - Layer 4: Error Handling ✅
+  - Layer 5: Auxiliary Commands ✅
+- Total: 450 tests passing (186 in core, 264 in ralph)
+

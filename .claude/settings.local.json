@@ -53,7 +53,9 @@
       "Read(.claude/context/**)",
       "Write(.claude/context/**)",
       "Edit(.claude/context/**)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

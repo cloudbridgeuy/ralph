@@ -114,15 +114,13 @@ for ((i = 1; i <= ITERATIONS; i++)); do
 
 ONLY WORK ON A SINGLE FEATURE.
 
+IF YOU NOTICE A FILE GOING OVER 1000 LINES CONSIDER UPDATING IT INTO A MODULE OR MOVING THE TESTS TO A DIFFERENT FILE, AND USE THE #[path = ...] PATTERN.
+
 If, while implementing the feature, you notice all stories in the PRD are complete, output $COMPLETION_MARKER."
 
 	# Run claude directly (no capture, pure streaming)
 	set +e
-	docker sandbox run \
-		-v /Users/guzmanmonne/.claude:/home/agent/.claude:ro \
-		-v /Users/guzmanmonne/.claude.json:/home/agent/.claude.json:ro \
-		-v /Users/guzmanmonne/.claude.json.backup:/home/agent/.claude.json.backup:ro \
-		claude --permission-mode acceptEdits -p "$PROMPT" --allowedTools "Read,Edit,Bash" --output-format stream-json --verbose
+	claude --permission-mode acceptEdits -p "$PROMPT" --allowedTools "Read,Edit,Bash" --output-format stream-json --verbose | jq
 	exit_code=$?
 	set -e
 

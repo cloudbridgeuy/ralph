@@ -739,7 +739,7 @@ steps = [
   "Populate IterationLog with extracted metadata, tool_calls, and chunks",
   "Remove TODO comments from run.rs:174-176",
 ]
-passes = false
+passes = true
 acceptance = [
   "IterationLog.metadata populated with session_id, model, cost_usd, duration_ms, usage",
   "IterationLog.tool_calls contains all tool invocations with correlated results",
