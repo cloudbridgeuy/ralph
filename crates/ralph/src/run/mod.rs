@@ -13,7 +13,8 @@ use crate::iteration::{
 };
 use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::startup::{
-    display_iteration_header, display_startup_info, IterationHeader, StartupInfo,
+    display_iteration_header, display_iteration_summary, display_startup_info, IterationHeader,
+    IterationSummary, StartupInfo,
 };
 use crate::subprocess::{
     invoke_subprocess_with_theme, invoke_subprocess_with_timeout, SubprocessError,
@@ -347,6 +348,25 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         if let Err(e) = capture_and_write_diff(&diff_path) {
             eprintln!("Warning: Failed to capture git diff: {}", e);
         }
+
+        // Display iteration summary with cost, duration, and token usage
+        let (input_tokens, output_tokens) = result
+            .stream_result
+            .costs
+            .usage
+            .as_ref()
+            .map(|u| (Some(u.input_tokens), Some(u.output_tokens)))
+            .unwrap_or((None, None));
+
+        let summary = IterationSummary {
+            iteration,
+            cost_usd: result.stream_result.costs.cost_usd,
+            duration_ms: result.stream_result.costs.duration_ms,
+            model: result.stream_result.metadata.model.clone(),
+            input_tokens,
+            output_tokens,
+        };
+        display_iteration_summary(&summary);
 
         // Post-iteration check: re-read PRD
         let prd_after = read_prd_file(&config.context_paths.prd)?;

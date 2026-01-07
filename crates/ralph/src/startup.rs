@@ -261,6 +261,145 @@ fn display_iteration_header_plain(header: &IterationHeader) {
     println!();
 }
 
+/// Information for iteration summary display.
+#[derive(Debug)]
+pub struct IterationSummary {
+    /// Current iteration number (1-indexed).
+    pub iteration: usize,
+    /// Cost in USD for this iteration (from result event).
+    pub cost_usd: Option<f64>,
+    /// Duration in milliseconds (from result event).
+    pub duration_ms: Option<u64>,
+    /// Model name used for this iteration.
+    pub model: Option<String>,
+    /// Input tokens used.
+    pub input_tokens: Option<u64>,
+    /// Output tokens generated.
+    pub output_tokens: Option<u64>,
+}
+
+/// Display iteration summary to stdout.
+///
+/// The output format adapts based on whether stdout is a terminal:
+/// - Terminal: Uses dimmed colors for a subtle summary appearance
+/// - Piped: Uses plain ASCII with no ANSI codes
+pub fn display_iteration_summary(summary: &IterationSummary) {
+    let is_terminal = std::io::stdout().is_terminal();
+
+    if is_terminal {
+        display_iteration_summary_terminal(summary);
+    } else {
+        display_iteration_summary_plain(summary);
+    }
+}
+
+/// Display iteration summary with terminal formatting.
+fn display_iteration_summary_terminal(summary: &IterationSummary) {
+    println!();
+    println!(
+        "\x1b[2m─── Iteration {} Summary ───\x1b[0m",
+        summary.iteration
+    );
+
+    // Cost and duration on one line
+    let cost_str = summary
+        .cost_usd
+        .map(|c| format!("${:.4}", c))
+        .unwrap_or_else(|| "N/A".to_string());
+    let duration_str = summary
+        .duration_ms
+        .map(format_duration)
+        .unwrap_or_else(|| "N/A".to_string());
+
+    println!(
+        "\x1b[2mCost: {} • Duration: {}\x1b[0m",
+        cost_str, duration_str
+    );
+
+    // Model
+    if let Some(ref model) = summary.model {
+        println!("\x1b[2mModel: {}\x1b[0m", model);
+    }
+
+    // Tokens
+    let has_tokens = summary.input_tokens.is_some() || summary.output_tokens.is_some();
+    if has_tokens {
+        let input_str = summary
+            .input_tokens
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+        let output_str = summary
+            .output_tokens
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+        println!(
+            "\x1b[2mTokens: {} input | {} output\x1b[0m",
+            input_str, output_str
+        );
+    }
+
+    println!("\x1b[2m{}\x1b[0m", "─".repeat(30));
+}
+
+/// Display iteration summary without terminal formatting.
+fn display_iteration_summary_plain(summary: &IterationSummary) {
+    println!();
+    println!("--- Iteration {} Summary ---", summary.iteration);
+
+    // Cost and duration on one line
+    let cost_str = summary
+        .cost_usd
+        .map(|c| format!("${:.4}", c))
+        .unwrap_or_else(|| "N/A".to_string());
+    let duration_str = summary
+        .duration_ms
+        .map(format_duration)
+        .unwrap_or_else(|| "N/A".to_string());
+
+    println!("Cost: {} | Duration: {}", cost_str, duration_str);
+
+    // Model
+    if let Some(ref model) = summary.model {
+        println!("Model: {}", model);
+    }
+
+    // Tokens
+    let has_tokens = summary.input_tokens.is_some() || summary.output_tokens.is_some();
+    if has_tokens {
+        let input_str = summary
+            .input_tokens
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+        let output_str = summary
+            .output_tokens
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+        println!("Tokens: {} input | {} output", input_str, output_str);
+    }
+
+    println!("{}", "-".repeat(30));
+}
+
+/// Format duration from milliseconds to human-readable string.
+///
+/// # Formatting rules
+/// - 0-999ms → "Xms"
+/// - 1000-59999ms → "X.Xs" (e.g., "45.2s")
+/// - 60000+ ms → "Xm Ys" (e.g., "1m 23s")
+fn format_duration(duration_ms: u64) -> String {
+    if duration_ms < 1000 {
+        format!("{}ms", duration_ms)
+    } else if duration_ms < 60_000 {
+        let seconds = duration_ms as f64 / 1000.0;
+        format!("{:.1}s", seconds)
+    } else {
+        let total_seconds = duration_ms / 1000;
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        format!("{}m {}s", minutes, seconds)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,5 +558,126 @@ mod tests {
         assert_eq!(header.iteration, 100);
         assert_eq!(header.max_iterations, Some(1000));
         assert_eq!(header.pending_stories, 500);
+    }
+
+    // Tests for format_duration
+
+    #[test]
+    fn test_format_duration_milliseconds() {
+        assert_eq!(format_duration(0), "0ms");
+        assert_eq!(format_duration(500), "500ms");
+        assert_eq!(format_duration(999), "999ms");
+    }
+
+    #[test]
+    fn test_format_duration_seconds() {
+        assert_eq!(format_duration(1000), "1.0s");
+        assert_eq!(format_duration(1500), "1.5s");
+        assert_eq!(format_duration(45200), "45.2s");
+        assert_eq!(format_duration(59999), "60.0s");
+    }
+
+    #[test]
+    fn test_format_duration_minutes() {
+        assert_eq!(format_duration(60_000), "1m 0s");
+        assert_eq!(format_duration(83_000), "1m 23s");
+        assert_eq!(format_duration(120_000), "2m 0s");
+        assert_eq!(format_duration(600_000), "10m 0s");
+    }
+
+    #[test]
+    fn test_format_duration_hours_as_minutes() {
+        // Very long durations are shown as minutes
+        assert_eq!(format_duration(3_600_000), "60m 0s");
+        assert_eq!(format_duration(7_200_000), "120m 0s");
+    }
+
+    // Tests for IterationSummary
+
+    fn create_test_summary() -> IterationSummary {
+        IterationSummary {
+            iteration: 1,
+            cost_usd: Some(0.0234),
+            duration_ms: Some(45_200),
+            model: Some("claude-opus-4-5-20251101".to_string()),
+            input_tokens: Some(712),
+            output_tokens: Some(2971),
+        }
+    }
+
+    #[test]
+    fn test_iteration_summary_creation() {
+        let summary = create_test_summary();
+        assert_eq!(summary.iteration, 1);
+        assert_eq!(summary.cost_usd, Some(0.0234));
+        assert_eq!(summary.duration_ms, Some(45_200));
+        assert_eq!(summary.model, Some("claude-opus-4-5-20251101".to_string()));
+        assert_eq!(summary.input_tokens, Some(712));
+        assert_eq!(summary.output_tokens, Some(2971));
+    }
+
+    #[test]
+    fn test_iteration_summary_with_none_values() {
+        let summary = IterationSummary {
+            iteration: 2,
+            cost_usd: None,
+            duration_ms: None,
+            model: None,
+            input_tokens: None,
+            output_tokens: None,
+        };
+        assert_eq!(summary.iteration, 2);
+        assert!(summary.cost_usd.is_none());
+        assert!(summary.duration_ms.is_none());
+        assert!(summary.model.is_none());
+        assert!(summary.input_tokens.is_none());
+        assert!(summary.output_tokens.is_none());
+    }
+
+    #[test]
+    fn test_iteration_summary_partial_tokens() {
+        // Can have input_tokens without output_tokens and vice versa
+        let summary = IterationSummary {
+            iteration: 1,
+            cost_usd: Some(0.05),
+            duration_ms: Some(10_000),
+            model: None,
+            input_tokens: Some(500),
+            output_tokens: None,
+        };
+        assert_eq!(summary.input_tokens, Some(500));
+        assert!(summary.output_tokens.is_none());
+    }
+
+    #[test]
+    fn test_iteration_summary_zero_cost() {
+        // Zero cost is valid (e.g., cached responses)
+        let summary = IterationSummary {
+            iteration: 1,
+            cost_usd: Some(0.0),
+            duration_ms: Some(100),
+            model: Some("test-model".to_string()),
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+        };
+        assert_eq!(summary.cost_usd, Some(0.0));
+        assert_eq!(summary.input_tokens, Some(0));
+        assert_eq!(summary.output_tokens, Some(0));
+    }
+
+    #[test]
+    fn test_iteration_summary_large_values() {
+        // Large token counts and costs
+        let summary = IterationSummary {
+            iteration: 100,
+            cost_usd: Some(15.5678),
+            duration_ms: Some(3_600_000), // 1 hour
+            model: Some("claude-opus-4-5-20251101".to_string()),
+            input_tokens: Some(1_000_000),
+            output_tokens: Some(500_000),
+        };
+        assert_eq!(summary.iteration, 100);
+        assert_eq!(summary.cost_usd, Some(15.5678));
+        assert_eq!(summary.input_tokens, Some(1_000_000));
     }
 }
