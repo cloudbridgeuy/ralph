@@ -501,12 +501,12 @@ category = "functional"
 description = "Apply syntax highlighting to code chunks"
 steps = [
   "Detect if stdout is a terminal",
-  "Use giallo library for syntax highlighting",
+  "Use syntect library for syntax highlighting",
   "Select syntax based on language hint",
   "Render highlighted code to terminal",
   "Fall back to plain output if not a terminal",
 ]
-passes = false
+passes = true
 acceptance = [
   "Common languages highlighted (rust, python, js, etc.)",
   "Unknown languages rendered without highlighting",

@@ -52,6 +52,9 @@ reqwest = { version = "0.12", features = ["json"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 
+# Syntax highlighting
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+
 # JSON
 serde_json = "1.0"
 

@@ -1047,3 +1047,43 @@
 - After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
 - The `StreamingChunkBuffer` is ready to be used by subprocess output processing
 
+## 2026-01-07 - Syntax Highlighting for Code Chunks Complete
+
+### What was accomplished
+- Implemented Story: "Apply syntax highlighting to code chunks" (Layer 3 Output Formatting)
+- Created `crates/ralph/src/highlight.rs` with the following components:
+  - `Highlighter` struct for reusable syntax highlighting with lazy-loaded syntaxes
+  - `Highlighter::highlight(code, language)` - Highlights code with optional language hint
+  - `Highlighter::is_language_supported(lang)` - Checks if a language is supported
+  - `Highlighter::supported_languages()` - Lists all supported language tokens
+  - `is_highlighting_supported()` - Terminal detection for ANSI support
+  - `highlight_code(code, language)` - Convenience function with default highlighter
+  - `format_code_for_terminal(code, language)` - Combines terminal detection with highlighting
+- Added syntect 5.2 as workspace dependency with default-fancy features
+- Added 19 comprehensive tests covering:
+  - Rust, Python, JavaScript highlighting
+  - Unknown language handling (returns plain text)
+  - No language hint handling
+  - Empty code, multiline code, special characters
+  - Language support detection
+  - Content preservation (ANSI stripping verification)
+- Updated PRD to change "giallo" to "syntect" (syntect has better terminal support)
+- All 371 tests pass (107 core, 264 ralph)
+
+### Implementation details
+- Uses syntect library for syntax highlighting (not giallo - syntect has native ANSI terminal support)
+- ANSI 24-bit true color output using `as_24_bit_terminal_escaped`
+- Base16 Ocean Dark theme for readable terminal output
+- Terminal detection via `std::io::IsTerminal` trait (Rust 1.70+)
+- Unknown languages return code unchanged (no highlighting, no error)
+- Follows Imperative Shell pattern (I/O operations in ralph crate)
+- Reusable `Highlighter` struct caches syntax/theme loading
+
+### Context for next iteration
+- **Layer 3 syntax highlighting story is now complete**
+- Next priorities for Layer 3:
+  - Story: Apply diff highlighting with fallback chain (delta → diff → basic)
+  - Story: Store typed chunks in iteration logs
+- After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
+- The highlight module is ready to be integrated with subprocess output streaming
+

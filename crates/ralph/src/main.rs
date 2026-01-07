@@ -1,5 +1,6 @@
 mod cli;
 mod git;
+pub mod highlight;
 mod init;
 mod iteration;
 mod run;
