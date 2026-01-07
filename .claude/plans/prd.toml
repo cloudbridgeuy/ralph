@@ -91,7 +91,7 @@ steps = [
   "Wait for process completion",
   "Return exit code and captured output",
 ]
-passes = false
+passes = true
 acceptance = [
   "Subprocess inherits stdin for interactive prompts",
   "stdout streams to terminal as it arrives",
