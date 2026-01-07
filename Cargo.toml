@@ -6,6 +6,7 @@ resolver = "2"
 edition = "2021"
 license = "MIT"
 authors = ["Guzmán Monné"]
+rust-version = "1.82.0"
 
 [profile.dev]
 # Disabling debug info speeds up builds.
@@ -17,41 +18,44 @@ incremental = true
 debug = 0
 
 [workspace.dependencies]
-ralph_core = { version = "0.0.0", path = "crates/core" }
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
+# Output formatting
+anstream = "0.6"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
 
 # Error handling
 color-eyre = "0.6"
-thiserror = "1.0"
-
-# Async runtime
-tokio = { version = "1.0", features = ["full"] }
 
 # Logging
 env_logger = "0.11"
 log = "0.4"
-
-# Output formatting
-anstream = "0.6"
 prettytable = "0.10"
+ralph_core = { version = "0.0.0", path = "crates/core" }
 
-# HTTP client (for existing features)
-reqwest = { version = "0.12", features = ["json"] }
-
-# Date/time
-chrono = { version = "0.4", features = ["serde"] }
-
-# JSON
-serde_json = "1.0"
+# Random number generation
+rand = "0.8"
 
 # Regex
 regex = "1.0"
 
+# HTTP client (for existing features)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+
+# JSON
+serde_json = "1.0"
+
 # Testing
 tempfile = "3.10"
+thiserror = "1.0"
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+toml = "0.8"
