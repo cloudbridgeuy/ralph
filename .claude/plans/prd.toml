@@ -254,7 +254,7 @@ steps = [
   "Extract tool name, id, and input for each",
   "Return list of ToolInvocation structs",
 ]
-passes = false
+passes = true
 acceptance = [
   "Extracts all tool calls from a message",
   "Preserves tool_use IDs for correlation with user events",

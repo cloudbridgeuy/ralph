@@ -425,3 +425,50 @@
   - Story #17-20: Metadata extraction and storage
 - The text extraction functions are ready to be used by accumulation logic in Story #15
 
+## 2026-01-06 - Tool Invocation Extraction Complete
+
+### What was accomplished
+- Implemented Story #14: Extract tool invocations from assistant events in `crates/core/src/stream.rs`
+- Added the following types, methods, and functions:
+  - `ToolInvocation` struct with `id`, `name`, and `input` (as `serde_json::Value`) fields
+  - `AssistantMessage::extract_tool_invocations()` - Extracts tool use blocks from message.content
+  - `AssistantEvent::extract_tool_invocations()` - Convenience method delegating to message
+  - `extract_tool_invocations_from_events(&[StreamEvent])` - Extracts all tool calls from events
+- All functions filter for `ContentBlock::ToolUse` variants and collect in order
+- Added 16 comprehensive tests covering:
+  - Single tool invocation extraction
+  - Multiple tool invocations in one message
+  - Mixed content (text + tool_use)
+  - Text-only messages (returns empty list)
+  - Empty content arrays
+  - Complex JSON input preservation (nested objects, arrays)
+  - AssistantEvent convenience method
+  - extract_tool_invocations_from_events with single and multiple assistants
+  - Mixed event types (filters non-assistant events)
+  - Empty event slices
+  - No assistant events
+  - Text-only assistant events
+  - Tool call order preservation
+  - ToolInvocation serialization round-trip
+- Marked story #14 as passes = true
+
+### Implementation details
+- Pure functions in Functional Core (ralph_core) - no I/O operations
+- Uses filter_map pattern to extract tool calls from ContentBlock::ToolUse variants
+- Tool use IDs preserved for correlation with user events (tool results)
+- Input field preserved as `serde_json::Value` for any JSON structure
+- Comprehensive documentation with examples in docstrings
+- Follows same patterns established by text extraction (Story #13)
+
+### Context for next iteration
+- Story #14 is complete
+- Next priorities for Layer 1C:
+  - Story #15: Accumulate text across streaming assistant events
+  - Story #16: Parse accumulated text into typed chunks
+  - Story #17: Extract metadata from system init event
+  - Story #18: Extract costs and usage from result event
+  - Story #19: Store metadata in iteration logs
+  - Story #20: Correlate tool calls with tool results
+  - Story #21: Store tool interactions in iteration logs
+- The tool extraction functions will be used by Story #20 for correlating tool calls with results
+
