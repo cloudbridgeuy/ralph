@@ -6,30 +6,59 @@
 //! The binary is integrated into the `cargo` command line by using an
 //! alias in `.cargo/config`.
 
-mod cli;
-mod scripts;
-
 use clap::Parser;
-use color_eyre::eyre::Result;
 
-fn main() -> Result<()> {
-    let cli = cli::App::parse();
+mod lint;
+mod prelude;
 
-    match &cli.command {
-        Some(command) => match command {
-            cli::Commands::Install(args) => scripts::install(args),
-            cli::Commands::Hooks(args) => match &args.command {
-                cli::HooksCommands::Install => scripts::hooks::install_hooks(),
-                cli::HooksCommands::Uninstall => scripts::hooks::uninstall_hooks(),
-                cli::HooksCommands::Status => scripts::hooks::show_status(),
-                cli::HooksCommands::Test => scripts::hooks::test_hooks(),
-            },
-            cli::Commands::Release(args) => scripts::release::release(args),
-            cli::Commands::InstallBinary(args) => scripts::install_binary::install_binary(args),
-        },
-        None => {
-            println!("No command specified.");
-            std::process::exit(1);
+/// Development tasks for the calendsync repository
+#[derive(Debug, Parser)]
+#[command(name = "xtask")]
+#[command(about = "Development tasks for calendsync", long_about = None)]
+struct Cli {
+    #[command(flatten)]
+    global: Global,
+
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct Global {
+    /// Silence the command output
+    #[clap(long, global = true)]
+    pub silent: bool,
+
+    /// Enable verbose output
+    #[clap(long, global = true)]
+    pub verbose: bool,
+}
+
+impl Global {
+    pub fn is_silent(&self) -> bool {
+        self.silent
+    }
+
+    pub fn is_verbose(&self) -> bool {
+        self.verbose
+    }
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum Commands {
+    /// Code quality checks and git hooks management
+    Lint(lint::LintCommand),
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Lint(lint_cmd) => {
+            lint::run(lint_cmd, cli.global).await?;
         }
     }
+
+    Ok(())
 }
