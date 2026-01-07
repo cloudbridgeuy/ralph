@@ -288,7 +288,7 @@ steps = [
   "Detect diff patterns (```diff or heuristic)",
   "Return ordered list of typed Chunk structs",
 ]
-passes = false
+passes = true
 acceptance = [
   "Code blocks extracted with language metadata",
   "Diff blocks detected and typed correctly",

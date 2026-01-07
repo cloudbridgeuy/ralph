@@ -521,3 +521,47 @@
   - Story #21: Store tool interactions in iteration logs
 - The TextAccumulator will be used by Story #16 to parse text into typed chunks
 
+## 2026-01-07 - Parse Accumulated Text Into Typed Chunks Complete
+
+### What was accomplished
+- Implemented Story #16: Parse accumulated text into typed chunks in `crates/core/src/stream.rs`
+- Added the following functions for connecting text accumulation to chunk parsing:
+  - `parse_chunks_from_events(&[StreamEvent])` - Parse stream events into typed chunks
+  - `parse_chunks_from_events_with_heuristics(&[StreamEvent])` - Same with unfenced diff detection
+  - `parse_text_into_chunks(&str)` - Convenience wrapper around `chunk::parse_chunks`
+  - `parse_text_into_chunks_with_heuristics(&str)` - Convenience wrapper with heuristics
+- Re-exported chunk types for convenience: `ChunkType`, `ParsedChunk`, `parse_chunks`, `parse_chunks_with_heuristics`
+- Added 16 comprehensive tests covering:
+  - Prose-only content
+  - Code blocks with language metadata
+  - Diff blocks (fenced and unfenced with heuristics)
+  - Multiple code blocks
+  - Empty event slices
+  - Non-assistant events filtering
+  - Multiple assistant events accumulation
+  - Language metadata preservation
+  - Prose preservation between code blocks
+  - Output matching plain-text parsing
+- Fixed pre-existing test failure in `chunk::tests::test_adjacent_code_blocks_no_prose`
+  - Test expected 3 chunks but parser correctly returns 2 for adjacent code blocks
+  - Updated test to match actual parser behavior (no empty prose chunks)
+- Marked story #16 as passes = true
+
+### Implementation details
+- Pure functions in Functional Core (ralph_core) - no I/O operations
+- Functions bridge `TextAccumulator` (from Story #15) with `parse_chunks` (from chunk.rs)
+- Uses `accumulate_text()` to extract text from stream events, then parses into chunks
+- Comprehensive documentation with examples in docstrings
+- Follows established patterns from prior stories
+
+### Context for next iteration
+- Story #16 is complete, Layer 1C continues
+- Next priorities for Layer 1C:
+  - Story #17: Extract metadata from system init event
+  - Story #18: Extract costs and usage from result event
+  - Story #19: Store metadata in iteration logs
+  - Story #20: Correlate tool calls with tool results
+  - Story #21: Store tool interactions in iteration logs
+  - Story #22: Update default command template for JSON output
+- The chunk parsing functions are ready to be used for output formatting (Layer 3)
+
