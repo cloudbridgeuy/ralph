@@ -1,26 +1,35 @@
 //! Application configuration management (Imperative Shell).
 //!
 //! This module handles loading and managing application configuration
-//! from the config file at `~/.config/ralph/config.toml`.
+//! from the config file. The config file location follows platform conventions
+//! and can be overridden via the `RALPH_CONFIG_DIR` environment variable.
+//!
+//! # Configuration File Location
+//!
+//! By default:
+//! - **Linux**: `~/.config/ralph/config.toml`
+//! - **macOS**: `~/Library/Application Support/ralph/config.toml`
+//! - **Windows**: `%APPDATA%\ralph\config.toml`
+//!
+//! Override with `RALPH_CONFIG_DIR` environment variable.
 //!
 //! # Configuration Precedence
 //!
 //! Settings are resolved in this order (highest priority first):
 //! 1. CLI flags (e.g., `--theme`)
 //! 2. Environment variables (e.g., `RALPH_THEME`)
-//! 3. Config file (`~/.config/ralph/config.toml`)
+//! 3. Config file (`config.toml` in config directory)
 //! 4. Default values
 //!
 //! # Example Config File
 //!
 //! ```toml
-//! # ~/.config/ralph/config.toml
-//!
 //! [theme]
 //! name = "Monokai Extended"  # or path like "/path/to/theme.tmTheme"
 //! no_background = false
 //! ```
 
+use crate::paths;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -155,19 +164,24 @@ impl AppConfig {
     }
 }
 
-/// Get the path to the configuration file (~/.config/ralph/config.toml).
+/// Get the path to the configuration file.
+///
+/// Uses platform-specific paths by default, which can be overridden
+/// via the `RALPH_CONFIG_DIR` environment variable.
+///
+/// See [`crate::paths::config_path`] for details.
 pub fn config_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("ralph")
-        .join("config.toml")
+    paths::config_path()
 }
 
-/// Get the path to the ralph config directory (~/.config/ralph/).
+/// Get the path to the ralph config directory.
+///
+/// Uses platform-specific paths by default, which can be overridden
+/// via the `RALPH_CONFIG_DIR` environment variable.
+///
+/// See [`crate::paths::config_dir`] for details.
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("ralph")
+    paths::config_dir()
 }
 
 #[cfg(test)]

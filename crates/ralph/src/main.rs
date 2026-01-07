@@ -12,6 +12,7 @@ pub mod highlight;
 mod init;
 pub mod iteration;
 pub mod markdown;
+pub mod paths;
 mod prompt;
 pub mod replay;
 mod run;

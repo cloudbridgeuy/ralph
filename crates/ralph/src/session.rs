@@ -4,7 +4,20 @@
 //! metadata storage, and the global sessions index. It uses pure functions
 //! from ralph_core::session for slug generation and type definitions, then
 //! performs the actual file system operations.
+//!
+//! # Session Storage Location
+//!
+//! Sessions are stored in the data directory, which follows platform conventions
+//! and can be overridden via the `RALPH_DATA_DIR` environment variable.
+//!
+//! By default:
+//! - **Linux**: `~/.local/share/ralph/sessions/`
+//! - **macOS**: `~/Library/Application Support/ralph/sessions/`
+//! - **Windows**: `%APPDATA%\ralph\sessions\`
+//!
+//! Override with `RALPH_DATA_DIR` environment variable.
 
+use crate::paths;
 use ralph_core::session::{
     generate_unique_slug, is_valid_slug, SessionEntry, SessionMetadata, SessionOutcome,
     SessionsIndex,
@@ -74,25 +87,24 @@ pub enum SessionError {
     },
 }
 
-/// Get the path to the global sessions directory (~/.config/ralph/sessions/)
-pub fn sessions_dir() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("ralph")
-        .join("sessions")
-}
-
-/// Get the path to the global sessions index file (~/.config/ralph/sessions.toml)
+/// Get the path to the global sessions index file.
+///
+/// Uses platform-specific paths by default, which can be overridden
+/// via the `RALPH_DATA_DIR` environment variable.
+///
+/// See [`crate::paths::sessions_index_path`] for details.
 pub fn sessions_index_path() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("ralph")
-        .join("sessions.toml")
+    paths::sessions_index_path()
 }
 
-/// Get the path to a specific session directory
+/// Get the path to a specific session directory.
+///
+/// Uses platform-specific paths by default, which can be overridden
+/// via the `RALPH_DATA_DIR` environment variable.
+///
+/// See [`crate::paths::session_dir`] for details.
 pub fn session_dir(slug: &str) -> PathBuf {
-    sessions_dir().join(slug)
+    paths::session_dir(slug)
 }
 
 /// Load the sessions index from disk, or create a new empty one if it doesn't exist.
