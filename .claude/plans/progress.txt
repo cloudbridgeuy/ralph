@@ -1401,3 +1401,43 @@ From "Fix session outcome for user abort and retry flow" story:
   - Implement subprocess timeout for LLM invocation
   - Integrate stream-json parsing into run loop
 
+## 2026-01-07 - Session Continuation on Retry Complete
+
+### What was accomplished
+- Completed Story: "Fix session outcome for user abort and retry flow" (Layer 1D)
+- Modified `execute_run_with_prompting()` in `crates/ralph/src/main.rs`:
+  - Added `current_session_slug` tracking to preserve the session across retries
+  - Added `total_iterations_completed` tracking to aggregate iterations across retries
+  - On retry, the same session slug is reused instead of creating a new session
+  - Session is only finalized when user aborts or run completes, not on retry
+- Modified `RunConfig` in `crates/ralph/src/run.rs`:
+  - Added `starting_iteration` field for session continuation
+  - This indicates how many iterations were already completed in prior retries
+- Modified `run()` function:
+  - When `starting_iteration > 0` and slug is provided, continues existing session
+  - Uses `iteration_offset` to calculate correct iteration sequence numbers
+  - Returns `iterations_completed` as count of iterations in this run only (not total)
+  - Finalization uses total iteration count (offset + current run iterations)
+- All acceptance criteria now met:
+  - ✓ Session outcome is 'aborted' when user chooses abort at prompt
+  - ✓ User retry continues same session (not new slug)
+  - ✓ iterations field aggregates across retries within same session
+  - ✓ User-provided slug works correctly with retry flow
+  - ✓ Auto-generated slug doesn't change on retry
+
+### Implementation details
+- `execute_run_with_prompting()` tracks session state across the retry loop
+- `current_session_slug` is captured on first run and reused for all retries
+- `total_iterations_completed` accumulates iterations from each failed run
+- The `RunConfig.starting_iteration` tells `run()` to continue an existing session
+- When continuing, `run()` skips `initialize_session()` and just gets the session dir
+- Iteration sequence numbers are offset by `starting_iteration` for correct log naming
+
+### Context for next iteration
+- **"Fix session outcome for user abort and retry flow" story is now COMPLETE**
+- Remaining stories in Layer 1D:
+  - Apply syntax highlighting during streaming output
+  - Implement subprocess timeout for LLM invocation
+  - Integrate stream-json parsing into run loop
+- All 429 tests pass (165 core, 264 ralph)
+

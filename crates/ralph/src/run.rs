@@ -32,6 +32,10 @@ pub struct RunConfig {
     pub context_paths: ContextPaths,
     /// Number of automatic retries on subprocess failure.
     pub retry_count: usize,
+    /// Starting iteration number (for session continuation after retries).
+    /// When continuing a session, this indicates how many iterations were
+    /// already completed in previous run attempts.
+    pub starting_iteration: usize,
 }
 
 /// Result of running the iteration loop.
@@ -142,15 +146,33 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
     // 3. Determine max iterations (use provided or default to pending count)
     let max_iterations = config.max_iterations.unwrap_or(pending_count);
 
-    // 4. Initialize session directory and metadata
+    // 4. Initialize or continue session
     let project_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let (session_slug, session_dir) = initialize_session(config.slug.as_deref(), &project_path)?;
+    let (session_slug, session_dir) = if config.starting_iteration > 0 {
+        // Continuing an existing session - reuse the slug and get the session directory
+        if let Some(slug) = config.slug.as_deref() {
+            let dir = crate::session::session_dir(slug);
+            (slug.to_string(), dir)
+        } else {
+            // This shouldn't happen - if starting_iteration > 0, we should have a slug
+            // Fall back to initializing a new session
+            initialize_session(None, &project_path)?
+        }
+    } else {
+        // First run - initialize a new session
+        initialize_session(config.slug.as_deref(), &project_path)?
+    };
 
     // 5. Execute iteration loop
     let mut iterations_completed = 0;
     let mut completion_reason = None;
 
-    for iteration in 1..=max_iterations {
+    // Calculate iteration numbers: if continuing a session, offset by starting_iteration
+    let iteration_offset = config.starting_iteration;
+
+    for relative_iteration in 1..=max_iterations {
+        // The actual iteration number includes any completed iterations from prior retries
+        let iteration = iteration_offset + relative_iteration;
         // Pre-iteration check: re-read PRD and count pending
         let prd_before = read_prd_file(&config.context_paths.prd)?;
         let pending_before = count_pending_stories(&prd_before)?;
@@ -216,8 +238,10 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Error if PRD unchanged (stuck state)
         if !has_prd_changed(&prd_snapshot, &prd_after) {
             // Finalize session as failed before returning error
+            // Use total iterations including prior retries
+            let total_so_far = iteration_offset + relative_iteration;
             if let Err(e) =
-                finalize_session(&session_slug, iteration as u32, SessionOutcome::Failed)
+                finalize_session(&session_slug, total_so_far as u32, SessionOutcome::Failed)
             {
                 eprintln!("Warning: Failed to finalize session: {}", e);
             }
@@ -237,17 +261,18 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             check_completion(pending_after, &result.stdout, &config.completion_marker)
         {
             completion_reason = Some(reason);
-            iterations_completed = iteration;
+            iterations_completed = relative_iteration;
             break;
         }
 
-        iterations_completed = iteration;
+        iterations_completed = relative_iteration;
     }
 
-    // Finalize session as completed
+    // Finalize session as completed (use total iterations including prior retries)
+    let total_iterations = iteration_offset + iterations_completed;
     if let Err(e) = finalize_session(
         &session_slug,
-        iterations_completed as u32,
+        total_iterations as u32,
         SessionOutcome::Completed,
     ) {
         eprintln!("Warning: Failed to finalize session: {}", e);
@@ -367,6 +392,7 @@ mod tests {
             completion_marker: "<promise>COMPLETE</promise>".to_string(),
             context_paths: paths,
             retry_count: 3,
+            starting_iteration: 0,
         };
 
         let result = run(config);
@@ -390,6 +416,7 @@ mod tests {
             completion_marker: "<promise>COMPLETE</promise>".to_string(),
             context_paths: paths,
             retry_count: 3,
+            starting_iteration: 0,
         };
 
         let result = run(config);

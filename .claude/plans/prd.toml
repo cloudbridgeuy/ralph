@@ -661,3 +661,90 @@ acceptance = [
   "All placeholders documented",
   "Instructions are clear and actionable",
 ]
+
+# =============================================================================
+# Layer 1D: Stream-JSON Integration (Wire Parsing to Run Loop)
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Fix session outcome for user abort and retry flow"
+steps = [
+  "Move session finalization from run() to execute_run_with_prompting()",
+  "Pass session slug back from run() even on failure",
+  "When user aborts at prompt, finalize with SessionOutcome::Aborted",
+  "When user retries, continue same session instead of creating new one",
+  "Update iterations count across retries",
+]
+passes = true
+acceptance = [
+  "Session outcome is 'aborted' when user chooses abort at prompt",
+  "User retry continues same session (not new slug)",
+  "iterations field aggregates across retries within same session",
+  "User-provided slug works correctly with retry flow",
+  "Auto-generated slug doesn't change on retry",
+]
+
+[[stories]]
+category = "functional"
+description = "Apply syntax highlighting during streaming output"
+steps = [
+  "Parse JSON stream events as they arrive (not after subprocess completes)",
+  "Extract text from assistant events incrementally",
+  "Feed text through StreamingChunkBuffer line-by-line",
+  "Apply syntax highlighting to complete chunks immediately",
+  "Output highlighted chunks to terminal in real-time",
+  "Fall back to plain output when stdout is not a terminal",
+]
+passes = false
+acceptance = [
+  "Code blocks highlighted with syntect as soon as closing fence detected",
+  "Diff blocks highlighted with delta/fallback as they complete",
+  "Prose streams line-by-line without buffering",
+  "Non-terminal output remains plain text (no ANSI codes)",
+  "No broken syntax highlighting artifacts from partial chunks",
+  "Performance acceptable (no noticeable lag vs raw streaming)",
+]
+
+[[stories]]
+category = "functional"
+description = "Implement subprocess timeout for LLM invocation"
+steps = [
+  "Add --timeout CLI flag with default value (e.g., 10 minutes)",
+  "Modify invoke_subprocess to accept timeout parameter",
+  "Use tokio::time::timeout or std::process with timeout wrapper",
+  "On timeout: kill subprocess and capture partial output",
+  "Treat timeout as subprocess failure (apply retry logic)",
+  "Include timeout duration in error message",
+]
+passes = false
+acceptance = [
+  "Default timeout is sensible (e.g., 600 seconds / 10 minutes)",
+  "Custom timeout configurable via --timeout flag",
+  "Timeout triggers same retry logic as non-zero exit code",
+  "Partial output captured and displayed before retry",
+  "Subprocess is properly killed on timeout (no orphan processes)",
+  "Error message indicates timeout vs other failures",
+]
+
+[[stories]]
+category = "functional"
+description = "Integrate stream-json parsing into run loop"
+steps = [
+  "Replace raw stdout storage with parse_stream_output() call",
+  "Extract metadata using extract_metadata_from_events()",
+  "Correlate tool calls using correlate_tool_interactions()",
+  "Accumulate assistant text using accumulate_text()",
+  "Parse accumulated text into chunks using parse_chunks()",
+  "Populate IterationLog with extracted metadata, tool_calls, and chunks",
+  "Remove TODO comments from run.rs:174-176",
+]
+passes = false
+acceptance = [
+  "IterationLog.metadata populated with session_id, model, cost_usd, duration_ms, usage",
+  "IterationLog.tool_calls contains all tool invocations with correlated results",
+  "IterationLog.chunks contains parsed prose/code/diff chunks instead of raw stdout",
+  "Replay command displays rich metadata (model, cost, duration)",
+  "Parsing errors logged to stderr without crashing the run loop",
+  "Graceful degradation if stream-json format changes (log warning, store raw)",
+]

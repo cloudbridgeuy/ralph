@@ -75,21 +75,32 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 /// This function handles the case where the LLM subprocess fails after exhausting
 /// all automatic retries. If stdin is interactive, it prompts the user to either
 /// retry the entire run or abort. Non-interactive sessions abort automatically.
+///
+/// When the user chooses to retry, the same session is continued rather than
+/// creating a new one. The session slug is preserved across retries, and
+/// iterations are aggregated within the same session.
 fn execute_run_with_prompting(
     args: RunArgs,
     context_paths: ContextPaths,
     command: String,
     completion_marker: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Track the session slug across retries. Once a session is created, we reuse it.
+    let mut current_session_slug: Option<String> = None;
+    // Track total iterations completed across retries within the same session.
+    let mut total_iterations_completed: usize = 0;
+
     loop {
-        // Build run config
+        // Build run config, using the established session slug if we have one
         let config = RunConfig {
             max_iterations: args.iterations,
-            slug: args.slug.clone(),
+            slug: current_session_slug.clone().or_else(|| args.slug.clone()),
             command: command.clone(),
             completion_marker: completion_marker.clone(),
             context_paths: context_paths.clone(),
             retry_count: args.retry,
+            // Pass the starting iteration number for session continuation
+            starting_iteration: total_iterations_completed,
         };
 
         // Execute the run loop
@@ -97,7 +108,10 @@ fn execute_run_with_prompting(
             Ok(result) => {
                 // Success - print summary and return
                 println!("Session: {}", result.slug);
-                println!("Iterations completed: {}", result.iterations_completed);
+                println!(
+                    "Iterations completed: {}",
+                    total_iterations_completed + result.iterations_completed
+                );
                 if let Some(reason) = result.completion_reason {
                     println!("Completion reason: {:?}", reason);
                 }
@@ -111,6 +125,11 @@ fn execute_run_with_prompting(
                 session_slug,
                 iterations_completed,
             }) => {
+                // Track the session slug for potential retry
+                if current_session_slug.is_none() {
+                    current_session_slug = Some(session_slug.clone());
+                }
+
                 // Subprocess failed after exhausting retries - prompt user
                 let summary = format!(
                     "LLM subprocess failed with exit code {} after {} attempt(s).",
@@ -119,24 +138,21 @@ fn execute_run_with_prompting(
 
                 match prompt_on_failure(&summary) {
                     Some(FailureAction::Retry) => {
-                        // Finalize the current session as failed before retrying
-                        // (The retry will create a new session)
-                        if let Err(e) = session::finalize_session(
-                            &session_slug,
-                            iterations_completed as u32,
-                            SessionOutcome::Failed,
-                        ) {
-                            eprintln!("Warning: Failed to finalize session: {}", e);
-                        }
-                        eprintln!("\nRetrying run...\n");
-                        // Continue loop to retry
+                        // Continue the same session on retry - don't finalize, just accumulate iterations
+                        total_iterations_completed += iterations_completed;
+                        eprintln!(
+                            "\nRetrying run (continuing session '{}')...\n",
+                            session_slug
+                        );
+                        // Continue loop to retry with the same session
                         continue;
                     }
                     Some(FailureAction::Abort) => {
                         // User chose to abort - finalize session as aborted
+                        let final_iterations = total_iterations_completed + iterations_completed;
                         if let Err(e) = session::finalize_session(
                             &session_slug,
-                            iterations_completed as u32,
+                            final_iterations as u32,
                             SessionOutcome::Aborted,
                         ) {
                             eprintln!("Warning: Failed to finalize session: {}", e);
@@ -145,9 +161,10 @@ fn execute_run_with_prompting(
                     }
                     None => {
                         // Non-interactive mode or EOF - finalize as failed and abort
+                        let final_iterations = total_iterations_completed + iterations_completed;
                         if let Err(e) = session::finalize_session(
                             &session_slug,
-                            iterations_completed as u32,
+                            final_iterations as u32,
                             SessionOutcome::Failed,
                         ) {
                             eprintln!("Warning: Failed to finalize session: {}", e);
