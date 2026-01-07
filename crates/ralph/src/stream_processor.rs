@@ -350,20 +350,46 @@ impl StreamProcessor {
     }
 
     /// Apply syntax highlighting to a chunk.
+    ///
+    /// For code blocks, this wraps the highlighted content with visible fences
+    /// to make the block boundaries clear in the terminal output.
     fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
-        if !self.highlighting_enabled {
-            return chunk.content.clone();
-        }
-
         match &chunk.chunk_type {
             ChunkType::Prose => chunk.content.clone(),
             ChunkType::Code { language } => {
-                let lang_ref = language.as_deref();
-                self.code_highlighter.highlight(&chunk.content, lang_ref)
+                // Format the opening fence with language hint
+                let opening_fence = match language {
+                    Some(lang) if !lang.is_empty() => format!("```{}", lang),
+                    _ => "```".to_string(),
+                };
+
+                // Highlight the code content (or leave plain if highlighting disabled)
+                let highlighted_content = if self.highlighting_enabled {
+                    let lang_ref = language.as_deref();
+                    self.code_highlighter.highlight(&chunk.content, lang_ref)
+                } else {
+                    chunk.content.clone()
+                };
+
+                // Build the full block with fences
+                format!("{}\n{}\n```", opening_fence, highlighted_content)
             }
             ChunkType::Diff => {
-                // Use basic colors always for inline output
-                highlight_with_basic_colors(&chunk.content)
+                // Format with visible diff fence
+                let opening_fence = "```diff";
+                let closing_fence = "```";
+
+                // Highlight the diff content
+                let highlighted_content = if self.highlighting_enabled {
+                    highlight_with_basic_colors(&chunk.content)
+                } else {
+                    chunk.content.clone()
+                };
+
+                format!(
+                    "{}\n{}\n{}",
+                    opening_fence, highlighted_content, closing_fence
+                )
             }
         }
     }
