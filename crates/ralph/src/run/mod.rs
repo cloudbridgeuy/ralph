@@ -17,7 +17,7 @@ use crate::startup::{
     IterationSummary, StartupInfo,
 };
 use crate::subprocess::{
-    invoke_subprocess_with_theme, invoke_subprocess_with_timeout, SubprocessError,
+    invoke_subprocess_with_spinner, invoke_subprocess_with_timeout, SubprocessError,
 };
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::context::ContextPaths;
@@ -282,13 +282,16 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Snapshot PRD content for change detection
         let prd_snapshot = prd_before.clone();
 
-        // Invoke LLM subprocess with retry logic, timeout, and stream processing
+        // Invoke LLM subprocess with retry logic, timeout, spinner, and stream processing
+        // Pass accumulated session time for spinner display
+        let session_elapsed_ms = total_duration_ms.unwrap_or(0);
         let result = match invoke_with_retries(
             &config.command,
             config.retry_count,
             config.timeout_secs,
             iteration,
             config.theme_config.as_ref(),
+            session_elapsed_ms,
         ) {
             Ok(r) => r,
             Err(RunError::SubprocessFailed {
@@ -471,7 +474,7 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 
 /// Invoke subprocess with automatic retries on failure and timeout support.
 ///
-/// This function wraps `invoke_subprocess_with_timeout` or `invoke_subprocess_with_theme`
+/// This function wraps `invoke_subprocess_with_spinner` or `invoke_subprocess_with_timeout`
 /// with retry logic:
 /// - On non-zero exit code, prints raw text/stderr and retries
 /// - On timeout, prints partial output and retries
@@ -485,6 +488,7 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 /// * `timeout_secs` - Timeout in seconds for each subprocess invocation
 /// * `iteration` - Current iteration number (for logging context)
 /// * `theme_config` - Optional theme configuration for syntax highlighting
+/// * `session_elapsed_ms` - Accumulated time from previous iterations (for spinner display)
 ///
 /// # Returns
 ///
@@ -495,14 +499,20 @@ fn invoke_with_retries(
     timeout_secs: u64,
     iteration: usize,
     theme_config: Option<&ThemeConfig>,
+    session_elapsed_ms: u64,
 ) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
     let max_attempts = retry_count + 1; // retry_count of 3 means 4 total attempts
 
     for attempt in 1..=max_attempts {
-        // Use theme-aware subprocess if config provided, otherwise use default
+        // Use spinner-aware subprocess if theme config provided, otherwise use default
         let result = match theme_config {
             Some(config) => {
-                match invoke_subprocess_with_theme(command, timeout_secs, config.clone()) {
+                match invoke_subprocess_with_spinner(
+                    command,
+                    timeout_secs,
+                    config.clone(),
+                    session_elapsed_ms,
+                ) {
                     Ok(r) => Ok(r),
                     Err(e) => Err(e),
                 }

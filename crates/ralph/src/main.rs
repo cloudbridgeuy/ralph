@@ -16,6 +16,7 @@ mod prompt;
 pub mod replay;
 mod run;
 mod session;
+pub mod spinner;
 pub mod startup;
 pub mod stream_processor;
 pub mod subprocess;
