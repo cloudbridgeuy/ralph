@@ -1131,3 +1131,57 @@
 - After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
 - The diff_highlight module is ready to be integrated with subprocess output streaming
 
+## 2026-01-07 - Store Typed Chunks in Iteration Logs Complete
+
+### What was accomplished
+- Implemented Story: "Store typed chunks in iteration logs" (Layer 3 Output Formatting)
+- Updated `crates/ralph/src/iteration.rs` with the following enhancements:
+  - Changed `Chunk::code()` signature from `(String, String)` to `(String, Option<String>)` for optional language
+  - Added `Chunk::from_parsed_chunk()` method to convert from core's `ParsedChunk` type
+  - Added `Chunk::from_parsed_chunks()` batch conversion method
+  - Added `#[derive(PartialEq)]` to `Chunk` for equality testing
+  - Added `#[serde(default)]` to language field for better deserialization
+- All acceptance criteria met:
+  - Chunks stored in order they appeared (via `from_parsed_chunks` preserving order)
+  - Language metadata preserved for replay (language field in code chunks)
+  - Content stored exactly as captured (direct content copying)
+- Added 14 comprehensive tests covering:
+  - Conversion from ParsedChunk (prose, code with/without language, diff)
+  - Order preservation in batch conversion
+  - Empty chunk list handling
+  - TOML serialization and round-trip verification
+  - Diff serialization (no language field)
+  - Full iteration log with typed chunks written to disk
+  - Chunk equality comparison
+- All 401 tests pass (137 in core, 264 in ralph)
+- Marked story as passes = true
+
+### Implementation details
+- Bridge between Functional Core (`ralph_core::chunk::ParsedChunk`) and Imperative Shell (`ralph::iteration::Chunk`)
+- `Chunk::from_parsed_chunk` uses pattern matching on `ChunkType` enum to create appropriate Chunk variant
+- Language field only serialized when present (via `skip_serializing_if`)
+- TOML output format matches architecture spec:
+  ```toml
+  [[chunks]]
+  type = "prose"
+  content = "I'll implement the feature..."
+
+  [[chunks]]
+  type = "code"
+  language = "rust"
+  content = "fn authenticate() {\n    // ...\n}"
+
+  [[chunks]]
+  type = "diff"
+  content = "--- a/file.rs\n+++ b/file.rs\n..."
+  ```
+
+### Context for next iteration
+- **Layer 3 (Output Formatting) is now COMPLETE** - all stories implemented
+- Next priority: **Layer 4 (Error Handling)** for retry logic and stuck state handling
+  - Story: Implement retry logic on subprocess failure
+  - Story: Prompt user on unrecoverable failure
+  - Story: Error on stuck state when PRD unchanged
+- After Layer 4: Layer 5 (Auxiliary Commands) for replay and sessions commands
+- The typed chunk storage is ready to be populated when JSON streaming output parsing is integrated into the run loop
+

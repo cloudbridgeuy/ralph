@@ -322,9 +322,10 @@ pub struct IterationLog {
 
 /// A chunk of output from the LLM.
 ///
-/// Currently basic (prose only for Layer 1). Layer 3 will add typed chunks
-/// (code blocks with language hints, diff blocks).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Chunks represent typed segments of LLM output: prose (markdown), code
+/// (fenced code blocks with optional language), and diff (unified diff format).
+/// These are stored in iteration logs for replay with proper syntax highlighting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Chunk {
     /// Type of chunk: "prose", "code", or "diff"
     #[serde(rename = "type")]
@@ -332,7 +333,7 @@ pub struct Chunk {
     /// The actual content
     pub content: String,
     /// Optional language hint (for code chunks)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 }
 
@@ -346,24 +347,84 @@ impl Chunk {
         }
     }
 
-    /// Create a code chunk with language hint.
-    #[allow(dead_code)] // Will be used in Layer 3
-    pub fn code(content: String, language: String) -> Self {
+    /// Create a code chunk with optional language hint.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::iteration::Chunk;
+    ///
+    /// let chunk = Chunk::code("fn main() {}".to_string(), Some("rust".to_string()));
+    /// assert_eq!(chunk.chunk_type, "code");
+    /// assert_eq!(chunk.language, Some("rust".to_string()));
+    /// ```
+    pub fn code(content: String, language: Option<String>) -> Self {
         Self {
             chunk_type: "code".to_string(),
             content,
-            language: Some(language),
+            language,
         }
     }
 
     /// Create a diff chunk.
-    #[allow(dead_code)] // Will be used in Layer 3
     pub fn diff(content: String) -> Self {
         Self {
             chunk_type: "diff".to_string(),
             content,
             language: None,
         }
+    }
+
+    /// Convert from a `ParsedChunk` from the core library.
+    ///
+    /// This method provides the bridge between the functional core chunk types
+    /// and the iteration log storage format.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::iteration::Chunk;
+    /// use ralph_core::chunk::{ParsedChunk, ChunkType};
+    ///
+    /// let parsed = ParsedChunk::code("fn main() {}", Some("rust".to_string()));
+    /// let chunk = Chunk::from_parsed_chunk(&parsed);
+    ///
+    /// assert_eq!(chunk.chunk_type, "code");
+    /// assert_eq!(chunk.content, "fn main() {}");
+    /// assert_eq!(chunk.language, Some("rust".to_string()));
+    /// ```
+    pub fn from_parsed_chunk(parsed: &ralph_core::chunk::ParsedChunk) -> Self {
+        use ralph_core::chunk::ChunkType;
+
+        match &parsed.chunk_type {
+            ChunkType::Prose => Self::prose(parsed.content.clone()),
+            ChunkType::Code { language } => Self::code(parsed.content.clone(), language.clone()),
+            ChunkType::Diff => Self::diff(parsed.content.clone()),
+        }
+    }
+
+    /// Convert multiple `ParsedChunk`s to `Chunk`s.
+    ///
+    /// This is a convenience method for batch conversion, preserving order.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::iteration::Chunk;
+    /// use ralph_core::chunk::ParsedChunk;
+    ///
+    /// let parsed_chunks = vec![
+    ///     ParsedChunk::prose("intro"),
+    ///     ParsedChunk::code("fn main() {}", Some("rust".to_string())),
+    /// ];
+    ///
+    /// let chunks = Chunk::from_parsed_chunks(&parsed_chunks);
+    /// assert_eq!(chunks.len(), 2);
+    /// assert_eq!(chunks[0].chunk_type, "prose");
+    /// assert_eq!(chunks[1].chunk_type, "code");
+    /// ```
+    pub fn from_parsed_chunks(parsed: &[ralph_core::chunk::ParsedChunk]) -> Vec<Self> {
+        parsed.iter().map(Chunk::from_parsed_chunk).collect()
     }
 }
 
@@ -473,10 +534,18 @@ mod tests {
 
     #[test]
     fn test_chunk_code() {
-        let chunk = Chunk::code("fn main() {}".to_string(), "rust".to_string());
+        let chunk = Chunk::code("fn main() {}".to_string(), Some("rust".to_string()));
         assert_eq!(chunk.chunk_type, "code");
         assert_eq!(chunk.content, "fn main() {}");
         assert_eq!(chunk.language, Some("rust".to_string()));
+    }
+
+    #[test]
+    fn test_chunk_code_without_language() {
+        let chunk = Chunk::code("some code".to_string(), None);
+        assert_eq!(chunk.chunk_type, "code");
+        assert_eq!(chunk.content, "some code");
+        assert_eq!(chunk.language, None);
     }
 
     #[test]
@@ -738,7 +807,7 @@ mod tests {
                 Chunk::prose("I'll implement the function:".to_string()),
                 Chunk::code(
                     "fn hello() {\n    println!(\"Hello\");\n}".to_string(),
-                    "rust".to_string(),
+                    Some("rust".to_string()),
                 ),
             ],
         };
@@ -1358,5 +1427,214 @@ mod tests {
 
         // Should contain the truncation message
         assert!(result_str.contains("... [truncated,"));
+    }
+
+    // ==========================================================================
+    // Chunk Conversion from ParsedChunk Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_chunk_from_parsed_chunk_prose() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed = ParsedChunk::prose("Some prose content");
+        let chunk = Chunk::from_parsed_chunk(&parsed);
+
+        assert_eq!(chunk.chunk_type, "prose");
+        assert_eq!(chunk.content, "Some prose content");
+        assert!(chunk.language.is_none());
+    }
+
+    #[test]
+    fn test_chunk_from_parsed_chunk_code_with_language() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed = ParsedChunk::code("fn main() {}", Some("rust".to_string()));
+        let chunk = Chunk::from_parsed_chunk(&parsed);
+
+        assert_eq!(chunk.chunk_type, "code");
+        assert_eq!(chunk.content, "fn main() {}");
+        assert_eq!(chunk.language, Some("rust".to_string()));
+    }
+
+    #[test]
+    fn test_chunk_from_parsed_chunk_code_without_language() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed = ParsedChunk::code("some code", None);
+        let chunk = Chunk::from_parsed_chunk(&parsed);
+
+        assert_eq!(chunk.chunk_type, "code");
+        assert_eq!(chunk.content, "some code");
+        assert!(chunk.language.is_none());
+    }
+
+    #[test]
+    fn test_chunk_from_parsed_chunk_diff() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed = ParsedChunk::diff("-old\n+new");
+        let chunk = Chunk::from_parsed_chunk(&parsed);
+
+        assert_eq!(chunk.chunk_type, "diff");
+        assert_eq!(chunk.content, "-old\n+new");
+        assert!(chunk.language.is_none());
+    }
+
+    #[test]
+    fn test_chunk_from_parsed_chunks_preserves_order() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed_chunks = vec![
+            ParsedChunk::prose("intro"),
+            ParsedChunk::code("fn main() {}", Some("rust".to_string())),
+            ParsedChunk::diff("-a\n+b"),
+            ParsedChunk::prose("outro"),
+        ];
+
+        let chunks = Chunk::from_parsed_chunks(&parsed_chunks);
+
+        assert_eq!(chunks.len(), 4);
+        assert_eq!(chunks[0].chunk_type, "prose");
+        assert_eq!(chunks[0].content, "intro");
+        assert_eq!(chunks[1].chunk_type, "code");
+        assert_eq!(chunks[1].language, Some("rust".to_string()));
+        assert_eq!(chunks[2].chunk_type, "diff");
+        assert_eq!(chunks[3].chunk_type, "prose");
+        assert_eq!(chunks[3].content, "outro");
+    }
+
+    #[test]
+    fn test_chunk_from_parsed_chunks_empty() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed_chunks: Vec<ParsedChunk> = vec![];
+        let chunks = Chunk::from_parsed_chunks(&parsed_chunks);
+
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_from_parsed_chunks_serializes_to_toml() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed_chunks = vec![
+            ParsedChunk::prose("Here's some code:"),
+            ParsedChunk::code("print('hello')", Some("python".to_string())),
+        ];
+
+        let chunks = Chunk::from_parsed_chunks(&parsed_chunks);
+
+        // Create an iteration log with these chunks
+        let now = Utc::now();
+        let log = IterationLog {
+            sequence: 1,
+            started_at: now,
+            completed_at: now,
+            exit_code: 0,
+            pending_before: 5,
+            pending_after: 4,
+            metadata: None,
+            tool_calls: vec![],
+            chunks,
+        };
+
+        let toml_str = toml::to_string_pretty(&log).unwrap();
+
+        // Verify TOML structure
+        assert!(toml_str.contains("[[chunks]]"));
+        assert!(toml_str.contains("type = \"prose\""));
+        assert!(toml_str.contains("type = \"code\""));
+        assert!(toml_str.contains("language = \"python\""));
+        assert!(toml_str.contains("Here's some code:"));
+        assert!(toml_str.contains("print('hello')"));
+
+        // Verify round-trip
+        let parsed: IterationLog = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.chunks.len(), 2);
+        assert_eq!(parsed.chunks[0].chunk_type, "prose");
+        assert_eq!(parsed.chunks[1].chunk_type, "code");
+        assert_eq!(parsed.chunks[1].language, Some("python".to_string()));
+    }
+
+    #[test]
+    fn test_chunk_from_parsed_chunks_diff_serialization() {
+        use ralph_core::chunk::ParsedChunk;
+
+        let parsed = ParsedChunk::diff("--- a/file.rs\n+++ b/file.rs\n@@ -1,1 +1,1 @@\n-old\n+new");
+        let chunk = Chunk::from_parsed_chunk(&parsed);
+
+        let toml_str = toml::to_string(&chunk).unwrap();
+
+        // Diff chunks should have type = "diff" and no language field
+        assert!(toml_str.contains("type = \"diff\""));
+        assert!(!toml_str.contains("language"));
+    }
+
+    #[test]
+    fn test_iteration_log_with_typed_chunks_from_parsed() {
+        use ralph_core::chunk::ParsedChunk;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let session_dir = temp_dir.path();
+
+        // Simulate chunks parsed from stream output
+        let parsed_chunks = vec![
+            ParsedChunk::prose("I'll implement this feature"),
+            ParsedChunk::code(
+                "fn authenticate(user: &str) -> bool {\n    true\n}",
+                Some("rust".to_string()),
+            ),
+            ParsedChunk::prose("Here are the changes:"),
+            ParsedChunk::diff("--- a/src/auth.rs\n+++ b/src/auth.rs\n@@ -1 +1,3 @@\n+fn authenticate(user: &str) -> bool {\n+    true\n+}"),
+        ];
+
+        let chunks = Chunk::from_parsed_chunks(&parsed_chunks);
+
+        let now = Utc::now();
+        let log = IterationLog {
+            sequence: 1,
+            started_at: now,
+            completed_at: now,
+            exit_code: 0,
+            pending_before: 5,
+            pending_after: 4,
+            metadata: None,
+            tool_calls: vec![],
+            chunks,
+        };
+
+        // Write to disk
+        let log_path = write_iteration_log(session_dir, &log).unwrap();
+
+        // Read back and verify
+        let content = fs::read_to_string(&log_path).unwrap();
+        let parsed_log: IterationLog = toml::from_str(&content).unwrap();
+
+        assert_eq!(parsed_log.chunks.len(), 4);
+        assert_eq!(parsed_log.chunks[0].chunk_type, "prose");
+        assert_eq!(parsed_log.chunks[1].chunk_type, "code");
+        assert_eq!(parsed_log.chunks[1].language, Some("rust".to_string()));
+        assert_eq!(parsed_log.chunks[2].chunk_type, "prose");
+        assert_eq!(parsed_log.chunks[3].chunk_type, "diff");
+        assert!(parsed_log.chunks[3].language.is_none());
+    }
+
+    #[test]
+    fn test_chunk_equality() {
+        let chunk1 = Chunk::prose("hello".to_string());
+        let chunk2 = Chunk::prose("hello".to_string());
+        let chunk3 = Chunk::prose("world".to_string());
+
+        assert_eq!(chunk1, chunk2);
+        assert_ne!(chunk1, chunk3);
+
+        let code1 = Chunk::code("fn main() {}".to_string(), Some("rust".to_string()));
+        let code2 = Chunk::code("fn main() {}".to_string(), Some("rust".to_string()));
+        let code3 = Chunk::code("fn main() {}".to_string(), Some("python".to_string()));
+
+        assert_eq!(code1, code2);
+        assert_ne!(code1, code3);
     }
 }

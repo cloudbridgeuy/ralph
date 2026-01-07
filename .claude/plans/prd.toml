@@ -541,7 +541,7 @@ steps = [
   "Record language field for code chunks",
   "Record content field with raw text",
 ]
-passes = false
+passes = true
 acceptance = [
   "Chunks stored in order they appeared",
   "Language metadata preserved for replay",
