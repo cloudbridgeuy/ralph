@@ -57,7 +57,7 @@ steps = [
   "Check uniqueness against sessions.toml",
   "Regenerate if collision detected",
 ]
-passes = false
+passes = true
 acceptance = [
   "Slugs are lowercase with hyphen separator",
   "At least 50 adjectives and 50 nouns for variety",
