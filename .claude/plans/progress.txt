@@ -1441,3 +1441,55 @@ From "Fix session outcome for user abort and retry flow" story:
   - Integrate stream-json parsing into run loop
 - All 429 tests pass (165 core, 264 ralph)
 
+## 2026-01-07 - Syntax Highlighting During Streaming Output Complete
+
+### What was accomplished
+- Implemented Story: "Apply syntax highlighting during streaming output" (Layer 1D)
+- Created `crates/ralph/src/stream_processor.rs` with the following components:
+  - `StreamProcessor` struct for stateful stream-json processing
+  - `StreamProcessorResult` struct for collected output data
+  - Real-time JSON event parsing with `process_line()` method
+  - Text accumulation across streaming assistant events
+  - Chunk boundary detection via `StreamingChunkBuffer`
+  - Syntax highlighting for code blocks using `Highlighter`
+  - Diff highlighting with basic colors for diff blocks
+  - Terminal detection for automatic color support
+  - Metadata and tool call extraction for iteration logs
+- Created `invoke_subprocess_with_stream_processing()` in `subprocess.rs`:
+  - Enhanced subprocess invocation with stream-json parsing
+  - Real-time highlighted output to terminal
+  - Metadata extraction (session ID, model, costs, usage)
+  - Tool interaction correlation
+- Updated `run.rs` to use the new streaming infrastructure:
+  - Changed from `invoke_subprocess` to `invoke_subprocess_with_stream_processing`
+  - `IterationLog` now populated with extracted metadata, tool calls, and typed chunks
+  - Completion marker detection uses raw_text from stream result
+  - Renamed `stdout` field to `raw_text` in `SubprocessFailed` error variant
+- All 443 tests pass (179 core, 264 ralph)
+- All acceptance criteria met:
+  - ✓ Code blocks highlighted with syntect as soon as closing fence detected
+  - ✓ Diff blocks highlighted with basic colors as they complete
+  - ✓ Prose streams line-by-line without buffering
+  - ✓ Non-terminal output remains plain text (no ANSI codes)
+  - ✓ No broken syntax highlighting artifacts from partial chunks
+
+### Implementation details
+- `StreamProcessor` maintains state for JSON parsing, text accumulation, and chunk detection
+- Uses `parse_stream_line()` from ralph_core to parse NDJSON events
+- Text from assistant events accumulated in `text_buffer`
+- Lines fed through `StreamingChunkBuffer` for code/diff block detection
+- Code blocks highlighted using syntect when closing fence detected
+- Diff blocks highlighted using basic inline +/- coloring
+- Terminal detection via `std::io::IsTerminal` for automatic color support
+- Metadata extracted from system init event (session_id, model, tools)
+- Costs extracted from result event (cost_usd, duration_ms, usage tokens)
+- Tool calls correlated with results using tool_use_id
+
+### Context for next iteration
+- **"Apply syntax highlighting during streaming output" story is now COMPLETE**
+- Remaining stories in Layer 1D:
+  - Implement subprocess timeout for LLM invocation
+  - Integrate stream-json parsing into run loop (mostly done - just needs verification)
+- The run command now outputs highlighted code and diff blocks in real-time
+- Iteration logs contain rich metadata from JSON streaming output
+

@@ -696,7 +696,7 @@ steps = [
   "Output highlighted chunks to terminal in real-time",
   "Fall back to plain output when stdout is not a terminal",
 ]
-passes = false
+passes = true
 acceptance = [
   "Code blocks highlighted with syntect as soon as closing fence detected",
   "Diff blocks highlighted with delta/fallback as they complete",

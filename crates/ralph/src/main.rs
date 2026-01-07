@@ -8,7 +8,8 @@ mod prompt;
 pub mod replay;
 mod run;
 mod session;
-mod subprocess;
+pub mod stream_processor;
+pub mod subprocess;
 
 use clap::Parser;
 use cli::{Cli, Commands, ReplayArgs, RunArgs, SessionsArgs};
@@ -120,7 +121,7 @@ fn execute_run_with_prompting(
             Err(RunError::SubprocessFailed {
                 exit_code,
                 attempts,
-                stdout: _,
+                raw_text: _,
                 stderr: _,
                 session_slug,
                 iterations_completed,
