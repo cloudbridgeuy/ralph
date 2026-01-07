@@ -961,3 +961,38 @@
   - Story: Store typed chunks in iteration logs
 - After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
 
+## 2026-01-07 - Parse Output Stream Into Typed Chunks Verified Complete
+
+### What was accomplished
+- Verified Story: "Parse output stream into typed chunks" (Layer 3 Output Formatting) was already implemented
+- The implementation exists in `crates/core/src/chunk.rs`:
+  - `parse_chunks(text: &str)` - Main parsing function for fenced code blocks
+  - `parse_chunks_with_heuristics(text: &str)` - Adds unfenced diff detection
+  - `is_unfenced_diff(text: &str)` - Heuristic detection for git diff patterns
+  - `ChunkType` enum with Prose, Code, and Diff variants
+  - `ParsedChunk` struct with type and content fields
+- All acceptance criteria are met:
+  - Code blocks extracted with language metadata from fence
+  - Explicit ```diff fences detected and typed as Diff
+  - Heuristic diff detection for unfenced unified diffs (git diff patterns, @@ hunks)
+  - Prose chunks contain markdown content between code/diff blocks
+- Story #16 from Layer 1C previously implemented this functionality
+- Updated PRD to mark story as passes = true
+- All 330 tests pass (88 in core, 242 in ralph)
+
+### Implementation details
+- Located in `crates/core/src/chunk.rs` (Functional Core - pure functions)
+- Uses line-by-line parsing with state machine for fence tracking
+- Language hints extracted from opening fence (first word after ```)
+- Unterminated code blocks handled gracefully (included as code chunk)
+- Comprehensive test coverage (25+ tests for chunk parsing)
+
+### Context for next iteration
+- **Layer 3 story #1 is now marked complete**
+- Next priority for Layer 3:
+  - Story: Buffer incomplete chunks during streaming
+  - Story: Apply syntax highlighting to code chunks (giallo)
+  - Story: Apply diff highlighting with fallback chain (delta → diff → basic)
+  - Story: Store typed chunks in iteration logs
+- After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
+

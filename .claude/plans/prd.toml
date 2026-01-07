@@ -470,7 +470,7 @@ steps = [
   "Classify remaining content as prose",
   "Return ordered list of typed chunks",
 ]
-passes = false
+passes = true
 acceptance = [
   "Code blocks extracted with language metadata",
   "Explicit ```diff fences detected",
