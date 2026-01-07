@@ -1,6 +1,7 @@
 mod git;
 mod init;
 mod iteration;
+mod run;
 mod session;
 mod subprocess;
 

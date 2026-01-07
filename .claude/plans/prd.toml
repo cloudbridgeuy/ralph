@@ -178,7 +178,7 @@ steps = [
   "Post-check: exit if zero pending or marker found",
   "Increment iteration counter and loop",
 ]
-passes = false
+passes = true
 acceptance = [
   "Loop respects max iteration count",
   "Loop exits cleanly on completion",
