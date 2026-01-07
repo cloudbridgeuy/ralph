@@ -1087,3 +1087,47 @@
 - After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
 - The highlight module is ready to be integrated with subprocess output streaming
 
+## 2026-01-07 - Diff Highlighting with Fallback Chain Complete
+
+### What was accomplished
+- Implemented Story: "Apply diff highlighting with fallback chain" (Layer 3 Output Formatting)
+- Created `crates/ralph/src/diff_highlight.rs` with the following components:
+  - `is_delta_available()` - Checks if delta is installed using `which delta`
+  - `highlight_with_delta(diff)` - Pipes diff through `delta --paging=never`
+  - `highlight_with_basic_colors(diff)` - Applies inline ANSI coloring for +/- lines
+  - `highlight_diff(diff)` - Main function using fallback chain with terminal detection
+  - `DiffHighlighter` struct for caching tool availability across multiple calls
+  - `format_diff_for_terminal(diff)` - Convenience function for terminal output
+- Fallback chain implementation:
+  1. Check if stdout is a terminal (return unchanged if piped)
+  2. Try delta with `--paging=never` (best quality output)
+  3. Fall back to basic inline coloring (always available)
+- Basic coloring scheme:
+  - Green (`\x1b[32m`) for additions (`+` lines)
+  - Red (`\x1b[31m`) for deletions (`-` lines)
+  - Cyan (`\x1b[36m`) for hunk headers (`@@` lines)
+  - Bold (`\x1b[1m`) for file headers (`---`, `+++`, `diff`, `index`)
+- Added 20 comprehensive tests covering:
+  - All line type coloring (additions, deletions, headers, hunks, context)
+  - Full diff highlighting
+  - Empty diffs, unicode content, special characters
+  - DiffHighlighter struct functionality
+  - Content preservation verification
+- All 390 tests pass (126 in ralph, 264 in core)
+- Marked story as passes = true
+
+### Implementation details
+- Follows Imperative Shell pattern (I/O operations in ralph crate)
+- Uses `std::process::Command` for delta invocation with stdin piping
+- Terminal detection via `std::io::IsTerminal` trait
+- No intermediate `diff --color` fallback (basic coloring is sufficient and more portable)
+- The PRD step about "check for diff with --color support" was simplified to just use basic coloring
+- Delta availability is cached in `DiffHighlighter` struct for efficiency
+
+### Context for next iteration
+- **Layer 3 diff highlighting story is now complete**
+- Remaining Layer 3 story:
+  - Story: Store typed chunks in iteration logs
+- After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
+- The diff_highlight module is ready to be integrated with subprocess output streaming
+

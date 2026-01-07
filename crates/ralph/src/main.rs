@@ -1,4 +1,5 @@
 mod cli;
+pub mod diff_highlight;
 mod git;
 pub mod highlight;
 mod init;

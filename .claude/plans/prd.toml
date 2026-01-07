@@ -524,7 +524,7 @@ steps = [
   "If not, apply basic +/- line coloring inline",
   "Render result to terminal",
 ]
-passes = false
+passes = true
 acceptance = [
   "Delta used when available",
   "No pager mode (--paging=never)",
