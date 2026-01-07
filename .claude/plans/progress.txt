@@ -797,3 +797,37 @@
 - After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
 - The `LogToolCall` struct is ready for use when JSON streaming output parsing is integrated into the run loop
 
+## 2026-01-07 - Default Command Template for JSON Output Complete
+
+### What was accomplished
+- Implemented Story #22: Update default command template for JSON output in `crates/core/src/context.rs`
+- Added the following constants to the `defaults` module:
+  - `COMMAND_TEMPLATE` - Default command: `claude --permission-mode acceptEdits --output-format stream-json -p {prompt}`
+  - `COMPLETION_MARKER` - Default marker: `<promise>COMPLETE</promise>`
+- Added comprehensive documentation explaining:
+  - The purpose of each CLI flag (`--permission-mode acceptEdits`, `--output-format stream-json`, `-p {prompt}`)
+  - Why `--output-format stream-json` is required for metadata extraction
+  - That custom commands can override but will lose metadata extraction capabilities
+- Added 5 unit tests covering:
+  - Presence of `--output-format stream-json` in template
+  - Presence of `{prompt}` placeholder
+  - Presence of `--permission-mode acceptEdits`
+  - Command starts with `claude `
+  - Completion marker value verification
+- Marked story #22 as passes = true
+
+### Implementation details
+- Constants placed in `ralph_core::context::defaults` module following existing pattern
+- Full documentation in docstrings serves as help text for future CLI integration
+- All 295 tests pass (66 in core, 229 in ralph)
+- Follows Functional Core pattern (pure constants, no I/O)
+
+### Context for next iteration
+- **Layer 1C (JSON Streaming Support) is now COMPLETE** - all stories implemented
+- Next priority: **Layer 2 (CLI Interface)** to wire up commands with clap
+  - Story: Implement ralph run subcommand with arguments
+  - Story: Substitute placeholders in prompt template
+  - Story: Substitute placeholders in command template
+- After Layer 2: Layer 3 (Output Formatting) for syntax highlighting and streaming
+- The defaults are ready to be used by CLI argument parsing with clap
+

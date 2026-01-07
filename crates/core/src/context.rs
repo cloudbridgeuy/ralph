@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Default paths for context files relative to project root.
+/// Default paths and templates for context files and commands.
 pub mod defaults {
     /// Default path for the design document.
     pub const DESIGN_FILE: &str = ".claude/designs/design.md";
@@ -14,6 +14,25 @@ pub mod defaults {
     pub const PRD_FILE: &str = ".claude/plans/prd.toml";
     /// Default path for the progress file.
     pub const PROGRESS_FILE: &str = ".claude/plans/progress.txt";
+
+    /// Default command template for invoking the LLM.
+    ///
+    /// Uses Claude CLI with:
+    /// - `--permission-mode acceptEdits`: Auto-accept file edits
+    /// - `--output-format stream-json`: JSON streaming output for metadata extraction
+    /// - `-p {prompt}`: Prompt placeholder to be substituted
+    ///
+    /// **Important**: The `--output-format stream-json` flag is required for ralph to extract
+    /// session metadata (model, costs, usage) and tool interactions from the output.
+    /// Custom commands can override this format, but metadata extraction will be unavailable.
+    pub const COMMAND_TEMPLATE: &str =
+        "claude --permission-mode acceptEdits --output-format stream-json -p {prompt}";
+
+    /// Default completion marker string.
+    ///
+    /// When this marker appears in the LLM output, ralph exits the iteration loop
+    /// regardless of PRD state. This allows the LLM to signal completion explicitly.
+    pub const COMPLETION_MARKER: &str = "<promise>COMPLETE</promise>";
 }
 
 /// Resolved paths for all context files.
@@ -241,5 +260,30 @@ mod tests {
         assert_eq!(files.len(), 2);
         assert!(files.contains(&&PathBuf::from("/design.md")));
         assert!(files.contains(&&PathBuf::from("/progress.txt")));
+    }
+
+    #[test]
+    fn test_default_command_template_contains_stream_json() {
+        assert!(defaults::COMMAND_TEMPLATE.contains("--output-format stream-json"));
+    }
+
+    #[test]
+    fn test_default_command_template_contains_prompt_placeholder() {
+        assert!(defaults::COMMAND_TEMPLATE.contains("{prompt}"));
+    }
+
+    #[test]
+    fn test_default_command_template_contains_permission_mode() {
+        assert!(defaults::COMMAND_TEMPLATE.contains("--permission-mode acceptEdits"));
+    }
+
+    #[test]
+    fn test_default_command_template_uses_claude() {
+        assert!(defaults::COMMAND_TEMPLATE.starts_with("claude "));
+    }
+
+    #[test]
+    fn test_default_completion_marker() {
+        assert_eq!(defaults::COMPLETION_MARKER, "<promise>COMPLETE</promise>");
     }
 }

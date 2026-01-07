@@ -393,7 +393,7 @@ steps = [
   "Ensure prompt still substituted correctly",
   "Document the JSON requirement in help text",
 ]
-passes = false
+passes = true
 acceptance = [
   "Default: claude --permission-mode acceptEdits --output-format stream-json -p {prompt}",
   "Custom commands can override format",
