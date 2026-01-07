@@ -30,7 +30,9 @@ The target user is a developer using LLM assistants for coding who wants to auto
 
 **Prompt Template** — The instructions sent to the LLM, with placeholders (`{design_file}`, `{prd_file}`, `{progress_file}`) that ralph substitutes before invocation. Users can override the built-in template.
 
-**Command Template** — The shell command pattern for invoking the LLM tool, with a `{prompt}` placeholder. Defaults to `claude --permission-mode acceptEdits -p {prompt}`.
+**Command Template** — The shell command pattern for invoking the LLM tool, with a `{prompt}` placeholder. Defaults to `claude --permission-mode acceptEdits --output-format stream-json -p {prompt}`.
+
+**Stream Event** — A JSON object from Claude's `--output-format stream-json` output. Events have a `type` field: `system` (init metadata), `assistant` (LLM responses with text/tool_use), `user` (tool results), or `result` (final costs/usage). Ralph parses these to extract text, metadata, and tool interactions.
 
 ## Invariants & Rules
 
@@ -61,7 +63,7 @@ The `run` subcommand accepts:
 | `[iterations]` | Optional. Max iterations to run. Defaults to pending story count in PRD. |
 | `--slug <name>` | Session identifier. Auto-generated if omitted (e.g., `fuzzy-walrus`). |
 | `--prompt <file\|-\|string>` | Custom prompt template. Supports file path, `-` for stdin, or inline string. |
-| `--command <template>` | Custom LLM invocation pattern. Default: `claude --permission-mode acceptEdits -p {prompt}` |
+| `--command <template>` | Custom LLM invocation pattern. Default: `claude --permission-mode acceptEdits --output-format stream-json -p {prompt}` |
 | `--design <path>` | Design document path. Default: `.claude/designs/design.md` |
 | `--prd <path>` | PRD file path. Default: `.claude/plans/prd.toml` |
 | `--progress <path>` | Progress notes path. Default: `.claude/plans/progress.txt` |
@@ -197,7 +199,7 @@ outcome = "aborted"
 
 ### `iteration-N.toml`
 
-Structured log for replay:
+Structured log for replay. Includes metadata from Claude's JSON streaming output:
 
 ```toml
 sequence = 1
@@ -207,6 +209,42 @@ exit_code = 0
 pending_before = 5
 pending_after = 4
 
+# Metadata extracted from stream-json events
+[metadata]
+claude_session_id = "f5b6aaac-4316-454a-b086-a3f9e4351b1e"
+model = "claude-opus-4-5-20251101"
+cost_usd = 0.226354
+duration_ms = 40966
+
+[metadata.usage]
+input_tokens = 712
+output_tokens = 2971
+cache_read_input_tokens = 107476
+cache_creation_input_tokens = 12504
+
+# Tool calls correlated with their results
+[[tool_calls]]
+id = "toolu_01YWLzHW2VBHQSz8VV1oCGSp"
+name = "Glob"
+input = { pattern = ".github/workflows/*.yml" }
+result = "/Users/.../release.yml\n/Users/.../ci.yml"
+result_truncated = false
+
+[[tool_calls]]
+id = "toolu_01KKvyfhUNr2Bdu32AKbDzmX"
+name = "Read"
+input = { file_path = "/Users/.../Cargo.toml" }
+result = "[workspace]\nmembers = ..."
+result_truncated = true
+
+[[tool_calls]]
+id = "toolu_016PgPqGnUjzQfuAPGNScAnK"
+name = "Edit"
+input = { file_path = "/Users/.../ci.yml", old_string = "...", new_string = "..." }
+result = "File updated successfully"
+result_truncated = false
+
+# Output chunks parsed from assistant text
 [[chunks]]
 type = "prose"
 content = "I'll implement the authentication feature..."

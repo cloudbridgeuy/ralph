@@ -2,6 +2,7 @@
 #
 # Stories are organized in implementation layers:
 # 1. Core Loop + Basic Storage (first milestone)
+# 1C. JSON Streaming Support (Claude CLI stream-json output)
 # 2. CLI Interface
 # 3. Output Formatting
 # 4. Error Handling
@@ -38,7 +39,7 @@ steps = [
   "Create empty file for each missing one",
   "Print notice to stderr for each created file",
 ]
-passes = false
+passes = true
 acceptance = [
   "PRD is NOT created if missing (error instead)",
   "Design doc created at default .claude/designs/design.md",
@@ -183,6 +184,220 @@ acceptance = [
   "Loop exits cleanly on completion",
   "Loop errors on stuck state (PRD unchanged)",
   "Session outcome updated on exit",
+]
+
+# =============================================================================
+# Layer 1C: JSON Streaming Support
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Define Rust types for stream-json events"
+steps = [
+  "Create StreamEvent enum with System, Assistant, User, Result variants",
+  "Create SystemInitEvent struct with session_id, model, tools fields",
+  "Create AssistantEvent struct with message.content array",
+  "Create ContentBlock enum for text vs tool_use content",
+  "Create UserEvent struct with tool_use_id and tool_result",
+  "Create ResultEvent struct with duration_ms, total_cost_usd, usage",
+  "Use serde tag-based deserialization on 'type' field",
+]
+passes = false
+acceptance = [
+  "All event types deserialize from real Claude stream-json output",
+  "Unknown fields ignored via #[serde(flatten)] or deny_unknown_fields = false",
+  "Missing optional fields default gracefully",
+  "Round-trip serialization preserves data",
+]
+
+[[stories]]
+category = "functional"
+description = "Parse newline-delimited JSON from stream-json output"
+steps = [
+  "Read stdout line by line from subprocess",
+  "Parse each line as JSON using serde_json",
+  "Deserialize into StreamEvent enum",
+  "Yield parsed events to caller",
+  "Handle malformed JSON gracefully (log warning, continue)",
+]
+passes = false
+acceptance = [
+  "Parses all event types from Claude stream-json output",
+  "Handles partial/incomplete lines at stream end",
+  "Reports parse errors to stderr without crashing",
+  "Empty lines are skipped",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract text content from assistant events"
+steps = [
+  "Iterate through message.content array",
+  "Filter for ContentBlock::Text variants",
+  "Concatenate text fields in order",
+  "Return combined text string",
+]
+passes = false
+acceptance = [
+  "Extracts text from single-content messages",
+  "Handles multi-content messages (text + tool_use mixed)",
+  "Returns empty string for tool-only messages",
+  "Preserves text ordering from content array",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract tool invocations from assistant events"
+steps = [
+  "Iterate through message.content array",
+  "Filter for ContentBlock::ToolUse variants",
+  "Extract tool name, id, and input for each",
+  "Return list of ToolInvocation structs",
+]
+passes = false
+acceptance = [
+  "Extracts all tool calls from a message",
+  "Preserves tool_use IDs for correlation with user events",
+  "Handles messages with no tool use (returns empty list)",
+  "Input field preserved as serde_json::Value",
+]
+
+[[stories]]
+category = "functional"
+description = "Accumulate text across streaming assistant events"
+steps = [
+  "Maintain buffer for current response text",
+  "As each assistant event arrives, extract and append text",
+  "Track message ID to detect new vs continuing messages",
+  "Return complete text when message ID changes or stream ends",
+]
+passes = false
+acceptance = [
+  "Multiple assistant events for same message combined correctly",
+  "New message ID starts fresh accumulation",
+  "Final text matches what would appear in plain-text mode",
+]
+
+[[stories]]
+category = "functional"
+description = "Parse accumulated text into typed chunks"
+steps = [
+  "Take accumulated text from assistant events",
+  "Apply existing chunk parsing logic (prose/code/diff detection)",
+  "Detect fenced code blocks with language hints",
+  "Detect diff patterns (```diff or heuristic)",
+  "Return ordered list of typed Chunk structs",
+]
+passes = false
+acceptance = [
+  "Code blocks extracted with language metadata",
+  "Diff blocks detected and typed correctly",
+  "Prose sections preserved between code/diff blocks",
+  "Output matches plain-text chunk parsing",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract metadata from system init event"
+steps = [
+  "Parse system event with subtype 'init'",
+  "Extract session_id field",
+  "Extract model field",
+  "Extract tools array",
+  "Return IterationMetadata struct",
+]
+passes = false
+acceptance = [
+  "Session ID captured from init event",
+  "Model name recorded",
+  "Tool list captured for auditing",
+  "Missing fields handled gracefully",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract costs and usage from result event"
+steps = [
+  "Parse result event at stream end",
+  "Extract total_cost_usd field",
+  "Extract duration_ms field",
+  "Extract usage object with token counts",
+  "Return IterationCosts struct",
+]
+passes = false
+acceptance = [
+  "Total cost captured in USD",
+  "Duration recorded in milliseconds",
+  "Input/output token counts extracted",
+  "Cache read/creation tokens extracted if present",
+]
+
+[[stories]]
+category = "functional"
+description = "Store metadata in iteration logs"
+steps = [
+  "Extend iteration-N.toml schema with metadata section",
+  "Add claude_session_id field",
+  "Add model field",
+  "Add cost_usd field",
+  "Add duration_ms field",
+  "Add usage subsection with token counts",
+]
+passes = false
+acceptance = [
+  "Metadata section present in iteration logs",
+  "All fields populated from JSON events",
+  "Backward compatible (old logs without metadata still parse)",
+  "Session summary can aggregate costs across iterations",
+]
+
+[[stories]]
+category = "functional"
+description = "Correlate tool calls with tool results"
+steps = [
+  "Track pending tool_use IDs from assistant events",
+  "When user event arrives, match tool_use_id to pending call",
+  "Create ToolInteraction struct pairing call with result",
+  "Handle missing results gracefully (tool may have failed)",
+]
+passes = false
+acceptance = [
+  "Each tool call paired with its result",
+  "tool_use_id used as correlation key",
+  "Unpaired calls tracked separately (in case of errors)",
+  "Multiple concurrent tool calls handled correctly",
+]
+
+[[stories]]
+category = "functional"
+description = "Store tool interactions in iteration logs"
+steps = [
+  "Extend iteration-N.toml schema with [[tool_calls]] array",
+  "Record tool name, input arguments, and result for each call",
+  "Include timing if available (from event timestamps)",
+  "Truncate large results to reasonable size for storage",
+]
+passes = false
+acceptance = [
+  "All tool calls recorded in iteration log",
+  "Input and output preserved for debugging",
+  "Large file contents truncated with indicator",
+  "Tool call order preserved",
+]
+
+[[stories]]
+category = "functional"
+description = "Update default command template for JSON output"
+steps = [
+  "Change default command to include --output-format stream-json",
+  "Ensure prompt still substituted correctly",
+  "Document the JSON requirement in help text",
+]
+passes = false
+acceptance = [
+  "Default: claude --permission-mode acceptEdits --output-format stream-json -p {prompt}",
+  "Custom commands can override format",
+  "Help text explains JSON output requirement",
 ]
 
 # =============================================================================

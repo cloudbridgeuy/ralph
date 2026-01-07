@@ -43,7 +43,17 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Skill(domain-design)",
-      "WebFetch(domain:ghuntley.com)"
+      "WebFetch(domain:ghuntley.com)",
+      "Read(.claude/plans/**)",
+      "Write(.claude/plans/**)",
+      "Edit(.claude/plans/**)",
+      "Read(.claude/designs/**)",
+      "Write(.claude/designs/**)",
+      "Edit(.claude/designs/**)",
+      "Read(.claude/context/**)",
+      "Write(.claude/context/**)",
+      "Edit(.claude/context/**)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []
