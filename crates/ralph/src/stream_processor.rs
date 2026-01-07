@@ -355,16 +355,29 @@ impl StreamProcessor {
     }
 
     /// Format a tool invocation for display.
+    ///
+    /// File paths are shown in full without truncation for tools like Read, Edit,
+    /// Write, Glob, and Grep. Other arguments (like Bash commands or prompts)
+    /// are truncated to keep output readable.
     fn format_tool_invocation(&self, invocation: &ralph_core::stream::ToolInvocation) -> String {
         let key_arg = extract_key_argument(&invocation.name, &invocation.input);
+
+        // Format the argument: paths shown in full, other args truncated
+        let formatted_arg = key_arg.map(|arg| {
+            if arg.is_path {
+                arg.value
+            } else {
+                truncate_string(&arg.value, 60)
+            }
+        });
 
         if self.highlighting_enabled {
             // Use colors for terminal display
             format!(
                 "\x1b[36m▶ {}\x1b[0m{}\n",
                 invocation.name,
-                if let Some(arg) = key_arg {
-                    format!(" \x1b[90m{}\x1b[0m", truncate_string(&arg, 60))
+                if let Some(arg) = formatted_arg {
+                    format!(" \x1b[90m{}\x1b[0m", arg)
                 } else {
                     String::new()
                 }
@@ -374,7 +387,7 @@ impl StreamProcessor {
             format!(
                 "> {} {}\n",
                 invocation.name,
-                key_arg.map(|a| truncate_string(&a, 60)).unwrap_or_default()
+                formatted_arg.unwrap_or_default()
             )
         }
     }
@@ -576,39 +589,57 @@ impl StreamProcessor {
     }
 }
 
+/// Result of extracting a key argument from a tool invocation.
+///
+/// Contains the argument value and metadata about whether it should be
+/// displayed in full (e.g., file paths) or truncated (e.g., file content).
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeyArgument {
+    /// The argument value.
+    pub value: String,
+    /// Whether this is a file path that should be shown in full.
+    pub is_path: bool,
+}
+
 /// Extract the most relevant argument from a tool invocation for display.
 ///
 /// Different tools have different key arguments:
-/// - Read/Edit/Write: file_path
-/// - Glob: pattern
-/// - Grep: pattern
-/// - Bash: command
-fn extract_key_argument(tool_name: &str, input: &Value) -> Option<String> {
+/// - Read/Edit/Write: file_path (shown in full)
+/// - Glob: pattern (shown in full)
+/// - Grep: pattern (shown in full)
+/// - Bash: command (truncated)
+/// - WebFetch: url (shown in full)
+/// - Task: prompt (truncated)
+fn extract_key_argument(tool_name: &str, input: &Value) -> Option<KeyArgument> {
     let obj = input.as_object()?;
 
-    // Tool-specific key arguments
-    let key = match tool_name {
-        "Read" | "Edit" | "Write" => "file_path",
-        "Glob" => "pattern",
-        "Grep" => "pattern",
-        "Bash" => "command",
-        "WebFetch" => "url",
-        "Task" => "prompt",
+    // Tool-specific key arguments with path indicators
+    let (key, is_path) = match tool_name {
+        "Read" | "Edit" | "Write" => ("file_path", true),
+        "Glob" => ("pattern", true),
+        "Grep" => ("pattern", true),
+        "Bash" => ("command", false),
+        "WebFetch" => ("url", true),
+        "Task" => ("prompt", false),
+        "NotebookEdit" => ("notebook_path", true),
         _ => {
             // For unknown tools, try common field names
             if obj.contains_key("file_path") {
-                "file_path"
+                ("file_path", true)
             } else if obj.contains_key("path") {
-                "path"
+                ("path", true)
             } else if obj.contains_key("pattern") {
-                "pattern"
+                ("pattern", true)
             } else if obj.contains_key("command") {
-                "command"
+                ("command", false)
             } else {
-                // Return the first string value
+                // Return the first string value (truncated since we don't know what it is)
                 for (_, v) in obj {
                     if let Some(s) = v.as_str() {
-                        return Some(s.to_string());
+                        return Some(KeyArgument {
+                            value: s.to_string(),
+                            is_path: false,
+                        });
                     }
                 }
                 return None;
@@ -616,7 +647,10 @@ fn extract_key_argument(tool_name: &str, input: &Value) -> Option<String> {
         }
     };
 
-    obj.get(key).and_then(|v| v.as_str()).map(String::from)
+    obj.get(key).and_then(|v| v.as_str()).map(|s| KeyArgument {
+        value: s.to_string(),
+        is_path,
+    })
 }
 
 /// Truncate a string to a maximum length, adding ellipsis if needed.
