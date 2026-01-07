@@ -140,7 +140,7 @@ steps = [
   "Scan output for completion marker string",
   "Return completion reason if either condition met",
 ]
-passes = false
+passes = true
 acceptance = [
   "Default marker is <promise>COMPLETE</promise>",
   "Marker can be customized via flag",
