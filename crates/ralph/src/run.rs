@@ -29,6 +29,8 @@ pub struct RunConfig {
     pub completion_marker: String,
     /// Context file paths.
     pub context_paths: ContextPaths,
+    /// Number of automatic retries on subprocess failure.
+    pub retry_count: usize,
 }
 
 /// Result of running the iteration loop.
@@ -57,9 +59,18 @@ pub enum RunError {
     #[error("Failed to parse PRD: {0}")]
     Prd(#[from] PrdError),
 
-    /// Subprocess invocation failed
+    /// Subprocess invocation failed (spawn error, signal, etc.)
     #[error("Failed to invoke subprocess: {0}")]
     Subprocess(#[from] SubprocessError),
+
+    /// LLM subprocess exited with non-zero code after exhausting retries
+    #[error("LLM subprocess failed with exit code {exit_code} after {attempts} attempt(s)")]
+    SubprocessFailed {
+        exit_code: i32,
+        attempts: usize,
+        stdout: String,
+        stderr: String,
+    },
 
     /// Iteration log writing failed
     #[error("Failed to write iteration log: {0}")]
@@ -148,8 +159,8 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Snapshot PRD content for change detection
         let prd_snapshot = prd_before.clone();
 
-        // Invoke LLM subprocess
-        let result = invoke_subprocess(&config.command)?;
+        // Invoke LLM subprocess with retry logic
+        let result = invoke_with_retries(&config.command, config.retry_count, iteration)?;
 
         // Write iteration log
         // Note: metadata will be populated from JSON streaming output in a future story
@@ -217,6 +228,76 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
     })
 }
 
+/// Invoke subprocess with automatic retries on failure.
+///
+/// This function wraps `invoke_subprocess` with retry logic:
+/// - On non-zero exit code, prints stdout/stderr and retries
+/// - Prints attempt number for each retry
+/// - Returns error with captured output if all retries exhausted
+///
+/// # Arguments
+///
+/// * `command` - The command to execute
+/// * `retry_count` - Number of retries (0 means run once with no retries)
+/// * `iteration` - Current iteration number (for logging context)
+///
+/// # Returns
+///
+/// Returns the `SubprocessResult` on success (exit code 0).
+fn invoke_with_retries(
+    command: &str,
+    retry_count: usize,
+    iteration: usize,
+) -> Result<crate::subprocess::SubprocessResult, RunError> {
+    let max_attempts = retry_count + 1; // retry_count of 3 means 4 total attempts
+
+    for attempt in 1..=max_attempts {
+        let result = invoke_subprocess(command)?;
+
+        if result.exit_code == 0 {
+            return Ok(result);
+        }
+
+        // Non-zero exit code - handle retry
+        eprintln!(
+            "\n[Iteration {}] LLM subprocess failed with exit code {} (attempt {}/{})",
+            iteration, result.exit_code, attempt, max_attempts
+        );
+
+        // Print captured output from failed attempt
+        if !result.stdout.is_empty() {
+            eprintln!("\n--- stdout ---");
+            eprint!("{}", result.stdout);
+            if !result.stdout.ends_with('\n') {
+                eprintln!();
+            }
+        }
+
+        if !result.stderr.is_empty() {
+            eprintln!("\n--- stderr ---");
+            eprint!("{}", result.stderr);
+            if !result.stderr.ends_with('\n') {
+                eprintln!();
+            }
+        }
+
+        if attempt < max_attempts {
+            eprintln!("\nRetrying...\n");
+        } else {
+            // All retries exhausted
+            return Err(RunError::SubprocessFailed {
+                exit_code: result.exit_code,
+                attempts: max_attempts,
+                stdout: result.stdout,
+                stderr: result.stderr,
+            });
+        }
+    }
+
+    // This should never be reached due to the return in the loop
+    unreachable!("Loop should have returned or errored")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +322,7 @@ mod tests {
             command: "echo 'test'".to_string(),
             completion_marker: "<promise>COMPLETE</promise>".to_string(),
             context_paths: paths,
+            retry_count: 3,
         };
 
         let result = run(config);
@@ -263,6 +345,7 @@ mod tests {
             command: "echo 'test'".to_string(),
             completion_marker: "<promise>COMPLETE</promise>".to_string(),
             context_paths: paths,
+            retry_count: 3,
         };
 
         let result = run(config);
@@ -286,5 +369,72 @@ mod tests {
 
         let result = read_prd_file(&prd_path);
         assert!(matches!(result, Err(RunError::ReadPrd { .. })));
+    }
+
+    #[test]
+    fn test_invoke_with_retries_success_first_attempt() {
+        let result = invoke_with_retries("echo 'success'", 3, 1).unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("success"));
+    }
+
+    #[test]
+    fn test_invoke_with_retries_fails_all_attempts() {
+        // exit 1 always fails, so all retries should be exhausted
+        let result = invoke_with_retries("exit 42", 2, 1);
+        assert!(matches!(
+            result,
+            Err(RunError::SubprocessFailed {
+                exit_code: 42,
+                attempts: 3, // 2 retries + 1 initial = 3 attempts
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_invoke_with_retries_zero_retries() {
+        // Zero retries means run once
+        let result = invoke_with_retries("exit 1", 0, 1);
+        assert!(matches!(
+            result,
+            Err(RunError::SubprocessFailed {
+                exit_code: 1,
+                attempts: 1,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_invoke_with_retries_captures_output() {
+        // Verify stdout and stderr are captured in the error
+        let result = invoke_with_retries("echo 'out'; echo 'err' >&2; exit 5", 0, 1);
+        match result {
+            Err(RunError::SubprocessFailed {
+                stdout,
+                stderr,
+                exit_code,
+                ..
+            }) => {
+                assert_eq!(exit_code, 5);
+                assert!(stdout.contains("out"));
+                assert!(stderr.contains("err"));
+            }
+            _ => panic!("Expected SubprocessFailed error"),
+        }
+    }
+
+    #[test]
+    fn test_subprocess_failed_error_display() {
+        let err = RunError::SubprocessFailed {
+            exit_code: 42,
+            attempts: 3,
+            stdout: "output".to_string(),
+            stderr: "error".to_string(),
+        };
+        let msg = format!("{}", err);
+        assert!(msg.contains("exit code 42"));
+        assert!(msg.contains("3 attempt"));
     }
 }

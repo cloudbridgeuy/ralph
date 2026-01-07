@@ -65,6 +65,7 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         command,
         completion_marker,
         context_paths,
+        retry_count: args.retry,
     };
 
     // Execute the run loop

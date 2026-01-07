@@ -562,7 +562,7 @@ steps = [
   "Re-invoke subprocess if retries remain",
   "Proceed to interactive prompt if exhausted",
 ]
-passes = false
+passes = true
 acceptance = [
   "Default retry count is 3",
   "Configurable via --retry flag",

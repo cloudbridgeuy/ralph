@@ -1185,3 +1185,54 @@
 - After Layer 4: Layer 5 (Auxiliary Commands) for replay and sessions commands
 - The typed chunk storage is ready to be populated when JSON streaming output parsing is integrated into the run loop
 
+## 2026-01-07 - Retry Logic on Subprocess Failure Complete
+
+### What was accomplished
+- Implemented Story: "Implement retry logic on subprocess failure" (Layer 4 Error Handling)
+- Added `retry_count` field to `RunConfig` struct in `crates/ralph/src/run.rs`
+- Created `invoke_with_retries()` helper function with the following features:
+  - Detects non-zero exit code from LLM subprocess
+  - Prints captured stdout and stderr before each retry
+  - Prints attempt number (e.g., "attempt 1/4")
+  - Re-invokes subprocess if retries remain
+  - Returns `RunError::SubprocessFailed` with captured output when all retries exhausted
+- Added new error variant `RunError::SubprocessFailed` with fields:
+  - `exit_code` - The exit code from the failed subprocess
+  - `attempts` - Total number of attempts made
+  - `stdout` - Captured stdout for debugging
+  - `stderr` - Captured stderr for debugging
+- Updated `main.rs` to pass `retry_count` from CLI args to `RunConfig`
+- Added 5 comprehensive tests covering:
+  - Success on first attempt
+  - Failure after exhausting all retries
+  - Zero retries (run once)
+  - Output capture in error
+  - Error message formatting
+- All 406 tests pass (142 in core, 264 in ralph)
+- Marked story as passes = true
+
+### Implementation details
+- Retry logic follows "retry_count + 1" pattern: retry_count of 3 means 4 total attempts
+- Output from failed attempts is printed to stderr with clear formatting:
+  ```
+  [Iteration N] LLM subprocess failed with exit code X (attempt Y/Z)
+
+  --- stdout ---
+  <captured output>
+
+  --- stderr ---
+  <captured error>
+
+  Retrying...
+  ```
+- The `--retry` flag defaults to 3 (already implemented in CLI args)
+- Follows Imperative Shell pattern (I/O operations in ralph crate)
+
+### Context for next iteration
+- **Layer 4 (Error Handling) has started** - first story complete
+- Next priorities for Layer 4:
+  - Story: Prompt user on unrecoverable failure (builds on retry logic)
+  - Story: Error on stuck state when PRD unchanged (already implemented in run.rs, needs verification)
+- After Layer 4: Layer 5 (Auxiliary Commands) for replay and sessions commands
+- The retry logic is ready but does not yet include interactive prompting for user action after retries exhausted
+
