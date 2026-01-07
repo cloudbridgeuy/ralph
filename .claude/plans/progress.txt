@@ -831,3 +831,50 @@
 - After Layer 2: Layer 3 (Output Formatting) for syntax highlighting and streaming
 - The defaults are ready to be used by CLI argument parsing with clap
 
+## 2026-01-07 - Ralph Run Subcommand Complete
+
+### What was accomplished
+- Implemented Story: "Implement ralph run subcommand with arguments" (Layer 2 CLI Interface)
+- Created `crates/ralph/src/cli.rs` with clap derive-based CLI parsing:
+  - `Cli` struct as main entry point with `#[derive(Parser)]`
+  - `Commands` enum with `Run` variant using `#[derive(Subcommand)]`
+  - `RunArgs` struct with all arguments from architecture spec:
+    - `iterations` - Optional positional argument for max iterations
+    - `--slug, -s` - Session identifier (auto-generated if omitted)
+    - `--prompt, -p` - Custom prompt template (file, stdin, or inline)
+    - `--command, -c` - Custom LLM invocation pattern
+    - `--design` - Design document path override
+    - `--prd` - PRD file path override
+    - `--progress` - Progress notes path override
+    - `--retry` - Auto-retry count (default: 3)
+    - `--completion-marker` - Custom completion marker
+- Updated `main.rs` to:
+  - Parse CLI arguments using clap
+  - Wire up `run` command to the run module
+  - Resolve prompt from file, stdin, or inline string
+  - Substitute `{prompt}` placeholder in command template with shell escaping
+  - Build `RunConfig` and execute the iteration loop
+  - Print session summary on completion
+- Added clap dependency to ralph crate (already in workspace)
+- Refactored `RunConfig` to use `command` instead of `command_template` + `prompt` fields
+- Removed `#[allow(dead_code)]` from run.rs since it's now used
+- Added 15 unit tests for CLI argument parsing and prompt substitution
+
+### Implementation details
+- Follows Command Routing Pattern from `.claude/context/rust-cli-clap.md`
+- Uses clap derive macros for declarative argument definitions
+- All arguments have comprehensive help text via doc comments
+- Default values match architecture spec (retry=3, paths from defaults module)
+- Prompt substitution handles shell escaping (single quotes with escape sequences)
+- Prompt resolution supports three modes: file path, stdin (`-`), inline string
+- Basic default prompt generated when none provided (placeholder for future prompt template story)
+
+### Context for next iteration
+- **Layer 2 (CLI Interface) has started** - first story complete
+- Remaining Layer 2 stories:
+  - Story: Substitute placeholders in prompt template (builds on current basic implementation)
+  - Story: Substitute placeholders in command template (partially done, needs full template support)
+- After Layer 2: Layer 3 (Output Formatting) for syntax highlighting and streaming
+- The CLI is now functional - users can run `ralph run` with all documented flags
+- The `--retry` flag is accepted but retry logic not yet implemented (Layer 4 story)
+

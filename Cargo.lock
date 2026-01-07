@@ -564,6 +564,7 @@ name = "ralph"
 version = "1.6.0"
 dependencies = [
  "chrono",
+ "clap",
  "color-eyre",
  "dirs",
  "ralph_core",

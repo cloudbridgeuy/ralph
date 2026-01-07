@@ -416,7 +416,7 @@ steps = [
   "Add --retry and --completion-marker flags",
   "Wire up to run module entry point",
 ]
-passes = false
+passes = true
 acceptance = [
   "All flags documented with help text",
   "Default values match architecture spec",

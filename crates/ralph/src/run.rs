@@ -5,8 +5,6 @@
 //! session management, subprocess invocation, PRD parsing, completion detection,
 //! and git diff capture.
 
-#![allow(dead_code)] // Module not yet used by CLI commands
-
 use crate::git::capture_and_write_diff;
 use crate::init::{initialize_context_files, InitError};
 use crate::iteration::{write_iteration_log, Chunk, IterationError, IterationLog};
@@ -25,10 +23,8 @@ pub struct RunConfig {
     pub max_iterations: Option<usize>,
     /// Session slug (auto-generated if None).
     pub slug: Option<String>,
-    /// Command template to invoke the LLM (e.g., "claude -p {prompt}").
-    pub command_template: String,
-    /// Prompt text to pass to the LLM.
-    pub prompt: String,
+    /// Full command to invoke the LLM (with prompt already substituted).
+    pub command: String,
     /// Completion marker string to detect in output.
     pub completion_marker: String,
     /// Context file paths.
@@ -153,7 +149,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         let prd_snapshot = prd_before.clone();
 
         // Invoke LLM subprocess
-        let result = invoke_subprocess(&config.command_template)?;
+        let result = invoke_subprocess(&config.command)?;
 
         // Write iteration log
         // Note: metadata will be populated from JSON streaming output in a future story
@@ -234,18 +230,6 @@ mod tests {
         }
     }
 
-    fn create_test_prd(path: &PathBuf, pending: usize) {
-        let mut content = String::new();
-        for i in 0..pending {
-            content.push_str(&format!(
-                "[[stories]]\ndescription = \"Story {}\"\npasses = false\n\n",
-                i + 1
-            ));
-        }
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(path, content).unwrap();
-    }
-
     #[test]
     fn test_run_error_when_no_prd() {
         let temp_dir = TempDir::new().unwrap();
@@ -254,8 +238,7 @@ mod tests {
         let config = RunConfig {
             max_iterations: Some(1),
             slug: Some("test-slug".to_string()),
-            command_template: "echo 'test'".to_string(),
-            prompt: "test prompt".to_string(),
+            command: "echo 'test'".to_string(),
             completion_marker: "<promise>COMPLETE</promise>".to_string(),
             context_paths: paths,
         };
@@ -277,8 +260,7 @@ mod tests {
         let config = RunConfig {
             max_iterations: Some(1),
             slug: Some("test-slug".to_string()),
-            command_template: "echo 'test'".to_string(),
-            prompt: "test prompt".to_string(),
+            command: "echo 'test'".to_string(),
             completion_marker: "<promise>COMPLETE</promise>".to_string(),
             context_paths: paths,
         };
