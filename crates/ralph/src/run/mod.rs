@@ -91,6 +91,26 @@ pub struct RunResult {
     pub total_output_tokens: Option<u64>,
 }
 
+/// Configuration for a single subprocess invocation with failure recovery.
+///
+/// Groups parameters needed by `invoke_with_failure_recovery` to keep
+/// the function signature under 5 arguments.
+#[derive(Debug, Clone)]
+struct InvocationConfig<'a> {
+    /// Full command to invoke the LLM.
+    command: &'a str,
+    /// Maximum number of recovery attempts after initial failure.
+    max_attempts: usize,
+    /// Timeout in seconds for each subprocess invocation.
+    timeout_secs: u64,
+    /// Current iteration number (for logging context).
+    iteration: usize,
+    /// Theme configuration for syntax highlighting.
+    theme_config: Option<&'a ThemeConfig>,
+    /// Accumulated time from previous iterations (for spinner display).
+    session_elapsed_ms: u64,
+}
+
 /// Error type for run operations.
 #[derive(thiserror::Error, Debug)]
 pub enum RunError {
@@ -303,15 +323,15 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
 
         // Invoke LLM subprocess with retry logic, timeout, spinner, and stream processing
         // Pass accumulated session time for spinner display
-        let session_elapsed_ms = total_duration_ms.unwrap_or(0);
-        let result = match invoke_with_failure_recovery(
-            &config.command,
-            config.max_attempts,
-            config.timeout_secs,
+        let invocation_config = InvocationConfig {
+            command: &config.command,
+            max_attempts: config.max_attempts,
+            timeout_secs: config.timeout_secs,
             iteration,
-            config.theme_config.as_ref(),
-            session_elapsed_ms,
-        ) {
+            theme_config: config.theme_config.as_ref(),
+            session_elapsed_ms: total_duration_ms.unwrap_or(0),
+        };
+        let result = match invoke_with_failure_recovery(&invocation_config) {
             Ok(r) => r,
             Err(RunError::SubprocessFailed {
                 exit_code,
@@ -511,41 +531,32 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 ///
 /// # Arguments
 ///
-/// * `command` - The command to execute
-/// * `max_attempts` - Maximum attempts (3 means up to 4 total: 1 initial + 3 recovery)
-/// * `timeout_secs` - Timeout in seconds for each subprocess invocation
-/// * `iteration` - Current iteration number (for logging context)
-/// * `theme_config` - Optional theme configuration for syntax highlighting
-/// * `session_elapsed_ms` - Accumulated time from previous iterations (for spinner display)
+/// * `config` - Configuration for the invocation including command, max_attempts,
+///   timeout_secs, iteration number, theme_config, and session_elapsed_ms
 ///
 /// # Returns
 ///
 /// Returns the `StreamingSubprocessResult` on success (exit code 0).
 fn invoke_with_failure_recovery(
-    command: &str,
-    max_attempts: usize,
-    timeout_secs: u64,
-    iteration: usize,
-    theme_config: Option<&ThemeConfig>,
-    session_elapsed_ms: u64,
+    config: &InvocationConfig,
 ) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
-    let total_attempts = max_attempts + 1; // max_attempts of 3 means 4 total attempts (1 initial + 3 recovery)
+    let total_attempts = config.max_attempts + 1; // max_attempts of 3 means 4 total attempts (1 initial + 3 recovery)
 
     for attempt in 1..=total_attempts {
         // Use spinner-aware subprocess if theme config provided, otherwise use default
-        let result = match theme_config {
-            Some(config) => {
+        let result = match config.theme_config {
+            Some(theme) => {
                 match invoke_subprocess_with_spinner(
-                    command,
-                    timeout_secs,
-                    config.clone(),
-                    session_elapsed_ms,
+                    config.command,
+                    config.timeout_secs,
+                    theme.clone(),
+                    config.session_elapsed_ms,
                 ) {
                     Ok(r) => Ok(r),
                     Err(e) => Err(e),
                 }
             }
-            None => invoke_subprocess_with_timeout(command, timeout_secs),
+            None => invoke_subprocess_with_timeout(config.command, config.timeout_secs),
         };
 
         let result = match result {
@@ -557,7 +568,7 @@ fn invoke_with_failure_recovery(
                 // Timeout occurred
                 eprintln!(
                     "\n[Iteration {}] LLM subprocess timed out after {} seconds (attempt {}/{})",
-                    iteration, ts, attempt, total_attempts
+                    config.iteration, ts, attempt, total_attempts
                 );
 
                 // Print partial output from timed out attempt
@@ -611,7 +622,7 @@ fn invoke_with_failure_recovery(
         // Non-zero exit code - handle failure recovery
         eprintln!(
             "\n[Iteration {}] LLM subprocess failed with exit code {} (attempt {}/{})",
-            iteration, result.exit_code, attempt, total_attempts
+            config.iteration, result.exit_code, attempt, total_attempts
         );
 
         // Print captured output from failed attempt

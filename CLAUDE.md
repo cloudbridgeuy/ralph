@@ -28,6 +28,36 @@ These principles are non-negotiable when working on this codebase:
 
 4. **Follow Existing Patterns**: When implementing features, use patterns already established in the codebase. Don't invent new approaches when existing ones work. Consistency trumps novelty
 
+5. **No .unwrap() or .expect() in Production Code**: Use proper error handling with `?` operator and Result/Option combinators. Test code may use `.unwrap()` for brevity. Any intentional panics must be documented with `#[allow(...)]` and comments explaining the invariant.
+
+6. **Maximum 5 Function Arguments**: Functions with more than 5 arguments must use config/options structs. This is enforced by `clippy::too_many_arguments` with threshold 5 (see `clippy.toml`). Test code may have exceptions where it makes tests clearer.
+
+**Example - Refactoring too many arguments:**
+
+```rust
+// Before: 6 arguments - violation!
+fn invoke_with_recovery(
+    command: &str,
+    max_attempts: usize,
+    timeout_secs: u64,
+    iteration: usize,
+    theme_config: Option<&ThemeConfig>,
+    session_elapsed_ms: u64,
+) -> Result<SubprocessResult, Error> { ... }
+
+// After: 1 argument - config struct
+struct InvocationConfig<'a> {
+    command: &'a str,
+    max_attempts: usize,
+    timeout_secs: u64,
+    iteration: usize,
+    theme_config: Option<&'a ThemeConfig>,
+    session_elapsed_ms: u64,
+}
+
+fn invoke_with_recovery(config: &InvocationConfig) -> Result<SubprocessResult, Error> { ... }
+```
+
 ## Functional Core - Imperative Shell
 
 We advocate the use of this pattern when writing code for this repo.
