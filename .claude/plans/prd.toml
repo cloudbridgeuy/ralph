@@ -360,7 +360,7 @@ steps = [
   "Create ToolInteraction struct pairing call with result",
   "Handle missing results gracefully (tool may have failed)",
 ]
-passes = false
+passes = true
 acceptance = [
   "Each tool call paired with its result",
   "tool_use_id used as correlation key",

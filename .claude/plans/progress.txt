@@ -697,3 +697,53 @@
   - Story #22: Update default command template for JSON output
 - After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
 
+## 2026-01-07 - Correlate Tool Calls With Tool Results Complete
+
+### What was accomplished
+- Implemented Story #20: Correlate tool calls with tool results in `crates/core/src/stream.rs`
+- Added the following types, methods, and functions:
+  - `ToolInteraction` struct with `id`, `name`, `input`, `result`, and `is_error` fields
+  - `ToolInteraction::from_invocation()` - Create interaction from invocation without result
+  - `ToolInteraction::from_invocation_and_result()` - Create interaction pairing call with result
+  - `correlate_tool_interactions(&[StreamEvent])` - Batch function to correlate all tool calls with results
+  - `ToolCorrelator` struct for stateful streaming correlation
+  - `ToolCorrelator::process_event()` - Process events, returning completed interactions
+  - `ToolCorrelator::pending_count()` - Get count of unresolved tool calls
+  - `ToolCorrelator::completed_interactions()` - Get all completed interactions
+  - `ToolCorrelator::finish()` - Finalize and return all interactions (including unpaired)
+  - `ToolCorrelator::reset()` - Reset to initial state
+- Added 18 comprehensive tests covering:
+  - ToolInteraction creation from invocations (with and without results)
+  - Error result handling
+  - Single and multiple tool call correlation
+  - Missing results (stream interrupted)
+  - Empty events and no tool calls
+  - Order preservation across multiple assistant events
+  - ToolCorrelator stateful processing
+  - Finish with pending invocations
+  - Multiple concurrent tool calls
+  - Ignoring non-tool events (system, result)
+  - Reset functionality
+  - Serialization round-trip
+  - Realistic stream scenarios
+- All tests pass (276 total)
+- Marked story #20 as passes = true
+
+### Implementation details
+- Pure types and functions in Functional Core (ralph_core) - no I/O operations
+- `correlate_tool_interactions` collects all tool results by ID, then pairs with invocations
+- Uses `tool_use_id` as correlation key between `ToolUse` content blocks and `ToolResult` content
+- Tool calls without matching results have `result: None` (handles stream interruption)
+- `ToolCorrelator` provides streaming-friendly stateful correlation
+- `ToolInteraction` uses serde with `skip_serializing_if` for clean JSON/TOML output
+- Comprehensive documentation with examples in docstrings
+- Follows established patterns from prior stories
+
+### Context for next iteration
+- Story #20 is complete, Layer 1C continues
+- Next priorities for Layer 1C:
+  - Story #21: Store tool interactions in iteration logs (extend iteration-N.toml schema)
+  - Story #22: Update default command template for JSON output
+- After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
+- The `ToolInteraction` and `correlate_tool_interactions` functions are ready for use in iteration log storage
+
