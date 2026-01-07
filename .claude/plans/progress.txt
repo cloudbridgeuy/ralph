@@ -1278,3 +1278,41 @@
   - Story: Write default prompt template (already done in previous iteration, needs verification)
 - After Layer 5: Feature complete for run command architecture
 
+## 2026-01-07 - Ralph Sessions Command Complete
+
+### What was accomplished
+- Implemented Story: "Implement ralph sessions command" (Layer 5 Auxiliary Commands)
+- Added `Sessions` variant to `Commands` enum in `crates/ralph/src/cli.rs`
+- Created `SessionsArgs` struct with optional filters:
+  - `--project` - Filter sessions by project path (substring match)
+  - `--outcome` - Filter sessions by outcome status (in_progress, completed, aborted, failed)
+- Added `execute_sessions()` function in `crates/ralph/src/main.rs` with:
+  - Loading sessions from global index via `session::load_sessions_index()`
+  - Filtering by project path and outcome status
+  - Sorting by date (most recent first)
+  - Table formatting with columns: SLUG, PROJECT, DATE, ITERS, OUTCOME
+  - Project path truncation for long paths (shows `...` prefix for paths > 38 chars)
+  - Empty state messages (different for filtered vs unfiltered)
+  - Session count summary at bottom
+- Added 5 new CLI tests for sessions command parsing
+- Also verified and marked "Write default prompt template" story as complete
+  - Implementation already exists in `ralph_core::context::defaults::PROMPT_TEMPLATE`
+  - All placeholders documented ({design_file}, {prd_file}, {progress_file}, {completion_marker})
+  - Uses @ file references for Claude CLI integration
+- All 414 tests pass (150 core, 264 ralph)
+
+### Implementation details
+- Sessions sorted by `started_at` in descending order (most recent first)
+- Outcome filtering is case-insensitive
+- Project filtering uses substring matching for flexibility
+- Table format: fixed-width columns for consistent alignment
+- Uses existing `session::load_sessions_index()` from session module
+- Follows established CLI patterns from `run` command
+
+### Context for next iteration
+- **Layer 5 (Auxiliary Commands) continues** - one story remaining
+- Next priority: Story: Implement ralph replay command
+  - Requires reading iteration logs from session directory
+  - Needs to re-render chunks with syntax highlighting
+- After Layer 5: Feature complete for run command architecture
+

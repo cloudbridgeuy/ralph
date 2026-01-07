@@ -636,7 +636,7 @@ steps = [
   "List all sessions with key metadata",
   "Format as table: slug, project, date, iterations, outcome",
 ]
-passes = false
+passes = true
 acceptance = [
   "Shows all sessions across all projects",
   "Sorted by date (most recent first)",
@@ -655,7 +655,7 @@ steps = [
   "Include commit instruction without attribution",
   "Include completion marker instruction",
 ]
-passes = false
+passes = true
 acceptance = [
   "Prompt works with claude CLI out of the box",
   "All placeholders documented",

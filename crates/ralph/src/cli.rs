@@ -29,6 +29,26 @@ pub enum Commands {
     /// the PRD. Each iteration picks up one story, implements it, updates the
     /// PRD to mark it complete, and commits the changes.
     Run(RunArgs),
+
+    /// List all sessions across all projects.
+    ///
+    /// Displays a table of sessions with their slug, project path,
+    /// start date, iteration count, and outcome status.
+    Sessions(SessionsArgs),
+}
+
+/// Arguments for the `sessions` subcommand.
+#[derive(clap::Args, Debug)]
+pub struct SessionsArgs {
+    /// Filter sessions by project path (substring match).
+    #[arg(long)]
+    pub project: Option<String>,
+
+    /// Filter sessions by outcome status.
+    ///
+    /// Valid values: in_progress, completed, aborted, failed
+    #[arg(long)]
+    pub outcome: Option<String>,
 }
 
 /// Arguments for the `run` subcommand.
@@ -113,6 +133,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.iterations, Some(5));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -123,6 +144,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.slug, Some("my-session".to_string()));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -133,6 +155,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.slug, Some("my-session".to_string()));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -143,6 +166,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.prompt, Some("custom prompt".to_string()));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -153,6 +177,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.command, Some("echo {prompt}".to_string()));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -175,6 +200,7 @@ mod tests {
                 assert_eq!(args.prd, Some(PathBuf::from("/custom/prd.toml")));
                 assert_eq!(args.progress, Some(PathBuf::from("/custom/progress.txt")));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -185,6 +211,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.retry, 5);
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -195,6 +222,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.retry, 3);
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -205,6 +233,7 @@ mod tests {
             Commands::Run(args) => {
                 assert_eq!(args.completion_marker, Some("DONE".to_string()));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -244,6 +273,7 @@ mod tests {
                 assert_eq!(args.retry, 2);
                 assert_eq!(args.completion_marker, Some("END".to_string()));
             }
+            _ => panic!("Expected Run command"),
         }
     }
 
@@ -256,5 +286,67 @@ mod tests {
         let err = result.unwrap_err();
         let help = err.to_string();
         assert!(help.contains("ITERATIONS"));
+    }
+
+    // Sessions command tests
+
+    #[test]
+    fn test_cli_parses_sessions_command() {
+        let cli = Cli::try_parse_from(["ralph", "sessions"]).unwrap();
+        assert!(matches!(cli.command, Commands::Sessions(_)));
+    }
+
+    #[test]
+    fn test_sessions_without_args() {
+        let cli = Cli::try_parse_from(["ralph", "sessions"]).unwrap();
+        match cli.command {
+            Commands::Sessions(args) => {
+                assert!(args.project.is_none());
+                assert!(args.outcome.is_none());
+            }
+            _ => panic!("Expected Sessions command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_with_project_filter() {
+        let cli = Cli::try_parse_from(["ralph", "sessions", "--project", "/my/project"]).unwrap();
+        match cli.command {
+            Commands::Sessions(args) => {
+                assert_eq!(args.project, Some("/my/project".to_string()));
+            }
+            _ => panic!("Expected Sessions command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_with_outcome_filter() {
+        let cli = Cli::try_parse_from(["ralph", "sessions", "--outcome", "completed"]).unwrap();
+        match cli.command {
+            Commands::Sessions(args) => {
+                assert_eq!(args.outcome, Some("completed".to_string()));
+            }
+            _ => panic!("Expected Sessions command"),
+        }
+    }
+
+    #[test]
+    fn test_sessions_with_both_filters() {
+        let cli = Cli::try_parse_from([
+            "ralph",
+            "sessions",
+            "--project",
+            "myproject",
+            "--outcome",
+            "in_progress",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Sessions(args) => {
+                assert_eq!(args.project, Some("myproject".to_string()));
+                assert_eq!(args.outcome, Some("in_progress".to_string()));
+            }
+            _ => panic!("Expected Sessions command"),
+        }
     }
 }
