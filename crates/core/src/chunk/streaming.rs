@@ -80,7 +80,9 @@ impl<'a> Iterator for SplitLinesIter<'a> {
 /// Internal state for the streaming chunk buffer.
 #[derive(Debug, Clone, PartialEq)]
 enum BufferState {
-    /// Processing prose content (emit lines eagerly).
+    /// Processing prose content.
+    /// When buffering is disabled (threshold = 0), lines emit eagerly.
+    /// When buffering is enabled, lines accumulate until threshold is reached.
     Prose,
     /// Inside a fenced code block (buffer until closing fence).
     Code {
@@ -89,17 +91,28 @@ enum BufferState {
     },
 }
 
+/// Default number of prose lines to buffer before flushing.
+/// Set to 0 for eager (line-by-line) streaming, or 3-5 for progressive buffering.
+pub const DEFAULT_PROSE_BUFFER_THRESHOLD: usize = 0;
+
 /// A streaming buffer for parsing LLM output into typed chunks.
 ///
 /// This buffer processes text line by line, emitting complete chunks as soon
 /// as their boundaries are detected. Code blocks and diff blocks are buffered
-/// until their closing fence is seen, while prose streams more eagerly.
+/// until their closing fence is seen.
+///
+/// # Prose Buffering
+///
+/// By default (threshold = 0), prose streams eagerly with each line emitted immediately.
+/// When a prose buffer threshold is set (e.g., 3-5 lines), prose accumulates until
+/// the threshold is reached, then emits as a single chunk. This provides a balance
+/// between immediate feedback and reducing output noise.
 ///
 /// # Design Principles
 ///
 /// - **Code blocks buffer**: Not emitted until closing ``` is seen
 /// - **Diff blocks buffer**: Treated the same as code blocks (```diff fence)
-/// - **Prose streams eagerly**: Each line emitted as its own chunk
+/// - **Prose streaming**: Configurable via threshold (0 = eager, N = buffer N lines)
 /// - **Final flush**: Unterminated blocks are emitted on [`finish()`](Self::finish)
 ///
 /// # Example
@@ -109,7 +122,7 @@ enum BufferState {
 ///
 /// let mut buffer = StreamingChunkBuffer::new();
 ///
-/// // Prose emitted eagerly
+/// // Prose emitted eagerly (default threshold = 0)
 /// let chunks = buffer.process_line("Hello, world!");
 /// assert_eq!(chunks.len(), 1);
 /// assert!(matches!(chunks[0].chunk_type, ChunkType::Prose));
@@ -122,14 +135,35 @@ enum BufferState {
 /// assert_eq!(chunks.len(), 1);
 /// assert!(matches!(chunks[0].chunk_type, ChunkType::Code { .. }));
 /// ```
+///
+/// # Example with Prose Buffering
+///
+/// ```
+/// use ralph_core::chunk::{StreamingChunkBuffer, ChunkType};
+///
+/// let mut buffer = StreamingChunkBuffer::with_prose_threshold(3);
+///
+/// // Lines buffer until threshold is reached
+/// assert!(buffer.process_line("Line 1").is_empty());
+/// assert!(buffer.process_line("Line 2").is_empty());
+///
+/// // Third line triggers flush
+/// let chunks = buffer.process_line("Line 3");
+/// assert_eq!(chunks.len(), 1);
+/// assert_eq!(chunks[0].content, "Line 1\nLine 2\nLine 3");
+/// ```
 #[derive(Debug, Clone)]
 pub struct StreamingChunkBuffer {
     /// Current parser state.
     state: BufferState,
-    /// Accumulated content for the current chunk.
+    /// Accumulated content for the current chunk (code blocks or buffered prose).
     buffer: String,
     /// Count of emitted chunks (for debugging).
     emitted_count: usize,
+    /// Number of prose lines to buffer before flushing (0 = emit each line immediately).
+    prose_buffer_threshold: usize,
+    /// Count of buffered prose lines (for threshold tracking).
+    buffered_prose_lines: usize,
 }
 
 impl Default for StreamingChunkBuffer {
@@ -139,7 +173,9 @@ impl Default for StreamingChunkBuffer {
 }
 
 impl StreamingChunkBuffer {
-    /// Create a new empty streaming buffer.
+    /// Create a new empty streaming buffer with eager prose streaming (no buffering).
+    ///
+    /// This is equivalent to `StreamingChunkBuffer::with_prose_threshold(0)`.
     ///
     /// # Example
     ///
@@ -150,10 +186,32 @@ impl StreamingChunkBuffer {
     /// assert!(buffer.is_empty());
     /// ```
     pub fn new() -> Self {
+        Self::with_prose_threshold(DEFAULT_PROSE_BUFFER_THRESHOLD)
+    }
+
+    /// Create a new streaming buffer with a custom prose buffer threshold.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Number of prose lines to buffer before flushing.
+    ///   - `0` means emit each line immediately (eager streaming)
+    ///   - `3-5` is a good balance for progressive streaming
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph_core::chunk::StreamingChunkBuffer;
+    ///
+    /// // Buffer 3 lines of prose before emitting
+    /// let buffer = StreamingChunkBuffer::with_prose_threshold(3);
+    /// ```
+    pub fn with_prose_threshold(threshold: usize) -> Self {
         Self {
             state: BufferState::Prose,
             buffer: String::new(),
             emitted_count: 0,
+            prose_buffer_threshold: threshold,
+            buffered_prose_lines: 0,
         }
     }
 
@@ -211,7 +269,10 @@ impl StreamingChunkBuffer {
     /// Process a single line of input.
     ///
     /// Returns any complete chunks that were detected. Code blocks are buffered
-    /// until their closing fence is seen. Prose lines are emitted immediately.
+    /// until their closing fence is seen. Prose streaming behavior depends on
+    /// the `prose_buffer_threshold` setting:
+    /// - `0`: Each prose line emitted immediately (eager streaming)
+    /// - `N`: Prose lines buffered until N lines accumulated, then flushed as one chunk
     ///
     /// # Arguments
     ///
@@ -228,7 +289,7 @@ impl StreamingChunkBuffer {
     ///
     /// let mut buffer = StreamingChunkBuffer::new();
     ///
-    /// // Prose is emitted immediately
+    /// // Prose is emitted immediately (default threshold = 0)
     /// let chunks = buffer.process_line("Some text");
     /// assert_eq!(chunks.len(), 1);
     ///
@@ -250,6 +311,11 @@ impl StreamingChunkBuffer {
             BufferState::Prose => {
                 // Check for opening fence
                 if let Some(lang) = parse_fence_open(line) {
+                    // Flush any buffered prose before starting a code block
+                    if let Some(prose_chunk) = self.flush_prose_buffer() {
+                        result.push(prose_chunk);
+                    }
+
                     // Start a code block
                     let is_diff = lang.as_deref() == Some("diff");
                     self.state = BufferState::Code {
@@ -258,11 +324,28 @@ impl StreamingChunkBuffer {
                     };
                     self.buffer.clear();
                 } else {
-                    // Emit prose line immediately (eager streaming)
-                    // Emit all lines including empty ones to preserve whitespace
-                    let chunk = ParsedChunk::prose(line);
-                    self.emitted_count += 1;
-                    result.push(chunk);
+                    // Handle prose based on buffering mode
+                    if self.prose_buffer_threshold == 0 {
+                        // Eager mode: emit each line immediately
+                        // Emit all lines including empty ones to preserve whitespace
+                        let chunk = ParsedChunk::prose(line);
+                        self.emitted_count += 1;
+                        result.push(chunk);
+                    } else {
+                        // Buffered mode: accumulate lines until threshold
+                        if !self.buffer.is_empty() {
+                            self.buffer.push('\n');
+                        }
+                        self.buffer.push_str(line);
+                        self.buffered_prose_lines += 1;
+
+                        // Check if we've reached the threshold
+                        if self.buffered_prose_lines >= self.prose_buffer_threshold {
+                            if let Some(prose_chunk) = self.flush_prose_buffer() {
+                                result.push(prose_chunk);
+                            }
+                        }
+                    }
                 }
             }
             BufferState::Code { language, is_diff } => {
@@ -291,6 +374,21 @@ impl StreamingChunkBuffer {
         }
 
         result
+    }
+
+    /// Flush the buffered prose lines and return as a single chunk.
+    ///
+    /// Returns `None` if no prose is buffered.
+    fn flush_prose_buffer(&mut self) -> Option<ParsedChunk> {
+        if self.buffered_prose_lines == 0 || self.buffer.is_empty() {
+            return None;
+        }
+
+        let content = std::mem::take(&mut self.buffer);
+        self.buffered_prose_lines = 0;
+        self.emitted_count += 1;
+
+        Some(ParsedChunk::prose(content))
     }
 
     /// Process multiple lines at once (convenience method).
@@ -325,11 +423,11 @@ impl StreamingChunkBuffer {
     /// Finish processing and return any remaining buffered content.
     ///
     /// This method should be called when the stream ends to handle any
-    /// unterminated code blocks. After calling this, the buffer is reset.
+    /// unterminated code blocks or buffered prose. After calling this, the buffer is reset.
     ///
     /// # Returns
     ///
-    /// Any remaining chunks (e.g., unterminated code blocks).
+    /// Any remaining chunks (e.g., unterminated code blocks, buffered prose).
     ///
     /// # Example
     ///
@@ -350,12 +448,32 @@ impl StreamingChunkBuffer {
     /// // Buffer is now empty and reset
     /// assert!(buffer.is_empty());
     /// ```
+    ///
+    /// # Example with Prose Buffering
+    ///
+    /// ```
+    /// use ralph_core::chunk::{StreamingChunkBuffer, ChunkType};
+    ///
+    /// let mut buffer = StreamingChunkBuffer::with_prose_threshold(5);
+    ///
+    /// // Only 2 lines buffered (below threshold)
+    /// buffer.process_line("Line 1");
+    /// buffer.process_line("Line 2");
+    ///
+    /// // finish() flushes remaining prose
+    /// let final_chunks = buffer.finish();
+    /// assert_eq!(final_chunks.len(), 1);
+    /// assert_eq!(final_chunks[0].content, "Line 1\nLine 2");
+    /// ```
     pub fn finish(&mut self) -> Vec<ParsedChunk> {
         let mut result = Vec::new();
 
         match &self.state {
             BufferState::Prose => {
-                // Nothing to flush for prose (lines already emitted)
+                // Flush any buffered prose (when using threshold-based buffering)
+                if let Some(prose_chunk) = self.flush_prose_buffer() {
+                    result.push(prose_chunk);
+                }
             }
             BufferState::Code { language, is_diff } => {
                 // Emit unterminated code block
@@ -375,11 +493,14 @@ impl StreamingChunkBuffer {
         // Reset state
         self.state = BufferState::Prose;
         self.buffer.clear();
+        self.buffered_prose_lines = 0;
 
         result
     }
 
     /// Reset the buffer to its initial state, discarding any buffered content.
+    ///
+    /// Note: This preserves the prose buffer threshold setting.
     ///
     /// # Example
     ///
@@ -398,6 +519,25 @@ impl StreamingChunkBuffer {
         self.state = BufferState::Prose;
         self.buffer.clear();
         self.emitted_count = 0;
+        self.buffered_prose_lines = 0;
+    }
+
+    /// Get the current prose buffer threshold.
+    pub fn prose_buffer_threshold(&self) -> usize {
+        self.prose_buffer_threshold
+    }
+
+    /// Set a new prose buffer threshold.
+    ///
+    /// Note: This does not flush any currently buffered content.
+    /// Call [`finish()`](Self::finish) first if you want to preserve buffered prose.
+    pub fn set_prose_threshold(&mut self, threshold: usize) {
+        self.prose_buffer_threshold = threshold;
+    }
+
+    /// Get the number of currently buffered prose lines.
+    pub fn buffered_prose_lines(&self) -> usize {
+        self.buffered_prose_lines
     }
 
     /// Get the current buffered content (for debugging/inspection).
