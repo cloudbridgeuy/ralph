@@ -449,9 +449,9 @@ steps = [
   "Replace {prompt} with the substituted prompt",
   "Return final command string for execution",
 ]
-passes = false
+passes = true
 acceptance = [
-  "Default command is: claude --permission-mode acceptEdits -p {prompt}",
+  "Default command is: claude --permission-mode acceptEdits --output-format stream-json -p {prompt}",
   "Prompt value properly escaped for shell",
   "Custom commands can use any structure",
 ]

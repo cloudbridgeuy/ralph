@@ -921,3 +921,43 @@
 - After Layer 2: Layer 3 (Output Formatting) for syntax highlighting and streaming
 - The `ralph run` command is now fully functional with default prompt template
 
+## 2026-01-07 - Command Template Placeholder Substitution Complete
+
+### What was accomplished
+- Verified and completed Story: "Substitute placeholders in command template" (Layer 2 CLI Interface)
+- The implementation was already in place in `crates/ralph/src/main.rs`:
+  - `substitute_prompt_in_command()` function handles `{prompt}` placeholder replacement
+  - Shell escaping with single quotes and proper quote escape sequences
+  - Default command template loaded from `defaults::COMMAND_TEMPLATE`
+  - Custom `--command` flag allows any command structure
+- Added 7 new comprehensive tests to fully cover acceptance criteria:
+  - Custom command structures with different argument positions
+  - Custom commands with environment variables
+  - Empty prompt handling
+  - Multiline prompt handling
+  - Special shell characters (safely escaped within single quotes)
+  - Command without placeholder (returns unchanged)
+  - Default command template substitution verification
+- Fixed outdated acceptance criteria in PRD:
+  - Changed from "claude --permission-mode acceptEdits -p {prompt}"
+  - To "claude --permission-mode acceptEdits --output-format stream-json -p {prompt}"
+  - This matches the architecture spec which requires `--output-format stream-json`
+- All 330 tests pass (88 in core, 242 in ralph)
+
+### Implementation details
+- Shell escaping uses single quotes with internal quote escape: `'text'` → `'text'`
+- Single quotes in prompts escaped as: `it's` → `'it'\"'\"'s'`
+- This approach keeps shell special characters safe ($VAR, `cmd`, $(cmd))
+- Custom commands can use any structure - the `{prompt}` placeholder is simply replaced
+- Commands without `{prompt}` placeholder work but prompt is ignored
+
+### Context for next iteration
+- **Layer 2 (CLI Interface) is now COMPLETE** - all stories implemented
+- Next priority: **Layer 3 (Output Formatting)** for syntax highlighting and streaming
+  - Story: Parse output stream into typed chunks (prose/code/diff detection)
+  - Story: Buffer incomplete chunks during streaming
+  - Story: Apply syntax highlighting to code chunks (giallo)
+  - Story: Apply diff highlighting with fallback chain (delta → diff → basic)
+  - Story: Store typed chunks in iteration logs
+- After Layer 3: Layer 4 (Error Handling) for retry logic and stuck state handling
+
