@@ -878,3 +878,46 @@
 - The CLI is now functional - users can run `ralph run` with all documented flags
 - The `--retry` flag is accepted but retry logic not yet implemented (Layer 4 story)
 
+## 2026-01-07 - Prompt Template Placeholder Substitution Complete
+
+### What was accomplished
+- Implemented Story: "Substitute placeholders in prompt template" (Layer 2 CLI Interface)
+- Added `PROMPT_TEMPLATE` constant to `ralph_core::context::defaults` module:
+  - Contains the full default prompt template with workflow instructions
+  - Uses `@{file}` syntax for Claude CLI file references
+  - Includes placeholders: `{design_file}`, `{prd_file}`, `{progress_file}`, `{completion_marker}`
+  - Comprehensive documentation explaining usage and placeholders
+- Added `substitute_template_placeholders()` pure function to `ralph_core::context`:
+  - Replaces known placeholders with actual values
+  - Preserves unknown placeholders (leaves them unchanged)
+  - Follows Functional Core pattern (pure function, no I/O)
+- Updated `resolve_prompt()` in main.rs to:
+  - Load template from file, stdin, or inline string
+  - Fall back to built-in default template when no `--prompt` provided
+  - Apply placeholder substitution to all templates
+- Added 15 comprehensive tests covering:
+  - All PROMPT_TEMPLATE placeholder and content requirements
+  - substitute_template_placeholders with various inputs
+  - Edge cases: empty templates, unknown placeholders, special characters
+- All 323 tests pass (81 in core, 242 in ralph)
+
+### Implementation details
+- `PROMPT_TEMPLATE` includes key workflow instructions:
+  - Pick highest-priority feature
+  - Run lint command
+  - Update PRD with passes = true
+  - Append progress notes
+  - Make git commit without Claude attribution
+  - Output completion marker when done
+- Template uses `@{file}` references which Claude CLI interprets as file includes
+- Placeholder substitution happens after template loading, before command substitution
+- Unknown placeholders are preserved for forward compatibility
+
+### Context for next iteration
+- **Layer 2 (CLI Interface) continues** - one story remaining
+- Next priority: "Substitute placeholders in command template"
+  - Already partially implemented (basic `{prompt}` substitution exists)
+  - May need refinement for full acceptance criteria
+- After Layer 2: Layer 3 (Output Formatting) for syntax highlighting and streaming
+- The `ralph run` command is now fully functional with default prompt template
+

@@ -33,6 +33,44 @@ pub mod defaults {
     /// When this marker appears in the LLM output, ralph exits the iteration loop
     /// regardless of PRD state. This allows the LLM to signal completion explicitly.
     pub const COMPLETION_MARKER: &str = "<promise>COMPLETE</promise>";
+
+    /// Default prompt template for the LLM.
+    ///
+    /// This template is used when no `--prompt` argument is provided.
+    /// It instructs the LLM to implement a single user story from the PRD.
+    ///
+    /// # Placeholders
+    ///
+    /// - `{design_file}` - Path to the design document
+    /// - `{prd_file}` - Path to the PRD file
+    /// - `{progress_file}` - Path to the progress notes file
+    /// - `{completion_marker}` - The marker string to output when all stories are complete
+    ///
+    /// # Notes
+    ///
+    /// The template uses `@` file references which are understood by Claude CLI
+    /// to read and include the file contents in the context.
+    pub const PROMPT_TEMPLATE: &str = r#"@{design_file} @{prd_file} @{progress_file}
+
+1. Find the highest-priority feature to work on and work on that feature.
+   This should be the one YOU decide has the highest priority - not necessarily the first in the list.
+
+2. Check that the 'cargo xtask lint' command passes successfully.
+   You can't mark a user story as complete if this command fails.
+   Even when the issue is not related to your current changes.
+
+3. Update the PRD with the work that was done by setting passes = true for completed stories.
+
+4. Append your progress to the progress.txt file.
+   Use this to leave a note for the next person working in the codebase.
+
+5. Make a git commit of that feature without Claude attribution.
+
+6. If you find some PRD is missing in order to complete or extend the task you are working on, you may append it to the PRD using the appropriate format.
+
+ONLY WORK ON A SINGLE FEATURE.
+
+If, while implementing the feature, you notice all stories in the PRD are complete, output {completion_marker}."#;
 }
 
 /// Resolved paths for all context files.
@@ -73,6 +111,53 @@ impl ContextPaths {
                 .unwrap_or_else(|| project_root.join(defaults::PROGRESS_FILE)),
         }
     }
+}
+
+/// Substitute placeholders in a prompt template.
+///
+/// This is a pure function that replaces known placeholders with their values.
+/// Unknown placeholders are left unchanged.
+///
+/// # Placeholders
+///
+/// - `{design_file}` - Replaced with the design file path
+/// - `{prd_file}` - Replaced with the PRD file path
+/// - `{progress_file}` - Replaced with the progress file path
+/// - `{completion_marker}` - Replaced with the completion marker string
+///
+/// # Arguments
+///
+/// * `template` - The prompt template containing placeholders
+/// * `paths` - The context paths to substitute
+/// * `completion_marker` - The completion marker string
+///
+/// # Returns
+///
+/// The template with all known placeholders replaced.
+///
+/// # Example
+///
+/// ```
+/// use ralph_core::context::{ContextPaths, substitute_template_placeholders};
+/// use std::path::Path;
+///
+/// let paths = ContextPaths::new(Path::new("/project"), None, None, None);
+/// let template = "Read @{design_file} and @{prd_file}";
+/// let result = substitute_template_placeholders(template, &paths, "<promise>COMPLETE</promise>");
+///
+/// assert!(result.contains("/project/.claude/designs/design.md"));
+/// assert!(result.contains("/project/.claude/plans/prd.toml"));
+/// ```
+pub fn substitute_template_placeholders(
+    template: &str,
+    paths: &ContextPaths,
+    completion_marker: &str,
+) -> String {
+    template
+        .replace("{design_file}", &paths.design.display().to_string())
+        .replace("{prd_file}", &paths.prd.display().to_string())
+        .replace("{progress_file}", &paths.progress.display().to_string())
+        .replace("{completion_marker}", completion_marker)
 }
 
 /// Result of checking which context files need to be touched.
@@ -285,5 +370,154 @@ mod tests {
     #[test]
     fn test_default_completion_marker() {
         assert_eq!(defaults::COMPLETION_MARKER, "<promise>COMPLETE</promise>");
+    }
+
+    // Tests for PROMPT_TEMPLATE constant
+
+    #[test]
+    fn test_default_prompt_template_contains_design_placeholder() {
+        assert!(defaults::PROMPT_TEMPLATE.contains("{design_file}"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_contains_prd_placeholder() {
+        assert!(defaults::PROMPT_TEMPLATE.contains("{prd_file}"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_contains_progress_placeholder() {
+        assert!(defaults::PROMPT_TEMPLATE.contains("{progress_file}"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_contains_completion_marker_placeholder() {
+        assert!(defaults::PROMPT_TEMPLATE.contains("{completion_marker}"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_uses_at_file_references() {
+        // Claude CLI uses @ for file references
+        assert!(defaults::PROMPT_TEMPLATE.contains("@{design_file}"));
+        assert!(defaults::PROMPT_TEMPLATE.contains("@{prd_file}"));
+        assert!(defaults::PROMPT_TEMPLATE.contains("@{progress_file}"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_includes_key_instructions() {
+        // Key workflow instructions should be present
+        assert!(defaults::PROMPT_TEMPLATE.contains("highest-priority feature"));
+        assert!(defaults::PROMPT_TEMPLATE.contains("passes = true"));
+        assert!(defaults::PROMPT_TEMPLATE.contains("ONLY WORK ON A SINGLE FEATURE"));
+    }
+
+    // Tests for substitute_template_placeholders function
+
+    #[test]
+    fn test_substitute_all_placeholders() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/project/design.md"),
+            prd: PathBuf::from("/project/prd.toml"),
+            progress: PathBuf::from("/project/progress.txt"),
+        };
+
+        let template = "{design_file} {prd_file} {progress_file} {completion_marker}";
+        let result = substitute_template_placeholders(template, &paths, "DONE");
+
+        assert_eq!(
+            result,
+            "/project/design.md /project/prd.toml /project/progress.txt DONE"
+        );
+    }
+
+    #[test]
+    fn test_substitute_preserves_unknown_placeholders() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/design.md"),
+            prd: PathBuf::from("/prd.toml"),
+            progress: PathBuf::from("/progress.txt"),
+        };
+
+        let template = "{design_file} {unknown_placeholder} {another}";
+        let result = substitute_template_placeholders(template, &paths, "DONE");
+
+        assert!(result.contains("/design.md"));
+        assert!(result.contains("{unknown_placeholder}"));
+        assert!(result.contains("{another}"));
+    }
+
+    #[test]
+    fn test_substitute_with_default_prompt_template() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/my/design.md"),
+            prd: PathBuf::from("/my/prd.toml"),
+            progress: PathBuf::from("/my/progress.txt"),
+        };
+
+        let result =
+            substitute_template_placeholders(defaults::PROMPT_TEMPLATE, &paths, "COMPLETE");
+
+        assert!(result.contains("@/my/design.md"));
+        assert!(result.contains("@/my/prd.toml"));
+        assert!(result.contains("@/my/progress.txt"));
+        assert!(result.contains("output COMPLETE"));
+        // No remaining placeholders for known values
+        assert!(!result.contains("{design_file}"));
+        assert!(!result.contains("{prd_file}"));
+        assert!(!result.contains("{progress_file}"));
+        assert!(!result.contains("{completion_marker}"));
+    }
+
+    #[test]
+    fn test_substitute_empty_template() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/design.md"),
+            prd: PathBuf::from("/prd.toml"),
+            progress: PathBuf::from("/progress.txt"),
+        };
+
+        let result = substitute_template_placeholders("", &paths, "DONE");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_substitute_no_placeholders() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/design.md"),
+            prd: PathBuf::from("/prd.toml"),
+            progress: PathBuf::from("/progress.txt"),
+        };
+
+        let template = "No placeholders here";
+        let result = substitute_template_placeholders(template, &paths, "DONE");
+        assert_eq!(result, "No placeholders here");
+    }
+
+    #[test]
+    fn test_substitute_multiple_occurrences() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/design.md"),
+            prd: PathBuf::from("/prd.toml"),
+            progress: PathBuf::from("/progress.txt"),
+        };
+
+        let template = "{design_file} and also {design_file}";
+        let result = substitute_template_placeholders(template, &paths, "DONE");
+        assert_eq!(result, "/design.md and also /design.md");
+    }
+
+    #[test]
+    fn test_substitute_with_special_characters_in_paths() {
+        let paths = ContextPaths {
+            design: PathBuf::from("/path with spaces/design.md"),
+            prd: PathBuf::from("/special!@#$/prd.toml"),
+            progress: PathBuf::from("/unicode/进度.txt"),
+        };
+
+        let template = "{design_file}|{prd_file}|{progress_file}";
+        let result = substitute_template_placeholders(template, &paths, "DONE");
+
+        assert!(result.contains("/path with spaces/design.md"));
+        assert!(result.contains("/special!@#$/prd.toml"));
+        assert!(result.contains("/unicode/进度.txt"));
     }
 }

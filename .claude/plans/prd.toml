@@ -433,7 +433,7 @@ steps = [
   "Replace {progress_file} with resolved path",
   "Return substituted prompt string",
 ]
-passes = false
+passes = true
 acceptance = [
   "Built-in default template used if no --prompt",
   "File path reads template from disk",

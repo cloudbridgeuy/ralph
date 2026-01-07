@@ -8,7 +8,7 @@ mod subprocess;
 
 use clap::Parser;
 use cli::{Cli, Commands, RunArgs};
-use ralph_core::context::{defaults, ContextPaths};
+use ralph_core::context::{defaults, substitute_template_placeholders, ContextPaths};
 use run::{run, RunConfig};
 use std::path::Path;
 use std::process::ExitCode;
@@ -50,9 +50,8 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         .completion_marker
         .unwrap_or_else(|| defaults::COMPLETION_MARKER.to_string());
 
-    // Resolve prompt (placeholder substitution happens in future story)
-    // For now, use the provided prompt or a default placeholder
-    let prompt = resolve_prompt(args.prompt.as_deref(), &context_paths)?;
+    // Resolve prompt template and substitute placeholders
+    let prompt = resolve_prompt(args.prompt.as_deref(), &context_paths, &completion_marker)?;
 
     // Substitute {prompt} in command template
     let command = substitute_prompt_in_command(&command_template, &prompt);
@@ -81,46 +80,52 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Resolve the prompt from various sources.
 ///
-/// This is a placeholder implementation. The full prompt template substitution
-/// will be implemented in a future story (Layer 2: "Substitute placeholders in prompt template").
+/// Loads the prompt template from one of three sources:
+/// - A file path (if the argument is a path to an existing file)
+/// - Stdin (if the argument is "-")
+/// - An inline string (if the argument doesn't match a file)
+/// - The default template (if no argument is provided)
+///
+/// After loading the template, placeholders are substituted with actual values:
+/// - `{design_file}` - Path to the design document
+/// - `{prd_file}` - Path to the PRD file
+/// - `{progress_file}` - Path to the progress notes file
+/// - `{completion_marker}` - The completion marker string
 fn resolve_prompt(
     prompt_arg: Option<&str>,
     context_paths: &ContextPaths,
+    completion_marker: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match prompt_arg {
+    let template = match prompt_arg {
         Some("-") => {
             // Read from stdin
             use std::io::Read;
             let mut prompt = String::new();
             std::io::stdin().read_to_string(&mut prompt)?;
-            Ok(prompt)
+            prompt
         }
         Some(value) => {
             // Check if it's a file path
             let path = Path::new(value);
             if path.exists() && path.is_file() {
-                Ok(std::fs::read_to_string(path)?)
+                std::fs::read_to_string(path)?
             } else {
                 // Treat as inline string
-                Ok(value.to_string())
+                value.to_string()
             }
         }
         None => {
-            // Use default prompt template (to be implemented)
-            // For now, generate a basic prompt referencing context files
-            Ok(format!(
-                "Read the following context files and implement the next pending user story:\n\
-                - Design: {}\n\
-                - PRD: {}\n\
-                - Progress: {}\n\n\
-                Pick ONE pending story from the PRD, implement it, mark it as passed=true, \
-                and update progress.txt with what you accomplished.",
-                context_paths.design.display(),
-                context_paths.prd.display(),
-                context_paths.progress.display()
-            ))
+            // Use built-in default prompt template
+            defaults::PROMPT_TEMPLATE.to_string()
         }
-    }
+    };
+
+    // Substitute placeholders in the template
+    Ok(substitute_template_placeholders(
+        &template,
+        context_paths,
+        completion_marker,
+    ))
 }
 
 /// Substitute {prompt} placeholder in command template.
