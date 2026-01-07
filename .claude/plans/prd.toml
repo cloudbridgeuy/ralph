@@ -271,7 +271,7 @@ steps = [
   "Track message ID to detect new vs continuing messages",
   "Return complete text when message ID changes or stream ends",
 ]
-passes = false
+passes = true
 acceptance = [
   "Multiple assistant events for same message combined correctly",
   "New message ID starts fresh accumulation",

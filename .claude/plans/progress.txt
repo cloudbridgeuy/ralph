@@ -472,3 +472,52 @@
   - Story #21: Store tool interactions in iteration logs
 - The tool extraction functions will be used by Story #20 for correlating tool calls with results
 
+## 2026-01-06 - Text Accumulation Across Streaming Events Complete
+
+### What was accomplished
+- Implemented Story #15: Accumulate text across streaming assistant events in `crates/core/src/stream.rs`
+- Added the following types and functions:
+  - `TextAccumulator` struct for stateful text accumulation across streaming events
+  - `AccumulatedMessage` struct to hold completed message ID and text
+  - `TextAccumulator::new()` - Create a new empty accumulator
+  - `TextAccumulator::process_event()` - Process a stream event, returns completed message when ID changes
+  - `TextAccumulator::finish()` - Finalize and return any remaining text
+  - `TextAccumulator::get_text()` - Get current buffer without finishing
+  - `TextAccumulator::get_all_text()` - Get all text from completed + buffer
+  - `TextAccumulator::completed_messages()` - Get all completed messages
+  - `TextAccumulator::reset()` - Reset to initial state
+  - `accumulate_text()` - Convenience function to process all events and return final text
+- Added 20 comprehensive tests covering:
+  - Single event accumulation
+  - Multiple events with same message ID (combining)
+  - New message ID completing previous message
+  - Finish method behavior
+  - Completed messages tracking
+  - Non-assistant event filtering
+  - Reset functionality
+  - None message IDs
+  - Tool-only events
+  - Convenience function behavior
+  - Realistic streaming scenarios
+  - Matching output with extract_text_from_events
+- Marked story #15 as passes = true
+
+### Implementation details
+- Pure types in Functional Core (ralph_core) - no I/O operations
+- Uses message ID tracking to detect new vs continuing messages
+- Supports None message IDs (treats same-None as same message)
+- Completed messages stored for later retrieval
+- Final text matches what would appear in Claude's plain-text mode
+- Comprehensive documentation with examples in docstrings
+
+### Context for next iteration
+- Story #15 is complete
+- Next priorities for Layer 1C:
+  - Story #16: Parse accumulated text into typed chunks (code blocks, diff blocks, prose)
+  - Story #17: Extract metadata from system init event
+  - Story #18: Extract costs and usage from result event
+  - Story #19: Store metadata in iteration logs
+  - Story #20: Correlate tool calls with tool results
+  - Story #21: Store tool interactions in iteration logs
+- The TextAccumulator will be used by Story #16 to parse text into typed chunks
+
