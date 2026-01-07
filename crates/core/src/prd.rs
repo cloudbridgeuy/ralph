@@ -119,6 +119,38 @@ pub fn count_pending_stories(content: &str) -> Result<usize, PrdError> {
     parse_prd(content).map(|analysis| analysis.pending_count)
 }
 
+/// Detect if PRD content has changed.
+///
+/// This is a pure function that compares two PRD content strings byte-for-byte.
+/// As specified in the architecture, the comparison is exact (not semantic) -
+/// even whitespace changes count as changes.
+///
+/// # Arguments
+///
+/// * `before` - The PRD content before the iteration
+/// * `after` - The PRD content after the iteration
+///
+/// # Returns
+///
+/// * `true` if the content has changed (differs byte-for-byte)
+/// * `false` if the content is identical
+///
+/// # Example
+///
+/// ```
+/// use ralph_core::prd::has_prd_changed;
+///
+/// let before = "[[stories]]\npasses = false\n";
+/// let after = "[[stories]]\npasses = true\n";
+/// assert!(has_prd_changed(before, after));
+///
+/// let same = "[[stories]]\npasses = false\n";
+/// assert!(!has_prd_changed(before, same));
+/// ```
+pub fn has_prd_changed(before: &str, after: &str) -> bool {
+    before != after
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +278,89 @@ passes = false
 
         let count = count_pending_stories(content).unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_has_prd_changed_detects_content_change() {
+        let before = r#"
+[[stories]]
+passes = false
+"#;
+        let after = r#"
+[[stories]]
+passes = true
+"#;
+
+        assert!(has_prd_changed(before, after));
+    }
+
+    #[test]
+    fn test_has_prd_changed_identical_content() {
+        let content = r#"
+[[stories]]
+passes = false
+
+[[stories]]
+passes = true
+"#;
+
+        assert!(!has_prd_changed(content, content));
+    }
+
+    #[test]
+    fn test_has_prd_changed_whitespace_change() {
+        let before = "[[stories]]\npasses = false\n";
+        let after = "[[stories]]\npasses = false \n"; // Extra space at end
+
+        // As per architecture spec: "Whitespace changes count as changes"
+        assert!(has_prd_changed(before, after));
+    }
+
+    #[test]
+    fn test_has_prd_changed_empty_strings() {
+        assert!(!has_prd_changed("", ""));
+    }
+
+    #[test]
+    fn test_has_prd_changed_different_story_count() {
+        let before = r#"
+[[stories]]
+passes = false
+"#;
+        let after = r#"
+[[stories]]
+passes = false
+
+[[stories]]
+passes = true
+"#;
+
+        assert!(has_prd_changed(before, after));
+    }
+
+    #[test]
+    fn test_has_prd_changed_comment_change() {
+        let before = r#"
+# Comment 1
+[[stories]]
+passes = false
+"#;
+        let after = r#"
+# Comment 2
+[[stories]]
+passes = false
+"#;
+
+        // Comments are part of the content, so this counts as a change
+        assert!(has_prd_changed(before, after));
+    }
+
+    #[test]
+    fn test_has_prd_changed_newline_normalization() {
+        let before = "[[stories]]\npasses = false\n";
+        let after = "[[stories]]\r\npasses = false\r\n"; // Windows line endings
+
+        // Different line endings = different content
+        assert!(has_prd_changed(before, after));
     }
 }

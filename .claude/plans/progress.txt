@@ -60,3 +60,37 @@
   - Story #10: Execute iteration loop with all checks
 - After Layer 1, need to wire up CLI interface (Layer 2)
 
+## 2026-01-07 - PRD Change Detection Complete
+
+### What was accomplished
+- Implemented Story #7: Detect PRD changes between iterations in `crates/core/src/prd.rs`
+- Added `has_prd_changed(before: &str, after: &str) -> bool` pure function
+- Function performs exact byte-for-byte comparison (not semantic)
+- Whitespace changes are detected as changes (as per architecture spec)
+- Added 8 comprehensive tests covering:
+  - Content changes detection
+  - Identical content (no change)
+  - Whitespace changes
+  - Empty strings
+  - Different story counts
+  - Comment changes
+  - Line ending differences (Unix vs Windows)
+- Marked story #7 (Detect PRD changes between iterations) as passes = true
+
+### Implementation details
+- Pure function in functional core (ralph_core) - no I/O operations
+- Simple string comparison using Rust's `!=` operator for exact byte comparison
+- Comprehensive documentation with examples
+- Follows existing code patterns and Functional Core / Imperative Shell design
+- Shell layer (ralph crate) will handle file I/O for reading PRD before/after iterations
+
+### Context for next iteration
+- PRD change detection is complete and ready to be used in iteration loop
+- Next priorities for Layer 1:
+  - Story #5: Invoke LLM subprocess and capture output (critical for loop)
+  - Story #6: Write iteration log after each iteration
+  - Story #8: Detect completion conditions
+  - Story #9: Capture git diff after each iteration
+  - Story #10: Execute iteration loop with all checks (integrates all features)
+- Story #7 provides the foundation for detecting stuck states in the iteration loop
+

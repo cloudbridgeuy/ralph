@@ -125,7 +125,7 @@ steps = [
   "Compare byte-for-byte",
   "Return whether content changed",
 ]
-passes = false
+passes = true
 acceptance = [
   "Comparison is exact (not semantic)",
   "Whitespace changes count as changes",
