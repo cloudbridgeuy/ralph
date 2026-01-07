@@ -565,3 +565,46 @@
   - Story #22: Update default command template for JSON output
 - The chunk parsing functions are ready to be used for output formatting (Layer 3)
 
+## 2026-01-07 - Extract Metadata From System Init Event Complete
+
+### What was accomplished
+- Implemented Story #17: Extract metadata from system init event in `crates/core/src/stream.rs`
+- Added the following types, methods, and functions:
+  - `IterationMetadata` struct with `session_id`, `model`, and `tools` fields
+  - `IterationMetadata::new()` - Create empty metadata struct
+  - `IterationMetadata::is_empty()` - Check if any fields are populated
+  - `SystemEvent::is_init()` - Check if system event has subtype "init"
+  - `SystemEvent::extract_metadata()` - Extract metadata from a system event
+  - `extract_metadata_from_events(&[StreamEvent])` - Find init event and extract metadata
+  - `extract_metadata_from_events_or_default(&[StreamEvent])` - Same but returns default if not found
+- Added 16 comprehensive tests covering:
+  - IterationMetadata creation and is_empty checks
+  - SystemEvent is_init detection
+  - SystemEvent extract_metadata with full and partial fields
+  - extract_metadata_from_events with init present, missing, or non-init
+  - Empty event slices
+  - Multiple init events (first one wins)
+  - extract_metadata_from_events_or_default behavior
+  - Serialization round-trip
+  - Empty fields skipped in serialization
+  - Init event at end of list
+  - Partial fields handling
+- Marked story #17 as passes = true
+
+### Implementation details
+- Pure types and functions in Functional Core (ralph_core) - no I/O operations
+- `IterationMetadata` uses serde with `skip_serializing_if` for clean JSON/TOML output
+- `extract_metadata_from_events` uses `find_map` for efficient first-match extraction
+- Comprehensive documentation with examples in docstrings
+- Follows established patterns from prior stories
+
+### Context for next iteration
+- Story #17 is complete, Layer 1C continues
+- Next priorities for Layer 1C:
+  - Story #18: Extract costs and usage from result event
+  - Story #19: Store metadata in iteration logs
+  - Story #20: Correlate tool calls with tool results
+  - Story #21: Store tool interactions in iteration logs
+  - Story #22: Update default command template for JSON output
+- The `IterationMetadata` struct will be used by Story #19 to extend iteration logs
+

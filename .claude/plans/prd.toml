@@ -306,7 +306,7 @@ steps = [
   "Extract tools array",
   "Return IterationMetadata struct",
 ]
-passes = false
+passes = true
 acceptance = [
   "Session ID captured from init event",
   "Model name recorded",

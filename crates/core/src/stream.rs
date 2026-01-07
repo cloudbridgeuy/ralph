@@ -943,6 +943,208 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
 }
 
+/// Metadata extracted from a system init event.
+///
+/// Contains session metadata from Claude's initialization event, including
+/// session ID, model name, and available tools.
+///
+/// # Example
+///
+/// ```
+/// use ralph_core::stream::{extract_metadata_from_events, StreamEvent, SystemEvent, Tool};
+///
+/// let events = vec![
+///     StreamEvent::System(SystemEvent {
+///         subtype: Some("init".to_string()),
+///         session_id: Some("abc-123".to_string()),
+///         model: Some("claude-opus-4-5-20251101".to_string()),
+///         tools: vec![
+///             Tool { name: "Read".to_string(), description: Some("Read files".to_string()) },
+///         ],
+///     }),
+/// ];
+///
+/// let metadata = extract_metadata_from_events(&events);
+/// assert!(metadata.is_some());
+/// let meta = metadata.unwrap();
+/// assert_eq!(meta.session_id, Some("abc-123".to_string()));
+/// assert_eq!(meta.model, Some("claude-opus-4-5-20251101".to_string()));
+/// assert_eq!(meta.tools.len(), 1);
+/// ```
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct IterationMetadata {
+    /// Unique identifier for this Claude session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+
+    /// The Claude model being used (e.g., "claude-opus-4-5-20251101").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+
+    /// List of tools available in this session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+}
+
+impl IterationMetadata {
+    /// Create a new empty metadata struct.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check if any metadata fields are populated.
+    pub fn is_empty(&self) -> bool {
+        self.session_id.is_none() && self.model.is_none() && self.tools.is_empty()
+    }
+}
+
+impl SystemEvent {
+    /// Check if this is an init event (subtype is "init").
+    pub fn is_init(&self) -> bool {
+        self.subtype.as_deref() == Some("init")
+    }
+
+    /// Extract metadata from this system event.
+    ///
+    /// Creates an [`IterationMetadata`] struct from the system event fields.
+    /// This works for any system event, but is most useful for init events.
+    ///
+    /// # Returns
+    ///
+    /// An [`IterationMetadata`] populated with the session_id, model, and tools
+    /// from this system event.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph_core::stream::{SystemEvent, Tool};
+    ///
+    /// let event = SystemEvent {
+    ///     subtype: Some("init".to_string()),
+    ///     session_id: Some("session-123".to_string()),
+    ///     model: Some("claude-opus-4-5".to_string()),
+    ///     tools: vec![Tool { name: "Read".to_string(), description: None }],
+    /// };
+    ///
+    /// let metadata = event.extract_metadata();
+    /// assert_eq!(metadata.session_id, Some("session-123".to_string()));
+    /// assert_eq!(metadata.model, Some("claude-opus-4-5".to_string()));
+    /// assert_eq!(metadata.tools.len(), 1);
+    /// ```
+    pub fn extract_metadata(&self) -> IterationMetadata {
+        IterationMetadata {
+            session_id: self.session_id.clone(),
+            model: self.model.clone(),
+            tools: self.tools.clone(),
+        }
+    }
+}
+
+/// Extract metadata from a slice of stream events.
+///
+/// Searches for the first system init event and extracts metadata from it.
+/// Returns `None` if no system init event is found.
+///
+/// # Arguments
+///
+/// * `events` - A slice of stream events to search
+///
+/// # Returns
+///
+/// `Some(IterationMetadata)` if a system init event was found, `None` otherwise.
+///
+/// # Example
+///
+/// ```
+/// use ralph_core::stream::{
+///     extract_metadata_from_events, StreamEvent, SystemEvent, AssistantEvent,
+///     AssistantMessage, ContentBlock, Tool,
+/// };
+///
+/// let events = vec![
+///     StreamEvent::System(SystemEvent {
+///         subtype: Some("init".to_string()),
+///         session_id: Some("f5b6aaac-4316-454a".to_string()),
+///         model: Some("claude-opus-4-5-20251101".to_string()),
+///         tools: vec![
+///             Tool { name: "Glob".to_string(), description: Some("Find files".to_string()) },
+///             Tool { name: "Read".to_string(), description: None },
+///         ],
+///     }),
+///     StreamEvent::Assistant(AssistantEvent {
+///         message: AssistantMessage {
+///             id: Some("msg_01".to_string()),
+///             content: vec![ContentBlock::Text { text: "Hello!".to_string() }],
+///             model: None,
+///             stop_reason: None,
+///         },
+///     }),
+/// ];
+///
+/// let metadata = extract_metadata_from_events(&events);
+/// assert!(metadata.is_some());
+/// let meta = metadata.unwrap();
+/// assert_eq!(meta.session_id, Some("f5b6aaac-4316-454a".to_string()));
+/// assert_eq!(meta.model, Some("claude-opus-4-5-20251101".to_string()));
+/// assert_eq!(meta.tools.len(), 2);
+/// assert_eq!(meta.tools[0].name, "Glob");
+/// assert_eq!(meta.tools[1].name, "Read");
+/// ```
+pub fn extract_metadata_from_events(events: &[StreamEvent]) -> Option<IterationMetadata> {
+    events.iter().find_map(|event| {
+        if let StreamEvent::System(sys) = event {
+            if sys.is_init() {
+                return Some(sys.extract_metadata());
+            }
+        }
+        None
+    })
+}
+
+/// Extract metadata from a slice of stream events, returning default if not found.
+///
+/// Similar to [`extract_metadata_from_events`], but returns a default (empty)
+/// [`IterationMetadata`] instead of `None` when no init event is found.
+/// This is useful when you want to proceed with default values.
+///
+/// # Arguments
+///
+/// * `events` - A slice of stream events to search
+///
+/// # Returns
+///
+/// An [`IterationMetadata`] populated from the init event, or a default empty struct.
+///
+/// # Example
+///
+/// ```
+/// use ralph_core::stream::{
+///     extract_metadata_from_events_or_default, StreamEvent, AssistantEvent,
+///     AssistantMessage, ContentBlock,
+/// };
+///
+/// // No system event present - returns default
+/// let events = vec![
+///     StreamEvent::Assistant(AssistantEvent {
+///         message: AssistantMessage {
+///             id: None,
+///             content: vec![ContentBlock::Text { text: "Hello!".to_string() }],
+///             model: None,
+///             stop_reason: None,
+///         },
+///     }),
+/// ];
+///
+/// let metadata = extract_metadata_from_events_or_default(&events);
+/// assert!(metadata.is_empty());
+/// assert_eq!(metadata.session_id, None);
+/// assert_eq!(metadata.model, None);
+/// assert!(metadata.tools.is_empty());
+/// ```
+pub fn extract_metadata_from_events_or_default(events: &[StreamEvent]) -> IterationMetadata {
+    extract_metadata_from_events(events).unwrap_or_default()
+}
+
 // Re-export chunk types for convenience when working with stream parsing
 pub use crate::chunk::{parse_chunks, parse_chunks_with_heuristics, ChunkType, ParsedChunk};
 
@@ -3233,5 +3435,347 @@ not valid json
             assert_eq!(a.chunk_type, b.chunk_type);
             assert_eq!(a.content, b.content);
         }
+    }
+
+    // ==========================================================================
+    // IterationMetadata extraction tests (Story #17)
+    // ==========================================================================
+
+    #[test]
+    fn test_iteration_metadata_new() {
+        let metadata = IterationMetadata::new();
+        assert!(metadata.is_empty());
+        assert_eq!(metadata.session_id, None);
+        assert_eq!(metadata.model, None);
+        assert!(metadata.tools.is_empty());
+    }
+
+    #[test]
+    fn test_iteration_metadata_is_empty() {
+        let empty = IterationMetadata::default();
+        assert!(empty.is_empty());
+
+        let with_session_id = IterationMetadata {
+            session_id: Some("abc".to_string()),
+            ..Default::default()
+        };
+        assert!(!with_session_id.is_empty());
+
+        let with_model = IterationMetadata {
+            model: Some("claude".to_string()),
+            ..Default::default()
+        };
+        assert!(!with_model.is_empty());
+
+        let with_tools = IterationMetadata {
+            tools: vec![Tool {
+                name: "Read".to_string(),
+                description: None,
+            }],
+            ..Default::default()
+        };
+        assert!(!with_tools.is_empty());
+    }
+
+    #[test]
+    fn test_system_event_is_init() {
+        let init_event = SystemEvent {
+            subtype: Some("init".to_string()),
+            session_id: None,
+            model: None,
+            tools: vec![],
+        };
+        assert!(init_event.is_init());
+
+        let other_event = SystemEvent {
+            subtype: Some("other".to_string()),
+            session_id: None,
+            model: None,
+            tools: vec![],
+        };
+        assert!(!other_event.is_init());
+
+        let no_subtype = SystemEvent {
+            subtype: None,
+            session_id: None,
+            model: None,
+            tools: vec![],
+        };
+        assert!(!no_subtype.is_init());
+    }
+
+    #[test]
+    fn test_system_event_extract_metadata() {
+        let event = SystemEvent {
+            subtype: Some("init".to_string()),
+            session_id: Some("session-123".to_string()),
+            model: Some("claude-opus-4-5-20251101".to_string()),
+            tools: vec![
+                Tool {
+                    name: "Read".to_string(),
+                    description: Some("Read files".to_string()),
+                },
+                Tool {
+                    name: "Edit".to_string(),
+                    description: None,
+                },
+            ],
+        };
+
+        let metadata = event.extract_metadata();
+        assert_eq!(metadata.session_id, Some("session-123".to_string()));
+        assert_eq!(metadata.model, Some("claude-opus-4-5-20251101".to_string()));
+        assert_eq!(metadata.tools.len(), 2);
+        assert_eq!(metadata.tools[0].name, "Read");
+        assert_eq!(
+            metadata.tools[0].description,
+            Some("Read files".to_string())
+        );
+        assert_eq!(metadata.tools[1].name, "Edit");
+        assert_eq!(metadata.tools[1].description, None);
+    }
+
+    #[test]
+    fn test_system_event_extract_metadata_missing_fields() {
+        let event = SystemEvent {
+            subtype: Some("init".to_string()),
+            session_id: None,
+            model: None,
+            tools: vec![],
+        };
+
+        let metadata = event.extract_metadata();
+        assert_eq!(metadata.session_id, None);
+        assert_eq!(metadata.model, None);
+        assert!(metadata.tools.is_empty());
+        assert!(metadata.is_empty());
+    }
+
+    #[test]
+    fn test_extract_metadata_from_events_init_present() {
+        let events = vec![
+            StreamEvent::System(SystemEvent {
+                subtype: Some("init".to_string()),
+                session_id: Some("f5b6aaac-4316-454a".to_string()),
+                model: Some("claude-opus-4-5-20251101".to_string()),
+                tools: vec![
+                    Tool {
+                        name: "Glob".to_string(),
+                        description: Some("Find files".to_string()),
+                    },
+                    Tool {
+                        name: "Read".to_string(),
+                        description: None,
+                    },
+                ],
+            }),
+            StreamEvent::Assistant(AssistantEvent {
+                message: AssistantMessage {
+                    id: Some("msg_01".to_string()),
+                    content: vec![ContentBlock::Text {
+                        text: "Hello!".to_string(),
+                    }],
+                    model: None,
+                    stop_reason: None,
+                },
+            }),
+        ];
+
+        let metadata = extract_metadata_from_events(&events);
+        assert!(metadata.is_some());
+        let meta = metadata.unwrap();
+        assert_eq!(meta.session_id, Some("f5b6aaac-4316-454a".to_string()));
+        assert_eq!(meta.model, Some("claude-opus-4-5-20251101".to_string()));
+        assert_eq!(meta.tools.len(), 2);
+        assert_eq!(meta.tools[0].name, "Glob");
+        assert_eq!(meta.tools[1].name, "Read");
+    }
+
+    #[test]
+    fn test_extract_metadata_from_events_no_system_event() {
+        let events = vec![StreamEvent::Assistant(AssistantEvent {
+            message: AssistantMessage {
+                id: Some("msg_01".to_string()),
+                content: vec![ContentBlock::Text {
+                    text: "Hello!".to_string(),
+                }],
+                model: None,
+                stop_reason: None,
+            },
+        })];
+
+        let metadata = extract_metadata_from_events(&events);
+        assert!(metadata.is_none());
+    }
+
+    #[test]
+    fn test_extract_metadata_from_events_non_init_system_event() {
+        let events = vec![StreamEvent::System(SystemEvent {
+            subtype: Some("other".to_string()),
+            session_id: Some("abc".to_string()),
+            model: Some("claude".to_string()),
+            tools: vec![],
+        })];
+
+        let metadata = extract_metadata_from_events(&events);
+        assert!(metadata.is_none());
+    }
+
+    #[test]
+    fn test_extract_metadata_from_events_empty_events() {
+        let events: Vec<StreamEvent> = vec![];
+        let metadata = extract_metadata_from_events(&events);
+        assert!(metadata.is_none());
+    }
+
+    #[test]
+    fn test_extract_metadata_from_events_first_init_wins() {
+        // If there are multiple init events, the first one should be returned
+        let events = vec![
+            StreamEvent::System(SystemEvent {
+                subtype: Some("init".to_string()),
+                session_id: Some("first-session".to_string()),
+                model: Some("model-1".to_string()),
+                tools: vec![],
+            }),
+            StreamEvent::System(SystemEvent {
+                subtype: Some("init".to_string()),
+                session_id: Some("second-session".to_string()),
+                model: Some("model-2".to_string()),
+                tools: vec![],
+            }),
+        ];
+
+        let metadata = extract_metadata_from_events(&events);
+        assert!(metadata.is_some());
+        let meta = metadata.unwrap();
+        assert_eq!(meta.session_id, Some("first-session".to_string()));
+        assert_eq!(meta.model, Some("model-1".to_string()));
+    }
+
+    #[test]
+    fn test_extract_metadata_from_events_or_default_with_init() {
+        let events = vec![StreamEvent::System(SystemEvent {
+            subtype: Some("init".to_string()),
+            session_id: Some("session-456".to_string()),
+            model: Some("claude-sonnet".to_string()),
+            tools: vec![Tool {
+                name: "Write".to_string(),
+                description: None,
+            }],
+        })];
+
+        let metadata = extract_metadata_from_events_or_default(&events);
+        assert!(!metadata.is_empty());
+        assert_eq!(metadata.session_id, Some("session-456".to_string()));
+        assert_eq!(metadata.model, Some("claude-sonnet".to_string()));
+        assert_eq!(metadata.tools.len(), 1);
+    }
+
+    #[test]
+    fn test_extract_metadata_from_events_or_default_no_init() {
+        let events: Vec<StreamEvent> = vec![];
+        let metadata = extract_metadata_from_events_or_default(&events);
+        assert!(metadata.is_empty());
+        assert_eq!(metadata.session_id, None);
+        assert_eq!(metadata.model, None);
+        assert!(metadata.tools.is_empty());
+    }
+
+    #[test]
+    fn test_iteration_metadata_serialization() {
+        let metadata = IterationMetadata {
+            session_id: Some("abc-123".to_string()),
+            model: Some("claude-opus-4-5".to_string()),
+            tools: vec![
+                Tool {
+                    name: "Read".to_string(),
+                    description: Some("Read files".to_string()),
+                },
+                Tool {
+                    name: "Edit".to_string(),
+                    description: None,
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        let roundtrip: IterationMetadata = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(metadata, roundtrip);
+    }
+
+    #[test]
+    fn test_iteration_metadata_serialization_empty_fields_skipped() {
+        let metadata = IterationMetadata {
+            session_id: Some("abc".to_string()),
+            model: None,
+            tools: vec![],
+        };
+
+        let json = serde_json::to_string(&metadata).unwrap();
+        // Empty model and tools should be skipped
+        assert!(!json.contains("\"model\""));
+        assert!(!json.contains("\"tools\""));
+        // But session_id should be present
+        assert!(json.contains("\"session_id\""));
+    }
+
+    #[test]
+    fn test_extract_metadata_init_at_end() {
+        // Init event at the end of the list (should still be found)
+        let events = vec![
+            StreamEvent::Assistant(AssistantEvent {
+                message: AssistantMessage {
+                    id: Some("msg_01".to_string()),
+                    content: vec![ContentBlock::Text {
+                        text: "Hello!".to_string(),
+                    }],
+                    model: None,
+                    stop_reason: None,
+                },
+            }),
+            StreamEvent::Result(ResultEvent {
+                subtype: None,
+                total_cost_usd: Some(0.01),
+                cost_usd: None,
+                duration_ms: None,
+                duration_api_ms: None,
+                usage: None,
+                session_id: None,
+                num_turns: None,
+                result: None,
+            }),
+            StreamEvent::System(SystemEvent {
+                subtype: Some("init".to_string()),
+                session_id: Some("late-init".to_string()),
+                model: Some("claude-late".to_string()),
+                tools: vec![],
+            }),
+        ];
+
+        let metadata = extract_metadata_from_events(&events);
+        assert!(metadata.is_some());
+        let meta = metadata.unwrap();
+        assert_eq!(meta.session_id, Some("late-init".to_string()));
+    }
+
+    #[test]
+    fn test_extract_metadata_partial_fields() {
+        // Only some fields present - others should be None/empty
+        let events = vec![StreamEvent::System(SystemEvent {
+            subtype: Some("init".to_string()),
+            session_id: Some("session-only".to_string()),
+            model: None,
+            tools: vec![],
+        })];
+
+        let metadata = extract_metadata_from_events(&events);
+        assert!(metadata.is_some());
+        let meta = metadata.unwrap();
+        assert_eq!(meta.session_id, Some("session-only".to_string()));
+        assert_eq!(meta.model, None);
+        assert!(meta.tools.is_empty());
+        assert!(!meta.is_empty()); // Still not empty since session_id is set
     }
 }
