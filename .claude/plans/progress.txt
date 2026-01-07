@@ -386,3 +386,42 @@
 - The parsing functions are ready to be used by subsequent stories
 - Shell layer (ralph crate) can use StreamParser with BufReader lines for real-time parsing
 
+## 2026-01-06 - Text Content Extraction Complete
+
+### What was accomplished
+- Implemented Story #13: Extract text content from assistant events in `crates/core/src/stream.rs`
+- Added the following methods and functions:
+  - `AssistantMessage::extract_text()` - Extracts and concatenates text from message.content array
+  - `AssistantEvent::extract_text()` - Convenience method delegating to message
+  - `extract_text_from_events(&[StreamEvent])` - Extracts all text from a slice of events
+- All functions filter for `ContentBlock::Text` variants and concatenate in order
+- Added 12 comprehensive tests covering:
+  - Single-content message text extraction
+  - Multi-content messages (text + tool_use mixed)
+  - Tool-only messages (returns empty string)
+  - Empty content arrays
+  - Text ordering preservation
+  - AssistantEvent convenience method
+  - extract_text_from_events with assistant-only events
+  - Mixed event types (system, assistant, user, result)
+  - Empty event slices
+  - No assistant events
+  - Tool-only assistant events
+- Marked story #13 as passes = true
+
+### Implementation details
+- Pure functions in Functional Core (ralph_core) - no I/O operations
+- Uses filter_map pattern to extract text from ContentBlock::Text variants
+- Text blocks are joined without separator (preserves exact original content)
+- Non-assistant events are filtered out when processing event slices
+- Comprehensive documentation with examples in docstrings
+
+### Context for next iteration
+- Story #13 is complete
+- Next priorities for Layer 1C:
+  - Story #14: Extract tool invocations from assistant events
+  - Story #15: Accumulate text across streaming assistant events
+  - Story #16: Parse accumulated text into typed chunks
+  - Story #17-20: Metadata extraction and storage
+- The text extraction functions are ready to be used by accumulation logic in Story #15
+

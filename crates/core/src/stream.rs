@@ -396,6 +396,137 @@ impl ResultEvent {
     }
 }
 
+impl AssistantMessage {
+    /// Extract text content from the message.
+    ///
+    /// Iterates through the `content` array, filters for `ContentBlock::Text` variants,
+    /// and concatenates all text fields in order.
+    ///
+    /// # Returns
+    ///
+    /// A `String` containing all text content from the message. Returns an empty string
+    /// if the message contains no text blocks (e.g., tool-only messages).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph_core::stream::{AssistantMessage, ContentBlock};
+    /// use serde_json::json;
+    ///
+    /// let message = AssistantMessage {
+    ///     id: Some("msg_01".to_string()),
+    ///     content: vec![
+    ///         ContentBlock::Text { text: "Hello, ".to_string() },
+    ///         ContentBlock::ToolUse {
+    ///             id: "toolu_01".to_string(),
+    ///             name: "Read".to_string(),
+    ///             input: json!({}),
+    ///         },
+    ///         ContentBlock::Text { text: "world!".to_string() },
+    ///     ],
+    ///     model: None,
+    ///     stop_reason: None,
+    /// };
+    ///
+    /// assert_eq!(message.extract_text(), "Hello, world!");
+    /// ```
+    pub fn extract_text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                ContentBlock::ToolUse { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+}
+
+impl AssistantEvent {
+    /// Extract text content from the assistant event's message.
+    ///
+    /// Convenience method that delegates to [`AssistantMessage::extract_text`].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph_core::stream::{AssistantEvent, AssistantMessage, ContentBlock};
+    ///
+    /// let event = AssistantEvent {
+    ///     message: AssistantMessage {
+    ///         id: None,
+    ///         content: vec![
+    ///             ContentBlock::Text { text: "Hello!".to_string() },
+    ///         ],
+    ///         model: None,
+    ///         stop_reason: None,
+    ///     },
+    /// };
+    ///
+    /// assert_eq!(event.extract_text(), "Hello!");
+    /// ```
+    pub fn extract_text(&self) -> String {
+        self.message.extract_text()
+    }
+}
+
+/// Extract text content from a slice of stream events.
+///
+/// Filters for `StreamEvent::Assistant` variants and concatenates all text content
+/// from their messages in order.
+///
+/// # Arguments
+///
+/// * `events` - A slice of stream events to extract text from
+///
+/// # Returns
+///
+/// A `String` containing all assistant text content. Returns an empty string if there
+/// are no assistant events or they contain no text.
+///
+/// # Example
+///
+/// ```
+/// use ralph_core::stream::{extract_text_from_events, StreamEvent, AssistantEvent, AssistantMessage, ContentBlock, SystemEvent};
+///
+/// let events = vec![
+///     StreamEvent::System(SystemEvent {
+///         subtype: Some("init".to_string()),
+///         session_id: None,
+///         model: None,
+///         tools: vec![],
+///     }),
+///     StreamEvent::Assistant(AssistantEvent {
+///         message: AssistantMessage {
+///             id: None,
+///             content: vec![ContentBlock::Text { text: "First message. ".to_string() }],
+///             model: None,
+///             stop_reason: None,
+///         },
+///     }),
+///     StreamEvent::Assistant(AssistantEvent {
+///         message: AssistantMessage {
+///             id: None,
+///             content: vec![ContentBlock::Text { text: "Second message.".to_string() }],
+///             model: None,
+///             stop_reason: None,
+///         },
+///     }),
+/// ];
+///
+/// assert_eq!(extract_text_from_events(&events), "First message. Second message.");
+/// ```
+pub fn extract_text_from_events(events: &[StreamEvent]) -> String {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::Assistant(ast) => Some(ast.extract_text()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 /// Token usage statistics for a Claude session.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Usage {
@@ -1018,5 +1149,251 @@ not valid json
             }
             _ => panic!("Expected Result"),
         }
+    }
+
+    // Tests for text extraction (Story #13)
+
+    #[test]
+    fn test_assistant_message_extract_text_single_content() {
+        let message = AssistantMessage {
+            id: Some("msg_01".to_string()),
+            content: vec![ContentBlock::Text {
+                text: "Hello, world!".to_string(),
+            }],
+            model: None,
+            stop_reason: None,
+        };
+
+        assert_eq!(message.extract_text(), "Hello, world!");
+    }
+
+    #[test]
+    fn test_assistant_message_extract_text_multi_content() {
+        let message = AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text {
+                    text: "First part. ".to_string(),
+                },
+                ContentBlock::ToolUse {
+                    id: "toolu_01".to_string(),
+                    name: "Read".to_string(),
+                    input: serde_json::json!({"file_path": "/test.rs"}),
+                },
+                ContentBlock::Text {
+                    text: "Second part.".to_string(),
+                },
+            ],
+            model: None,
+            stop_reason: None,
+        };
+
+        assert_eq!(message.extract_text(), "First part. Second part.");
+    }
+
+    #[test]
+    fn test_assistant_message_extract_text_tool_only() {
+        let message = AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::ToolUse {
+                    id: "toolu_01".to_string(),
+                    name: "Glob".to_string(),
+                    input: serde_json::json!({"pattern": "*.rs"}),
+                },
+                ContentBlock::ToolUse {
+                    id: "toolu_02".to_string(),
+                    name: "Read".to_string(),
+                    input: serde_json::json!({"file_path": "/test.rs"}),
+                },
+            ],
+            model: None,
+            stop_reason: None,
+        };
+
+        assert_eq!(message.extract_text(), "");
+    }
+
+    #[test]
+    fn test_assistant_message_extract_text_empty_content() {
+        let message = AssistantMessage {
+            id: None,
+            content: vec![],
+            model: None,
+            stop_reason: None,
+        };
+
+        assert_eq!(message.extract_text(), "");
+    }
+
+    #[test]
+    fn test_assistant_message_extract_text_preserves_ordering() {
+        let message = AssistantMessage {
+            id: None,
+            content: vec![
+                ContentBlock::Text {
+                    text: "A".to_string(),
+                },
+                ContentBlock::Text {
+                    text: "B".to_string(),
+                },
+                ContentBlock::Text {
+                    text: "C".to_string(),
+                },
+            ],
+            model: None,
+            stop_reason: None,
+        };
+
+        assert_eq!(message.extract_text(), "ABC");
+    }
+
+    #[test]
+    fn test_assistant_event_extract_text() {
+        let event = AssistantEvent {
+            message: AssistantMessage {
+                id: Some("msg_01".to_string()),
+                content: vec![ContentBlock::Text {
+                    text: "Hello from assistant event!".to_string(),
+                }],
+                model: None,
+                stop_reason: None,
+            },
+        };
+
+        assert_eq!(event.extract_text(), "Hello from assistant event!");
+    }
+
+    #[test]
+    fn test_extract_text_from_events_assistant_only() {
+        let events = vec![
+            StreamEvent::Assistant(AssistantEvent {
+                message: AssistantMessage {
+                    id: None,
+                    content: vec![ContentBlock::Text {
+                        text: "First.".to_string(),
+                    }],
+                    model: None,
+                    stop_reason: None,
+                },
+            }),
+            StreamEvent::Assistant(AssistantEvent {
+                message: AssistantMessage {
+                    id: None,
+                    content: vec![ContentBlock::Text {
+                        text: "Second.".to_string(),
+                    }],
+                    model: None,
+                    stop_reason: None,
+                },
+            }),
+        ];
+
+        assert_eq!(extract_text_from_events(&events), "First.Second.");
+    }
+
+    #[test]
+    fn test_extract_text_from_events_mixed() {
+        let events = vec![
+            StreamEvent::System(SystemEvent {
+                subtype: Some("init".to_string()),
+                session_id: Some("abc".to_string()),
+                model: None,
+                tools: vec![],
+            }),
+            StreamEvent::Assistant(AssistantEvent {
+                message: AssistantMessage {
+                    id: None,
+                    content: vec![ContentBlock::Text {
+                        text: "Hello! ".to_string(),
+                    }],
+                    model: None,
+                    stop_reason: None,
+                },
+            }),
+            StreamEvent::User(UserEvent {
+                message: UserMessage {
+                    id: None,
+                    content: vec![ToolResult {
+                        result_type: Some("tool_result".to_string()),
+                        tool_use_id: Some("toolu_01".to_string()),
+                        content: Some("file contents".to_string()),
+                        is_error: false,
+                    }],
+                },
+            }),
+            StreamEvent::Assistant(AssistantEvent {
+                message: AssistantMessage {
+                    id: None,
+                    content: vec![ContentBlock::Text {
+                        text: "Done!".to_string(),
+                    }],
+                    model: None,
+                    stop_reason: None,
+                },
+            }),
+            StreamEvent::Result(ResultEvent {
+                subtype: Some("success".to_string()),
+                total_cost_usd: Some(0.01),
+                cost_usd: None,
+                duration_ms: Some(1000),
+                duration_api_ms: None,
+                usage: None,
+                session_id: None,
+                num_turns: None,
+                result: None,
+            }),
+        ];
+
+        assert_eq!(extract_text_from_events(&events), "Hello! Done!");
+    }
+
+    #[test]
+    fn test_extract_text_from_events_empty() {
+        let events: Vec<StreamEvent> = vec![];
+        assert_eq!(extract_text_from_events(&events), "");
+    }
+
+    #[test]
+    fn test_extract_text_from_events_no_assistant() {
+        let events = vec![
+            StreamEvent::System(SystemEvent {
+                subtype: None,
+                session_id: None,
+                model: None,
+                tools: vec![],
+            }),
+            StreamEvent::Result(ResultEvent {
+                subtype: None,
+                total_cost_usd: None,
+                cost_usd: None,
+                duration_ms: None,
+                duration_api_ms: None,
+                usage: None,
+                session_id: None,
+                num_turns: None,
+                result: None,
+            }),
+        ];
+
+        assert_eq!(extract_text_from_events(&events), "");
+    }
+
+    #[test]
+    fn test_extract_text_from_events_tool_only_assistant() {
+        let events = vec![StreamEvent::Assistant(AssistantEvent {
+            message: AssistantMessage {
+                id: None,
+                content: vec![ContentBlock::ToolUse {
+                    id: "toolu_01".to_string(),
+                    name: "Read".to_string(),
+                    input: serde_json::json!({}),
+                }],
+                model: None,
+                stop_reason: None,
+            },
+        })];
+
+        assert_eq!(extract_text_from_events(&events), "");
     }
 }

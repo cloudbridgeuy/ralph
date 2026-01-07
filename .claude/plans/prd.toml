@@ -237,7 +237,7 @@ steps = [
   "Concatenate text fields in order",
   "Return combined text string",
 ]
-passes = false
+passes = true
 acceptance = [
   "Extracts text from single-content messages",
   "Handles multi-content messages (text + tool_use mixed)",
