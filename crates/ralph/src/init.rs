@@ -147,9 +147,9 @@ mod tests {
 
     fn create_test_paths(temp_dir: &TempDir) -> ContextPaths {
         ContextPaths {
-            design: temp_dir.path().join(".claude/designs/design.md"),
-            prd: temp_dir.path().join(".claude/plans/prd.toml"),
-            progress: temp_dir.path().join(".claude/plans/progress.txt"),
+            design: temp_dir.path().join(".local/designs/design.md"),
+            prd: temp_dir.path().join(".local/plans/prd.toml"),
+            progress: temp_dir.path().join(".local/plans/progress.txt"),
         }
     }
 
@@ -198,15 +198,15 @@ mod tests {
     fn test_touch_context_files_creates_missing() {
         let temp_dir = TempDir::new().unwrap();
         let to_touch = ContextFilesTouch {
-            design: Some(temp_dir.path().join(".claude/designs/design.md")),
-            progress: Some(temp_dir.path().join(".claude/plans/progress.txt")),
+            design: Some(temp_dir.path().join(".local/designs/design.md")),
+            progress: Some(temp_dir.path().join(".local/plans/progress.txt")),
         };
 
         let result = touch_context_files(&to_touch);
         assert!(result.is_ok());
 
-        assert!(temp_dir.path().join(".claude/designs/design.md").exists());
-        assert!(temp_dir.path().join(".claude/plans/progress.txt").exists());
+        assert!(temp_dir.path().join(".local/designs/design.md").exists());
+        assert!(temp_dir.path().join(".local/plans/progress.txt").exists());
     }
 
     #[test]

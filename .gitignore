@@ -9,3 +9,5 @@
 /archive/
 
 .DS_Store
+
+.local/

@@ -14,9 +14,9 @@
 set -e
 
 # Configuration (override with environment variables)
-DESIGN_FILE="${RALPH_DESIGN_FILE:-.claude/designs/2026-01-06-run-command-architecture.md}"
-PRD_FILE="${RALPH_PRD_FILE:-.claude/plans/prd.toml}"
-PROGRESS_FILE="${RALPH_PROGRESS_FILE:-.claude/plans/progress.txt}"
+DESIGN_FILE="${RALPH_DESIGN_FILE:-.local/designs/2026-01-06-run-command-architecture.md}"
+PRD_FILE="${RALPH_PRD_FILE:-.local/plans/prd.toml}"
+PROGRESS_FILE="${RALPH_PROGRESS_FILE:-.local/plans/progress.txt}"
 COMPLETION_MARKER="${RALPH_COMPLETION_MARKER:-<promise>COMPLETE</promise>}"
 LINT_COMMAND="${RALPH_LINT_COMMAND:-cargo xtask lint}"
 

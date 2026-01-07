@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 /// Default paths and templates for context files and commands.
 pub mod defaults {
     /// Default path for the design document.
-    pub const DESIGN_FILE: &str = ".claude/designs/design.md";
+    pub const DESIGN_FILE: &str = ".local/designs/design.md";
     /// Default path for the PRD file.
-    pub const PRD_FILE: &str = ".claude/plans/prd.toml";
+    pub const PRD_FILE: &str = ".local/plans/prd.toml";
     /// Default path for the progress file.
-    pub const PROGRESS_FILE: &str = ".claude/plans/progress.txt";
+    pub const PROGRESS_FILE: &str = ".local/plans/progress.txt";
 
     /// Default command template for invoking the LLM.
     ///
@@ -26,7 +26,7 @@ pub mod defaults {
     /// session metadata (model, costs, usage) and tool interactions from the output.
     /// Custom commands can override this format, but metadata extraction will be unavailable.
     pub const COMMAND_TEMPLATE: &str =
-        "claude --permission-mode acceptEdits --output-format stream-json -p {prompt}";
+        "claude --verbose --permission-mode acceptEdits --output-format stream-json -p {prompt}";
 
     /// Default completion marker string.
     ///
@@ -69,6 +69,8 @@ pub mod defaults {
 6. If you find some PRD is missing in order to complete or extend the task you are working on, you may append it to the PRD using the appropriate format.
 
 ONLY WORK ON A SINGLE FEATURE.
+
+IF YOU NOTICE A FILE GOING OVER 1000 LINES CONSIDER UPDATING IT INTO A MODULE OR MOVING THE TESTS TO A DIFFERENT FILE, AND USE THE #[path = ...] PATTERN.
 
 If, while implementing the feature, you notice all stories in the PRD are complete, output {completion_marker}."#;
 }
@@ -145,8 +147,8 @@ impl ContextPaths {
 /// let template = "Read @{design_file} and @{prd_file}";
 /// let result = substitute_template_placeholders(template, &paths, "<promise>COMPLETE</promise>");
 ///
-/// assert!(result.contains("/project/.claude/designs/design.md"));
-/// assert!(result.contains("/project/.claude/plans/prd.toml"));
+/// assert!(result.contains("/project/.local/designs/design.md"));
+/// assert!(result.contains("/project/.local/plans/prd.toml"));
 /// ```
 pub fn substitute_template_placeholders(
     template: &str,
@@ -231,12 +233,12 @@ mod tests {
 
         assert_eq!(
             paths.design,
-            PathBuf::from("/project/.claude/designs/design.md")
+            PathBuf::from("/project/.local/designs/design.md")
         );
-        assert_eq!(paths.prd, PathBuf::from("/project/.claude/plans/prd.toml"));
+        assert_eq!(paths.prd, PathBuf::from("/project/.local/plans/prd.toml"));
         assert_eq!(
             paths.progress,
-            PathBuf::from("/project/.claude/plans/progress.txt")
+            PathBuf::from("/project/.local/plans/progress.txt")
         );
     }
 
@@ -261,19 +263,19 @@ mod tests {
         let paths = ContextPaths::new(root, Some(Path::new("/custom/design.md")), None, None);
 
         assert_eq!(paths.design, PathBuf::from("/custom/design.md"));
-        assert_eq!(paths.prd, PathBuf::from("/project/.claude/plans/prd.toml"));
+        assert_eq!(paths.prd, PathBuf::from("/project/.local/plans/prd.toml"));
         assert_eq!(
             paths.progress,
-            PathBuf::from("/project/.claude/plans/progress.txt")
+            PathBuf::from("/project/.local/plans/progress.txt")
         );
     }
 
     #[test]
     fn test_determine_files_to_touch_none_exist() {
         let paths = ContextPaths {
-            design: PathBuf::from("/project/.claude/designs/design.md"),
-            prd: PathBuf::from("/project/.claude/plans/prd.toml"),
-            progress: PathBuf::from("/project/.claude/plans/progress.txt"),
+            design: PathBuf::from("/project/.local/designs/design.md"),
+            prd: PathBuf::from("/project/.local/plans/prd.toml"),
+            progress: PathBuf::from("/project/.local/plans/progress.txt"),
         };
 
         let to_touch = determine_files_to_touch(&paths, false, false);
@@ -281,20 +283,20 @@ mod tests {
         assert!(to_touch.has_files_to_create());
         assert_eq!(
             to_touch.design,
-            Some(PathBuf::from("/project/.claude/designs/design.md"))
+            Some(PathBuf::from("/project/.local/designs/design.md"))
         );
         assert_eq!(
             to_touch.progress,
-            Some(PathBuf::from("/project/.claude/plans/progress.txt"))
+            Some(PathBuf::from("/project/.local/plans/progress.txt"))
         );
     }
 
     #[test]
     fn test_determine_files_to_touch_all_exist() {
         let paths = ContextPaths {
-            design: PathBuf::from("/project/.claude/designs/design.md"),
-            prd: PathBuf::from("/project/.claude/plans/prd.toml"),
-            progress: PathBuf::from("/project/.claude/plans/progress.txt"),
+            design: PathBuf::from("/project/.local/designs/design.md"),
+            prd: PathBuf::from("/project/.local/plans/prd.toml"),
+            progress: PathBuf::from("/project/.local/plans/progress.txt"),
         };
 
         let to_touch = determine_files_to_touch(&paths, true, true);
@@ -307,9 +309,9 @@ mod tests {
     #[test]
     fn test_determine_files_to_touch_partial() {
         let paths = ContextPaths {
-            design: PathBuf::from("/project/.claude/designs/design.md"),
-            prd: PathBuf::from("/project/.claude/plans/prd.toml"),
-            progress: PathBuf::from("/project/.claude/plans/progress.txt"),
+            design: PathBuf::from("/project/.local/designs/design.md"),
+            prd: PathBuf::from("/project/.local/plans/prd.toml"),
+            progress: PathBuf::from("/project/.local/plans/progress.txt"),
         };
 
         // Only design exists
@@ -318,7 +320,7 @@ mod tests {
         assert_eq!(to_touch.design, None);
         assert_eq!(
             to_touch.progress,
-            Some(PathBuf::from("/project/.claude/plans/progress.txt"))
+            Some(PathBuf::from("/project/.local/plans/progress.txt"))
         );
 
         // Only progress exists
@@ -326,7 +328,7 @@ mod tests {
         assert!(to_touch.has_files_to_create());
         assert_eq!(
             to_touch.design,
-            Some(PathBuf::from("/project/.claude/designs/design.md"))
+            Some(PathBuf::from("/project/.local/designs/design.md"))
         );
         assert_eq!(to_touch.progress, None);
     }

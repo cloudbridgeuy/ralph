@@ -24,7 +24,7 @@ These principles are non-negotiable when working on this codebase:
 
 2. **Functional Core - Imperative Shell**: Follow this pattern strictly. Pure business logic in core modules, I/O operations in shell. See the dedicated section above for details.
 
-3. **Progressive Disclosure**: Keep documentation layered. High-level overview in CLAUDE.md, detailed docs in `.claude/context/` files. Don't duplicate information.
+3. **Progressive Disclosure**: Keep documentation layered. High-level overview in CLAUDE.md, detailed docs in `docs/context/` files. Don't duplicate information.
 
 4. **Follow Existing Patterns**: When implementing features, use patterns already established in the codebase. Don't invent new approaches when existing ones work. Consistency trumps novelty
 
@@ -117,12 +117,12 @@ async fn send_user_expiry_emails(db: &Database, email_service: &EmailService) ->
 
 Detailed documentation is kept in dedicated files. Consult these when working on related features.
 
-- [Clap CLI Patterns](.claude/context/rust-cli-clap.md) - Command routing, subcommands, arguments, and derive macros
-- [Error Handling](.claude/context/rust-cli-error-handling.md) - color_eyre, thiserror, and error propagation patterns
-- [Serde Serialization](.claude/context/rust-cli-serde.md) - JSON serialization, field attributes, and API type patterns
-- [I/O Patterns](.claude/context/rust-cli-io.md) - stdin/stdout handling, terminal detection, async I/O
-- [Environment Configuration](.claude/context/rust-cli-env-config.md) - Env vars, secrets, config precedence
-- [Project Structure](.claude/context/rust-cli-project-structure.md) - Workspace setup, xtask, module organization
+- [Clap CLI Patterns](docs/context/rust-cli-clap.md) - Command routing, subcommands, arguments, and derive macros
+- [Error Handling](docs/context/rust-cli-error-handling.md) - color_eyre, thiserror, and error propagation patterns
+- [Serde Serialization](docs/context/rust-cli-serde.md) - JSON serialization, field attributes, and API type patterns
+- [I/O Patterns](docs/context/rust-cli-io.md) - stdin/stdout handling, terminal detection, async I/O
+- [Environment Configuration](docs/context/rust-cli-env-config.md) - Env vars, secrets, config precedence
+- [Project Structure](docs/context/rust-cli-project-structure.md) - Workspace setup, xtask, module organization
 
 ## Glossary
 

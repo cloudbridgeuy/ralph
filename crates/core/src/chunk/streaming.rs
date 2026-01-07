@@ -3,6 +3,80 @@
 use super::fence::{is_fence_close, parse_fence_open};
 use super::types::ParsedChunk;
 
+/// Split text into lines while preserving trailing newlines.
+///
+/// Unlike `str::lines()`, this function preserves trailing empty lines.
+/// For example:
+/// - `"a\nb"` → `["a", "b"]`
+/// - `"a\nb\n"` → `["a", "b", ""]` (preserves the trailing empty line)
+/// - `"a\n\nb"` → `["a", "", "b"]` (preserves blank lines)
+///
+/// This is critical for whitespace preservation in streamed output,
+/// ensuring the output matches the original LLM response byte-for-byte.
+pub fn split_lines_preserve_trailing(text: &str) -> impl Iterator<Item = &str> {
+    SplitLinesIter {
+        text,
+        finished: false,
+        emit_trailing_empty: false,
+    }
+}
+
+/// Iterator for splitting lines while preserving trailing newlines.
+struct SplitLinesIter<'a> {
+    text: &'a str,
+    finished: bool,
+    /// Whether we need to emit an empty string for a trailing newline.
+    emit_trailing_empty: bool,
+}
+
+impl<'a> Iterator for SplitLinesIter<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
+
+        // Check if we need to emit an empty string for trailing newline
+        if self.emit_trailing_empty {
+            self.emit_trailing_empty = false;
+            self.finished = true;
+            return Some("");
+        }
+
+        if self.text.is_empty() {
+            self.finished = true;
+            return None;
+        }
+
+        // Find the next newline
+        if let Some(pos) = self.text.find('\n') {
+            // Check for CRLF
+            let line_end = if pos > 0 && self.text.as_bytes().get(pos - 1) == Some(&b'\r') {
+                pos - 1
+            } else {
+                pos
+            };
+            let line = &self.text[..line_end];
+            self.text = &self.text[pos + 1..];
+
+            // If we just consumed the last character (the newline), we need to
+            // emit an empty string on the next iteration
+            if self.text.is_empty() {
+                self.emit_trailing_empty = true;
+            }
+
+            Some(line)
+        } else {
+            // No more newlines - return the rest
+            let line = self.text;
+            self.text = "";
+            self.finished = true;
+            Some(line)
+        }
+    }
+}
+
 /// Internal state for the streaming chunk buffer.
 #[derive(Debug, Clone, PartialEq)]
 enum BufferState {
@@ -85,6 +159,9 @@ impl StreamingChunkBuffer {
 
     /// Check if the buffer is empty (no pending content).
     ///
+    /// Note: This only checks if there's buffered code content, not the parser state.
+    /// Use [`is_in_code_block`](Self::is_in_code_block) to check if inside a code block.
+    ///
     /// # Example
     ///
     /// ```
@@ -93,8 +170,14 @@ impl StreamingChunkBuffer {
     /// let mut buffer = StreamingChunkBuffer::new();
     /// assert!(buffer.is_empty());
     ///
+    /// // Opening a code block clears the buffer for code content
     /// buffer.process_line("```rust");
-    /// assert!(!buffer.is_empty()); // Code block started
+    /// assert!(buffer.is_empty()); // Buffer is empty (no code content yet)
+    /// assert!(buffer.is_in_code_block()); // But we are inside a code block
+    ///
+    /// // Adding code content makes the buffer non-empty
+    /// buffer.process_line("fn main() {}");
+    /// assert!(!buffer.is_empty()); // Now has buffered code content
     /// ```
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
@@ -176,12 +259,10 @@ impl StreamingChunkBuffer {
                     self.buffer.clear();
                 } else {
                     // Emit prose line immediately (eager streaming)
-                    // Only emit non-empty lines to avoid noise
-                    if !line.is_empty() {
-                        let chunk = ParsedChunk::prose(line);
-                        self.emitted_count += 1;
-                        result.push(chunk);
-                    }
+                    // Emit all lines including empty ones to preserve whitespace
+                    let chunk = ParsedChunk::prose(line);
+                    self.emitted_count += 1;
+                    result.push(chunk);
                 }
             }
             BufferState::Code { language, is_diff } => {
@@ -234,7 +315,8 @@ impl StreamingChunkBuffer {
     /// ```
     pub fn process_text(&mut self, text: &str) -> Vec<ParsedChunk> {
         let mut result = Vec::new();
-        for line in text.lines() {
+        // Use split_lines_preserve_trailing to handle trailing newlines correctly
+        for line in split_lines_preserve_trailing(text) {
             result.extend(self.process_line(line));
         }
         result

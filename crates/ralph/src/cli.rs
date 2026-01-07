@@ -109,19 +109,19 @@ pub struct RunArgs {
 
     /// Design document path.
     ///
-    /// Default: .claude/designs/design.md
+    /// Default: .local/designs/design.md
     #[arg(long, value_name = "PATH")]
     pub design: Option<PathBuf>,
 
     /// PRD file path.
     ///
-    /// Default: .claude/plans/prd.toml
+    /// Default: .local/plans/prd.toml
     #[arg(long, value_name = "PATH")]
     pub prd: Option<PathBuf>,
 
     /// Progress notes path.
     ///
-    /// Default: .claude/plans/progress.txt
+    /// Default: .local/plans/progress.txt
     #[arg(long, value_name = "PATH")]
     pub progress: Option<PathBuf>,
 

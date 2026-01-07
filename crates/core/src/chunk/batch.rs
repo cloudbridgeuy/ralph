@@ -21,23 +21,12 @@ use super::types::ParsedChunk;
 /// ```
 /// use ralph_core::chunk::{parse_chunks, ChunkType};
 ///
-/// let text = r#"Here's a simple function:
-///
-/// ```python
-/// def greet():
-///     print("Hello!")
-/// ```
-///
-/// And here's a diff:
-///
-/// ```diff
-/// -old line
-/// +new line
-/// ```
-/// "#;
-///
+/// let text = "Here's code:\n\n```rust\nfn main() {}\n```\n\nDone.";
 /// let chunks = parse_chunks(text);
-/// assert_eq!(chunks.len(), 5);
+/// assert_eq!(chunks.len(), 3);
+/// assert!(matches!(chunks[0].chunk_type, ChunkType::Prose));
+/// assert!(matches!(chunks[1].chunk_type, ChunkType::Code { .. }));
+/// assert!(matches!(chunks[2].chunk_type, ChunkType::Prose));
 /// ```
 pub fn parse_chunks(text: &str) -> Vec<ParsedChunk> {
     let mut chunks = Vec::new();

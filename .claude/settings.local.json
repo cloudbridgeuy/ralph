@@ -55,7 +55,10 @@
       "Edit(.claude/context/**)",
       "Bash(grep:*)",
       "Bash(cargo fmt:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Read(.claude/**)",
+      "Write(.claude/**)",
+      "Edit(.claude/**)"
     ],
     "deny": [],
     "ask": []

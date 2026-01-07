@@ -25,16 +25,7 @@
 //! ```
 //! use ralph_core::chunk::{parse_chunks, ChunkType};
 //!
-//! let text = r#"I'll implement the function:
-//!
-//! ```rust
-//! fn hello() {
-//!     println!("Hello, world!");
-//! }
-//! ```
-//!
-//! This prints a greeting."#;
-//!
+//! let text = "I'll implement:\n\n```rust\nfn hello() {}\n```\n\nDone.";
 //! let chunks = parse_chunks(text);
 //! assert_eq!(chunks.len(), 3);
 //! assert!(matches!(chunks[0].chunk_type, ChunkType::Prose));
@@ -49,18 +40,21 @@
 //!
 //! let mut buffer = StreamingChunkBuffer::new();
 //!
-//! // Process lines as they arrive
+//! // Process lines as they arrive - prose emits eagerly
 //! let chunks = buffer.process_line("Here's some code:");
-//! assert_eq!(chunks.len(), 1); // Prose emitted eagerly
+//! assert_eq!(chunks.len(), 1);
 //!
+//! // Opening fence starts code block buffering
 //! let chunks = buffer.process_line("```rust");
-//! assert!(chunks.is_empty()); // Code block started, waiting for close
+//! assert!(chunks.is_empty());
 //!
+//! // Code content is buffered
 //! let chunks = buffer.process_line("fn main() {}");
-//! assert!(chunks.is_empty()); // Still buffering code
+//! assert!(chunks.is_empty());
 //!
+//! // Closing fence emits the complete code block
 //! let chunks = buffer.process_line("```");
-//! assert_eq!(chunks.len(), 1); // Code block complete, emitted
+//! assert_eq!(chunks.len(), 1);
 //!
 //! // Get any remaining content
 //! let final_chunks = buffer.finish();
@@ -78,5 +72,5 @@ mod tests;
 // Re-export public types
 pub use batch::parse_chunks;
 pub use heuristics::{is_unfenced_diff, parse_chunks_with_heuristics};
-pub use streaming::StreamingChunkBuffer;
+pub use streaming::{split_lines_preserve_trailing, StreamingChunkBuffer};
 pub use types::{ChunkType, ParsedChunk};

@@ -18,15 +18,6 @@ Rust checks:
 4. cargo test - Run all tests including doctests
 5. cargo rail unify --check - Dependency unification, unused deps, dead features
 
-TypeScript checks (crates/frontend):
-6. biome check --write --unsafe - Format and lint TypeScript (auto-fix)
-7. bun run typecheck - TypeScript type checking
-8. bun test - Run TypeScript tests
-
-TypeScript checks (examples/react-ssr):
-9. biome check --write --unsafe - Format and lint example TypeScript
-10. bun run typecheck - Example TypeScript type checking
-
 When used with --install-hooks, this command also manages git pre-commit hooks that
 run these same checks automatically before each commit.
 
@@ -97,7 +88,6 @@ async fn run_lint_checks(command: &LintCommand, global: &crate::Global) -> Resul
         "cargo-rail",
         "Required for dependency unification: cargo install cargo-rail or cargo binstall cargo-rail",
     )?;
-    require_command("bun", "Required for TypeScript: https://bun.sh/")?;
 
     if !global.is_silent() {
         aprintln!("{}", p_b("Running code quality checks..."));
