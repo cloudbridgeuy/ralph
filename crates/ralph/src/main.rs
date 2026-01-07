@@ -18,6 +18,7 @@ mod prompt;
 pub mod replay;
 mod run;
 mod session;
+pub mod signal;
 pub mod spinner;
 pub mod startup;
 pub mod stream_processor;
@@ -54,6 +55,11 @@ fn main() -> ExitCode {
 
 /// Execute the run command.
 fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
+    if let Err(e) = signal::init() {
+        eprintln!("Warning: Failed to initialize signal handler: {}", e);
+    }
+
     // Resolve context file paths
     let project_root = std::env::current_dir()?;
     let context_paths = ContextPaths::new(
@@ -275,6 +281,22 @@ fn execute_run_with_prompting(
                     }
                 }
             }
+            Err(RunError::Interrupted {
+                session_slug,
+                iterations_completed,
+            }) => {
+                // Run was interrupted by signal - finalize session as interrupted
+                let final_iterations = total_iterations_completed + iterations_completed;
+                if let Err(e) = session::finalize_session(
+                    &session_slug,
+                    final_iterations as u32,
+                    SessionOutcome::Interrupted,
+                ) {
+                    eprintln!("Warning: Failed to finalize session: {}", e);
+                }
+                eprintln!("Interrupted. Session '{}' saved.", session_slug);
+                return Err("Interrupted by signal".into());
+            }
             Err(e) => {
                 // Other errors - propagate immediately
                 return Err(e.into());
@@ -352,6 +374,7 @@ fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>
             SessionOutcome::InProgress => "in_progress",
             SessionOutcome::Aborted => "aborted",
             SessionOutcome::Failed => "failed",
+            SessionOutcome::Interrupted => "interrupted",
         };
 
         println!(

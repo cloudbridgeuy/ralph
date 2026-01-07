@@ -12,6 +12,7 @@
 //!   stream-json parsing, syntax highlighting, and metadata extraction
 
 use crate::highlight::{ThemeConfig, ThemeError};
+use crate::signal;
 use crate::spinner::Spinner;
 use crate::stream_processor::{StreamProcessor, StreamProcessorResult};
 use std::io::{self, BufRead, BufReader, Write};
@@ -48,6 +49,12 @@ pub enum SubprocessError {
         /// Timeout duration in seconds
         timeout_secs: u64,
         /// Partial output captured before timeout
+        partial_result: Box<StreamingSubprocessResult>,
+    },
+
+    #[error("Subprocess interrupted by SIGINT/SIGTERM")]
+    Interrupted {
+        /// Partial output captured before interrupt
         partial_result: Box<StreamingSubprocessResult>,
     },
 
@@ -866,6 +873,43 @@ pub fn invoke_subprocess_with_spinner(
                 timeout_secs,
                 partial_result: Box::new(StreamingSubprocessResult {
                     exit_code: -1, // Indicate killed
+                    stderr: stderr_captured,
+                    stream_result,
+                }),
+            });
+        }
+
+        // Check for interrupt signal (SIGINT/SIGTERM)
+        if signal::is_interrupted() {
+            // Stop spinner
+            if !spinner_stopped {
+                spinner.stop();
+            }
+
+            // Kill the subprocess gracefully
+            let _ = child.kill();
+            let _ = child.wait(); // Clean up zombie
+
+            // Drain any remaining output that was received
+            while let Ok(line_result) = line_rx.try_recv() {
+                if let Ok(line) = line_result {
+                    if let Some(output) = processor.process_line(&line) {
+                        print!("{}", output);
+                        let _ = io::stdout().flush();
+                    }
+                }
+            }
+
+            // Wait for threads
+            let _ = stdout_thread.join();
+            let stderr_captured = stderr_thread.join().unwrap_or_default();
+
+            // Finish stream processing to get partial result
+            let stream_result = processor.finish();
+
+            return Err(SubprocessError::Interrupted {
+                partial_result: Box::new(StreamingSubprocessResult {
+                    exit_code: -2, // Indicate interrupted
                     stderr: stderr_captured,
                     stream_result,
                 }),

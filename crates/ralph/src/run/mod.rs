@@ -12,6 +12,7 @@ use crate::iteration::{
     write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata, LogToolCall,
 };
 use crate::session::{finalize_session, initialize_session, SessionError};
+use crate::signal;
 use crate::startup::{
     display_iteration_header, display_iteration_summary, display_startup_info, IterationHeader,
     IterationSummary, StartupInfo,
@@ -156,6 +157,15 @@ pub enum RunError {
     /// No pending stories to process
     #[error("No pending stories in PRD. All work is complete.")]
     NoPendingStories,
+
+    /// Run was interrupted by a signal (SIGINT/SIGTERM)
+    #[error("Run interrupted by signal")]
+    Interrupted {
+        /// Session slug for finalization
+        session_slug: String,
+        /// Number of iterations completed before interrupt
+        iterations_completed: usize,
+    },
 }
 
 /// Execute the main iteration loop.
@@ -259,6 +269,14 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
     let remaining_iterations = max_iterations.saturating_sub(iteration_offset);
 
     for relative_iteration in 1..=remaining_iterations {
+        // Check for interrupt at the start of each iteration
+        if signal::is_interrupted() {
+            return Err(RunError::Interrupted {
+                session_slug,
+                iterations_completed,
+            });
+        }
+
         // The actual iteration number includes any completed iterations from prior retries
         let iteration = iteration_offset + relative_iteration;
         // Pre-iteration check: re-read PRD and count pending
@@ -363,6 +381,15 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         };
 
         write_iteration_log(&session_dir, &iteration_log)?;
+
+        // Check for interrupt after writing iteration log (preserves partial data)
+        if signal::is_interrupted() {
+            // Return interrupt error - iteration log already saved
+            return Err(RunError::Interrupted {
+                session_slug,
+                iterations_completed: relative_iteration, // Include this completed iteration
+            });
+        }
 
         // Capture git diff
         let diff_path = session_dir.join(format!("iteration-{}.diff", iteration));
@@ -565,6 +592,14 @@ fn invoke_with_failure_recovery(
                         iterations_completed: 0,
                     });
                 }
+            }
+            Err(SubprocessError::Interrupted { .. }) => {
+                // Interrupt occurred - don't retry, propagate immediately
+                // The caller will handle session finalization
+                return Err(RunError::Interrupted {
+                    session_slug: String::new(),
+                    iterations_completed: 0,
+                });
             }
             Err(e) => return Err(e.into()),
         };

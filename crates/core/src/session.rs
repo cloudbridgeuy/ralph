@@ -405,10 +405,12 @@ pub enum SessionOutcome {
     InProgress,
     /// Session completed successfully (all stories done)
     Completed,
-    /// Session was manually aborted by the user
+    /// Session was manually aborted by the user at the failure prompt
     Aborted,
     /// Session failed due to an error
     Failed,
+    /// Session was interrupted by a signal (SIGINT/SIGTERM)
+    Interrupted,
 }
 
 impl std::fmt::Display for SessionOutcome {
@@ -418,6 +420,7 @@ impl std::fmt::Display for SessionOutcome {
             SessionOutcome::Completed => write!(f, "completed"),
             SessionOutcome::Aborted => write!(f, "aborted"),
             SessionOutcome::Failed => write!(f, "failed"),
+            SessionOutcome::Interrupted => write!(f, "interrupted"),
         }
     }
 }
@@ -786,6 +789,7 @@ mod tests {
         assert_eq!(SessionOutcome::Completed.to_string(), "completed");
         assert_eq!(SessionOutcome::Aborted.to_string(), "aborted");
         assert_eq!(SessionOutcome::Failed.to_string(), "failed");
+        assert_eq!(SessionOutcome::Interrupted.to_string(), "interrupted");
     }
 
     #[test]
