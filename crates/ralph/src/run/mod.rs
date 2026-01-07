@@ -77,6 +77,16 @@ pub struct RunResult {
     pub iterations_completed: usize,
     /// Reason for completion (if completed successfully).
     pub completion_reason: Option<CompletionReason>,
+    /// Final count of pending stories.
+    pub final_pending_stories: usize,
+    /// Total cost across all iterations (USD).
+    pub total_cost_usd: Option<f64>,
+    /// Total duration across all iterations (milliseconds).
+    pub total_duration_ms: Option<u64>,
+    /// Total input tokens across all iterations.
+    pub total_input_tokens: Option<u64>,
+    /// Total output tokens across all iterations.
+    pub total_output_tokens: Option<u64>,
 }
 
 /// Error type for run operations.
@@ -232,6 +242,13 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
     // 6. Execute iteration loop
     let mut iterations_completed = 0;
     let mut completion_reason = None;
+    let mut final_pending_stories = prd_analysis.pending_count;
+
+    // Accumulators for aggregated metrics
+    let mut total_cost_usd: Option<f64> = None;
+    let mut total_duration_ms: Option<u64> = None;
+    let mut total_input_tokens: Option<u64> = None;
+    let mut total_output_tokens: Option<u64> = None;
 
     // Calculate iteration numbers: if continuing a session, offset by starting_iteration
     let iteration_offset = config.starting_iteration;
@@ -368,6 +385,20 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         };
         display_iteration_summary(&summary);
 
+        // Accumulate metrics for final summary
+        if let Some(cost) = result.stream_result.costs.cost_usd {
+            total_cost_usd = Some(total_cost_usd.unwrap_or(0.0) + cost);
+        }
+        if let Some(duration) = result.stream_result.costs.duration_ms {
+            total_duration_ms = Some(total_duration_ms.unwrap_or(0) + duration);
+        }
+        if let Some(tokens) = input_tokens {
+            total_input_tokens = Some(total_input_tokens.unwrap_or(0) + tokens);
+        }
+        if let Some(tokens) = output_tokens {
+            total_output_tokens = Some(total_output_tokens.unwrap_or(0) + tokens);
+        }
+
         // Post-iteration check: re-read PRD
         let prd_after = read_prd_file(&config.context_paths.prd)?;
 
@@ -386,6 +417,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
 
         // Count pending stories after iteration
         let pending_after = count_pending_stories(&prd_after)?;
+        final_pending_stories = pending_after;
 
         // Update iteration log with pending_after
         let mut updated_log = iteration_log.clone();
@@ -416,11 +448,16 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         eprintln!("Warning: Failed to finalize session: {}", e);
     }
 
-    // Return result
+    // Return result with aggregated metrics
     Ok(RunResult {
         slug: session_slug,
         iterations_completed,
         completion_reason,
+        final_pending_stories,
+        total_cost_usd,
+        total_duration_ms,
+        total_input_tokens,
+        total_output_tokens,
     })
 }
 

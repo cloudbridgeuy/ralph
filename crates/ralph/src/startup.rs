@@ -380,13 +380,220 @@ fn display_iteration_summary_plain(summary: &IterationSummary) {
     println!("{}", "-".repeat(30));
 }
 
+/// Information for final run summary display.
+#[derive(Debug, Clone)]
+pub struct RunSummary {
+    /// The session slug.
+    pub slug: String,
+    /// Total number of iterations completed.
+    pub iterations_completed: usize,
+    /// Reason for completion (if any).
+    pub completion_reason: Option<String>,
+    /// Total cost across all iterations (USD).
+    pub total_cost_usd: Option<f64>,
+    /// Total duration across all iterations (wall clock time from start).
+    pub total_duration_ms: Option<u64>,
+    /// Total input tokens across all iterations.
+    pub total_input_tokens: Option<u64>,
+    /// Total output tokens across all iterations.
+    pub total_output_tokens: Option<u64>,
+    /// Final pending story count.
+    pub final_pending_stories: usize,
+}
+
+/// Display final run summary to stdout.
+///
+/// The output format adapts based on whether stdout is a terminal:
+/// - Terminal: Uses box drawing characters and colors with clear boundaries
+/// - Piped: Uses plain ASCII with no ANSI codes
+pub fn display_run_summary(summary: &RunSummary) {
+    let is_terminal = std::io::stdout().is_terminal();
+
+    if is_terminal {
+        display_run_summary_terminal(summary);
+    } else {
+        display_run_summary_plain(summary);
+    }
+}
+
+/// Display final run summary with terminal formatting.
+fn display_run_summary_terminal(summary: &RunSummary) {
+    println!();
+    println!("\x1b[1m\x1b[36m╔══════════════════════════════════════════════════════════╗\x1b[0m");
+    println!("\x1b[1m\x1b[36m║                    Run Complete                          ║\x1b[0m");
+    println!("\x1b[1m\x1b[36m╚══════════════════════════════════════════════════════════╝\x1b[0m");
+    println!();
+
+    // Session slug (prominently displayed for replay)
+    println!("\x1b[1mSession:\x1b[0m \x1b[33m{}\x1b[0m", summary.slug);
+
+    // Iterations and completion reason
+    let iterations_text = if summary.iterations_completed == 1 {
+        "1 iteration".to_string()
+    } else {
+        format!("{} iterations", summary.iterations_completed)
+    };
+    println!("\x1b[1mIterations:\x1b[0m {}", iterations_text);
+
+    // Completion reason
+    if let Some(ref reason) = summary.completion_reason {
+        let reason_display = match reason.as_str() {
+            "AllStoriesComplete" => "\x1b[32mAll stories complete\x1b[0m",
+            "MarkerFound" => "\x1b[32mCompletion marker found\x1b[0m",
+            _ => reason.as_str(),
+        };
+        println!("\x1b[1mResult:\x1b[0m {}", reason_display);
+    }
+
+    // Final story count
+    let stories_text = if summary.final_pending_stories == 0 {
+        "\x1b[32m0 stories remaining\x1b[0m".to_string()
+    } else if summary.final_pending_stories == 1 {
+        "\x1b[33m1 story remaining\x1b[0m".to_string()
+    } else {
+        format!(
+            "\x1b[33m{} stories remaining\x1b[0m",
+            summary.final_pending_stories
+        )
+    };
+    println!("\x1b[1mStories:\x1b[0m {}", stories_text);
+
+    println!();
+
+    // Aggregated totals section
+    println!("\x1b[2m─── Totals ───\x1b[0m");
+
+    // Total cost
+    let cost_str = summary
+        .total_cost_usd
+        .map(|c| format!("${:.4}", c))
+        .unwrap_or_else(|| "N/A".to_string());
+    println!("\x1b[2mTotal cost:\x1b[0m {}", cost_str);
+
+    // Total duration
+    let duration_str = summary
+        .total_duration_ms
+        .map(format_duration)
+        .unwrap_or_else(|| "N/A".to_string());
+    println!("\x1b[2mTotal duration:\x1b[0m {}", duration_str);
+
+    // Total tokens
+    let has_tokens = summary.total_input_tokens.is_some() || summary.total_output_tokens.is_some();
+    if has_tokens {
+        let input_str = summary
+            .total_input_tokens
+            .map(format_token_count)
+            .unwrap_or_else(|| "N/A".to_string());
+        let output_str = summary
+            .total_output_tokens
+            .map(format_token_count)
+            .unwrap_or_else(|| "N/A".to_string());
+        println!(
+            "\x1b[2mTotal tokens:\x1b[0m {} input | {} output",
+            input_str, output_str
+        );
+    }
+
+    println!();
+    println!("\x1b[2mReplay with: ralph replay {}\x1b[0m", summary.slug);
+    println!();
+}
+
+/// Display final run summary without terminal formatting.
+fn display_run_summary_plain(summary: &RunSummary) {
+    println!();
+    println!("============================================================");
+    println!("                     Run Complete                           ");
+    println!("============================================================");
+    println!();
+
+    // Session slug
+    println!("Session: {}", summary.slug);
+
+    // Iterations and completion reason
+    let iterations_text = if summary.iterations_completed == 1 {
+        "1 iteration".to_string()
+    } else {
+        format!("{} iterations", summary.iterations_completed)
+    };
+    println!("Iterations: {}", iterations_text);
+
+    // Completion reason
+    if let Some(ref reason) = summary.completion_reason {
+        let reason_display = match reason.as_str() {
+            "AllStoriesComplete" => "All stories complete",
+            "MarkerFound" => "Completion marker found",
+            _ => reason.as_str(),
+        };
+        println!("Result: {}", reason_display);
+    }
+
+    // Final story count
+    let stories_text = if summary.final_pending_stories == 0 {
+        "0 stories remaining".to_string()
+    } else if summary.final_pending_stories == 1 {
+        "1 story remaining".to_string()
+    } else {
+        format!("{} stories remaining", summary.final_pending_stories)
+    };
+    println!("Stories: {}", stories_text);
+
+    println!();
+
+    // Aggregated totals section
+    println!("--- Totals ---");
+
+    // Total cost
+    let cost_str = summary
+        .total_cost_usd
+        .map(|c| format!("${:.4}", c))
+        .unwrap_or_else(|| "N/A".to_string());
+    println!("Total cost: {}", cost_str);
+
+    // Total duration
+    let duration_str = summary
+        .total_duration_ms
+        .map(format_duration)
+        .unwrap_or_else(|| "N/A".to_string());
+    println!("Total duration: {}", duration_str);
+
+    // Total tokens
+    let has_tokens = summary.total_input_tokens.is_some() || summary.total_output_tokens.is_some();
+    if has_tokens {
+        let input_str = summary
+            .total_input_tokens
+            .map(format_token_count)
+            .unwrap_or_else(|| "N/A".to_string());
+        let output_str = summary
+            .total_output_tokens
+            .map(format_token_count)
+            .unwrap_or_else(|| "N/A".to_string());
+        println!("Total tokens: {} input | {} output", input_str, output_str);
+    }
+
+    println!();
+    println!("Replay with: ralph replay {}", summary.slug);
+    println!();
+}
+
+/// Format token count with thousands separators for readability.
+fn format_token_count(tokens: u64) -> String {
+    if tokens < 1000 {
+        tokens.to_string()
+    } else if tokens < 1_000_000 {
+        format!("{:.1}K", tokens as f64 / 1000.0)
+    } else {
+        format!("{:.2}M", tokens as f64 / 1_000_000.0)
+    }
+}
+
 /// Format duration from milliseconds to human-readable string.
 ///
 /// # Formatting rules
 /// - 0-999ms → "Xms"
 /// - 1000-59999ms → "X.Xs" (e.g., "45.2s")
 /// - 60000+ ms → "Xm Ys" (e.g., "1m 23s")
-fn format_duration(duration_ms: u64) -> String {
+pub fn format_duration(duration_ms: u64) -> String {
     if duration_ms < 1000 {
         format!("{}ms", duration_ms)
     } else if duration_ms < 60_000 {
@@ -679,5 +886,158 @@ mod tests {
         assert_eq!(summary.iteration, 100);
         assert_eq!(summary.cost_usd, Some(15.5678));
         assert_eq!(summary.input_tokens, Some(1_000_000));
+    }
+
+    // Tests for format_token_count
+
+    #[test]
+    fn test_format_token_count_small() {
+        assert_eq!(format_token_count(0), "0");
+        assert_eq!(format_token_count(100), "100");
+        assert_eq!(format_token_count(999), "999");
+    }
+
+    #[test]
+    fn test_format_token_count_thousands() {
+        assert_eq!(format_token_count(1000), "1.0K");
+        assert_eq!(format_token_count(1500), "1.5K");
+        assert_eq!(format_token_count(45_200), "45.2K");
+        assert_eq!(format_token_count(999_999), "1000.0K");
+    }
+
+    #[test]
+    fn test_format_token_count_millions() {
+        assert_eq!(format_token_count(1_000_000), "1.00M");
+        assert_eq!(format_token_count(1_500_000), "1.50M");
+        assert_eq!(format_token_count(10_000_000), "10.00M");
+    }
+
+    // Tests for RunSummary
+
+    fn create_test_run_summary() -> RunSummary {
+        RunSummary {
+            slug: "quiet-mountain".to_string(),
+            iterations_completed: 3,
+            completion_reason: Some("AllStoriesComplete".to_string()),
+            total_cost_usd: Some(0.1234),
+            total_duration_ms: Some(90_000),
+            total_input_tokens: Some(5000),
+            total_output_tokens: Some(15000),
+            final_pending_stories: 0,
+        }
+    }
+
+    #[test]
+    fn test_run_summary_creation() {
+        let summary = create_test_run_summary();
+        assert_eq!(summary.slug, "quiet-mountain");
+        assert_eq!(summary.iterations_completed, 3);
+        assert_eq!(
+            summary.completion_reason,
+            Some("AllStoriesComplete".to_string())
+        );
+        assert_eq!(summary.total_cost_usd, Some(0.1234));
+        assert_eq!(summary.total_duration_ms, Some(90_000));
+        assert_eq!(summary.total_input_tokens, Some(5000));
+        assert_eq!(summary.total_output_tokens, Some(15000));
+        assert_eq!(summary.final_pending_stories, 0);
+    }
+
+    #[test]
+    fn test_run_summary_with_none_values() {
+        let summary = RunSummary {
+            slug: "test-session".to_string(),
+            iterations_completed: 1,
+            completion_reason: None,
+            total_cost_usd: None,
+            total_duration_ms: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            final_pending_stories: 5,
+        };
+        assert_eq!(summary.slug, "test-session");
+        assert!(summary.completion_reason.is_none());
+        assert!(summary.total_cost_usd.is_none());
+        assert!(summary.total_duration_ms.is_none());
+        assert!(summary.total_input_tokens.is_none());
+        assert!(summary.total_output_tokens.is_none());
+        assert_eq!(summary.final_pending_stories, 5);
+    }
+
+    #[test]
+    fn test_run_summary_single_iteration() {
+        let summary = RunSummary {
+            slug: "single-run".to_string(),
+            iterations_completed: 1,
+            completion_reason: Some("MarkerFound".to_string()),
+            total_cost_usd: Some(0.05),
+            total_duration_ms: Some(30_000),
+            total_input_tokens: Some(1000),
+            total_output_tokens: Some(2000),
+            final_pending_stories: 2,
+        };
+        assert_eq!(summary.iterations_completed, 1);
+        assert_eq!(summary.final_pending_stories, 2);
+    }
+
+    #[test]
+    fn test_run_summary_large_values() {
+        let summary = RunSummary {
+            slug: "big-run".to_string(),
+            iterations_completed: 100,
+            completion_reason: Some("AllStoriesComplete".to_string()),
+            total_cost_usd: Some(50.0),
+            total_duration_ms: Some(3_600_000), // 1 hour
+            total_input_tokens: Some(10_000_000),
+            total_output_tokens: Some(5_000_000),
+            final_pending_stories: 0,
+        };
+        assert_eq!(summary.iterations_completed, 100);
+        assert_eq!(summary.total_cost_usd, Some(50.0));
+        assert_eq!(summary.total_input_tokens, Some(10_000_000));
+    }
+
+    #[test]
+    fn test_run_summary_partial_completion() {
+        // Run that stopped before completing all stories (e.g., max iterations reached)
+        let summary = RunSummary {
+            slug: "partial-run".to_string(),
+            iterations_completed: 10,
+            completion_reason: None, // No completion reason means max iterations reached
+            total_cost_usd: Some(1.5),
+            total_duration_ms: Some(300_000),
+            total_input_tokens: Some(50_000),
+            total_output_tokens: Some(100_000),
+            final_pending_stories: 3, // Still 3 stories remaining
+        };
+        assert_eq!(summary.iterations_completed, 10);
+        assert!(summary.completion_reason.is_none());
+        assert_eq!(summary.final_pending_stories, 3);
+    }
+
+    #[test]
+    fn test_run_summary_zero_cost() {
+        // Edge case: run with no cost data (e.g., all cached)
+        let summary = RunSummary {
+            slug: "cached-run".to_string(),
+            iterations_completed: 2,
+            completion_reason: Some("AllStoriesComplete".to_string()),
+            total_cost_usd: Some(0.0),
+            total_duration_ms: Some(5000),
+            total_input_tokens: Some(0),
+            total_output_tokens: Some(0),
+            final_pending_stories: 0,
+        };
+        assert_eq!(summary.total_cost_usd, Some(0.0));
+        assert_eq!(summary.total_input_tokens, Some(0));
+    }
+
+    #[test]
+    fn test_run_summary_clone() {
+        let original = create_test_run_summary();
+        let cloned = original.clone();
+        assert_eq!(original.slug, cloned.slug);
+        assert_eq!(original.iterations_completed, cloned.iterations_completed);
+        assert_eq!(original.total_cost_usd, cloned.total_cost_usd);
     }
 }

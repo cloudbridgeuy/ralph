@@ -140,15 +140,19 @@ fn execute_run_with_prompting(
         // Execute the run loop
         match run(config) {
             Ok(result) => {
-                // Success - print summary and return
-                println!("Session: {}", result.slug);
-                println!(
-                    "Iterations completed: {}",
-                    total_iterations_completed + result.iterations_completed
-                );
-                if let Some(reason) = result.completion_reason {
-                    println!("Completion reason: {:?}", reason);
-                }
+                // Success - display final run summary
+                let total_iterations = total_iterations_completed + result.iterations_completed;
+                let run_summary = startup::RunSummary {
+                    slug: result.slug,
+                    iterations_completed: total_iterations,
+                    completion_reason: result.completion_reason.map(|r| format!("{:?}", r)),
+                    total_cost_usd: result.total_cost_usd,
+                    total_duration_ms: result.total_duration_ms,
+                    total_input_tokens: result.total_input_tokens,
+                    total_output_tokens: result.total_output_tokens,
+                    final_pending_stories: result.final_pending_stories,
+                };
+                startup::display_run_summary(&run_summary);
                 return Ok(());
             }
             Err(RunError::SubprocessFailed {
