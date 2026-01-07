@@ -1236,3 +1236,45 @@
 - After Layer 4: Layer 5 (Auxiliary Commands) for replay and sessions commands
 - The retry logic is ready but does not yet include interactive prompting for user action after retries exhausted
 
+## 2026-01-07 - User Prompting on Unrecoverable Failure Complete
+
+### What was accomplished
+- Implemented Story: "Prompt user on unrecoverable failure" (Layer 4 Error Handling)
+- Created `crates/ralph/src/prompt.rs` with the following components:
+  - `FailureAction` enum with `Retry` and `Abort` variants
+  - `is_interactive()` function to check if stdin is a terminal
+  - `prompt_on_failure(summary)` function for interactive user prompting
+- Updated `crates/ralph/src/main.rs` with:
+  - New `execute_run_with_prompting()` function that wraps the run loop
+  - Handles `RunError::SubprocessFailed` errors by prompting user
+  - Retries the entire run on user's "Retry" choice
+  - Aborts gracefully on user's "Abort" choice or EOF
+  - Automatically aborts in non-interactive mode (piped stdin)
+- All acceptance criteria met:
+  - Prompt only shown after retries exhausted (handled by SubprocessFailed error)
+  - Interactive prompt works in terminal (uses std::io::IsTerminal)
+  - Non-interactive mode aborts automatically (checks is_interactive())
+  - User can choose to retry or abort
+- Also verified and marked "Error on stuck state when PRD unchanged" story as complete
+  - Implementation in run.rs already handles PRD change detection (lines 190-193)
+  - Error message includes actionable suggestion to check progress.txt
+  - Iteration log written before the check for debugging
+- All 409 tests pass (145 core, 264 ralph)
+- Marked both stories as passes = true
+
+### Implementation details
+- `prompt_on_failure()` uses synchronous I/O per rust-cli-io.md patterns
+- Prompt displayed on stderr to keep stdout clean for results
+- Accepts 'r', 'retry', 'a', or 'abort' (case-insensitive)
+- Invalid input shows helpful error and re-prompts
+- EOF (Ctrl+D) and I/O errors treated as abort
+- Loop in `execute_run_with_prompting()` allows unlimited retries until success or abort
+
+### Context for next iteration
+- **Layer 4 (Error Handling) is now COMPLETE** - all stories implemented
+- Next priority: **Layer 5 (Auxiliary Commands)**
+  - Story: Implement ralph replay command
+  - Story: Implement ralph sessions command
+  - Story: Write default prompt template (already done in previous iteration, needs verification)
+- After Layer 5: Feature complete for run command architecture
+

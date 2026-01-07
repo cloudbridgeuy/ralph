@@ -579,7 +579,7 @@ steps = [
   "On Retry: reset retry counter, re-invoke",
   "On Abort: update session outcome, exit",
 ]
-passes = false
+passes = true
 acceptance = [
   "Prompt only shown after retries exhausted",
   "Interactive prompt works in terminal",
@@ -597,7 +597,7 @@ steps = [
   "Update session outcome to 'failed'",
   "Exit loop immediately",
 ]
-passes = false
+passes = true
 acceptance = [
   "Clear error message explains the problem",
   "Actionable suggestion for debugging",

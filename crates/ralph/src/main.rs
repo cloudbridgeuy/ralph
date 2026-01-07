@@ -4,14 +4,16 @@ mod git;
 pub mod highlight;
 mod init;
 mod iteration;
+mod prompt;
 mod run;
 mod session;
 mod subprocess;
 
 use clap::Parser;
 use cli::{Cli, Commands, RunArgs};
+use prompt::{prompt_on_failure, FailureAction};
 use ralph_core::context::{defaults, substitute_template_placeholders, ContextPaths};
-use run::{run, RunConfig};
+use run::{run, RunConfig, RunError};
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -45,11 +47,13 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Determine command template
     let command_template = args
         .command
+        .clone()
         .unwrap_or_else(|| defaults::COMMAND_TEMPLATE.to_string());
 
     // Determine completion marker
     let completion_marker = args
         .completion_marker
+        .clone()
         .unwrap_or_else(|| defaults::COMPLETION_MARKER.to_string());
 
     // Resolve prompt template and substitute placeholders
@@ -58,27 +62,82 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Substitute {prompt} in command template
     let command = substitute_prompt_in_command(&command_template, &prompt);
 
-    // Build run config
-    let config = RunConfig {
-        max_iterations: args.iterations,
-        slug: args.slug,
-        command,
-        completion_marker,
-        context_paths,
-        retry_count: args.retry,
-    };
+    // Execute run loop with retry prompting on failure
+    execute_run_with_prompting(args, context_paths, command, completion_marker)
+}
 
-    // Execute the run loop
-    let result = run(config)?;
+/// Execute run loop with interactive retry prompting on unrecoverable failures.
+///
+/// This function handles the case where the LLM subprocess fails after exhausting
+/// all automatic retries. If stdin is interactive, it prompts the user to either
+/// retry the entire run or abort. Non-interactive sessions abort automatically.
+fn execute_run_with_prompting(
+    args: RunArgs,
+    context_paths: ContextPaths,
+    command: String,
+    completion_marker: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    loop {
+        // Build run config
+        let config = RunConfig {
+            max_iterations: args.iterations,
+            slug: args.slug.clone(),
+            command: command.clone(),
+            completion_marker: completion_marker.clone(),
+            context_paths: context_paths.clone(),
+            retry_count: args.retry,
+        };
 
-    // Print summary
-    println!("Session: {}", result.slug);
-    println!("Iterations completed: {}", result.iterations_completed);
-    if let Some(reason) = result.completion_reason {
-        println!("Completion reason: {:?}", reason);
+        // Execute the run loop
+        match run(config) {
+            Ok(result) => {
+                // Success - print summary and return
+                println!("Session: {}", result.slug);
+                println!("Iterations completed: {}", result.iterations_completed);
+                if let Some(reason) = result.completion_reason {
+                    println!("Completion reason: {:?}", reason);
+                }
+                return Ok(());
+            }
+            Err(RunError::SubprocessFailed {
+                exit_code,
+                attempts,
+                stdout: _,
+                stderr: _,
+            }) => {
+                // Subprocess failed after exhausting retries - prompt user
+                let summary = format!(
+                    "LLM subprocess failed with exit code {} after {} attempt(s).",
+                    exit_code, attempts
+                );
+
+                match prompt_on_failure(&summary) {
+                    Some(FailureAction::Retry) => {
+                        eprintln!("\nRetrying run...\n");
+                        // Continue loop to retry
+                        continue;
+                    }
+                    Some(FailureAction::Abort) => {
+                        // User chose to abort
+                        return Err("Aborted by user".into());
+                    }
+                    None => {
+                        // Non-interactive mode or EOF - abort automatically
+                        eprintln!("Non-interactive mode - aborting.");
+                        return Err(format!(
+                            "LLM subprocess failed with exit code {} after {} attempt(s)",
+                            exit_code, attempts
+                        )
+                        .into());
+                    }
+                }
+            }
+            Err(e) => {
+                // Other errors - propagate immediately
+                return Err(e.into());
+            }
+        }
     }
-
-    Ok(())
 }
 
 /// Resolve the prompt from various sources.
