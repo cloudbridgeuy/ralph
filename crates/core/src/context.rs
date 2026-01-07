@@ -125,9 +125,15 @@ mod tests {
         let root = Path::new("/project");
         let paths = ContextPaths::new(root, None, None, None);
 
-        assert_eq!(paths.design, PathBuf::from("/project/.claude/designs/design.md"));
+        assert_eq!(
+            paths.design,
+            PathBuf::from("/project/.claude/designs/design.md")
+        );
         assert_eq!(paths.prd, PathBuf::from("/project/.claude/plans/prd.toml"));
-        assert_eq!(paths.progress, PathBuf::from("/project/.claude/plans/progress.txt"));
+        assert_eq!(
+            paths.progress,
+            PathBuf::from("/project/.claude/plans/progress.txt")
+        );
     }
 
     #[test]
@@ -148,16 +154,14 @@ mod tests {
     #[test]
     fn test_context_paths_with_partial_overrides() {
         let root = Path::new("/project");
-        let paths = ContextPaths::new(
-            root,
-            Some(Path::new("/custom/design.md")),
-            None,
-            None,
-        );
+        let paths = ContextPaths::new(root, Some(Path::new("/custom/design.md")), None, None);
 
         assert_eq!(paths.design, PathBuf::from("/custom/design.md"));
         assert_eq!(paths.prd, PathBuf::from("/project/.claude/plans/prd.toml"));
-        assert_eq!(paths.progress, PathBuf::from("/project/.claude/plans/progress.txt"));
+        assert_eq!(
+            paths.progress,
+            PathBuf::from("/project/.claude/plans/progress.txt")
+        );
     }
 
     #[test]
@@ -171,8 +175,14 @@ mod tests {
         let to_touch = determine_files_to_touch(&paths, false, false);
 
         assert!(to_touch.has_files_to_create());
-        assert_eq!(to_touch.design, Some(PathBuf::from("/project/.claude/designs/design.md")));
-        assert_eq!(to_touch.progress, Some(PathBuf::from("/project/.claude/plans/progress.txt")));
+        assert_eq!(
+            to_touch.design,
+            Some(PathBuf::from("/project/.claude/designs/design.md"))
+        );
+        assert_eq!(
+            to_touch.progress,
+            Some(PathBuf::from("/project/.claude/plans/progress.txt"))
+        );
     }
 
     #[test]
@@ -202,12 +212,18 @@ mod tests {
         let to_touch = determine_files_to_touch(&paths, true, false);
         assert!(to_touch.has_files_to_create());
         assert_eq!(to_touch.design, None);
-        assert_eq!(to_touch.progress, Some(PathBuf::from("/project/.claude/plans/progress.txt")));
+        assert_eq!(
+            to_touch.progress,
+            Some(PathBuf::from("/project/.claude/plans/progress.txt"))
+        );
 
         // Only progress exists
         let to_touch = determine_files_to_touch(&paths, false, true);
         assert!(to_touch.has_files_to_create());
-        assert_eq!(to_touch.design, Some(PathBuf::from("/project/.claude/designs/design.md")));
+        assert_eq!(
+            to_touch.design,
+            Some(PathBuf::from("/project/.claude/designs/design.md"))
+        );
         assert_eq!(to_touch.progress, None);
     }
 

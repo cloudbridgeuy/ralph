@@ -4,6 +4,9 @@
 //! It uses the pure functions from ralph_core::context to determine what
 //! needs to be done, then performs the actual file system operations.
 
+// TODO: Wire up init command to CLI - these functions are ready for use
+#![allow(dead_code)]
+
 use ralph_core::context::{ContextFilesTouch, ContextPaths};
 use std::fs;
 use std::io::Write;
