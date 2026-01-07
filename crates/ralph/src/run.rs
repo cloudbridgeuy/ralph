@@ -163,8 +163,9 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             completed_at: chrono::Utc::now(),
             exit_code: result.exit_code,
             pending_before,
-            pending_after: 0, // Will be updated below
-            metadata: None,   // TODO: Extract from JSON streaming output (Story #20+)
+            pending_after: 0,   // Will be updated below
+            metadata: None,     // TODO: Extract from JSON streaming output
+            tool_calls: vec![], // TODO: Extract from JSON streaming output
             chunks: vec![Chunk::prose(result.stdout.clone())],
         };
 

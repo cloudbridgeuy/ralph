@@ -377,7 +377,7 @@ steps = [
   "Include timing if available (from event timestamps)",
   "Truncate large results to reasonable size for storage",
 ]
-passes = false
+passes = true
 acceptance = [
   "All tool calls recorded in iteration log",
   "Input and output preserved for debugging",

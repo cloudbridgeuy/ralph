@@ -747,3 +747,53 @@
 - After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
 - The `ToolInteraction` and `correlate_tool_interactions` functions are ready for use in iteration log storage
 
+## 2026-01-07 - Store Tool Interactions in Iteration Logs Complete
+
+### What was accomplished
+- Implemented Story #21: Store tool interactions in iteration logs in `crates/ralph/src/iteration.rs`
+- Added the following types, methods, and functions:
+  - `LogToolCall` struct with `id`, `name`, `input`, `result`, `result_truncated`, `is_error` fields
+  - `LogToolCall::from_interaction()` - Convert a `ToolInteraction` to `LogToolCall` with automatic truncation
+  - `LogToolCall::from_interactions()` - Batch convert multiple interactions
+  - `truncate_result()` - Internal function to safely truncate large results at UTF-8 boundaries
+  - Added `tool_calls: Vec<LogToolCall>` field to `IterationLog` struct
+- Added `serde_json` dependency to ralph crate for `Value` type and `json!` macro
+- Added 17 comprehensive tests covering:
+  - LogToolCall creation from interactions (with and without results, with errors)
+  - Result truncation for large content (>10KB)
+  - No truncation for small results
+  - UTF-8 safe truncation (doesn't break multi-byte characters)
+  - Batch conversion from multiple interactions
+  - TOML serialization/deserialization
+  - Boolean field skipping (result_truncated, is_error only when true)
+  - Integration with IterationLog
+  - File writing with tool calls
+  - Backward compatibility (old logs without tool_calls still parse)
+- All tests pass (290 total)
+- Marked story #21 as passes = true
+
+### Implementation details
+- `LogToolCall` follows Imperative Shell pattern (I/O operations in ralph crate)
+- Uses `ToolInteraction` from ralph_core (Functional Core) as input
+- Results larger than 10,000 bytes are truncated with indicator: `... [truncated, N bytes total]`
+- Truncation is UTF-8 safe using `char_indices()` to find safe boundaries
+- Boolean fields `result_truncated` and `is_error` use `skip_serializing_if` to omit when false
+- Empty `tool_calls` vector uses `skip_serializing_if = "Vec::is_empty"` for clean TOML
+- TOML output format matches architecture spec:
+  ```toml
+  [[tool_calls]]
+  id = "toolu_01YWLzHW2VBHQSz8VV1oCGSp"
+  name = "Glob"
+  result = "/Users/.../release.yml\n/Users/.../ci.yml"
+
+  [tool_calls.input]
+  pattern = ".github/workflows/*.yml"
+  ```
+
+### Context for next iteration
+- Story #21 is complete, Layer 1C has one story remaining
+- Next priority for Layer 1C:
+  - Story #22: Update default command template for JSON output
+- After Layer 1C: Layer 2 (CLI Interface) to wire up commands with clap
+- The `LogToolCall` struct is ready for use when JSON streaming output parsing is integrated into the run loop
+

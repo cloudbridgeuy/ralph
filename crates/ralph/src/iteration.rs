@@ -15,10 +15,15 @@
 #![allow(dead_code)] // Module not yet used by CLI commands
 
 use chrono::{DateTime, Utc};
-use ralph_core::stream::{IterationCosts, IterationMetadata, Usage};
+use ralph_core::stream::{IterationCosts, IterationMetadata, ToolInteraction, Usage};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
+
+/// Maximum size in bytes for tool results before truncation.
+/// Results larger than this will be truncated with an indicator.
+const MAX_RESULT_SIZE: usize = 10_000;
 
 /// Metadata extracted from Claude's JSON streaming output.
 ///
@@ -123,6 +128,129 @@ impl LogMetadata {
     }
 }
 
+/// A tool call recorded in an iteration log.
+///
+/// This struct stores information about a single tool invocation and its result.
+/// Large results are truncated to keep log files manageable.
+///
+/// # Example TOML output
+///
+/// ```toml
+/// [[tool_calls]]
+/// id = "toolu_01YWLzHW2VBHQSz8VV1oCGSp"
+/// name = "Glob"
+/// input = { pattern = ".github/workflows/*.yml" }
+/// result = "/Users/.../release.yml\n/Users/.../ci.yml"
+/// result_truncated = false
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogToolCall {
+    /// Unique identifier for this tool use.
+    pub id: String,
+
+    /// The name of the tool that was invoked (e.g., "Read", "Edit", "Glob").
+    pub name: String,
+
+    /// The input arguments to the tool as a JSON object.
+    pub input: Value,
+
+    /// The result content from the tool execution, if available.
+    /// May be truncated for large results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+
+    /// Whether the result was truncated due to size.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub result_truncated: bool,
+
+    /// Whether the tool execution resulted in an error.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_error: bool,
+}
+
+impl LogToolCall {
+    /// Create a LogToolCall from a ToolInteraction.
+    ///
+    /// Large results are automatically truncated to `MAX_RESULT_SIZE` bytes
+    /// with a truncation indicator appended.
+    ///
+    /// # Arguments
+    ///
+    /// * `interaction` - The tool interaction to convert
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use ralph::iteration::LogToolCall;
+    /// use ralph_core::stream::ToolInteraction;
+    /// use serde_json::json;
+    ///
+    /// let interaction = ToolInteraction {
+    ///     id: "toolu_01".to_string(),
+    ///     name: "Read".to_string(),
+    ///     input: json!({"file_path": "/src/main.rs"}),
+    ///     result: Some("fn main() {}".to_string()),
+    ///     is_error: false,
+    /// };
+    ///
+    /// let log_call = LogToolCall::from_interaction(&interaction);
+    /// assert_eq!(log_call.name, "Read");
+    /// assert!(!log_call.result_truncated);
+    /// ```
+    pub fn from_interaction(interaction: &ToolInteraction) -> Self {
+        let (result, result_truncated) = match &interaction.result {
+            Some(content) => truncate_result(content),
+            None => (None, false),
+        };
+
+        Self {
+            id: interaction.id.clone(),
+            name: interaction.name.clone(),
+            input: interaction.input.clone(),
+            result,
+            result_truncated,
+            is_error: interaction.is_error,
+        }
+    }
+
+    /// Create LogToolCalls from a slice of ToolInteractions.
+    ///
+    /// This is a convenience method that converts all interactions
+    /// and preserves their order.
+    pub fn from_interactions(interactions: &[ToolInteraction]) -> Vec<Self> {
+        interactions
+            .iter()
+            .map(LogToolCall::from_interaction)
+            .collect()
+    }
+}
+
+/// Truncate a result string if it exceeds MAX_RESULT_SIZE.
+///
+/// Returns the (possibly truncated) result and a flag indicating whether
+/// truncation occurred.
+fn truncate_result(content: &str) -> (Option<String>, bool) {
+    if content.len() <= MAX_RESULT_SIZE {
+        (Some(content.to_string()), false)
+    } else {
+        // Find a safe truncation point (don't cut in the middle of a UTF-8 char)
+        // We need to find the last valid char boundary at or before MAX_RESULT_SIZE
+        let safe_end = content
+            .char_indices()
+            .take_while(|(i, _)| *i < MAX_RESULT_SIZE)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        let truncated = &content[..safe_end];
+        let result = format!(
+            "{}\n\n... [truncated, {} bytes total]",
+            truncated,
+            content.len()
+        );
+        (Some(result), true)
+    }
+}
+
 /// A single iteration log entry.
 ///
 /// This struct represents the complete log for one LLM invocation, stored as
@@ -148,6 +276,19 @@ impl LogMetadata {
 /// input_tokens = 712
 /// output_tokens = 2971
 ///
+/// [[tool_calls]]
+/// id = "toolu_01YWLzHW2VBHQSz8VV1oCGSp"
+/// name = "Glob"
+/// input = { pattern = ".github/workflows/*.yml" }
+/// result = "/Users/.../release.yml\n/Users/.../ci.yml"
+///
+/// [[tool_calls]]
+/// id = "toolu_01KKvyfhUNr2Bdu32AKbDzmX"
+/// name = "Read"
+/// input = { file_path = "/Users/.../Cargo.toml" }
+/// result = "[workspace]\nmembers = ..."
+/// result_truncated = true
+///
 /// [[chunks]]
 /// type = "prose"
 /// content = "I'll implement the feature..."
@@ -170,6 +311,10 @@ pub struct IterationLog {
     /// Contains session_id, model, cost, duration, and token usage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<LogMetadata>,
+    /// Tool calls made during this iteration with their results.
+    /// Large results are truncated to keep log files manageable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<LogToolCall>,
     /// Output chunks from the LLM
     #[serde(default)]
     pub chunks: Vec<Chunk>,
@@ -256,10 +401,11 @@ pub enum IterationError {
 /// # Example
 ///
 /// ```no_run
-/// use ralph::iteration::{IterationLog, Chunk, LogMetadata, write_iteration_log};
+/// use ralph::iteration::{IterationLog, Chunk, LogMetadata, LogToolCall, write_iteration_log};
 /// use ralph_core::stream::Usage;
 /// use std::path::PathBuf;
 /// use chrono::Utc;
+/// use serde_json::json;
 ///
 /// let session_dir = PathBuf::from("/home/user/.config/ralph/sessions/test-session");
 /// let log = IterationLog {
@@ -276,6 +422,16 @@ pub enum IterationError {
 ///         duration_ms: Some(10000),
 ///         usage: Some(Usage::default()),
 ///     }),
+///     tool_calls: vec![
+///         LogToolCall {
+///             id: "toolu_01".to_string(),
+///             name: "Read".to_string(),
+///             input: json!({"file_path": "/src/main.rs"}),
+///             result: Some("fn main() {}".to_string()),
+///             result_truncated: false,
+///             is_error: false,
+///         },
+///     ],
 ///     chunks: vec![Chunk::prose("Implementation complete".to_string())],
 /// };
 ///
@@ -494,6 +650,7 @@ mod tests {
             pending_before: 5,
             pending_after: 4,
             metadata: None,
+            tool_calls: vec![],
             chunks: vec![Chunk::prose("Test output".to_string())],
         };
 
@@ -509,6 +666,8 @@ mod tests {
         assert!(toml_str.contains("Test output"));
         // Metadata should not appear when None
         assert!(!toml_str.contains("[metadata]"));
+        // tool_calls should not appear when empty
+        assert!(!toml_str.contains("[[tool_calls]]"));
     }
 
     #[test]
@@ -535,6 +694,7 @@ mod tests {
         assert_eq!(log.pending_before, 3);
         assert_eq!(log.pending_after, 2);
         assert!(log.metadata.is_none()); // Backward compatible - no metadata
+        assert!(log.tool_calls.is_empty()); // Backward compatible - no tool_calls
         assert_eq!(log.chunks.len(), 1);
         assert_eq!(log.chunks[0].chunk_type, "prose");
         assert_eq!(log.chunks[0].content, "Implementation complete");
@@ -551,6 +711,7 @@ mod tests {
             pending_before: 5,
             pending_after: 5,
             metadata: None,
+            tool_calls: vec![],
             chunks: vec![],
         };
 
@@ -558,6 +719,7 @@ mod tests {
         let parsed: IterationLog = toml::from_str(&toml_str).unwrap();
 
         assert_eq!(parsed.chunks.len(), 0);
+        assert!(parsed.tool_calls.is_empty());
     }
 
     #[test]
@@ -571,6 +733,7 @@ mod tests {
             pending_before: 2,
             pending_after: 1,
             metadata: None,
+            tool_calls: vec![],
             chunks: vec![
                 Chunk::prose("I'll implement the function:".to_string()),
                 Chunk::code(
@@ -616,6 +779,7 @@ mod tests {
                     cache_creation_input_tokens: Some(12504),
                 }),
             }),
+            tool_calls: vec![],
             chunks: vec![Chunk::prose("Test output".to_string())],
         };
 
@@ -717,6 +881,7 @@ mod tests {
             pending_before: 5,
             pending_after: 4,
             metadata: None,
+            tool_calls: vec![],
             chunks: vec![
                 Chunk::prose("Starting work...".to_string()),
                 Chunk::prose("Finished!".to_string()),
@@ -767,6 +932,7 @@ mod tests {
                     cache_creation_input_tokens: Some(0),
                 }),
             }),
+            tool_calls: vec![],
             chunks: vec![Chunk::prose("Test output".to_string())],
         };
 
@@ -801,6 +967,7 @@ mod tests {
             pending_before: 5,
             pending_after: 4,
             metadata: None,
+            tool_calls: vec![],
             chunks: vec![Chunk::prose("First iteration".to_string())],
         };
         write_iteration_log(session_dir, &log1).unwrap();
@@ -814,6 +981,7 @@ mod tests {
             pending_before: 4,
             pending_after: 3,
             metadata: None,
+            tool_calls: vec![],
             chunks: vec![Chunk::prose("Second iteration".to_string())],
         };
         write_iteration_log(session_dir, &log2).unwrap();
@@ -821,5 +989,374 @@ mod tests {
         // Verify both files exist
         assert!(session_dir.join("iteration-1.toml").exists());
         assert!(session_dir.join("iteration-2.toml").exists());
+    }
+
+    // ==========================================================================
+    // LogToolCall Tests
+    // ==========================================================================
+
+    #[test]
+    fn test_log_tool_call_from_interaction() {
+        use ralph_core::stream::ToolInteraction;
+        use serde_json::json;
+
+        let interaction = ToolInteraction {
+            id: "toolu_01".to_string(),
+            name: "Read".to_string(),
+            input: json!({"file_path": "/src/main.rs"}),
+            result: Some("fn main() {}".to_string()),
+            is_error: false,
+        };
+
+        let log_call = LogToolCall::from_interaction(&interaction);
+
+        assert_eq!(log_call.id, "toolu_01");
+        assert_eq!(log_call.name, "Read");
+        assert_eq!(log_call.input, json!({"file_path": "/src/main.rs"}));
+        assert_eq!(log_call.result, Some("fn main() {}".to_string()));
+        assert!(!log_call.result_truncated);
+        assert!(!log_call.is_error);
+    }
+
+    #[test]
+    fn test_log_tool_call_from_interaction_no_result() {
+        use ralph_core::stream::ToolInteraction;
+        use serde_json::json;
+
+        let interaction = ToolInteraction {
+            id: "toolu_01".to_string(),
+            name: "Edit".to_string(),
+            input: json!({"file_path": "/src/main.rs", "old_string": "a", "new_string": "b"}),
+            result: None,
+            is_error: false,
+        };
+
+        let log_call = LogToolCall::from_interaction(&interaction);
+
+        assert_eq!(log_call.name, "Edit");
+        assert!(log_call.result.is_none());
+        assert!(!log_call.result_truncated);
+    }
+
+    #[test]
+    fn test_log_tool_call_from_interaction_error() {
+        use ralph_core::stream::ToolInteraction;
+        use serde_json::json;
+
+        let interaction = ToolInteraction {
+            id: "toolu_01".to_string(),
+            name: "Read".to_string(),
+            input: json!({"file_path": "/nonexistent"}),
+            result: Some("File not found".to_string()),
+            is_error: true,
+        };
+
+        let log_call = LogToolCall::from_interaction(&interaction);
+
+        assert_eq!(log_call.result, Some("File not found".to_string()));
+        assert!(log_call.is_error);
+    }
+
+    #[test]
+    fn test_log_tool_call_truncation() {
+        use ralph_core::stream::ToolInteraction;
+        use serde_json::json;
+
+        // Create a large result that exceeds MAX_RESULT_SIZE
+        let large_content = "x".repeat(15_000);
+
+        let interaction = ToolInteraction {
+            id: "toolu_01".to_string(),
+            name: "Read".to_string(),
+            input: json!({"file_path": "/src/large_file.rs"}),
+            result: Some(large_content.clone()),
+            is_error: false,
+        };
+
+        let log_call = LogToolCall::from_interaction(&interaction);
+
+        assert!(log_call.result_truncated);
+        assert!(log_call.result.is_some());
+
+        let result = log_call.result.unwrap();
+        assert!(result.contains("... [truncated, 15000 bytes total]"));
+        // Result should be smaller than original
+        assert!(result.len() < large_content.len());
+    }
+
+    #[test]
+    fn test_log_tool_call_no_truncation_for_small_result() {
+        use ralph_core::stream::ToolInteraction;
+        use serde_json::json;
+
+        let content = "x".repeat(5_000);
+
+        let interaction = ToolInteraction {
+            id: "toolu_01".to_string(),
+            name: "Read".to_string(),
+            input: json!({"file_path": "/src/file.rs"}),
+            result: Some(content.clone()),
+            is_error: false,
+        };
+
+        let log_call = LogToolCall::from_interaction(&interaction);
+
+        assert!(!log_call.result_truncated);
+        assert_eq!(log_call.result, Some(content));
+    }
+
+    #[test]
+    fn test_log_tool_call_from_interactions() {
+        use ralph_core::stream::ToolInteraction;
+        use serde_json::json;
+
+        let interactions = vec![
+            ToolInteraction {
+                id: "toolu_01".to_string(),
+                name: "Glob".to_string(),
+                input: json!({"pattern": "*.rs"}),
+                result: Some("src/main.rs\nsrc/lib.rs".to_string()),
+                is_error: false,
+            },
+            ToolInteraction {
+                id: "toolu_02".to_string(),
+                name: "Read".to_string(),
+                input: json!({"file_path": "/src/main.rs"}),
+                result: Some("fn main() {}".to_string()),
+                is_error: false,
+            },
+        ];
+
+        let log_calls = LogToolCall::from_interactions(&interactions);
+
+        assert_eq!(log_calls.len(), 2);
+        assert_eq!(log_calls[0].name, "Glob");
+        assert_eq!(log_calls[1].name, "Read");
+    }
+
+    #[test]
+    fn test_log_tool_call_serialization() {
+        use serde_json::json;
+
+        let log_call = LogToolCall {
+            id: "toolu_01".to_string(),
+            name: "Glob".to_string(),
+            input: json!({"pattern": "*.rs"}),
+            result: Some("src/main.rs".to_string()),
+            result_truncated: false,
+            is_error: false,
+        };
+
+        let toml_str = toml::to_string(&log_call).unwrap();
+
+        assert!(toml_str.contains("id = \"toolu_01\""));
+        assert!(toml_str.contains("name = \"Glob\""));
+        assert!(toml_str.contains("result = \"src/main.rs\""));
+        // Boolean false fields should not appear when using skip_serializing_if
+        assert!(!toml_str.contains("result_truncated"));
+        assert!(!toml_str.contains("is_error"));
+    }
+
+    #[test]
+    fn test_log_tool_call_serialization_with_truncated() {
+        use serde_json::json;
+
+        let log_call = LogToolCall {
+            id: "toolu_01".to_string(),
+            name: "Read".to_string(),
+            input: json!({"file_path": "/src/main.rs"}),
+            result: Some("truncated content...".to_string()),
+            result_truncated: true,
+            is_error: false,
+        };
+
+        let toml_str = toml::to_string(&log_call).unwrap();
+
+        assert!(toml_str.contains("result_truncated = true"));
+    }
+
+    #[test]
+    fn test_log_tool_call_serialization_with_error() {
+        use serde_json::json;
+
+        let log_call = LogToolCall {
+            id: "toolu_01".to_string(),
+            name: "Read".to_string(),
+            input: json!({"file_path": "/nonexistent"}),
+            result: Some("File not found".to_string()),
+            result_truncated: false,
+            is_error: true,
+        };
+
+        let toml_str = toml::to_string(&log_call).unwrap();
+
+        assert!(toml_str.contains("is_error = true"));
+    }
+
+    #[test]
+    fn test_log_tool_call_deserialization() {
+        let toml_str = r#"
+            id = "toolu_01YWLzHW2VBHQSz8VV1oCGSp"
+            name = "Glob"
+            result = "/Users/dev/project/release.yml\n/Users/dev/project/ci.yml"
+
+            [input]
+            pattern = ".github/workflows/*.yml"
+        "#;
+
+        let log_call: LogToolCall = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(log_call.id, "toolu_01YWLzHW2VBHQSz8VV1oCGSp");
+        assert_eq!(log_call.name, "Glob");
+        assert!(log_call.result.is_some());
+        assert!(!log_call.result_truncated);
+        assert!(!log_call.is_error);
+    }
+
+    #[test]
+    fn test_iteration_log_with_tool_calls() {
+        use serde_json::json;
+
+        let now = Utc::now();
+        let log = IterationLog {
+            sequence: 1,
+            started_at: now,
+            completed_at: now,
+            exit_code: 0,
+            pending_before: 5,
+            pending_after: 4,
+            metadata: None,
+            tool_calls: vec![
+                LogToolCall {
+                    id: "toolu_01".to_string(),
+                    name: "Glob".to_string(),
+                    input: json!({"pattern": "*.rs"}),
+                    result: Some("src/main.rs".to_string()),
+                    result_truncated: false,
+                    is_error: false,
+                },
+                LogToolCall {
+                    id: "toolu_02".to_string(),
+                    name: "Read".to_string(),
+                    input: json!({"file_path": "/src/main.rs"}),
+                    result: Some("fn main() {}".to_string()),
+                    result_truncated: false,
+                    is_error: false,
+                },
+            ],
+            chunks: vec![Chunk::prose("Found and read files".to_string())],
+        };
+
+        let toml_str = toml::to_string_pretty(&log).unwrap();
+
+        assert!(toml_str.contains("[[tool_calls]]"));
+        assert!(toml_str.contains("name = \"Glob\""));
+        assert!(toml_str.contains("name = \"Read\""));
+
+        // Verify round-trip
+        let parsed: IterationLog = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert_eq!(parsed.tool_calls[0].name, "Glob");
+        assert_eq!(parsed.tool_calls[1].name, "Read");
+    }
+
+    #[test]
+    fn test_iteration_log_deserialization_with_tool_calls() {
+        let toml_str = r#"
+            sequence = 1
+            started_at = "2025-01-06T14:30:00Z"
+            completed_at = "2025-01-06T14:35:00Z"
+            exit_code = 0
+            pending_before = 5
+            pending_after = 4
+
+            [[tool_calls]]
+            id = "toolu_01YWLzHW2VBHQSz8VV1oCGSp"
+            name = "Glob"
+            result = "/Users/.../release.yml\n/Users/.../ci.yml"
+
+            [tool_calls.input]
+            pattern = ".github/workflows/*.yml"
+
+            [[tool_calls]]
+            id = "toolu_01KKvyfhUNr2Bdu32AKbDzmX"
+            name = "Read"
+            result = "[workspace]\nmembers = ..."
+            result_truncated = true
+
+            [tool_calls.input]
+            file_path = "/Users/.../Cargo.toml"
+
+            [[chunks]]
+            type = "prose"
+            content = "I'll check the workflows..."
+        "#;
+
+        let log: IterationLog = toml::from_str(toml_str).unwrap();
+
+        assert_eq!(log.tool_calls.len(), 2);
+
+        let first_call = &log.tool_calls[0];
+        assert_eq!(first_call.name, "Glob");
+        assert!(!first_call.result_truncated);
+
+        let second_call = &log.tool_calls[1];
+        assert_eq!(second_call.name, "Read");
+        assert!(second_call.result_truncated);
+    }
+
+    #[test]
+    fn test_write_iteration_log_with_tool_calls() {
+        use serde_json::json;
+
+        let temp_dir = TempDir::new().unwrap();
+        let session_dir = temp_dir.path();
+
+        let now = Utc::now();
+        let log = IterationLog {
+            sequence: 1,
+            started_at: now,
+            completed_at: now,
+            exit_code: 0,
+            pending_before: 5,
+            pending_after: 4,
+            metadata: None,
+            tool_calls: vec![LogToolCall {
+                id: "toolu_01".to_string(),
+                name: "Glob".to_string(),
+                input: json!({"pattern": "*.rs"}),
+                result: Some("src/main.rs".to_string()),
+                result_truncated: false,
+                is_error: false,
+            }],
+            chunks: vec![Chunk::prose("Found files".to_string())],
+        };
+
+        let log_path = write_iteration_log(session_dir, &log).unwrap();
+
+        let content = fs::read_to_string(&log_path).unwrap();
+        let parsed: IterationLog = toml::from_str(&content).unwrap();
+
+        assert_eq!(parsed.tool_calls.len(), 1);
+        assert_eq!(parsed.tool_calls[0].name, "Glob");
+    }
+
+    #[test]
+    fn test_truncate_result_preserves_utf8() {
+        // Test that truncation doesn't break UTF-8 characters
+        // Create a string with multi-byte UTF-8 characters
+        let content = "こんにちは世界".repeat(2000); // Japanese text
+
+        let (result, truncated) = truncate_result(&content);
+
+        assert!(truncated);
+        assert!(result.is_some());
+
+        // The result should be valid UTF-8
+        let result_str = result.unwrap();
+        assert!(result_str.is_char_boundary(result_str.len()));
+
+        // Should contain the truncation message
+        assert!(result_str.contains("... [truncated,"));
     }
 }
