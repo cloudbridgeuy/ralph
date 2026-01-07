@@ -11,7 +11,7 @@ use crate::iteration::{
     write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata, LogToolCall,
 };
 use crate::session::{finalize_session, initialize_session, SessionError};
-use crate::subprocess::{invoke_subprocess_with_stream_processing, SubprocessError};
+use crate::subprocess::{invoke_subprocess_with_timeout, SubprocessError};
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::context::ContextPaths;
 use ralph_core::prd::{count_pending_stories, has_prd_changed, PrdError};
@@ -38,6 +38,9 @@ pub struct RunConfig {
     /// When continuing a session, this indicates how many iterations were
     /// already completed in previous run attempts.
     pub starting_iteration: usize,
+    /// Timeout in seconds for LLM subprocess (default: 600 = 10 minutes).
+    /// If exceeded, the subprocess is killed and treated as a failure.
+    pub timeout_secs: u64,
 }
 
 /// Result of running the iteration loop.
@@ -81,6 +84,20 @@ pub enum RunError {
         /// Session slug for later finalization
         session_slug: String,
         /// Number of iterations completed before failure
+        iterations_completed: usize,
+    },
+
+    /// LLM subprocess timed out after exhausting retries
+    #[error("LLM subprocess timed out after {timeout_secs} seconds ({attempts} attempt(s))")]
+    SubprocessTimedOut {
+        timeout_secs: u64,
+        attempts: usize,
+        /// Partial raw text captured before timeout
+        raw_text: String,
+        stderr: String,
+        /// Session slug for later finalization
+        session_slug: String,
+        /// Number of iterations completed before timeout
         iterations_completed: usize,
     },
 
@@ -189,8 +206,13 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Snapshot PRD content for change detection
         let prd_snapshot = prd_before.clone();
 
-        // Invoke LLM subprocess with retry logic and stream processing
-        let result = match invoke_with_retries(&config.command, config.retry_count, iteration) {
+        // Invoke LLM subprocess with retry logic, timeout, and stream processing
+        let result = match invoke_with_retries(
+            &config.command,
+            config.retry_count,
+            config.timeout_secs,
+            iteration,
+        ) {
             Ok(r) => r,
             Err(RunError::SubprocessFailed {
                 exit_code,
@@ -203,6 +225,23 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
                 // The caller will determine whether to mark as "failed" or "aborted"
                 return Err(RunError::SubprocessFailed {
                     exit_code,
+                    attempts,
+                    raw_text,
+                    stderr,
+                    session_slug,
+                    iterations_completed,
+                });
+            }
+            Err(RunError::SubprocessTimedOut {
+                timeout_secs,
+                attempts,
+                raw_text,
+                stderr,
+                ..
+            }) => {
+                // Subprocess timed out - return error with session info for caller to finalize
+                return Err(RunError::SubprocessTimedOut {
+                    timeout_secs,
                     attempts,
                     raw_text,
                     stderr,
@@ -314,10 +353,11 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
     })
 }
 
-/// Invoke subprocess with automatic retries on failure.
+/// Invoke subprocess with automatic retries on failure and timeout support.
 ///
-/// This function wraps `invoke_subprocess_with_stream_processing` with retry logic:
+/// This function wraps `invoke_subprocess_with_timeout` with retry logic:
 /// - On non-zero exit code, prints raw text/stderr and retries
+/// - On timeout, prints partial output and retries
 /// - Prints attempt number for each retry
 /// - Returns error with captured output if all retries exhausted
 ///
@@ -325,6 +365,7 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 ///
 /// * `command` - The command to execute
 /// * `retry_count` - Number of retries (0 means run once with no retries)
+/// * `timeout_secs` - Timeout in seconds for each subprocess invocation
 /// * `iteration` - Current iteration number (for logging context)
 ///
 /// # Returns
@@ -333,12 +374,59 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 fn invoke_with_retries(
     command: &str,
     retry_count: usize,
+    timeout_secs: u64,
     iteration: usize,
 ) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
     let max_attempts = retry_count + 1; // retry_count of 3 means 4 total attempts
 
     for attempt in 1..=max_attempts {
-        let result = invoke_subprocess_with_stream_processing(command)?;
+        let result = match invoke_subprocess_with_timeout(command, timeout_secs) {
+            Ok(r) => r,
+            Err(SubprocessError::Timeout {
+                timeout_secs: ts,
+                partial_result,
+            }) => {
+                // Timeout occurred
+                eprintln!(
+                    "\n[Iteration {}] LLM subprocess timed out after {} seconds (attempt {}/{})",
+                    iteration, ts, attempt, max_attempts
+                );
+
+                // Print partial output from timed out attempt
+                let raw_text = &partial_result.stream_result.raw_text;
+                if !raw_text.is_empty() {
+                    eprintln!("\n--- partial output ---");
+                    eprint!("{}", raw_text);
+                    if !raw_text.ends_with('\n') {
+                        eprintln!();
+                    }
+                }
+
+                if !partial_result.stderr.is_empty() {
+                    eprintln!("\n--- stderr ---");
+                    eprint!("{}", partial_result.stderr);
+                    if !partial_result.stderr.ends_with('\n') {
+                        eprintln!();
+                    }
+                }
+
+                if attempt < max_attempts {
+                    eprintln!("\nRetrying...\n");
+                    continue;
+                } else {
+                    // All retries exhausted due to timeout
+                    return Err(RunError::SubprocessTimedOut {
+                        timeout_secs: ts,
+                        attempts: max_attempts,
+                        raw_text: partial_result.stream_result.raw_text,
+                        stderr: partial_result.stderr,
+                        session_slug: String::new(),
+                        iterations_completed: 0,
+                    });
+                }
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         if result.exit_code == 0 {
             return Ok(result);
@@ -414,6 +502,7 @@ mod tests {
             context_paths: paths,
             retry_count: 3,
             starting_iteration: 0,
+            timeout_secs: 600,
         };
 
         let result = run(config);
@@ -438,6 +527,7 @@ mod tests {
             context_paths: paths,
             retry_count: 3,
             starting_iteration: 0,
+            timeout_secs: 600,
         };
 
         let result = run(config);
@@ -466,7 +556,7 @@ mod tests {
     #[test]
     fn test_invoke_with_retries_success_first_attempt() {
         // Use a JSON format that the stream processor can parse
-        let result = invoke_with_retries("echo 'success'", 3, 1).unwrap();
+        let result = invoke_with_retries("echo 'success'", 3, 600, 1).unwrap();
         assert_eq!(result.exit_code, 0);
         // The stream processor parses JSON, so plain text won't be in raw_text
         // Just verify the subprocess completed successfully
@@ -475,7 +565,7 @@ mod tests {
     #[test]
     fn test_invoke_with_retries_fails_all_attempts() {
         // exit 1 always fails, so all retries should be exhausted
-        let result = invoke_with_retries("exit 42", 2, 1);
+        let result = invoke_with_retries("exit 42", 2, 600, 1);
         assert!(matches!(
             result,
             Err(RunError::SubprocessFailed {
@@ -489,7 +579,7 @@ mod tests {
     #[test]
     fn test_invoke_with_retries_zero_retries() {
         // Zero retries means run once
-        let result = invoke_with_retries("exit 1", 0, 1);
+        let result = invoke_with_retries("exit 1", 0, 600, 1);
         assert!(matches!(
             result,
             Err(RunError::SubprocessFailed {
@@ -503,7 +593,7 @@ mod tests {
     #[test]
     fn test_invoke_with_retries_captures_output() {
         // Verify raw_text and stderr are captured in the error
-        let result = invoke_with_retries("echo 'out'; echo 'err' >&2; exit 5", 0, 1);
+        let result = invoke_with_retries("echo 'out'; echo 'err' >&2; exit 5", 0, 600, 1);
         match result {
             Err(RunError::SubprocessFailed {
                 raw_text: _,

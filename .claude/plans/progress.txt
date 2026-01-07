@@ -1493,3 +1493,51 @@ From "Fix session outcome for user abort and retry flow" story:
 - The run command now outputs highlighted code and diff blocks in real-time
 - Iteration logs contain rich metadata from JSON streaming output
 
+## 2026-01-07 - Subprocess Timeout for LLM Invocation Complete
+
+### What was accomplished
+- Implemented Story: "Implement subprocess timeout for LLM invocation" (Layer 1D)
+- Added `--timeout` CLI flag to `RunArgs` in `crates/ralph/src/cli.rs`:
+  - Default value: 600 seconds (10 minutes)
+  - Accepts custom timeout via `--timeout <SECONDS>` flag
+- Added `timeout_secs` field to `RunConfig` in `crates/ralph/src/run.rs`
+- Created `invoke_subprocess_with_timeout()` function in `crates/ralph/src/subprocess.rs`:
+  - Uses separate threads for stdout and stderr reading
+  - Monitors elapsed time in main thread with 100ms polling interval
+  - Properly kills subprocess on timeout using `child.kill()` and `child.wait()`
+  - Captures partial output before timeout for debugging
+  - Returns `SubprocessError::Timeout` with partial result and timeout duration
+- Added `SubprocessError::Timeout` error variant with:
+  - `timeout_secs` field for the timeout duration
+  - `partial_result` field containing captured output before timeout
+- Added `RunError::SubprocessTimedOut` error variant for propagating timeout errors
+- Updated `invoke_with_retries()` to handle timeout errors with retry logic
+- Updated `execute_run_with_prompting()` in main.rs to handle timeout errors:
+  - Prompts user for retry/abort like other subprocess failures
+  - Properly finalizes session on abort or non-interactive mode
+- Added `Default` impl to `StreamProcessorResult` for test support
+- Added 5 comprehensive tests for timeout functionality:
+  - `test_invoke_with_timeout_completes_quickly`
+  - `test_invoke_with_timeout_times_out`
+  - `test_invoke_with_timeout_captures_partial_output`
+  - `test_invoke_with_timeout_non_zero_exit`
+  - `test_timeout_error_display`
+- All 450 tests pass (186 in core, 264 in ralph)
+- Marked story as passes = true
+
+### Implementation details
+- Uses `std::sync::mpsc` channels for thread-safe communication between reader threads and main thread
+- Uses `std::time::{Duration, Instant}` for timeout tracking
+- `try_wait()` used for non-blocking process status checks
+- Subprocess is killed with `SIGKILL` via `child.kill()` on timeout
+- Zombie process cleanup handled by `child.wait()` after kill
+- Partial output is captured from stream processor state at timeout
+- Exit code is set to -1 for killed processes to distinguish from normal failures
+
+### Context for next iteration
+- **"Implement subprocess timeout for LLM invocation" story is now COMPLETE**
+- Remaining story in Layer 1D:
+  - Integrate stream-json parsing into run loop (needs verification that passes = true)
+- The run command now has robust timeout handling for LLM subprocess invocations
+- Timeout errors trigger the same retry/prompt flow as other subprocess failures
+

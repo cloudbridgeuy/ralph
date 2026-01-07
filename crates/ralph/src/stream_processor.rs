@@ -34,7 +34,7 @@ use ralph_core::stream::{
 use std::io::IsTerminal;
 
 /// Result of processing a complete stream.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StreamProcessorResult {
     /// Parsed chunks from assistant output (prose, code, diff).
     pub chunks: Vec<ParsedChunk>,

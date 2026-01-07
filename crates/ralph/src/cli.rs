@@ -138,6 +138,14 @@ pub struct RunArgs {
     /// Default: <promise>COMPLETE</promise>
     #[arg(long, value_name = "STRING")]
     pub completion_marker: Option<String>,
+
+    /// Timeout for LLM subprocess in seconds.
+    ///
+    /// If the subprocess exceeds this duration, it is killed and treated
+    /// as a failure (retry logic applies). Prevents runaway processes.
+    /// Default: 600 seconds (10 minutes)
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
 }
 
 #[cfg(test)]
@@ -262,6 +270,28 @@ mod tests {
     }
 
     #[test]
+    fn test_run_with_timeout() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--timeout", "300"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.timeout, 300);
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_default_timeout() {
+        let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.timeout, 600); // Default is 10 minutes
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
     fn test_run_with_all_options() {
         let cli = Cli::try_parse_from([
             "ralph",
@@ -283,6 +313,8 @@ mod tests {
             "2",
             "--completion-marker",
             "END",
+            "--timeout",
+            "120",
         ])
         .unwrap();
         match cli.command {
@@ -296,6 +328,7 @@ mod tests {
                 assert_eq!(args.progress, Some(PathBuf::from("/pr.txt")));
                 assert_eq!(args.retry, 2);
                 assert_eq!(args.completion_marker, Some("END".to_string()));
+                assert_eq!(args.timeout, 120);
             }
             _ => panic!("Expected Run command"),
         }

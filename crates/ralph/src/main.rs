@@ -102,6 +102,7 @@ fn execute_run_with_prompting(
             retry_count: args.retry,
             // Pass the starting iteration number for session continuation
             starting_iteration: total_iterations_completed,
+            timeout_secs: args.timeout,
         };
 
         // Execute the run loop
@@ -174,6 +175,67 @@ fn execute_run_with_prompting(
                         return Err(format!(
                             "LLM subprocess failed with exit code {} after {} attempt(s)",
                             exit_code, attempts
+                        )
+                        .into());
+                    }
+                }
+            }
+            Err(RunError::SubprocessTimedOut {
+                timeout_secs,
+                attempts,
+                raw_text: _,
+                stderr: _,
+                session_slug,
+                iterations_completed,
+            }) => {
+                // Track the session slug for potential retry
+                if current_session_slug.is_none() {
+                    current_session_slug = Some(session_slug.clone());
+                }
+
+                // Subprocess timed out after exhausting retries - prompt user
+                let summary = format!(
+                    "LLM subprocess timed out after {} seconds ({} attempt(s)).",
+                    timeout_secs, attempts
+                );
+
+                match prompt_on_failure(&summary) {
+                    Some(FailureAction::Retry) => {
+                        // Continue the same session on retry - don't finalize, just accumulate iterations
+                        total_iterations_completed += iterations_completed;
+                        eprintln!(
+                            "\nRetrying run (continuing session '{}')...\n",
+                            session_slug
+                        );
+                        // Continue loop to retry with the same session
+                        continue;
+                    }
+                    Some(FailureAction::Abort) => {
+                        // User chose to abort - finalize session as aborted
+                        let final_iterations = total_iterations_completed + iterations_completed;
+                        if let Err(e) = session::finalize_session(
+                            &session_slug,
+                            final_iterations as u32,
+                            SessionOutcome::Aborted,
+                        ) {
+                            eprintln!("Warning: Failed to finalize session: {}", e);
+                        }
+                        return Err("Aborted by user".into());
+                    }
+                    None => {
+                        // Non-interactive mode or EOF - finalize as failed and abort
+                        let final_iterations = total_iterations_completed + iterations_completed;
+                        if let Err(e) = session::finalize_session(
+                            &session_slug,
+                            final_iterations as u32,
+                            SessionOutcome::Failed,
+                        ) {
+                            eprintln!("Warning: Failed to finalize session: {}", e);
+                        }
+                        eprintln!("Non-interactive mode - aborting.");
+                        return Err(format!(
+                            "LLM subprocess timed out after {} seconds ({} attempt(s))",
+                            timeout_secs, attempts
                         )
                         .into());
                     }
