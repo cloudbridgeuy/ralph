@@ -35,6 +35,13 @@ pub enum Commands {
     /// Displays a table of sessions with their slug, project path,
     /// start date, iteration count, and outcome status.
     Sessions(SessionsArgs),
+
+    /// Replay a session's output with syntax highlighting.
+    ///
+    /// Re-renders the captured output from a previous session, applying
+    /// syntax highlighting to code blocks and diff highlighting to diffs.
+    /// Works with sessions from any project.
+    Replay(ReplayArgs),
 }
 
 /// Arguments for the `sessions` subcommand.
@@ -49,6 +56,23 @@ pub struct SessionsArgs {
     /// Valid values: in_progress, completed, aborted, failed
     #[arg(long)]
     pub outcome: Option<String>,
+}
+
+/// Arguments for the `replay` subcommand.
+#[derive(clap::Args, Debug)]
+pub struct ReplayArgs {
+    /// Session identifier (slug) to replay.
+    ///
+    /// The slug uniquely identifies a session. Use 'ralph sessions'
+    /// to list available sessions.
+    #[arg(value_name = "SLUG")]
+    pub slug: String,
+
+    /// Only replay a specific iteration (1-indexed).
+    ///
+    /// If omitted, all iterations are replayed in order.
+    #[arg(short, long, value_name = "N")]
+    pub iteration: Option<u32>,
 }
 
 /// Arguments for the `run` subcommand.
@@ -348,5 +372,57 @@ mod tests {
             }
             _ => panic!("Expected Sessions command"),
         }
+    }
+
+    // Replay command tests
+
+    #[test]
+    fn test_cli_parses_replay_command() {
+        let cli = Cli::try_parse_from(["ralph", "replay", "my-session"]).unwrap();
+        assert!(matches!(cli.command, Commands::Replay(_)));
+    }
+
+    #[test]
+    fn test_replay_with_slug() {
+        let cli = Cli::try_parse_from(["ralph", "replay", "quiet-mountain"]).unwrap();
+        match cli.command {
+            Commands::Replay(args) => {
+                assert_eq!(args.slug, "quiet-mountain");
+                assert!(args.iteration.is_none());
+            }
+            _ => panic!("Expected Replay command"),
+        }
+    }
+
+    #[test]
+    fn test_replay_with_iteration() {
+        let cli = Cli::try_parse_from(["ralph", "replay", "my-session", "-i", "3"]).unwrap();
+        match cli.command {
+            Commands::Replay(args) => {
+                assert_eq!(args.slug, "my-session");
+                assert_eq!(args.iteration, Some(3));
+            }
+            _ => panic!("Expected Replay command"),
+        }
+    }
+
+    #[test]
+    fn test_replay_with_iteration_long_flag() {
+        let cli =
+            Cli::try_parse_from(["ralph", "replay", "my-session", "--iteration", "5"]).unwrap();
+        match cli.command {
+            Commands::Replay(args) => {
+                assert_eq!(args.slug, "my-session");
+                assert_eq!(args.iteration, Some(5));
+            }
+            _ => panic!("Expected Replay command"),
+        }
+    }
+
+    #[test]
+    fn test_replay_requires_slug() {
+        // Replay without slug should fail
+        let result = Cli::try_parse_from(["ralph", "replay"]);
+        assert!(result.is_err());
     }
 }

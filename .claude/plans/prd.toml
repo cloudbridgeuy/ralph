@@ -619,7 +619,7 @@ steps = [
   "Read iteration logs in sequence",
   "Re-render chunks with syntax highlighting",
 ]
-passes = false
+passes = true
 acceptance = [
   "Error if session not found",
   "Iterations displayed in order",

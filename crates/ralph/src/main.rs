@@ -3,14 +3,15 @@ pub mod diff_highlight;
 mod git;
 pub mod highlight;
 mod init;
-mod iteration;
+pub mod iteration;
 mod prompt;
+pub mod replay;
 mod run;
 mod session;
 mod subprocess;
 
 use clap::Parser;
-use cli::{Cli, Commands, RunArgs, SessionsArgs};
+use cli::{Cli, Commands, ReplayArgs, RunArgs, SessionsArgs};
 use prompt::{prompt_on_failure, FailureAction};
 use ralph_core::context::{defaults, substitute_template_placeholders, ContextPaths};
 use ralph_core::session::SessionOutcome;
@@ -24,6 +25,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Commands::Run(args) => execute_run(args),
         Commands::Sessions(args) => execute_sessions(args),
+        Commands::Replay(args) => execute_replay(args),
     };
 
     match result {
@@ -222,6 +224,24 @@ fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>
     // Print summary
     println!();
     println!("Total: {} session(s)", sessions.len());
+
+    Ok(())
+}
+
+/// Execute the replay command.
+///
+/// Replays a session's output with syntax highlighting. Reads iteration logs
+/// from the session directory and re-renders the chunks.
+fn execute_replay(args: ReplayArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let result = replay::replay_session(&args.slug, args.iteration)?;
+
+    // Print summary
+    println!();
+    println!("{}", "─".repeat(60));
+    println!(
+        "Replayed {} iteration(s) from session '{}'",
+        result.iterations_replayed, result.slug
+    );
 
     Ok(())
 }

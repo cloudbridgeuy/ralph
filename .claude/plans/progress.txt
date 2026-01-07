@@ -1316,3 +1316,42 @@
   - Needs to re-render chunks with syntax highlighting
 - After Layer 5: Feature complete for run command architecture
 
+## 2026-01-07 - Ralph Replay Command Complete
+
+### What was accomplished
+- Implemented Story: "Implement ralph replay command" (Layer 5 Auxiliary Commands)
+- Added `Replay` variant to `Commands` enum in `crates/ralph/src/cli.rs`
+- Created `ReplayArgs` struct with:
+  - Required `slug` positional argument for session identifier
+  - Optional `-i/--iteration` flag to replay specific iteration
+- Created `crates/ralph/src/replay.rs` module with:
+  - `ReplayError` enum for comprehensive error handling
+  - `ReplayResult` struct for replay operation results
+  - `replay_session()` function as main entry point
+  - `find_iteration_logs()` helper to discover iteration log files
+  - `replay_iteration()` helper to render a single iteration
+- Added `execute_replay()` function in `crates/ralph/src/main.rs`
+- Added 5 CLI tests and 8 unit tests for replay functionality
+
+### Implementation details
+- Session lookup via global sessions.toml index
+- Iteration logs discovered by pattern matching `iteration-N.toml` files
+- Iterations sorted by sequence number and replayed in order
+- Syntax highlighting via `Highlighter` for code chunks
+- Diff highlighting via `highlight_with_basic_colors()` for diff chunks
+- Terminal detection to disable highlighting when output is piped
+- Metadata display (model, cost, duration) when available
+- Error messages guide users to run `ralph sessions` for available sessions
+
+### Acceptance criteria met
+- Error if session not found (ReplayError::SessionNotFound)
+- Iterations displayed in order (sorted by sequence number)
+- Formatting matches original output (syntax highlighting preserved)
+- Works with sessions from any project (reads from global config dir)
+
+### Context for next iteration
+- **Layer 5 (Auxiliary Commands) is now COMPLETE** - all stories implemented
+- **Run command architecture is now FEATURE COMPLETE**
+- All PRD stories have passes = true
+- Total tests: 427 (163 core, 264 ralph)
+
