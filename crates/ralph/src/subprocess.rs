@@ -13,13 +13,17 @@
 
 use crate::highlight::{ThemeConfig, ThemeError};
 use crate::signal;
-use crate::spinner::Spinner;
+use crate::spinner::{Spinner, SpinnerContext};
 use crate::stream_processor::{StreamProcessor, StreamProcessorResult};
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// Default gap threshold before showing spinner (in milliseconds).
+/// If no output is received for this duration, spinner reappears.
+const DEFAULT_GAP_THRESHOLD_MS: u64 = 500;
 
 /// Result of a subprocess invocation.
 #[derive(Debug, Clone)]
@@ -767,8 +771,13 @@ pub fn invoke_subprocess_with_spinner(
     let mut spinner = Spinner::with_session_elapsed(session_elapsed_ms);
     spinner.start();
 
-    // Track if we've received first output (to stop spinner)
-    let mut spinner_stopped = false;
+    // Track time for gap detection and spinner control
+    let mut last_output_time = Instant::now();
+    let mut spinner_active = true; // Spinner starts active
+    let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
+
+    // Track whether we're in a tool invocation (to determine spinner context)
+    let mut pending_tool_count: usize = 0;
 
     // Create channel to receive stderr from background thread
     let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
@@ -804,8 +813,8 @@ pub fn invoke_subprocess_with_spinner(
     loop {
         // Check if process has completed
         if let Some(status) = try_wait_child(&mut child)? {
-            // Stop spinner if not already stopped
-            if !spinner_stopped {
+            // Stop spinner if active
+            if spinner_active {
                 spinner.stop();
             }
 
@@ -843,8 +852,8 @@ pub fn invoke_subprocess_with_spinner(
 
         // Check timeout
         if start.elapsed() >= timeout {
-            // Stop spinner before showing timeout message
-            if !spinner_stopped {
+            // Stop spinner if active
+            if spinner_active {
                 spinner.stop();
             }
 
@@ -881,8 +890,8 @@ pub fn invoke_subprocess_with_spinner(
 
         // Check for interrupt signal (SIGINT/SIGTERM)
         if signal::is_interrupted() {
-            // Stop spinner
-            if !spinner_stopped {
+            // Stop spinner if active
+            if spinner_active {
                 spinner.stop();
             }
 
@@ -920,19 +929,33 @@ pub fn invoke_subprocess_with_spinner(
         match line_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(line_result) => match line_result {
                 Ok(line) => {
+                    // Check for tool invocation markers in the JSON
+                    // Tool invocations come in assistant events with tool_use content
+                    if line.contains("\"type\":\"tool_use\"") {
+                        pending_tool_count += 1;
+                    }
+                    // Tool results come in user events
+                    if line.contains("\"type\":\"user\"")
+                        && line.contains("\"type\":\"tool_result\"")
+                    {
+                        pending_tool_count = pending_tool_count.saturating_sub(1);
+                    }
+
                     if let Some(output) = processor.process_line(&line) {
-                        // Stop spinner on first visible output
-                        if !spinner_stopped {
+                        // Stop spinner on visible output
+                        if spinner_active {
                             spinner.stop();
-                            spinner_stopped = true;
+                            spinner_active = false;
                         }
                         print!("{}", output);
                         let _ = io::stdout().flush();
+                        // Update last output time
+                        last_output_time = Instant::now();
                     }
                 }
                 Err(e) => {
                     // Stop spinner before returning error
-                    if !spinner_stopped {
+                    if spinner_active {
                         spinner.stop();
                     }
                     return Err(SubprocessError::OutputCaptureFailed(format!(
@@ -946,8 +969,20 @@ pub fn invoke_subprocess_with_spinner(
                 while let Ok(line) = stderr_rx.try_recv() {
                     eprintln!("{}", line);
                 }
+
+                // Gap detection: if no output for threshold duration, show spinner
+                if !spinner_active && last_output_time.elapsed() >= gap_threshold {
+                    // Determine spinner context based on state
+                    let context = if pending_tool_count > 0 {
+                        SpinnerContext::WaitingForTool
+                    } else {
+                        SpinnerContext::Thinking
+                    };
+                    spinner.start_with_context(context);
+                    spinner_active = true;
+                }
+
                 // Continue loop to check process status and timeout
-                // Spinner keeps running during this wait
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 // stdout closed, wait for process to exit

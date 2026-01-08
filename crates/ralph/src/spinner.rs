@@ -38,11 +38,40 @@ const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦'
 /// Interval between spinner frame updates.
 const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
 
+/// The context or reason for showing the spinner.
+///
+/// Different wait states should show different messages to give users
+/// better feedback about what the system is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SpinnerContext {
+    /// Initial wait for LLM to start responding.
+    #[default]
+    WaitingForResponse,
+    /// LLM is thinking between outputs (gap in streaming).
+    Thinking,
+    /// Waiting for a tool to complete execution.
+    WaitingForTool,
+    /// Buffering output (e.g., waiting for code block to close).
+    Buffering,
+}
+
+impl SpinnerContext {
+    /// Get the display message for this context.
+    pub fn message(&self) -> &'static str {
+        match self {
+            Self::WaitingForResponse => "Waiting for response...",
+            Self::Thinking => "Thinking...",
+            Self::WaitingForTool => "Running tool...",
+            Self::Buffering => "Buffering code...",
+        }
+    }
+}
+
 /// A spinner that displays while waiting for LLM responses.
 ///
 /// The spinner runs on a background thread and shows:
 /// - An animated spinner character
-/// - A "Waiting for response..." message
+/// - A contextual message (e.g., "Waiting for response...", "Thinking...")
 /// - Elapsed time in seconds or minutes:seconds format
 ///
 /// Call [`start`](Spinner::start) to begin spinning and [`stop`](Spinner::stop)
@@ -58,6 +87,8 @@ pub struct Spinner {
     iteration_start: Instant,
     /// Total elapsed time from previous iterations in this session.
     session_elapsed_ms: u64,
+    /// Current context for the spinner message.
+    context: Arc<std::sync::Mutex<SpinnerContext>>,
 }
 
 impl Default for Spinner {
@@ -78,6 +109,7 @@ impl Spinner {
             enabled: std::io::stdout().is_terminal(),
             iteration_start: Instant::now(),
             session_elapsed_ms: 0,
+            context: Arc::new(std::sync::Mutex::new(SpinnerContext::default())),
         }
     }
 
@@ -91,6 +123,7 @@ impl Spinner {
             enabled,
             iteration_start: Instant::now(),
             session_elapsed_ms: 0,
+            context: Arc::new(std::sync::Mutex::new(SpinnerContext::default())),
         }
     }
 
@@ -106,6 +139,7 @@ impl Spinner {
             enabled: std::io::stdout().is_terminal(),
             iteration_start: Instant::now(),
             session_elapsed_ms,
+            context: Arc::new(std::sync::Mutex::new(SpinnerContext::default())),
         }
     }
 
@@ -124,12 +158,29 @@ impl Spinner {
     /// If the spinner is disabled (non-terminal) or already running, this is a no-op.
     /// The spinner will continue until [`stop`](Spinner::stop) is called.
     pub fn start(&mut self) {
+        self.start_with_context(SpinnerContext::default());
+    }
+
+    /// Start the spinner animation with a specific context message.
+    ///
+    /// If the spinner is disabled (non-terminal) or already running, this is a no-op.
+    /// The spinner will continue until [`stop`](Spinner::stop) is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `context` - The context determining what message to display
+    pub fn start_with_context(&mut self, context: SpinnerContext) {
         if !self.enabled || self.is_running() {
             return;
         }
 
         // Reset iteration start time
         self.iteration_start = Instant::now();
+
+        // Set context
+        if let Ok(mut ctx) = self.context.lock() {
+            *ctx = context;
+        }
 
         // Set running flag
         self.running.store(true, Ordering::SeqCst);
@@ -138,13 +189,33 @@ impl Spinner {
         let running = Arc::clone(&self.running);
         let iteration_start = self.iteration_start;
         let session_elapsed_ms = self.session_elapsed_ms;
+        let context_arc = Arc::clone(&self.context);
 
         // Spawn spinner thread
         let handle = thread::spawn(move || {
-            run_spinner(running, iteration_start, session_elapsed_ms);
+            run_spinner(running, iteration_start, session_elapsed_ms, context_arc);
         });
 
         self.thread_handle = Some(handle);
+    }
+
+    /// Update the spinner context while it's running.
+    ///
+    /// This changes the message displayed by the spinner without stopping it.
+    /// If the spinner is not running, this has no effect.
+    ///
+    /// # Arguments
+    ///
+    /// * `context` - The new context determining what message to display
+    pub fn set_context(&self, context: SpinnerContext) {
+        if let Ok(mut ctx) = self.context.lock() {
+            *ctx = context;
+        }
+    }
+
+    /// Get the current spinner context.
+    pub fn get_context(&self) -> SpinnerContext {
+        self.context.lock().map(|ctx| *ctx).unwrap_or_default()
     }
 
     /// Stop the spinner and clear the display.
@@ -202,7 +273,12 @@ impl Drop for Spinner {
 ///
 /// This function runs on a background thread and displays the spinner
 /// until the running flag is set to false.
-fn run_spinner(running: Arc<AtomicBool>, iteration_start: Instant, session_elapsed_ms: u64) {
+fn run_spinner(
+    running: Arc<AtomicBool>,
+    iteration_start: Instant,
+    session_elapsed_ms: u64,
+    context: Arc<std::sync::Mutex<SpinnerContext>>,
+) {
     let mut frame = 0;
     let mut stdout = std::io::stdout();
 
@@ -218,10 +294,16 @@ fn run_spinner(running: Arc<AtomicBool>, iteration_start: Instant, session_elaps
         // Get current spinner character
         let spinner_char = SPINNER_CHARS[frame % SPINNER_CHARS.len()];
 
+        // Get the context message
+        let message = context
+            .lock()
+            .map(|ctx| ctx.message())
+            .unwrap_or("Working...");
+
         // Build the spinner line
         let spinner_line = format!(
-            "\r\x1b[36m{}\x1b[0m Waiting for response... {}",
-            spinner_char, time_display
+            "\r\x1b[36m{}\x1b[0m {} {}",
+            spinner_char, message, time_display
         );
 
         // Write and flush
@@ -449,5 +531,71 @@ mod tests {
         // Verify we have enough spinner chars for smooth animation
         assert!(SPINNER_CHARS.len() >= 8); // Should have good variety (currently 10)
         assert_eq!(SPINNER_CHARS.len(), 10); // Document expected count
+    }
+
+    // Context-related tests
+
+    #[test]
+    fn test_spinner_context_default() {
+        assert_eq!(
+            SpinnerContext::default(),
+            SpinnerContext::WaitingForResponse
+        );
+    }
+
+    #[test]
+    fn test_spinner_context_messages() {
+        assert_eq!(
+            SpinnerContext::WaitingForResponse.message(),
+            "Waiting for response..."
+        );
+        assert_eq!(SpinnerContext::Thinking.message(), "Thinking...");
+        assert_eq!(SpinnerContext::WaitingForTool.message(), "Running tool...");
+        assert_eq!(SpinnerContext::Buffering.message(), "Buffering code...");
+    }
+
+    #[test]
+    fn test_spinner_get_context_default() {
+        let spinner = Spinner::with_enabled(false);
+        assert_eq!(spinner.get_context(), SpinnerContext::WaitingForResponse);
+    }
+
+    #[test]
+    fn test_spinner_set_context() {
+        let spinner = Spinner::with_enabled(false);
+        assert_eq!(spinner.get_context(), SpinnerContext::WaitingForResponse);
+        spinner.set_context(SpinnerContext::Thinking);
+        assert_eq!(spinner.get_context(), SpinnerContext::Thinking);
+        spinner.set_context(SpinnerContext::WaitingForTool);
+        assert_eq!(spinner.get_context(), SpinnerContext::WaitingForTool);
+    }
+
+    #[test]
+    fn test_spinner_start_with_context() {
+        let mut spinner = Spinner::with_enabled(true);
+        spinner.start_with_context(SpinnerContext::Thinking);
+        thread::sleep(Duration::from_millis(10));
+        assert!(spinner.is_running());
+        assert_eq!(spinner.get_context(), SpinnerContext::Thinking);
+        spinner.stop();
+        assert!(!spinner.is_running());
+    }
+
+    #[test]
+    fn test_spinner_context_changes_while_running() {
+        let mut spinner = Spinner::with_enabled(true);
+        spinner.start();
+        thread::sleep(Duration::from_millis(10));
+        assert!(spinner.is_running());
+
+        // Change context while running
+        spinner.set_context(SpinnerContext::WaitingForTool);
+        assert_eq!(spinner.get_context(), SpinnerContext::WaitingForTool);
+
+        // Change again
+        spinner.set_context(SpinnerContext::Buffering);
+        assert_eq!(spinner.get_context(), SpinnerContext::Buffering);
+
+        spinner.stop();
     }
 }
