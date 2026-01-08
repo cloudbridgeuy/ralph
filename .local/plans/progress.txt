@@ -452,3 +452,90 @@ ralph run --verbose-tools         # Enable verbose for all tools
   tests/
     integration.rs
 ```
+
+---
+
+## 2026-01-08: NotebookEdit Tool Diff Display
+
+**Completed**: NotebookEdit Tool Diff Display feature (3 stories from PRD)
+- "Capture notebook cell content before NotebookEdit execution"
+- "Generate diff when NotebookEdit tool result arrives"
+- "Display NotebookEdit diff with syntax highlighting"
+
+### Background
+
+Similar to the Edit and Write tools, Claude CLI's NotebookEdit tool returns success messages rather than diff content. NotebookEdit modifies Jupyter notebook cells (.ipynb files). To show meaningful diffs, we implemented the same snapshot-based pattern used for Edit and Write tools.
+
+### Implementation Details
+
+1. **NotebookSnapshot type** (`stream_processor/types.rs`):
+   - New struct storing notebook path, cell identifier, optional content, edit mode, and cell type
+   - The `edit_mode` field tracks whether the operation is replace, insert, or delete
+   - The `cell_type` field stores code vs markdown for display formatting
+
+2. **Snapshot capture** (`stream_processor/event_handler.rs`):
+   - Added `pending_notebook_snapshots: HashMap<String, NotebookSnapshot>` to StreamProcessor
+   - `capture_notebook_snapshot()` function extracts notebook_path and cell identifier from invocation
+   - `read_notebook_cell_content()` helper parses Jupyter notebook JSON to extract cell source
+   - Handles both cell_id (string) and cell_number (index) identification
+   - Keyed by `tool_use_id` for correlation with results
+
+3. **Diff generation** (`stream_processor/tool_results/notebookedit.rs`):
+   - New module following same pattern as edit.rs and write.rs
+   - Reuses `similar` crate for unified diff generation
+   - `generate_diff_from_snapshot()` handles replace, insert, and delete modes
+   - For insert: before content is empty (all additions)
+   - For delete: after content is empty (all removals)
+
+4. **Result processing** (`stream_processor/event_handler.rs`):
+   - Added match arm for NotebookEdit tool in user event handler
+   - When NotebookEdit result arrives with snapshot, generates diff
+
+5. **Display formatting** (`stream_processor/tool_results/notebookedit.rs`):
+   - Header shows "notebook_path:cell_identifier" format
+   - Cell type indicator: "(code)" or "(markdown)"
+   - Edit mode indicator: "(new cell)" for inserts, "(deleted)" for deletes
+   - Diff coloring: green additions, red deletions
+   - Truncation at 50 lines with "... N more lines" indicator
+   - Non-terminal output shows plain text
+
+### Files Changed
+- `crates/ralph/src/stream_processor/types.rs`: Added `NotebookSnapshot` struct
+- `crates/ralph/src/stream_processor/processor.rs`: Added `pending_notebook_snapshots` field to all constructors
+- `crates/ralph/src/stream_processor/event_handler.rs`: Snapshot capture and result processing for NotebookEdit tool
+- `crates/ralph/src/stream_processor/tool_results/notebookedit.rs`: New module (~300 lines)
+- `crates/ralph/src/stream_processor/tool_results/mod.rs`: Added notebookedit module and re-export
+
+### Tests
+7 unit tests added in notebookedit.rs:
+- Unified diff generation
+- New cell diff (all additions)
+- Code cell indicator
+- Insert mode indicator
+- Delete mode indicator
+- Diff truncation
+- No truncation for short diffs
+
+### Usage
+The NotebookEdit tool diff display is automatic - whenever Claude uses the NotebookEdit tool, ralph will capture the cell content before and after the edit and display a diff.
+
+### Example Output
+```
+── notebook.ipynb:0 (code) ──
+```diff
+--- a/notebook.ipynb:0
++++ b/notebook.ipynb:0
+@@ -1,2 +1,2 @@
+-print('hello')
++print('world')
+```
+```
+
+For new cells:
+```
+── notebook.ipynb:1 (code) (new cell) ──
+```diff
++# New cell
++print('hello')
+```
+```

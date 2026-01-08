@@ -405,7 +405,7 @@ steps = [
   "Store content in pending_notebook_snapshots map keyed by tool_use_id",
   "Handle cell insertion (no 'before' content) gracefully",
 ]
-passes = false
+passes = true
 acceptance = [
   "Cell content captured when NotebookEdit tool_use event arrives",
   "New cell insertions tracked with empty 'before' content",
@@ -422,7 +422,7 @@ steps = [
   "Generate diff between before and after cell content",
   "For new cells, show all content as additions",
 ]
-passes = false
+passes = true
 acceptance = [
   "Diff generated for cell content changes",
   "New cells show all content as additions",
@@ -439,7 +439,7 @@ steps = [
   "Apply markdown rendering for markdown cells",
   "Show cell type indicator (code/markdown)",
 ]
-passes = false
+passes = true
 acceptance = [
   "Header shows notebook path and cell number/id",
   "Code cells highlighted as Python",

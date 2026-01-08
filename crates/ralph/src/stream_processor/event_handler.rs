@@ -12,7 +12,7 @@ use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocat
 use super::processor::StreamProcessor;
 use super::tool_display;
 use super::tool_results;
-use super::types::{EditSnapshot, WriteSnapshot};
+use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
 
 impl StreamProcessor {
     /// Process a single line of stream-json output.
@@ -100,6 +100,14 @@ impl StreamProcessor {
                         }
                     }
 
+                    // Capture cell content before NotebookEdit tool executes
+                    if invocation.name == "NotebookEdit" {
+                        if let Some(snapshot) = capture_notebook_snapshot(invocation) {
+                            self.pending_notebook_snapshots
+                                .insert(invocation.id.clone(), snapshot);
+                        }
+                    }
+
                     if self.show_tool_invocations {
                         let formatted = tool_display::format_tool_invocation(self, invocation);
                         output_parts.push(formatted);
@@ -138,6 +146,12 @@ impl StreamProcessor {
                             .as_ref()
                             .and_then(|id| self.pending_write_snapshots.remove(id));
 
+                        // Remove any pending NotebookEdit snapshot (cleanup)
+                        let notebook_snapshot = result
+                            .tool_use_id
+                            .as_ref()
+                            .and_then(|id| self.pending_notebook_snapshots.remove(id));
+
                         // Determine formatting approach based on tool type and snapshots
                         let formatted = match &invocation {
                             Some(inv) if inv.name == "Edit" && !result.is_error => {
@@ -170,6 +184,16 @@ impl StreamProcessor {
                                 // Write tool - generate diff from snapshot
                                 if let Some(snap) = write_snapshot {
                                     tool_results::format_write_result_with_snapshot(self, snap)
+                                } else {
+                                    tool_results::format_tool_result_with_context(
+                                        self, result, invocation,
+                                    )
+                                }
+                            }
+                            Some(inv) if inv.name == "NotebookEdit" && !result.is_error => {
+                                // NotebookEdit tool - generate diff from snapshot
+                                if let Some(snap) = notebook_snapshot {
+                                    tool_results::format_notebook_result_with_snapshot(self, snap)
                                 } else {
                                     tool_results::format_tool_result_with_context(
                                         self, result, invocation,
@@ -348,4 +372,98 @@ fn capture_write_snapshot(invocation: &ToolInvocation) -> Option<WriteSnapshot> 
         content,
         file_existed,
     })
+}
+
+/// Capture the current content of a notebook cell before a NotebookEdit tool modifies it.
+///
+/// This function reads the notebook JSON and extracts the cell content before the edit.
+/// Returns None if the notebook path cannot be extracted or the notebook cannot be parsed.
+fn capture_notebook_snapshot(invocation: &ToolInvocation) -> Option<NotebookSnapshot> {
+    // Extract notebook path from invocation input
+    let notebook_path = invocation
+        .input
+        .get("notebook_path")
+        .and_then(|v| v.as_str())?;
+
+    // Extract cell identifier - prefer cell_id, fall back to cell_number
+    let cell_identifier = invocation
+        .input
+        .get("cell_id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| {
+            invocation
+                .input
+                .get("cell_number")
+                .and_then(|v| v.as_u64())
+                .map(|n| n.to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Extract edit mode (default to "replace")
+    let edit_mode = invocation
+        .input
+        .get("edit_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("replace")
+        .to_string();
+
+    // Extract cell type if provided
+    let cell_type = invocation
+        .input
+        .get("cell_type")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    // Try to read the notebook and extract cell content
+    let content = read_notebook_cell_content(notebook_path, &cell_identifier);
+
+    Some(NotebookSnapshot {
+        notebook_path: notebook_path.to_string(),
+        cell_identifier,
+        content,
+        edit_mode,
+        cell_type,
+    })
+}
+
+/// Read the content of a specific cell from a Jupyter notebook.
+///
+/// Returns the cell content as a single string (joining source lines),
+/// or None if the notebook or cell cannot be read.
+fn read_notebook_cell_content(notebook_path: &str, cell_identifier: &str) -> Option<String> {
+    // Read and parse the notebook JSON
+    let notebook_content = fs::read_to_string(notebook_path).ok()?;
+    let notebook: serde_json::Value = serde_json::from_str(&notebook_content).ok()?;
+
+    // Get the cells array
+    let cells = notebook.get("cells")?.as_array()?;
+
+    // Try to find the cell by identifier
+    // First try to match by cell_id (string match)
+    // Then try to match by index (if identifier is numeric)
+    let cell = if let Ok(index) = cell_identifier.parse::<usize>() {
+        // Numeric identifier - use as 0-based index
+        cells.get(index)
+    } else {
+        // String identifier - try to match against cell id metadata
+        cells.iter().find(|cell| {
+            cell.get("id")
+                .and_then(|id| id.as_str())
+                .map(|id| id == cell_identifier)
+                .unwrap_or(false)
+        })
+    }?;
+
+    // Extract the source content
+    // The "source" field can be either a string or an array of strings
+    let source = cell.get("source")?;
+    if let Some(s) = source.as_str() {
+        Some(s.to_string())
+    } else if let Some(arr) = source.as_array() {
+        let lines: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+        Some(lines.join(""))
+    } else {
+        None
+    }
 }

@@ -8,6 +8,7 @@ mod bash;
 mod edit;
 mod glob;
 mod grep;
+mod notebookedit;
 mod read;
 mod todowrite;
 mod write;
@@ -20,6 +21,7 @@ use super::utils::truncate_string;
 
 // Re-export for use in event_handler
 pub use edit::format_edit_result_with_snapshot;
+pub use notebookedit::format_notebook_result_with_snapshot;
 pub use write::format_write_result_with_snapshot;
 
 /// Format a tool result for display with optional context from the original invocation.

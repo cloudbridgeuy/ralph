@@ -167,3 +167,22 @@ pub struct WriteSnapshot {
     /// Whether the file existed before the write.
     pub file_existed: bool,
 }
+
+/// Snapshot of notebook cell content captured before a NotebookEdit tool execution.
+///
+/// Used to generate diffs by comparing the cell content before and after
+/// the NotebookEdit tool runs. NotebookEdit can modify existing cells,
+/// insert new cells, or delete cells in Jupyter notebooks.
+#[derive(Debug, Clone)]
+pub struct NotebookSnapshot {
+    /// Path to the notebook file being edited.
+    pub notebook_path: String,
+    /// Cell identifier (cell_id if provided, otherwise stringified cell_number).
+    pub cell_identifier: String,
+    /// Content of the cell before the edit (None if cell didn't exist).
+    pub content: Option<String>,
+    /// The edit mode being performed (replace, insert, delete).
+    pub edit_mode: String,
+    /// The type of cell (code or markdown).
+    pub cell_type: Option<String>,
+}

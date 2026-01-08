@@ -14,7 +14,9 @@ use ralph_core::stream::{
 use std::collections::HashMap;
 use std::io::IsTerminal;
 
-use super::types::{EditSnapshot, StreamProcessorResult, VerboseToolsConfig, WriteSnapshot};
+use super::types::{
+    EditSnapshot, NotebookSnapshot, StreamProcessorResult, VerboseToolsConfig, WriteSnapshot,
+};
 
 /// A streaming processor for Claude's stream-json output.
 ///
@@ -70,6 +72,12 @@ pub struct StreamProcessor {
     /// (if it exists) before the write runs. When the result arrives, we
     /// generate a diff showing what changed or that a new file was created.
     pub(super) pending_write_snapshots: HashMap<String, WriteSnapshot>,
+    /// Pending NotebookEdit tool snapshots keyed by tool_use_id.
+    ///
+    /// When a NotebookEdit tool invocation is detected, we capture the cell content
+    /// before the edit runs. When the result arrives, we generate a diff showing
+    /// what changed in the cell.
+    pub(super) pending_notebook_snapshots: HashMap<String, NotebookSnapshot>,
 }
 
 impl Default for StreamProcessor {
@@ -111,6 +119,7 @@ impl StreamProcessor {
             verbose_tools_config: VerboseToolsConfig::new(),
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
+            pending_notebook_snapshots: HashMap::new(),
         }
     }
 
@@ -202,6 +211,7 @@ impl StreamProcessor {
             verbose_tools_config: VerboseToolsConfig::new(),
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
+            pending_notebook_snapshots: HashMap::new(),
         })
     }
 
@@ -242,6 +252,7 @@ impl StreamProcessor {
             verbose_tools_config: VerboseToolsConfig::new(),
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
+            pending_notebook_snapshots: HashMap::new(),
         })
     }
 
@@ -284,6 +295,7 @@ impl StreamProcessor {
             verbose_tools_config: verbose_tools,
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
+            pending_notebook_snapshots: HashMap::new(),
         })
     }
 
