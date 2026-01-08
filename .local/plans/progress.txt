@@ -250,3 +250,66 @@ All 9 existing edit_diff tests pass, covering:
 - Non-Edit tool results
 - Pending invocation tracking
 - Unified diff format
+
+---
+
+## 2026-01-08: Write Tool Diff Display
+
+**Completed**: Write Tool Diff Display feature (3 stories from PRD)
+- "Capture file content before Write tool execution"
+- "Generate diff when Write tool result arrives"
+- "Display Write tool diff with syntax highlighting"
+
+### Background
+
+Similar to the Edit tool, Claude CLI's Write tool returns success messages rather than diff content. The Write tool can create new files or overwrite existing ones. To show meaningful diffs, we implemented the same pattern as Edit tool diff display.
+
+### Implementation Details
+
+1. **WriteSnapshot type** (`stream_processor/types.rs`):
+   - New struct storing file path, optional content, and `file_existed` flag
+   - The `file_existed` flag allows distinguishing new files from overwrites in the display
+
+2. **Snapshot capture** (`stream_processor/event_handler.rs`):
+   - Added `pending_write_snapshots: HashMap<String, WriteSnapshot>` to StreamProcessor
+   - `capture_write_snapshot()` function reads file content when Write tool invocation detected
+   - Checks `std::path::Path::exists()` to set `file_existed` flag
+   - Keyed by `tool_use_id` for correlation with results
+
+3. **Diff generation** (`stream_processor/tool_results/write.rs`):
+   - New module following same pattern as edit.rs
+   - Reuses `similar` crate for unified diff generation
+   - `generate_diff_from_snapshot()` compares before/after content
+   - `format_write_result_with_snapshot()` handles the flow
+
+4. **Result processing** (`stream_processor/event_handler.rs`):
+   - Refactored to use match expression for cleaner tool-specific handling
+   - When Write tool result arrives with snapshot, generates diff
+
+5. **Display formatting** (`stream_processor/tool_results/write.rs`):
+   - File path header with box drawing characters
+   - **New files** show "(new file)" indicator in header with yellow color
+   - Diff coloring: green additions, red deletions
+   - Truncation at 50 lines with "... N more lines" indicator
+   - Non-terminal output shows plain text
+
+### Files Changed
+- `crates/ralph/src/stream_processor/types.rs`: Added `WriteSnapshot` struct
+- `crates/ralph/src/stream_processor/processor.rs`: Added `pending_write_snapshots` field to all constructors
+- `crates/ralph/src/stream_processor/event_handler.rs`: Snapshot capture and result processing for Write tool
+- `crates/ralph/src/stream_processor/tool_results/write.rs`: New module for diff generation and formatting
+- `crates/ralph/src/stream_processor/tool_results/mod.rs`: Added write module and re-export
+
+### Behavior
+- New files: all content shown as additions (green) with "(new file)" indicator
+- Overwrites: proper diff showing additions/deletions
+- If file unchanged or couldn't be read: shows "Write: /path (no changes)"
+- Error results skip diff generation and show error format
+
+### Tests
+5 unit tests added in write.rs:
+- Unified diff generation
+- New file diff (all additions)
+- New file indicator in header
+- Overwrite without indicator
+- Diff truncation

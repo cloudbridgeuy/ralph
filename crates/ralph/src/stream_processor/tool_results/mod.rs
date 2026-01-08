@@ -9,6 +9,7 @@ mod edit;
 mod grep;
 mod read;
 mod todowrite;
+mod write;
 
 use ralph_core::chunk::is_unfenced_diff;
 use ralph_core::stream::{ToolInvocation, ToolResult};
@@ -18,6 +19,7 @@ use super::utils::truncate_string;
 
 // Re-export for use in event_handler
 pub use edit::format_edit_result_with_snapshot;
+pub use write::format_write_result_with_snapshot;
 
 /// Format a tool result for display with optional context from the original invocation.
 ///

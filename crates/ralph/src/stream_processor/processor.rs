@@ -14,7 +14,7 @@ use ralph_core::stream::{
 use std::collections::HashMap;
 use std::io::IsTerminal;
 
-use super::types::{EditSnapshot, StreamProcessorResult, VerboseToolsConfig};
+use super::types::{EditSnapshot, StreamProcessorResult, VerboseToolsConfig, WriteSnapshot};
 
 /// A streaming processor for Claude's stream-json output.
 ///
@@ -64,6 +64,12 @@ pub struct StreamProcessor {
     /// before the edit runs. When the result arrives, we generate a diff
     /// by comparing the snapshot with the current file content.
     pub(super) pending_edit_snapshots: HashMap<String, EditSnapshot>,
+    /// Pending Write tool snapshots keyed by tool_use_id.
+    ///
+    /// When a Write tool invocation is detected, we capture the file content
+    /// (if it exists) before the write runs. When the result arrives, we
+    /// generate a diff showing what changed or that a new file was created.
+    pub(super) pending_write_snapshots: HashMap<String, WriteSnapshot>,
 }
 
 impl Default for StreamProcessor {
@@ -104,6 +110,7 @@ impl StreamProcessor {
             pending_invocations: HashMap::new(),
             verbose_tools_config: VerboseToolsConfig::new(),
             pending_edit_snapshots: HashMap::new(),
+            pending_write_snapshots: HashMap::new(),
         }
     }
 
@@ -194,6 +201,7 @@ impl StreamProcessor {
             pending_invocations: HashMap::new(),
             verbose_tools_config: VerboseToolsConfig::new(),
             pending_edit_snapshots: HashMap::new(),
+            pending_write_snapshots: HashMap::new(),
         })
     }
 
@@ -233,6 +241,7 @@ impl StreamProcessor {
             pending_invocations: HashMap::new(),
             verbose_tools_config: VerboseToolsConfig::new(),
             pending_edit_snapshots: HashMap::new(),
+            pending_write_snapshots: HashMap::new(),
         })
     }
 
@@ -274,6 +283,7 @@ impl StreamProcessor {
             pending_invocations: HashMap::new(),
             verbose_tools_config: verbose_tools,
             pending_edit_snapshots: HashMap::new(),
+            pending_write_snapshots: HashMap::new(),
         })
     }
 

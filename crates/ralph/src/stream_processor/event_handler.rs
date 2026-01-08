@@ -12,7 +12,7 @@ use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocat
 use super::processor::StreamProcessor;
 use super::tool_display;
 use super::tool_results;
-use super::types::EditSnapshot;
+use super::types::{EditSnapshot, WriteSnapshot};
 
 impl StreamProcessor {
     /// Process a single line of stream-json output.
@@ -92,6 +92,14 @@ impl StreamProcessor {
                         }
                     }
 
+                    // Capture file content before Write tool executes
+                    if invocation.name == "Write" {
+                        if let Some(snapshot) = capture_write_snapshot(invocation) {
+                            self.pending_write_snapshots
+                                .insert(invocation.id.clone(), snapshot);
+                        }
+                    }
+
                     if self.show_tool_invocations {
                         let formatted = tool_display::format_tool_invocation(self, invocation);
                         output_parts.push(formatted);
@@ -119,44 +127,61 @@ impl StreamProcessor {
                             .and_then(|id| self.pending_invocations.remove(id));
 
                         // Remove any pending Edit snapshot (cleanup)
-                        let snapshot = result
+                        let edit_snapshot = result
                             .tool_use_id
                             .as_ref()
                             .and_then(|id| self.pending_edit_snapshots.remove(id));
 
-                        // Determine formatting approach for Edit tool results:
-                        // 1. If result already contains diff content, use that (existing behavior)
-                        // 2. Otherwise, try snapshot-based diff generation (new behavior)
-                        let formatted = if let (Some(ref inv), Some(snap)) = (&invocation, snapshot)
-                        {
-                            if inv.name == "Edit" && !result.is_error {
-                                // Check if result already contains diff content
-                                let has_diff_content = result
-                                    .content
-                                    .as_ref()
-                                    .map(|c| ralph_core::chunk::is_unfenced_diff(c))
-                                    .unwrap_or(false);
+                        // Remove any pending Write snapshot (cleanup)
+                        let write_snapshot = result
+                            .tool_use_id
+                            .as_ref()
+                            .and_then(|id| self.pending_write_snapshots.remove(id));
 
-                                if has_diff_content {
-                                    // Result contains diff - use existing formatting
-                                    tool_results::format_tool_result_with_context(
-                                        self,
-                                        result,
-                                        Some(inv.clone()),
-                                    )
+                        // Determine formatting approach based on tool type and snapshots
+                        let formatted = match &invocation {
+                            Some(inv) if inv.name == "Edit" && !result.is_error => {
+                                // Edit tool - check for diff content or use snapshot
+                                if let Some(snap) = edit_snapshot {
+                                    let has_diff_content = result
+                                        .content
+                                        .as_ref()
+                                        .map(|c| ralph_core::chunk::is_unfenced_diff(c))
+                                        .unwrap_or(false);
+
+                                    if has_diff_content {
+                                        // Result contains diff - use existing formatting
+                                        tool_results::format_tool_result_with_context(
+                                            self,
+                                            result,
+                                            Some(inv.clone()),
+                                        )
+                                    } else {
+                                        // No diff in result - generate from snapshot
+                                        tool_results::format_edit_result_with_snapshot(self, snap)
+                                    }
                                 } else {
-                                    // No diff in result - generate from snapshot
-                                    tool_results::format_edit_result_with_snapshot(self, snap)
+                                    tool_results::format_tool_result_with_context(
+                                        self, result, invocation,
+                                    )
                                 }
-                            } else {
-                                // Error or non-Edit tool
+                            }
+                            Some(inv) if inv.name == "Write" && !result.is_error => {
+                                // Write tool - generate diff from snapshot
+                                if let Some(snap) = write_snapshot {
+                                    tool_results::format_write_result_with_snapshot(self, snap)
+                                } else {
+                                    tool_results::format_tool_result_with_context(
+                                        self, result, invocation,
+                                    )
+                                }
+                            }
+                            _ => {
+                                // Other tools or errors - use regular formatting
                                 tool_results::format_tool_result_with_context(
                                     self, result, invocation,
                                 )
                             }
-                        } else {
-                            // No snapshot or invocation - use regular formatting
-                            tool_results::format_tool_result_with_context(self, result, invocation)
                         };
                         output_parts.push(formatted);
                     }
@@ -303,5 +328,24 @@ fn capture_edit_snapshot(invocation: &ToolInvocation) -> Option<EditSnapshot> {
     Some(EditSnapshot {
         file_path: file_path.to_string(),
         content,
+    })
+}
+
+/// Capture the current content of a file before a Write tool creates/overwrites it.
+///
+/// This is a pure function that reads the file (if it exists) and returns a snapshot.
+/// Returns None if the file path cannot be extracted from the invocation input.
+fn capture_write_snapshot(invocation: &ToolInvocation) -> Option<WriteSnapshot> {
+    // Extract file path from invocation input
+    let file_path = invocation.input.get("file_path").and_then(|v| v.as_str())?;
+
+    // Check if file exists and read content
+    let file_existed = std::path::Path::new(file_path).exists();
+    let content = fs::read_to_string(file_path).ok();
+
+    Some(WriteSnapshot {
+        file_path: file_path.to_string(),
+        content,
+        file_existed,
     })
 }

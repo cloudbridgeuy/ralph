@@ -152,3 +152,18 @@ pub struct EditSnapshot {
     /// Content of the file before the edit (None if file didn't exist).
     pub content: Option<String>,
 }
+
+/// Snapshot of file content captured before a Write tool execution.
+///
+/// Used to generate diffs by comparing the file content before and after
+/// the Write tool runs. Unlike Edit, Write can create new files or completely
+/// overwrite existing ones.
+#[derive(Debug, Clone)]
+pub struct WriteSnapshot {
+    /// Path to the file being written.
+    pub file_path: String,
+    /// Content of the file before the write (None if file didn't exist).
+    pub content: Option<String>,
+    /// Whether the file existed before the write.
+    pub file_existed: bool,
+}
