@@ -11,3 +11,5 @@
 .DS_Store
 
 .local/
+!.local/plans/prd.toml
+!.local/plans/progress.txt
