@@ -787,3 +787,44 @@ Updated `README.md` with:
 ### All PRD Stories Complete
 
 This was the last remaining story in the PRD. All stories now have `passes = true`.
+
+---
+
+## 2026-01-08: Vibrant Diff Line Number Colors
+
+**Completed**: "Make before/after line number colors more vibrant and visible" story from Layer 8 (UI Improvements)
+
+### Background
+
+The Edit tool's before/after display uses colored backgrounds for line numbers to distinguish deletions (red) from additions (green). The previous colors were too muted (RGB 60,45,45 for red and RGB 45,60,45 for green), making them hard to distinguish on typical terminal backgrounds.
+
+### Implementation Details
+
+Updated the background color constants in `edit.rs`:
+
+1. **RED_BG** (deletion/before):
+   - Before: RGB(60, 45, 45) - muted grayish-red
+   - After: RGB(100, 40, 40) - vibrant red with higher saturation
+
+2. **GREEN_BG** (addition/after):
+   - Before: RGB(45, 60, 45) - muted grayish-green
+   - After: RGB(40, 90, 40) - vibrant green with higher saturation
+
+The new values:
+- Increase the primary color channel (red or green) significantly
+- Keep other channels relatively low to maintain color distinction
+- Stay within a range that works well on both dark and light terminal backgrounds
+- Are not harsh or garish while being immediately distinguishable
+
+### Files Changed
+- `crates/ralph/src/stream_processor/tool_results/edit.rs`: Updated RED_BG and GREEN_BG color constants
+
+### Acceptance Criteria Verified
+- ✅ Red and green line number backgrounds are immediately distinguishable
+- ✅ Colors pop without being distracting or garish
+- ✅ Syntax highlighting on code content remains clearly readable (line numbers have bg color, content has syntax highlighting)
+- ✅ Works well on both dark and light terminal themes (24-bit RGB colors work across modern terminals)
+
+### All PRD Stories Complete
+
+This was the last remaining story in the PRD. All stories now have `passes = true`.
