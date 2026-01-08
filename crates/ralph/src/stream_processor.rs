@@ -27,14 +27,15 @@ use crate::diff_highlight::{highlight_with_basic_colors, DiffHighlighter};
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::markdown::MarkdownRenderer;
 use ralph_core::chunk::{
-    split_lines_preserve_trailing, ChunkType, ParsedChunk, StreamingChunkBuffer,
+    is_unfenced_diff, split_lines_preserve_trailing, ChunkType, ParsedChunk, StreamingChunkBuffer,
 };
 use ralph_core::stream::{
     correlate_tool_interactions, extract_costs_from_events_or_default,
     extract_metadata_from_events_or_default, parse_stream_line, IterationCosts, IterationMetadata,
-    ParsedLine, StreamEvent, ToolCorrelator, ToolInteraction,
+    ParsedLine, StreamEvent, ToolCorrelator, ToolInteraction, ToolInvocation,
 };
 use serde_json::Value;
+use std::collections::HashMap;
 use std::io::IsTerminal;
 
 /// Result of processing a complete stream.
@@ -93,6 +94,8 @@ pub struct StreamProcessor {
     has_emitted_output: bool,
     /// Count of distinct assistant responses processed.
     response_count: usize,
+    /// Pending tool invocations keyed by tool_use_id (for special result formatting).
+    pending_invocations: HashMap<String, ToolInvocation>,
 }
 
 impl Default for StreamProcessor {
@@ -131,6 +134,7 @@ impl StreamProcessor {
             tool_correlator: ToolCorrelator::new(),
             has_emitted_output: false,
             response_count: 0,
+            pending_invocations: HashMap::new(),
         }
     }
 
@@ -199,6 +203,7 @@ impl StreamProcessor {
             tool_correlator: ToolCorrelator::new(),
             has_emitted_output: false,
             response_count: 0,
+            pending_invocations: HashMap::new(),
         })
     }
 
@@ -236,6 +241,7 @@ impl StreamProcessor {
             tool_correlator: ToolCorrelator::new(),
             has_emitted_output: false,
             response_count: 0,
+            pending_invocations: HashMap::new(),
         })
     }
 
@@ -306,10 +312,14 @@ impl StreamProcessor {
                 }
                 self.current_message_id = new_message_id;
 
-                // Display tool invocations if enabled
-                if self.show_tool_invocations {
-                    let tool_invocations = assistant_event.extract_tool_invocations();
-                    for invocation in &tool_invocations {
+                // Display tool invocations if enabled, and track them for result formatting
+                let tool_invocations = assistant_event.extract_tool_invocations();
+                for invocation in &tool_invocations {
+                    // Track pending invocations for special result formatting
+                    self.pending_invocations
+                        .insert(invocation.id.clone(), invocation.clone());
+
+                    if self.show_tool_invocations {
                         let formatted = self.format_tool_invocation(invocation);
                         output_parts.push(formatted);
                     }
@@ -329,7 +339,13 @@ impl StreamProcessor {
                 // Display tool results if enabled
                 if self.show_tool_invocations {
                     for result in &user_event.message.content {
-                        let formatted = self.format_tool_result(result);
+                        // Look up the original invocation to get the tool name
+                        let invocation = result
+                            .tool_use_id
+                            .as_ref()
+                            .and_then(|id| self.pending_invocations.remove(id));
+
+                        let formatted = self.format_tool_result_with_context(result, invocation);
                         output_parts.push(formatted);
                     }
                 }
@@ -392,8 +408,34 @@ impl StreamProcessor {
         }
     }
 
-    /// Format a tool result for display.
+    /// Format a tool result for display (without invocation context).
+    #[allow(dead_code)]
     fn format_tool_result(&self, result: &ralph_core::stream::ToolResult) -> String {
+        self.format_tool_result_with_context(result, None)
+    }
+
+    /// Format a tool result for display with optional context from the original invocation.
+    ///
+    /// When the original invocation is available and the tool is "Edit", this method
+    /// will detect if the result contains a diff and apply syntax highlighting.
+    fn format_tool_result_with_context(
+        &self,
+        result: &ralph_core::stream::ToolResult,
+        invocation: Option<ToolInvocation>,
+    ) -> String {
+        // Check if this is an Edit tool result with diff content
+        if let Some(inv) = invocation {
+            if inv.name == "Edit" && !result.is_error {
+                if let Some(ref content) = result.content {
+                    // Check if content looks like a diff
+                    if is_unfenced_diff(content) {
+                        return self.format_edit_diff_result(inv, content);
+                    }
+                }
+            }
+        }
+
+        // Default formatting for other tools
         let truncated_content = result
             .content
             .as_ref()
@@ -415,6 +457,84 @@ impl StreamProcessor {
             } else {
                 format!("  {}\n", truncated_content)
             }
+        }
+    }
+
+    /// Format an Edit tool result that contains a diff with syntax highlighting.
+    ///
+    /// This displays:
+    /// 1. A file path header showing which file was edited
+    /// 2. The diff content with syntax highlighting (green for additions, red for deletions)
+    /// 3. Truncation indicator if the diff is very long
+    fn format_edit_diff_result(&self, invocation: ToolInvocation, diff_content: &str) -> String {
+        // Extract file path from the invocation input
+        let file_path = invocation
+            .input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown file");
+
+        // Count lines for potential truncation
+        let lines: Vec<&str> = diff_content.lines().collect();
+        let line_count = lines.len();
+        const MAX_DIFF_LINES: usize = 50;
+
+        // Truncate if too long
+        let (display_content, truncated) = if line_count > MAX_DIFF_LINES {
+            let truncated_lines: String = lines[..MAX_DIFF_LINES].join("\n");
+            (truncated_lines, true)
+        } else {
+            (diff_content.to_string(), false)
+        };
+
+        if self.highlighting_enabled {
+            // Highlight the diff
+            let highlighted_diff = highlight_with_basic_colors(&display_content);
+
+            // Build output with header
+            let mut output = String::new();
+
+            // File path header with box drawing
+            output.push_str(&format!("\x1b[36m── {} ──\x1b[0m\n", file_path));
+
+            // The highlighted diff content wrapped in diff fences
+            output.push_str("```diff\n");
+            output.push_str(&highlighted_diff);
+            if !highlighted_diff.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("```\n");
+
+            // Truncation indicator
+            if truncated {
+                output.push_str(&format!(
+                    "\x1b[90m... {} more lines\x1b[0m\n",
+                    line_count - MAX_DIFF_LINES
+                ));
+            }
+
+            output
+        } else {
+            // Plain text format
+            let mut output = String::new();
+
+            // Simple header
+            output.push_str(&format!("-- {} --\n", file_path));
+
+            // Plain diff content
+            output.push_str("```diff\n");
+            output.push_str(&display_content);
+            if !display_content.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push_str("```\n");
+
+            // Truncation indicator
+            if truncated {
+                output.push_str(&format!("... {} more lines\n", line_count - MAX_DIFF_LINES));
+            }
+
+            output
         }
     }
 
