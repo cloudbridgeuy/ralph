@@ -7,8 +7,8 @@ use super::events::StreamEvent;
 
 /// Parse accumulated text from stream events into typed chunks.
 ///
-/// Takes accumulated text from assistant events (obtained via [`accumulate_text`] or
-/// [`TextAccumulator`]) and parses it into typed chunks: prose, code, and diff.
+/// Takes accumulated text from assistant events (obtained via [`accumulate_text`])
+/// and parses it into typed chunks: prose, code, and diff.
 ///
 /// This is a convenience function that applies the chunk parsing logic from
 /// [`crate::chunk::parse_chunks`] to text extracted from stream events.

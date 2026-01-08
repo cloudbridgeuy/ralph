@@ -34,3 +34,100 @@ acceptance = [
   "Works with partial file reads (offset/limit parameters)",
   "Non-cat-n format content passed through unchanged",
 ]
+
+# =============================================================================
+# Documentation
+# =============================================================================
+
+[[stories]]
+category = "internal"
+description = "Create comprehensive README with installation and usage"
+steps = [
+  "Write project overview explaining ralph's purpose",
+  "Document installation methods (cargo install, from source)",
+  "Add quick start guide with basic usage examples",
+  "Include configuration section with link to detailed docs",
+  "Add screenshots or terminal output examples",
+]
+passes = true
+acceptance = [
+  "README explains what ralph does in first paragraph",
+  "Installation instructions work on macOS, Linux, Windows",
+  "Quick start shows ralph run with minimal setup",
+  "Links to detailed documentation for advanced topics",
+  "Examples show actual terminal output",
+]
+
+[[stories]]
+category = "internal"
+description = "Document all CLI commands and flags"
+steps = [
+  "Create docs/cli-reference.md with full CLI documentation",
+  "Document ralph run with all flags and defaults",
+  "Document ralph replay, sessions, themes, iterations commands",
+  "Include examples for common workflows",
+  "Document environment variable alternatives",
+]
+passes = true
+acceptance = [
+  "Every CLI flag documented with description and default",
+  "All subcommands have dedicated sections",
+  "Environment variables listed (RALPH_THEME, RALPH_CONFIG_DIR)",
+  "Examples show real command invocations",
+  "Short form flags documented (-n, -a, etc.)",
+]
+
+[[stories]]
+category = "internal"
+description = "Document configuration file format"
+steps = [
+  "Create docs/configuration.md with config file documentation",
+  "Document config file locations per platform",
+  "Document all config sections ([theme], etc.)",
+  "Explain precedence order (CLI > env > config > defaults)",
+  "Include complete example config.toml",
+]
+passes = true
+acceptance = [
+  "Config paths documented for macOS, Linux, Windows",
+  "All config options documented with types and defaults",
+  "Precedence order clearly explained",
+  "Example config.toml covers all available options",
+  "Custom theme file usage documented",
+]
+
+[[stories]]
+category = "internal"
+description = "Document PRD file format and workflow"
+steps = [
+  "Create docs/prd-format.md explaining story structure",
+  "Document required and optional fields for stories",
+  "Explain category values and when to use each",
+  "Show example PRD file with multiple stories",
+  "Document how ralph uses PRD for iteration tracking",
+]
+passes = false
+acceptance = [
+  "Story schema documented (category, description, steps, passes)",
+  "All category values listed with descriptions",
+  "Example shows realistic multi-story PRD",
+  "Workflow explained (pending → in progress → completed)",
+  "Optional fields documented (actor, acceptance)",
+]
+
+[[stories]]
+category = "internal"
+description = "Add inline documentation for public APIs"
+steps = [
+  "Audit all public functions and structs for /// docs",
+  "Add missing documentation with examples where helpful",
+  "Ensure cargo doc generates without warnings",
+  "Add module-level //! docs to all modules",
+]
+passes = true
+acceptance = [
+  "Every public item has /// documentation",
+  "Module docs explain purpose and contents",
+  "cargo doc --no-deps builds without warnings",
+  "Complex functions include usage examples",
+]

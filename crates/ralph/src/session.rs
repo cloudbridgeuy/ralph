@@ -180,7 +180,7 @@ pub fn resolve_session_slug(user_slug: Option<&str>) -> Result<String, SessionEr
 /// Create a session directory and initialize metadata files.
 ///
 /// This function:
-/// 1. Creates the session directory at ~/.config/ralph/sessions/<slug>/
+/// 1. Creates the session directory at `~/.config/ralph/sessions/{slug}/`
 /// 2. Writes session.toml with initial metadata
 /// 3. Appends an entry to ~/.config/ralph/sessions.toml
 ///

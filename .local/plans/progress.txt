@@ -864,3 +864,38 @@ Updated the `normalize_cat_n_format` function in `read.rs`:
 ### All PRD Stories Complete
 
 All stories in the PRD now have `passes = true`.
+
+---
+
+## 2026-01-08: Fix Rustdoc Warnings and Update PRD
+
+**Completed**: Fix cargo doc warnings and update PRD to reflect completed documentation stories
+
+### Background
+
+The PRD had several documentation stories marked as `passes = false` even though the actual documentation already existed (README.md, docs/cli-reference.md, docs/configuration.md). Additionally, `cargo doc --no-deps` was generating 2 warnings that needed to be fixed.
+
+### Changes Made
+
+1. **Fixed rustdoc warnings**:
+   - `crates/core/src/stream/chunks.rs:11`: Removed reference to non-existent `TextAccumulator` type in doc comment
+   - `crates/ralph/src/session.rs:183`: Changed `<slug>` to `{slug}` to avoid HTML tag interpretation
+
+2. **Updated PRD** (`prd.toml`):
+   - Marked "Create comprehensive README with installation and usage" as `passes = true`
+   - Marked "Document all CLI commands and flags" as `passes = true`
+   - Marked "Document configuration file format" as `passes = true`
+   - Marked "Add inline documentation for public APIs" as `passes = true`
+
+### Files Changed
+- `crates/core/src/stream/chunks.rs`: Fixed broken doc link
+- `crates/ralph/src/session.rs`: Fixed HTML tag in doc comment
+- `.local/plans/prd.toml`: Updated 4 documentation stories to passes = true
+
+### Verification
+- `cargo doc --no-deps` now completes with 0 warnings
+- `cargo xtask lint` passes all checks (fmt, check, clippy, tests)
+
+### Remaining Pending Story
+One documentation story remains incomplete:
+- "Document PRD file format and workflow" - requires creating `docs/prd-format.md`
