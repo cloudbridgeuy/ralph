@@ -16,3 +16,21 @@ acceptance = [
   "Syntax highlighting on code content remains clearly readable",
   "Works well on both dark and light terminal themes",
 ]
+
+[[stories]]
+category = "ui"
+description = "Remove arrow from Read tool line number format"
+steps = [
+  "Detect Read tool result content with cat -n format (number→content)",
+  "Replace arrow separator (→) with pipe separator (│)",
+  "Preserve original line numbers without renumbering",
+  "Apply transformation before syntax highlighting",
+]
+passes = true
+acceptance = [
+  "Line format transforms from '505→content' to '505 │ content'",
+  "Arrow character (→) no longer appears in Read tool output",
+  "Line numbers remain left-aligned and readable",
+  "Works with partial file reads (offset/limit parameters)",
+  "Non-cat-n format content passed through unchanged",
+]

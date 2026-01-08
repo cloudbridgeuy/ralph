@@ -825,6 +825,42 @@ The new values:
 - ✅ Syntax highlighting on code content remains clearly readable (line numbers have bg color, content has syntax highlighting)
 - ✅ Works well on both dark and light terminal themes (24-bit RGB colors work across modern terminals)
 
+---
+
+## 2026-01-08: Read Tool Line Number Format Fix
+
+**Completed**: "Remove arrow from Read tool line number format" story from Layer 8 (UI Improvements)
+
+### Background
+
+The Read tool's verbose mode normalization was producing `1│ content` (no space before the pipe), but the PRD acceptance criteria specified `505 │ content` (space before and after the pipe). This was a format discrepancy that needed correction.
+
+### Implementation Details
+
+Updated the `normalize_cat_n_format` function in `read.rs`:
+
+1. **Format string change**:
+   - Before: `format!("{}│ {}", trimmed, rest)` → `1│ content`
+   - After: `format!("{} │ {}", trimmed, rest)` → `1 │ content`
+
+2. **Updated documentation**:
+   - Docstrings updated to reflect the correct output format
+   - Examples changed from `1│ content` to `1 │ content`
+
+3. **Updated tests**:
+   - All 11 unit tests updated with new expected format
+   - Tests cover: single/double/triple digit line numbers, multiple lines, pass-through cases, tabs in content, empty content, empty string, mixed lines, and offset reads
+
+### Files Changed
+- `crates/ralph/src/stream_processor/tool_results/read.rs`: Updated format string and all test expectations
+
+### Acceptance Criteria Verified
+- ✅ Line format transforms from '505→content' to '505 │ content'
+- ✅ Arrow character (→) no longer appears in Read tool output
+- ✅ Line numbers remain left-aligned and readable
+- ✅ Works with partial file reads (offset/limit parameters)
+- ✅ Non-cat-n format content passed through unchanged
+
 ### All PRD Stories Complete
 
-This was the last remaining story in the PRD. All stories now have `passes = true`.
+All stories in the PRD now have `passes = true`.
