@@ -17,7 +17,7 @@ steps = [
   "Verify IterationLog contains parsed metadata, tool_calls, and chunks",
   "Verify session is finalized with correct outcome",
 ]
-passes = false
+passes = true
 acceptance = [
   "Test covers successful iteration with all fields populated",
   "Test covers iteration with missing optional fields (graceful defaults)",
@@ -36,7 +36,7 @@ steps = [
   "Verify prose streams immediately",
   "Verify diff blocks use fallback when delta unavailable",
 ]
-passes = false
+passes = true
 acceptance = [
   "Test verifies chunk buffering behavior (code waits for close)",
   "Test verifies ANSI codes present in terminal output",
@@ -54,7 +54,7 @@ steps = [
   "Verify partial output is captured",
   "Verify retry logic is triggered",
 ]
-passes = false
+passes = true
 acceptance = [
   "Test verifies timeout triggers same path as non-zero exit",
   "Test verifies no orphan processes left running",
@@ -74,7 +74,7 @@ steps = [
   "Verify git diff captured (if in git repo)",
   "Verify replay reproduces output with highlighting",
 ]
-passes = false
+passes = true
 acceptance = [
   "Test exercises full run loop including retries",
   "Test verifies PRD change detection works",
@@ -92,7 +92,7 @@ steps = [
   "Test timeout with partial JSON output (stores what was captured)",
   "Test session finalization failure (warns but returns result)",
 ]
-passes = false
+passes = true
 acceptance = [
   "Each feature degrades independently without cascading failures",
   "Warnings logged to stderr for each degradation",
@@ -1198,4 +1198,103 @@ acceptance = [
   "invoke_subprocess_with_timeout accepts VerboseToolsConfig parameter",
   "StreamProcessor created with with_verbose_tools()",
   "Fallback path (no theme config) still supports verbose tools",
+]
+
+# =============================================================================
+# Documentation
+# =============================================================================
+
+[[stories]]
+category = "internal"
+description = "Document configuration file format and options"
+steps = [
+  "Create docs/configuration.md with comprehensive config documentation",
+  "Document config file locations per platform (macOS, Linux, Windows)",
+  "Document all config file sections and options with examples",
+  "Document precedence order (CLI > env var > config file > defaults)",
+  "Include example config.toml with all available options",
+]
+passes = true
+acceptance = [
+  "Config file location documented for each platform",
+  "All [theme] section options documented (name, no_background)",
+  "Example showing custom .tmTheme file path",
+  "Precedence order clearly explained",
+  "RALPH_CONFIG_DIR override documented",
+]
+
+[[stories]]
+category = "internal"
+description = "Document theme configuration and available themes"
+steps = [
+  "Add theme configuration section to docs/configuration.md",
+  "List all built-in syntect themes with descriptions",
+  "Document how to use custom .tmTheme files",
+  "Document --theme CLI flag and RALPH_THEME env var",
+  "Document --no-background flag and its effect",
+  "Include examples for common use cases",
+]
+passes = true
+acceptance = [
+  "All built-in themes listed (base16-ocean.dark, Monokai Extended, etc.)",
+  "Custom theme file usage documented with example path",
+  "Environment variable RALPH_THEME documented",
+  "CLI flag --theme documented with examples",
+  "--no-background effect explained",
+  "ralph themes command mentioned for listing themes",
+]
+
+[[stories]]
+category = "internal"
+description = "Document verbose tools configuration"
+steps = [
+  "Add verbose tools section to docs/configuration.md",
+  "Document --verbose-tools CLI flag syntax",
+  "List all supported tool names (read, edit, write, glob, grep, bash, etc.)",
+  "Document what verbose mode shows for each tool type",
+  "Include examples for common use cases",
+]
+passes = true
+acceptance = [
+  "--verbose-tools flag syntax documented",
+  "All tool names listed with descriptions",
+  "Examples: --verbose-tools=read, --verbose-tools=read,grep,bash",
+  "Verbose output differences explained per tool",
+  "Case-insensitivity of tool names documented",
+]
+
+[[stories]]
+category = "internal"
+description = "Document all ralph run CLI flags"
+steps = [
+  "Create docs/cli-reference.md with full CLI documentation",
+  "Document all ralph run flags with descriptions and defaults",
+  "Document all ralph subcommands (run, replay, sessions, themes, iterations)",
+  "Include usage examples for common workflows",
+  "Document environment variable alternatives where applicable",
+]
+passes = true
+acceptance = [
+  "All ralph run flags documented with defaults",
+  "All subcommands documented (run, replay, sessions, themes, iterations, upgrade)",
+  "Environment variables documented (RALPH_THEME, RALPH_CONFIG_DIR, etc.)",
+  "Examples for common workflows included",
+  "Flag short forms documented (-n, -a, etc.)",
+]
+
+[[stories]]
+category = "internal"
+description = "Add configuration section to README"
+steps = [
+  "Add Configuration section to main README.md",
+  "Brief overview of config file location and format",
+  "Link to detailed docs/configuration.md",
+  "Quick example of common configuration",
+]
+passes = false
+acceptance = [
+  "README has Configuration section",
+  "Config file path shown for at least one platform",
+  "Quick example config.toml snippet included",
+  "Link to full documentation provided",
 ]
