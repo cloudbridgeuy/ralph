@@ -12,6 +12,7 @@
 
 use crate::iteration::IterationLog;
 use crate::run::{run, RunConfig};
+use crate::summarize::SummarizeConfig;
 use ralph_core::context::ContextPaths;
 use std::fs;
 use std::sync::Mutex;
@@ -73,6 +74,10 @@ fn create_test_config(paths: ContextPaths, command: String) -> RunConfig {
         custom_prompt: false,
         custom_completion_marker: false,
         custom_additional_prompt: false,
+        summarize_config: SummarizeConfig {
+            disabled: true, // Disable summarization in tests
+            ..Default::default()
+        },
     }
 }
 
@@ -516,6 +521,10 @@ fn test_no_iterations_when_at_limit() {
         custom_prompt: false,
         custom_completion_marker: false,
         custom_additional_prompt: false,
+        summarize_config: SummarizeConfig {
+            disabled: true,
+            ..Default::default()
+        },
     };
 
     let result = run(config);

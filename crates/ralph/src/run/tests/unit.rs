@@ -1,6 +1,7 @@
 //! Unit tests for run module.
 
 use crate::run::{run, RunConfig, RunError};
+use crate::summarize::SummarizeConfig;
 use ralph_core::context::ContextPaths;
 use std::fs;
 use tempfile::TempDir;
@@ -32,6 +33,10 @@ fn create_test_config(paths: ContextPaths) -> RunConfig {
         custom_prompt: false,
         custom_completion_marker: false,
         custom_additional_prompt: false,
+        summarize_config: SummarizeConfig {
+            disabled: true, // Disable summarization in tests
+            ..Default::default()
+        },
     }
 }
 

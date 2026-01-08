@@ -20,6 +20,7 @@ use crate::startup::{
 use crate::subprocess::{
     invoke_subprocess_with_spinner, invoke_subprocess_with_timeout, SubprocessError,
 };
+use crate::summarize::{maybe_summarize_progress, SummarizeConfig};
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::context::ContextPaths;
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
@@ -70,6 +71,8 @@ pub struct RunConfig {
     pub custom_completion_marker: bool,
     /// Whether user provided additional prompt instructions.
     pub custom_additional_prompt: bool,
+    /// Configuration for progress file auto-summarization.
+    pub summarize_config: SummarizeConfig,
 }
 
 /// Result of running the iteration loop.
@@ -412,6 +415,16 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
                 session_slug,
                 iterations_completed: relative_iteration, // Include this completed iteration
             });
+        }
+
+        // Attempt progress file summarization if configured
+        if config.summarize_config.should_summarize() {
+            if let Err(e) =
+                maybe_summarize_progress(&config.context_paths.progress, &config.summarize_config)
+            {
+                // Log warning but don't fail the run
+                eprintln!("Warning: Failed to summarize progress file: {}", e);
+            }
         }
 
         // Capture git diff

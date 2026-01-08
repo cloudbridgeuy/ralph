@@ -26,6 +26,7 @@ pub mod spinner;
 pub mod startup;
 pub mod stream_processor;
 pub mod subprocess;
+pub mod summarize;
 
 use clap::Parser;
 use cli::{Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
@@ -35,6 +36,7 @@ use ralph_core::session::SessionOutcome;
 use run::{run, RunConfig, RunError};
 use std::path::Path;
 use std::process::ExitCode;
+use summarize::SummarizeConfig;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -138,6 +140,9 @@ fn execute_run_with_prompting(
     let custom_completion_marker = args.completion_marker.is_some();
     let custom_additional_prompt = args.additional_prompt.is_some();
 
+    // Build summarization config from CLI args
+    let summarize_config = build_summarize_config(&args)?;
+
     loop {
         // Build run config, using the established session slug if we have one
         let config = RunConfig {
@@ -158,6 +163,7 @@ fn execute_run_with_prompting(
             custom_prompt,
             custom_completion_marker,
             custom_additional_prompt,
+            summarize_config: summarize_config.clone(),
         };
 
         // Execute the run loop
@@ -562,6 +568,57 @@ fn substitute_prompt_in_command(template: &str, prompt: &str) -> String {
     let escaped = prompt.replace('\'', "'\"'\"'");
     let quoted_prompt = format!("'{}'", escaped);
     template.replace("{prompt}", &quoted_prompt)
+}
+
+/// Build summarization config from CLI arguments.
+///
+/// Resolves the summarize prompt from file, stdin, inline string, or default.
+fn build_summarize_config(args: &RunArgs) -> Result<SummarizeConfig, Box<dyn std::error::Error>> {
+    // If --no-summarize is set, return disabled config
+    if args.no_summarize {
+        return Ok(SummarizeConfig {
+            disabled: true,
+            ..Default::default()
+        });
+    }
+
+    // Resolve summarize prompt (same pattern as resolve_additional_prompt)
+    let prompt = match args.summarize_prompt.as_deref() {
+        Some("-") => {
+            // Read from stdin
+            use std::io::Read;
+            let mut content = String::new();
+            std::io::stdin().read_to_string(&mut content)?;
+            content
+        }
+        Some(value) => {
+            // Check if it's a file path
+            let path = Path::new(value);
+            if path.exists() && path.is_file() {
+                std::fs::read_to_string(path)?
+            } else {
+                // Treat as inline string
+                value.to_string()
+            }
+        }
+        None => {
+            // Use default prompt
+            defaults::SUMMARIZE_PROMPT.to_string()
+        }
+    };
+
+    // Get command template
+    let command = args
+        .summarize_command
+        .clone()
+        .unwrap_or_else(|| defaults::SUMMARIZE_COMMAND.to_string());
+
+    Ok(SummarizeConfig {
+        max_lines: args.progress_max_lines,
+        command,
+        prompt,
+        disabled: false,
+    })
 }
 
 #[cfg(test)]

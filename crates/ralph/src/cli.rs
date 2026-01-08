@@ -22,6 +22,7 @@ pub struct Cli {
 
 /// Available subcommands.
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)] // RunArgs is large but this is CLI parsing, not hot path
 pub enum Commands {
     /// Run the iteration loop to process user stories.
     ///
@@ -213,6 +214,36 @@ pub struct RunArgs {
     /// Useful for adding project-specific or one-off instructions.
     #[arg(short = 'a', long)]
     pub additional_prompt: Option<String>,
+
+    /// Maximum lines in progress file before auto-summarization.
+    ///
+    /// After each iteration, if the progress file exceeds this line count,
+    /// it will be automatically summarized using the configured command.
+    /// Set to 0 to disable (default: 1000 lines).
+    #[arg(long, default_value_t = 1000)]
+    pub progress_max_lines: usize,
+
+    /// Command to invoke for progress file summarization.
+    ///
+    /// Used with {prompt} placeholder for the summarization prompt.
+    /// Default: claude -p {prompt}
+    #[arg(long, value_name = "COMMAND")]
+    pub summarize_command: Option<String>,
+
+    /// Custom prompt for progress file summarization.
+    ///
+    /// Supports file path, `-` for stdin, or inline string.
+    /// Placeholders: {progress_file}, {progress_content}
+    /// If not provided, uses a default summarization prompt.
+    #[arg(long, value_name = "PROMPT")]
+    pub summarize_prompt: Option<String>,
+
+    /// Disable automatic progress file summarization.
+    ///
+    /// When set, the progress file will never be automatically summarized,
+    /// regardless of its size.
+    #[arg(long)]
+    pub no_summarize: bool,
 }
 
 #[cfg(test)]
@@ -657,6 +688,88 @@ mod tests {
                 assert_eq!(args.outcome, Some("failed".to_string()));
             }
             _ => panic!("Expected Iterations command"),
+        }
+    }
+
+    // Progress summarization flag tests
+
+    #[test]
+    fn test_run_default_progress_max_lines() {
+        let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.progress_max_lines, 1000);
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_progress_max_lines() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--progress-max-lines", "500"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.progress_max_lines, 500);
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_summarize_command() {
+        let cli =
+            Cli::try_parse_from(["ralph", "run", "--summarize-command", "my-llm -p {prompt}"])
+                .unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(
+                    args.summarize_command,
+                    Some("my-llm -p {prompt}".to_string())
+                );
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_summarize_prompt() {
+        let cli = Cli::try_parse_from([
+            "ralph",
+            "run",
+            "--summarize-prompt",
+            "Summarize: {progress_content}",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(
+                    args.summarize_prompt,
+                    Some("Summarize: {progress_content}".to_string())
+                );
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_no_summarize() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--no-summarize"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert!(args.no_summarize);
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_default_no_summarize() {
+        let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert!(!args.no_summarize);
+            }
+            _ => panic!("Expected Run command"),
         }
     }
 }

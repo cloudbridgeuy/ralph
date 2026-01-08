@@ -15,6 +15,39 @@ pub mod defaults {
     /// Default path for the progress file.
     pub const PROGRESS_FILE: &str = ".local/plans/progress.txt";
 
+    /// Default command template for summarizing the progress file.
+    ///
+    /// Uses Claude CLI with just the prompt flag for quick summarization.
+    pub const SUMMARIZE_COMMAND: &str = "claude -p {prompt}";
+
+    /// Default prompt template for summarizing the progress file.
+    ///
+    /// # Placeholders
+    ///
+    /// - `{progress_file}` - Path to the progress file
+    /// - `{progress_content}` - Actual content of the progress file
+    pub const SUMMARIZE_PROMPT: &str = r#"You are summarizing a progress notes file for an LLM-driven development workflow.
+
+The file is located at: {progress_file}
+
+Current content:
+```
+{progress_content}
+```
+
+Your task is to create a condensed summary that:
+1. PRESERVES all key technical decisions and their rationale
+2. PRESERVES all blockers, open questions, and unresolved issues
+3. PRESERVES implementation details that would be needed to continue work
+4. REMOVES redundant entries (e.g., multiple "starting feature X" entries)
+5. REMOVES outdated information that has been superseded
+6. CONSOLIDATES related entries into coherent summaries
+7. MAINTAINS chronological context where it matters
+
+Target length: 200-500 lines (significantly shorter than the original)
+
+Output ONLY the summarized content, ready to replace the file. Do not include any preamble or explanation."#;
+
     /// Default command template for invoking the LLM.
     ///
     /// Uses Claude CLI with:
@@ -165,6 +198,35 @@ pub fn substitute_template_placeholders(
         .replace("{progress_file}", &paths.progress.display().to_string())
         .replace("{completion_marker}", completion_marker)
         .replace("{additional_prompt}", additional_prompt)
+}
+
+/// Substitute placeholders in a summarization prompt template.
+///
+/// This is a pure function that replaces summarization-specific placeholders.
+/// Unknown placeholders are left unchanged.
+///
+/// # Placeholders
+///
+/// - `{progress_file}` - Replaced with the progress file path
+/// - `{progress_content}` - Replaced with the actual content of the progress file
+///
+/// # Arguments
+///
+/// * `template` - The prompt template containing placeholders
+/// * `progress_path` - Path to the progress file
+/// * `progress_content` - Content of the progress file
+///
+/// # Returns
+///
+/// The template with all known placeholders replaced.
+pub fn substitute_summarize_placeholders(
+    template: &str,
+    progress_path: &str,
+    progress_content: &str,
+) -> String {
+    template
+        .replace("{progress_file}", progress_path)
+        .replace("{progress_content}", progress_content)
 }
 
 /// Result of checking which context files need to be touched.
@@ -558,5 +620,71 @@ mod tests {
         let result = substitute_template_placeholders(template, &paths, "DONE", "");
 
         assert_eq!(result, "Instructions");
+    }
+
+    // Tests for summarization defaults and functions
+
+    #[test]
+    fn test_default_summarize_command() {
+        assert!(defaults::SUMMARIZE_COMMAND.contains("{prompt}"));
+        assert!(defaults::SUMMARIZE_COMMAND.contains("claude"));
+    }
+
+    #[test]
+    fn test_default_summarize_prompt_contains_placeholders() {
+        assert!(defaults::SUMMARIZE_PROMPT.contains("{progress_file}"));
+        assert!(defaults::SUMMARIZE_PROMPT.contains("{progress_content}"));
+    }
+
+    #[test]
+    fn test_default_summarize_prompt_has_key_instructions() {
+        // Key instructions should be present
+        assert!(defaults::SUMMARIZE_PROMPT.contains("PRESERVES"));
+        assert!(defaults::SUMMARIZE_PROMPT.contains("REMOVES"));
+        assert!(defaults::SUMMARIZE_PROMPT.contains("200-500 lines"));
+    }
+
+    #[test]
+    fn test_substitute_summarize_placeholders() {
+        let template = "Path: {progress_file}\nContent: {progress_content}";
+        let result =
+            substitute_summarize_placeholders(template, "/path/to/progress.txt", "line 1\nline 2");
+
+        assert_eq!(
+            result,
+            "Path: /path/to/progress.txt\nContent: line 1\nline 2"
+        );
+    }
+
+    #[test]
+    fn test_substitute_summarize_placeholders_with_default_template() {
+        let result = substitute_summarize_placeholders(
+            defaults::SUMMARIZE_PROMPT,
+            "/project/progress.txt",
+            "## Entry 1\nDid some work",
+        );
+
+        assert!(result.contains("/project/progress.txt"));
+        assert!(result.contains("## Entry 1\nDid some work"));
+        assert!(!result.contains("{progress_file}"));
+        assert!(!result.contains("{progress_content}"));
+    }
+
+    #[test]
+    fn test_substitute_summarize_preserves_unknown_placeholders() {
+        let template = "{progress_file} {unknown} {another}";
+        let result = substitute_summarize_placeholders(template, "/path", "content");
+
+        assert!(result.contains("/path"));
+        assert!(result.contains("{unknown}"));
+        assert!(result.contains("{another}"));
+    }
+
+    #[test]
+    fn test_substitute_summarize_multiple_occurrences() {
+        let template = "{progress_file} repeated {progress_file}";
+        let result = substitute_summarize_placeholders(template, "/path", "");
+
+        assert_eq!(result, "/path repeated /path");
     }
 }
