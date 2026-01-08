@@ -943,3 +943,69 @@ Created `docs/prd-format.md` (~180 lines) with comprehensive PRD documentation:
 ### All PRD Stories Complete
 
 This was the final pending story. All stories in the PRD now have `passes = true`.
+
+---
+
+## 2026-01-08: New File Display Without Diff Format for Write Tool
+
+**Completed**: "Display new file content without diff format for Write tool" story from Write Tool Improvements section
+
+### Background
+
+Previously, when the Write tool created a new file, it would display the content using unified diff format with `+` markers on every line. This was visually noisy for new files where all content is "added". The improved display shows clean syntax-highlighted content with green line number backgrounds, matching the Edit tool's "After" block style.
+
+### Implementation Details
+
+1. **New file detection** (`format_write_result_with_snapshot`):
+   - Checks `snapshot.file_existed` flag to detect new files
+   - Routes new files to new clean display format
+   - Routes overwrites to existing unified diff format
+
+2. **Clean display functions** (`format_new_file_display`):
+   - `format_new_file_highlighted`: For terminal output with ANSI colors
+     - File header with box drawing characters and yellow "(new file)" indicator
+     - Green background (RGB 40, 90, 40) on line numbers only
+     - Syntax highlighting on content based on file extension
+     - Truncation at 50 lines with "... N more lines" indicator
+   - `format_new_file_plain`: For non-terminal output
+     - Simple "-- filename (new file) --" header
+     - Line numbers with pipe separator (matching Read tool style)
+     - Truncation indicator for large files
+
+3. **Success message handling** (`format_no_changes_message`):
+   - Shows "(new file)" for empty new files
+   - Shows "(no changes)" for overwrites with no diff
+
+### Files Changed
+- `crates/ralph/src/stream_processor/tool_results/write.rs`: Added ~130 lines for new file display
+
+### Tests Added
+- `test_format_new_file_plain_has_indicator`
+- `test_format_new_file_plain_no_diff_markers`
+- `test_format_new_file_plain_has_line_numbers`
+- `test_format_new_file_plain_truncation`
+- `test_format_new_file_highlighted_has_indicator`
+- `test_format_new_file_highlighted_has_green_background`
+- `test_format_new_file_highlighted_no_diff_markers`
+- `test_format_new_file_highlighted_truncation`
+- `test_format_no_changes_message_new_file`
+- `test_format_no_changes_message_overwrite`
+
+### Acceptance Criteria Verified
+- ✅ New files show clean syntax-highlighted content without +/- markers
+- ✅ Line numbers displayed with green background indicating addition
+- ✅ File header shows '(new file)' indicator
+- ✅ Overwrites still show unified diff as appropriate
+- ✅ Large new files truncated with '... N more lines' indicator
+
+### Example Output
+
+For a new Rust file:
+```
+── src/lib.rs (new file) ──
+ 1 │ pub fn hello() {
+ 2 │     println!("Hello, world!");
+ 3 │ }
+```
+
+With green background on line numbers and syntax highlighting on content.

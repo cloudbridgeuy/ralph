@@ -36,6 +36,45 @@ acceptance = [
 ]
 
 # =============================================================================
+# Write Tool Improvements
+# =============================================================================
+
+[[stories]]
+category = "ui"
+description = "Display new file content without diff format for Write tool"
+steps = [
+  "Detect when Write tool creates a new file (file didn't exist before)",
+  "For new files, display content with syntax highlighting but no diff markers",
+  "Show line numbers with green background (matching Edit tool style)",
+  "Keep diff format only for file overwrites where before content exists",
+]
+passes = true
+acceptance = [
+  "New files show clean syntax-highlighted content without +/- markers",
+  "Line numbers displayed with green background indicating addition",
+  "File header shows '(new file)' indicator",
+  "Overwrites still show before/after or unified diff as appropriate",
+  "Large new files truncated with '... N more lines' indicator",
+]
+
+[[stories]]
+category = "ui"
+description = "Use before/after display for Write tool overwrites"
+steps = [
+  "When Write tool overwrites existing file, capture before content",
+  "Display before block with red line number background",
+  "Display after block with green line number background",
+  "Apply syntax highlighting to both blocks",
+]
+passes = false
+acceptance = [
+  "Overwrites show before/after blocks like Edit tool",
+  "Syntax highlighting applied based on file extension",
+  "Line numbers right-aligned and consistent width",
+  "Horizontal rule separates before and after blocks",
+]
+
+# =============================================================================
 # Documentation
 # =============================================================================
 
