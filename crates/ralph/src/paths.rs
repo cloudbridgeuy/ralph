@@ -228,6 +228,7 @@ pub fn debug_paths() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
 
     // Helper to run a test with a temporary environment variable
@@ -272,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_dir_default() {
         without_env_var(RALPH_CONFIG_DIR_ENV, || {
             let path = config_dir();
@@ -280,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_dir_env_override() {
         with_env_var(RALPH_CONFIG_DIR_ENV, "/custom/config/path", || {
             let path = config_dir();
@@ -288,6 +291,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_dir_empty_env_uses_default() {
         with_env_var(RALPH_CONFIG_DIR_ENV, "", || {
             let path = config_dir();
@@ -297,6 +301,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_data_dir_default() {
         without_env_var(RALPH_DATA_DIR_ENV, || {
             let path = data_dir();
@@ -305,6 +310,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_data_dir_env_override() {
         with_env_var(RALPH_DATA_DIR_ENV, "/custom/data/path", || {
             let path = data_dir();
@@ -313,6 +319,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_data_dir_empty_env_uses_default() {
         with_env_var(RALPH_DATA_DIR_ENV, "", || {
             let path = data_dir();
@@ -322,6 +329,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_path_is_in_config_dir() {
         without_env_var(RALPH_CONFIG_DIR_ENV, || {
             let config = config_dir();
@@ -332,6 +340,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_path_respects_env_override() {
         with_env_var(RALPH_CONFIG_DIR_ENV, "/custom/config", || {
             let path = config_path();
@@ -340,6 +349,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_sessions_dir_is_in_data_dir() {
         without_env_var(RALPH_DATA_DIR_ENV, || {
             let data = data_dir();
@@ -350,6 +360,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_sessions_dir_respects_env_override() {
         with_env_var(RALPH_DATA_DIR_ENV, "/custom/data", || {
             let path = sessions_dir();
@@ -358,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_sessions_index_path_is_in_data_dir() {
         without_env_var(RALPH_DATA_DIR_ENV, || {
             let data = data_dir();
@@ -368,6 +380,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_sessions_index_path_respects_env_override() {
         with_env_var(RALPH_DATA_DIR_ENV, "/custom/data", || {
             let path = sessions_index_path();
@@ -376,6 +389,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_session_dir_structure() {
         without_env_var(RALPH_DATA_DIR_ENV, || {
             let path = session_dir("test-slug");
@@ -385,6 +399,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_session_dir_respects_env_override() {
         with_env_var(RALPH_DATA_DIR_ENV, "/custom/data", || {
             let path = session_dir("my-session");
@@ -393,6 +408,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_env_override_helper() {
         // Test with set variable
         with_env_var("TEST_VAR_12345", "/some/path", || {
@@ -408,6 +424,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_env_override_empty_returns_none() {
         with_env_var("TEST_VAR_EMPTY", "", || {
             let result = env_override("TEST_VAR_EMPTY");
@@ -426,6 +443,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_debug_paths_shows_env_override() {
         with_env_var(RALPH_CONFIG_DIR_ENV, "/custom/config", || {
             let debug = debug_paths();
@@ -435,6 +453,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_debug_paths_shows_platform_default() {
         without_env_var(RALPH_CONFIG_DIR_ENV, || {
             let debug = debug_paths();
@@ -443,6 +462,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_and_data_dirs_can_differ() {
         // On Linux, they should be different by default (config vs data dir)
         // On other platforms, they may be the same
