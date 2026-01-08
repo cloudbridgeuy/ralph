@@ -24,6 +24,9 @@ debug = 0
 
 [workspace.dependencies]
 
+# Ctrl+C / SIGINT handling
+ctrlc = "3.4"
+
 # Output formatting
 anstream = "0.6"
 
@@ -67,6 +70,7 @@ termimad = "0.30"
 serde_json = "1.0"
 
 # Testing
+serial_test = "3.2"
 tempfile = "3.10"
 thiserror = "1.0"
 
