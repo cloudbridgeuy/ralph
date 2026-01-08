@@ -139,3 +139,16 @@ pub struct KeyArgument {
     /// Whether this is a file path that should be shown in full.
     pub is_path: bool,
 }
+
+/// Snapshot of file content captured before an Edit tool execution.
+///
+/// Used to generate diffs by comparing the file content before and after
+/// the Edit tool runs, since Claude CLI returns success messages rather
+/// than diff content.
+#[derive(Debug, Clone)]
+pub struct EditSnapshot {
+    /// Path to the file being edited.
+    pub file_path: String,
+    /// Content of the file before the edit (None if file didn't exist).
+    pub content: Option<String>,
+}

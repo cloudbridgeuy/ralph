@@ -177,3 +177,76 @@ The spinner was not showing total session time correctly. The issue was:
 - During subsequent iterations: `⠋ Thinking... 8s • Total: 1m 45s`
 - Total time accumulates correctly across iterations
 - Iteration time continues counting even when spinner restarts after output gaps
+
+---
+
+## 2026-01-07: Edit Tool Diff Display
+
+**Completed**: Edit Tool Diff Display feature (3 stories from PRD)
+- "Capture file content before Edit tool execution"
+- "Generate diff when Edit tool result arrives"
+- "Display Edit tool diff with syntax highlighting"
+
+### Background
+
+Claude CLI's Edit tool returns success messages like "File updated", not actual diff content. To show meaningful diffs to the user, we need to:
+1. Capture file content before the edit executes
+2. Re-read the file after the edit completes
+3. Generate a unified diff between before/after
+4. Display with syntax highlighting
+
+### Implementation Details
+
+1. **EditSnapshot type** (`stream_processor/types.rs`):
+   - New struct storing file path and optional content (None if file didn't exist)
+   - Used to track state before Edit tool execution
+
+2. **Snapshot capture** (`stream_processor/event_handler.rs`):
+   - Added `pending_edit_snapshots: HashMap<String, EditSnapshot>` to StreamProcessor
+   - `capture_edit_snapshot()` function reads file content when Edit tool invocation detected
+   - Keyed by `tool_use_id` for correlation with results
+
+3. **Diff generation** (`stream_processor/tool_results/edit.rs`):
+   - Added `similar` crate for unified diff generation
+   - `generate_diff_from_snapshot()` compares before/after content
+   - `generate_unified_diff()` formats as standard unified diff format
+   - `format_edit_result_with_snapshot()` handles the new flow
+
+4. **Result processing** (`stream_processor/event_handler.rs`):
+   - When Edit tool result arrives:
+     - First check if result already contains diff content (existing behavior)
+     - If not, use snapshot to generate diff (new behavior)
+   - Snapshots cleaned up after processing
+
+5. **Display formatting** (`stream_processor/tool_results/edit.rs`):
+   - File path header with box drawing characters
+   - Diff coloring: green additions, red deletions
+   - Truncation at 50 lines with "... N more lines" indicator
+   - Non-terminal output shows plain text
+
+### Files Changed
+- `Cargo.toml` (workspace): Added `similar = "2.6"` dependency
+- `crates/ralph/Cargo.toml`: Added `similar` dependency
+- `crates/ralph/src/stream_processor/types.rs`: Added `EditSnapshot` struct
+- `crates/ralph/src/stream_processor/processor.rs`: Added `pending_edit_snapshots` field
+- `crates/ralph/src/stream_processor/event_handler.rs`: Snapshot capture and result processing
+- `crates/ralph/src/stream_processor/tool_results/edit.rs`: Diff generation and formatting
+- `crates/ralph/src/stream_processor/tool_results/mod.rs`: Re-export new function
+
+### Behavior
+- If Claude CLI returns diff content in result: displays it (backward compatible)
+- If result is success message: generates diff from snapshot and displays it
+- If file unchanged or couldn't be read: shows "Edit: /path (no changes)"
+- Error results skip diff generation and show error format
+
+### Tests
+All 9 existing edit_diff tests pass, covering:
+- File header display
+- Diff fence wrapping
+- Highlighting with terminal support
+- Error handling
+- Non-diff content fallback
+- Diff truncation
+- Non-Edit tool results
+- Pending invocation tracking
+- Unified diff format

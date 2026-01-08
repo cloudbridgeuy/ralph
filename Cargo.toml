@@ -60,6 +60,9 @@ reqwest = { version = "0.12", features = ["json"] }
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 
+# Diff generation
+similar = "2.6"
+
 # Syntax highlighting
 syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
 

@@ -14,7 +14,7 @@ use ralph_core::stream::{
 use std::collections::HashMap;
 use std::io::IsTerminal;
 
-use super::types::{StreamProcessorResult, VerboseToolsConfig};
+use super::types::{EditSnapshot, StreamProcessorResult, VerboseToolsConfig};
 
 /// A streaming processor for Claude's stream-json output.
 ///
@@ -58,6 +58,12 @@ pub struct StreamProcessor {
     pub(super) pending_invocations: HashMap<String, ToolInvocation>,
     /// Verbose tools configuration.
     pub(super) verbose_tools_config: VerboseToolsConfig,
+    /// Pending Edit tool snapshots keyed by tool_use_id.
+    ///
+    /// When an Edit tool invocation is detected, we capture the file content
+    /// before the edit runs. When the result arrives, we generate a diff
+    /// by comparing the snapshot with the current file content.
+    pub(super) pending_edit_snapshots: HashMap<String, EditSnapshot>,
 }
 
 impl Default for StreamProcessor {
@@ -97,6 +103,7 @@ impl StreamProcessor {
             response_count: 0,
             pending_invocations: HashMap::new(),
             verbose_tools_config: VerboseToolsConfig::new(),
+            pending_edit_snapshots: HashMap::new(),
         }
     }
 
@@ -186,6 +193,7 @@ impl StreamProcessor {
             response_count: 0,
             pending_invocations: HashMap::new(),
             verbose_tools_config: VerboseToolsConfig::new(),
+            pending_edit_snapshots: HashMap::new(),
         })
     }
 
@@ -224,6 +232,7 @@ impl StreamProcessor {
             response_count: 0,
             pending_invocations: HashMap::new(),
             verbose_tools_config: VerboseToolsConfig::new(),
+            pending_edit_snapshots: HashMap::new(),
         })
     }
 
@@ -264,6 +273,7 @@ impl StreamProcessor {
             response_count: 0,
             pending_invocations: HashMap::new(),
             verbose_tools_config: verbose_tools,
+            pending_edit_snapshots: HashMap::new(),
         })
     }
 

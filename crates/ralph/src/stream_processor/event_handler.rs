@@ -3,13 +3,16 @@
 //! This module implements the core event processing loop including
 //! JSON line parsing, event routing, and text/chunk output generation.
 
+use std::fs;
+
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
-use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent};
+use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
 use super::processor::StreamProcessor;
 use super::tool_display;
 use super::tool_results;
+use super::types::EditSnapshot;
 
 impl StreamProcessor {
     /// Process a single line of stream-json output.
@@ -81,6 +84,14 @@ impl StreamProcessor {
                     self.pending_invocations
                         .insert(invocation.id.clone(), invocation.clone());
 
+                    // Capture file content before Edit tool executes
+                    if invocation.name == "Edit" {
+                        if let Some(snapshot) = capture_edit_snapshot(invocation) {
+                            self.pending_edit_snapshots
+                                .insert(invocation.id.clone(), snapshot);
+                        }
+                    }
+
                     if self.show_tool_invocations {
                         let formatted = tool_display::format_tool_invocation(self, invocation);
                         output_parts.push(formatted);
@@ -107,8 +118,46 @@ impl StreamProcessor {
                             .as_ref()
                             .and_then(|id| self.pending_invocations.remove(id));
 
-                        let formatted =
-                            tool_results::format_tool_result_with_context(self, result, invocation);
+                        // Remove any pending Edit snapshot (cleanup)
+                        let snapshot = result
+                            .tool_use_id
+                            .as_ref()
+                            .and_then(|id| self.pending_edit_snapshots.remove(id));
+
+                        // Determine formatting approach for Edit tool results:
+                        // 1. If result already contains diff content, use that (existing behavior)
+                        // 2. Otherwise, try snapshot-based diff generation (new behavior)
+                        let formatted = if let (Some(ref inv), Some(snap)) = (&invocation, snapshot)
+                        {
+                            if inv.name == "Edit" && !result.is_error {
+                                // Check if result already contains diff content
+                                let has_diff_content = result
+                                    .content
+                                    .as_ref()
+                                    .map(|c| ralph_core::chunk::is_unfenced_diff(c))
+                                    .unwrap_or(false);
+
+                                if has_diff_content {
+                                    // Result contains diff - use existing formatting
+                                    tool_results::format_tool_result_with_context(
+                                        self,
+                                        result,
+                                        Some(inv.clone()),
+                                    )
+                                } else {
+                                    // No diff in result - generate from snapshot
+                                    tool_results::format_edit_result_with_snapshot(self, snap)
+                                }
+                            } else {
+                                // Error or non-Edit tool
+                                tool_results::format_tool_result_with_context(
+                                    self, result, invocation,
+                                )
+                            }
+                        } else {
+                            // No snapshot or invocation - use regular formatting
+                            tool_results::format_tool_result_with_context(self, result, invocation)
+                        };
                         output_parts.push(formatted);
                     }
                 }
@@ -238,4 +287,21 @@ impl StreamProcessor {
             Some(output)
         }
     }
+}
+
+/// Capture the current content of a file before an Edit tool modifies it.
+///
+/// This is a pure function that reads the file and returns a snapshot.
+/// Returns None if the file path cannot be extracted from the invocation input.
+fn capture_edit_snapshot(invocation: &ToolInvocation) -> Option<EditSnapshot> {
+    // Extract file path from invocation input
+    let file_path = invocation.input.get("file_path").and_then(|v| v.as_str())?;
+
+    // Read current content - Ok(content) if file exists, None if it doesn't
+    let content = fs::read_to_string(file_path).ok();
+
+    Some(EditSnapshot {
+        file_path: file_path.to_string(),
+        content,
+    })
 }

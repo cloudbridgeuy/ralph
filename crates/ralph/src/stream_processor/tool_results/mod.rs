@@ -16,6 +16,9 @@ use ralph_core::stream::{ToolInvocation, ToolResult};
 use super::processor::StreamProcessor;
 use super::utils::truncate_string;
 
+// Re-export for use in event_handler
+pub use edit::format_edit_result_with_snapshot;
+
 /// Format a tool result for display with optional context from the original invocation.
 ///
 /// When the original invocation is available and the tool is "Edit", this method
