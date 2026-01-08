@@ -5,7 +5,8 @@ use super::types::{StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRES
 use crate::highlight::ThemeConfig;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext};
-use crate::stream_processor::StreamProcessor;
+use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
+use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -26,6 +27,7 @@ use std::time::{Duration, Instant};
 /// * `timeout_secs` - Maximum duration in seconds before killing the subprocess
 /// * `theme_config` - Configuration for syntax highlighting theme
 /// * `session_elapsed_ms` - Accumulated time from previous iterations in this session
+/// * `verbose_tools` - Configuration for verbose tool output
 ///
 /// # Returns
 ///
@@ -36,6 +38,7 @@ use std::time::{Duration, Instant};
 /// ```no_run
 /// use ralph::subprocess::invoke_subprocess_with_spinner;
 /// use ralph::highlight::ThemeConfig;
+/// use ralph::stream_processor::VerboseToolsConfig;
 ///
 /// let config = ThemeConfig::new().with_theme("Monokai Extended");
 /// let result = invoke_subprocess_with_spinner(
@@ -43,6 +46,7 @@ use std::time::{Duration, Instant};
 ///     300,
 ///     config,
 ///     0, // No prior session time
+///     VerboseToolsConfig::new(),
 /// );
 /// ```
 pub fn invoke_subprocess_with_spinner(
@@ -50,6 +54,7 @@ pub fn invoke_subprocess_with_spinner(
     timeout_secs: u64,
     theme_config: ThemeConfig,
     session_elapsed_ms: u64,
+    verbose_tools: VerboseToolsConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     // Spawn subprocess with stdout/stderr captured and stdin inherited
     let mut child = Command::new("sh")
@@ -75,8 +80,12 @@ pub fn invoke_subprocess_with_spinner(
     let stdout_reader = BufReader::new(stdout);
     let stderr_reader = BufReader::new(stderr);
 
-    // Create stream processor with theme configuration
-    let mut processor = StreamProcessor::with_theme_config(theme_config)?;
+    // Check if stdout is a terminal for highlighting and tool display
+    let is_terminal = std::io::stdout().is_terminal();
+
+    // Create stream processor with theme configuration and verbose tools
+    let mut processor =
+        StreamProcessor::with_verbose_tools(theme_config, is_terminal, is_terminal, verbose_tools)?;
 
     // Create and start spinner
     let mut spinner = Spinner::with_session_elapsed(session_elapsed_ms);

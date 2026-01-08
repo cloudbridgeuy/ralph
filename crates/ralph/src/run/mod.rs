@@ -17,6 +17,7 @@ use crate::startup::{
     display_iteration_header, display_iteration_summary, display_startup_info, IterationHeader,
     IterationSummary, StartupInfo,
 };
+use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
     invoke_subprocess_with_spinner, invoke_subprocess_with_timeout, SubprocessError,
 };
@@ -73,6 +74,8 @@ pub struct RunConfig {
     pub custom_additional_prompt: bool,
     /// Configuration for progress file auto-summarization.
     pub summarize_config: SummarizeConfig,
+    /// Configuration for verbose tool output.
+    pub verbose_tools_config: VerboseToolsConfig,
 }
 
 /// Result of running the iteration loop.
@@ -114,6 +117,8 @@ struct InvocationConfig<'a> {
     theme_config: Option<&'a ThemeConfig>,
     /// Accumulated time from previous iterations (for spinner display).
     session_elapsed_ms: u64,
+    /// Configuration for verbose tool output.
+    verbose_tools_config: &'a VerboseToolsConfig,
 }
 
 /// Error type for run operations.
@@ -336,6 +341,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             iteration,
             theme_config: config.theme_config.as_ref(),
             session_elapsed_ms: total_duration_ms.unwrap_or(0),
+            verbose_tools_config: &config.verbose_tools_config,
         };
         let result = match invoke_with_failure_recovery(&invocation_config) {
             Ok(r) => r,
@@ -567,12 +573,17 @@ fn invoke_with_failure_recovery(
                     config.timeout_secs,
                     theme.clone(),
                     config.session_elapsed_ms,
+                    config.verbose_tools_config.clone(),
                 ) {
                     Ok(r) => Ok(r),
                     Err(e) => Err(e),
                 }
             }
-            None => invoke_subprocess_with_timeout(config.command, config.timeout_secs),
+            None => invoke_subprocess_with_timeout(
+                config.command,
+                config.timeout_secs,
+                config.verbose_tools_config.clone(),
+            ),
         };
 
         let result = match result {

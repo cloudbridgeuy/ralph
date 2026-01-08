@@ -12,6 +12,7 @@
 
 use crate::iteration::IterationLog;
 use crate::run::{run, RunConfig};
+use crate::stream_processor::VerboseToolsConfig;
 use crate::summarize::SummarizeConfig;
 use ralph_core::context::ContextPaths;
 use std::fs;
@@ -78,6 +79,7 @@ fn create_test_config(paths: ContextPaths, command: String) -> RunConfig {
             disabled: true, // Disable summarization in tests
             ..Default::default()
         },
+        verbose_tools_config: VerboseToolsConfig::new(),
     }
 }
 
@@ -525,6 +527,7 @@ fn test_no_iterations_when_at_limit() {
             disabled: true,
             ..Default::default()
         },
+        verbose_tools_config: VerboseToolsConfig::new(),
     };
 
     let result = run(config);

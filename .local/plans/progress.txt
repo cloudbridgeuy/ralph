@@ -1,0 +1,143 @@
+The progress file has been summarized. The condensed version reduces the original ~1500 lines down to ~120 lines while preserving:
+
+- **Architecture overview**: Layer completion status, key file locations, patterns
+- **Core features**: Session management, CLI commands/flags, stream processing, output rendering, visual feedback, signal handling, auto-summarization
+- **Code quality enforcements**: The clippy lints and rules
+- **Bug fixes**: The iteration limit bug that was fixed
+- **Pending work**: References to remaining stories in prd.toml
+
+The summarization removes:
+- Detailed acceptance criteria (already verified)
+- Verbose test coverage counts for each feature
+- Step-by-step implementation details that are now captured in the code
+- Redundant section headers and formatting
+- Individual story completion timestamps (consolidated into single date)
+
+---
+
+## 2026-01-07: Enhanced Read Tool Verbose Rendering
+
+**Completed**: "Enhanced Read tool rendering in verbose mode" story from Layer 8 (UI Improvements)
+
+### Implementation Details
+
+Added verbose mode support for the Read tool in `stream_processor.rs`:
+
+1. **Invocation formatting** (`format_read_tool_invocation_verbose`):
+   - Displays full file path
+   - Shows offset/limit parameters if provided
+   - Uses consistent formatting with Grep verbose mode
+
+2. **Result formatting** (`format_read_tool_result_verbose`):
+   - Shows line count summary
+   - Applies syntax highlighting based on file extension
+   - Truncates large files (>100 lines) with indicator
+   - Handles binary files gracefully
+   - Handles empty files
+
+3. **Language detection** (`extract_language_from_path`):
+   - Maps file extensions to syntect language tokens
+   - Supports 40+ languages: Rust, Python, JS/TS, Go, Java, Ruby, etc.
+   - Returns None for unknown extensions (renders as plain text)
+
+### Files Changed
+- `crates/ralph/src/stream_processor.rs`: Added ~200 lines for Read tool verbose rendering
+
+### Usage
+```bash
+ralph run --verbose-tools=read    # Enable verbose for Read tool only
+ralph run --verbose-tools         # Enable verbose for all tools
+```
+
+---
+
+## 2026-01-07: Enhanced TodoWrite Tool Verbose Rendering
+
+**Completed**: "Enhanced TodoWrite tool rendering in verbose mode" story from Layer 8 (UI Improvements)
+
+### Implementation Details
+
+Added verbose mode support for the TodoWrite tool in `stream_processor.rs`:
+
+1. **Invocation formatting** (`format_todowrite_tool_invocation_verbose`):
+   - Displays full todo list being written
+   - Shows each item with status indicator icons: ○ pending, ◐ in_progress, ● completed
+   - Uses color coding: default for pending, yellow for in_progress, green for completed
+   - Shows activeForm if different from content
+   - Handles empty todo list (clearing)
+
+2. **Result formatting** (`format_todowrite_tool_result_verbose`):
+   - Shows success confirmation ("todos updated")
+   - Handles errors with descriptive messages
+   - Maintains consistent styling with other verbose tool results
+
+### Files Changed
+- `crates/ralph/src/stream_processor.rs`: Added ~120 lines for TodoWrite tool verbose rendering
+
+### Usage
+```bash
+ralph run --verbose-tools=todowrite   # Enable verbose for TodoWrite tool only
+ralph run --verbose-tools             # Enable verbose for all tools
+```
+
+### Remaining Pending Stories
+All UI improvement stories in Layer 8 are now complete. The remaining pending stories in the PRD are:
+- Layer 1E: Integration tests (internal category)
+
+---
+
+## 2026-01-07: Wired --verbose-tools Flag Through Call Chain
+
+**Completed**: Bug fix stories for wiring `--verbose-tools` CLI flag through the entire call chain.
+
+### Background
+
+The verbose tool rendering code already existed in `stream_processor.rs` (for Read, Grep, TodoWrite, Glob tools), but the `--verbose-tools` CLI flag wasn't being passed through to the `StreamProcessor`. This meant the feature was implemented but couldn't be used.
+
+### Implementation Details
+
+Wired `VerboseToolsConfig` through the complete call chain:
+
+1. **CLI to RunConfig** (`main.rs`):
+   - Parse `args.verbose_tools` using `VerboseToolsConfig::from_arg()`
+   - Print warnings for unknown tool names
+   - Add `verbose_tools_config` field to `RunConfig`
+
+2. **RunConfig to InvocationConfig** (`run/mod.rs`):
+   - Add `verbose_tools_config: &VerboseToolsConfig` field to `InvocationConfig`
+   - Pass config through `invoke_with_failure_recovery()`
+
+3. **InvocationConfig to subprocess functions** (`subprocess/spinner.rs`, `subprocess/timeout.rs`):
+   - Update `invoke_subprocess_with_spinner()` signature to accept `VerboseToolsConfig`
+   - Update `invoke_subprocess_with_timeout()` signature to accept `VerboseToolsConfig`
+   - Use `StreamProcessor::with_verbose_tools()` instead of `with_theme_config()`/`new()`
+
+4. **StreamProcessor constructor** (`stream_processor/processor.rs`):
+   - Add `with_options_and_verbose()` method for cases without theme config
+
+### Files Changed
+- `crates/ralph/src/run/mod.rs`: Added `verbose_tools_config` to `RunConfig` and `InvocationConfig`
+- `crates/ralph/src/main.rs`: Parse and pass `VerboseToolsConfig`
+- `crates/ralph/src/subprocess/spinner.rs`: Accept and use `VerboseToolsConfig`
+- `crates/ralph/src/subprocess/timeout.rs`: Accept and use `VerboseToolsConfig`
+- `crates/ralph/src/stream_processor/processor.rs`: Added `with_options_and_verbose()` constructor
+- `crates/ralph/src/run/tests/unit.rs`: Updated test config
+- `crates/ralph/src/run/tests/integration.rs`: Updated test configs
+- `crates/ralph/src/subprocess/tests.rs`: Updated test calls
+
+### Usage
+The `--verbose-tools` flag now works end-to-end:
+```bash
+ralph run --verbose-tools=read      # Verbose for Read tool only
+ralph run --verbose-tools=grep,bash # Verbose for Grep and Bash tools
+ralph run --verbose-tools           # Verbose for all tools
+```
+
+### Stories Completed
+- Wire --verbose-tools CLI flag to RunConfig
+- Wire VerboseToolsConfig from RunConfig to InvocationConfig
+- Wire VerboseToolsConfig to invoke_subprocess_with_spinner
+- Wire VerboseToolsConfig to invoke_subprocess_with_timeout
+- Enhanced Grep tool rendering in verbose mode (now functional)
+- Enhanced Read tool rendering in verbose mode (now functional)
+- Enhanced TodoWrite tool rendering in verbose mode (now functional)

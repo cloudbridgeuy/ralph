@@ -36,6 +36,7 @@ use ralph_core::session::SessionOutcome;
 use run::{run, RunConfig, RunError};
 use std::path::Path;
 use std::process::ExitCode;
+use stream_processor::VerboseToolsConfig;
 use summarize::SummarizeConfig;
 
 fn main() -> ExitCode {
@@ -143,6 +144,13 @@ fn execute_run_with_prompting(
     // Build summarization config from CLI args
     let summarize_config = build_summarize_config(&args)?;
 
+    // Parse verbose tools config from CLI args
+    let verbose_tools_config = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
+    // Print warnings about unknown tool names
+    for warning in verbose_tools_config.warnings() {
+        eprintln!("Warning: {}", warning);
+    }
+
     loop {
         // Build run config, using the established session slug if we have one
         let config = RunConfig {
@@ -164,6 +172,7 @@ fn execute_run_with_prompting(
             custom_completion_marker,
             custom_additional_prompt,
             summarize_config: summarize_config.clone(),
+            verbose_tools_config: verbose_tools_config.clone(),
         };
 
         // Execute the run loop

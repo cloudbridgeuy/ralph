@@ -1,7 +1,7 @@
 //! Tests for subprocess invocation functions.
 
 use super::*;
-use crate::stream_processor::StreamProcessorResult;
+use crate::stream_processor::{StreamProcessorResult, VerboseToolsConfig};
 
 #[test]
 fn test_invoke_subprocess_success() {
@@ -57,7 +57,8 @@ fn test_invoke_subprocess_command_not_found() {
 #[test]
 fn test_invoke_with_timeout_completes_quickly() {
     // Fast command should complete before timeout
-    let result = invoke_subprocess_with_timeout("echo 'hello'", 10).unwrap();
+    let result =
+        invoke_subprocess_with_timeout("echo 'hello'", 10, VerboseToolsConfig::new()).unwrap();
     assert_eq!(result.exit_code, 0);
     // stream processor parses JSON, so plain text won't be captured meaningfully
 }
@@ -65,7 +66,7 @@ fn test_invoke_with_timeout_completes_quickly() {
 #[test]
 fn test_invoke_with_timeout_times_out() {
     // Use a very short timeout (1 second) with a command that sleeps
-    let result = invoke_subprocess_with_timeout("sleep 10", 1);
+    let result = invoke_subprocess_with_timeout("sleep 10", 1, VerboseToolsConfig::new());
     match result {
         Err(SubprocessError::Timeout {
             timeout_secs,
@@ -83,7 +84,11 @@ fn test_invoke_with_timeout_times_out() {
 fn test_invoke_with_timeout_captures_partial_output() {
     // Command that outputs something then sleeps
     // Using a very short timeout to catch it mid-output
-    let result = invoke_subprocess_with_timeout("echo 'first'; sleep 10; echo 'never_reached'", 1);
+    let result = invoke_subprocess_with_timeout(
+        "echo 'first'; sleep 10; echo 'never_reached'",
+        1,
+        VerboseToolsConfig::new(),
+    );
     match result {
         Err(SubprocessError::Timeout { partial_result, .. }) => {
             // The partial result should exist, even if raw_text is empty
@@ -98,7 +103,7 @@ fn test_invoke_with_timeout_captures_partial_output() {
 #[test]
 fn test_invoke_with_timeout_non_zero_exit() {
     // Command that fails should return the exit code, not timeout
-    let result = invoke_subprocess_with_timeout("exit 42", 10).unwrap();
+    let result = invoke_subprocess_with_timeout("exit 42", 10, VerboseToolsConfig::new()).unwrap();
     assert_eq!(result.exit_code, 42);
 }
 

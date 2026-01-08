@@ -1,7 +1,8 @@
 //! Subprocess invocation with timeout enforcement.
 
 use super::types::{StreamingSubprocessResult, SubprocessError};
-use crate::stream_processor::StreamProcessor;
+use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
+use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -18,6 +19,7 @@ use std::time::{Duration, Instant};
 ///
 /// * `command` - The command string to execute (should produce stream-json output)
 /// * `timeout_secs` - Maximum duration in seconds before killing the subprocess
+/// * `verbose_tools` - Configuration for verbose tool output
 ///
 /// # Returns
 ///
@@ -28,11 +30,13 @@ use std::time::{Duration, Instant};
 ///
 /// ```no_run
 /// use ralph::subprocess::invoke_subprocess_with_timeout;
+/// use ralph::stream_processor::VerboseToolsConfig;
 ///
 /// // Run with 5 minute timeout
 /// let result = invoke_subprocess_with_timeout(
 ///     "claude --output-format stream-json -p 'hello'",
-///     300
+///     300,
+///     VerboseToolsConfig::new(),
 /// );
 ///
 /// match result {
@@ -47,6 +51,7 @@ use std::time::{Duration, Instant};
 pub fn invoke_subprocess_with_timeout(
     command: &str,
     timeout_secs: u64,
+    verbose_tools: VerboseToolsConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     // Spawn subprocess with stdout/stderr captured and stdin inherited
     let mut child = Command::new("sh")
@@ -72,8 +77,12 @@ pub fn invoke_subprocess_with_timeout(
     let stdout_reader = BufReader::new(stdout);
     let stderr_reader = BufReader::new(stderr);
 
-    // Create stream processor
-    let mut processor = StreamProcessor::new();
+    // Check if stdout is a terminal for highlighting and tool display
+    let is_terminal = std::io::stdout().is_terminal();
+
+    // Create stream processor with verbose tools configuration
+    let mut processor =
+        StreamProcessor::with_options_and_verbose(is_terminal, is_terminal, verbose_tools);
 
     // Create channel to receive stderr from background thread
     let (stderr_tx, stderr_rx) = mpsc::channel::<String>();

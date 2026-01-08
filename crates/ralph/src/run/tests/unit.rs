@@ -1,6 +1,7 @@
 //! Unit tests for run module.
 
 use crate::run::{run, RunConfig, RunError};
+use crate::stream_processor::VerboseToolsConfig;
 use crate::summarize::SummarizeConfig;
 use ralph_core::context::ContextPaths;
 use std::fs;
@@ -37,6 +38,7 @@ fn create_test_config(paths: ContextPaths) -> RunConfig {
             disabled: true, // Disable summarization in tests
             ..Default::default()
         },
+        verbose_tools_config: VerboseToolsConfig::new(),
     }
 }
 

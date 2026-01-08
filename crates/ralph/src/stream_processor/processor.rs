@@ -126,6 +126,26 @@ impl StreamProcessor {
         }
     }
 
+    /// Create a processor with custom settings and verbose tools configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `highlighting` - Whether to apply syntax highlighting
+    /// * `show_tools` - Whether to display tool invocations
+    /// * `verbose_tools` - Configuration for verbose tool output
+    pub fn with_options_and_verbose(
+        highlighting: bool,
+        show_tools: bool,
+        verbose_tools: VerboseToolsConfig,
+    ) -> Self {
+        Self {
+            highlighting_enabled: highlighting,
+            show_tool_invocations: show_tools,
+            verbose_tools_config: verbose_tools,
+            ..Self::new()
+        }
+    }
+
     /// Create a processor with custom theme configuration.
     ///
     /// # Arguments
