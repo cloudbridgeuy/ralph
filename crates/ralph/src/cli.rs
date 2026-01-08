@@ -244,6 +244,19 @@ pub struct RunArgs {
     /// regardless of its size.
     #[arg(long)]
     pub no_summarize: bool,
+
+    /// Enable verbose output for specific tools.
+    ///
+    /// Accepts a comma-separated list of tool names (case-insensitive).
+    /// When verbose is enabled for a tool, full input/output is shown
+    /// instead of truncated summaries.
+    ///
+    /// Examples:
+    ///   --verbose-tools              Enable verbose for all tools
+    ///   --verbose-tools=grep,bash    Enable for Grep and Bash only
+    ///   --verbose-tools=read         Enable for Read only
+    #[arg(long, value_name = "TOOLS", num_args = 0..=1, default_missing_value = "*")]
+    pub verbose_tools: Option<String>,
 }
 
 #[cfg(test)]
@@ -768,6 +781,64 @@ mod tests {
         match cli.command {
             Commands::Run(args) => {
                 assert!(!args.no_summarize);
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    // Verbose tools flag tests
+
+    #[test]
+    fn test_run_without_verbose_tools() {
+        let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert!(args.verbose_tools.is_none());
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_verbose_tools_all() {
+        // --verbose-tools without value enables all tools (uses default_missing_value)
+        let cli = Cli::try_parse_from(["ralph", "run", "--verbose-tools"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.verbose_tools, Some("*".to_string()));
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_verbose_tools_specific() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--verbose-tools=grep,bash"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.verbose_tools, Some("grep,bash".to_string()));
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_verbose_tools_single() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--verbose-tools=read"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.verbose_tools, Some("read".to_string()));
+            }
+            _ => panic!("Expected Run command"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_verbose_tools_space_separated() {
+        let cli = Cli::try_parse_from(["ralph", "run", "--verbose-tools", "grep,read"]).unwrap();
+        match cli.command {
+            Commands::Run(args) => {
+                assert_eq!(args.verbose_tools, Some("grep,read".to_string()));
             }
             _ => panic!("Expected Run command"),
         }

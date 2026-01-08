@@ -1,0 +1,1851 @@
+# Ralph Run Command - Product Requirements Document
+#
+# Stories are organized in implementation layers:
+# 1. Core Loop + Basic Storage (first milestone)
+# 1C. JSON Streaming Support (Claude CLI stream-json output)
+# 2. CLI Interface
+# 3. Output Formatting
+# 4. Error Handling
+# 5. Auxiliary Commands
+
+# =============================================================================
+# Layer 1: Core Loop + Basic Storage
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Parse PRD file and count pending stories"
+steps = [
+  "Read TOML file from specified path",
+  "Deserialize into structure with [[stories]] array",
+  "Extract `passed` boolean from each story",
+  "Count stories where passed = false",
+  "Return count and raw file content for snapshot",
+]
+passes = true
+acceptance = [
+  "Returns error if file doesn't exist",
+  "Returns error if TOML is malformed",
+  "Returns error if no [[stories]] entries exist",
+  "Ignores all fields except `passed`",
+]
+
+[[stories]]
+category = "functional"
+description = "Touch missing context files on initialization"
+steps = [
+  "Check if design doc exists at path",
+  "Check if progress file exists at path",
+  "Create empty file for each missing one",
+  "Print notice to stderr for each created file",
+]
+passes = true
+acceptance = [
+  "PRD is NOT created if missing (error instead)",
+  "Design doc created at default .claude/designs/design.md",
+  "Progress file created at default .claude/plans/progress.txt",
+  "Parent directories created if needed",
+]
+
+[[stories]]
+category = "functional"
+description = "Generate memorable session slugs"
+steps = [
+  "Maintain list of adjectives (quiet, fuzzy, bright, etc.)",
+  "Maintain list of nouns (mountain, walrus, river, etc.)",
+  "Combine random adjective + noun",
+  "Check uniqueness against sessions.toml",
+  "Regenerate if collision detected",
+]
+passes = true
+acceptance = [
+  "Slugs are lowercase with hyphen separator",
+  "At least 50 adjectives and 50 nouns for variety",
+  "Collision check prevents duplicates",
+]
+
+[[stories]]
+category = "functional"
+description = "Initialize session directory and metadata"
+steps = [
+  "Create directory at ~/.config/ralph/sessions/<slug>/",
+  "Write session.toml with initial metadata",
+  "Append entry to ~/.config/ralph/sessions.toml",
+  "Set outcome to 'in_progress'",
+]
+passes = true
+acceptance = [
+  "Directory created with proper permissions",
+  "sessions.toml created if it doesn't exist",
+  "Metadata includes: slug, project path, started_at, outcome",
+]
+
+[[stories]]
+category = "functional"
+description = "Invoke LLM subprocess and capture output"
+steps = [
+  "Build command string from template",
+  "Spawn subprocess with stdout/stderr capture",
+  "Stream stdout to terminal in real-time",
+  "Capture full output for storage",
+  "Wait for process completion",
+  "Return exit code and captured output",
+]
+passes = true
+acceptance = [
+  "Subprocess inherits stdin for interactive prompts",
+  "stdout streams to terminal as it arrives",
+  "stderr captured separately",
+  "Exit code available after completion",
+]
+
+[[stories]]
+category = "functional"
+description = "Write iteration log after each iteration"
+steps = [
+  "Create iteration-N.toml in session directory",
+  "Record sequence number and timestamps",
+  "Store raw output as single prose chunk",
+  "Record exit code",
+  "Record pending_before and pending_after counts",
+]
+passes = true
+acceptance = [
+  "File written immediately after iteration completes",
+  "TOML format matches architecture spec",
+  "Content preserved exactly (no transformation yet)",
+]
+
+[[stories]]
+category = "functional"
+description = "Detect PRD changes between iterations"
+steps = [
+  "Snapshot PRD content before iteration",
+  "Re-read PRD content after iteration",
+  "Compare byte-for-byte",
+  "Return whether content changed",
+]
+passes = true
+acceptance = [
+  "Comparison is exact (not semantic)",
+  "Whitespace changes count as changes",
+  "File must be re-read from disk (not cached)",
+]
+
+[[stories]]
+category = "functional"
+description = "Detect completion conditions"
+steps = [
+  "Check if pending story count is zero",
+  "Scan output for completion marker string",
+  "Return completion reason if either condition met",
+]
+passes = true
+acceptance = [
+  "Default marker is <promise>COMPLETE</promise>",
+  "Marker can be customized via flag",
+  "Zero pending stories triggers completion",
+  "Marker in output triggers completion",
+]
+
+[[stories]]
+category = "functional"
+description = "Capture git diff after each iteration"
+steps = [
+  "Check if current directory is a git repository",
+  "Run git diff to capture uncommitted changes",
+  "Write diff output to iteration-N.diff",
+  "Warn and continue if git unavailable",
+]
+passes = true
+acceptance = [
+  "Captures both staged and unstaged changes",
+  "Empty diff file is valid (no changes)",
+  "Non-git directory logs warning, doesn't fail",
+  "Diff file stored alongside iteration log",
+]
+
+[[stories]]
+category = "functional"
+description = "Execute iteration loop with all checks"
+steps = [
+  "Pre-check: exit if zero pending stories",
+  "Snapshot PRD content",
+  "Invoke LLM subprocess",
+  "Write iteration log",
+  "Capture git diff",
+  "Post-check: error if PRD unchanged",
+  "Post-check: exit if zero pending or marker found",
+  "Increment iteration counter and loop",
+]
+passes = true
+acceptance = [
+  "Loop respects max iteration count",
+  "Loop exits cleanly on completion",
+  "Loop errors on stuck state (PRD unchanged)",
+  "Session outcome updated on exit",
+]
+
+# =============================================================================
+# Layer 1C: JSON Streaming Support
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Define Rust types for stream-json events"
+steps = [
+  "Create StreamEvent enum with System, Assistant, User, Result variants",
+  "Create SystemInitEvent struct with session_id, model, tools fields",
+  "Create AssistantEvent struct with message.content array",
+  "Create ContentBlock enum for text vs tool_use content",
+  "Create UserEvent struct with tool_use_id and tool_result",
+  "Create ResultEvent struct with duration_ms, total_cost_usd, usage",
+  "Use serde tag-based deserialization on 'type' field",
+]
+passes = true
+acceptance = [
+  "All event types deserialize from real Claude stream-json output",
+  "Unknown fields ignored via #[serde(flatten)] or deny_unknown_fields = false",
+  "Missing optional fields default gracefully",
+  "Round-trip serialization preserves data",
+]
+
+[[stories]]
+category = "functional"
+description = "Parse newline-delimited JSON from stream-json output"
+steps = [
+  "Read stdout line by line from subprocess",
+  "Parse each line as JSON using serde_json",
+  "Deserialize into StreamEvent enum",
+  "Yield parsed events to caller",
+  "Handle malformed JSON gracefully (log warning, continue)",
+]
+passes = true
+acceptance = [
+  "Parses all event types from Claude stream-json output",
+  "Handles partial/incomplete lines at stream end",
+  "Reports parse errors to stderr without crashing",
+  "Empty lines are skipped",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract text content from assistant events"
+steps = [
+  "Iterate through message.content array",
+  "Filter for ContentBlock::Text variants",
+  "Concatenate text fields in order",
+  "Return combined text string",
+]
+passes = true
+acceptance = [
+  "Extracts text from single-content messages",
+  "Handles multi-content messages (text + tool_use mixed)",
+  "Returns empty string for tool-only messages",
+  "Preserves text ordering from content array",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract tool invocations from assistant events"
+steps = [
+  "Iterate through message.content array",
+  "Filter for ContentBlock::ToolUse variants",
+  "Extract tool name, id, and input for each",
+  "Return list of ToolInvocation structs",
+]
+passes = true
+acceptance = [
+  "Extracts all tool calls from a message",
+  "Preserves tool_use IDs for correlation with user events",
+  "Handles messages with no tool use (returns empty list)",
+  "Input field preserved as serde_json::Value",
+]
+
+[[stories]]
+category = "functional"
+description = "Accumulate text across streaming assistant events"
+steps = [
+  "Maintain buffer for current response text",
+  "As each assistant event arrives, extract and append text",
+  "Track message ID to detect new vs continuing messages",
+  "Return complete text when message ID changes or stream ends",
+]
+passes = true
+acceptance = [
+  "Multiple assistant events for same message combined correctly",
+  "New message ID starts fresh accumulation",
+  "Final text matches what would appear in plain-text mode",
+]
+
+[[stories]]
+category = "functional"
+description = "Parse accumulated text into typed chunks"
+steps = [
+  "Take accumulated text from assistant events",
+  "Apply existing chunk parsing logic (prose/code/diff detection)",
+  "Detect fenced code blocks with language hints",
+  "Detect diff patterns (```diff or heuristic)",
+  "Return ordered list of typed Chunk structs",
+]
+passes = true
+acceptance = [
+  "Code blocks extracted with language metadata",
+  "Diff blocks detected and typed correctly",
+  "Prose sections preserved between code/diff blocks",
+  "Output matches plain-text chunk parsing",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract metadata from system init event"
+steps = [
+  "Parse system event with subtype 'init'",
+  "Extract session_id field",
+  "Extract model field",
+  "Extract tools array",
+  "Return IterationMetadata struct",
+]
+passes = true
+acceptance = [
+  "Session ID captured from init event",
+  "Model name recorded",
+  "Tool list captured for auditing",
+  "Missing fields handled gracefully",
+]
+
+[[stories]]
+category = "functional"
+description = "Extract costs and usage from result event"
+steps = [
+  "Parse result event at stream end",
+  "Extract total_cost_usd field",
+  "Extract duration_ms field",
+  "Extract usage object with token counts",
+  "Return IterationCosts struct",
+]
+passes = true
+acceptance = [
+  "Total cost captured in USD",
+  "Duration recorded in milliseconds",
+  "Input/output token counts extracted",
+  "Cache read/creation tokens extracted if present",
+]
+
+[[stories]]
+category = "functional"
+description = "Store metadata in iteration logs"
+steps = [
+  "Extend iteration-N.toml schema with metadata section",
+  "Add claude_session_id field",
+  "Add model field",
+  "Add cost_usd field",
+  "Add duration_ms field",
+  "Add usage subsection with token counts",
+]
+passes = true
+acceptance = [
+  "Metadata section present in iteration logs",
+  "All fields populated from JSON events",
+  "Backward compatible (old logs without metadata still parse)",
+  "Session summary can aggregate costs across iterations",
+]
+
+[[stories]]
+category = "functional"
+description = "Correlate tool calls with tool results"
+steps = [
+  "Track pending tool_use IDs from assistant events",
+  "When user event arrives, match tool_use_id to pending call",
+  "Create ToolInteraction struct pairing call with result",
+  "Handle missing results gracefully (tool may have failed)",
+]
+passes = true
+acceptance = [
+  "Each tool call paired with its result",
+  "tool_use_id used as correlation key",
+  "Unpaired calls tracked separately (in case of errors)",
+  "Multiple concurrent tool calls handled correctly",
+]
+
+[[stories]]
+category = "functional"
+description = "Store tool interactions in iteration logs"
+steps = [
+  "Extend iteration-N.toml schema with [[tool_calls]] array",
+  "Record tool name, input arguments, and result for each call",
+  "Include timing if available (from event timestamps)",
+  "Truncate large results to reasonable size for storage",
+]
+passes = true
+acceptance = [
+  "All tool calls recorded in iteration log",
+  "Input and output preserved for debugging",
+  "Large file contents truncated with indicator",
+  "Tool call order preserved",
+]
+
+[[stories]]
+category = "functional"
+description = "Update default command template for JSON output"
+steps = [
+  "Change default command to include --output-format stream-json",
+  "Ensure prompt still substituted correctly",
+  "Document the JSON requirement in help text",
+]
+passes = true
+acceptance = [
+  "Default: claude --permission-mode acceptEdits --output-format stream-json -p {prompt}",
+  "Custom commands can override format",
+  "Help text explains JSON output requirement",
+]
+
+# =============================================================================
+# Layer 2: CLI Interface
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Implement ralph run subcommand with arguments"
+steps = [
+  "Add Run variant to SubCommands enum",
+  "Define RunApp struct with clap derives",
+  "Add optional iterations positional argument",
+  "Add --slug, --prompt, --command flags",
+  "Add --design, --prd, --progress path flags",
+  "Add --retry and --completion-marker flags",
+  "Wire up to run module entry point",
+]
+passes = true
+acceptance = [
+  "All flags documented with help text",
+  "Default values match architecture spec",
+  "Iterations defaults to pending count if omitted",
+]
+
+[[stories]]
+category = "functional"
+description = "Substitute placeholders in prompt template"
+steps = [
+  "Load prompt template (built-in or from file/stdin)",
+  "Replace {design_file} with resolved path",
+  "Replace {prd_file} with resolved path",
+  "Replace {progress_file} with resolved path",
+  "Return substituted prompt string",
+]
+passes = true
+acceptance = [
+  "Built-in default template used if no --prompt",
+  "File path reads template from disk",
+  "Dash (-) reads from stdin",
+  "Unknown placeholders left unchanged",
+]
+
+[[stories]]
+category = "functional"
+description = "Substitute placeholders in command template"
+steps = [
+  "Load command template (built-in or from flag)",
+  "Replace {prompt} with the substituted prompt",
+  "Return final command string for execution",
+]
+passes = true
+acceptance = [
+  "Default command is: claude --permission-mode acceptEdits --output-format stream-json -p {prompt}",
+  "Prompt value properly escaped for shell",
+  "Custom commands can use any structure",
+]
+
+# =============================================================================
+# Layer 3: Output Formatting
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Parse output stream into typed chunks"
+steps = [
+  "Scan output for fenced code blocks (```)",
+  "Detect language hint after opening fence",
+  "Scan for diff patterns (explicit ```diff or heuristic)",
+  "Classify remaining content as prose",
+  "Return ordered list of typed chunks",
+]
+passes = true
+acceptance = [
+  "Code blocks extracted with language metadata",
+  "Explicit ```diff fences detected",
+  "Heuristic diff detection for unfenced unified diffs",
+  "Prose chunks contain markdown content",
+]
+
+[[stories]]
+category = "functional"
+description = "Buffer incomplete chunks during streaming"
+steps = [
+  "Accumulate output in buffer",
+  "Detect chunk boundaries (fence open/close, diff headers)",
+  "Emit complete chunks immediately",
+  "Hold incomplete chunks until boundary found",
+  "Flush remaining buffer on stream end",
+]
+passes = true
+acceptance = [
+  "Code blocks not emitted until closing ``` seen",
+  "Diff blocks buffered until non-diff line seen",
+  "Prose streams more eagerly (line-by-line)",
+  "Final flush handles unterminated blocks",
+]
+
+[[stories]]
+category = "functional"
+description = "Apply syntax highlighting to code chunks"
+steps = [
+  "Detect if stdout is a terminal",
+  "Use syntect library for syntax highlighting",
+  "Select syntax based on language hint",
+  "Render highlighted code to terminal",
+  "Fall back to plain output if not a terminal",
+]
+passes = true
+acceptance = [
+  "Common languages highlighted (rust, python, js, etc.)",
+  "Unknown languages rendered without highlighting",
+  "Piped output is plain text (no ANSI codes)",
+  "Highlighting doesn't break code content",
+]
+
+[[stories]]
+category = "functional"
+description = "Apply diff highlighting with fallback chain"
+steps = [
+  "Check if delta is installed (which delta)",
+  "If found, pipe diff through delta --paging=never",
+  "If not, check for diff with --color support",
+  "If not, apply basic +/- line coloring inline",
+  "Render result to terminal",
+]
+passes = true
+acceptance = [
+  "Delta used when available",
+  "No pager mode (--paging=never)",
+  "Graceful fallback to simpler tools",
+  "Basic coloring works without external tools",
+]
+
+[[stories]]
+category = "functional"
+description = "Store typed chunks in iteration logs"
+steps = [
+  "Update iteration-N.toml to use [[chunks]] array",
+  "Record type field (prose, code, diff)",
+  "Record language field for code chunks",
+  "Record content field with raw text",
+]
+passes = true
+acceptance = [
+  "Chunks stored in order they appeared",
+  "Language metadata preserved for replay",
+  "Content stored exactly as captured",
+]
+
+# =============================================================================
+# Layer 4: Error Handling
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Implement retry logic on subprocess failure"
+steps = [
+  "Detect non-zero exit code from LLM",
+  "Print captured stdout and stderr",
+  "Decrement retry counter",
+  "Re-invoke subprocess if retries remain",
+  "Proceed to interactive prompt if exhausted",
+]
+passes = true
+acceptance = [
+  "Default retry count is 3",
+  "Configurable via --retry flag",
+  "Each retry prints attempt number",
+  "Output from failed attempt shown before retry",
+]
+
+[[stories]]
+category = "functional"
+description = "Prompt user on unrecoverable failure"
+steps = [
+  "Display failure summary",
+  "Prompt: Retry or Abort?",
+  "On Retry: reset retry counter, re-invoke",
+  "On Abort: update session outcome, exit",
+]
+passes = true
+acceptance = [
+  "Prompt only shown after retries exhausted",
+  "Interactive prompt works in terminal",
+  "Non-interactive mode (piped stdin) aborts",
+  "Session marked as 'failed' or 'aborted' appropriately",
+]
+
+[[stories]]
+category = "functional"
+description = "Error on stuck state when PRD unchanged"
+steps = [
+  "Compare PRD snapshot to post-iteration content",
+  "If identical, print error message",
+  "Suggest checking progress.txt for notes",
+  "Update session outcome to 'failed'",
+  "Exit loop immediately",
+]
+passes = true
+acceptance = [
+  "Clear error message explains the problem",
+  "Actionable suggestion for debugging",
+  "Session properly finalized",
+  "Iteration log still written for debugging",
+]
+
+# =============================================================================
+# Layer 5: Auxiliary Commands
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Implement ralph replay command"
+steps = [
+  "Add Replay variant to SubCommands",
+  "Accept session slug as argument",
+  "Look up session in sessions.toml",
+  "Read iteration logs in sequence",
+  "Re-render chunks with syntax highlighting",
+]
+passes = true
+acceptance = [
+  "Error if session not found",
+  "Iterations displayed in order",
+  "Formatting matches original output",
+  "Works with sessions from any project",
+]
+
+[[stories]]
+category = "functional"
+description = "Implement ralph sessions command"
+steps = [
+  "Add Sessions variant to SubCommands",
+  "Read ~/.config/ralph/sessions.toml",
+  "List all sessions with key metadata",
+  "Format as table: slug, project, date, iterations, outcome",
+]
+passes = true
+acceptance = [
+  "Shows all sessions across all projects",
+  "Sorted by date (most recent first)",
+  "Truncates long project paths gracefully",
+  "Empty state shows helpful message",
+]
+
+[[stories]]
+category = "internal"
+description = "Write default prompt template"
+steps = [
+  "Draft prompt based on original bash script",
+  "Include placeholders for context files",
+  "Include instructions for single-feature focus",
+  "Include PRD update and progress.txt instructions",
+  "Include commit instruction without attribution",
+  "Include completion marker instruction",
+]
+passes = true
+acceptance = [
+  "Prompt works with claude CLI out of the box",
+  "All placeholders documented",
+  "Instructions are clear and actionable",
+]
+
+# =============================================================================
+# Layer 1D: Stream-JSON Integration (Wire Parsing to Run Loop)
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Fix session outcome for user abort and retry flow"
+steps = [
+  "Move session finalization from run() to execute_run_with_prompting()",
+  "Pass session slug back from run() even on failure",
+  "When user aborts at prompt, finalize with SessionOutcome::Aborted",
+  "When user retries, continue same session instead of creating new one",
+  "Update iterations count across retries",
+]
+passes = true
+acceptance = [
+  "Session outcome is 'aborted' when user chooses abort at prompt",
+  "User retry continues same session (not new slug)",
+  "iterations field aggregates across retries within same session",
+  "User-provided slug works correctly with retry flow",
+  "Auto-generated slug doesn't change on retry",
+]
+
+[[stories]]
+category = "functional"
+description = "Apply syntax highlighting during streaming output"
+steps = [
+  "Parse JSON stream events as they arrive (not after subprocess completes)",
+  "Extract text from assistant events incrementally",
+  "Feed text through StreamingChunkBuffer line-by-line",
+  "Apply syntax highlighting to complete chunks immediately",
+  "Output highlighted chunks to terminal in real-time",
+  "Fall back to plain output when stdout is not a terminal",
+]
+passes = true
+acceptance = [
+  "Code blocks highlighted with syntect as soon as closing fence detected",
+  "Diff blocks highlighted with delta/fallback as they complete",
+  "Prose streams line-by-line without buffering",
+  "Non-terminal output remains plain text (no ANSI codes)",
+  "No broken syntax highlighting artifacts from partial chunks",
+  "Performance acceptable (no noticeable lag vs raw streaming)",
+]
+
+[[stories]]
+category = "ui"
+description = "Progressive prose streaming with small buffer"
+steps = [
+  "Buffer prose text in small chunks (e.g., 3-5 lines)",
+  "Flush buffered prose to terminal after threshold reached",
+  "Continue buffering next chunk while user reads",
+  "Keep code and diff blocks fully buffered until complete",
+  "Apply markdown formatting to each flushed prose chunk",
+]
+passes = true
+acceptance = [
+  "Prose appears progressively (few lines at a time, not all at once)",
+  "User gets context quickly without waiting for full response",
+  "Code blocks still wait for closing fence before display",
+  "Diff blocks still wait for completion before display",
+  "Buffer size is tunable (default ~3-5 lines)",
+  "Partial sentences at buffer boundary handled gracefully",
+  "Works correctly with markdown formatting across buffer boundaries",
+]
+
+[[stories]]
+category = "functional"
+description = "Preserve whitespace in streamed output"
+steps = [
+  "Track and preserve blank lines between paragraphs",
+  "Preserve leading indentation in code blocks",
+  "Preserve trailing newlines at end of chunks",
+  "Handle whitespace at buffer boundaries (don't collapse or duplicate)",
+  "Preserve spacing in lists and nested structures",
+]
+passes = true
+acceptance = [
+  "Blank lines between paragraphs not collapsed",
+  "Code block indentation preserved exactly",
+  "No extra newlines inserted between chunks",
+  "No newlines lost between chunks",
+  "Whitespace-only lines preserved (not trimmed)",
+  "Output matches original LLM response byte-for-byte for whitespace",
+  "Works correctly when prose buffer flushes mid-paragraph",
+]
+
+[[stories]]
+category = "ui"
+description = "Visually separate distinct assistant responses"
+steps = [
+  "Detect when a new assistant message begins (new message ID or event boundary)",
+  "Insert blank line between consecutive assistant responses",
+  "Ensure tool invocation/result cycles don't break response flow",
+  "Handle rapid successive responses gracefully",
+]
+passes = true
+acceptance = [
+  "Blank line inserted between separate assistant responses",
+  "Responses within same message not separated (continuous flow)",
+  "Tool use in middle of response doesn't cause extra separation",
+  "User can visually distinguish where one response ends and next begins",
+  "Works correctly with streaming (separation after response complete)",
+]
+
+[[stories]]
+category = "ui"
+description = "Display tool invocations during ralph run"
+steps = [
+  "Detect tool_use content blocks in assistant events",
+  "Print tool name and key arguments when tool is invoked",
+  "Print tool result summary when user event arrives",
+  "Handle tool errors distinctly from successes",
+]
+passes = true
+acceptance = [
+  "User sees which tool is being called (e.g., 'Read', 'Edit', 'Glob')",
+  "User sees key arguments (e.g., file path, pattern)",
+  "Tool result shown (truncated if large)",
+  "Tool errors highlighted distinctly (red/warning)",
+  "Multiple concurrent tools displayed correctly",
+  "Output is clean when stdout is not a terminal",
+]
+
+[[stories]]
+category = "ui"
+description = "Display code blocks with syntax highlighting during ralph run"
+steps = [
+  "Detect fenced code blocks in assistant text",
+  "Extract language hint from opening fence",
+  "Buffer code until closing fence detected",
+  "Apply syntax highlighting using syntect",
+  "Print highlighted code with visible fence markers",
+]
+passes = true
+acceptance = [
+  "syntect used for code syntax highlighting",
+  "Code blocks visually distinct from prose",
+  "Language-appropriate syntax highlighting applied",
+  "Opening fence shows language (e.g., '```rust')",
+  "Closing fence clearly visible",
+  "Indentation within code preserved exactly",
+  "Unknown languages rendered without highlighting (not error)",
+  "Large code blocks not truncated during display",
+]
+
+[[stories]]
+category = "ui"
+description = "Display diff blocks with highlighting during ralph run"
+steps = [
+  "Detect diff content (```diff fence or heuristic patterns)",
+  "Buffer diff until block complete",
+  "Apply diff highlighting (delta if available, fallback otherwise)",
+  "Print highlighted diff with clear boundaries",
+]
+passes = true
+acceptance = [
+  "Diff blocks visually distinct from prose and code",
+  "Added lines (+) shown in green",
+  "Removed lines (-) shown in red",
+  "Context lines shown in neutral color",
+  "Diff headers (@@, ---, +++) formatted appropriately",
+  "Works with delta when installed",
+  "Falls back gracefully when delta unavailable",
+  "Unfenced diffs detected by heuristic patterns",
+]
+
+[[stories]]
+category = "functional"
+description = "Implement subprocess timeout for LLM invocation"
+steps = [
+  "Add --timeout CLI flag with default value (e.g., 10 minutes)",
+  "Modify invoke_subprocess to accept timeout parameter",
+  "Use tokio::time::timeout or std::process with timeout wrapper",
+  "On timeout: kill subprocess and capture partial output",
+  "Treat timeout as subprocess failure (apply retry logic)",
+  "Include timeout duration in error message",
+]
+passes = true
+acceptance = [
+  "Default timeout is sensible (e.g., 600 seconds / 10 minutes)",
+  "Custom timeout configurable via --timeout flag",
+  "Timeout triggers same retry logic as non-zero exit code",
+  "Partial output captured and displayed before retry",
+  "Subprocess is properly killed on timeout (no orphan processes)",
+  "Error message indicates timeout vs other failures",
+]
+
+[[stories]]
+category = "functional"
+description = "Integrate stream-json parsing into run loop"
+steps = [
+  "Replace raw stdout storage with parse_stream_output() call",
+  "Extract metadata using extract_metadata_from_events()",
+  "Correlate tool calls using correlate_tool_interactions()",
+  "Accumulate assistant text using accumulate_text()",
+  "Parse accumulated text into chunks using parse_chunks()",
+  "Populate IterationLog with extracted metadata, tool_calls, and chunks",
+  "Remove TODO comments from run.rs:174-176",
+]
+passes = true
+acceptance = [
+  "IterationLog.metadata populated with session_id, model, cost_usd, duration_ms, usage",
+  "IterationLog.tool_calls contains all tool invocations with correlated results",
+  "IterationLog.chunks contains parsed prose/code/diff chunks instead of raw stdout",
+  "Replay command displays rich metadata (model, cost, duration)",
+  "Parsing errors logged to stderr without crashing the run loop",
+  "Graceful degradation if stream-json format changes (log warning, store raw)",
+]
+
+[[stories]]
+category = "ui"
+description = "Allow user to configure syntect theme"
+steps = [
+  "Add --theme CLI flag to ralph run command",
+  "Support built-in syntect theme names (e.g., 'Monokai', 'Solarized')",
+  "Support custom theme file path (e.g., --theme /path/to/theme.tmTheme)",
+  "Add RALPH_THEME environment variable as fallback",
+  "Store theme preference in config file (~/.config/ralph/config.toml)",
+  "Add --no-background flag to disable theme background colors",
+  "Use sensible default theme when not specified",
+]
+passes = true
+acceptance = [
+  "User can select built-in theme via --theme flag",
+  "User can specify custom .tmTheme file path",
+  "Environment variable RALPH_THEME works as fallback",
+  "Config file stores persistent theme preference",
+  "CLI flag overrides env var overrides config file",
+  "Invalid theme path shows helpful error message",
+  "Unknown built-in theme name shows available options",
+  "Theme applies to code blocks, inline code, and diffs",
+  "--no-background disables theme background colors",
+  "Without background, console default background is used",
+  "RALPH_NO_BACKGROUND env var works as fallback for --no-background",
+]
+
+[[stories]]
+category = "ui"
+description = "Display verbose progress during ralph run"
+steps = [
+  "Print iteration header before each iteration starts (e.g., '[Iteration 1/5] Starting...')",
+  "Show spinner or activity indicator while subprocess is running",
+  "Print iteration summary after each iteration completes (duration, pending count)",
+  "Display overall session progress (e.g., '3 of 5 stories completed')",
+  "Print final session summary on completion or exit",
+]
+passes = true
+acceptance = [
+  "User can see which iteration is currently running",
+  "User can tell subprocess is active (not hung)",
+  "Iteration number and max shown (e.g., 'Iteration 2/5')",
+  "Duration of each iteration displayed after completion",
+  "Pending story count shown after each iteration",
+  "Works correctly with --retry (shows retry attempts)",
+  "Output is clean when stdout is not a terminal (no spinners)",
+]
+
+# =============================================================================
+# Layer 1E: Integration Testing
+# =============================================================================
+
+[[stories]]
+category = "internal"
+description = "Integration test for run loop with JSON parsing"
+steps = [
+  "Create test fixture with sample stream-json output",
+  "Mock subprocess to return fixture data",
+  "Execute run() with mock subprocess",
+  "Verify IterationLog contains parsed metadata, tool_calls, and chunks",
+  "Verify session is finalized with correct outcome",
+]
+passes = false
+acceptance = [
+  "Test covers successful iteration with all fields populated",
+  "Test covers iteration with missing optional fields (graceful defaults)",
+  "Test covers malformed JSON lines (logged, not crashed)",
+  "Test runs in CI without external dependencies",
+]
+
+[[stories]]
+category = "internal"
+description = "Integration test for streaming output with highlighting"
+steps = [
+  "Create test fixture with mixed prose/code/diff content",
+  "Mock subprocess with streaming output (line by line)",
+  "Capture stdout during streaming",
+  "Verify code blocks are highlighted only after closing fence",
+  "Verify prose streams immediately",
+  "Verify diff blocks use fallback when delta unavailable",
+]
+passes = false
+acceptance = [
+  "Test verifies chunk buffering behavior (code waits for close)",
+  "Test verifies ANSI codes present in terminal output",
+  "Test verifies plain output when stdout is not a terminal",
+  "Test covers partial/interrupted streams",
+]
+
+[[stories]]
+category = "internal"
+description = "Integration test for subprocess timeout"
+steps = [
+  "Create subprocess that sleeps longer than timeout",
+  "Execute run() with short timeout value",
+  "Verify subprocess is killed after timeout",
+  "Verify partial output is captured",
+  "Verify retry logic is triggered",
+]
+passes = false
+acceptance = [
+  "Test verifies timeout triggers same path as non-zero exit",
+  "Test verifies no orphan processes left running",
+  "Test verifies timeout error message is distinct from exit code error",
+  "Test covers timeout during retry sequence",
+]
+
+[[stories]]
+category = "internal"
+description = "End-to-end test with mock Claude subprocess"
+steps = [
+  "Create shell script that mimics Claude stream-json output",
+  "Create test PRD with pending stories",
+  "Execute ralph run with mock script as --command",
+  "Verify session created with correct slug",
+  "Verify iteration logs contain parsed data",
+  "Verify git diff captured (if in git repo)",
+  "Verify replay reproduces output with highlighting",
+]
+passes = false
+acceptance = [
+  "Test exercises full run loop including retries",
+  "Test verifies PRD change detection works",
+  "Test verifies completion marker detection works",
+  "Test can run in CI with mock subprocess",
+  "Test covers both success and failure paths",
+]
+
+[[stories]]
+category = "internal"
+description = "Graceful degradation test for Layer 1D features"
+steps = [
+  "Test JSON parsing failure mid-stream (falls back to raw storage)",
+  "Test highlighting failure (continues without color)",
+  "Test timeout with partial JSON output (stores what was captured)",
+  "Test session finalization failure (warns but returns result)",
+]
+passes = false
+acceptance = [
+  "Each feature degrades independently without cascading failures",
+  "Warnings logged to stderr for each degradation",
+  "Core functionality (iteration loop) continues despite feature failures",
+  "User sees actionable error messages for each degradation type",
+]
+
+# =============================================================================
+# Layer 1F: Progress Indicators and Run Summaries
+# =============================================================================
+
+[[stories]]
+category = "ui"
+description = "Show spinner with elapsed time while waiting for Claude to respond"
+steps = [
+  "Display animated spinner when subprocess starts and no output received yet",
+  "Show message like 'Waiting for response...' alongside spinner",
+  "Show elapsed time updating every second (e.g., 'Waiting... 12s')",
+  "Show iteration elapsed time and total session time (e.g., 'Iteration: 12s • Total: 1m 45s')",
+  "Clear spinner line completely when first text chunk arrives",
+  "Do not show spinner when stdout is not a terminal (piped output)",
+]
+passes = true
+acceptance = [
+  "Spinner only visible when waiting (no text streaming)",
+  "Elapsed time updates every second while spinner is shown",
+  "Iteration time resets at start of each iteration",
+  "Total session time accumulates across all iterations",
+  "Spinner clears cleanly without leaving artifacts on terminal",
+  "Spinner uses standard terminal spinner characters (e.g., ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏)",
+  "No spinner when output is piped to file or another process",
+  "Spinner runs on separate thread to not block I/O",
+  "Time format readable (seconds for <60s, 'm:ss' for longer)",
+]
+
+[[stories]]
+category = "ui"
+description = "Display iteration header with story count at start of each iteration"
+steps = [
+  "Print visual separator line at iteration start (e.g., ━━━ or ───)",
+  "Show iteration number and max iterations (e.g., 'Iteration 2/10')",
+  "Show remaining story count from PRD (e.g., '5 stories remaining')",
+  "Header appears before spinner/waiting state",
+]
+passes = true
+acceptance = [
+  "Header clearly separates iterations visually",
+  "Iteration number uses 1-based indexing",
+  "Story count reflects actual pending stories from PRD at that moment",
+  "Header is visually distinct from LLM output (different color or format)",
+  "Works correctly when max iterations unknown (shows 'Iteration N')",
+]
+
+[[stories]]
+category = "ui"
+description = "Show per-iteration cost and metadata summary"
+steps = [
+  "Print summary section after iteration output finishes",
+  "Display iteration cost in USD (e.g., '$0.0234')",
+  "Display iteration duration in readable format (e.g., '45.2s' or '1m 23s')",
+  "Display token usage (input tokens, output tokens)",
+  "Display model name used for the iteration",
+  "Use visual separator to distinguish summary from output",
+]
+passes = true
+acceptance = [
+  "Summary appears immediately after all LLM output for that iteration",
+  "Cost formatted as currency with appropriate precision (e.g., '$0.0234')",
+  "Duration formatted readably (seconds for <60s, minutes:seconds otherwise)",
+  "Token counts show both input and output separately",
+  "Model name shown (e.g., 'claude-opus-4-5-20251101')",
+  "Summary is visually distinct (dimmed color or boxed)",
+  "Missing metadata handled gracefully (show 'N/A' or omit field)",
+]
+
+[[stories]]
+category = "ui"
+description = "Show final run summary with aggregated totals"
+steps = [
+  "Print final summary section after run completes (success or failure)",
+  "Display total cost across all iterations",
+  "Display total duration of entire run",
+  "Display total token usage (input + output across all iterations)",
+  "Display completion reason (all stories done, marker found, max iterations, aborted)",
+  "Display session slug for replay reference",
+  "Display final story count (0 remaining = success)",
+  "Display number of iterations completed",
+]
+passes = true
+acceptance = [
+  "Summary shows aggregated totals, not just last iteration",
+  "Total cost is sum of all iteration costs",
+  "Total duration is wall-clock time from start to finish",
+  "Session slug displayed for easy 'ralph replay <slug>' command",
+  "Completion reason clearly indicates success vs incomplete state",
+  "Final pending story count shown (0 = all done)",
+  "Number of iterations shown (e.g., '3 iterations completed')",
+  "Summary has clear visual boundary (box or double separator)",
+]
+
+[[stories]]
+category = "ui"
+description = "Render prose output as formatted markdown using termimad"
+steps = [
+  "Add termimad as a dependency",
+  "Detect prose chunks in LLM output during streaming",
+  "Render prose through termimad before displaying to terminal",
+  "Apply ANSI formatting for bold, italic, headers, lists",
+  "Render inline code with distinct styling",
+  "Fall back to plain text when stdout is not a terminal",
+]
+passes = true
+acceptance = [
+  "termimad library used for markdown rendering (not syntect for prose)",
+  "Headers (# ## ###) rendered with appropriate emphasis",
+  "Bold (**text**) and italic (*text*) rendered correctly",
+  "Inline code (`code`) rendered with distinct background/color",
+  "Numbered and bulleted lists properly indented",
+  "Links rendered visibly (e.g., '[text](url)' or underlined)",
+  "Code blocks (```) passed to syntect, not termimad",
+  "Plain text output when piped (no ANSI codes)",
+  "Nested formatting handled correctly (bold inside list item)",
+]
+
+[[stories]]
+category = "ui"
+description = "Display startup information when ralph run begins"
+steps = [
+  "Print ralph version and session slug being created/used",
+  "Show PRD status: total stories, pending stories, completed stories",
+  "Show planned iterations: from CLI argument N, or default to pending story count",
+  "Show config being used: command template, prompt source, context file paths",
+  "Show session initialization: creating session directory, path",
+  "Use clear visual formatting (banner or box)",
+]
+passes = true
+acceptance = [
+  "User immediately sees ralph is starting (not silent)",
+  "Session slug displayed prominently for later reference",
+  "PRD summary shows X pending / Y total format",
+  "Max iterations shown (e.g., 'Running up to 5 iterations')",
+  "If N argument provided, use that as max iterations",
+  "If N argument omitted, default max iterations to pending story count",
+  "Custom config overrides highlighted (e.g., custom prompt file)",
+  "Default values not cluttering output (only show if overridden)",
+  "Startup info appears before first iteration header",
+  "Works correctly when stdout is not a terminal (plain text)",
+  "Clear separation between startup info and first iteration",
+]
+
+[[stories]]
+category = "ui"
+description = "Display file changes with syntax-highlighted diffs when Edit tool is used"
+steps = [
+  "Detect when Edit tool result arrives in stream",
+  "Extract the file path and change content from tool result",
+  "Generate unified diff showing old vs new content",
+  "Apply syntax highlighting to the diff based on file extension",
+  "Display file path header before the diff",
+  "Use diff coloring (green additions, red deletions) combined with language syntax",
+  "Truncate very large diffs with '... N more lines' indicator",
+]
+passes = true
+acceptance = [
+  "Edit tool results show actual diff of what changed",
+  "Diff has syntax highlighting based on file type (rust, python, js, etc.)",
+  "Added lines (+) shown in green with syntax colors",
+  "Removed lines (-) shown in red with syntax colors",
+  "File path shown prominently before diff (e.g., '── src/main.rs ──')",
+  "Context lines shown around changes (3 lines default)",
+  "Large diffs truncated with count of hidden lines",
+  "Truncation threshold configurable or sensible default (e.g., 50 lines)",
+  "Works with delta if available, falls back to basic coloring",
+  "Non-terminal output shows plain diff without ANSI codes",
+  "Multiple edits in same file shown as single combined diff",
+]
+
+# =============================================================================
+# Code Quality Standards
+# =============================================================================
+
+[[stories]]
+category = "internal"
+description = "Eliminate .unwrap() and .expect() calls in favor of proper error handling"
+steps = [
+  "Audit codebase for all .unwrap() and .expect() calls",
+  "Replace with proper error propagation using ? operator",
+  "Use Result/Option combinators (map, and_then, ok_or) where appropriate",
+  "Add clippy lint to deny unwrap_used and expect_used",
+  "Document any rare exceptions where panic is intentional (e.g., static initialization)",
+]
+passes = true
+acceptance = [
+  "No .unwrap() calls in non-test code",
+  "No .expect() calls in non-test code",
+  "Clippy configured with #![deny(clippy::unwrap_used, clippy::expect_used)]",
+  "All error paths return meaningful error types",
+  "Test code may use .unwrap() for brevity",
+  "Any intentional panics documented with comments explaining why",
+]
+
+[[stories]]
+category = "functional"
+description = "Use cross-platform config directories with environment variable override"
+steps = [
+  "Use dirs crate for platform-appropriate config directory resolution",
+  "Default locations: ~/.config/ralph (Linux), ~/Library/Application Support/ralph (macOS), %APPDATA%/ralph (Windows)",
+  "Add RALPH_CONFIG_DIR environment variable to override config directory",
+  "Add RALPH_DATA_DIR environment variable to override data directory (sessions)",
+  "Store config.toml in config directory",
+  "Store sessions.toml and session directories in data directory",
+  "Print resolved paths in --verbose or startup info",
+]
+passes = true
+acceptance = [
+  "Config directory follows XDG Base Directory spec on Linux",
+  "Config directory uses Application Support on macOS",
+  "Config directory uses APPDATA on Windows",
+  "RALPH_CONFIG_DIR overrides default config location",
+  "RALPH_DATA_DIR overrides default data/sessions location",
+  "Environment variables take precedence over platform defaults",
+  "Directories created automatically if they don't exist",
+  "Error message shows expected path when config file not found",
+  "Works correctly when HOME or equivalent is not set (fallback to current dir)",
+  "Path resolution documented in --help or man page",
+]
+
+# =============================================================================
+# Bug Fixes
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Fix iteration limit not being respected across session continuation"
+steps = [
+  "Identify the bug in run/mod.rs where loop runs 1..=max_iterations regardless of starting_iteration",
+  "Calculate remaining_iterations as max_iterations minus iterations already completed",
+  "Update loop to run for remaining_iterations instead of full max_iterations",
+  "Ensure total iterations never exceeds user-specified N argument",
+  "Add tests to verify limit is respected after failure recovery",
+]
+passes = true
+acceptance = [
+  "ralph run 5 runs at most 5 iterations total, even after failure recovery",
+  "If failure occurs at iteration 3, continuing runs at most 2 more iterations",
+  "Iteration numbering continues correctly (4, 5) not restarting (1, 2)",
+  "Works correctly when N argument is omitted (defaults to pending story count)",
+  "Session metadata shows correct total iteration count",
+]
+
+[[stories]]
+category = "internal"
+description = "Replace 'retry' terminology with clearer iteration/failure-recovery terms"
+steps = [
+  "Audit codebase for 'retry' terminology in variable names, function names, comments",
+  "Rename retry_count to max_failure_attempts or similar",
+  "Rename invoke_with_retries to invoke_with_failure_recovery or similar",
+  "Update --retry CLI flag to --max-attempts or --failure-attempts",
+  "Update all comments and documentation to use consistent terminology",
+  "Clarify in docs: 'iteration' = one LLM execution, 'failure recovery' = continuing after subprocess error",
+]
+passes = true
+acceptance = [
+  "No variables or functions named with 'retry' (except external APIs)",
+  "CLI flag renamed from --retry to clearer alternative",
+  "Help text clearly distinguishes iterations from failure recovery",
+  "Code comments use consistent terminology",
+  "User-facing messages don't confuse iteration with retry",
+  "README and docs updated with correct terminology",
+]
+
+[[stories]]
+category = "internal"
+description = "Reset version to v0.1.0 to reflect pre-release status"
+steps = [
+  "Update version in Cargo.toml (workspace and crate levels)",
+  "Update any hardcoded version strings in code or docs",
+  "Ensure version is displayed correctly in --version output",
+]
+passes = true
+acceptance = [
+  "ralph --version shows 'ralph 0.1.0'",
+  "All Cargo.toml files use version = \"0.1.0\"",
+  "No references to v1.6.0 remain in codebase",
+]
+
+# =============================================================================
+# Layer 6: Iterations Command
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Implement ralph iterations subcommand"
+steps = [
+  "Add Iterations variant to Commands enum in cli.rs",
+  "Define IterationsArgs struct with clap derives",
+  "Add optional --session filter flag",
+  "Add optional --project filter flag",
+  "Add optional --outcome filter flag (completed, failed, aborted, in_progress)",
+  "Wire up to iterations module entry point",
+]
+passes = true
+acceptance = [
+  "ralph iterations works without arguments (shows all iterations)",
+  "All filter flags documented with help text",
+  "Filter flags can be combined",
+  "Invalid outcome value shows available options",
+]
+
+[[stories]]
+category = "functional"
+description = "Load iteration logs from session directories"
+steps = [
+  "Read sessions index from ~/.config/ralph/sessions.toml",
+  "For each session, scan ~/.config/ralph/sessions/<slug>/ for iteration-N.toml files",
+  "Parse each iteration log into IterationLog struct",
+  "Return flat list of (session_entry, iteration_log) pairs",
+  "Handle missing or malformed iteration files gracefully",
+]
+passes = true
+acceptance = [
+  "Iterations loaded from all sessions",
+  "Missing iteration files logged as warning, not error",
+  "Malformed TOML files logged as warning, skipped",
+  "Empty sessions (no iterations) handled correctly",
+  "Performance acceptable with many sessions (lazy loading if needed)",
+]
+
+[[stories]]
+category = "functional"
+description = "Apply filters to iteration listing"
+steps = [
+  "If --session provided, filter to iterations from matching session slug",
+  "If --project provided, filter to iterations from sessions matching project path (substring match)",
+  "If --outcome provided, filter by iteration exit code (0=success, non-zero=failed)",
+  "Apply filters in combination (AND logic)",
+]
+passes = true
+acceptance = [
+  "--session quiet-mountain shows only iterations from that session",
+  "--project /path/to/project filters by project path substring",
+  "--outcome completed shows iterations with exit_code 0",
+  "--outcome failed shows iterations with non-zero exit_code",
+  "Multiple filters combine with AND logic",
+  "No matches shows empty table with helpful message",
+]
+
+[[stories]]
+category = "ui"
+description = "Format iterations as table with key metadata"
+steps = [
+  "Display table with columns: SESSION, #, PROJECT, STARTED, DURATION, EXIT",
+  "SESSION column shows session slug",
+  "# column shows iteration sequence number",
+  "PROJECT column shows project path (truncated if too long)",
+  "STARTED column shows started_at timestamp in human-readable format",
+  "DURATION column shows duration_ms formatted as readable time (e.g., 2m 30s)",
+  "EXIT column shows exit_code (0 or error code)",
+  "Sort by started_at descending (most recent first)",
+]
+passes = true
+acceptance = [
+  "Table renders cleanly in terminal",
+  "Long project paths truncated with ellipsis",
+  "Timestamps formatted as local time (not UTC)",
+  "Duration formatted readably (seconds for <60s, minutes:seconds otherwise)",
+  "Exit code 0 shown normally, non-zero highlighted or marked",
+  "Table header is visually distinct",
+  "Empty state shows helpful message",
+  "Works correctly when stdout is not a terminal (plain text output)",
+]
+
+[[stories]]
+category = "ui"
+description = "Add cost column to iterations table"
+steps = [
+  "Add optional COST column showing cost_usd from iteration metadata",
+  "Format cost as currency (e.g., $0.0234)",
+  "Handle missing cost data gracefully (show N/A or -)",
+  "Add --show-cost flag to enable column (or show by default if data available)",
+]
+passes = true
+acceptance = [
+  "Cost displayed when metadata.cost_usd is present",
+  "Missing cost shows placeholder (N/A or -)",
+  "Cost formatted with appropriate precision",
+  "Column width adjusts to content",
+]
+
+[[stories]]
+category = "ui"
+description = "Add total summary row to iterations table"
+steps = [
+  "After iteration rows, display summary line",
+  "Show total iteration count",
+  "Show total cost across all displayed iterations",
+  "Show total duration across all displayed iterations",
+  "Summary applies to filtered results (not all iterations)",
+]
+passes = true
+acceptance = [
+  "Summary row visually distinct from data rows",
+  "Total count shows 'N iterations'",
+  "Total cost is sum of all iteration costs (with missing values as 0)",
+  "Total duration is sum of all iteration durations",
+  "Summary reflects applied filters",
+]
+
+# =============================================================================
+# Layer 7: Progress File Auto-Summarization
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Check progress file size after each iteration"
+steps = [
+  "After iteration completes and logs are written",
+  "Read progress file from configured path",
+  "Count number of lines in the file",
+  "Compare against configured threshold (default 1000)",
+  "If over threshold, trigger summarization",
+]
+passes = true
+acceptance = [
+  "Line count uses platform-appropriate line endings",
+  "Empty file or missing file returns 0 lines",
+  "Check happens after every iteration (not just successful ones)",
+  "Threshold comparison is strictly greater than (>1000, not >=1000)",
+]
+
+[[stories]]
+category = "functional"
+description = "Invoke summarization command for progress file"
+steps = [
+  "Build summarization prompt with progress file content",
+  "Execute configured summarize command (default: claude -p)",
+  "Capture stdout as the summarized content",
+  "Handle subprocess errors gracefully",
+]
+passes = true
+acceptance = [
+  "Default command is 'claude -p'",
+  "Progress file content passed as prompt input",
+  "Prompt instructs LLM to summarize while preserving key context",
+  "Subprocess timeout applied (reuse existing timeout logic)",
+  "Non-zero exit code treated as failure",
+]
+
+[[stories]]
+category = "functional"
+description = "Replace progress file with summarized content"
+steps = [
+  "Validate summarized content is not empty",
+  "Write summarized content to progress file path",
+  "Overwrite existing content (no backup)",
+  "Log success message to stderr",
+]
+passes = true
+acceptance = [
+  "Original content completely replaced",
+  "Empty summary is rejected (keeps original)",
+  "File permissions preserved",
+  "Write is atomic (temp file + rename) to prevent corruption",
+]
+
+[[stories]]
+category = "functional"
+description = "Handle summarization failures gracefully"
+steps = [
+  "On command failure, log warning to stderr",
+  "Keep original progress file unchanged",
+  "Continue with next iteration (don't block run loop)",
+  "Record summarization attempt in iteration log",
+]
+passes = true
+acceptance = [
+  "Warning message includes failure reason",
+  "Original progress file untouched on failure",
+  "Run loop continues normally after failure",
+  "User informed of skipped summarization",
+]
+
+[[stories]]
+category = "functional"
+description = "Add CLI flags for progress summarization configuration"
+steps = [
+  "Add --progress-max-lines flag to ralph run (default: 1000)",
+  "Add --summarize-command flag to ralph run (default: 'claude -p')",
+  "Add --summarize-prompt flag to ralph run (file path, inline string, or '-' for stdin)",
+  "Add --no-summarize flag to disable auto-summarization entirely",
+  "Document flags in help text",
+]
+passes = true
+acceptance = [
+  "--progress-max-lines accepts positive integer",
+  "--summarize-command accepts command string with optional arguments",
+  "--summarize-prompt accepts file path, inline string, or '-' for stdin (like --prompt)",
+  "--no-summarize disables the feature completely",
+  "Flags documented with examples in help text",
+  "Invalid values show helpful error messages",
+  "Default summarization prompt used when --summarize-prompt not provided",
+]
+
+[[stories]]
+category = "functional"
+description = "Design summarization prompt with placeholder support"
+steps = [
+  "Create default prompt template that instructs LLM to summarize progress notes",
+  "Support {progress_file} placeholder for progress file path",
+  "Support {progress_content} placeholder for actual file content",
+  "Include instruction to preserve key decisions and blockers",
+  "Include instruction to remove redundant or outdated information",
+  "Include instruction to maintain chronological context",
+  "Use substitute_template_placeholders pattern from context.rs",
+]
+passes = true
+acceptance = [
+  "{progress_file} replaced with configured progress file path",
+  "{progress_content} replaced with actual content of progress file",
+  "Custom prompts can use any combination of placeholders",
+  "Unknown placeholders left unchanged (consistent with existing behavior)",
+  "Default prompt produces useful summaries without customization",
+  "Key technical decisions preserved in summary",
+  "Blockers and open questions preserved",
+  "Redundant entries consolidated",
+  "Summary is significantly shorter than original (target: ~200-500 lines)",
+  "Summary maintains enough context for LLM to continue work",
+]
+
+# =============================================================================
+# Layer 8: UI Improvements
+# =============================================================================
+
+[[stories]]
+category = "ui"
+description = "Show full file paths in tool invocation output"
+steps = [
+  "Identify tools that use file paths as key argument (Read, Edit, Write, Glob, Grep, etc.)",
+  "Remove truncation for file path arguments in format_tool_invocation",
+  "Keep truncation for non-path arguments (e.g., file content, search patterns)",
+  "Update extract_key_argument to indicate when argument is a path",
+]
+passes = true
+acceptance = [
+  "Read tool shows full file path (no ... truncation)",
+  "Edit tool shows full file path (no ... truncation)",
+  "Write tool shows full file path (no ... truncation)",
+  "Glob tool shows full pattern (no truncation)",
+  "Grep tool shows full pattern (no truncation)",
+  "Tool results (file content) still truncated to keep output readable",
+  "Long paths wrap naturally in terminal instead of being cut off",
+  "Non-terminal output also shows full paths",
+]
+
+[[stories]]
+category = "ui"
+description = "Enhanced Bash tool rendering with syntax highlighting"
+steps = [
+  "Extract full command from Bash tool invocation input",
+  "Apply bash/shell syntax highlighting using syntect",
+  "Display full command without truncation",
+  "Show command output without truncation (or with configurable limit)",
+  "Use distinct visual styling for command vs output",
+  "Handle multi-line commands gracefully",
+]
+passes = true
+acceptance = [
+  "Bash command shown in full (e.g., 'git log --oneline -5' not truncated)",
+  "Command syntax highlighted with syntect using bash/shell grammar",
+  "Command output displayed below the command",
+  "Output uses dimmed/muted color to distinguish from command",
+  "Multi-line commands displayed with proper formatting",
+  "Exit code shown if non-zero (error indicator)",
+  "Very long outputs may have optional truncation with 'show more' note",
+  "Non-terminal output shows plain text without ANSI codes",
+  "Respects --theme flag for syntax highlighting colors",
+]
+
+[[stories]]
+category = "functional"
+description = "Add --verbose-tools flag for selective tool output verbosity"
+steps = [
+  "Add --verbose-tools flag to ralph run command",
+  "Accept comma-separated list of tool names (e.g., --verbose-tools=grep,bash,read)",
+  "Make tool name matching case-insensitive",
+  "If flag provided without value (--verbose-tools), enable verbose for all tools",
+  "Store enabled tools in StreamProcessor configuration",
+  "Check verbose setting when formatting tool invocations and results",
+]
+passes = true
+acceptance = [
+  "--verbose-tools=grep enables verbose output for Grep tool only",
+  "--verbose-tools=grep,bash,read enables verbose for multiple tools",
+  "--verbose-tools (no value) enables verbose for all tools",
+  "Tool names are case-insensitive (grep, Grep, GREP all work)",
+  "Unknown tool names are ignored with warning",
+  "Flag documented in help text with examples",
+  "Default behavior (no flag) shows compact tool output",
+]
+
+[[stories]]
+category = "ui"
+description = "Enhanced Grep tool rendering in verbose mode"
+steps = [
+  "Check if Grep is in verbose tools list",
+  "If verbose, show full search pattern with regex syntax highlighting",
+  "Show matched file paths or content based on grep output mode",
+  "Apply syntax highlighting to regex pattern",
+  "Display results in readable format (not truncated)",
+]
+passes = false
+acceptance = [
+  "Grep pattern shown in full when verbose enabled",
+  "Regex pattern syntax highlighted",
+  "Matched files/content displayed below pattern",
+  "Output uses appropriate coloring (matches highlighted)",
+  "Non-verbose mode shows compact single-line format",
+  "Respects --theme flag for syntax highlighting",
+]
+
+[[stories]]
+category = "ui"
+description = "Enhanced Read tool rendering in verbose mode"
+steps = [
+  "Check if Read is in verbose tools list",
+  "If verbose, show full file path and content",
+  "Detect file language from extension (rs, py, js, toml, etc.)",
+  "Apply syntax highlighting to file content using syntect",
+  "Show line numbers alongside content",
+  "Handle binary files gracefully (show placeholder message)",
+]
+passes = false
+acceptance = [
+  "File path shown in full",
+  "File content displayed with syntax highlighting based on extension",
+  "Line numbers shown (matching Read tool's cat -n format)",
+  "Rust files highlighted as Rust, Python as Python, etc.",
+  "Unknown extensions rendered as plain text",
+  "Binary files show '(binary file)' instead of garbled content",
+  "Large files may be truncated with line count indicator",
+  "Non-verbose mode shows compact format (path + line count only)",
+  "Respects --theme flag for syntax highlighting",
+]
+
+[[stories]]
+category = "ui"
+description = "Enhanced TodoWrite tool rendering in verbose mode"
+steps = [
+  "Check if TodoWrite is in verbose tools list",
+  "If verbose, display the full todo list being written",
+  "Show each todo item with status indicator",
+  "Use color coding for status (pending, in_progress, completed)",
+  "Format as readable checklist",
+]
+passes = false
+acceptance = [
+  "Todo items displayed as formatted list",
+  "Status shown with icons: ○ pending, ◐ in_progress, ● completed",
+  "Pending items in default color",
+  "In-progress items in yellow/amber",
+  "Completed items in green (possibly dimmed)",
+  "Non-verbose mode shows compact format (e.g., '3 todos updated')",
+  "Both content and activeForm fields visible if different",
+]
+
+# =============================================================================
+# Code Quality: Function Argument Limits
+# =============================================================================
+
+[[stories]]
+category = "internal"
+description = "Enforce maximum 5 arguments per function using config structs"
+steps = [
+  "Audit codebase for functions with more than 5 arguments",
+  "Refactor offending functions to use config/options structs",
+  "Add clippy lint to deny too_many_arguments (threshold 5)",
+  "Update CLAUDE.md non-negotiables section with this rule",
+  "Document the pattern with examples in CLAUDE.md",
+]
+passes = true
+acceptance = [
+  "No functions with more than 5 arguments in non-test code",
+  "Clippy configured with #![deny(clippy::too_many_arguments)] and threshold set to 5",
+  "Config structs use descriptive names (e.g., RunConfig, SessionOptions)",
+  "Config structs derive Debug, Clone where appropriate",
+  "CLAUDE.md lists this as a non-negotiable alongside .unwrap()/.expect() ban",
+  "Pattern documented with before/after example in CLAUDE.md",
+  "Test code may have exceptions where it makes tests clearer",
+]
+
+[[stories]]
+category = "ui"
+description = "Show spinner during output gaps and buffering periods"
+steps = [
+  "Track time since last output was displayed",
+  "If no output for N milliseconds (e.g., 500ms), show spinner",
+  "Hide spinner immediately when new output arrives",
+  "Show spinner while buffering incomplete chunks (code blocks, diffs)",
+  "Show spinner while waiting for tool results after tool invocation",
+  "Spinner should indicate what we're waiting for (e.g., 'Processing...', 'Waiting for tool result...')",
+]
+passes = true
+acceptance = [
+  "Spinner reappears after output gap (configurable threshold, default ~500ms)",
+  "Spinner shows during code block buffering (waiting for closing fence)",
+  "Spinner shows after tool invocation while waiting for result",
+  "Spinner message contextual: 'Thinking...', 'Running tool...', 'Buffering code...'",
+  "Spinner clears cleanly when output resumes (no artifacts)",
+  "Elapsed time continues accumulating across spinner appearances",
+  "No spinner flicker for brief gaps (debounce threshold)",
+  "Works correctly with streaming output (doesn't interrupt flow)",
+  "Disabled when stdout is not a terminal",
+]
+
+# =============================================================================
+# Signal Handling and Session Cleanup
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "Handle SIGINT/SIGTERM to mark sessions as interrupted"
+steps = [
+  "Register signal handlers for SIGINT (Ctrl+C) and SIGTERM",
+  "On signal received, finalize session with 'interrupted' outcome",
+  "Add 'Interrupted' variant to SessionOutcome enum",
+  "Kill any running subprocess gracefully before exiting",
+  "Write partial iteration log if mid-iteration",
+  "Display message indicating clean shutdown",
+]
+passes = true
+acceptance = [
+  "Ctrl+C during ralph run marks session as 'interrupted' (not 'in_progress')",
+  "SIGTERM marks session as 'interrupted'",
+  "SessionOutcome::Interrupted added alongside Completed, Aborted, Failed, InProgress",
+  "sessions.toml updated before process exits",
+  "Subprocess killed cleanly (SIGTERM, then SIGKILL if needed)",
+  "Partial iteration data preserved in iteration-N.toml",
+  "Exit message: 'Interrupted. Session saved as <slug>'",
+  "ralph sessions shows 'interrupted' in OUTCOME column",
+  "Multiple rapid Ctrl+C doesn't corrupt session data",
+]
+
+[[stories]]
+category = "functional"
+description = "Distinguish 'interrupted' from 'aborted' in session outcomes"
+steps = [
+  "Update SessionOutcome enum: InProgress, Completed, Aborted, Failed, Interrupted",
+  "Interrupted = external signal (SIGINT/SIGTERM)",
+  "Aborted = user chose 'abort' at failure prompt",
+  "Update sessions list display to show 'interrupted' outcome",
+  "Update --outcome filter to accept 'interrupted' value",
+]
+passes = true
+acceptance = [
+  "'interrupted' shown for signal-terminated sessions",
+  "'aborted' shown for user-chosen abort at prompt",
+  "'in_progress' only for sessions that crashed without cleanup",
+  "--outcome=interrupted filters to interrupted sessions only",
+  "Backward compatible: existing 'aborted' sessions unchanged",
+]
+
+# =============================================================================
+# Layer 9: Additional Prompt Feature
+# =============================================================================
+
+[[stories]]
+category = "functional"
+description = "User can pass --additional-prompt flag to append instructions to the main prompt"
+steps = [
+  "Add --additional-prompt (-a) argument to RunArgs in cli.rs",
+  "Argument accepts an optional string value",
+  "When not provided, defaults to empty string",
+]
+passes = true
+acceptance = [
+  "--additional-prompt flag is recognized by clap",
+  "Short form -a works as alias",
+  "Flag appears in help text with description",
+]
+
+[[stories]]
+category = "functional"
+description = "Additional prompt supports same input sources as --prompt (file, stdin, inline)"
+steps = [
+  "Create resolve_additional_prompt function in main.rs",
+  "If value is '-', read from stdin",
+  "If value is path to existing file, read file contents",
+  "Otherwise treat value as inline string",
+  "If not provided, return empty string",
+]
+passes = true
+acceptance = [
+  "ralph run --additional-prompt 'inline text' works",
+  "ralph run --additional-prompt ./instructions.txt reads file",
+  "echo 'text' | ralph run --additional-prompt - reads from stdin",
+  "ralph run (without flag) uses empty string",
+]
+
+[[stories]]
+category = "functional"
+description = "Prompt template substitutes {additional_prompt} placeholder"
+steps = [
+  "Update substitute_template_placeholders in context.rs to accept additional_prompt parameter",
+  "Add {additional_prompt} replacement to the substitution chain",
+  "Update all call sites to pass the additional_prompt value",
+]
+passes = true
+acceptance = [
+  "Template containing {additional_prompt} gets value substituted",
+  "Empty additional_prompt results in empty string substitution",
+  "Existing placeholders continue to work",
+]
+
+[[stories]]
+category = "functional"
+description = "Default prompt template includes {additional_prompt} at the end"
+steps = [
+  "Append {additional_prompt} placeholder to PROMPT_TEMPLATE in context.rs",
+  "Place it after existing instructions but before completion marker instruction",
+]
+passes = true
+acceptance = [
+  "Default template contains {additional_prompt} placeholder",
+  "When additional_prompt is empty, no extra content appears in final prompt",
+  "When additional_prompt has value, it appears in the rendered prompt",
+]
+
+[[stories]]
+category = "internal"
+description = "Startup display shows custom additional prompt indicator"
+steps = [
+  "Add custom_additional_prompt field to RunConfig",
+  "Add custom_additional_prompt field to StartupInfo",
+  "Display indicator in startup output when additional prompt is provided",
+]
+passes = true
+acceptance = [
+  "Startup info shows 'additional prompt: custom' when flag is used",
+  "No indicator shown when using default (empty) additional prompt",
+]

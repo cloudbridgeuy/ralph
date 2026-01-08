@@ -36,7 +36,114 @@ use ralph_core::stream::{
 };
 use serde_json::Value;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::IsTerminal;
+
+/// Configuration for verbose tool output.
+///
+/// Controls which tools display verbose (full) output instead of truncated summaries.
+/// Tool name matching is case-insensitive.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VerboseToolsConfig {
+    /// If true, all tools are verbose
+    all_verbose: bool,
+    /// Set of tool names (lowercase) that should be verbose
+    verbose_tools: HashSet<String>,
+    /// Warnings about unknown tool names
+    warnings: Vec<String>,
+}
+
+/// Known tool names for validation
+const KNOWN_TOOLS: &[&str] = &[
+    "read",
+    "edit",
+    "write",
+    "glob",
+    "grep",
+    "bash",
+    "task",
+    "webfetch",
+    "notebookedit",
+    "todowrite",
+    "websearch",
+    "askuserquestion",
+    "skill",
+];
+
+impl VerboseToolsConfig {
+    /// Create a new empty config (no tools verbose).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a config where all tools are verbose.
+    pub fn all() -> Self {
+        Self {
+            all_verbose: true,
+            verbose_tools: HashSet::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Parse from a CLI argument value.
+    ///
+    /// - `None` -> no verbose tools
+    /// - `Some("*")` -> all tools verbose
+    /// - `Some("grep,bash")` -> specific tools verbose
+    ///
+    /// Returns the config and optionally warns about unknown tool names.
+    pub fn from_arg(arg: Option<&str>) -> Self {
+        match arg {
+            None => Self::new(),
+            Some("*") => Self::all(),
+            Some(tools_str) => {
+                let mut config = Self::new();
+                let mut warnings = Vec::new();
+
+                for tool in tools_str.split(',') {
+                    let tool_lower = tool.trim().to_lowercase();
+                    if tool_lower.is_empty() {
+                        continue;
+                    }
+
+                    // Check if it's a known tool
+                    if !KNOWN_TOOLS.contains(&tool_lower.as_str()) {
+                        warnings.push(format!(
+                            "Unknown tool name: '{}'. Known tools: {}",
+                            tool,
+                            KNOWN_TOOLS.join(", ")
+                        ));
+                    }
+
+                    config.verbose_tools.insert(tool_lower);
+                }
+
+                config.warnings = warnings;
+                config
+            }
+        }
+    }
+
+    /// Check if verbose output is enabled for a specific tool.
+    ///
+    /// Tool name matching is case-insensitive.
+    pub fn is_verbose(&self, tool_name: &str) -> bool {
+        if self.all_verbose {
+            return true;
+        }
+        self.verbose_tools.contains(&tool_name.to_lowercase())
+    }
+
+    /// Get any warnings generated during parsing.
+    pub fn warnings(&self) -> &[String] {
+        &self.warnings
+    }
+
+    /// Check if any verbose tools are configured.
+    pub fn has_any(&self) -> bool {
+        self.all_verbose || !self.verbose_tools.is_empty()
+    }
+}
 
 /// Result of processing a complete stream.
 #[derive(Debug, Default)]
@@ -96,6 +203,8 @@ pub struct StreamProcessor {
     response_count: usize,
     /// Pending tool invocations keyed by tool_use_id (for special result formatting).
     pending_invocations: HashMap<String, ToolInvocation>,
+    /// Verbose tools configuration.
+    verbose_tools_config: VerboseToolsConfig,
 }
 
 impl Default for StreamProcessor {
@@ -135,6 +244,7 @@ impl StreamProcessor {
             has_emitted_output: false,
             response_count: 0,
             pending_invocations: HashMap::new(),
+            verbose_tools_config: VerboseToolsConfig::new(),
         }
     }
 
@@ -204,6 +314,7 @@ impl StreamProcessor {
             has_emitted_output: false,
             response_count: 0,
             pending_invocations: HashMap::new(),
+            verbose_tools_config: VerboseToolsConfig::new(),
         })
     }
 
@@ -242,6 +353,48 @@ impl StreamProcessor {
             has_emitted_output: false,
             response_count: 0,
             pending_invocations: HashMap::new(),
+            verbose_tools_config: VerboseToolsConfig::new(),
+        })
+    }
+
+    /// Create a processor with verbose tools configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `theme_config` - Configuration for syntax highlighting theme
+    /// * `highlighting` - Whether to apply syntax highlighting
+    /// * `show_tools` - Whether to display tool invocations
+    /// * `verbose_tools` - Configuration for verbose tool output
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StreamProcessor)` - Successfully configured processor
+    /// * `Err(ThemeError)` - If the theme was not found or failed to load
+    pub fn with_verbose_tools(
+        theme_config: ThemeConfig,
+        highlighting: bool,
+        show_tools: bool,
+        verbose_tools: VerboseToolsConfig,
+    ) -> Result<Self, ThemeError> {
+        let highlighter = Highlighter::with_config(theme_config)?;
+
+        Ok(Self {
+            events: Vec::new(),
+            text_buffer: String::new(),
+            chunk_buffer: StreamingChunkBuffer::new(),
+            code_highlighter: highlighter,
+            diff_highlighter: DiffHighlighter::new(),
+            markdown_renderer: MarkdownRenderer::new(),
+            highlighting_enabled: highlighting,
+            show_tool_invocations: show_tools,
+            current_message_id: None,
+            collected_chunks: Vec::new(),
+            parse_errors: Vec::new(),
+            tool_correlator: ToolCorrelator::new(),
+            has_emitted_output: false,
+            response_count: 0,
+            pending_invocations: HashMap::new(),
+            verbose_tools_config: verbose_tools,
         })
     }
 
@@ -867,6 +1020,16 @@ impl StreamProcessor {
     /// responses if there's been output to separate.
     pub fn has_emitted_output(&self) -> bool {
         self.has_emitted_output
+    }
+
+    /// Get the verbose tools configuration.
+    pub fn verbose_tools_config(&self) -> &VerboseToolsConfig {
+        &self.verbose_tools_config
+    }
+
+    /// Check if verbose output is enabled for a specific tool.
+    pub fn is_tool_verbose(&self, tool_name: &str) -> bool {
+        self.verbose_tools_config.is_verbose(tool_name)
     }
 }
 
