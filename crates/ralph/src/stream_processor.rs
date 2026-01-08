@@ -375,7 +375,15 @@ impl StreamProcessor {
     /// File paths are shown in full without truncation for tools like Read, Edit,
     /// Write, Glob, and Grep. Other arguments (like Bash commands or prompts)
     /// are truncated to keep output readable.
+    ///
+    /// Bash tool invocations receive special treatment: the command is shown in
+    /// full with shell syntax highlighting applied.
     fn format_tool_invocation(&self, invocation: &ralph_core::stream::ToolInvocation) -> String {
+        // Special handling for Bash tool invocations
+        if invocation.name == "Bash" {
+            return self.format_bash_tool_invocation(invocation);
+        }
+
         let key_arg = extract_key_argument(&invocation.name, &invocation.input);
 
         // Format the argument: paths shown in full, other args truncated
@@ -408,6 +416,68 @@ impl StreamProcessor {
         }
     }
 
+    /// Format a Bash tool invocation with syntax highlighting.
+    ///
+    /// The command is shown in full (not truncated) with shell syntax highlighting
+    /// applied. Multi-line commands are displayed with proper formatting.
+    fn format_bash_tool_invocation(
+        &self,
+        invocation: &ralph_core::stream::ToolInvocation,
+    ) -> String {
+        // Extract the command from the input
+        let command = invocation
+            .input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Check if this is a multi-line command
+        let is_multiline = command.contains('\n');
+
+        if self.highlighting_enabled {
+            let mut output = String::new();
+
+            // Header with tool name
+            output.push_str("\x1b[36m▶ Bash\x1b[0m\n");
+
+            if is_multiline {
+                // Multi-line: wrap in a code block with shell highlighting
+                output.push_str("```sh\n");
+                let highlighted = self.code_highlighter.highlight(command, Some("sh"));
+                output.push_str(&highlighted);
+                if !highlighted.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str("```\n");
+            } else {
+                // Single-line: show inline with highlighting
+                output.push_str("  ");
+                let highlighted = self.code_highlighter.highlight(command, Some("sh"));
+                // Remove trailing reset if present to add our own formatting
+                let trimmed = highlighted.trim_end_matches("\x1b[0m");
+                output.push_str(trimmed);
+                output.push_str("\x1b[0m\n");
+            }
+
+            output
+        } else {
+            // Plain text for non-terminal
+            if is_multiline {
+                let mut output = String::new();
+                output.push_str("> Bash\n");
+                output.push_str("```sh\n");
+                output.push_str(command);
+                if !command.ends_with('\n') {
+                    output.push('\n');
+                }
+                output.push_str("```\n");
+                output
+            } else {
+                format!("> Bash\n  {}\n", command)
+            }
+        }
+    }
+
     /// Format a tool result for display (without invocation context).
     #[allow(dead_code)]
     fn format_tool_result(&self, result: &ralph_core::stream::ToolResult) -> String {
@@ -418,20 +488,26 @@ impl StreamProcessor {
     ///
     /// When the original invocation is available and the tool is "Edit", this method
     /// will detect if the result contains a diff and apply syntax highlighting.
+    /// When the tool is "Bash", the output is shown with distinct styling.
     fn format_tool_result_with_context(
         &self,
         result: &ralph_core::stream::ToolResult,
         invocation: Option<ToolInvocation>,
     ) -> String {
-        // Check if this is an Edit tool result with diff content
-        if let Some(inv) = invocation {
+        // Check for tool-specific formatting
+        if let Some(ref inv) = invocation {
+            // Edit tool with diff content
             if inv.name == "Edit" && !result.is_error {
                 if let Some(ref content) = result.content {
                     // Check if content looks like a diff
                     if is_unfenced_diff(content) {
-                        return self.format_edit_diff_result(inv, content);
+                        return self.format_edit_diff_result(inv.clone(), content);
                     }
                 }
+            }
+            // Bash tool with output
+            if inv.name == "Bash" {
+                return self.format_bash_tool_result(result);
             }
         }
 
@@ -456,6 +532,91 @@ impl StreamProcessor {
                 format!("! Error: {}\n", truncated_content)
             } else {
                 format!("  {}\n", truncated_content)
+            }
+        }
+    }
+
+    /// Format a Bash tool result with distinct output styling.
+    ///
+    /// The output is shown in a dimmed/muted color to distinguish it from the command.
+    /// Exit code is shown if non-zero (error indicator).
+    /// Very long outputs are truncated with a '... N more lines' indicator.
+    fn format_bash_tool_result(&self, result: &ralph_core::stream::ToolResult) -> String {
+        const MAX_OUTPUT_LINES: usize = 30;
+
+        if result.is_error {
+            // Error case - show error message with red indicator
+            let error_content = result
+                .content
+                .as_ref()
+                .map(|c| truncate_multiline(c, MAX_OUTPUT_LINES))
+                .unwrap_or_else(|| ("(command failed)".to_string(), false));
+
+            if self.highlighting_enabled {
+                let mut output = String::new();
+                output.push_str("\x1b[31m✗ Exit code: non-zero\x1b[0m\n");
+                if !error_content.0.is_empty() {
+                    output.push_str("\x1b[90m");
+                    output.push_str(&error_content.0);
+                    output.push_str("\x1b[0m");
+                    if !error_content.0.ends_with('\n') {
+                        output.push('\n');
+                    }
+                }
+                if error_content.1 {
+                    output.push_str("\x1b[90m... (output truncated)\x1b[0m\n");
+                }
+                output
+            } else {
+                let mut output = String::new();
+                output.push_str("! Exit code: non-zero\n");
+                if !error_content.0.is_empty() {
+                    output.push_str(&error_content.0);
+                    if !error_content.0.ends_with('\n') {
+                        output.push('\n');
+                    }
+                }
+                if error_content.1 {
+                    output.push_str("... (output truncated)\n");
+                }
+                output
+            }
+        } else {
+            // Success case - show output in dimmed style
+            let content = result.content.as_deref().unwrap_or("");
+
+            // Don't show anything for empty output
+            if content.is_empty() {
+                return if self.highlighting_enabled {
+                    "\x1b[32m✓\x1b[0m\n".to_string()
+                } else {
+                    "(ok)\n".to_string()
+                };
+            }
+
+            let (display_content, truncated) = truncate_multiline(content, MAX_OUTPUT_LINES);
+
+            if self.highlighting_enabled {
+                let mut output = String::new();
+                output.push_str("\x1b[90m");
+                output.push_str(&display_content);
+                output.push_str("\x1b[0m");
+                if !display_content.ends_with('\n') {
+                    output.push('\n');
+                }
+                if truncated {
+                    output.push_str("\x1b[90m... (output truncated)\x1b[0m\n");
+                }
+                output
+            } else {
+                let mut output = display_content.clone();
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+                if truncated {
+                    output.push_str("... (output truncated)\n");
+                }
+                output
             }
         }
     }
@@ -787,6 +948,19 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     } else {
         let truncated: String = single_line.chars().take(max_len - 3).collect();
         format!("{}...", truncated)
+    }
+}
+
+/// Truncate multiline content to a maximum number of lines.
+///
+/// Returns a tuple of (truncated content, was_truncated).
+fn truncate_multiline(s: &str, max_lines: usize) -> (String, bool) {
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.len() <= max_lines {
+        (s.to_string(), false)
+    } else {
+        let truncated = lines[..max_lines].join("\n");
+        (truncated, true)
     }
 }
 
