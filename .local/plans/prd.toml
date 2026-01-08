@@ -1291,7 +1291,7 @@ steps = [
   "Link to detailed docs/configuration.md",
   "Quick example of common configuration",
 ]
-passes = false
+passes = true
 acceptance = [
   "README has Configuration section",
   "Config file path shown for at least one platform",

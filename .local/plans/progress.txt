@@ -747,3 +747,43 @@ Created `docs/cli-reference.md` (~300 lines) with comprehensive CLI documentatio
 
 ### Remaining Documentation Stories
 - "Add configuration section to README" (README.md is currently empty)
+
+---
+
+## 2026-01-08: Add Configuration Section to README
+
+**Completed**: "Add configuration section to README" story from Documentation section
+
+### Background
+
+The README.md was essentially empty (just `# ralph`). The PRD required adding a Configuration section with:
+- Brief overview of config file location and format
+- Link to detailed docs/configuration.md
+- Quick example of common configuration
+
+### Implementation Details
+
+Updated `README.md` with:
+
+1. **Project description**: Brief explanation of what ralph is (LLM-powered vibe coding CLI)
+2. **Installation section**: Quick install commands using cargo xtask
+3. **Quick Start section**: Basic usage examples for common commands
+4. **Configuration section**:
+   - Platform-specific config file locations table (Linux, macOS, Windows)
+   - Example config.toml snippet showing theme configuration
+   - Configuration precedence explanation (CLI > env > config > defaults)
+   - Link to full docs/configuration.md
+5. **Documentation section**: Links to CLI Reference and Configuration docs
+
+### Files Changed
+- `README.md`: Updated from 2 lines to ~63 lines with complete project documentation
+
+### Acceptance Criteria Verified
+- ✅ README has Configuration section
+- ✅ Config file path shown for all three platforms (Linux, macOS, Windows)
+- ✅ Quick example config.toml snippet included
+- ✅ Link to full documentation provided
+
+### All PRD Stories Complete
+
+This was the last remaining story in the PRD. All stories now have `passes = true`.
