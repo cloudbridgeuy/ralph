@@ -899,3 +899,47 @@ The PRD had several documentation stories marked as `passes = false` even though
 ### Remaining Pending Story
 One documentation story remains incomplete:
 - "Document PRD file format and workflow" - requires creating `docs/prd-format.md`
+
+---
+
+## 2026-01-08: Document PRD File Format and Workflow
+
+**Completed**: "Document PRD file format and workflow" story from Documentation section
+
+### Background
+
+The PRD file format is central to how ralph tracks work and determines when iteration loops should complete. This documentation was the last remaining incomplete story in the PRD.
+
+### Implementation Details
+
+Created `docs/prd-format.md` (~180 lines) with comprehensive PRD documentation:
+
+1. **Overview**: Explains what PRD files are and how ralph uses them
+2. **File Location**: Default path and `--prd` flag for custom paths
+3. **Story Schema**:
+   - Required fields table: `description`, `passes`
+   - Optional fields table: `category`, `steps`, `acceptance`, `actor`
+   - Note about `passed` alias for `passes`
+4. **Categories**: Table of common category values (`ui`, `internal`, `feature`, `bugfix`)
+5. **Example PRD File**: Multi-story example showing all field types and categories
+6. **Workflow**: Detailed explanation of how ralph uses PRD:
+   - Initial analysis (counts, early exit, max iterations)
+   - Per-iteration monitoring (re-reading, change detection)
+   - Completion detection (all complete, marker found, max iterations)
+   - Story state transitions diagram
+7. **Best Practices**: 5 recommendations for effective PRD usage
+8. **Related Documentation**: Links to CLI Reference and Configuration docs
+
+### Files Created
+- `docs/prd-format.md`: Complete PRD format documentation
+
+### Acceptance Criteria Verified
+- Story schema documented (category, description, steps, passes)
+- All category values listed with descriptions
+- Example shows realistic multi-story PRD
+- Workflow explained (pending -> in progress -> completed)
+- Optional fields documented (actor, acceptance)
+
+### All PRD Stories Complete
+
+This was the final pending story. All stories in the PRD now have `passes = true`.

@@ -106,7 +106,7 @@ steps = [
   "Show example PRD file with multiple stories",
   "Document how ralph uses PRD for iteration tracking",
 ]
-passes = false
+passes = true
 acceptance = [
   "Story schema documented (category, description, steps, passes)",
   "All category values listed with descriptions",
