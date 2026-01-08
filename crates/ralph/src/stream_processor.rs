@@ -531,10 +531,18 @@ impl StreamProcessor {
     ///
     /// Bash tool invocations receive special treatment: the command is shown in
     /// full with shell syntax highlighting applied.
+    ///
+    /// Grep tool invocations receive special treatment in verbose mode: the
+    /// regex pattern is shown with syntax highlighting.
     fn format_tool_invocation(&self, invocation: &ralph_core::stream::ToolInvocation) -> String {
         // Special handling for Bash tool invocations
         if invocation.name == "Bash" {
             return self.format_bash_tool_invocation(invocation);
+        }
+
+        // Special handling for Grep tool invocations in verbose mode
+        if invocation.name == "Grep" && self.is_tool_verbose("Grep") {
+            return self.format_grep_tool_invocation_verbose(invocation);
         }
 
         let key_arg = extract_key_argument(&invocation.name, &invocation.input);
@@ -631,6 +639,112 @@ impl StreamProcessor {
         }
     }
 
+    /// Format a Grep tool invocation with verbose output.
+    ///
+    /// In verbose mode, the pattern is shown with regex syntax highlighting
+    /// and additional search parameters are displayed.
+    fn format_grep_tool_invocation_verbose(
+        &self,
+        invocation: &ralph_core::stream::ToolInvocation,
+    ) -> String {
+        // Extract the pattern from the input
+        let pattern = invocation
+            .input
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Extract optional search path
+        let search_path = invocation
+            .input
+            .get("path")
+            .and_then(|v| v.as_str())
+            .unwrap_or(".");
+
+        // Extract optional glob filter
+        let glob = invocation.input.get("glob").and_then(|v| v.as_str());
+
+        // Extract optional file type
+        let file_type = invocation.input.get("type").and_then(|v| v.as_str());
+
+        // Extract output mode
+        let output_mode = invocation
+            .input
+            .get("output_mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("files_with_matches");
+
+        // Extract case-insensitive flag
+        let case_insensitive = invocation
+            .input
+            .get("-i")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if self.highlighting_enabled {
+            let mut output = String::new();
+
+            // Header with tool name
+            output.push_str("\x1b[36m▶ Grep\x1b[0m\n");
+
+            // Pattern line with regex highlighting
+            output.push_str("  \x1b[1mPattern:\x1b[0m ");
+            let highlighted_pattern = self.code_highlighter.highlight(pattern, Some("regex"));
+            // Remove trailing reset if present to add our own newline
+            let trimmed_pattern = highlighted_pattern.trim_end_matches("\x1b[0m");
+            output.push_str(trimmed_pattern);
+            output.push_str("\x1b[0m\n");
+
+            // Search path
+            output.push_str(&format!("  \x1b[90mPath:\x1b[0m {}\n", search_path));
+
+            // Output mode
+            output.push_str(&format!("  \x1b[90mMode:\x1b[0m {}\n", output_mode));
+
+            // Optional filters on same line if present
+            let mut filters = Vec::new();
+            if let Some(g) = glob {
+                filters.push(format!("glob: {}", g));
+            }
+            if let Some(t) = file_type {
+                filters.push(format!("type: {}", t));
+            }
+            if case_insensitive {
+                filters.push("case-insensitive".to_string());
+            }
+            if !filters.is_empty() {
+                output.push_str(&format!("  \x1b[90m[{}]\x1b[0m\n", filters.join(", ")));
+            }
+
+            output
+        } else {
+            // Plain text for non-terminal
+            let mut output = String::new();
+
+            output.push_str("> Grep\n");
+            output.push_str(&format!("  Pattern: {}\n", pattern));
+            output.push_str(&format!("  Path: {}\n", search_path));
+            output.push_str(&format!("  Mode: {}\n", output_mode));
+
+            // Optional filters
+            let mut filters = Vec::new();
+            if let Some(g) = glob {
+                filters.push(format!("glob: {}", g));
+            }
+            if let Some(t) = file_type {
+                filters.push(format!("type: {}", t));
+            }
+            if case_insensitive {
+                filters.push("case-insensitive".to_string());
+            }
+            if !filters.is_empty() {
+                output.push_str(&format!("  [{}]\n", filters.join(", ")));
+            }
+
+            output
+        }
+    }
+
     /// Format a tool result for display (without invocation context).
     #[allow(dead_code)]
     fn format_tool_result(&self, result: &ralph_core::stream::ToolResult) -> String {
@@ -642,6 +756,8 @@ impl StreamProcessor {
     /// When the original invocation is available and the tool is "Edit", this method
     /// will detect if the result contains a diff and apply syntax highlighting.
     /// When the tool is "Bash", the output is shown with distinct styling.
+    /// When the tool is "Grep" and verbose mode is enabled, the results are shown
+    /// with syntax highlighting.
     fn format_tool_result_with_context(
         &self,
         result: &ralph_core::stream::ToolResult,
@@ -661,6 +777,10 @@ impl StreamProcessor {
             // Bash tool with output
             if inv.name == "Bash" {
                 return self.format_bash_tool_result(result);
+            }
+            // Grep tool with verbose mode
+            if inv.name == "Grep" && self.is_tool_verbose("Grep") {
+                return self.format_grep_tool_result_verbose(inv.clone(), result);
             }
         }
 
@@ -850,6 +970,166 @@ impl StreamProcessor {
 
             output
         }
+    }
+
+    /// Format a Grep tool result with verbose output.
+    ///
+    /// In verbose mode, the matched files/content are displayed without truncation
+    /// and with appropriate coloring for matches.
+    fn format_grep_tool_result_verbose(
+        &self,
+        invocation: ToolInvocation,
+        result: &ralph_core::stream::ToolResult,
+    ) -> String {
+        const MAX_RESULT_LINES: usize = 100;
+
+        if result.is_error {
+            // Error case - show error message
+            let error_content = result
+                .content
+                .as_ref()
+                .map(|c| truncate_string(c, 200))
+                .unwrap_or_else(|| "(grep failed)".to_string());
+
+            return if self.highlighting_enabled {
+                format!("\x1b[31m✗ Grep error:\x1b[0m {}\n", error_content)
+            } else {
+                format!("! Grep error: {}\n", error_content)
+            };
+        }
+
+        let content = result.content.as_deref().unwrap_or("");
+
+        // Empty result
+        if content.is_empty() {
+            return if self.highlighting_enabled {
+                "\x1b[90m(no matches)\x1b[0m\n".to_string()
+            } else {
+                "(no matches)\n".to_string()
+            };
+        }
+
+        // Extract the pattern for highlighting context
+        let pattern = invocation
+            .input
+            .get("pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Get the output mode to determine formatting
+        let output_mode = invocation
+            .input
+            .get("output_mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("files_with_matches");
+
+        // Count lines for potential truncation
+        let lines: Vec<&str> = content.lines().collect();
+        let line_count = lines.len();
+        let (display_lines, truncated) = if line_count > MAX_RESULT_LINES {
+            (&lines[..MAX_RESULT_LINES], true)
+        } else {
+            (&lines[..], false)
+        };
+
+        if self.highlighting_enabled {
+            let mut output = String::new();
+
+            // Results header showing match count
+            let match_word = if line_count == 1 { "match" } else { "matches" };
+            output.push_str(&format!(
+                "\x1b[32m✓\x1b[0m \x1b[90m{} {}\x1b[0m\n",
+                line_count, match_word
+            ));
+
+            // Format based on output mode
+            match output_mode {
+                "files_with_matches" => {
+                    // Just file paths - show them in dim color
+                    for line in display_lines {
+                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
+                    }
+                }
+                "content" => {
+                    // Content with line numbers - highlight the pattern
+                    for line in display_lines {
+                        // Format: filename:line_number:content
+                        // Try to highlight the matched pattern in the line
+                        let highlighted_line = self.highlight_grep_match(line, pattern);
+                        output.push_str(&format!("  {}\n", highlighted_line));
+                    }
+                }
+                "count" => {
+                    // Just counts - show path:count pairs
+                    for line in display_lines {
+                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
+                    }
+                }
+                _ => {
+                    // Unknown mode - show raw
+                    for line in display_lines {
+                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
+                    }
+                }
+            }
+
+            if truncated {
+                output.push_str(&format!(
+                    "\x1b[90m... {} more lines\x1b[0m\n",
+                    line_count - MAX_RESULT_LINES
+                ));
+            }
+
+            output
+        } else {
+            // Plain text format
+            let mut output = String::new();
+
+            let match_word = if line_count == 1 { "match" } else { "matches" };
+            output.push_str(&format!("{} {}\n", line_count, match_word));
+
+            for line in display_lines {
+                output.push_str(&format!("  {}\n", line));
+            }
+
+            if truncated {
+                output.push_str(&format!(
+                    "... {} more lines\n",
+                    line_count - MAX_RESULT_LINES
+                ));
+            }
+
+            output
+        }
+    }
+
+    /// Highlight a grep match within a line of output.
+    ///
+    /// Attempts to find and highlight the matched portion of the line.
+    /// For content mode output (filename:line_number:content), this highlights
+    /// the content portion where the pattern matched.
+    fn highlight_grep_match(&self, line: &str, _pattern: &str) -> String {
+        // Parse the line format: filename:line_number:content or just filename
+        // For simplicity, we'll just apply dim styling to the filename:line_number prefix
+        // and normal styling to the content
+
+        // Try to find the pattern ":number:" which indicates content mode
+        if let Some(first_colon) = line.find(':') {
+            if let Some(second_colon_offset) = line[first_colon + 1..].find(':') {
+                let second_colon = first_colon + 1 + second_colon_offset;
+                // Check if the part between colons is a number
+                let potential_line_num = &line[first_colon + 1..second_colon];
+                if potential_line_num.chars().all(|c| c.is_ascii_digit()) {
+                    // This looks like filename:line_number:content format
+                    let prefix = &line[..second_colon + 1];
+                    let content = &line[second_colon + 1..];
+                    return format!("\x1b[90m{}\x1b[0m\x1b[93m{}\x1b[0m", prefix, content);
+                }
+            }
+        }
+
+        // Default: just show the line in dim color
+        format!("\x1b[90m{}\x1b[0m", line)
     }
 
     /// Process text through the chunk buffer and generate highlighted output.

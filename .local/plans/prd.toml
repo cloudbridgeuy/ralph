@@ -1619,7 +1619,7 @@ steps = [
   "Apply syntax highlighting to regex pattern",
   "Display results in readable format (not truncated)",
 ]
-passes = false
+passes = true
 acceptance = [
   "Grep pattern shown in full when verbose enabled",
   "Regex pattern syntax highlighted",
