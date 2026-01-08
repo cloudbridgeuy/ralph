@@ -115,9 +115,7 @@ steps = [
   "Clear spinner line completely when first text chunk arrives",
   "Do not show spinner when stdout is not a terminal (piped output)",
 ]
-# Note: Basic spinner works but total session time is not displayed.
-# Current output: "⠹ Thinking... 0s" - missing total time component.
-passes = false
+passes = true
 acceptance = [
   "Spinner only visible when waiting (no text streaming)",
   "Elapsed time updates every second while spinner is shown",

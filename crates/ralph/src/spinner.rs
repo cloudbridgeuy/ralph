@@ -166,6 +166,10 @@ impl Spinner {
     /// If the spinner is disabled (non-terminal) or already running, this is a no-op.
     /// The spinner will continue until [`stop`](Spinner::stop) is called.
     ///
+    /// Note: This does NOT reset iteration start time. Use this for restarting
+    /// the spinner after gaps during an iteration. The iteration time continues
+    /// accumulating from when the iteration started.
+    ///
     /// # Arguments
     ///
     /// * `context` - The context determining what message to display
@@ -174,8 +178,9 @@ impl Spinner {
             return;
         }
 
-        // Reset iteration start time
-        self.iteration_start = Instant::now();
+        // Note: We do NOT reset iteration_start here.
+        // The iteration time should continue from when the iteration actually started,
+        // not from when the spinner was restarted after a gap.
 
         // Set context
         if let Ok(mut ctx) = self.context.lock() {
@@ -325,18 +330,16 @@ fn run_spinner(
 /// # Format
 ///
 /// - Just iteration time: "12s" or "1m 23s"
-/// - With session time: "Iteration: 12s | Total: 1m 45s"
+/// - With session time: "12s • Total: 1m 45s"
 fn format_spinner_time(iteration_secs: u64, total_elapsed_ms: u64) -> String {
     let iteration_display = format_time_short(iteration_secs);
     let total_secs = total_elapsed_ms / 1000;
 
-    // Only show session total if it differs from iteration time
+    // Only show session total if it differs significantly from iteration time
+    // (more than 1 second difference, indicating multiple iterations)
     if total_secs > iteration_secs + 1 {
         let total_display = format_time_short(total_secs);
-        format!(
-            "Iteration: {} | Total: {}",
-            iteration_display, total_display
-        )
+        format!("{} • Total: {}", iteration_display, total_display)
     } else {
         iteration_display
     }
@@ -484,7 +487,7 @@ mod tests {
     fn test_format_spinner_time_with_session() {
         // When session time differs significantly, show both
         let result = format_spinner_time(12, 105_000);
-        assert_eq!(result, "Iteration: 12s | Total: 1m 45s");
+        assert_eq!(result, "12s • Total: 1m 45s");
     }
 
     #[test]

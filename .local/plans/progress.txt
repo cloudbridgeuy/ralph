@@ -141,3 +141,39 @@ ralph run --verbose-tools           # Verbose for all tools
 - Enhanced Grep tool rendering in verbose mode (now functional)
 - Enhanced Read tool rendering in verbose mode (now functional)
 - Enhanced TodoWrite tool rendering in verbose mode (now functional)
+
+---
+
+## 2026-01-07: Fixed Spinner Total Session Time Display
+
+**Completed**: "Show spinner with elapsed time while waiting for Claude to respond" story from Layer 1F (Progress Indicators)
+
+### Background
+
+The spinner was not showing total session time correctly. The issue was:
+1. When the spinner restarted after a gap in output, `start_with_context()` was resetting `iteration_start` to `Instant::now()`
+2. This caused the iteration elapsed time to reset to 0s every time the spinner restarted
+3. Since iteration time was always small, total session time was never displayed (only shown when total > iteration + 1)
+
+### Implementation Details
+
+1. **Fixed iteration time preservation** (`spinner.rs`):
+   - Removed `self.iteration_start = Instant::now()` from `start_with_context()`
+   - The iteration start time is now only set when the `Spinner` is constructed
+   - Restarting the spinner after gaps preserves the correct iteration elapsed time
+
+2. **Updated time format** (`spinner.rs`):
+   - Changed format from `Iteration: 12s | Total: 1m 45s` to `12s • Total: 1m 45s`
+   - More concise format as per PRD requirements
+
+3. **Updated tests** (`spinner.rs`):
+   - Updated `test_format_spinner_time_with_session` to expect new format
+
+### Files Changed
+- `crates/ralph/src/spinner.rs`: Fixed `start_with_context()` and time format
+
+### Behavior After Fix
+- During first iteration: `⠋ Thinking... 12s`
+- During subsequent iterations: `⠋ Thinking... 8s • Total: 1m 45s`
+- Total time accumulates correctly across iterations
+- Iteration time continues counting even when spinner restarts after output gaps
