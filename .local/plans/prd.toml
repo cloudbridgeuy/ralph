@@ -1640,7 +1640,7 @@ steps = [
   "Show line numbers alongside content",
   "Handle binary files gracefully (show placeholder message)",
 ]
-passes = false
+passes = true
 acceptance = [
   "File path shown in full",
   "File content displayed with syntax highlighting based on extension",

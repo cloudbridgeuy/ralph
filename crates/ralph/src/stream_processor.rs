@@ -545,6 +545,11 @@ impl StreamProcessor {
             return self.format_grep_tool_invocation_verbose(invocation);
         }
 
+        // Special handling for Read tool invocations in verbose mode
+        if invocation.name == "Read" && self.is_tool_verbose("Read") {
+            return self.format_read_tool_invocation_verbose(invocation);
+        }
+
         let key_arg = extract_key_argument(&invocation.name, &invocation.input);
 
         // Format the argument: paths shown in full, other args truncated
@@ -781,6 +786,10 @@ impl StreamProcessor {
             // Grep tool with verbose mode
             if inv.name == "Grep" && self.is_tool_verbose("Grep") {
                 return self.format_grep_tool_result_verbose(inv.clone(), result);
+            }
+            // Read tool with verbose mode
+            if inv.name == "Read" && self.is_tool_verbose("Read") {
+                return self.format_read_tool_result_verbose(inv.clone(), result);
             }
         }
 
@@ -1132,6 +1141,190 @@ impl StreamProcessor {
         format!("\x1b[90m{}\x1b[0m", line)
     }
 
+    /// Format a Read tool invocation with verbose output.
+    ///
+    /// In verbose mode, the file path is shown clearly with additional context
+    /// about line offset and limit if provided.
+    fn format_read_tool_invocation_verbose(
+        &self,
+        invocation: &ralph_core::stream::ToolInvocation,
+    ) -> String {
+        // Extract the file path from the input
+        let file_path = invocation
+            .input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(unknown file)");
+
+        // Extract optional offset and limit
+        let offset = invocation.input.get("offset").and_then(|v| v.as_u64());
+        let limit = invocation.input.get("limit").and_then(|v| v.as_u64());
+
+        if self.highlighting_enabled {
+            let mut output = String::new();
+
+            // Header with tool name
+            output.push_str("\x1b[36m▶ Read\x1b[0m\n");
+
+            // File path
+            output.push_str(&format!("  \x1b[1mFile:\x1b[0m {}\n", file_path));
+
+            // Optional range info
+            let mut range_parts = Vec::new();
+            if let Some(o) = offset {
+                range_parts.push(format!("offset: {}", o));
+            }
+            if let Some(l) = limit {
+                range_parts.push(format!("limit: {}", l));
+            }
+            if !range_parts.is_empty() {
+                output.push_str(&format!("  \x1b[90m[{}]\x1b[0m\n", range_parts.join(", ")));
+            }
+
+            output
+        } else {
+            // Plain text for non-terminal
+            let mut output = String::new();
+
+            output.push_str("> Read\n");
+            output.push_str(&format!("  File: {}\n", file_path));
+
+            // Optional range info
+            let mut range_parts = Vec::new();
+            if let Some(o) = offset {
+                range_parts.push(format!("offset: {}", o));
+            }
+            if let Some(l) = limit {
+                range_parts.push(format!("limit: {}", l));
+            }
+            if !range_parts.is_empty() {
+                output.push_str(&format!("  [{}]\n", range_parts.join(", ")));
+            }
+
+            output
+        }
+    }
+
+    /// Format a Read tool result with verbose output.
+    ///
+    /// In verbose mode, the file content is displayed with syntax highlighting
+    /// based on the file extension. Line numbers are shown matching the Read
+    /// tool's cat -n format.
+    fn format_read_tool_result_verbose(
+        &self,
+        invocation: ToolInvocation,
+        result: &ralph_core::stream::ToolResult,
+    ) -> String {
+        const MAX_CONTENT_LINES: usize = 100;
+
+        if result.is_error {
+            // Error case - show error message
+            let error_content = result
+                .content
+                .as_ref()
+                .map(|c| truncate_string(c, 200))
+                .unwrap_or_else(|| "(read failed)".to_string());
+
+            return if self.highlighting_enabled {
+                format!("\x1b[31m✗ Read error:\x1b[0m {}\n", error_content)
+            } else {
+                format!("! Read error: {}\n", error_content)
+            };
+        }
+
+        let content = result.content.as_deref().unwrap_or("");
+
+        // Empty result
+        if content.is_empty() {
+            return if self.highlighting_enabled {
+                "\x1b[90m(empty file)\x1b[0m\n".to_string()
+            } else {
+                "(empty file)\n".to_string()
+            };
+        }
+
+        // Check for binary file indicator
+        if content.contains("(binary file)") || content.starts_with('\u{0}') {
+            return if self.highlighting_enabled {
+                "\x1b[90m(binary file)\x1b[0m\n".to_string()
+            } else {
+                "(binary file)\n".to_string()
+            };
+        }
+
+        // Extract file path for language detection
+        let file_path = invocation
+            .input
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Extract language from file extension
+        let language = extract_language_from_path(file_path);
+
+        // Count lines for potential truncation
+        let lines: Vec<&str> = content.lines().collect();
+        let line_count = lines.len();
+        let (display_lines, truncated) = if line_count > MAX_CONTENT_LINES {
+            (&lines[..MAX_CONTENT_LINES], true)
+        } else {
+            (&lines[..], false)
+        };
+
+        if self.highlighting_enabled {
+            let mut output = String::new();
+
+            // Results header showing line count
+            let line_word = if line_count == 1 { "line" } else { "lines" };
+            output.push_str(&format!(
+                "\x1b[32m✓\x1b[0m \x1b[90m{} {}\x1b[0m\n",
+                line_count, line_word
+            ));
+
+            // Apply syntax highlighting to the content
+            let content_to_highlight = display_lines.join("\n");
+            let highlighted = if language.is_some() {
+                self.code_highlighter
+                    .highlight(&content_to_highlight, language)
+            } else {
+                content_to_highlight.clone()
+            };
+
+            // Display highlighted content with indentation
+            for line in highlighted.lines() {
+                output.push_str(&format!("  {}\n", line));
+            }
+
+            if truncated {
+                output.push_str(&format!(
+                    "\x1b[90m... {} more lines\x1b[0m\n",
+                    line_count - MAX_CONTENT_LINES
+                ));
+            }
+
+            output
+        } else {
+            // Plain text format
+            let mut output = String::new();
+
+            let line_word = if line_count == 1 { "line" } else { "lines" };
+            output.push_str(&format!("{} {}\n", line_count, line_word));
+
+            for line in display_lines {
+                output.push_str(&format!("  {}\n", line));
+            }
+
+            if truncated {
+                output.push_str(&format!(
+                    "... {} more lines\n",
+                    line_count - MAX_CONTENT_LINES
+                ));
+            }
+
+            output
+        }
+    }
+
     /// Process text through the chunk buffer and generate highlighted output.
     fn process_text_for_output(&mut self, text: &str) -> Option<String> {
         let mut output = String::new();
@@ -1404,6 +1597,79 @@ fn truncate_multiline(s: &str, max_lines: usize) -> (String, bool) {
     } else {
         let truncated = lines[..max_lines].join("\n");
         (truncated, true)
+    }
+}
+
+/// Extract language hint from a file path based on extension.
+///
+/// Returns the language token that can be used with syntect for syntax highlighting.
+/// Returns None for unknown extensions.
+fn extract_language_from_path(file_path: &str) -> Option<&'static str> {
+    // Get the extension from the file path
+    let extension = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|ext| ext.to_str())?;
+
+    // Map common extensions to syntect language tokens
+    match extension.to_lowercase().as_str() {
+        // Rust
+        "rs" => Some("rust"),
+        // Python
+        "py" | "pyw" | "pyi" => Some("python"),
+        // JavaScript/TypeScript
+        "js" | "mjs" | "cjs" => Some("javascript"),
+        "ts" | "mts" | "cts" => Some("typescript"),
+        "jsx" => Some("jsx"),
+        "tsx" => Some("tsx"),
+        // Web
+        "html" | "htm" => Some("html"),
+        "css" => Some("css"),
+        "scss" | "sass" => Some("scss"),
+        // Shell
+        "sh" | "bash" | "zsh" => Some("sh"),
+        // C/C++
+        "c" | "h" => Some("c"),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some("cpp"),
+        // Go
+        "go" => Some("go"),
+        // Java/Kotlin
+        "java" => Some("java"),
+        "kt" | "kts" => Some("kotlin"),
+        // Ruby
+        "rb" => Some("ruby"),
+        // PHP
+        "php" => Some("php"),
+        // Swift
+        "swift" => Some("swift"),
+        // Data formats
+        "json" => Some("json"),
+        "yaml" | "yml" => Some("yaml"),
+        "toml" => Some("toml"),
+        "xml" => Some("xml"),
+        // Markup
+        "md" | "markdown" => Some("markdown"),
+        // SQL
+        "sql" => Some("sql"),
+        // Docker
+        "dockerfile" => Some("dockerfile"),
+        // Makefile
+        "mk" | "makefile" => Some("makefile"),
+        // Config
+        "ini" | "cfg" => Some("ini"),
+        // Diff
+        "diff" | "patch" => Some("diff"),
+        // Other
+        "lua" => Some("lua"),
+        "vim" => Some("viml"),
+        "hs" => Some("haskell"),
+        "ml" | "mli" => Some("ocaml"),
+        "ex" | "exs" => Some("elixir"),
+        "erl" | "hrl" => Some("erlang"),
+        "clj" | "cljs" | "cljc" => Some("clojure"),
+        "scala" | "sc" => Some("scala"),
+        "r" => Some("r"),
+        "pl" | "pm" => Some("perl"),
+        _ => None,
     }
 }
 
