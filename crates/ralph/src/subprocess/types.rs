@@ -1,0 +1,61 @@
+//! Core types for subprocess operations.
+
+use crate::highlight::ThemeError;
+use crate::stream_processor::StreamProcessorResult;
+use std::io;
+
+/// Default gap threshold before showing spinner (in milliseconds).
+/// If no output is received for this duration, spinner reappears.
+pub const DEFAULT_GAP_THRESHOLD_MS: u64 = 500;
+
+/// Result of a subprocess invocation.
+#[derive(Debug, Clone)]
+pub struct SubprocessResult {
+    /// The exit code from the subprocess.
+    pub exit_code: i32,
+    /// Captured stdout output.
+    pub stdout: String,
+    /// Captured stderr output.
+    pub stderr: String,
+}
+
+/// Error type for subprocess operations.
+#[derive(Debug, thiserror::Error)]
+pub enum SubprocessError {
+    #[error("Failed to spawn subprocess: {0}")]
+    SpawnFailed(#[from] io::Error),
+
+    #[error("Subprocess terminated by signal")]
+    Signaled,
+
+    #[error("Failed to capture output: {0}")]
+    OutputCaptureFailed(String),
+
+    #[error("Subprocess timed out after {timeout_secs} seconds")]
+    Timeout {
+        /// Timeout duration in seconds
+        timeout_secs: u64,
+        /// Partial output captured before timeout
+        partial_result: Box<StreamingSubprocessResult>,
+    },
+
+    #[error("Subprocess interrupted by SIGINT/SIGTERM")]
+    Interrupted {
+        /// Partial output captured before interrupt
+        partial_result: Box<StreamingSubprocessResult>,
+    },
+
+    #[error("Invalid theme configuration: {0}")]
+    ThemeError(#[from] ThemeError),
+}
+
+/// Result of a subprocess invocation with stream processing.
+#[derive(Debug)]
+pub struct StreamingSubprocessResult {
+    /// The exit code from the subprocess.
+    pub exit_code: i32,
+    /// Captured stderr output.
+    pub stderr: String,
+    /// Processed stream result with chunks, metadata, and tool interactions.
+    pub stream_result: StreamProcessorResult,
+}
