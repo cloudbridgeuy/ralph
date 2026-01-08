@@ -58,7 +58,9 @@
       "Bash(find:*)",
       "Read(.claude/**)",
       "Write(.claude/**)",
-      "Edit(.claude/**)"
+      "Edit(.claude/**)",
+      "Bash(cargo xtask lint:*)",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": []
