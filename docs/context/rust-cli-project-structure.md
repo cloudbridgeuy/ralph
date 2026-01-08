@@ -447,6 +447,68 @@ myapp/
 └── README.md
 ```
 
+## Splitting Large Modules
+
+When a module exceeds ~500-1000 lines, split it into a directory structure for better maintainability and LLM parsing. This pattern is used for `startup/`, `stream_processor/`, and `subprocess/` modules.
+
+**When to split:**
+- File exceeds 500-1000 lines
+- Multiple distinct functional areas exist
+- Testing becomes unwieldy
+
+**Directory structure pattern:**
+
+```
+module_name/
+├── mod.rs              # Module declarations + public API re-exports
+├── types.rs            # Shared types, constants, error enums
+├── core_function_a.rs  # Primary functionality
+├── core_function_b.rs  # Related functionality
+├── helpers.rs          # Internal utilities (if needed)
+└── tests.rs            # All tests for the module
+```
+
+**mod.rs pattern:**
+
+```rust
+//! Module documentation explaining purpose and composition.
+
+mod core_function_a;
+mod core_function_b;
+mod types;
+
+#[cfg(test)]
+mod tests;
+
+// Re-export public API only
+pub use core_function_a::function_a;
+pub use core_function_b::function_b;
+pub use types::{TypeA, TypeB, ModuleError};
+```
+
+**Key principles:**
+
+1. **Minimal mod.rs**: Only module declarations and re-exports (~25-35 lines)
+2. **Types centralized**: All shared types in `types.rs`, imported via `super::types`
+3. **Single responsibility**: Each file handles one aspect of functionality
+4. **Tests consolidated**: All tests in `tests.rs` using `use super::*`
+5. **Internal visibility**: Helper functions use `pub(super)` for module-internal sharing
+6. **Target size**: Each file under 300-400 lines
+
+**Example (subprocess module):**
+
+```
+subprocess/
+├── mod.rs              # 34 lines - declarations + re-exports
+├── types.rs            # 61 lines - SubprocessResult, SubprocessError
+├── basic.rs            # 106 lines - invoke_subprocess
+├── streaming.rs        # 135 lines - invoke_subprocess_with_stream_processing
+├── timeout.rs          # 213 lines - invoke_subprocess_with_timeout
+├── themed.rs           # 202 lines - invoke_subprocess_with_theme
+├── spinner.rs          # 304 lines - invoke_subprocess_with_spinner
+└── tests.rs            # 119 lines - all 11 tests
+```
+
 ## Key Principles for AI Agents
 
 1. **Follow existing patterns**: When adding features, mirror the structure of existing features in the codebase.
@@ -462,3 +524,5 @@ myapp/
 6. **Use the prelude**: Import `crate::prelude::*` instead of individual items for common types.
 
 7. **Workspace dependencies**: Define versions once in workspace root, reference with `.workspace = true`.
+
+8. **Split large modules**: When a file exceeds ~500-1000 lines, refactor into a directory structure.
