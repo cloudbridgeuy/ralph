@@ -6,6 +6,7 @@
 
 mod bash;
 mod edit;
+mod glob;
 mod grep;
 mod read;
 mod todowrite;
@@ -59,6 +60,10 @@ pub fn format_tool_result_with_context(
         // TodoWrite tool with verbose mode
         if inv.name == "TodoWrite" && processor.is_tool_verbose("TodoWrite") {
             return todowrite::format_todowrite_tool_result_verbose(processor, result);
+        }
+        // Glob tool with verbose mode
+        if inv.name == "Glob" && processor.is_tool_verbose("Glob") {
+            return glob::format_glob_tool_result_verbose(processor, result);
         }
     }
 

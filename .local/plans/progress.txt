@@ -374,3 +374,81 @@ To:
 2│     println!("hello");
 3│ }
 ```
+
+---
+
+## 2026-01-08: Enhanced Glob Tool Verbose Rendering
+
+**Completed**: "Enhanced Glob tool rendering in verbose mode" story from Layer 8 (UI Improvements)
+
+### Background
+
+The Glob tool is used for file pattern matching (e.g., `**/*.rs`). In non-verbose mode, it shows a compact format with pattern and count. In verbose mode, we want to show all matched files grouped by directory for better readability.
+
+### Implementation Details
+
+1. **Invocation formatting** (`tool_display/glob.rs`):
+   - New `format_glob_tool_invocation_verbose()` function
+   - Displays full pattern without truncation
+   - Shows search path (defaults to ".")
+   - Consistent styling with other verbose tools (cyan header, labeled fields)
+
+2. **Result formatting** (`tool_results/glob.rs`):
+   - New `format_glob_tool_result_verbose()` function
+   - Shows total match count (e.g., "23 files matched")
+   - Groups files by directory using `BTreeMap` for sorted output
+   - Displays directory headers followed by filenames
+   - Truncates at 200 lines with "... N more files" indicator
+   - Handles empty results with "(no matches)" message
+   - Handles errors with descriptive error format
+
+3. **Directory grouping** (`group_files_by_directory`):
+   - Helper function to organize file paths by parent directory
+   - Uses `BTreeMap` for consistent alphabetical ordering
+   - Handles root-level files (empty string key)
+
+### Files Changed
+- `crates/ralph/src/stream_processor/tool_display/glob.rs`: New file (~50 lines)
+- `crates/ralph/src/stream_processor/tool_results/glob.rs`: New file (~180 lines)
+- `crates/ralph/src/stream_processor/tool_display/mod.rs`: Added glob module and wiring
+- `crates/ralph/src/stream_processor/tool_results/mod.rs`: Added glob module and wiring
+- `crates/ralph/src/stream_processor/tests/mod.rs`: Added glob_verbose test module
+- `crates/ralph/src/stream_processor/tests/glob_verbose.rs`: New file (~320 lines)
+
+### Tests
+15 unit tests added:
+- Pattern display in invocation
+- Path display in invocation
+- Default path handling
+- Match count display
+- Single file grammar ("1 file" vs "N files")
+- Empty results
+- Error handling
+- Directory grouping
+- Large output truncation
+- Terminal highlighting with ANSI codes
+- Non-verbose compact format
+- Plain text format
+- Nested directory handling
+
+### Usage
+```bash
+ralph run --verbose-tools=glob    # Enable verbose for Glob tool only
+ralph run --verbose-tools         # Enable verbose for all tools
+```
+
+### Example Output
+```
+▶ Glob
+  Pattern: **/*.rs
+  Path: .
+✓ 5 files matched
+  src/
+    main.rs
+    lib.rs
+  src/stream_processor/
+    mod.rs
+    types.rs
+  tests/
+    integration.rs
+```

@@ -380,7 +380,7 @@ steps = [
   "Group matches by directory for readability",
   "Show total match count",
 ]
-passes = false
+passes = true
 acceptance = [
   "Glob pattern shown in full when verbose enabled",
   "All matched files displayed (not truncated)",

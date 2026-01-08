@@ -5,6 +5,7 @@
 //! for unknown tools.
 
 mod bash;
+mod glob;
 mod grep;
 mod read;
 mod todowrite;
@@ -44,6 +45,11 @@ pub fn format_tool_invocation(processor: &StreamProcessor, invocation: &ToolInvo
     // Special handling for TodoWrite tool invocations in verbose mode
     if invocation.name == "TodoWrite" && processor.is_tool_verbose("TodoWrite") {
         return todowrite::format_todowrite_tool_invocation_verbose(processor, invocation);
+    }
+
+    // Special handling for Glob tool invocations in verbose mode
+    if invocation.name == "Glob" && processor.is_tool_verbose("Glob") {
+        return glob::format_glob_tool_invocation_verbose(processor, invocation);
     }
 
     let key_arg = extract_key_argument(&invocation.name, &invocation.input);
