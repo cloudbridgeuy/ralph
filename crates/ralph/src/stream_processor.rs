@@ -550,6 +550,11 @@ impl StreamProcessor {
             return self.format_read_tool_invocation_verbose(invocation);
         }
 
+        // Special handling for TodoWrite tool invocations in verbose mode
+        if invocation.name == "TodoWrite" && self.is_tool_verbose("TodoWrite") {
+            return self.format_todowrite_tool_invocation_verbose(invocation);
+        }
+
         let key_arg = extract_key_argument(&invocation.name, &invocation.input);
 
         // Format the argument: paths shown in full, other args truncated
@@ -790,6 +795,10 @@ impl StreamProcessor {
             // Read tool with verbose mode
             if inv.name == "Read" && self.is_tool_verbose("Read") {
                 return self.format_read_tool_result_verbose(inv.clone(), result);
+            }
+            // TodoWrite tool with verbose mode
+            if inv.name == "TodoWrite" && self.is_tool_verbose("TodoWrite") {
+                return self.format_todowrite_tool_result_verbose(result);
             }
         }
 
@@ -1322,6 +1331,129 @@ impl StreamProcessor {
             }
 
             output
+        }
+    }
+
+    /// Format a TodoWrite tool invocation with verbose output.
+    ///
+    /// In verbose mode, the full todo list is displayed with status indicators
+    /// and color coding for each item's status.
+    fn format_todowrite_tool_invocation_verbose(
+        &self,
+        invocation: &ralph_core::stream::ToolInvocation,
+    ) -> String {
+        // Extract the todos array from the input
+        let todos = invocation
+            .input
+            .get("todos")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.as_slice())
+            .unwrap_or(&[]);
+
+        if self.highlighting_enabled {
+            let mut output = String::new();
+
+            // Header with tool name
+            output.push_str("\x1b[36m▶ TodoWrite\x1b[0m\n");
+
+            if todos.is_empty() {
+                output.push_str("  \x1b[90m(clearing todo list)\x1b[0m\n");
+            } else {
+                // Display each todo item with status indicator
+                for todo in todos {
+                    let content = todo.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    let status = todo.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    let active_form = todo.get("activeForm").and_then(|v| v.as_str());
+
+                    // Status indicator with color coding
+                    // ○ pending (default), ◐ in_progress (yellow), ● completed (green)
+                    let (icon, color) = match status {
+                        "pending" => ("○", "\x1b[0m"),
+                        "in_progress" => ("◐", "\x1b[33m"),
+                        "completed" => ("●", "\x1b[32m"),
+                        _ => ("?", "\x1b[90m"),
+                    };
+
+                    output.push_str(&format!("  {}{} {}\x1b[0m", color, icon, content));
+
+                    // Show activeForm if different from content
+                    if let Some(af) = active_form {
+                        if af != content {
+                            output.push_str(&format!(" \x1b[90m({})\x1b[0m", af));
+                        }
+                    }
+
+                    output.push('\n');
+                }
+            }
+
+            output
+        } else {
+            // Plain text for non-terminal
+            let mut output = String::new();
+
+            output.push_str("> TodoWrite\n");
+
+            if todos.is_empty() {
+                output.push_str("  (clearing todo list)\n");
+            } else {
+                for todo in todos {
+                    let content = todo.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                    let status = todo.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                    let active_form = todo.get("activeForm").and_then(|v| v.as_str());
+
+                    // Status indicator without color
+                    let icon = match status {
+                        "pending" => "[ ]",
+                        "in_progress" => "[~]",
+                        "completed" => "[x]",
+                        _ => "[?]",
+                    };
+
+                    output.push_str(&format!("  {} {}", icon, content));
+
+                    if let Some(af) = active_form {
+                        if af != content {
+                            output.push_str(&format!(" ({})", af));
+                        }
+                    }
+
+                    output.push('\n');
+                }
+            }
+
+            output
+        }
+    }
+
+    /// Format a TodoWrite tool result with verbose output.
+    ///
+    /// In verbose mode, displays confirmation of the todo update. Since
+    /// TodoWrite typically doesn't have meaningful result content (just
+    /// success/failure), we show a summary message.
+    fn format_todowrite_tool_result_verbose(
+        &self,
+        result: &ralph_core::stream::ToolResult,
+    ) -> String {
+        if result.is_error {
+            let error_content = result
+                .content
+                .as_ref()
+                .map(|c| truncate_string(c, 200))
+                .unwrap_or_else(|| "(todo update failed)".to_string());
+
+            return if self.highlighting_enabled {
+                format!("\x1b[31m✗ TodoWrite error:\x1b[0m {}\n", error_content)
+            } else {
+                format!("! TodoWrite error: {}\n", error_content)
+            };
+        }
+
+        // Success case - show confirmation message
+        if self.highlighting_enabled {
+            "\x1b[32m✓\x1b[0m \x1b[90mtodos updated\x1b[0m\n".to_string()
+        } else {
+            "(todos updated)\n".to_string()
         }
     }
 

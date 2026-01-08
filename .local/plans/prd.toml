@@ -1663,7 +1663,7 @@ steps = [
   "Use color coding for status (pending, in_progress, completed)",
   "Format as readable checklist",
 ]
-passes = false
+passes = true
 acceptance = [
   "Todo items displayed as formatted list",
   "Status shown with icons: ○ pending, ◐ in_progress, ● completed",
