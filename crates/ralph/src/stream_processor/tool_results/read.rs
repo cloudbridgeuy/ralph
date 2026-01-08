@@ -7,11 +7,42 @@ use ralph_core::stream::{ToolInvocation, ToolResult};
 use super::super::processor::StreamProcessor;
 use super::super::utils::{extract_language_from_path, truncate_string};
 
+/// Normalize Claude CLI's `cat -n` line number format to a cleaner pipe-separated format.
+///
+/// Transforms lines from:
+/// - `     1\tcontent` → `1│ content`
+/// - `    12\tcontent` → `12│ content`
+/// - `   123\tcontent` → `123│ content`
+///
+/// Lines that don't match the `cat -n` pattern are passed through unchanged.
+fn normalize_cat_n_format(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| {
+            // Pattern: leading whitespace + digits + tab + content
+            // Claude CLI's cat -n output uses tab between number and content
+            if let Some(tab_pos) = line.find('\t') {
+                let prefix = &line[..tab_pos];
+                let rest = &line[tab_pos + 1..];
+
+                // Check if prefix is whitespace followed by digits
+                let trimmed = prefix.trim_start();
+                if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
+                    return format!("{}│ {}", trimmed, rest);
+                }
+            }
+            // Pass through unchanged if pattern doesn't match
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Format a Read tool result with verbose output.
 ///
 /// In verbose mode, the file content is displayed with syntax highlighting
-/// based on the file extension. Line numbers are shown matching the Read
-/// tool's cat -n format.
+/// based on the file extension. Line numbers from Claude CLI's `cat -n` format
+/// are normalized to use pipe separators (e.g., `1│ content` instead of `     1→content`).
 pub fn format_read_tool_result_verbose(
     processor: &StreamProcessor,
     invocation: ToolInvocation,
@@ -34,10 +65,10 @@ pub fn format_read_tool_result_verbose(
         };
     }
 
-    let content = result.content.as_deref().unwrap_or("");
+    let raw_content = result.content.as_deref().unwrap_or("");
 
     // Empty result
-    if content.is_empty() {
+    if raw_content.is_empty() {
         return if processor.highlighting_enabled {
             "\x1b[90m(empty file)\x1b[0m\n".to_string()
         } else {
@@ -46,7 +77,7 @@ pub fn format_read_tool_result_verbose(
     }
 
     // Check for binary file indicator
-    if content.contains("(binary file)") || content.starts_with('\u{0}') {
+    if raw_content.contains("(binary file)") || raw_content.starts_with('\u{0}') {
         return if processor.highlighting_enabled {
             "\x1b[90m(binary file)\x1b[0m\n".to_string()
         } else {
@@ -63,6 +94,10 @@ pub fn format_read_tool_result_verbose(
 
     // Extract language from file extension
     let language = extract_language_from_path(file_path);
+
+    // Normalize cat -n format before processing
+    // This transforms "     1\tcontent" to "1│ content"
+    let content = normalize_cat_n_format(raw_content);
 
     // Count lines for potential truncation
     let lines: Vec<&str> = content.lines().collect();
@@ -125,5 +160,90 @@ pub fn format_read_tool_result_verbose(
         }
 
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_cat_n_format_single_digit() {
+        let input = "     1\tfn main() {";
+        let expected = "1│ fn main() {";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_double_digit() {
+        let input = "    12\t    println!(\"hello\");";
+        let expected = "12│     println!(\"hello\");";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_triple_digit() {
+        let input = "   123\t}";
+        let expected = "123│ }";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_multiple_lines() {
+        let input = "     1\tfn main() {\n     2\t    println!(\"hello\");\n     3\t}";
+        let expected = "1│ fn main() {\n2│     println!(\"hello\");\n3│ }";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_pass_through_no_tab() {
+        // Lines without tabs should pass through unchanged
+        let input = "This is just plain text";
+        assert_eq!(normalize_cat_n_format(input), input);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_pass_through_non_numeric_prefix() {
+        // Lines with tabs but non-numeric prefix should pass through
+        let input = "abc\tcontent";
+        assert_eq!(normalize_cat_n_format(input), input);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_preserves_content_with_tabs() {
+        // Content after the first tab should be preserved, including tabs
+        let input = "     1\tfield1\tfield2";
+        let expected = "1│ field1\tfield2";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_empty_content() {
+        // Line with just a number and tab (empty content)
+        let input = "     1\t";
+        let expected = "1│ ";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_empty_string() {
+        let input = "";
+        assert_eq!(normalize_cat_n_format(input), "");
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_mixed_lines() {
+        // Mix of cat-n formatted lines and regular lines
+        let input = "     1\tcode line\nregular text\n     2\tmore code";
+        let expected = "1│ code line\nregular text\n2│ more code";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_with_offset() {
+        // Simulates partial file read with offset - line numbers don't start at 1
+        let input = "    50\tline fifty\n    51\tline fifty-one";
+        let expected = "50│ line fifty\n51│ line fifty-one";
+        assert_eq!(normalize_cat_n_format(input), expected);
     }
 }

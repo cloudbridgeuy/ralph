@@ -313,3 +313,64 @@ Similar to the Edit tool, Claude CLI's Write tool returns success messages rathe
 - New file indicator in header
 - Overwrite without indicator
 - Diff truncation
+
+---
+
+## 2026-01-08: Normalize Read Tool Line Number Format
+
+**Completed**: "Normalize Read tool line number format from tab to pipe separator" story from Layer 8 (UI Improvements)
+
+### Background
+
+Claude CLI's Read tool returns file content with `cat -n` format line numbers: leading whitespace + number + tab + content (e.g., `     1→content`). The tab character renders as an arrow in terminals. This format is hard to read and wastes horizontal space.
+
+### Implementation Details
+
+1. **New normalization function** (`normalize_cat_n_format`):
+   - Detects `cat -n` format pattern: leading whitespace + digits + tab
+   - Transforms to cleaner format: `1│ content` (number + pipe + space + content)
+   - Lines that don't match the pattern pass through unchanged
+   - Preserves original line numbers (important for offset/limit partial reads)
+   - Preserves content after the first tab, including any embedded tabs
+
+2. **Integration** (`format_read_tool_result_verbose`):
+   - Normalization applied early, before syntax highlighting
+   - Works for all file types
+   - Works with partial file reads (offset/limit parameters)
+
+### Files Changed
+- `crates/ralph/src/stream_processor/tool_results/read.rs`: Added `normalize_cat_n_format` function and integrated into result formatting
+
+### Tests
+11 unit tests added in read.rs:
+- Single digit line numbers (`     1\t` → `1│ `)
+- Double digit line numbers (`    12\t` → `12│ `)
+- Triple digit line numbers (`   123\t` → `123│ `)
+- Multiple lines
+- Pass-through for non-cat-n formatted lines
+- Pass-through for non-numeric prefixes
+- Preserves tabs in content after the first tab
+- Empty content after line number
+- Empty string input
+- Mixed formatted and non-formatted lines
+- Offset reads (line numbers not starting at 1)
+
+### Usage
+The normalization is automatically applied when using verbose mode for the Read tool:
+```bash
+ralph run --verbose-tools=read
+```
+
+Output transforms from:
+```
+     1→fn main() {
+     2→    println!("hello");
+     3→}
+```
+
+To:
+```
+1│ fn main() {
+2│     println!("hello");
+3│ }
+```

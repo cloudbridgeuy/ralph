@@ -925,7 +925,7 @@ steps = [
   "Preserve original line numbers (don't renumber)",
   "Apply to both verbose and non-verbose Read output",
 ]
-passes = false
+passes = true
 acceptance = [
   "Line format transforms from '     1→content' to '1│ content'",
   "Tab character (rendered as →) replaced with '│ ' (pipe + space)",
