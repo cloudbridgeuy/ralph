@@ -395,7 +395,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Convert parsed chunks to iteration log chunks
         let chunks = Chunk::from_parsed_chunks(&result.stream_result.chunks);
 
-        // Write iteration log with extracted metadata, tool calls, and typed chunks
+        // Write iteration log with extracted metadata, tool calls, typed chunks, and output blocks
         let iteration_log = IterationLog {
             sequence: iteration as u32,
             started_at: chrono::Utc::now(),
@@ -410,6 +410,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             },
             tool_calls,
             chunks,
+            output_blocks: result.stream_result.output_blocks.clone(),
         };
 
         write_iteration_log(&session_dir, &iteration_log)?;
@@ -474,19 +475,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
 
         // Post-iteration check: re-read PRD
         let prd_after = read_prd_file(&config.context_paths.prd)?;
-
-        // Error if PRD unchanged (stuck state)
-        if !has_prd_changed(&prd_snapshot, &prd_after) {
-            // Finalize session as failed before returning error
-            // Use total iterations including prior retries
-            let total_so_far = iteration_offset + relative_iteration;
-            if let Err(e) =
-                finalize_session(&session_slug, total_so_far as u32, SessionOutcome::Failed)
-            {
-                eprintln!("Warning: Failed to finalize session: {}", e);
-            }
-            return Err(RunError::PrdUnchanged);
-        }
+        let prd_changed = has_prd_changed(&prd_snapshot, &prd_after);
 
         // Count pending stories after iteration
         let pending_after = count_pending_stories(&prd_after)?;
@@ -498,6 +487,9 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         write_iteration_log(&session_dir, &updated_log)?;
 
         // Check completion conditions (use raw_text for completion marker detection)
+        // This check happens BEFORE the PRD unchanged check because:
+        // 1. If completion marker is found, user explicitly wants to stop
+        // 2. If all stories are complete, we should exit successfully
         if let Some(reason) = check_completion(
             pending_after,
             &result.stream_result.raw_text,
@@ -506,6 +498,20 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             completion_reason = Some(reason);
             iterations_completed = relative_iteration;
             break;
+        }
+
+        // Error if PRD unchanged (stuck state) - only check if no completion condition met
+        // This ensures that completion markers take precedence over the "stuck" detection
+        if !prd_changed {
+            // Finalize session as failed before returning error
+            // Use total iterations including prior retries
+            let total_so_far = iteration_offset + relative_iteration;
+            if let Err(e) =
+                finalize_session(&session_slug, total_so_far as u32, SessionOutcome::Failed)
+            {
+                eprintln!("Warning: Failed to finalize session: {}", e);
+            }
+            return Err(RunError::PrdUnchanged);
         }
 
         iterations_completed = relative_iteration;

@@ -54,6 +54,7 @@ use std::path::Path;
 ///         },
 ///     ],
 ///     chunks: vec![Chunk::prose("Implementation complete".to_string())],
+///     output_blocks: vec![],
 /// };
 ///
 /// write_iteration_log(&session_dir, &log).unwrap();

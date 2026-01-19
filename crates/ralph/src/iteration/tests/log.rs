@@ -20,6 +20,7 @@ fn test_iteration_log_serialization() {
         metadata: None,
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
+        output_blocks: vec![],
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -81,6 +82,7 @@ fn test_iteration_log_empty_chunks() {
         metadata: None,
         tool_calls: vec![],
         chunks: vec![],
+        output_blocks: vec![],
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -109,6 +111,7 @@ fn test_iteration_log_with_code_chunk() {
                 Some("rust".to_string()),
             ),
         ],
+        output_blocks: vec![],
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -149,6 +152,7 @@ fn test_iteration_log_with_metadata() {
         }),
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
+        output_blocks: vec![],
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();

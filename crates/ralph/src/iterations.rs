@@ -414,6 +414,7 @@ mod tests {
             metadata: None,
             tool_calls: vec![],
             chunks: vec![Chunk::prose(format!("Iteration {}", sequence))],
+            output_blocks: vec![],
         }
     }
 

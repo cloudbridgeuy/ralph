@@ -1,6 +1,7 @@
 //! IterationLog struct for complete iteration log entries.
 
 use crate::iteration::{Chunk, LogMetadata, LogToolCall};
+use crate::stream_processor::OutputBlock;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -71,4 +72,8 @@ pub struct IterationLog {
     /// Output chunks from the LLM
     #[serde(default)]
     pub chunks: Vec<Chunk>,
+    /// Output blocks for replay serialization.
+    /// Contains all visual output in display order for faithful replay.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output_blocks: Vec<OutputBlock>,
 }

@@ -95,6 +95,7 @@ fn test_chunk_from_parsed_chunks_serializes_to_toml() {
         metadata: None,
         tool_calls: vec![],
         chunks,
+        output_blocks: vec![],
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -156,6 +157,7 @@ fn test_iteration_log_with_typed_chunks_from_parsed() {
         metadata: None,
         tool_calls: vec![],
         chunks,
+        output_blocks: vec![],
     };
 
     // Write to disk

@@ -75,6 +75,7 @@ pub enum ReplayError {
 }
 
 /// Result of a replay operation.
+#[derive(Debug)]
 pub struct ReplayResult {
     /// The session slug that was replayed.
     pub slug: String,
@@ -319,6 +320,7 @@ mod tests {
                 Chunk::prose(format!("This is iteration {}", sequence)),
                 Chunk::code("fn main() {}".to_string(), Some("rust".to_string())),
             ],
+            output_blocks: vec![],
         }
     }
 

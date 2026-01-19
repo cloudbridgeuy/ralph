@@ -24,6 +24,7 @@ fn test_write_iteration_log() {
             Chunk::prose("Starting work...".to_string()),
             Chunk::prose("Finished!".to_string()),
         ],
+        output_blocks: vec![],
     };
 
     let log_path = write_iteration_log(session_dir, &log).unwrap();
@@ -72,6 +73,7 @@ fn test_write_iteration_log_with_metadata() {
         }),
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
+        output_blocks: vec![],
     };
 
     let log_path = write_iteration_log(session_dir, &log).unwrap();
@@ -107,6 +109,7 @@ fn test_write_multiple_iteration_logs() {
         metadata: None,
         tool_calls: vec![],
         chunks: vec![Chunk::prose("First iteration".to_string())],
+        output_blocks: vec![],
     };
     write_iteration_log(session_dir, &log1).unwrap();
 
@@ -121,6 +124,7 @@ fn test_write_multiple_iteration_logs() {
         metadata: None,
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Second iteration".to_string())],
+        output_blocks: vec![],
     };
     write_iteration_log(session_dir, &log2).unwrap();
 
