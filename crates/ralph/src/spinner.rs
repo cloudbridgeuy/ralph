@@ -53,6 +53,8 @@ pub enum SpinnerContext {
     WaitingForTool,
     /// Buffering output (e.g., waiting for code block to close).
     Buffering,
+    /// Summarizing the progress file.
+    Summarizing,
 }
 
 impl SpinnerContext {
@@ -63,6 +65,7 @@ impl SpinnerContext {
             Self::Thinking => "Thinking...",
             Self::WaitingForTool => "Running tool...",
             Self::Buffering => "Buffering code...",
+            Self::Summarizing => "Summarizing progress file...",
         }
     }
 }
@@ -555,6 +558,10 @@ mod tests {
         assert_eq!(SpinnerContext::Thinking.message(), "Thinking...");
         assert_eq!(SpinnerContext::WaitingForTool.message(), "Running tool...");
         assert_eq!(SpinnerContext::Buffering.message(), "Buffering code...");
+        assert_eq!(
+            SpinnerContext::Summarizing.message(),
+            "Summarizing progress file..."
+        );
     }
 
     #[test]

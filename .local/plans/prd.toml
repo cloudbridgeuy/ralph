@@ -36,6 +36,30 @@ acceptance = [
 ]
 
 # =============================================================================
+# Progress Summarization UI
+# =============================================================================
+
+[[stories]]
+category = "ui"
+description = "Show spinner with elapsed time during progress file summarization"
+steps = [
+  "Display spinner when summarization subprocess starts",
+  "Show message like 'Summarizing progress file...' alongside spinner",
+  "Update elapsed time every second (e.g., 'Summarizing... 5s')",
+  "Clear spinner when summarization completes or fails",
+  "Show success/failure message after spinner clears",
+]
+passes = true
+acceptance = [
+  "Spinner visible during entire summarization subprocess",
+  "Elapsed time updates every second",
+  "Spinner uses same style as iteration waiting spinner",
+  "Success message shows when summarization completes",
+  "Failure message shows reason if summarization fails",
+  "No spinner when stdout is not a terminal",
+]
+
+# =============================================================================
 # Write Tool Improvements
 # =============================================================================
 
@@ -66,7 +90,7 @@ steps = [
   "Display after block with green line number background",
   "Apply syntax highlighting to both blocks",
 ]
-passes = false
+passes = true
 acceptance = [
   "Overwrites show before/after blocks like Edit tool",
   "Syntax highlighting applied based on file extension",
@@ -152,6 +176,47 @@ acceptance = [
   "Example shows realistic multi-story PRD",
   "Workflow explained (pending → in progress → completed)",
   "Optional fields documented (actor, acceptance)",
+]
+
+[[stories]]
+category = "internal"
+description = "Document local development build instructions"
+steps = [
+  "Add CONTRIBUTING.md or Development section in README",
+  "Document prerequisites (Rust toolchain version, cargo)",
+  "Show cargo build and cargo run commands",
+  "Document cargo xtask commands (install, lint, etc.)",
+  "Explain workspace structure and crate organization",
+]
+passes = false
+acceptance = [
+  "Developer can clone repo and build with documented commands",
+  "Minimum Rust version specified (MSRV)",
+  "cargo build, cargo test, cargo run documented",
+  "cargo xtask install explained for local installation",
+  "Workspace layout explained (crates/ralph, crates/ralph-core, xtask)",
+]
+
+[[stories]]
+category = "internal"
+description = "Create polished README with visual appeal and clear structure"
+steps = [
+  "Add project logo or ASCII art banner at top",
+  "Write compelling one-liner description of what ralph does",
+  "Add badges (build status, version, license)",
+  "Include terminal screenshot or GIF showing ralph in action",
+  "Structure with clear sections: Features, Install, Quick Start, Config, Contributing",
+  "Add table of contents for easy navigation",
+]
+passes = false
+acceptance = [
+  "README has visual header (logo, banner, or styled title)",
+  "One-liner clearly explains ralph's purpose",
+  "Badges show project health at a glance",
+  "Screenshot or GIF demonstrates actual usage",
+  "Sections are well-organized with consistent formatting",
+  "Links to detailed docs where appropriate",
+  "Contributing section welcomes new contributors",
 ]
 
 [[stories]]

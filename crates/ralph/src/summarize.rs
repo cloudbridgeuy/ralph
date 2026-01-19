@@ -5,6 +5,7 @@
 //! Shell pattern, pure functions handle content processing while I/O operations
 //! are isolated in dedicated functions.
 
+use crate::spinner::{Spinner, SpinnerContext};
 use ralph_core::context::{defaults, substitute_summarize_placeholders};
 use std::io::Write;
 use std::path::Path;
@@ -205,6 +206,9 @@ pub fn execute_summarize_command(command: &str) -> Result<String, SummarizeError
 ///
 /// Returns Ok(true) if summarization was performed, Ok(false) if not needed,
 /// or an error if summarization failed.
+///
+/// Shows a spinner with elapsed time during the summarization subprocess
+/// when stdout is a terminal.
 pub fn maybe_summarize_progress(
     progress_path: &Path,
     config: &SummarizeConfig,
@@ -222,13 +226,20 @@ pub fn maybe_summarize_progress(
     let progress_path_str = progress_path.display().to_string();
     let command = build_summarize_command(config, &progress_path_str, &content);
 
-    // Execute summarization
-    eprintln!(
-        "Progress file has {} lines (threshold: {}). Summarizing...",
-        check.line_count, check.threshold
-    );
+    // Create spinner for the summarization process
+    let mut spinner = Spinner::new();
 
-    let summarized = execute_summarize_command(&command)?;
+    // Start spinner with Summarizing context
+    spinner.start_with_context(SpinnerContext::Summarizing);
+
+    // Execute summarization
+    let result = execute_summarize_command(&command);
+
+    // Stop spinner before showing result message
+    spinner.stop();
+
+    // Handle result
+    let summarized = result?;
 
     // Write atomically
     write_progress_file_atomic(progress_path, &summarized)?;
