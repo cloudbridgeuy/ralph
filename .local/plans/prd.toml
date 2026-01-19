@@ -188,7 +188,7 @@ steps = [
   "Document cargo xtask commands (install, lint, etc.)",
   "Explain workspace structure and crate organization",
 ]
-passes = false
+passes = true
 acceptance = [
   "Developer can clone repo and build with documented commands",
   "Minimum Rust version specified (MSRV)",

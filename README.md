@@ -61,3 +61,4 @@ For full configuration documentation, see [docs/configuration.md](docs/configura
 
 - [CLI Reference](docs/cli-reference.md) - Complete reference for all commands and options
 - [Configuration](docs/configuration.md) - Detailed configuration file documentation
+- [Development Guide](docs/development.md) - Local development and build instructions
