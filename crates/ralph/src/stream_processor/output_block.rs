@@ -10,6 +10,7 @@
 //! - All variants derive Serialize/Deserialize for TOML storage
 //! - Rendering is handled by separate functions that take OutputBlock variants
 //! - The enum preserves the order of output blocks for faithful replay
+//! - Enums are marked `#[non_exhaustive]` for forward compatibility when adding new variants
 
 use ralph_core::chunk::ParsedChunk;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,7 @@ use serde::{Deserialize, Serialize};
 /// to the session file for replay.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum OutputBlock {
     /// Text output from the assistant (prose, code, or diff chunks).
     Text(TextBlock),
@@ -62,6 +64,7 @@ pub struct ToolInvocationBlock {
 /// Tool-specific invocation data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "invocation_type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ToolInvocationVariant {
     /// Bash command invocation.
     Bash {
@@ -149,6 +152,7 @@ pub struct ToolResultBlock {
 /// Tool-specific result data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "result_type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ToolResultVariant {
     /// Bash command result.
     Bash {
