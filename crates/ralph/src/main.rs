@@ -19,6 +19,7 @@ pub mod markdown;
 pub mod paths;
 mod prompt;
 pub mod replay;
+pub mod replay_renderer;
 mod run;
 mod session;
 pub mod signal;
@@ -312,8 +313,44 @@ fn execute_run_with_prompting(
             Err(RunError::Interrupted {
                 session_slug,
                 iterations_completed,
+                partial_result,
+                pending_before,
             }) => {
-                // Run was interrupted by signal - finalize session as interrupted
+                // Run was interrupted by signal
+                // If we have a partial result (interrupt during subprocess), write partial iteration log
+                if let (Some(partial), Some(pending)) = (partial_result, pending_before) {
+                    // Calculate iteration number
+                    let iteration = total_iterations_completed + iterations_completed + 1;
+                    let session_dir = session::session_dir(&session_slug);
+
+                    // Write partial iteration log with whatever output blocks were accumulated
+                    let partial_log = iteration::IterationLog {
+                        sequence: iteration as u32,
+                        started_at: chrono::Utc::now(),
+                        completed_at: chrono::Utc::now(),
+                        exit_code: partial.exit_code,
+                        pending_before: pending,
+                        pending_after: pending, // Same as before since iteration was interrupted
+                        metadata: iteration::LogMetadata::from_extracted(
+                            partial.stream_result.metadata.clone(),
+                            partial.stream_result.costs.clone(),
+                        )
+                        .into_option(),
+                        tool_calls: iteration::LogToolCall::from_interactions(
+                            &partial.stream_result.tool_interactions,
+                        ),
+                        chunks: iteration::Chunk::from_parsed_chunks(&partial.stream_result.chunks),
+                        output_blocks: partial.stream_result.output_blocks.clone(),
+                    };
+
+                    if let Err(e) = iteration::write_iteration_log(&session_dir, &partial_log) {
+                        eprintln!("Warning: Failed to write partial iteration log: {}", e);
+                    } else {
+                        eprintln!("Partial iteration {} saved.", iteration);
+                    }
+                }
+
+                // Finalize session as interrupted
                 let final_iterations = total_iterations_completed + iterations_completed;
                 if let Err(e) = session::finalize_session(
                     &session_slug,

@@ -104,4 +104,16 @@ impl LogMetadata {
             && self.duration_ms.is_none()
             && self.usage.is_none()
     }
+
+    /// Convert to Option, returning None if all fields are empty.
+    ///
+    /// This is useful for conditional serialization where we want to omit
+    /// the metadata section entirely if there's no data.
+    pub fn into_option(self) -> Option<Self> {
+        if self.is_empty() {
+            None
+        } else {
+            Some(self)
+        }
+    }
 }

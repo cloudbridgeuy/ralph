@@ -19,6 +19,7 @@
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::iteration::IterationLog;
+use crate::replay_renderer::ReplayRenderer;
 use crate::session::{load_sessions_index, session_dir};
 use std::fs;
 use std::io::IsTerminal;
@@ -257,11 +258,39 @@ fn replay_iteration(
             let seconds = duration as f64 / 1000.0;
             println!("Duration: {:.1}s", seconds);
         }
+        if let Some(ref usage) = metadata.usage {
+            println!(
+                "Tokens: {} in / {} out",
+                usage.input_tokens, usage.output_tokens
+            );
+        }
     }
 
     println!();
 
-    // Replay chunks
+    // Prefer output_blocks for replay (newer format with full tool rendering)
+    // Fall back to chunks for older session files without output_blocks
+    if !log.output_blocks.is_empty() {
+        replay_output_blocks(&log, highlighter, is_terminal);
+    } else {
+        replay_chunks(&log, highlighter, is_terminal);
+    }
+
+    Ok(())
+}
+
+/// Replay using output_blocks (newer format with full tool rendering).
+fn replay_output_blocks(log: &IterationLog, highlighter: &Highlighter, is_terminal: bool) {
+    let renderer = ReplayRenderer::new(highlighter.clone(), is_terminal);
+
+    for block in &log.output_blocks {
+        let rendered = renderer.render(block);
+        print!("{}", rendered);
+    }
+}
+
+/// Replay using chunks (legacy format, text-only).
+fn replay_chunks(log: &IterationLog, highlighter: &Highlighter, is_terminal: bool) {
     for chunk in &log.chunks {
         match chunk.chunk_type.as_str() {
             "prose" => {
@@ -294,8 +323,6 @@ fn replay_iteration(
             }
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

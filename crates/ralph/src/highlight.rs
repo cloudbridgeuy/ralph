@@ -218,7 +218,7 @@ impl ThemeConfig {
 /// This struct lazily loads syntax definitions and themes on first use,
 /// caching them for subsequent highlighting operations. It supports
 /// configurable themes including built-in themes and custom .tmTheme files.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Highlighter {
     syntax_set: SyntaxSet,
     /// The resolved theme to use for highlighting.
@@ -385,9 +385,8 @@ impl Highlighter {
         };
 
         // If no syntax found, return code as-is
-        let syntax = match syntax {
-            Some(s) => s,
-            None => return code.to_string(),
+        let Some(syntax) = syntax else {
+            return code.to_string();
         };
 
         let mut highlighter = HighlightLines::new(syntax, &self.theme);

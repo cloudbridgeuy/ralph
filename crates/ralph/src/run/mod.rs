@@ -195,6 +195,12 @@ pub enum RunError {
         session_slug: String,
         /// Number of iterations completed before interrupt
         iterations_completed: usize,
+        /// Partial result from interrupted subprocess (if interrupt occurred during execution).
+        /// Boxed to avoid making the error enum too large since StreamingSubprocessResult
+        /// contains vectors of output blocks and other data.
+        partial_result: Option<Box<crate::subprocess::StreamingSubprocessResult>>,
+        /// Number of pending stories at iteration start (for partial iteration log)
+        pending_before: Option<usize>,
     },
 }
 
@@ -305,6 +311,8 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             return Err(RunError::Interrupted {
                 session_slug,
                 iterations_completed,
+                partial_result: None,
+                pending_before: None,
             });
         }
 
@@ -380,6 +388,16 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
                     iterations_completed,
                 });
             }
+            Err(RunError::Interrupted { partial_result, .. }) => {
+                // Interrupt during subprocess - propagate with session context and pending_before
+                // The caller will write partial iteration log and finalize session
+                return Err(RunError::Interrupted {
+                    session_slug,
+                    iterations_completed,
+                    partial_result,
+                    pending_before: Some(pending_before),
+                });
+            }
             Err(e) => return Err(e),
         };
 
@@ -421,6 +439,8 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             return Err(RunError::Interrupted {
                 session_slug,
                 iterations_completed: relative_iteration, // Include this completed iteration
+                partial_result: None,
+                pending_before: None,
             });
         }
 
@@ -637,12 +657,14 @@ fn invoke_with_failure_recovery(
                     });
                 }
             }
-            Err(SubprocessError::Interrupted { .. }) => {
-                // Interrupt occurred - don't retry, propagate immediately
-                // The caller will handle session finalization
+            Err(SubprocessError::Interrupted { partial_result }) => {
+                // Interrupt occurred - don't retry, propagate immediately with partial result
+                // The caller will handle session finalization and write partial iteration log
                 return Err(RunError::Interrupted {
                     session_slug: String::new(),
                     iterations_completed: 0,
+                    partial_result: Some(partial_result),
+                    pending_before: None,
                 });
             }
             Err(e) => return Err(e.into()),
