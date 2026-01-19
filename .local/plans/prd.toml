@@ -235,3 +235,18 @@ acceptance = [
   "cargo doc --no-deps builds without warnings",
   "Complex functions include usage examples",
 ]
+
+[[stories]]
+category = "summarization"
+description = "Ensure prompt.txt summarizer invokes Claude with read/write permissions so summarization succeeds"
+steps = [
+  "Trigger progress summarization with default command after the progress file exceeds the threshold",
+  "Inspect the invoked Claude command to confirm it passes required file read/write permissions",
+  "Run summarization and confirm Claude finishes without permission errors and writes the summary",
+]
+passes = true
+acceptance = [
+  "Default prompt.txt summarizer Claude command includes permissions to read and write needed files",
+  "Summarization completes without permission-denied errors",
+  "Progress file is summarized and saved when over the configured line threshold",
+]

@@ -71,3 +71,24 @@ I need your permission to write the file. Please grant write access to `/Users/g
 - Success shows: "Progress file summarized: N lines → M lines"
 - Failure shows via warning in caller: "Warning: Failed to summarize progress file: ..."
 - No spinner when stdout is not a terminal (handled by Spinner::new())
+
+---
+
+## Progress Summarization Permission Fix (2026-01-19)
+
+**Story**: Ensure prompt.txt summarizer invokes Claude with read/write permissions so summarization succeeds
+
+**Problem**:
+The default summarization command was `claude -p {prompt}` which ran Claude without any permission mode. Without explicit permission bypass, Claude CLI may prompt interactively for permission confirmations, which blocks the non-interactive subprocess.
+
+**Changes**:
+- Updated `SUMMARIZE_COMMAND` default from `"claude -p {prompt}"` to `"claude --dangerously-skip-permissions -p {prompt}"`
+- Added test `test_default_summarize_command_has_permission_bypass` to verify the permission flag
+- Updated `test_build_summarize_command_default_templates` to reflect new command format
+
+**Key files**:
+- `crates/core/src/context.rs` - Updated `SUMMARIZE_COMMAND` constant
+- `crates/ralph/src/summarize.rs` - Updated test assertion
+
+**Rationale**:
+The summarization workflow doesn't require Claude to access files directly - it receives the progress file content as part of the prompt and outputs the summary to stdout. The Rust code then writes the output to the file. However, Claude CLI without explicit permission mode may still prompt interactively, which fails in a subprocess. Using `--dangerously-skip-permissions` ensures the subprocess completes without blocking.

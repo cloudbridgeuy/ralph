@@ -17,8 +17,11 @@ pub mod defaults {
 
     /// Default command template for summarizing the progress file.
     ///
-    /// Uses Claude CLI with just the prompt flag for quick summarization.
-    pub const SUMMARIZE_COMMAND: &str = "claude -p {prompt}";
+    /// Uses Claude CLI with:
+    /// - `--dangerously-skip-permissions`: Bypass permission checks since summarization
+    ///   only outputs to stdout (no file access needed by Claude itself)
+    /// - `-p {prompt}`: Non-interactive print mode with prompt
+    pub const SUMMARIZE_COMMAND: &str = "claude --dangerously-skip-permissions -p {prompt}";
 
     /// Default prompt template for summarizing the progress file.
     ///
@@ -628,6 +631,13 @@ mod tests {
     fn test_default_summarize_command() {
         assert!(defaults::SUMMARIZE_COMMAND.contains("{prompt}"));
         assert!(defaults::SUMMARIZE_COMMAND.contains("claude"));
+    }
+
+    #[test]
+    fn test_default_summarize_command_has_permission_bypass() {
+        // Summarization runs non-interactively and needs permission bypass
+        // to avoid interactive prompts blocking the subprocess
+        assert!(defaults::SUMMARIZE_COMMAND.contains("--dangerously-skip-permissions"));
     }
 
     #[test]

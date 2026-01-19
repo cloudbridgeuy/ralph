@@ -406,7 +406,7 @@ mod tests {
         assert!(result.contains("/progress.txt"));
         assert!(result.contains("line 1"));
         assert!(result.contains("line 2"));
-        // Should be a claude command
-        assert!(result.starts_with("claude -p '"));
+        // Should be a claude command with permission bypass
+        assert!(result.starts_with("claude --dangerously-skip-permissions -p '"));
     }
 }
