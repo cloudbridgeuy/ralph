@@ -24,6 +24,7 @@
 //! let result = processor.finish();
 //! ```
 
+mod block_builders;
 mod event_handler;
 mod output_block;
 mod processor;

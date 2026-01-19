@@ -196,3 +196,49 @@ The summarization workflow doesn't require Claude to access files directly - it 
 - Each variant wraps corresponding data struct
 - All types derive Serialize and Deserialize
 - 10 unit tests verify round-trip serialization through TOML
+
+---
+
+## Output Block Accumulation During Execution (2026-01-19)
+
+**Story**: Accumulate output blocks during execution
+
+**Changes**:
+- Added `output_blocks: Vec<OutputBlock>` field to `StreamProcessor` struct
+- Added `output_blocks` field to `StreamProcessorResult` struct
+- Created `block_builders.rs` module with helper functions for building OutputBlocks from tool data
+- Updated `handle_event()` to push OutputBlocks as they render:
+  - Separator blocks when visual separators are emitted
+  - Tool invocation blocks when tool invocations are displayed
+  - Tool result blocks when tool results are displayed
+- Updated `process_text_for_output()` to push text blocks as chunks are collected
+- Updated `flush_pending_chunks()` to push text blocks when flushing
+- Added getter method `output_blocks()` to StreamProcessor for accessing accumulated blocks
+- Updated `finish()` to include output_blocks in the result
+
+**Key files**:
+- `crates/ralph/src/stream_processor/processor.rs` - Added field, initializers, getter, and finish() update
+- `crates/ralph/src/stream_processor/types.rs` - Added field to StreamProcessorResult
+- `crates/ralph/src/stream_processor/event_handler.rs` - Push blocks during event handling
+- `crates/ralph/src/stream_processor/block_builders.rs` - New module with builder functions
+
+**Block builders implemented**:
+- `build_tool_invocation_block()` - Creates invocation blocks from ToolInvocation data
+- `build_default_result_block()` - Creates result blocks with content
+- `build_edit_before_after_block()` - For Edit tool (prepared for future use)
+- `build_write_new_file_block()` - For Write tool (prepared for future use)
+- `build_write_overwrite_block()` - For Write tool (prepared for future use)
+- `build_bash_result_block()` - For Bash tool (prepared for future use)
+
+**Tests added** (7 tests in block_builders.rs):
+- `test_build_bash_invocation_block` - Verifies Bash invocation data extraction
+- `test_build_grep_invocation_block` - Verifies Grep invocation with all options
+- `test_build_default_invocation_block` - Verifies default fallback for unknown tools
+- `test_build_todowrite_invocation_block` - Verifies TodoWrite with todo items
+- `test_build_edit_before_after_block` - Verifies Edit snapshot conversion
+- `test_build_bash_result_block` - Verifies Bash result creation
+
+**Acceptance criteria met**:
+- A Vec<OutputBlock> accumulates each block as it renders to stdout
+- The Vec preserves the order blocks were printed
+- Accumulation does not affect live rendering performance or behavior (O(1) push per block)

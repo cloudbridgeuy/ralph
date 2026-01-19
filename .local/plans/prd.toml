@@ -295,7 +295,7 @@ steps = [
   "Run `ralph run` with a simple PRD",
   "Verify blocks are appended to a Vec as they print",
 ]
-passes = false
+passes = true
 acceptance = [
   "A Vec<OutputBlock> accumulates each block as it renders to stdout",
   "The Vec preserves the order blocks were printed",
@@ -362,4 +362,61 @@ acceptance = [
   "Signal handlers are installed for SIGTERM and SIGINT",
   "On signal, the accumulated Vec<OutputBlock> is serialized before exit",
   "Partial sessions can be replayed showing blocks up to the interruption",
+]
+
+[[stories]]
+category = "refactor"
+description = "Add #[non_exhaustive] attribute to output block enum"
+steps = [
+  "Add #[non_exhaustive] to the OutputBlock enum",
+  "Verify code compiles and tests pass",
+]
+passes = false
+acceptance = [
+  "OutputBlock enum has #[non_exhaustive] attribute",
+  "Adding new variants in the future won't be a breaking change for downstream match expressions",
+]
+
+[[stories]]
+category = "refactor"
+description = "Create test helper for output block serialization tests"
+steps = [
+  "Identify repeated test setup code in output block tests",
+  "Extract common logic into a helper function",
+  "Update existing tests to use the helper",
+]
+passes = false
+acceptance = [
+  "Test helper reduces boilerplate in output block tests",
+  "Existing tests pass using the new helper",
+]
+
+[[stories]]
+category = "refactor"
+description = "Add builder pattern for output block structs"
+steps = [
+  "Identify output block structs with many fields",
+  "Implement builder pattern for those structs",
+  "Update construction sites to use builders where it improves readability",
+]
+passes = false
+acceptance = [
+  "Builder pattern available for complex output block structs",
+  "Builders have sensible defaults where appropriate",
+  "Construction is more ergonomic than direct struct initialization",
+]
+
+[[stories]]
+category = "internal"
+description = "Document output block integration and data flow"
+steps = [
+  "Document how output blocks flow from Claude JSON to stdout",
+  "Document how output blocks are serialized to session TOML",
+  "Document how replay deserializes and renders output blocks",
+]
+passes = false
+acceptance = [
+  "Documentation explains the full output block lifecycle",
+  "Diagrams or examples clarify the data flow",
+  "New contributors can understand how replay works",
 ]

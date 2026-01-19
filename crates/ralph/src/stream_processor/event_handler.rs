@@ -9,6 +9,8 @@ use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
+use super::block_builders::{build_default_result_block, build_tool_invocation_block};
+use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
 use super::tool_display;
 use super::tool_results;
@@ -69,6 +71,8 @@ impl StreamProcessor {
                     // (but only if we've already emitted some output)
                     if self.has_emitted_output {
                         output_parts.push("\n".to_string());
+                        // Accumulate separator block for replay
+                        self.output_blocks.push(OutputBlock::separator());
                     }
                     self.response_count += 1;
                 } else if self.current_message_id.is_none() {
@@ -111,6 +115,9 @@ impl StreamProcessor {
                     if self.show_tool_invocations {
                         let formatted = tool_display::format_tool_invocation(self, invocation);
                         output_parts.push(formatted);
+                        // Accumulate tool invocation block for replay
+                        let block = build_tool_invocation_block(invocation);
+                        self.output_blocks.push(block);
                     }
                 }
 
@@ -151,6 +158,9 @@ impl StreamProcessor {
                             .tool_use_id
                             .as_ref()
                             .and_then(|id| self.pending_notebook_snapshots.remove(id));
+
+                        // Capture invocation info for block building before the match consumes it
+                        let invocation_name = invocation.as_ref().map(|i| i.name.clone());
 
                         // Determine formatting approach based on tool type and snapshots
                         let formatted = match &invocation {
@@ -208,6 +218,15 @@ impl StreamProcessor {
                             }
                         };
                         output_parts.push(formatted);
+
+                        // Accumulate tool result block for replay
+                        let tool_name = invocation_name.as_deref().unwrap_or("Unknown");
+                        let block = build_default_result_block(
+                            tool_name,
+                            result.content.as_deref(),
+                            result.is_error,
+                        );
+                        self.output_blocks.push(block);
                     }
                 }
             }
@@ -243,6 +262,9 @@ impl StreamProcessor {
             for chunk in chunks {
                 // Store chunk
                 self.collected_chunks.push(chunk.clone());
+
+                // Accumulate text block for replay
+                self.output_blocks.push(OutputBlock::text(chunk.clone()));
 
                 // Generate highlighted output
                 let highlighted = self.highlight_chunk(&chunk);
@@ -327,6 +349,8 @@ impl StreamProcessor {
             let highlighted = self.highlight_chunk(&chunk);
             output.push_str(&highlighted);
             output.push('\n');
+            // Accumulate text block for replay
+            self.output_blocks.push(OutputBlock::text(chunk.clone()));
             self.collected_chunks.push(chunk);
         }
 
@@ -342,6 +366,9 @@ impl StreamProcessor {
 ///
 /// This is a pure function that reads the file and returns a snapshot.
 /// Returns None if the file path cannot be extracted from the invocation input.
+///
+/// Extracts both the file content (for unified diff fallback) and
+/// old_string/new_string from the tool input (for before/after display).
 fn capture_edit_snapshot(invocation: &ToolInvocation) -> Option<EditSnapshot> {
     // Extract file path from invocation input
     let file_path = invocation.input.get("file_path").and_then(|v| v.as_str())?;
@@ -349,9 +376,23 @@ fn capture_edit_snapshot(invocation: &ToolInvocation) -> Option<EditSnapshot> {
     // Read current content - Ok(content) if file exists, None if it doesn't
     let content = fs::read_to_string(file_path).ok();
 
+    // Extract old_string and new_string from Edit tool input
+    let old_string = invocation
+        .input
+        .get("old_string")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let new_string = invocation
+        .input
+        .get("new_string")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
     Some(EditSnapshot {
         file_path: file_path.to_string(),
         content,
+        old_string,
+        new_string,
     })
 }
 

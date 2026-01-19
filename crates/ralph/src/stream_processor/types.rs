@@ -7,6 +7,8 @@ use ralph_core::chunk::ParsedChunk;
 use ralph_core::stream::{IterationCosts, IterationMetadata, ToolInteraction};
 use std::collections::HashSet;
 
+use super::output_block::OutputBlock;
+
 /// Configuration for verbose tool output.
 ///
 /// Controls which tools display verbose (full) output instead of truncated summaries.
@@ -126,6 +128,11 @@ pub struct StreamProcessorResult {
     pub tool_interactions: Vec<ToolInteraction>,
     /// Raw accumulated text (for completion marker detection).
     pub raw_text: String,
+    /// Accumulated output blocks for replay serialization.
+    ///
+    /// Each block captures the data needed to re-render a piece of output.
+    /// Blocks are ordered as they appeared during live execution.
+    pub output_blocks: Vec<OutputBlock>,
 }
 
 /// Result of extracting a key argument from a tool invocation.
@@ -145,12 +152,19 @@ pub struct KeyArgument {
 /// Used to generate diffs by comparing the file content before and after
 /// the Edit tool runs, since Claude CLI returns success messages rather
 /// than diff content.
+///
+/// Contains both the full file content (for unified diff fallback) and
+/// the old_string/new_string from the Edit tool input (for before/after display).
 #[derive(Debug, Clone)]
 pub struct EditSnapshot {
     /// Path to the file being edited.
     pub file_path: String,
     /// Content of the file before the edit (None if file didn't exist).
     pub content: Option<String>,
+    /// The text being replaced (from Edit tool input).
+    pub old_string: Option<String>,
+    /// The replacement text (from Edit tool input).
+    pub new_string: Option<String>,
 }
 
 /// Snapshot of file content captured before a Write tool execution.

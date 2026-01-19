@@ -14,6 +14,7 @@ use ralph_core::stream::{
 use std::collections::HashMap;
 use std::io::IsTerminal;
 
+use super::output_block::OutputBlock;
 use super::types::{
     EditSnapshot, NotebookSnapshot, StreamProcessorResult, VerboseToolsConfig, WriteSnapshot,
 };
@@ -78,6 +79,11 @@ pub struct StreamProcessor {
     /// before the edit runs. When the result arrives, we generate a diff showing
     /// what changed in the cell.
     pub(super) pending_notebook_snapshots: HashMap<String, NotebookSnapshot>,
+    /// Accumulated output blocks for replay serialization.
+    ///
+    /// Each output block captures the data needed to re-render a piece of output.
+    /// Blocks are accumulated in order as they render to stdout during execution.
+    pub(super) output_blocks: Vec<OutputBlock>,
 }
 
 impl Default for StreamProcessor {
@@ -120,6 +126,7 @@ impl StreamProcessor {
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
             pending_notebook_snapshots: HashMap::new(),
+            output_blocks: Vec::new(),
         }
     }
 
@@ -212,6 +219,7 @@ impl StreamProcessor {
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
             pending_notebook_snapshots: HashMap::new(),
+            output_blocks: Vec::new(),
         })
     }
 
@@ -253,6 +261,7 @@ impl StreamProcessor {
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
             pending_notebook_snapshots: HashMap::new(),
+            output_blocks: Vec::new(),
         })
     }
 
@@ -296,6 +305,7 @@ impl StreamProcessor {
             pending_edit_snapshots: HashMap::new(),
             pending_write_snapshots: HashMap::new(),
             pending_notebook_snapshots: HashMap::new(),
+            output_blocks: Vec::new(),
         })
     }
 
@@ -334,6 +344,7 @@ impl StreamProcessor {
             costs,
             tool_interactions,
             raw_text: self.text_buffer,
+            output_blocks: self.output_blocks,
         }
     }
 
@@ -376,5 +387,12 @@ impl StreamProcessor {
     /// Check if verbose output is enabled for a specific tool.
     pub fn is_tool_verbose(&self, tool_name: &str) -> bool {
         self.verbose_tools_config.is_verbose(tool_name)
+    }
+
+    /// Get the accumulated output blocks.
+    ///
+    /// These blocks capture all output data needed for replay serialization.
+    pub fn output_blocks(&self) -> &[OutputBlock] {
+        &self.output_blocks
     }
 }
