@@ -5,7 +5,9 @@
 
 use ralph_core::stream::ToolInvocation;
 
-use super::output_block::{OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant};
+use super::output_block::{
+    GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
+};
 use super::utils::extract_key_argument;
 
 /// Build an OutputBlock from a tool invocation.
@@ -36,41 +38,28 @@ pub fn build_tool_invocation_block(invocation: &ToolInvocation) -> OutputBlock {
                 .input
                 .get("pattern")
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let path = invocation
-                .input
-                .get("path")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let output_mode = invocation
-                .input
-                .get("output_mode")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let glob = invocation
-                .input
-                .get("glob")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let file_type = invocation
-                .input
-                .get("type")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let case_insensitive = invocation
-                .input
-                .get("-i")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            ToolInvocationVariant::Grep {
-                pattern,
-                path,
-                output_mode,
-                glob,
-                file_type,
-                case_insensitive,
+                .unwrap_or("");
+
+            // Use builder for cleaner construction with many optional fields
+            let mut builder = GrepInvocationBuilder::new(pattern);
+
+            if let Some(path) = invocation.input.get("path").and_then(|v| v.as_str()) {
+                builder = builder.path(path);
             }
+            if let Some(mode) = invocation.input.get("output_mode").and_then(|v| v.as_str()) {
+                builder = builder.output_mode(mode);
+            }
+            if let Some(glob) = invocation.input.get("glob").and_then(|v| v.as_str()) {
+                builder = builder.glob(glob);
+            }
+            if let Some(ft) = invocation.input.get("type").and_then(|v| v.as_str()) {
+                builder = builder.file_type(ft);
+            }
+            if let Some(ci) = invocation.input.get("-i").and_then(|v| v.as_bool()) {
+                builder = builder.case_insensitive(ci);
+            }
+
+            builder.build()
         }
         "Read" => {
             let file_path = invocation

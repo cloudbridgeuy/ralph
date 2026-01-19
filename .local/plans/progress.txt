@@ -460,3 +460,57 @@ let inv = expect_tool_invocation(block);
 **Acceptance criteria met**:
 - Test helper reduces boilerplate in output block tests (14 tests simplified)
 - Existing tests pass using the new helper (all 522 tests pass)
+
+---
+
+## Builder Pattern for Output Block Structs (2026-01-19)
+
+**Story**: Add builder pattern for output block structs
+
+**Analysis**:
+Examined all output block structs to identify candidates for builder pattern:
+- `TextBlock`: 1 field - too simple
+- `ToolInvocationBlock`: 2 fields - too simple
+- `ToolResultBlock`: 3 fields - too simple
+- `ToolInvocationVariant::Grep`: 6 fields (1 required, 5 optional) - good candidate
+- `ToolResultVariant::NotebookEdit`: 5 fields (4 required, 1 optional) - considered but only 1 optional field
+
+**Changes**:
+- Created `GrepInvocationBuilder` for `ToolInvocationVariant::Grep` with fluent API
+- Builder has sensible defaults (`case_insensitive: false`, all optional fields `None`)
+- Updated `block_builders.rs` to use `GrepInvocationBuilder` for Grep invocation construction
+- Updated `test_tool_invocation_grep_serialization` to demonstrate builder usage
+- Initially created `NotebookEditResultBuilder` but removed it per "No Dead Code" principle (no production usage)
+
+**Key file**: `crates/ralph/src/stream_processor/output_block.rs`
+
+**Builder API example**:
+```rust
+let variant = GrepInvocationBuilder::new("fn main")
+    .path("src/")
+    .output_mode("content")
+    .glob("*.rs")
+    .case_insensitive(true)
+    .build();
+```
+
+**Tests added** (3 tests):
+- `test_grep_builder_minimal` - verifies default values
+- `test_grep_builder_all_options` - verifies all options set
+- `test_grep_builder_serialization_roundtrip` - verifies TOML round-trip
+
+**Production usage** (block_builders.rs):
+```rust
+let mut builder = GrepInvocationBuilder::new(pattern);
+if let Some(path) = invocation.input.get("path").and_then(|v| v.as_str()) {
+    builder = builder.path(path);
+}
+// ... conditional optional field setting
+builder.build()
+```
+
+**Acceptance criteria met**:
+- Builder pattern available for complex output block structs (GrepInvocationBuilder)
+- Builders have sensible defaults (false for case_insensitive, None for optional fields)
+- Construction is more ergonomic than direct struct initialization
+- All 525 tests pass

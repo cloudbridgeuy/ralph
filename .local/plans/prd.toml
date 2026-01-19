@@ -399,7 +399,7 @@ steps = [
   "Implement builder pattern for those structs",
   "Update construction sites to use builders where it improves readability",
 ]
-passes = false
+passes = true
 acceptance = [
   "Builder pattern available for complex output block structs",
   "Builders have sensible defaults where appropriate",

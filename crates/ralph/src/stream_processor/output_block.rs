@@ -304,6 +304,88 @@ impl OutputBlock {
     }
 }
 
+// =============================================================================
+// Builders for complex variants
+// =============================================================================
+
+/// Builder for `ToolInvocationVariant::Grep`.
+///
+/// Provides a fluent API for constructing Grep invocation variants
+/// with sensible defaults for optional fields.
+///
+/// # Example
+///
+/// ```
+/// use ralph::stream_processor::GrepInvocationBuilder;
+///
+/// let variant = GrepInvocationBuilder::new("fn main")
+///     .path("src/")
+///     .output_mode("content")
+///     .case_insensitive(true)
+///     .build();
+/// ```
+#[derive(Debug, Default)]
+pub struct GrepInvocationBuilder {
+    pattern: String,
+    path: Option<String>,
+    output_mode: Option<String>,
+    glob: Option<String>,
+    file_type: Option<String>,
+    case_insensitive: bool,
+}
+
+impl GrepInvocationBuilder {
+    /// Create a new builder with the required pattern.
+    pub fn new(pattern: impl Into<String>) -> Self {
+        Self {
+            pattern: pattern.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the search path.
+    pub fn path(mut self, path: impl Into<String>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    /// Set the output mode (files_with_matches, content, count).
+    pub fn output_mode(mut self, mode: impl Into<String>) -> Self {
+        self.output_mode = Some(mode.into());
+        self
+    }
+
+    /// Set the glob filter.
+    pub fn glob(mut self, glob: impl Into<String>) -> Self {
+        self.glob = Some(glob.into());
+        self
+    }
+
+    /// Set the file type filter.
+    pub fn file_type(mut self, file_type: impl Into<String>) -> Self {
+        self.file_type = Some(file_type.into());
+        self
+    }
+
+    /// Set case insensitivity.
+    pub fn case_insensitive(mut self, value: bool) -> Self {
+        self.case_insensitive = value;
+        self
+    }
+
+    /// Build the `ToolInvocationVariant::Grep` variant.
+    pub fn build(self) -> ToolInvocationVariant {
+        ToolInvocationVariant::Grep {
+            pattern: self.pattern,
+            path: self.path,
+            output_mode: self.output_mode,
+            glob: self.glob,
+            file_type: self.file_type,
+            case_insensitive: self.case_insensitive,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,14 +463,12 @@ mod tests {
     fn test_tool_invocation_grep_serialization() {
         let block = OutputBlock::tool_invocation(
             "Grep",
-            ToolInvocationVariant::Grep {
-                pattern: "fn main".to_string(),
-                path: Some("src/".to_string()),
-                output_mode: Some("content".to_string()),
-                glob: Some("*.rs".to_string()),
-                file_type: None,
-                case_insensitive: true,
-            },
+            GrepInvocationBuilder::new("fn main")
+                .path("src/")
+                .output_mode("content")
+                .glob("*.rs")
+                .case_insensitive(true)
+                .build(),
         );
         assert_toml_roundtrip(&block);
     }
@@ -432,6 +512,74 @@ mod tests {
             chunk_type: ChunkType::Diff,
             content: "+added\n-removed".to_string(),
         });
+        assert_toml_roundtrip(&block);
+    }
+
+    // =============================================================================
+    // Builder tests
+    // =============================================================================
+
+    #[test]
+    fn test_grep_builder_minimal() {
+        let variant = GrepInvocationBuilder::new("fn main").build();
+
+        match variant {
+            ToolInvocationVariant::Grep {
+                pattern,
+                path,
+                output_mode,
+                glob,
+                file_type,
+                case_insensitive,
+            } => {
+                assert_eq!(pattern, "fn main");
+                assert!(path.is_none());
+                assert!(output_mode.is_none());
+                assert!(glob.is_none());
+                assert!(file_type.is_none());
+                assert!(!case_insensitive);
+            }
+            _ => panic!("Expected Grep variant"),
+        }
+    }
+
+    #[test]
+    fn test_grep_builder_all_options() {
+        let variant = GrepInvocationBuilder::new("fn main")
+            .path("src/")
+            .output_mode("content")
+            .glob("*.rs")
+            .file_type("rust")
+            .case_insensitive(true)
+            .build();
+
+        match variant {
+            ToolInvocationVariant::Grep {
+                pattern,
+                path,
+                output_mode,
+                glob,
+                file_type,
+                case_insensitive,
+            } => {
+                assert_eq!(pattern, "fn main");
+                assert_eq!(path, Some("src/".to_string()));
+                assert_eq!(output_mode, Some("content".to_string()));
+                assert_eq!(glob, Some("*.rs".to_string()));
+                assert_eq!(file_type, Some("rust".to_string()));
+                assert!(case_insensitive);
+            }
+            _ => panic!("Expected Grep variant"),
+        }
+    }
+
+    #[test]
+    fn test_grep_builder_serialization_roundtrip() {
+        let variant = GrepInvocationBuilder::new("pattern")
+            .path("src/")
+            .case_insensitive(true)
+            .build();
+        let block = OutputBlock::tool_invocation("Grep", variant);
         assert_toml_roundtrip(&block);
     }
 }
