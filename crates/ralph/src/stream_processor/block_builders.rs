@@ -157,155 +157,116 @@ pub fn build_default_result_block(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream_processor::test_helpers::{create_test_invocation, expect_tool_invocation};
     use serde_json::json;
 
     #[test]
     fn test_build_bash_invocation_block() {
-        let invocation = ToolInvocation {
-            id: "test-id".to_string(),
-            name: "Bash".to_string(),
-            input: json!({
+        let invocation = create_test_invocation(
+            "Bash",
+            json!({
                 "command": "ls -la",
                 "description": "List files"
-            })
-            .as_object()
-            .unwrap()
-            .clone()
-            .into_iter()
-            .collect(),
-        };
+            }),
+        );
 
         let block = build_tool_invocation_block(&invocation);
+        let inv = expect_tool_invocation(block);
 
-        match block {
-            OutputBlock::ToolInvocation(inv) => {
-                assert_eq!(inv.tool_name, "Bash");
-                match inv.variant {
-                    ToolInvocationVariant::Bash {
-                        command,
-                        description,
-                    } => {
-                        assert_eq!(command, "ls -la");
-                        assert_eq!(description, Some("List files".to_string()));
-                    }
-                    _ => panic!("Expected Bash variant"),
-                }
+        assert_eq!(inv.tool_name, "Bash");
+        match inv.variant {
+            ToolInvocationVariant::Bash {
+                command,
+                description,
+            } => {
+                assert_eq!(command, "ls -la");
+                assert_eq!(description, Some("List files".to_string()));
             }
-            _ => panic!("Expected ToolInvocation"),
+            _ => panic!("Expected Bash variant"),
         }
     }
 
     #[test]
     fn test_build_grep_invocation_block() {
-        let invocation = ToolInvocation {
-            id: "test-id".to_string(),
-            name: "Grep".to_string(),
-            input: json!({
+        let invocation = create_test_invocation(
+            "Grep",
+            json!({
                 "pattern": "fn main",
                 "path": "src/",
                 "output_mode": "content",
                 "-i": true
-            })
-            .as_object()
-            .unwrap()
-            .clone()
-            .into_iter()
-            .collect(),
-        };
+            }),
+        );
 
         let block = build_tool_invocation_block(&invocation);
+        let inv = expect_tool_invocation(block);
 
-        match block {
-            OutputBlock::ToolInvocation(inv) => {
-                assert_eq!(inv.tool_name, "Grep");
-                match inv.variant {
-                    ToolInvocationVariant::Grep {
-                        pattern,
-                        path,
-                        output_mode,
-                        case_insensitive,
-                        ..
-                    } => {
-                        assert_eq!(pattern, "fn main");
-                        assert_eq!(path, Some("src/".to_string()));
-                        assert_eq!(output_mode, Some("content".to_string()));
-                        assert!(case_insensitive);
-                    }
-                    _ => panic!("Expected Grep variant"),
-                }
+        assert_eq!(inv.tool_name, "Grep");
+        match inv.variant {
+            ToolInvocationVariant::Grep {
+                pattern,
+                path,
+                output_mode,
+                case_insensitive,
+                ..
+            } => {
+                assert_eq!(pattern, "fn main");
+                assert_eq!(path, Some("src/".to_string()));
+                assert_eq!(output_mode, Some("content".to_string()));
+                assert!(case_insensitive);
             }
-            _ => panic!("Expected ToolInvocation"),
+            _ => panic!("Expected Grep variant"),
         }
     }
 
     #[test]
     fn test_build_default_invocation_block() {
-        let invocation = ToolInvocation {
-            id: "test-id".to_string(),
-            name: "WebFetch".to_string(),
-            input: json!({
+        let invocation = create_test_invocation(
+            "WebFetch",
+            json!({
                 "url": "https://example.com"
-            })
-            .as_object()
-            .unwrap()
-            .clone()
-            .into_iter()
-            .collect(),
-        };
+            }),
+        );
 
         let block = build_tool_invocation_block(&invocation);
+        let inv = expect_tool_invocation(block);
 
-        match block {
-            OutputBlock::ToolInvocation(inv) => {
-                assert_eq!(inv.tool_name, "WebFetch");
-                match inv.variant {
-                    ToolInvocationVariant::Default { key_argument, .. } => {
-                        assert_eq!(key_argument, Some("https://example.com".to_string()));
-                    }
-                    _ => panic!("Expected Default variant"),
-                }
+        assert_eq!(inv.tool_name, "WebFetch");
+        match inv.variant {
+            ToolInvocationVariant::Default { key_argument, .. } => {
+                assert_eq!(key_argument, Some("https://example.com".to_string()));
             }
-            _ => panic!("Expected ToolInvocation"),
+            _ => panic!("Expected Default variant"),
         }
     }
 
     #[test]
     fn test_build_todowrite_invocation_block() {
-        let invocation = ToolInvocation {
-            id: "test-id".to_string(),
-            name: "TodoWrite".to_string(),
-            input: json!({
+        let invocation = create_test_invocation(
+            "TodoWrite",
+            json!({
                 "todos": [
                     {"content": "Fix bug", "status": "in_progress", "activeForm": "Fixing bug"},
                     {"content": "Write tests", "status": "pending"}
                 ]
-            })
-            .as_object()
-            .unwrap()
-            .clone()
-            .into_iter()
-            .collect(),
-        };
+            }),
+        );
 
         let block = build_tool_invocation_block(&invocation);
+        let inv = expect_tool_invocation(block);
 
-        match block {
-            OutputBlock::ToolInvocation(inv) => {
-                assert_eq!(inv.tool_name, "TodoWrite");
-                match inv.variant {
-                    ToolInvocationVariant::TodoWrite { todos } => {
-                        assert_eq!(todos.len(), 2);
-                        assert_eq!(todos[0].content, "Fix bug");
-                        assert_eq!(todos[0].status, "in_progress");
-                        assert_eq!(todos[0].active_form, Some("Fixing bug".to_string()));
-                        assert_eq!(todos[1].content, "Write tests");
-                        assert_eq!(todos[1].status, "pending");
-                        assert_eq!(todos[1].active_form, None);
-                    }
-                    _ => panic!("Expected TodoWrite variant"),
-                }
+        assert_eq!(inv.tool_name, "TodoWrite");
+        match inv.variant {
+            ToolInvocationVariant::TodoWrite { todos } => {
+                assert_eq!(todos.len(), 2);
+                assert_eq!(todos[0].content, "Fix bug");
+                assert_eq!(todos[0].status, "in_progress");
+                assert_eq!(todos[0].active_form, Some("Fixing bug".to_string()));
+                assert_eq!(todos[1].content, "Write tests");
+                assert_eq!(todos[1].status, "pending");
+                assert_eq!(todos[1].active_form, None);
             }
-            _ => panic!("Expected ToolInvocation"),
+            _ => panic!("Expected TodoWrite variant"),
         }
     }
 }

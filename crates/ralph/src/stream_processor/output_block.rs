@@ -307,6 +307,7 @@ impl OutputBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream_processor::test_helpers::assert_toml_roundtrip;
     use ralph_core::chunk::ChunkType;
 
     #[test]
@@ -315,21 +316,13 @@ mod tests {
             chunk_type: ChunkType::Prose,
             content: "Hello, world!".to_string(),
         });
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
     fn test_output_block_separator_serialization() {
         let block = OutputBlock::separator();
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -341,11 +334,7 @@ mod tests {
                 description: Some("List files".to_string()),
             },
         );
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -358,11 +347,7 @@ mod tests {
                 truncated: false,
             },
         );
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -376,11 +361,7 @@ mod tests {
                 new_content: "let x = 2;".to_string(),
             },
         );
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -393,11 +374,7 @@ mod tests {
                 content: "fn main() {}".to_string(),
             },
         );
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -413,11 +390,7 @@ mod tests {
                 case_insensitive: true,
             },
         );
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -439,11 +412,7 @@ mod tests {
                 ],
             },
         );
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -454,11 +423,7 @@ mod tests {
             },
             content: "fn main() {}".to_string(),
         });
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 
     #[test]
@@ -467,10 +432,6 @@ mod tests {
             chunk_type: ChunkType::Diff,
             content: "+added\n-removed".to_string(),
         });
-
-        let serialized = toml::to_string(&block).unwrap();
-        let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-
-        assert_eq!(block, deserialized);
+        assert_toml_roundtrip(&block);
     }
 }

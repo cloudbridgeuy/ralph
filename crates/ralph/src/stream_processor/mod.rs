@@ -48,4 +48,6 @@ pub use types::KeyArgument;
 pub use utils::{extract_key_argument, truncate_string};
 
 #[cfg(test)]
+mod test_helpers;
+#[cfg(test)]
 mod tests;

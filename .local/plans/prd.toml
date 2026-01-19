@@ -310,7 +310,7 @@ steps = [
   "Inspect the session TOML file",
   "Verify the output blocks are present in the file",
 ]
-passes = false
+passes = true
 acceptance = [
   "The accumulated Vec<OutputBlock> is serialized to the session TOML file",
   "Serialization occurs after successful completion",
@@ -325,7 +325,7 @@ steps = [
   "Inspect the session TOML file",
   "Verify each iteration has its metadata and grouped blocks",
 ]
-passes = false
+passes = true
 acceptance = [
   "Each iteration's output blocks are grouped together",
   "Iteration metadata is stored (iteration number, cost, duration, tokens)",
@@ -340,7 +340,7 @@ steps = [
   "Run `ralph replay <session-slug>`",
   "Compare replay output to live output",
 ]
-passes = false
+passes = true
 acceptance = [
   "Replay deserializes the Vec<OutputBlock> from the session TOML",
   "Replay renders each block using the same logic as live execution",
@@ -357,7 +357,7 @@ steps = [
   "Verify output blocks accumulated before interruption are present",
   "Repeat with SIGTERM",
 ]
-passes = false
+passes = true
 acceptance = [
   "Signal handlers are installed for SIGTERM and SIGINT",
   "On signal, the accumulated Vec<OutputBlock> is serialized before exit",
@@ -371,7 +371,7 @@ steps = [
   "Add #[non_exhaustive] to the OutputBlock enum",
   "Verify code compiles and tests pass",
 ]
-passes = false
+passes = true
 acceptance = [
   "OutputBlock enum has #[non_exhaustive] attribute",
   "Adding new variants in the future won't be a breaking change for downstream match expressions",
@@ -385,7 +385,7 @@ steps = [
   "Extract common logic into a helper function",
   "Update existing tests to use the helper",
 ]
-passes = false
+passes = true
 acceptance = [
   "Test helper reduces boilerplate in output block tests",
   "Existing tests pass using the new helper",

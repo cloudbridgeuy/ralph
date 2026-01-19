@@ -242,3 +242,221 @@ The summarization workflow doesn't require Claude to access files directly - it 
 - A Vec<OutputBlock> accumulates each block as it renders to stdout
 - The Vec preserves the order blocks were printed
 - Accumulation does not affect live rendering performance or behavior (O(1) push per block)
+
+---
+
+## Serialize Output Blocks to Session TOML on Normal Completion (2026-01-19)
+
+**Story**: Serialize output blocks to session TOML on normal completion
+
+**Changes**:
+- Added `output_blocks: Vec<OutputBlock>` field to `IterationLog` struct
+- Added import for `OutputBlock` in `crates/ralph/src/iteration/log.rs`
+- Updated `run/mod.rs` to pass `output_blocks` from `StreamProcessorResult` to `IterationLog`
+- Field uses `#[serde(default, skip_serializing_if = "Vec::is_empty")]` for backward compatibility
+- Updated all test files that construct `IterationLog` instances to include `output_blocks: vec![]`
+
+**Key files**:
+- `crates/ralph/src/iteration/log.rs` - Added `output_blocks` field to IterationLog struct
+- `crates/ralph/src/run/mod.rs` - Pass output_blocks when creating IterationLog
+- `crates/ralph/src/iteration/tests/*.rs` - Updated test fixtures
+- `crates/ralph/src/iterations.rs` - Updated test helper
+- `crates/ralph/src/replay.rs` - Updated test helper
+- `crates/ralph/src/iteration/writer.rs` - Updated doctest example
+
+**Data flow**:
+1. StreamProcessor accumulates OutputBlocks during execution
+2. StreamProcessor.finish() returns StreamProcessorResult with output_blocks
+3. Run loop creates IterationLog with cloned output_blocks
+4. write_iteration_log() serializes IterationLog (including output_blocks) to TOML
+
+**TOML format** (when output_blocks present):
+```toml
+[[output_blocks]]
+type = "text"
+[output_blocks.chunk]
+chunk_type = { Prose = {} }
+content = "Hello, world!"
+
+[[output_blocks]]
+type = "tool_invocation"
+tool_name = "Bash"
+invocation_type = "bash"
+command = "ls -la"
+
+[[output_blocks]]
+type = "separator"
+```
+
+**Acceptance criteria met**:
+- The accumulated Vec<OutputBlock> is serialized to the session TOML file (iteration-N.toml)
+- Serialization occurs after successful completion (via write_iteration_log in run loop)
+- The TOML file contains all output blocks from the session (507 tests pass)
+
+---
+
+## Replay Rendering with OutputBlocks (2026-01-19)
+
+**Story**: Replay deserializes and renders output blocks identically to live execution
+
+**Changes**:
+- Created new module `crates/ralph/src/replay_renderer.rs` with `ReplayRenderer` struct
+- Implemented rendering for all `OutputBlock` variants (Text, ToolInvocation, ToolResult, Separator)
+- Updated `replay.rs` to use `output_blocks` when available, falling back to `chunks` for older sessions
+- Added `Clone` derive to `Highlighter` to allow cloning for replay renderer
+- Added token usage display in iteration header metadata
+
+**Key files**:
+- `crates/ralph/src/replay_renderer.rs` - New replay renderer module (750+ lines)
+- `crates/ralph/src/replay.rs` - Updated to prefer output_blocks, added token display
+- `crates/ralph/src/highlight.rs` - Added Clone derive to Highlighter
+- `crates/ralph/src/main.rs` - Added replay_renderer module
+
+**ReplayRenderer features**:
+- Text blocks: Prose (markdown rendering), Code (syntax highlighting), Diff (diff colors)
+- Tool invocations: Bash (shell highlighting), Grep (verbose), Read, Glob, TodoWrite, Default
+- Tool results: Bash, EditBeforeAfter, EditDiff, WriteNewFile, WriteOverwrite, Read, Grep, Glob, TodoWrite, NotebookEdit, Default
+- Terminal detection for ANSI color support
+- Same rendering patterns as live execution stream processor
+
+**Tests added** (15 tests in replay_renderer.rs):
+- `test_render_separator` - Separator renders as newline
+- `test_render_prose_plain` - Prose text rendering
+- `test_render_code_plain` - Code block with fences
+- `test_render_diff_plain` - Diff block rendering
+- `test_render_bash_invocation_plain` - Bash tool header
+- `test_render_bash_invocation_multiline_plain` - Multi-line bash commands
+- `test_render_bash_result_success_plain` - Bash success output
+- `test_render_bash_result_error_plain` - Bash error output
+- `test_render_default_invocation_plain` - Default tool header
+- `test_render_todowrite_invocation_plain` - TodoWrite with status icons
+- `test_render_edit_before_after_plain` - Before/after blocks with separator
+- `test_render_write_new_file_plain` - New file indicator
+- `test_extract_language_from_path` - File extension to language mapping
+- `test_render_with_highlighting_has_ansi` - ANSI codes when terminal
+- `test_render_without_highlighting_no_ansi` - No ANSI when not terminal
+
+**Acceptance criteria met**:
+- Replay deserializes `Vec<OutputBlock>` from session TOML (via existing IterationLog deserialization)
+- Replay renders each block using same logic as live execution (ReplayRenderer mirrors stream_processor patterns)
+- Replay displays iteration headers with metadata (model, cost, duration, tokens)
+- Replay output is visually identical to live execution (same highlighting, colors, formatting)
+
+---
+
+## Persist Output Blocks on SIGTERM/SIGINT Interruption (2026-01-19)
+
+**Story**: Persist output blocks on SIGTERM or SIGINT interruption
+
+**Problem**:
+When an interrupt signal (Ctrl+C / SIGINT or SIGTERM) occurred during subprocess execution, the partial output blocks accumulated by the StreamProcessor were being discarded. The `SubprocessError::Interrupted` variant contained a `partial_result` with the accumulated data, but this was being ignored when converting to `RunError::Interrupted`.
+
+**Changes**:
+- Extended `RunError::Interrupted` variant with two new fields:
+  - `partial_result: Option<Box<StreamingSubprocessResult>>` - Contains output blocks accumulated before interrupt
+  - `pending_before: Option<usize>` - Number of pending stories at iteration start (for partial log)
+- Updated `invoke_with_failure_recovery` to capture and propagate the partial result from subprocess interrupts
+- Updated the main run loop to handle interrupts during subprocess execution by propagating session context
+- Added logic in `main.rs` `execute_run_with_prompting` to write a partial iteration log when an interrupt occurs during subprocess execution
+- Added `into_option()` method to `LogMetadata` for clean conditional serialization
+
+**Key files**:
+- `crates/ralph/src/run/mod.rs` - Extended `RunError::Interrupted`, updated interrupt handling
+- `crates/ralph/src/main.rs` - Added partial iteration log writing on interrupt
+- `crates/ralph/src/iteration/metadata.rs` - Added `into_option()` method
+
+**Data flow on interrupt**:
+1. Signal handler sets `INTERRUPTED` flag
+2. `invoke_subprocess_with_spinner` detects flag, drains output, calls `processor.finish()`
+3. Returns `SubprocessError::Interrupted { partial_result }` with accumulated output blocks
+4. `invoke_with_failure_recovery` converts to `RunError::Interrupted` preserving partial result
+5. Main run loop fills in session context (slug, iterations, pending_before)
+6. `execute_run_with_prompting` writes partial iteration log to session TOML
+7. Session is finalized as "interrupted"
+
+**Behavior**:
+- When `ralph run` is interrupted during subprocess execution, a partial `iteration-N.toml` is written
+- The partial log contains all output blocks accumulated up to the point of interruption
+- Partial sessions can be replayed with `ralph replay <session-slug>`, showing output up to interruption
+- Interrupts at other points (start of iteration, after log write) continue to work as before
+
+**Acceptance criteria met**:
+- Signal handlers are installed for SIGTERM and SIGINT (via ctrlc crate, already present)
+- On signal, the accumulated Vec<OutputBlock> is serialized before exit
+- Partial sessions can be replayed showing blocks up to the interruption
+
+---
+
+## Non-Exhaustive Attribute for Output Block Enums (2026-01-19)
+
+**Story**: Add #[non_exhaustive] attribute to output block enum
+
+**Changes**:
+- Added `#[non_exhaustive]` attribute to `OutputBlock` enum
+- Added `#[non_exhaustive]` attribute to `ToolInvocationVariant` enum
+- Added `#[non_exhaustive]` attribute to `ToolResultVariant` enum
+
+**Key file**: `crates/ralph/src/stream_processor/output_block.rs`
+
+**Rationale**:
+The `#[non_exhaustive]` attribute ensures that adding new variants to these enums in the future won't be a breaking change for downstream code that pattern-matches on them. This is a Rust best practice for public enums that are expected to evolve over time. All three enums (`OutputBlock`, `ToolInvocationVariant`, `ToolResultVariant`) may gain new variants as new tools are supported or new output types are added.
+
+**Acceptance criteria met**:
+- OutputBlock enum has #[non_exhaustive] attribute
+- ToolInvocationVariant enum has #[non_exhaustive] attribute
+- ToolResultVariant enum has #[non_exhaustive] attribute
+- Adding new variants in the future won't be a breaking change for downstream match expressions
+- All 522 tests pass
+
+---
+
+## Test Helper for Output Block Serialization (2026-01-19)
+
+**Story**: Create test helper for output block serialization tests
+
+**Changes**:
+- Created new module `crates/ralph/src/stream_processor/test_helpers.rs`
+- Added `assert_toml_roundtrip<T>()` - Generic helper for testing TOML serialization round-trips
+- Added `create_test_invocation()` - Helper to create ToolInvocation from name and JSON input
+- Added `expect_tool_invocation()` - Helper to extract ToolInvocationBlock with descriptive panic
+- Updated 10 tests in `output_block.rs` to use `assert_toml_roundtrip()`
+- Updated 4 tests in `block_builders.rs` to use `create_test_invocation()` and `expect_tool_invocation()`
+
+**Key file**: `crates/ralph/src/stream_processor/test_helpers.rs`
+
+**Test reduction examples**:
+
+Before (repeated in 10 tests):
+```rust
+let serialized = toml::to_string(&block).unwrap();
+let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
+assert_eq!(block, deserialized);
+```
+
+After:
+```rust
+assert_toml_roundtrip(&block);
+```
+
+Before (repeated in 4 tests):
+```rust
+let invocation = ToolInvocation {
+    id: "test-id".to_string(),
+    name: "Bash".to_string(),
+    input: json!({...}).as_object().unwrap().clone().into_iter().collect(),
+};
+match block {
+    OutputBlock::ToolInvocation(inv) => { ... }
+    _ => panic!("Expected ToolInvocation"),
+}
+```
+
+After:
+```rust
+let invocation = create_test_invocation("Bash", json!({...}));
+let inv = expect_tool_invocation(block);
+```
+
+**Acceptance criteria met**:
+- Test helper reduces boilerplate in output block tests (14 tests simplified)
+- Existing tests pass using the new helper (all 522 tests pass)
