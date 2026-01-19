@@ -208,7 +208,7 @@ steps = [
   "Structure with clear sections: Features, Install, Quick Start, Config, Contributing",
   "Add table of contents for easy navigation",
 ]
-passes = false
+passes = true
 acceptance = [
   "README has visual header (logo, banner, or styled title)",
   "One-liner clearly explains ralph's purpose",
@@ -249,4 +249,117 @@ acceptance = [
   "Default prompt.txt summarizer Claude command includes permissions to read and write needed files",
   "Summarization completes without permission-denied errors",
   "Progress file is summarized and saved when over the configured line threshold",
+]
+
+# =============================================================================
+# Replay Output Blocks
+# =============================================================================
+
+[[stories]]
+category = "refactor"
+description = "Unify output structs into a single enum type for collection"
+steps = [
+  "Identify all structs that render to stdout during execution",
+  "Create an enum with variants for each output struct",
+  "Update rendering code to work with the enum",
+  "Run `ralph run` and verify output is unchanged",
+]
+passes = true
+acceptance = [
+  "A single enum type contains variants for all output structs (text, bash, read, edit, glob, grep, todo, task, etc.)",
+  "Each variant wraps its corresponding struct",
+  "Rendering logic accepts the enum and dispatches to the correct struct's display",
+  "Live execution output is visually identical to before the refactor",
+]
+
+[[stories]]
+category = "refactor"
+description = "Ensure output enum and all variants are serializable"
+steps = [
+  "Add Serialize and Deserialize derives to the output enum",
+  "Add Serialize and Deserialize derives to all variant structs",
+  "Write a unit test that round-trips an output block through TOML",
+]
+passes = true
+acceptance = [
+  "The output enum derives Serialize and Deserialize",
+  "All variant structs derive Serialize and Deserialize",
+  "Fields that cannot serialize are handled (skipped, transformed, or removed)",
+  "A unit test verifies round-trip serialization works correctly",
+]
+
+[[stories]]
+category = "replay"
+description = "Accumulate output blocks during execution"
+steps = [
+  "Run `ralph run` with a simple PRD",
+  "Verify blocks are appended to a Vec as they print",
+]
+passes = false
+acceptance = [
+  "A Vec<OutputBlock> accumulates each block as it renders to stdout",
+  "The Vec preserves the order blocks were printed",
+  "Accumulation does not affect live rendering performance or behavior",
+]
+
+[[stories]]
+category = "replay"
+description = "Serialize output blocks to session TOML on normal completion"
+steps = [
+  "Run `ralph run` and let it complete normally",
+  "Inspect the session TOML file",
+  "Verify the output blocks are present in the file",
+]
+passes = false
+acceptance = [
+  "The accumulated Vec<OutputBlock> is serialized to the session TOML file",
+  "Serialization occurs after successful completion",
+  "The TOML file contains all output blocks from the session",
+]
+
+[[stories]]
+category = "replay"
+description = "Include iteration metadata in serialized output"
+steps = [
+  "Run `ralph run` for multiple iterations",
+  "Inspect the session TOML file",
+  "Verify each iteration has its metadata and grouped blocks",
+]
+passes = false
+acceptance = [
+  "Each iteration's output blocks are grouped together",
+  "Iteration metadata is stored (iteration number, cost, duration, tokens)",
+  "The structure supports multiple iterations per session",
+]
+
+[[stories]]
+category = "replay"
+description = "Replay deserializes and renders output blocks identically to live execution"
+steps = [
+  "Run `ralph run` and observe the live output",
+  "Run `ralph replay <session-slug>`",
+  "Compare replay output to live output",
+]
+passes = false
+acceptance = [
+  "Replay deserializes the Vec<OutputBlock> from the session TOML",
+  "Replay renders each block using the same logic as live execution",
+  "Replay displays iteration headers and metadata",
+  "Replay output is visually identical to live execution output",
+]
+
+[[stories]]
+category = "replay"
+description = "Persist output blocks on SIGTERM or SIGINT interruption"
+steps = [
+  "Run `ralph run` and interrupt with Ctrl+C (SIGINT)",
+  "Inspect the session TOML file",
+  "Verify output blocks accumulated before interruption are present",
+  "Repeat with SIGTERM",
+]
+passes = false
+acceptance = [
+  "Signal handlers are installed for SIGTERM and SIGINT",
+  "On signal, the accumulated Vec<OutputBlock> is serialized before exit",
+  "Partial sessions can be replayed showing blocks up to the interruption",
 ]

@@ -12,6 +12,7 @@
 //! - Diff highlighting with delta fallback chain
 //! - Terminal detection for automatic color support
 //! - Metadata and tool call extraction for iteration logs
+//! - Output block accumulation for replay serialization
 //!
 //! # Example
 //!
@@ -24,6 +25,7 @@
 //! ```
 
 mod event_handler;
+mod output_block;
 mod processor;
 mod tool_display;
 mod tool_results;
@@ -31,6 +33,10 @@ mod types;
 mod utils;
 
 // Re-export public API
+pub use output_block::{
+    OutputBlock, TextBlock, TodoItem, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock,
+    ToolResultVariant,
+};
 pub use processor::StreamProcessor;
 pub use types::{StreamProcessorResult, VerboseToolsConfig};
 

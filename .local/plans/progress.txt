@@ -124,3 +124,75 @@ The summarization workflow doesn't require Claude to access files directly - it 
 - cargo build, cargo test, cargo run documented
 - cargo xtask install explained for local installation
 - Workspace layout explained (crates/ralph, crates/core, xtask)
+
+---
+
+## Polished README (2026-01-19)
+
+**Story**: Create polished README with visual appeal and clear structure
+
+**Changes**:
+- Rewrote README.md with enhanced visual structure
+- Added ASCII art banner with ralph logo
+- Added badges for license and Rust version
+- Added one-liner description explaining ralph's purpose
+- Added Features section highlighting key capabilities
+- Added Table of Contents for easy navigation
+- Added Example Output section showing typical ralph usage
+- Structured with clear sections: Features, Install, Quick Start, Config, Documentation, Contributing, License
+- Added Contributing section welcoming new contributors
+
+**Key file**: `README.md`
+
+**Acceptance criteria met**:
+- README has visual header (ASCII art banner with styled title)
+- One-liner clearly explains ralph's purpose
+- Badges show license and Rust version at a glance
+- Example Output section demonstrates actual usage
+- Sections are well-organized with consistent formatting
+- Links to detailed docs (CLI Reference, Configuration, PRD Format, Development)
+- Contributing section welcomes new contributors
+
+---
+
+## OutputBlock Enum for Replay Serialization (2026-01-19)
+
+**Stories completed**:
+1. Unify output structs into a single enum type for collection
+2. Ensure output enum and all variants are serializable
+
+**Changes**:
+- Created new module `crates/ralph/src/stream_processor/output_block.rs`
+- Implemented `OutputBlock` enum with variants: `Text`, `ToolInvocation`, `ToolResult`, `Separator`
+- Created supporting structs: `TextBlock`, `ToolInvocationBlock`, `ToolResultBlock`
+- Implemented `ToolInvocationVariant` enum with tool-specific invocation data (Bash, Grep, Read, Glob, TodoWrite, Default)
+- Implemented `ToolResultVariant` enum with tool-specific result data (Bash, EditBeforeAfter, EditDiff, EditNoChanges, WriteNewFile, WriteOverwrite, WriteNoChanges, Read, Grep, Glob, TodoWrite, NotebookEdit, Default)
+- Added `TodoItem` struct for TodoWrite display
+- All types derive `Serialize` and `Deserialize` for TOML serialization
+- Re-exported public types from `stream_processor` module
+
+**Key file**: `crates/ralph/src/stream_processor/output_block.rs`
+
+**Tests added** (10 tests):
+- `test_output_block_text_serialization` - round-trip text block through TOML
+- `test_output_block_separator_serialization` - round-trip separator
+- `test_tool_invocation_bash_serialization` - Bash invocation serialization
+- `test_tool_result_bash_serialization` - Bash result serialization
+- `test_tool_result_edit_before_after_serialization` - Edit before/after serialization
+- `test_tool_result_write_new_file_serialization` - Write new file serialization
+- `test_tool_invocation_grep_serialization` - Grep invocation with all options
+- `test_tool_invocation_todowrite_serialization` - TodoWrite with todo items
+- `test_code_chunk_serialization` - Code chunk with language
+- `test_diff_chunk_serialization` - Diff chunk
+
+**Design decisions**:
+- Each variant captures **data** not rendered strings, enabling re-rendering with different settings
+- Uses `#[serde(tag = "type", rename_all = "snake_case")]` for clean TOML format
+- Tool-specific data uses nested enums (`ToolInvocationVariant`, `ToolResultVariant`) for type safety
+- Leverages existing `ParsedChunk` from ralph_core which already has serialization
+
+**Acceptance criteria met**:
+- Single enum type contains variants for all output types
+- Each variant wraps corresponding data struct
+- All types derive Serialize and Deserialize
+- 10 unit tests verify round-trip serialization through TOML
