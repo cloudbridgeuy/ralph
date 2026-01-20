@@ -103,7 +103,7 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let command = substitute_prompt_in_command(&command_template, &prompt);
 
     // Execute run loop with failure recovery prompting
-    execute_run_with_prompting(args, context_paths, command, completion_marker)
+    execute_run_with_prompting(args, context_paths, command, prompt, completion_marker)
 }
 
 /// Execute run loop with interactive failure recovery prompting.
@@ -119,6 +119,7 @@ fn execute_run_with_prompting(
     args: RunArgs,
     context_paths: ContextPaths,
     command: String,
+    prompt: String,
     completion_marker: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Track the session slug across recovery attempts. Once a session is created, we reuse it.
@@ -158,6 +159,7 @@ fn execute_run_with_prompting(
             max_iterations: args.iterations,
             slug: current_session_slug.clone().or_else(|| args.slug.clone()),
             command: command.clone(),
+            prompt: prompt.clone(),
             completion_marker: completion_marker.clone(),
             context_paths: context_paths.clone(),
             max_attempts: args.max_attempts,

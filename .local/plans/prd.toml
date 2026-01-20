@@ -555,7 +555,7 @@ steps = [
   "Store the prompt in a data structure that can be serialized",
   "Include the prompt in the session TOML file",
 ]
-passes = false
+passes = true
 acceptance = [
   "The prompt string (as passed to claude CLI) is captured before invocation",
   "The prompt is stored in the session TOML file",

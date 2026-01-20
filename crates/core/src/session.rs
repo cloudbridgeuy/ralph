@@ -536,11 +536,15 @@ pub struct SessionMetadata {
     /// Current status of the session
     #[serde(default)]
     pub outcome: SessionOutcome,
+    /// The prompt passed to the Claude CLI (after placeholder substitution).
+    /// Stored for replay to show what prompt was used for this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
 }
 
 impl SessionMetadata {
     /// Create new session metadata with initial values.
-    pub fn new(slug: String, project: PathBuf) -> Self {
+    pub fn new(slug: String, project: PathBuf, prompt: Option<String>) -> Self {
         Self {
             slug,
             project,
@@ -548,6 +552,7 @@ impl SessionMetadata {
             completed_at: None,
             iterations: 0,
             outcome: SessionOutcome::InProgress,
+            prompt,
         }
     }
 
@@ -571,6 +576,8 @@ impl From<&SessionEntry> for SessionMetadata {
             completed_at: entry.completed_at,
             iterations: entry.iterations,
             outcome: entry.outcome,
+            // SessionEntry doesn't store prompt, so default to None
+            prompt: None,
         }
     }
 }
@@ -878,23 +885,72 @@ mod tests {
 
     #[test]
     fn test_session_metadata_new() {
-        let meta = SessionMetadata::new("bright-river".to_string(), PathBuf::from("/my/project"));
+        let meta = SessionMetadata::new(
+            "bright-river".to_string(),
+            PathBuf::from("/my/project"),
+            None,
+        );
 
         assert_eq!(meta.slug, "bright-river");
         assert_eq!(meta.project, PathBuf::from("/my/project"));
         assert_eq!(meta.iterations, 0);
         assert_eq!(meta.outcome, SessionOutcome::InProgress);
+        assert_eq!(meta.prompt, None);
+    }
+
+    #[test]
+    fn test_session_metadata_new_with_prompt() {
+        let meta = SessionMetadata::new(
+            "sunny-day".to_string(),
+            PathBuf::from("/my/project"),
+            Some("Test prompt content".to_string()),
+        );
+
+        assert_eq!(meta.slug, "sunny-day");
+        assert_eq!(meta.prompt, Some("Test prompt content".to_string()));
     }
 
     #[test]
     fn test_session_metadata_toml_roundtrip() {
-        let meta = SessionMetadata::new("calm-ocean".to_string(), PathBuf::from("/test"));
+        let meta = SessionMetadata::new("calm-ocean".to_string(), PathBuf::from("/test"), None);
 
         let toml_str = meta.to_toml().unwrap();
         let parsed = SessionMetadata::from_toml(&toml_str).unwrap();
 
         assert_eq!(parsed.slug, "calm-ocean");
         assert_eq!(parsed.project, PathBuf::from("/test"));
+        assert_eq!(parsed.prompt, None);
+    }
+
+    #[test]
+    fn test_session_metadata_prompt_toml_roundtrip() {
+        let prompt = "Work on the highest priority feature.\n\nContext:\n- PRD: path/to/prd.toml"
+            .to_string();
+        let meta = SessionMetadata::new(
+            "swift-wind".to_string(),
+            PathBuf::from("/test"),
+            Some(prompt.clone()),
+        );
+
+        let toml_str = meta.to_toml().unwrap();
+        // Verify prompt appears in serialized TOML
+        assert!(toml_str.contains("prompt = "));
+        assert!(toml_str.contains("Work on the highest priority feature"));
+
+        let parsed = SessionMetadata::from_toml(&toml_str).unwrap();
+        assert_eq!(parsed.prompt, Some(prompt));
+    }
+
+    #[test]
+    fn test_session_metadata_prompt_not_serialized_when_none() {
+        let meta = SessionMetadata::new("clear-sky".to_string(), PathBuf::from("/test"), None);
+
+        let toml_str = meta.to_toml().unwrap();
+        // Verify prompt is NOT in serialized TOML when None
+        assert!(
+            !toml_str.contains("prompt"),
+            "prompt field should not appear when None"
+        );
     }
 
     #[test]

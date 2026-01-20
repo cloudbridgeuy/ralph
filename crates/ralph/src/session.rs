@@ -188,6 +188,7 @@ pub fn resolve_session_slug(user_slug: Option<&str>) -> Result<String, SessionEr
 ///
 /// * `slug` - The session identifier (must be unique)
 /// * `project_path` - Absolute path to the project directory
+/// * `prompt` - Optional prompt string (after placeholder substitution) for replay
 ///
 /// # Returns
 ///
@@ -196,6 +197,7 @@ pub fn resolve_session_slug(user_slug: Option<&str>) -> Result<String, SessionEr
 pub fn initialize_session_directory(
     slug: &str,
     project_path: &Path,
+    prompt: Option<String>,
 ) -> Result<PathBuf, SessionError> {
     // Create session directory
     let session_path = session_dir(slug);
@@ -205,7 +207,7 @@ pub fn initialize_session_directory(
     })?;
 
     // Create session metadata
-    let metadata = SessionMetadata::new(slug.to_string(), project_path.to_path_buf());
+    let metadata = SessionMetadata::new(slug.to_string(), project_path.to_path_buf(), prompt);
 
     // Write session.toml in the session directory
     let session_toml_path = session_path.join("session.toml");
@@ -237,6 +239,7 @@ pub fn initialize_session_directory(
 ///
 /// * `user_slug` - Optional user-provided slug. If None, generates automatically.
 /// * `project_path` - Absolute path to the project directory
+/// * `prompt` - Optional prompt string (after placeholder substitution) for replay
 ///
 /// # Returns
 ///
@@ -245,9 +248,10 @@ pub fn initialize_session_directory(
 pub fn initialize_session(
     user_slug: Option<&str>,
     project_path: &Path,
+    prompt: Option<String>,
 ) -> Result<(String, PathBuf), SessionError> {
     let slug = resolve_session_slug(user_slug)?;
-    let session_path = initialize_session_directory(&slug, project_path)?;
+    let session_path = initialize_session_directory(&slug, project_path, prompt)?;
     Ok((slug, session_path))
 }
 
@@ -404,7 +408,8 @@ mod tests {
             // Manually create the session directory and metadata
             fs::create_dir_all(&session_path).unwrap();
 
-            let metadata = SessionMetadata::new("test-session".to_string(), project_path.clone());
+            let metadata =
+                SessionMetadata::new("test-session".to_string(), project_path.clone(), None);
             let session_toml_path = session_path.join("session.toml");
             let metadata_content = metadata.to_toml().unwrap();
             fs::write(&session_toml_path, metadata_content).unwrap();

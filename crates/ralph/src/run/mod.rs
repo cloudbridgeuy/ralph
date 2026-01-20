@@ -41,6 +41,9 @@ pub struct RunConfig {
     pub slug: Option<String>,
     /// Full command to invoke the LLM (with prompt already substituted).
     pub command: String,
+    /// The prompt passed to Claude CLI (after placeholder substitution).
+    /// Stored in session metadata for replay purposes.
+    pub prompt: String,
     /// Completion marker string to detect in output.
     pub completion_marker: String,
     /// Context file paths.
@@ -258,12 +261,16 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             (slug.to_string(), dir)
         } else {
             // This shouldn't happen - if starting_iteration > 0, we should have a slug
-            // Fall back to initializing a new session
-            initialize_session(None, &project_path)?
+            // Fall back to initializing a new session (no prompt for fallback case)
+            initialize_session(None, &project_path, None)?
         }
     } else {
-        // First run - initialize a new session
-        initialize_session(config.slug.as_deref(), &project_path)?
+        // First run - initialize a new session with the prompt
+        initialize_session(
+            config.slug.as_deref(),
+            &project_path,
+            Some(config.prompt.clone()),
+        )?
     };
 
     // 5. Display startup information (only on first run, not retries)

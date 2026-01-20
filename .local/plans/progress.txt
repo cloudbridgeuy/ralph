@@ -645,3 +645,55 @@ The replay renderer was using simpler formatting compared to the stream processo
 - Grep/Glob results show match counts and file paths with proper formatting ✓
 - Formatting is visually identical between live and replay ✓
 - All 537 tests pass, cargo xtask lint passes
+
+---
+
+## Capture and Store Prompt in Session (2026-01-20)
+
+**Story**: Capture and store the prompt passed to the claude CLI
+
+**Problem**:
+The prompt passed to Claude CLI (after placeholder substitution) was not being stored anywhere, making it impossible for replay to show what prompt was used for a session.
+
+**Changes**:
+- Added `prompt: Option<String>` field to `SessionMetadata` struct in `crates/core/src/session.rs`
+- Updated `SessionMetadata::new()` to accept a prompt parameter
+- Added `prompt: String` field to `RunConfig` in `crates/ralph/src/run/mod.rs`
+- Updated `initialize_session_directory()` and `initialize_session()` to accept prompt parameter
+- Updated `execute_run_with_prompting()` to pass prompt through the call chain
+- Prompt is captured after placeholder substitution (e.g., `{design_file}`, `{prd_file}`, etc.) but before shell escaping
+
+**Key files**:
+- `crates/core/src/session.rs` - Added prompt field to SessionMetadata, updated constructor
+- `crates/ralph/src/session.rs` - Updated initialize functions to accept prompt
+- `crates/ralph/src/run/mod.rs` - Added prompt to RunConfig, pass to initialize_session
+- `crates/ralph/src/main.rs` - Pass prompt to execute_run_with_prompting and RunConfig
+
+**Data flow**:
+1. `resolve_prompt()` constructs the prompt with placeholder substitution (line 95 in main.rs)
+2. Prompt is passed to `execute_run_with_prompting()` as a new parameter
+3. Prompt is stored in `RunConfig` struct
+4. On first run (starting_iteration == 0), `initialize_session()` is called with `Some(config.prompt.clone())`
+5. `SessionMetadata::new()` stores the prompt
+6. `session.toml` is written with the prompt field
+
+**TOML format** (when prompt present):
+```toml
+slug = "quiet-mountain"
+project = "/path/to/project"
+started_at = "2026-01-20T10:00:00Z"
+iterations = 3
+outcome = "completed"
+prompt = "Work on the highest priority feature.\n\nContext:\n- PRD: path/to/prd.toml"
+```
+
+**Tests added** (4 new tests):
+- `test_session_metadata_new_with_prompt` - Verifies prompt is stored in struct
+- `test_session_metadata_prompt_toml_roundtrip` - Verifies prompt serialization/deserialization
+- `test_session_metadata_prompt_not_serialized_when_none` - Verifies prompt not in TOML when None
+
+**Acceptance criteria met**:
+- The prompt string (as passed to claude CLI) is captured before invocation ✓
+- The prompt is stored in the session TOML file ✓
+- The prompt is available for replay to read ✓
+- All 537 tests pass, cargo xtask lint passes

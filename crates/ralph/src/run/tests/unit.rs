@@ -21,6 +21,7 @@ fn create_test_config(paths: ContextPaths) -> RunConfig {
         max_iterations: Some(1),
         slug: Some("test-slug".to_string()),
         command: "echo 'test'".to_string(),
+        prompt: "Test prompt content".to_string(),
         completion_marker: "<promise>COMPLETE</promise>".to_string(),
         context_paths: paths,
         max_attempts: 3,
