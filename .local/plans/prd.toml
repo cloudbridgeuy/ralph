@@ -46,7 +46,7 @@ steps = [
   "Observe the countdown decrements each second until the next block renders",
   "Observe the spinner clears before the next block appears",
 ]
-passes = false
+passes = true
 acceptance = [
   "A spinner with countdown is displayed between blocks when --delay is used",
   "The countdown shows remaining seconds (updating each second)",
@@ -103,4 +103,21 @@ acceptance = [
   "Known files use their assigned descriptions: design.md → 'Design document', prd.toml → 'Product requirements', progress.txt → 'Progress notes'",
   "Inline @/path references are removed from the prompt body display",
   "Table formatting works for both terminal (with colors) and plain output",
+]
+
+[[stories]]
+category = "spinner"
+description = "As a user, I want the spinner timer display to clear properly when the text length changes so residual characters don't appear."
+steps = [
+  "Run ralph and trigger a long-running LLM request",
+  "Observe the spinner as time progresses past minute boundaries (e.g., 59s → 1m 0s)",
+  "Observe the spinner when context changes (e.g., 'Thinking...' to 'Running tool...')",
+  "Verify no residual characters appear when the line gets shorter",
+]
+passes = false
+acceptance = [
+  "Spinner format uses '\\r\\x1b[K' to clear the line before each redraw",
+  "No leftover characters appear when time format changes (e.g., '59s' → '1m 0s')",
+  "No leftover characters appear when spinner context changes",
+  "Spinner continues to display correctly in terminal output",
 ]

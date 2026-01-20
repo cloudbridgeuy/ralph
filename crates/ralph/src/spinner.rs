@@ -33,10 +33,10 @@ use std::time::{Duration, Instant};
 
 /// Braille spinner characters for animation.
 /// These create a smooth spinning effect: ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
-const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+pub const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Interval between spinner frame updates.
-const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
+pub const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
 
 /// The context or reason for showing the spinner.
 ///

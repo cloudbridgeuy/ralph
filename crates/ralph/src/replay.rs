@@ -19,15 +19,14 @@
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::iteration::IterationLog;
+use crate::replay_countdown::apply_delay_with_countdown;
 use crate::replay_renderer::ReplayRenderer;
 use crate::session::{load_sessions_index, session_dir};
 use crate::startup::{display_prompt, PromptDisplay};
 use ralph_core::session::SessionMetadata;
 use std::fs;
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::path::PathBuf;
-use std::thread;
-use std::time::Duration;
 
 /// Error type for replay operations.
 #[derive(Debug, thiserror::Error)]
@@ -396,18 +395,6 @@ fn replay_iteration(
     Ok(())
 }
 
-/// Apply delay between output elements if specified.
-///
-/// Flushes stdout before sleeping to ensure previous output is visible.
-fn apply_delay(delay_secs: Option<f64>) {
-    if let Some(secs) = delay_secs {
-        if secs > 0.0 {
-            let _ = std::io::stdout().flush();
-            thread::sleep(Duration::from_secs_f64(secs));
-        }
-    }
-}
-
 /// Replay using output_blocks (newer format with full tool rendering).
 fn replay_output_blocks(
     log: &IterationLog,
@@ -420,7 +407,7 @@ fn replay_output_blocks(
     for block in &log.output_blocks {
         let rendered = renderer.render(block);
         print!("{}", rendered);
-        apply_delay(delay_secs);
+        apply_delay_with_countdown(delay_secs);
     }
 }
 
@@ -462,7 +449,7 @@ fn replay_chunks(
                 println!("{}", chunk.content);
             }
         }
-        apply_delay(delay_secs);
+        apply_delay_with_countdown(delay_secs);
     }
 }
 

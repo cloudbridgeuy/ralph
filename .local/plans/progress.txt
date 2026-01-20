@@ -280,3 +280,31 @@ Added a new lint check that enforces a 1000-line maximum for Rust files.
 - ✅ Files exceeding 1000 lines cause lint to fail
 - ✅ Error output lists violating files with path and line count
 - ✅ Files at or under 1000 lines pass silently
+
+---
+
+## Replay Countdown Spinner (2026-01-20)
+
+### Implementation
+Added an animated countdown spinner displayed between output blocks when the `--delay` flag is used during replay.
+
+**Location**: `crates/ralph/src/replay_countdown.rs`
+
+### Details
+- `replay_countdown` module provides `wait_with_countdown()` and `apply_delay_with_countdown()` functions
+- Uses the same braille spinner characters as the main spinner (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`)
+- Displays "Next block in Ns..." with countdown that decrements each second
+- Updates at 80ms intervals for smooth animation
+- Clears the spinner line with `\r\x1b[K` before rendering the next block
+- No spinner shown when stdout is not a terminal (non-interactive mode)
+
+### Integration
+- `replay.rs` imports `apply_delay_with_countdown` from the new module
+- Replaced inline `apply_delay()` function with the new countdown-aware version
+- Both `replay_output_blocks()` and `replay_chunks()` now use the countdown
+
+### Acceptance Criteria Met
+- ✅ A spinner with countdown is displayed between blocks when --delay is used
+- ✅ The countdown shows remaining seconds (updating each second)
+- ✅ The spinner is cleared before rendering the next block
+- ✅ No spinner is shown when --delay is omitted or set to 0
