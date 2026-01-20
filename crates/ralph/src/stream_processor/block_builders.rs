@@ -8,7 +8,8 @@ use ralph_core::stream::ToolInvocation;
 use super::output_block::{
     GrepInvocationBuilder, OutputBlock, TodoItem, ToolInvocationVariant, ToolResultVariant,
 };
-use super::utils::extract_key_argument;
+use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
+use super::utils::{extract_key_argument, is_content_truncated};
 
 /// Build an OutputBlock from a tool invocation.
 ///
@@ -141,6 +142,235 @@ pub fn build_default_result_block(
             content: content.map(String::from),
         },
     )
+}
+
+// =============================================================================
+// Specialized result block builders
+// =============================================================================
+
+/// Build an OutputBlock for Bash tool results.
+pub fn build_bash_result_block(content: Option<&str>, is_error: bool) -> OutputBlock {
+    let truncated = content.map(is_content_truncated).unwrap_or(false);
+
+    OutputBlock::tool_result(
+        "Bash",
+        is_error,
+        ToolResultVariant::Bash {
+            content: content.map(String::from),
+            truncated,
+        },
+    )
+}
+
+/// Build an OutputBlock for Edit tool results using before/after display.
+///
+/// Requires an EditSnapshot captured before the edit was performed.
+/// Returns EditBeforeAfter variant with old_string and new_string,
+/// or EditNoChanges if no change occurred.
+pub fn build_edit_before_after_block(snapshot: &EditSnapshot) -> OutputBlock {
+    let old = snapshot.old_string.clone().unwrap_or_default();
+    let new = snapshot.new_string.clone().unwrap_or_default();
+
+    // If both are empty or equal, no changes
+    if old == new {
+        return OutputBlock::tool_result(
+            "Edit",
+            false,
+            ToolResultVariant::EditNoChanges {
+                file_path: snapshot.file_path.clone(),
+            },
+        );
+    }
+
+    OutputBlock::tool_result(
+        "Edit",
+        false,
+        ToolResultVariant::EditBeforeAfter {
+            file_path: snapshot.file_path.clone(),
+            old_content: old,
+            new_content: new,
+        },
+    )
+}
+
+/// Build an OutputBlock for Edit tool results with diff content.
+///
+/// Used when the result contains inline diff content.
+pub fn build_edit_diff_block(file_path: &str, diff_content: &str) -> OutputBlock {
+    OutputBlock::tool_result(
+        "Edit",
+        false,
+        ToolResultVariant::EditDiff {
+            file_path: file_path.to_string(),
+            diff_content: diff_content.to_string(),
+        },
+    )
+}
+
+/// Build the appropriate Write result block based on snapshot state.
+///
+/// - New file: WriteNewFile variant
+/// - Overwrite: WriteOverwrite variant with before/after
+/// - No changes: WriteNoChanges variant
+pub fn build_write_result_block(
+    snapshot: &WriteSnapshot,
+    new_content: Option<&str>,
+) -> OutputBlock {
+    let after = new_content.unwrap_or_default();
+
+    if !snapshot.file_existed {
+        // New file
+        return OutputBlock::tool_result(
+            "Write",
+            false,
+            ToolResultVariant::WriteNewFile {
+                file_path: snapshot.file_path.clone(),
+                content: after.to_string(),
+            },
+        );
+    }
+
+    // Overwrite
+    let before = snapshot.content.as_deref().unwrap_or_default();
+    if before == after {
+        return OutputBlock::tool_result(
+            "Write",
+            false,
+            ToolResultVariant::WriteNoChanges {
+                file_path: snapshot.file_path.clone(),
+                is_new_file: false,
+            },
+        );
+    }
+
+    OutputBlock::tool_result(
+        "Write",
+        false,
+        ToolResultVariant::WriteOverwrite {
+            file_path: snapshot.file_path.clone(),
+            before_content: before.to_string(),
+            after_content: after.to_string(),
+        },
+    )
+}
+
+/// Build an OutputBlock for Read tool results (verbose mode).
+pub fn build_read_result_block(
+    file_path: &str,
+    content: &str,
+    line_count: usize,
+    truncated: bool,
+) -> OutputBlock {
+    OutputBlock::tool_result(
+        "Read",
+        false,
+        ToolResultVariant::Read {
+            file_path: file_path.to_string(),
+            content: content.to_string(),
+            line_count,
+            truncated,
+        },
+    )
+}
+
+/// Build an OutputBlock for Grep tool results (verbose mode).
+pub fn build_grep_result_block(
+    match_count: usize,
+    output_mode: &str,
+    content: &str,
+) -> OutputBlock {
+    OutputBlock::tool_result(
+        "Grep",
+        false,
+        ToolResultVariant::Grep {
+            match_count,
+            output_mode: output_mode.to_string(),
+            content: content.to_string(),
+        },
+    )
+}
+
+/// Build an OutputBlock for Glob tool results (verbose mode).
+pub fn build_glob_result_block(file_count: usize, content: &str, truncated: bool) -> OutputBlock {
+    OutputBlock::tool_result(
+        "Glob",
+        false,
+        ToolResultVariant::Glob {
+            file_count,
+            content: content.to_string(),
+            truncated,
+        },
+    )
+}
+
+/// Build an OutputBlock for TodoWrite tool results (verbose mode).
+pub fn build_todowrite_result_block(message: Option<&str>) -> OutputBlock {
+    OutputBlock::tool_result(
+        "TodoWrite",
+        false,
+        ToolResultVariant::TodoWrite {
+            message: message.map(String::from),
+        },
+    )
+}
+
+/// Build an OutputBlock for NotebookEdit tool results.
+///
+/// Requires a NotebookSnapshot for cell identification and the new source content.
+pub fn build_notebook_edit_block(snapshot: &NotebookSnapshot, new_source: &str) -> OutputBlock {
+    // Generate diff between old and new content
+    let old_content = snapshot.content.as_deref().unwrap_or("");
+    let diff_content = generate_simple_diff(old_content, new_source, &snapshot.edit_mode);
+
+    OutputBlock::tool_result(
+        "NotebookEdit",
+        false,
+        ToolResultVariant::NotebookEdit {
+            notebook_path: snapshot.notebook_path.clone(),
+            cell_identifier: snapshot.cell_identifier.clone(),
+            cell_type: snapshot.cell_type.clone(),
+            edit_mode: snapshot.edit_mode.clone(),
+            diff_content,
+        },
+    )
+}
+
+/// Generate a simple diff representation for notebook edits.
+///
+/// For replace/insert: shows old content with - prefix, new content with + prefix
+/// For delete: shows old content with - prefix only
+fn generate_simple_diff(old: &str, new: &str, edit_mode: &str) -> String {
+    let mut diff = String::new();
+
+    match edit_mode {
+        "delete" => {
+            // Delete mode: only show removed lines
+            for line in old.lines() {
+                diff.push_str(&format!("-{}\n", line));
+            }
+        }
+        "insert" => {
+            // Insert mode: only show added lines
+            for line in new.lines() {
+                diff.push_str(&format!("+{}\n", line));
+            }
+        }
+        _ => {
+            // Replace mode: show both old and new
+            if !old.is_empty() {
+                for line in old.lines() {
+                    diff.push_str(&format!("-{}\n", line));
+                }
+            }
+            if !new.is_empty() {
+                for line in new.lines() {
+                    diff.push_str(&format!("+{}\n", line));
+                }
+            }
+        }
+    }
+
+    diff
 }
 
 #[cfg(test)]

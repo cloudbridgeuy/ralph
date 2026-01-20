@@ -514,3 +514,84 @@ builder.build()
 - Builders have sensible defaults (false for case_insensitive, None for optional fields)
 - Construction is more ergonomic than direct struct initialization
 - All 525 tests pass
+
+---
+
+## Output Block Documentation (2026-01-19)
+
+**Story**: Document output block integration and data flow
+
+**Changes**:
+- Created `docs/output-blocks.md` with comprehensive documentation of the output block architecture
+
+**Key file**: `docs/output-blocks.md`
+
+**Documentation covers**:
+- Architecture diagram showing live execution → serialization → replay flow
+- OutputBlock enum structure and all variants
+- ToolInvocationVariant mapping table (Bash, Grep, Read, Glob, TodoWrite, Default)
+- ToolResultVariant mapping table (Bash, Edit variants, Write variants, Read, Grep, Glob, TodoWrite, NotebookEdit, Default)
+- Key implementation files with responsibilities
+- Data flow details for each phase (live execution, serialization, replay)
+- Design decisions and rationale
+- Snapshot pattern for before/after capture
+- Non-exhaustive enums for forward compatibility
+- Interrupt handling behavior
+- Testing approach with round-trip assertions
+
+**Acceptance criteria met**:
+- Documentation explains the full output block lifecycle (live execution → TOML → replay)
+- ASCII diagram clarifies the data flow visually
+- New contributors can understand how replay works from this document
+
+---
+
+## Capture Specialized ToolResultVariant During Live Execution (2026-01-20)
+
+**Story**: Capture specialized ToolResultVariant during live execution instead of Default
+
+**Problem**:
+Previously, Read, Grep, Glob, and TodoWrite tool results were all being serialized with the `Default` variant, discarding valuable metadata like line counts, match counts, and file counts. This metadata was available during live execution (used by verbose formatters) but not captured for replay.
+
+**Changes**:
+- Added specialized handlers for Read, Grep, Glob, and TodoWrite in `event_handler.rs` match statement (lines 284-341)
+- Imported previously unused block builders: `build_read_result_block`, `build_grep_result_block`, `build_glob_result_block`, `build_todowrite_result_block`
+- Removed dead code: `build_write_new_file_block` and `build_write_overwrite_block` (redundant with `build_write_result_block`)
+- Each handler extracts metadata from tool results:
+  - Read: file_path, line_count, truncated flag
+  - Grep: match_count, output_mode, content
+  - Glob: file_count, content, truncated flag
+  - TodoWrite: message from result
+
+**Key file**: `crates/ralph/src/stream_processor/event_handler.rs`
+
+**Metadata extraction logic**:
+- `line_count`: `content.lines().count()`
+- `match_count`: `content.lines().filter(|l| !l.is_empty()).count()`
+- `file_count`: Same as match_count for Glob results
+- `truncated`: Checks for "... (truncated)" or "Output truncated" in content
+- `output_mode`: Extracted from invocation input, defaults to "files_with_matches"
+
+**TOML format** (for Read tool result):
+```toml
+[[output_blocks]]
+type = "tool_result"
+tool_name = "Read"
+is_error = false
+
+[output_blocks.result_type]
+type = "read"
+file_path = "src/main.rs"
+content = "fn main() { ... }"
+line_count = 50
+truncated = false
+```
+
+**Acceptance criteria met**:
+- Edit tool results serialize as EditBeforeAfter or EditDiff variants (already working)
+- Write tool results serialize as WriteNewFile or WriteOverwrite variants (already working)
+- Read tool results serialize as Read variant with content and line count ✓
+- Grep/Glob results serialize with match counts and file lists ✓
+- TodoWrite results serialize with message ✓
+- Default variant only used for truly unknown tools ✓
+- All 525 tests pass, cargo xtask lint passes

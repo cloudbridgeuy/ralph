@@ -22,8 +22,7 @@ pub fn extract_key_argument(tool_name: &str, input: &Value) -> Option<KeyArgumen
     // Tool-specific key arguments with path indicators
     let (key, is_path) = match tool_name {
         "Read" | "Edit" | "Write" => ("file_path", true),
-        "Glob" => ("pattern", true),
-        "Grep" => ("pattern", true),
+        "Glob" | "Grep" => ("pattern", true),
         "Bash" => ("command", false),
         "WebFetch" => ("url", true),
         "Task" => ("prompt", false),
@@ -74,6 +73,21 @@ pub fn truncate_string(s: &str, max_len: usize) -> String {
         let truncated: String = single_line.chars().take(max_len - 3).collect();
         format!("{}...", truncated)
     }
+}
+
+/// Detect if content was truncated by Claude.
+///
+/// Claude adds truncation indicators like "... (truncated)" or "Output truncated"
+/// when output exceeds limits.
+pub fn is_content_truncated(content: &str) -> bool {
+    content.contains("... (truncated)") || content.contains("Output truncated")
+}
+
+/// Count non-empty lines in content.
+///
+/// Useful for calculating match counts in Grep results or file counts in Glob results.
+pub fn count_non_empty_lines(content: &str) -> usize {
+    content.lines().filter(|l| !l.is_empty()).count()
 }
 
 /// Truncate multiline content to a maximum number of lines.

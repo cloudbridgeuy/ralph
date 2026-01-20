@@ -414,9 +414,183 @@ steps = [
   "Document how output blocks are serialized to session TOML",
   "Document how replay deserializes and renders output blocks",
 ]
-passes = false
+passes = true
 acceptance = [
   "Documentation explains the full output block lifecycle",
   "Diagrams or examples clarify the data flow",
   "New contributors can understand how replay works",
+]
+
+[[stories]]
+category = "replay"
+description = "Capture specialized ToolResultVariant during live execution instead of Default"
+steps = [
+  "Identify where tool results are converted to OutputBlock during live execution",
+  "Update to create specialized variants (EditBeforeAfter, WriteNewFile, etc.) instead of Default",
+  "Run `ralph run` with Edit/Write tools and inspect serialized TOML",
+  "Verify specialized variants are present in the session file",
+]
+passes = true
+acceptance = [
+  "Edit tool results serialize as EditBeforeAfter or EditDiff variants",
+  "Write tool results serialize as WriteNewFile or WriteOverwrite variants",
+  "Read tool results serialize as Read variant with content and line count",
+  "Grep/Glob results serialize with match counts and file lists",
+  "Default variant only used for truly unknown tools",
+]
+
+[[stories]]
+category = "replay"
+description = "Verify replay renders tool results with same formatting as live execution"
+steps = [
+  "Run `ralph run` and capture live output",
+  "Run `ralph replay <session-slug>`",
+  "Compare Edit/Write/Read tool result formatting between live and replay",
+]
+passes = false
+acceptance = [
+  "Edit results show before/after blocks with colored line numbers",
+  "Write results show new file content or overwrite diff",
+  "Read results show syntax-highlighted content with line numbers",
+  "Grep/Glob results show match counts and file paths",
+  "Formatting is visually identical between live and replay",
+]
+
+# =============================================================================
+# Unified Rendering
+# =============================================================================
+
+[[stories]]
+category = "refactor"
+description = "Audit rendering code to identify duplication between live execution and replay"
+steps = [
+  "List all functions that render OutputBlock variants to stdout in stream_processor",
+  "List all functions that render OutputBlock variants in replay_renderer",
+  "Document which functions are duplicated vs shared",
+  "Create a checklist of functions to consolidate",
+]
+passes = false
+acceptance = [
+  "A clear list of duplicated rendering functions exists",
+  "Each function's location is documented (stream_processor vs replay_renderer)",
+  "The scope of refactoring work is understood before implementation begins",
+]
+
+[[stories]]
+category = "refactor"
+description = "Create shared rendering module with generic writer parameter"
+steps = [
+  "Create a new rendering module (e.g., src/render.rs or src/output_render.rs)",
+  "Define rendering functions that accept impl std::io::Write",
+  "Implement OutputBlock rendering for all variants",
+  "Add unit tests using Vec<u8> as the writer",
+]
+passes = false
+acceptance = [
+  "Shared rendering module exists with all OutputBlock variant handlers",
+  "All rendering functions accept a generic writer parameter",
+  "Unit tests verify rendering output using in-memory buffers",
+  "No direct stdout writes in the rendering module",
+  "Non-TTY output renders without ANSI codes",
+]
+
+[[stories]]
+category = "refactor"
+description = "Migrate live execution to use shared rendering module"
+steps = [
+  "Update stream_processor to import shared rendering module",
+  "Replace direct stdout rendering with calls to shared module",
+  "Pass stdout as the writer parameter",
+  "Verify live execution output is unchanged",
+]
+passes = false
+acceptance = [
+  "Live execution uses shared rendering module for all OutputBlock display",
+  "No rendering logic remains in stream_processor (only calls to shared module)",
+  "Live output is visually identical to before the refactor",
+]
+
+[[stories]]
+category = "refactor"
+description = "Migrate replay to use shared rendering module"
+steps = [
+  "Update replay to import shared rendering module",
+  "Replace replay_renderer formatting logic with calls to shared module",
+  "Pass stdout as the writer parameter",
+  "Verify replay output matches live execution",
+]
+passes = false
+acceptance = [
+  "Replay uses shared rendering module for all OutputBlock display",
+  "replay_renderer.rs contains only orchestration logic (iteration loops, headers)",
+  "Replay output is visually identical to live execution",
+]
+
+[[stories]]
+category = "refactor"
+description = "Remove duplicated rendering code from replay_renderer"
+steps = [
+  "Identify rendering functions in replay_renderer that are now unused",
+  "Delete unused rendering code",
+  "Verify replay still works correctly",
+  "Run cargo xtask lint to confirm no dead code warnings",
+]
+passes = false
+acceptance = [
+  "No duplicated rendering logic remains in replay_renderer.rs",
+  "replay_renderer.rs is significantly smaller (orchestration only)",
+  "All tests pass",
+  "No dead code warnings from clippy",
+]
+
+# =============================================================================
+# Prompt Display
+# =============================================================================
+
+[[stories]]
+category = "ui"
+description = "Capture and store the prompt passed to the claude CLI"
+steps = [
+  "Identify where the final prompt string is constructed (after placeholder substitution)",
+  "Store the prompt in a data structure that can be serialized",
+  "Include the prompt in the session TOML file",
+]
+passes = false
+acceptance = [
+  "The prompt string (as passed to claude CLI) is captured before invocation",
+  "The prompt is stored in the session TOML file",
+  "The prompt is available for replay to read",
+]
+
+[[stories]]
+category = "ui"
+description = "Display the prompt at the start of a run with formatting"
+steps = [
+  "Render the prompt with a header (e.g., '▶ Prompt')",
+  "Apply syntax highlighting for embedded markdown/code",
+  "Display before Iteration 1 begins",
+  "Add --no-prompt flag to suppress display",
+]
+passes = false
+acceptance = [
+  "Prompt is displayed by default before Iteration 1",
+  "Prompt has visual header like other tool outputs",
+  "Syntax highlighting applied to prompt content",
+  "--no-prompt flag suppresses prompt display",
+  "Prompt is only shown once per session",
+]
+
+[[stories]]
+category = "ui"
+description = "Display the prompt during replay"
+steps = [
+  "Read the stored prompt from session TOML",
+  "Render with same formatting as live execution",
+  "Display before Iteration 1 in replay output",
+]
+passes = false
+acceptance = [
+  "Replay shows the prompt before Iteration 1",
+  "Formatting matches live execution display",
+  "Prompt is not shown if it wasn't stored (older sessions)",
 ]
