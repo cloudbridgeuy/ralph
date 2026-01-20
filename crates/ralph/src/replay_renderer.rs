@@ -12,6 +12,8 @@
 //! - Tool results show success/error indicators with content
 //! - Separators emit a single newline
 
+use std::collections::BTreeMap;
+
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::highlight::Highlighter;
 use crate::stream_processor::{
@@ -564,6 +566,8 @@ impl ReplayRenderer {
     }
 
     /// Render Read result (verbose mode).
+    ///
+    /// Normalizes cat-n format and displays with syntax highlighting, matching stream processor.
     fn render_read_result(
         &self,
         file_path: &str,
@@ -571,39 +575,83 @@ impl ReplayRenderer {
         line_count: usize,
         truncated: bool,
     ) -> String {
+        const MAX_CONTENT_LINES: usize = 100;
+
+        // Empty result
+        if content.is_empty() {
+            return if self.highlighting_enabled {
+                "\x1b[90m(empty file)\x1b[0m\n".to_string()
+            } else {
+                "(empty file)\n".to_string()
+            };
+        }
+
+        // Check for binary file indicator
+        if content.contains("(binary file)") || content.starts_with('\u{0}') {
+            return if self.highlighting_enabled {
+                "\x1b[90m(binary file)\x1b[0m\n".to_string()
+            } else {
+                "(binary file)\n".to_string()
+            };
+        }
+
+        // Normalize cat-n format before processing
+        let normalized_content = normalize_cat_n_format(content);
+
+        // Count lines for potential truncation
+        let lines: Vec<&str> = normalized_content.lines().collect();
+        let actual_line_count = lines.len();
+        let (display_lines, should_truncate) = if actual_line_count > MAX_CONTENT_LINES {
+            (&lines[..MAX_CONTENT_LINES], true)
+        } else {
+            (&lines[..], truncated)
+        };
+
+        let language = extract_language_from_path(file_path);
         let mut output = String::new();
 
-        // File header with line count
         if self.highlighting_enabled {
+            // Results header showing line count
+            let line_word = if line_count == 1 { "line" } else { "lines" };
             output.push_str(&format!(
-                "\x1b[90m{}\x1b[0m ({} lines)\n",
-                file_path, line_count
+                "\x1b[32m✓\x1b[0m \x1b[90m{} {}\x1b[0m\n",
+                line_count, line_word
             ));
-        } else {
-            output.push_str(&format!("{} ({} lines)\n", file_path, line_count));
-        }
 
-        // Content with syntax highlighting
-        let language = extract_language_from_path(file_path);
-        if self.highlighting_enabled {
-            if let Some(lang) = language {
-                output.push_str(&self.code_highlighter.highlight(content, Some(lang)));
+            // Apply syntax highlighting to the content
+            let content_to_highlight = display_lines.join("\n");
+            let highlighted = if language.is_some() {
+                self.code_highlighter
+                    .highlight(&content_to_highlight, language)
             } else {
-                output.push_str(content);
+                content_to_highlight.clone()
+            };
+
+            // Display highlighted content with indentation
+            for line in highlighted.lines() {
+                output.push_str(&format!("  {}\n", line));
+            }
+
+            if should_truncate {
+                output.push_str(&format!(
+                    "\x1b[90m... {} more lines\x1b[0m\n",
+                    actual_line_count.saturating_sub(MAX_CONTENT_LINES)
+                ));
             }
         } else {
-            output.push_str(content);
-        }
+            // Plain text format
+            let line_word = if line_count == 1 { "line" } else { "lines" };
+            output.push_str(&format!("{} {}\n", line_count, line_word));
 
-        if !content.ends_with('\n') {
-            output.push('\n');
-        }
+            for line in display_lines {
+                output.push_str(&format!("  {}\n", line));
+            }
 
-        if truncated {
-            if self.highlighting_enabled {
-                output.push_str("\x1b[90m(output truncated)\x1b[0m\n");
-            } else {
-                output.push_str("(output truncated)\n");
+            if should_truncate {
+                output.push_str(&format!(
+                    "... {} more lines\n",
+                    actual_line_count.saturating_sub(MAX_CONTENT_LINES)
+                ));
             }
         }
 
@@ -611,42 +659,200 @@ impl ReplayRenderer {
     }
 
     /// Render Grep result (verbose mode).
+    ///
+    /// Formats based on output mode with appropriate coloring, matching stream processor.
     fn render_grep_result(&self, match_count: usize, output_mode: &str, content: &str) -> String {
+        const MAX_RESULT_LINES: usize = 100;
+
+        // Empty result
+        if content.is_empty() {
+            return if self.highlighting_enabled {
+                "\x1b[90m(no matches)\x1b[0m\n".to_string()
+            } else {
+                "(no matches)\n".to_string()
+            };
+        }
+
+        // Count lines for potential truncation
+        let lines: Vec<&str> = content.lines().collect();
+        let line_count = lines.len();
+        let (display_lines, truncated) = if line_count > MAX_RESULT_LINES {
+            (&lines[..MAX_RESULT_LINES], true)
+        } else {
+            (&lines[..], false)
+        };
+
         let mut output = String::new();
 
         if self.highlighting_enabled {
+            // Results header showing match count
+            let match_word = if match_count == 1 { "match" } else { "matches" };
             output.push_str(&format!(
-                "\x1b[32m{} matches\x1b[0m \x1b[90m({})\x1b[0m\n",
-                match_count, output_mode
+                "\x1b[32m✓\x1b[0m \x1b[90m{} {}\x1b[0m\n",
+                match_count, match_word
             ));
-            output.push_str(&format!("\x1b[90m{}\x1b[0m\n", content));
+
+            // Format based on output mode
+            match output_mode {
+                "files_with_matches" => {
+                    // Just file paths - show them in dim color
+                    for line in display_lines {
+                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
+                    }
+                }
+                "content" => {
+                    // Content with line numbers - highlight the content portion
+                    for line in display_lines {
+                        let highlighted_line = highlight_grep_match(line);
+                        output.push_str(&format!("  {}\n", highlighted_line));
+                    }
+                }
+                "count" => {
+                    // Just counts - show path:count pairs
+                    for line in display_lines {
+                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
+                    }
+                }
+                _ => {
+                    // Unknown mode - show raw
+                    for line in display_lines {
+                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
+                    }
+                }
+            }
+
+            if truncated {
+                output.push_str(&format!(
+                    "\x1b[90m... {} more lines\x1b[0m\n",
+                    line_count - MAX_RESULT_LINES
+                ));
+            }
         } else {
-            output.push_str(&format!("{} matches ({})\n", match_count, output_mode));
-            output.push_str(content);
-            output.push('\n');
+            // Plain text format
+            let match_word = if match_count == 1 { "match" } else { "matches" };
+            output.push_str(&format!("{} {}\n", match_count, match_word));
+
+            for line in display_lines {
+                output.push_str(&format!("  {}\n", line));
+            }
+
+            if truncated {
+                output.push_str(&format!(
+                    "... {} more lines\n",
+                    line_count - MAX_RESULT_LINES
+                ));
+            }
         }
 
         output
     }
 
     /// Render Glob result (verbose mode).
+    ///
+    /// Groups files by directory for readability, matching stream processor format.
     fn render_glob_result(&self, file_count: usize, content: &str, truncated: bool) -> String {
+        const MAX_RESULT_LINES: usize = 200;
+
+        // Empty result
+        if content.is_empty() {
+            return if self.highlighting_enabled {
+                "\x1b[90m(no matches)\x1b[0m\n".to_string()
+            } else {
+                "(no matches)\n".to_string()
+            };
+        }
+
+        // Parse file paths from content
+        let files: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
+
+        // Group files by directory for readability
+        let grouped = group_files_by_directory(&files);
+
+        // Determine if we need to truncate based on total display lines
+        let total_display_lines: usize = grouped
+            .values()
+            .map(|paths| paths.len() + 1) // +1 for directory header
+            .sum();
+        let should_truncate = truncated || total_display_lines > MAX_RESULT_LINES;
+
         let mut output = String::new();
 
         if self.highlighting_enabled {
-            output.push_str(&format!("\x1b[32m{} files\x1b[0m\n", file_count));
-            output.push_str(&format!("\x1b[90m{}\x1b[0m\n", content));
-        } else {
-            output.push_str(&format!("{} files\n", file_count));
-            output.push_str(content);
-            output.push('\n');
-        }
+            // Results header showing match count
+            let file_word = if file_count == 1 { "file" } else { "files" };
+            output.push_str(&format!(
+                "\x1b[32m✓\x1b[0m \x1b[90m{} {} matched\x1b[0m\n",
+                file_count, file_word
+            ));
 
-        if truncated {
-            if self.highlighting_enabled {
-                output.push_str("\x1b[90m(output truncated)\x1b[0m\n");
-            } else {
-                output.push_str("(output truncated)\n");
+            // Display files grouped by directory
+            let mut lines_shown = 0;
+            for (dir, paths) in &grouped {
+                if should_truncate && lines_shown >= MAX_RESULT_LINES {
+                    break;
+                }
+
+                // Directory header
+                if dir.is_empty() {
+                    output.push_str("  \x1b[1m.\x1b[0m\n");
+                } else {
+                    output.push_str(&format!("  \x1b[1m{}/\x1b[0m\n", dir));
+                }
+                lines_shown += 1;
+
+                // Files in this directory
+                for path in paths {
+                    if should_truncate && lines_shown >= MAX_RESULT_LINES {
+                        break;
+                    }
+                    // Extract just the filename part
+                    let filename = path.rsplit('/').next().unwrap_or(path);
+                    output.push_str(&format!("    \x1b[90m{}\x1b[0m\n", filename));
+                    lines_shown += 1;
+                }
+            }
+
+            if should_truncate && lines_shown < file_count {
+                output.push_str(&format!(
+                    "\x1b[90m... {} more files\x1b[0m\n",
+                    file_count.saturating_sub(lines_shown)
+                ));
+            }
+        } else {
+            // Plain text format
+            let file_word = if file_count == 1 { "file" } else { "files" };
+            output.push_str(&format!("{} {} matched\n", file_count, file_word));
+
+            let mut lines_shown = 0;
+            for (dir, paths) in &grouped {
+                if should_truncate && lines_shown >= MAX_RESULT_LINES {
+                    break;
+                }
+
+                // Directory header
+                if dir.is_empty() {
+                    output.push_str("  .\n");
+                } else {
+                    output.push_str(&format!("  {}/\n", dir));
+                }
+                lines_shown += 1;
+
+                // Files in this directory
+                for path in paths {
+                    if should_truncate && lines_shown >= MAX_RESULT_LINES {
+                        break;
+                    }
+                    let filename = path.rsplit('/').next().unwrap_or(path);
+                    output.push_str(&format!("    {}\n", filename));
+                    lines_shown += 1;
+                }
+            }
+
+            if should_truncate && lines_shown < file_count {
+                output.push_str(&format!(
+                    "... {} more files\n",
+                    file_count.saturating_sub(lines_shown)
+                ));
             }
         }
 
@@ -726,6 +932,111 @@ impl ReplayRenderer {
             format!("  {}\n", display_content)
         }
     }
+}
+
+/// Group file paths by their parent directory.
+///
+/// Returns a sorted map of directory -> list of full file paths.
+fn group_files_by_directory<'a>(files: &[&'a str]) -> BTreeMap<String, Vec<&'a str>> {
+    let mut grouped: BTreeMap<String, Vec<&'a str>> = BTreeMap::new();
+
+    for file in files {
+        let dir = match file.rfind('/') {
+            Some(pos) => file[..pos].to_string(),
+            None => String::new(), // No directory, use empty string for root
+        };
+        grouped.entry(dir).or_default().push(file);
+    }
+
+    grouped
+}
+
+/// Extract line number from a cat-n formatted line, if present.
+/// Returns (line_number_str, rest_of_line) or None if not a cat-n line.
+fn extract_line_number(line: &str) -> Option<(&str, &str)> {
+    // Try to find separator: tab or arrow character
+    let separator_pos = line.find('\t').or_else(|| line.find('→'));
+
+    if let Some(sep_pos) = separator_pos {
+        let prefix = &line[..sep_pos];
+        // Arrow is multi-byte UTF-8, so we need to handle it properly
+        let rest = if line[sep_pos..].starts_with('→') {
+            &line[sep_pos + '→'.len_utf8()..]
+        } else {
+            &line[sep_pos + 1..] // tab is single byte
+        };
+
+        // Check if prefix is whitespace followed by digits
+        let trimmed = prefix.trim_start();
+        if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
+            return Some((trimmed, rest));
+        }
+    }
+    None
+}
+
+/// Highlight a grep match within a line of output.
+///
+/// Attempts to find and highlight the matched portion of the line.
+/// For content mode output (filename:line_number:content), this highlights
+/// the content portion where the pattern matched.
+fn highlight_grep_match(line: &str) -> String {
+    // Parse the line format: filename:line_number:content or just filename
+    // We apply dim styling to the filename:line_number prefix
+    // and yellow styling to the content
+
+    // Try to find the pattern ":number:" which indicates content mode
+    if let Some(first_colon) = line.find(':') {
+        if let Some(second_colon_offset) = line[first_colon + 1..].find(':') {
+            let second_colon = first_colon + 1 + second_colon_offset;
+            // Check if the part between colons is a number
+            let potential_line_num = &line[first_colon + 1..second_colon];
+            if potential_line_num.chars().all(|c| c.is_ascii_digit()) {
+                // This looks like filename:line_number:content format
+                let prefix = &line[..second_colon + 1];
+                let content = &line[second_colon + 1..];
+                return format!("\x1b[90m{}\x1b[0m\x1b[93m{}\x1b[0m", prefix, content);
+            }
+        }
+    }
+
+    // Default: just show the line in dim color
+    format!("\x1b[90m{}\x1b[0m", line)
+}
+
+/// Normalize Claude CLI's `cat -n` line number format to a cleaner pipe-separated format.
+///
+/// Transforms lines from:
+/// - `     1\tcontent` → ` 1 │ content`
+/// - `    12→content` → `12 │ content`
+/// - `   123\tcontent` → `123 │ content`
+///
+/// Handles both tab (`\t`) and arrow (`→`) separators as Claude CLI may use either.
+/// Line numbers are right-aligned to the width of the largest line number.
+/// Lines that don't match the pattern are passed through unchanged.
+fn normalize_cat_n_format(content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+
+    // First pass: find max line number width
+    let max_width = lines
+        .iter()
+        .filter_map(|line| extract_line_number(line))
+        .map(|(num, _)| num.len())
+        .max()
+        .unwrap_or(1);
+
+    // Second pass: format with consistent width
+    lines
+        .iter()
+        .map(|line| {
+            if let Some((num, rest)) = extract_line_number(line) {
+                format!("{:>width$} │ {}", num, rest, width = max_width)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Extract programming language from file path extension.
@@ -995,5 +1306,168 @@ mod tests {
         let result = renderer.render(&block);
         // Should NOT contain ANSI escape codes
         assert!(!result.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_render_glob_result_grouped_by_directory() {
+        let renderer = create_test_renderer(false);
+        let block = OutputBlock::tool_result(
+            "Glob",
+            false,
+            ToolResultVariant::Glob {
+                file_count: 3,
+                content: "src/main.rs\nsrc/lib.rs\ntests/test.rs".to_string(),
+                truncated: false,
+            },
+        );
+        let result = renderer.render(&block);
+        // Should group files by directory
+        assert!(result.contains("3 files matched"));
+        assert!(result.contains("src/"));
+        assert!(result.contains("tests/"));
+        assert!(result.contains("main.rs"));
+        assert!(result.contains("lib.rs"));
+        assert!(result.contains("test.rs"));
+    }
+
+    #[test]
+    fn test_render_glob_result_empty() {
+        let renderer = create_test_renderer(false);
+        let block = OutputBlock::tool_result(
+            "Glob",
+            false,
+            ToolResultVariant::Glob {
+                file_count: 0,
+                content: "".to_string(),
+                truncated: false,
+            },
+        );
+        let result = renderer.render(&block);
+        assert!(result.contains("(no matches)"));
+    }
+
+    #[test]
+    fn test_render_read_result_normalizes_cat_n() {
+        let renderer = create_test_renderer(false);
+        let block = OutputBlock::tool_result(
+            "Read",
+            false,
+            ToolResultVariant::Read {
+                file_path: "test.rs".to_string(),
+                content: "     1\tfn main() {\n     2\t    println!(\"hello\");\n     3\t}"
+                    .to_string(),
+                line_count: 3,
+                truncated: false,
+            },
+        );
+        let result = renderer.render(&block);
+        // Should normalize line numbers to pipe format
+        assert!(result.contains("3 lines"));
+        assert!(result.contains("1 │ fn main() {"));
+        assert!(result.contains("2 │     println!(\"hello\");"));
+        assert!(result.contains("3 │ }"));
+    }
+
+    #[test]
+    fn test_render_read_result_empty() {
+        let renderer = create_test_renderer(false);
+        let block = OutputBlock::tool_result(
+            "Read",
+            false,
+            ToolResultVariant::Read {
+                file_path: "empty.txt".to_string(),
+                content: "".to_string(),
+                line_count: 0,
+                truncated: false,
+            },
+        );
+        let result = renderer.render(&block);
+        assert!(result.contains("(empty file)"));
+    }
+
+    #[test]
+    fn test_render_grep_result_files_mode() {
+        let renderer = create_test_renderer(false);
+        let block = OutputBlock::tool_result(
+            "Grep",
+            false,
+            ToolResultVariant::Grep {
+                match_count: 3,
+                output_mode: "files_with_matches".to_string(),
+                content: "src/main.rs\nsrc/lib.rs\ntests/test.rs".to_string(),
+            },
+        );
+        let result = renderer.render(&block);
+        assert!(result.contains("3 matches"));
+        assert!(result.contains("src/main.rs"));
+        assert!(result.contains("src/lib.rs"));
+    }
+
+    #[test]
+    fn test_render_grep_result_empty() {
+        let renderer = create_test_renderer(false);
+        let block = OutputBlock::tool_result(
+            "Grep",
+            false,
+            ToolResultVariant::Grep {
+                match_count: 0,
+                output_mode: "files_with_matches".to_string(),
+                content: "".to_string(),
+            },
+        );
+        let result = renderer.render(&block);
+        assert!(result.contains("(no matches)"));
+    }
+
+    #[test]
+    fn test_group_files_by_directory() {
+        let files = vec!["src/main.rs", "src/lib.rs", "tests/test.rs", "Cargo.toml"];
+        let grouped = group_files_by_directory(&files);
+        assert_eq!(grouped.len(), 3);
+        assert!(grouped.contains_key("src"));
+        assert!(grouped.contains_key("tests"));
+        assert!(grouped.contains_key("")); // root files
+        assert_eq!(grouped.get("src").map(|v| v.len()), Some(2));
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_single_digit() {
+        let input = "     1\tfn main() {";
+        let expected = "1 │ fn main() {";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_arrow_separator() {
+        let input = "       1→fn main() {";
+        let expected = "1 │ fn main() {";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_normalize_cat_n_format_alignment() {
+        let input = "       9→line nine\n      10→line ten";
+        let expected = " 9 │ line nine\n10 │ line ten";
+        assert_eq!(normalize_cat_n_format(input), expected);
+    }
+
+    #[test]
+    fn test_highlight_grep_match_content_format() {
+        let line = "src/main.rs:10:fn main() {}";
+        let result = highlight_grep_match(line);
+        // Should contain ANSI codes for highlighting
+        assert!(result.contains("\x1b[90m"));
+        assert!(result.contains("\x1b[93m"));
+        assert!(result.contains("src/main.rs:10:"));
+        assert!(result.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn test_highlight_grep_match_simple_path() {
+        let line = "src/main.rs";
+        let result = highlight_grep_match(line);
+        // Should be dimmed but not split
+        assert!(result.contains("\x1b[90m"));
+        assert!(result.contains("src/main.rs"));
     }
 }

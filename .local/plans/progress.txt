@@ -595,3 +595,53 @@ truncated = false
 - TodoWrite results serialize with message ✓
 - Default variant only used for truly unknown tools ✓
 - All 525 tests pass, cargo xtask lint passes
+
+---
+
+## Replay Renders Tool Results with Same Formatting as Live Execution (2026-01-20)
+
+**Story**: Verify replay renders tool results with same formatting as live execution
+
+**Problem**:
+The replay renderer was using simpler formatting compared to the stream processor during live execution. Specific differences:
+1. Glob results were shown as flat lists instead of grouped by directory
+2. Read results didn't normalize Claude CLI's cat-n format (arrow → separators)
+3. Grep results didn't handle different output modes (files_with_matches, content, count)
+
+**Changes**:
+- Updated `render_glob_result()` to group files by directory (matching stream processor)
+- Updated `render_read_result()` to normalize cat-n format and show checkmark header
+- Updated `render_grep_result()` to handle output modes with proper formatting and truncation
+- Added `group_files_by_directory()` helper function
+- Added `extract_line_number()` helper function for parsing cat-n format
+- Added `normalize_cat_n_format()` helper function
+- Added `highlight_grep_match()` helper function for content mode
+
+**Key file**: `crates/ralph/src/replay_renderer.rs`
+
+**Tests added** (12 new tests):
+- `test_render_glob_result_grouped_by_directory` - Verifies files grouped by directory
+- `test_render_glob_result_empty` - Handles empty results
+- `test_render_read_result_normalizes_cat_n` - Verifies cat-n normalization
+- `test_render_read_result_empty` - Handles empty files
+- `test_render_grep_result_files_mode` - Verifies files_with_matches mode
+- `test_render_grep_result_empty` - Handles no matches
+- `test_group_files_by_directory` - Unit test for directory grouping
+- `test_normalize_cat_n_format_single_digit` - Single digit line numbers
+- `test_normalize_cat_n_format_arrow_separator` - Arrow separator handling
+- `test_normalize_cat_n_format_alignment` - Line number alignment
+- `test_highlight_grep_match_content_format` - Content mode highlighting
+- `test_highlight_grep_match_simple_path` - Simple path handling
+
+**Formatting behavior**:
+- **Glob**: Groups files by parent directory, shows directory headers with bold, filenames indented
+- **Read**: Normalizes `     1→content` to `1 │ content` with proper alignment, shows checkmark + line count header
+- **Grep**: Handles modes (files_with_matches=dim paths, content=highlighted matches, count=dim pairs)
+
+**Acceptance criteria met**:
+- Edit results show before/after blocks with colored line numbers ✓
+- Write results show new file content or overwrite diff ✓
+- Read results show syntax-highlighted content with normalized line numbers ✓
+- Grep/Glob results show match counts and file paths with proper formatting ✓
+- Formatting is visually identical between live and replay ✓
+- All 537 tests pass, cargo xtask lint passes

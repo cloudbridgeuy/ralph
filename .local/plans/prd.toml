@@ -447,7 +447,7 @@ steps = [
   "Run `ralph replay <session-slug>`",
   "Compare Edit/Write/Read tool result formatting between live and replay",
 ]
-passes = false
+passes = true
 acceptance = [
   "Edit results show before/after blocks with colored line numbers",
   "Write results show new file content or overwrite diff",
