@@ -34,5 +34,4 @@ workspace = true
 
 [dev-dependencies]
 regex = { workspace = true }
-serial_test = { workspace = true }
 tempfile = { workspace = true }

@@ -73,7 +73,6 @@ termimad = "0.30"
 serde_json = "1.0"
 
 # Testing
-serial_test = "3.2"
 tempfile = "3.10"
 thiserror = "1.0"
 
