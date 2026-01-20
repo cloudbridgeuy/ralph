@@ -489,7 +489,8 @@ fn execute_replay(args: ReplayArgs) -> Result<(), Box<dyn std::error::Error>> {
     let options = replay::ReplayOptions::new()
         .with_iteration(args.iteration)
         .with_theme(theme_config)
-        .with_show_prompt(!args.no_prompt);
+        .with_show_prompt(!args.no_prompt)
+        .with_delay(args.delay);
 
     let result = replay::replay_session_with_options(&args.slug, options)?;
 

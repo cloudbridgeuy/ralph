@@ -1,596 +1,88 @@
-# Ralph PRD - Pending Stories
-
-[[stories]]
-category = "ui"
-description = "Make before/after line number colors more vibrant and visible"
-steps = [
-  "Increase saturation of red background for 'before' line numbers",
-  "Increase saturation of green background for 'after' line numbers",
-  "Ensure colors are distinct but not harsh on dark terminal backgrounds",
-  "Test visibility across common terminal color schemes",
-]
-passes = true
-acceptance = [
-  "Red and green line number backgrounds are immediately distinguishable",
-  "Colors pop without being distracting or garish",
-  "Syntax highlighting on code content remains clearly readable",
-  "Works well on both dark and light terminal themes",
-]
-
-[[stories]]
-category = "ui"
-description = "Remove arrow from Read tool line number format"
-steps = [
-  "Detect Read tool result content with cat -n format (number→content)",
-  "Replace arrow separator (→) with pipe separator (│)",
-  "Preserve original line numbers without renumbering",
-  "Apply transformation before syntax highlighting",
-]
-passes = true
-acceptance = [
-  "Line format transforms from '505→content' to '505 │ content'",
-  "Arrow character (→) no longer appears in Read tool output",
-  "Line numbers remain left-aligned and readable",
-  "Works with partial file reads (offset/limit parameters)",
-  "Non-cat-n format content passed through unchanged",
-]
-
-# =============================================================================
-# Progress Summarization UI
-# =============================================================================
-
-[[stories]]
-category = "ui"
-description = "Show spinner with elapsed time during progress file summarization"
-steps = [
-  "Display spinner when summarization subprocess starts",
-  "Show message like 'Summarizing progress file...' alongside spinner",
-  "Update elapsed time every second (e.g., 'Summarizing... 5s')",
-  "Clear spinner when summarization completes or fails",
-  "Show success/failure message after spinner clears",
-]
-passes = true
-acceptance = [
-  "Spinner visible during entire summarization subprocess",
-  "Elapsed time updates every second",
-  "Spinner uses same style as iteration waiting spinner",
-  "Success message shows when summarization completes",
-  "Failure message shows reason if summarization fails",
-  "No spinner when stdout is not a terminal",
-]
-
-# =============================================================================
-# Write Tool Improvements
-# =============================================================================
-
-[[stories]]
-category = "ui"
-description = "Display new file content without diff format for Write tool"
-steps = [
-  "Detect when Write tool creates a new file (file didn't exist before)",
-  "For new files, display content with syntax highlighting but no diff markers",
-  "Show line numbers with green background (matching Edit tool style)",
-  "Keep diff format only for file overwrites where before content exists",
-]
-passes = true
-acceptance = [
-  "New files show clean syntax-highlighted content without +/- markers",
-  "Line numbers displayed with green background indicating addition",
-  "File header shows '(new file)' indicator",
-  "Overwrites still show before/after or unified diff as appropriate",
-  "Large new files truncated with '... N more lines' indicator",
-]
-
-[[stories]]
-category = "ui"
-description = "Use before/after display for Write tool overwrites"
-steps = [
-  "When Write tool overwrites existing file, capture before content",
-  "Display before block with red line number background",
-  "Display after block with green line number background",
-  "Apply syntax highlighting to both blocks",
-]
-passes = true
-acceptance = [
-  "Overwrites show before/after blocks like Edit tool",
-  "Syntax highlighting applied based on file extension",
-  "Line numbers right-aligned and consistent width",
-  "Horizontal rule separates before and after blocks",
-]
-
-# =============================================================================
-# Documentation
-# =============================================================================
-
-[[stories]]
-category = "internal"
-description = "Create comprehensive README with installation and usage"
-steps = [
-  "Write project overview explaining ralph's purpose",
-  "Document installation methods (cargo install, from source)",
-  "Add quick start guide with basic usage examples",
-  "Include configuration section with link to detailed docs",
-  "Add screenshots or terminal output examples",
-]
-passes = true
-acceptance = [
-  "README explains what ralph does in first paragraph",
-  "Installation instructions work on macOS, Linux, Windows",
-  "Quick start shows ralph run with minimal setup",
-  "Links to detailed documentation for advanced topics",
-  "Examples show actual terminal output",
-]
-
-[[stories]]
-category = "internal"
-description = "Document all CLI commands and flags"
-steps = [
-  "Create docs/cli-reference.md with full CLI documentation",
-  "Document ralph run with all flags and defaults",
-  "Document ralph replay, sessions, themes, iterations commands",
-  "Include examples for common workflows",
-  "Document environment variable alternatives",
-]
-passes = true
-acceptance = [
-  "Every CLI flag documented with description and default",
-  "All subcommands have dedicated sections",
-  "Environment variables listed (RALPH_THEME, RALPH_CONFIG_DIR)",
-  "Examples show real command invocations",
-  "Short form flags documented (-n, -a, etc.)",
-]
-
-[[stories]]
-category = "internal"
-description = "Document configuration file format"
-steps = [
-  "Create docs/configuration.md with config file documentation",
-  "Document config file locations per platform",
-  "Document all config sections ([theme], etc.)",
-  "Explain precedence order (CLI > env > config > defaults)",
-  "Include complete example config.toml",
-]
-passes = true
-acceptance = [
-  "Config paths documented for macOS, Linux, Windows",
-  "All config options documented with types and defaults",
-  "Precedence order clearly explained",
-  "Example config.toml covers all available options",
-  "Custom theme file usage documented",
-]
-
-[[stories]]
-category = "internal"
-description = "Document PRD file format and workflow"
-steps = [
-  "Create docs/prd-format.md explaining story structure",
-  "Document required and optional fields for stories",
-  "Explain category values and when to use each",
-  "Show example PRD file with multiple stories",
-  "Document how ralph uses PRD for iteration tracking",
-]
-passes = true
-acceptance = [
-  "Story schema documented (category, description, steps, passes)",
-  "All category values listed with descriptions",
-  "Example shows realistic multi-story PRD",
-  "Workflow explained (pending → in progress → completed)",
-  "Optional fields documented (actor, acceptance)",
-]
-
-[[stories]]
-category = "internal"
-description = "Document local development build instructions"
-steps = [
-  "Add CONTRIBUTING.md or Development section in README",
-  "Document prerequisites (Rust toolchain version, cargo)",
-  "Show cargo build and cargo run commands",
-  "Document cargo xtask commands (install, lint, etc.)",
-  "Explain workspace structure and crate organization",
-]
-passes = true
-acceptance = [
-  "Developer can clone repo and build with documented commands",
-  "Minimum Rust version specified (MSRV)",
-  "cargo build, cargo test, cargo run documented",
-  "cargo xtask install explained for local installation",
-  "Workspace layout explained (crates/ralph, crates/ralph-core, xtask)",
-]
-
-[[stories]]
-category = "internal"
-description = "Create polished README with visual appeal and clear structure"
-steps = [
-  "Add project logo or ASCII art banner at top",
-  "Write compelling one-liner description of what ralph does",
-  "Add badges (build status, version, license)",
-  "Include terminal screenshot or GIF showing ralph in action",
-  "Structure with clear sections: Features, Install, Quick Start, Config, Contributing",
-  "Add table of contents for easy navigation",
-]
-passes = true
-acceptance = [
-  "README has visual header (logo, banner, or styled title)",
-  "One-liner clearly explains ralph's purpose",
-  "Badges show project health at a glance",
-  "Screenshot or GIF demonstrates actual usage",
-  "Sections are well-organized with consistent formatting",
-  "Links to detailed docs where appropriate",
-  "Contributing section welcomes new contributors",
-]
-
-[[stories]]
-category = "internal"
-description = "Add inline documentation for public APIs"
-steps = [
-  "Audit all public functions and structs for /// docs",
-  "Add missing documentation with examples where helpful",
-  "Ensure cargo doc generates without warnings",
-  "Add module-level //! docs to all modules",
-]
-passes = true
-acceptance = [
-  "Every public item has /// documentation",
-  "Module docs explain purpose and contents",
-  "cargo doc --no-deps builds without warnings",
-  "Complex functions include usage examples",
-]
-
-[[stories]]
-category = "summarization"
-description = "Ensure prompt.txt summarizer invokes Claude with read/write permissions so summarization succeeds"
-steps = [
-  "Trigger progress summarization with default command after the progress file exceeds the threshold",
-  "Inspect the invoked Claude command to confirm it passes required file read/write permissions",
-  "Run summarization and confirm Claude finishes without permission errors and writes the summary",
-]
-passes = true
-acceptance = [
-  "Default prompt.txt summarizer Claude command includes permissions to read and write needed files",
-  "Summarization completes without permission-denied errors",
-  "Progress file is summarized and saved when over the configured line threshold",
-]
-
-# =============================================================================
-# Replay Output Blocks
-# =============================================================================
-
-[[stories]]
-category = "refactor"
-description = "Unify output structs into a single enum type for collection"
-steps = [
-  "Identify all structs that render to stdout during execution",
-  "Create an enum with variants for each output struct",
-  "Update rendering code to work with the enum",
-  "Run `ralph run` and verify output is unchanged",
-]
-passes = true
-acceptance = [
-  "A single enum type contains variants for all output structs (text, bash, read, edit, glob, grep, todo, task, etc.)",
-  "Each variant wraps its corresponding struct",
-  "Rendering logic accepts the enum and dispatches to the correct struct's display",
-  "Live execution output is visually identical to before the refactor",
-]
-
-[[stories]]
-category = "refactor"
-description = "Ensure output enum and all variants are serializable"
-steps = [
-  "Add Serialize and Deserialize derives to the output enum",
-  "Add Serialize and Deserialize derives to all variant structs",
-  "Write a unit test that round-trips an output block through TOML",
-]
-passes = true
-acceptance = [
-  "The output enum derives Serialize and Deserialize",
-  "All variant structs derive Serialize and Deserialize",
-  "Fields that cannot serialize are handled (skipped, transformed, or removed)",
-  "A unit test verifies round-trip serialization works correctly",
-]
-
 [[stories]]
 category = "replay"
-description = "Accumulate output blocks during execution"
+description = "As a user, I want to pause for a configurable number of seconds between each output block during replay so I can follow the output at my own pace."
 steps = [
-  "Run `ralph run` with a simple PRD",
-  "Verify blocks are appended to a Vec as they print",
+  "Run `ralph replay <slug> --delay 2` for a session with multiple output blocks",
+  "Observe that each block is rendered with a 2-second pause before the next",
+  "Run `ralph replay <slug>` without --delay",
+  "Observe that blocks render immediately with no pause (default behavior)",
+  "Run `ralph replay <slug> --delay 0.5`",
+  "Observe that fractional seconds are supported",
 ]
 passes = true
 acceptance = [
-  "A Vec<OutputBlock> accumulates each block as it renders to stdout",
-  "The Vec preserves the order blocks were printed",
-  "Accumulation does not affect live rendering performance or behavior",
+  "A `--delay <seconds>` flag is added to the replay command",
+  "The flag accepts positive floating-point values (e.g., 0.5, 1, 2.5)",
+  "When provided, replay pauses for the specified duration between each output block",
+  "When omitted, replay behaves as before with no delay (zero cost default)",
+  "The flag is documented in `--help` output",
 ]
 
 [[stories]]
-category = "replay"
-description = "Serialize output blocks to session TOML on normal completion"
+category = "lint"
+description = "As a developer, I want the lint command to fail if any Rust file exceeds 1000 lines so that large files are flagged for refactoring."
 steps = [
-  "Run `ralph run` and let it complete normally",
-  "Inspect the session TOML file",
-  "Verify the output blocks are present in the file",
-]
-passes = true
-acceptance = [
-  "The accumulated Vec<OutputBlock> is serialized to the session TOML file",
-  "Serialization occurs after successful completion",
-  "The TOML file contains all output blocks from the session",
-]
-
-[[stories]]
-category = "replay"
-description = "Include iteration metadata in serialized output"
-steps = [
-  "Run `ralph run` for multiple iterations",
-  "Inspect the session TOML file",
-  "Verify each iteration has its metadata and grouped blocks",
-]
-passes = true
-acceptance = [
-  "Each iteration's output blocks are grouped together",
-  "Iteration metadata is stored (iteration number, cost, duration, tokens)",
-  "The structure supports multiple iterations per session",
-]
-
-[[stories]]
-category = "replay"
-description = "Replay deserializes and renders output blocks identically to live execution"
-steps = [
-  "Run `ralph run` and observe the live output",
-  "Run `ralph replay <session-slug>`",
-  "Compare replay output to live output",
-]
-passes = true
-acceptance = [
-  "Replay deserializes the Vec<OutputBlock> from the session TOML",
-  "Replay renders each block using the same logic as live execution",
-  "Replay displays iteration headers and metadata",
-  "Replay output is visually identical to live execution output",
-]
-
-[[stories]]
-category = "replay"
-description = "Persist output blocks on SIGTERM or SIGINT interruption"
-steps = [
-  "Run `ralph run` and interrupt with Ctrl+C (SIGINT)",
-  "Inspect the session TOML file",
-  "Verify output blocks accumulated before interruption are present",
-  "Repeat with SIGTERM",
-]
-passes = true
-acceptance = [
-  "Signal handlers are installed for SIGTERM and SIGINT",
-  "On signal, the accumulated Vec<OutputBlock> is serialized before exit",
-  "Partial sessions can be replayed showing blocks up to the interruption",
-]
-
-[[stories]]
-category = "refactor"
-description = "Add #[non_exhaustive] attribute to output block enum"
-steps = [
-  "Add #[non_exhaustive] to the OutputBlock enum",
-  "Verify code compiles and tests pass",
-]
-passes = true
-acceptance = [
-  "OutputBlock enum has #[non_exhaustive] attribute",
-  "Adding new variants in the future won't be a breaking change for downstream match expressions",
-]
-
-[[stories]]
-category = "refactor"
-description = "Create test helper for output block serialization tests"
-steps = [
-  "Identify repeated test setup code in output block tests",
-  "Extract common logic into a helper function",
-  "Update existing tests to use the helper",
-]
-passes = true
-acceptance = [
-  "Test helper reduces boilerplate in output block tests",
-  "Existing tests pass using the new helper",
-]
-
-[[stories]]
-category = "refactor"
-description = "Add builder pattern for output block structs"
-steps = [
-  "Identify output block structs with many fields",
-  "Implement builder pattern for those structs",
-  "Update construction sites to use builders where it improves readability",
-]
-passes = true
-acceptance = [
-  "Builder pattern available for complex output block structs",
-  "Builders have sensible defaults where appropriate",
-  "Construction is more ergonomic than direct struct initialization",
-]
-
-[[stories]]
-category = "internal"
-description = "Document output block integration and data flow"
-steps = [
-  "Document how output blocks flow from Claude JSON to stdout",
-  "Document how output blocks are serialized to session TOML",
-  "Document how replay deserializes and renders output blocks",
-]
-passes = true
-acceptance = [
-  "Documentation explains the full output block lifecycle",
-  "Diagrams or examples clarify the data flow",
-  "New contributors can understand how replay works",
-]
-
-[[stories]]
-category = "replay"
-description = "Capture specialized ToolResultVariant during live execution instead of Default"
-steps = [
-  "Identify where tool results are converted to OutputBlock during live execution",
-  "Update to create specialized variants (EditBeforeAfter, WriteNewFile, etc.) instead of Default",
-  "Run `ralph run` with Edit/Write tools and inspect serialized TOML",
-  "Verify specialized variants are present in the session file",
-]
-passes = true
-acceptance = [
-  "Edit tool results serialize as EditBeforeAfter or EditDiff variants",
-  "Write tool results serialize as WriteNewFile or WriteOverwrite variants",
-  "Read tool results serialize as Read variant with content and line count",
-  "Grep/Glob results serialize with match counts and file lists",
-  "Default variant only used for truly unknown tools",
-]
-
-[[stories]]
-category = "replay"
-description = "Verify replay renders tool results with same formatting as live execution"
-steps = [
-  "Run `ralph run` and capture live output",
-  "Run `ralph replay <session-slug>`",
-  "Compare Edit/Write/Read tool result formatting between live and replay",
-]
-passes = true
-acceptance = [
-  "Edit results show before/after blocks with colored line numbers",
-  "Write results show new file content or overwrite diff",
-  "Read results show syntax-highlighted content with line numbers",
-  "Grep/Glob results show match counts and file paths",
-  "Formatting is visually identical between live and replay",
-]
-
-# =============================================================================
-# Unified Rendering
-# =============================================================================
-
-[[stories]]
-category = "refactor"
-description = "Audit rendering code to identify duplication between live execution and replay"
-steps = [
-  "List all functions that render OutputBlock variants to stdout in stream_processor",
-  "List all functions that render OutputBlock variants in replay_renderer",
-  "Document which functions are duplicated vs shared",
-  "Create a checklist of functions to consolidate",
-]
-passes = true
-acceptance = [
-  "A clear list of duplicated rendering functions exists",
-  "Each function's location is documented (stream_processor vs replay_renderer)",
-  "The scope of refactoring work is understood before implementation begins",
-]
-
-[[stories]]
-category = "refactor"
-description = "Create shared rendering module with generic writer parameter"
-steps = [
-  "Create a new rendering module (e.g., src/render.rs or src/output_render.rs)",
-  "Define rendering functions that accept impl std::io::Write",
-  "Implement OutputBlock rendering for all variants",
-  "Add unit tests using Vec<u8> as the writer",
-]
-passes = true
-acceptance = [
-  "Shared rendering module exists with all OutputBlock variant handlers",
-  "All rendering functions accept a generic writer parameter",
-  "Unit tests verify rendering output using in-memory buffers",
-  "No direct stdout writes in the rendering module",
-  "Non-TTY output renders without ANSI codes",
-]
-
-[[stories]]
-category = "refactor"
-description = "Migrate live execution to use shared rendering module"
-steps = [
-  "Update stream_processor to import shared rendering module",
-  "Replace direct stdout rendering with calls to shared module",
-  "Pass stdout as the writer parameter",
-  "Verify live execution output is unchanged",
+  "Run `cargo xtask lint` on a codebase where all .rs files are under 1000 lines",
+  "Observe that the file length check passes",
+  "Create or modify a .rs file to exceed 1000 lines",
+  "Run `cargo xtask lint` again",
+  "Observe that the check fails and reports the offending file(s) with their line counts",
 ]
 passes = false
 acceptance = [
-  "Live execution uses shared rendering module for all OutputBlock display",
-  "No rendering logic remains in stream_processor (only calls to shared module)",
-  "Live output is visually identical to before the refactor",
+  "A file length check is added to the lint command",
+  "The check scans all .rs files in the workspace (including tests)",
+  "Files exceeding 1000 lines cause the lint to fail",
+  "The error output lists each violating file with its path and line count",
+  "Files at or under 1000 lines pass silently",
 ]
 
 [[stories]]
-category = "refactor"
-description = "Migrate replay to use shared rendering module"
+category = "replay"
+description = "As a user, I want to see a spinner with a countdown during the delay between blocks so I know when the next block will appear."
 steps = [
-  "Update replay to import shared rendering module",
-  "Replace replay_renderer formatting logic with calls to shared module",
-  "Pass stdout as the writer parameter",
-  "Verify replay output matches live execution",
+  "Run `ralph replay <slug> --delay 3` for a session with multiple output blocks",
+  "Observe a spinner appears after each block with a countdown (e.g., 'Next block in 3s...')",
+  "Observe the countdown decrements each second until the next block renders",
+  "Observe the spinner clears before the next block appears",
 ]
 passes = false
 acceptance = [
-  "Replay uses shared rendering module for all OutputBlock display",
-  "replay_renderer.rs contains only orchestration logic (iteration loops, headers)",
-  "Replay output is visually identical to live execution",
+  "A spinner with countdown is displayed between blocks when --delay is used",
+  "The countdown shows remaining seconds (updating each second)",
+  "The spinner is cleared before rendering the next block",
+  "No spinner is shown when --delay is omitted or set to 0",
 ]
 
 [[stories]]
-category = "refactor"
-description = "Remove duplicated rendering code from replay_renderer"
+category = "replay"
+description = "As a user, I want to press a key to skip the countdown and immediately show the next block so I can speed through familiar content."
 steps = [
-  "Identify rendering functions in replay_renderer that are now unused",
-  "Delete unused rendering code",
-  "Verify replay still works correctly",
-  "Run cargo xtask lint to confirm no dead code warnings",
+  "Run `ralph replay <slug> --delay 5` for a session with multiple output blocks",
+  "While the countdown spinner is active, press a skip key (e.g., 'n' or Space)",
+  "Observe the countdown is cancelled and the next block renders immediately",
 ]
 passes = false
 acceptance = [
-  "No duplicated rendering logic remains in replay_renderer.rs",
-  "replay_renderer.rs is significantly smaller (orchestration only)",
-  "All tests pass",
-  "No dead code warnings from clippy",
-]
-
-# =============================================================================
-# Prompt Display
-# =============================================================================
-
-[[stories]]
-category = "ui"
-description = "Capture and store the prompt passed to the claude CLI"
-steps = [
-  "Identify where the final prompt string is constructed (after placeholder substitution)",
-  "Store the prompt in a data structure that can be serialized",
-  "Include the prompt in the session TOML file",
-]
-passes = true
-acceptance = [
-  "The prompt string (as passed to claude CLI) is captured before invocation",
-  "The prompt is stored in the session TOML file",
-  "The prompt is available for replay to read",
+  "Pressing a designated key during the countdown skips to the next block",
+  "The skip key is documented in the spinner display (e.g., 'Next block in 3s... [n: next]')",
+  "Skipping works reliably without blocking or delays",
 ]
 
 [[stories]]
-category = "ui"
-description = "Display the prompt at the start of a run with formatting"
+category = "replay"
+description = "As a user, I want to pause and resume the replay so I can take time to read content without the countdown progressing."
 steps = [
-  "Render the prompt with a header (e.g., '▶ Prompt')",
-  "Apply syntax highlighting for embedded markdown/code",
-  "Display before Iteration 1 begins",
-  "Add --no-prompt flag to suppress display",
+  "Run `ralph replay <slug> --delay 3` for a session with multiple output blocks",
+  "While the countdown spinner is active, press a pause key (e.g., 'p' or Space)",
+  "Observe the countdown pauses and the spinner indicates paused state",
+  "Press the pause key again to resume",
+  "Observe the countdown resumes from where it left off",
 ]
-passes = true
+passes = false
 acceptance = [
-  "Prompt is displayed by default before Iteration 1",
-  "Prompt has visual header like other tool outputs",
-  "Syntax highlighting applied to prompt content",
-  "--no-prompt flag suppresses prompt display",
-  "Prompt is only shown once per session",
-]
-
-[[stories]]
-category = "ui"
-description = "Display the prompt during replay"
-steps = [
-  "Read the stored prompt from session TOML",
-  "Render with same formatting as live execution",
-  "Display before Iteration 1 in replay output",
-]
-passes = true
-acceptance = [
-  "Replay shows the prompt before Iteration 1",
-  "Formatting matches live execution display",
-  "Prompt is not shown if it wasn't stored (older sessions)",
+  "Pressing a designated key toggles pause/play during the countdown",
+  "The paused state is visually indicated (e.g., 'Paused [p: play]')",
+  "The countdown resumes from the remaining time, not from the beginning",
+  "The pause/play key is documented in the spinner display",
 ]

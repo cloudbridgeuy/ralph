@@ -899,3 +899,131 @@ The codebase had significant code duplication between stream_processor (live exe
 - Live execution output unchanged (verified by 545 passing tests) ✓
 - Replay output unchanged (verified by 545 passing tests) ✓
 - All 545 tests pass, cargo xtask lint passes ✓
+
+---
+
+## Unified Rendering Refactor Completion (2026-01-20)
+
+**Stories completed**:
+1. Migrate live execution to use shared rendering module
+2. Migrate replay to use shared rendering module
+3. Remove duplicated rendering code from replay_renderer
+
+**Problem**:
+The replay_renderer.rs had dead code methods that were never called. These methods (`render_read_result`, `render_grep_result`, `render_glob_result`, `render_todowrite_result`, `render_notebook_edit`, `render_default_result`) were older implementations that had been superseded by the shared `crate::render` module functions.
+
+Additionally:
+- `render_notebook_edit` had 6 arguments, violating the 5-argument limit rule
+- Several tests expected incorrect label formats after the shared renderer changes
+- `render_bash_result` didn't handle empty string content as "no output"
+
+**Changes**:
+- **Dead code removal**: Removed ~370 lines of dead code from `replay_renderer.rs` (methods at lines 237-603)
+- **NotebookEditParams struct**: Created params struct in `render/tool_renderers.rs` to replace 6-argument function
+- **Updated render_notebook_edit**: Now takes `&RenderContext` and `&NotebookEditParams` (2 args instead of 6)
+- **Fixed render_bash_result**: Treats empty string content as None for "success" display
+- **Fixed render_glob_invocation**: Added "Pattern:" and "Path:" labels with default path "."
+- **Fixed render_grep_invocation**: Capitalized labels ("Pattern:", "Path:", "Mode:")
+- **Updated tests**: Fixed tests expecting old label formats
+
+**Key files modified**:
+- `crates/ralph/src/replay_renderer.rs` - Removed dead code, fixed imports
+- `crates/ralph/src/render/tool_renderers.rs` - Added NotebookEditParams, fixed renderers
+- `crates/ralph/src/render/mod.rs` - Exported NotebookEditParams
+
+**Data flow (final state)**:
+1. Stream processor tool_display/tool_results files import shared functions from `crate::render`
+2. Replay renderer imports shared functions from `crate::render`
+3. Both paths use identical rendering logic
+4. No rendering duplication exists
+
+**Acceptance criteria met**:
+- No duplicated rendering logic remains in replay_renderer.rs ✓
+- replay_renderer.rs is significantly smaller (orchestration only) ✓
+- All 558 tests pass ✓
+- No dead code warnings from clippy ✓
+- cargo xtask lint passes ✓
+
+---
+
+## Vibrant Line Number Background Colors (2026-01-20)
+
+**Story**: Make before/after line number colors more vibrant and visible
+
+**Problem**:
+The red and green background colors used for "before" and "after" blocks in Edit/Write tool diffs were desaturated and difficult to distinguish. The original values (RGB 100,40,40 for red and 40,90,40 for green) didn't provide enough visual contrast.
+
+**Changes**:
+- Updated `RED_BG` from `48;2;100;40;40` (RGB 100,40,40) to `48;2;140;45;45` (RGB 140,45,45)
+- Updated `GREEN_BG` from `48;2;40;90;40` (RGB 40,90,40) to `48;2;45;130;45` (RGB 45,130,45)
+- Consolidated color constants to use the central `ansi` module in `render/tool_renderers.rs`
+- Updated `edit.rs` to import from `crate::render::ansi` instead of defining local constants
+- Updated `write.rs` to import from `crate::render::ansi` instead of defining local constants
+- Removed ~20 lines of duplicated constant definitions
+
+**Key files modified**:
+- `crates/ralph/src/render/tool_renderers.rs` - Central color definitions with vibrant values
+- `crates/ralph/src/stream_processor/tool_results/edit.rs` - Import from central module
+- `crates/ralph/src/stream_processor/tool_results/write.rs` - Import from central module
+
+**Color rationale**:
+- New red (140,45,45): More saturated with higher red component for immediate visibility
+- New green (45,130,45): More saturated with higher green component for clear distinction
+- Both colors remain dark enough to work on light terminal themes
+- Both colors are vibrant enough to "pop" on dark terminal themes
+- Syntax highlighting remains readable on both backgrounds
+
+**Acceptance criteria met**:
+- Red and green line number backgrounds are immediately distinguishable ✓
+- Colors pop without being distracting or garish ✓
+- Syntax highlighting on code content remains clearly readable ✓
+- Works well on both dark and light terminal themes ✓
+- All 558 tests pass, cargo xtask lint passes ✓
+
+---
+
+## Replay Delay Flag (2026-01-20)
+
+**Story**: Add --delay flag to replay command for configurable pause between output blocks
+
+**Problem**:
+Users replaying sessions with large output blocks had no way to pace the output. All blocks rendered immediately, making it difficult to follow along with the replay at a comfortable reading pace.
+
+**Changes**:
+- Added `--delay <SECONDS>` flag to `ReplayArgs` in `crates/ralph/src/cli.rs`
+- Added `delay_secs: Option<f64>` field to `ReplayOptions` struct
+- Added `with_delay()` builder method to `ReplayOptions`
+- Updated `replay_iteration()` to accept and pass delay parameter
+- Updated `replay_output_blocks()` to sleep between blocks when delay specified
+- Updated `replay_chunks()` (legacy format) to sleep between chunks when delay specified
+- Updated `execute_replay()` in main.rs to pass delay through options
+
+**Key files**:
+- `crates/ralph/src/cli.rs` - Added `--delay` flag to ReplayArgs
+- `crates/ralph/src/replay.rs` - Added delay support to ReplayOptions and replay functions
+- `crates/ralph/src/main.rs` - Wired delay flag through to replay options
+
+**Implementation details**:
+- Delay is applied after each output block/chunk is rendered
+- Uses `std::thread::sleep(Duration::from_secs_f64(secs))` for precise fractional seconds
+- Stdout is flushed before sleeping to ensure output is visible
+- Zero or negative delays are treated as no-delay (no sleep call)
+- Both output_blocks (new format) and chunks (legacy format) support delay
+
+**Tests added** (8 tests):
+- `test_replay_with_delay` - Verifies delay flag parsing with float value
+- `test_replay_with_delay_integer` - Verifies integer value converts to float
+- `test_replay_with_delay_fractional` - Verifies fractional second support
+- `test_replay_without_delay` - Verifies default is None
+- `test_replay_options_default` - Verifies ReplayOptions defaults include delay_secs: None
+- `test_replay_options_with_delay` - Verifies with_delay() builder sets value
+- `test_replay_options_with_delay_none` - Verifies with_delay(None) works
+- `test_replay_options_builder_chain` - Verifies all builder methods chain correctly
+
+**Acceptance criteria met**:
+- A `--delay <seconds>` flag is added to the replay command ✓
+- The flag accepts positive floating-point values (e.g., 0.5, 1, 2.5) ✓
+- When provided, replay pauses for the specified duration between each output block ✓
+- When omitted, replay behaves as before with no delay (zero cost default) ✓
+- The flag is documented in `--help` output ✓
+- All 566 tests pass, cargo xtask lint passes ✓

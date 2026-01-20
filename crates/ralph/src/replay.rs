@@ -24,8 +24,10 @@ use crate::session::{load_sessions_index, session_dir};
 use crate::startup::{display_prompt, PromptDisplay};
 use ralph_core::session::SessionMetadata;
 use std::fs;
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 /// Error type for replay operations.
 #[derive(Debug, thiserror::Error)]
@@ -107,6 +109,8 @@ pub struct ReplayOptions {
     pub theme_config: Option<ThemeConfig>,
     /// Whether to show the prompt before iterations (default: true).
     pub show_prompt: bool,
+    /// Optional delay in seconds between output blocks.
+    pub delay_secs: Option<f64>,
 }
 
 impl ReplayOptions {
@@ -116,6 +120,7 @@ impl ReplayOptions {
             iteration: None,
             theme_config: None,
             show_prompt: true,
+            delay_secs: None,
         }
     }
 
@@ -134,6 +139,12 @@ impl ReplayOptions {
     /// Set whether to show the prompt.
     pub fn with_show_prompt(mut self, show_prompt: bool) -> Self {
         self.show_prompt = show_prompt;
+        self
+    }
+
+    /// Set the delay between output blocks.
+    pub fn with_delay(mut self, delay_secs: Option<f64>) -> Self {
+        self.delay_secs = delay_secs;
         self
     }
 }
@@ -259,7 +270,7 @@ pub fn replay_session_with_options(
     }
 
     for (seq, path) in &logs_to_replay {
-        replay_iteration(*seq, path, &highlighter, is_terminal)?;
+        replay_iteration(*seq, path, &highlighter, is_terminal, options.delay_secs)?;
     }
 
     Ok(ReplayResult {
@@ -337,6 +348,7 @@ fn replay_iteration(
     path: &PathBuf,
     highlighter: &Highlighter,
     is_terminal: bool,
+    delay_secs: Option<f64>,
 ) -> Result<(), ReplayError> {
     // Read and parse iteration log
     let content = fs::read_to_string(path).map_err(|e| ReplayError::ReadIterationLog {
@@ -376,26 +388,49 @@ fn replay_iteration(
     // Prefer output_blocks for replay (newer format with full tool rendering)
     // Fall back to chunks for older session files without output_blocks
     if !log.output_blocks.is_empty() {
-        replay_output_blocks(&log, highlighter, is_terminal);
+        replay_output_blocks(&log, highlighter, is_terminal, delay_secs);
     } else {
-        replay_chunks(&log, highlighter, is_terminal);
+        replay_chunks(&log, highlighter, is_terminal, delay_secs);
     }
 
     Ok(())
 }
 
+/// Apply delay between output elements if specified.
+///
+/// Flushes stdout before sleeping to ensure previous output is visible.
+fn apply_delay(delay_secs: Option<f64>) {
+    if let Some(secs) = delay_secs {
+        if secs > 0.0 {
+            let _ = std::io::stdout().flush();
+            thread::sleep(Duration::from_secs_f64(secs));
+        }
+    }
+}
+
 /// Replay using output_blocks (newer format with full tool rendering).
-fn replay_output_blocks(log: &IterationLog, highlighter: &Highlighter, is_terminal: bool) {
+fn replay_output_blocks(
+    log: &IterationLog,
+    highlighter: &Highlighter,
+    is_terminal: bool,
+    delay_secs: Option<f64>,
+) {
     let renderer = ReplayRenderer::new(highlighter.clone(), is_terminal);
 
     for block in &log.output_blocks {
         let rendered = renderer.render(block);
         print!("{}", rendered);
+        apply_delay(delay_secs);
     }
 }
 
 /// Replay using chunks (legacy format, text-only).
-fn replay_chunks(log: &IterationLog, highlighter: &Highlighter, is_terminal: bool) {
+fn replay_chunks(
+    log: &IterationLog,
+    highlighter: &Highlighter,
+    is_terminal: bool,
+    delay_secs: Option<f64>,
+) {
     for chunk in &log.chunks {
         match chunk.chunk_type.as_str() {
             "prose" => {
@@ -427,6 +462,7 @@ fn replay_chunks(log: &IterationLog, highlighter: &Highlighter, is_terminal: boo
                 println!("{}", chunk.content);
             }
         }
+        apply_delay(delay_secs);
     }
 }
 
@@ -559,5 +595,38 @@ mod tests {
 
         assert!(index.slug_exists("test-session"));
         assert!(!index.slug_exists("nonexistent"));
+    }
+
+    #[test]
+    fn test_replay_options_default() {
+        let options = ReplayOptions::new();
+        assert!(options.iteration.is_none());
+        assert!(options.theme_config.is_none());
+        assert!(options.show_prompt);
+        assert!(options.delay_secs.is_none());
+    }
+
+    #[test]
+    fn test_replay_options_with_delay() {
+        let options = ReplayOptions::new().with_delay(Some(2.5));
+        assert_eq!(options.delay_secs, Some(2.5));
+    }
+
+    #[test]
+    fn test_replay_options_with_delay_none() {
+        let options = ReplayOptions::new().with_delay(None);
+        assert!(options.delay_secs.is_none());
+    }
+
+    #[test]
+    fn test_replay_options_builder_chain() {
+        let options = ReplayOptions::new()
+            .with_iteration(Some(3))
+            .with_show_prompt(false)
+            .with_delay(Some(1.5));
+
+        assert_eq!(options.iteration, Some(3));
+        assert!(!options.show_prompt);
+        assert_eq!(options.delay_secs, Some(1.5));
     }
 }

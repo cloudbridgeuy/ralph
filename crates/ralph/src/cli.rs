@@ -124,6 +124,14 @@ pub struct ReplayArgs {
     /// Use this flag to hide the prompt.
     #[arg(long)]
     pub no_prompt: bool,
+
+    /// Pause duration in seconds between each output block.
+    ///
+    /// When specified, replay pauses for the given duration after rendering
+    /// each output block. Supports fractional seconds (e.g., 0.5, 1.5).
+    /// When omitted, blocks render immediately with no delay.
+    #[arg(long, value_name = "SECONDS")]
+    pub delay: Option<f64>,
 }
 
 /// Arguments for the `run` subcommand.
@@ -638,6 +646,51 @@ mod tests {
         // Replay without slug should fail
         let result = Cli::try_parse_from(["ralph", "replay"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_replay_with_delay() {
+        let cli = Cli::try_parse_from(["ralph", "replay", "my-session", "--delay", "2.5"]).unwrap();
+        match cli.command {
+            Commands::Replay(args) => {
+                assert_eq!(args.slug, "my-session");
+                assert_eq!(args.delay, Some(2.5));
+            }
+            _ => panic!("Expected Replay command"),
+        }
+    }
+
+    #[test]
+    fn test_replay_with_delay_integer() {
+        let cli = Cli::try_parse_from(["ralph", "replay", "my-session", "--delay", "2"]).unwrap();
+        match cli.command {
+            Commands::Replay(args) => {
+                assert_eq!(args.delay, Some(2.0));
+            }
+            _ => panic!("Expected Replay command"),
+        }
+    }
+
+    #[test]
+    fn test_replay_with_delay_fractional() {
+        let cli = Cli::try_parse_from(["ralph", "replay", "my-session", "--delay", "0.5"]).unwrap();
+        match cli.command {
+            Commands::Replay(args) => {
+                assert_eq!(args.delay, Some(0.5));
+            }
+            _ => panic!("Expected Replay command"),
+        }
+    }
+
+    #[test]
+    fn test_replay_without_delay() {
+        let cli = Cli::try_parse_from(["ralph", "replay", "my-session"]).unwrap();
+        match cli.command {
+            Commands::Replay(args) => {
+                assert!(args.delay.is_none());
+            }
+            _ => panic!("Expected Replay command"),
+        }
     }
 
     // Iterations command tests
