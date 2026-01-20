@@ -231,11 +231,26 @@ pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
     println!();
     println!("\x1b[1m\x1b[35m▶ Prompt\x1b[0m");
     println!("\x1b[35m{}\x1b[0m", "─".repeat(60));
+
+    // Display attached files as a table (if any)
+    if !prompt.attached_files.is_empty() {
+        println!();
+        println!("\x1b[2mAttached files:\x1b[0m");
+        for file in &prompt.attached_files {
+            // Format: "  path  →  Description"
+            println!(
+                "  \x1b[36m{}\x1b[0m  \x1b[2m→\x1b[0m  {}",
+                file.path.display(),
+                file.description
+            );
+        }
+    }
+
     println!();
 
-    // Render the prompt with markdown formatting
+    // Render the prompt with markdown formatting (strip @/path references from display)
     let renderer = MarkdownRenderer::new();
-    let rendered = renderer.render(prompt.prompt);
+    let rendered = renderer.render(&prompt.stripped_prompt());
     println!("{}", rendered);
 
     // Closing separator

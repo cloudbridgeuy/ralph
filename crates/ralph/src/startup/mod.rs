@@ -24,5 +24,6 @@ pub use display::{
 };
 pub use formatters::format_duration;
 pub use types::{
-    IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
+    AttachedFile, IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo,
+    VERSION,
 };

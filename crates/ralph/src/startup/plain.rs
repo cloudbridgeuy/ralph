@@ -2,7 +2,8 @@
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{
-    IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
+    strip_file_references, IterationHeader, IterationSummary, PromptDisplay, RunSummary,
+    StartupInfo, VERSION,
 };
 
 /// Display startup info without terminal formatting.
@@ -212,10 +213,21 @@ pub(super) fn display_prompt_plain(prompt: &PromptDisplay) {
     println!();
     println!("> Prompt");
     println!("{}", "-".repeat(60));
+
+    // Display attached files (if any)
+    if !prompt.attached_files.is_empty() {
+        println!();
+        println!("Attached files:");
+        for file in &prompt.attached_files {
+            println!("  {} -> {}", file.path.display(), file.description);
+        }
+    }
+
     println!();
 
-    // Print the prompt as-is (no markdown rendering)
-    println!("{}", prompt.prompt);
+    // Print the prompt with file references stripped (no markdown rendering)
+    let display_prompt = strip_file_references(prompt.prompt);
+    println!("{}", display_prompt);
 
     // Closing separator
     println!("{}", "-".repeat(60));
