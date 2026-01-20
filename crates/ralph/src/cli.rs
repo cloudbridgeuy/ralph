@@ -117,6 +117,13 @@ pub struct ReplayArgs {
     /// Can also be set via RALPH_NO_BACKGROUND environment variable.
     #[arg(long)]
     pub no_background: bool,
+
+    /// Suppress prompt display at the start of replay.
+    ///
+    /// By default, the stored prompt is displayed before Iteration 1.
+    /// Use this flag to hide the prompt.
+    #[arg(long)]
+    pub no_prompt: bool,
 }
 
 /// Arguments for the `run` subcommand.
@@ -257,6 +264,13 @@ pub struct RunArgs {
     ///   --verbose-tools=read         Enable for Read only
     #[arg(long, value_name = "TOOLS", num_args = 0..=1, default_missing_value = "*")]
     pub verbose_tools: Option<String>,
+
+    /// Suppress prompt display at the start of each run.
+    ///
+    /// By default, the prompt passed to the LLM is displayed before
+    /// Iteration 1 begins. Use this flag to hide the prompt.
+    #[arg(long)]
+    pub no_prompt: bool,
 }
 
 #[cfg(test)]

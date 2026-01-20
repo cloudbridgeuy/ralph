@@ -40,6 +40,7 @@ fn create_test_config(paths: ContextPaths) -> RunConfig {
             ..Default::default()
         },
         verbose_tools_config: VerboseToolsConfig::new(),
+        show_prompt: false, // Don't display prompt in tests
     }
 }
 

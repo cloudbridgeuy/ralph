@@ -99,3 +99,10 @@ pub struct RunSummary {
     /// Final pending story count.
     pub final_pending_stories: usize,
 }
+
+/// Information for prompt display before iterations begin.
+#[derive(Debug, Clone)]
+pub struct PromptDisplay<'a> {
+    /// The prompt text to display.
+    pub prompt: &'a str,
+}

@@ -1,7 +1,9 @@
 //! Plain text output without ANSI formatting.
 
 use super::formatters::{format_duration, format_token_count};
-use super::types::{IterationHeader, IterationSummary, RunSummary, StartupInfo, VERSION};
+use super::types::{
+    IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
+};
 
 /// Display startup info without terminal formatting.
 pub(super) fn display_startup_plain(info: &StartupInfo) {
@@ -202,4 +204,19 @@ pub(super) fn display_run_summary_plain(summary: &RunSummary) {
     println!();
     println!("Replay with: ralph replay {}", summary.slug);
     println!();
+}
+
+/// Display prompt without terminal formatting.
+pub(super) fn display_prompt_plain(prompt: &PromptDisplay) {
+    // Header
+    println!();
+    println!("> Prompt");
+    println!("{}", "-".repeat(60));
+    println!();
+
+    // Print the prompt as-is (no markdown rendering)
+    println!("{}", prompt.prompt);
+
+    // Closing separator
+    println!("{}", "-".repeat(60));
 }

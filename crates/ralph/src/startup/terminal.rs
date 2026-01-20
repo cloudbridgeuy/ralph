@@ -1,7 +1,10 @@
 //! Terminal-formatted output with ANSI escape codes.
 
 use super::formatters::{format_duration, format_token_count};
-use super::types::{IterationHeader, IterationSummary, RunSummary, StartupInfo, VERSION};
+use super::types::{
+    IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
+};
+use crate::markdown::MarkdownRenderer;
 
 /// Display startup info with terminal formatting.
 pub(super) fn display_startup_terminal(info: &StartupInfo) {
@@ -220,4 +223,21 @@ pub(super) fn display_run_summary_terminal(summary: &RunSummary) {
     println!();
     println!("\x1b[2mReplay with: ralph replay {}\x1b[0m", summary.slug);
     println!();
+}
+
+/// Display prompt with terminal formatting.
+pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
+    // Header with visual indicator
+    println!();
+    println!("\x1b[1m\x1b[35m▶ Prompt\x1b[0m");
+    println!("\x1b[35m{}\x1b[0m", "─".repeat(60));
+    println!();
+
+    // Render the prompt with markdown formatting
+    let renderer = MarkdownRenderer::new();
+    let rendered = renderer.render(prompt.prompt);
+    println!("{}", rendered);
+
+    // Closing separator
+    println!("\x1b[35m{}\x1b[0m", "─".repeat(60));
 }

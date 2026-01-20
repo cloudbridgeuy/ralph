@@ -176,6 +176,7 @@ fn execute_run_with_prompting(
             custom_additional_prompt,
             summarize_config: summarize_config.clone(),
             verbose_tools_config: verbose_tools_config.clone(),
+            show_prompt: !args.no_prompt,
         };
 
         // Execute the run loop
@@ -484,7 +485,12 @@ fn execute_replay(args: ReplayArgs) -> Result<(), Box<dyn std::error::Error>> {
             .merge_cli(args.theme.as_deref(), args.no_background),
     );
 
-    let result = replay::replay_session_with_theme(&args.slug, args.iteration, theme_config)?;
+    let options = replay::ReplayOptions::new()
+        .with_iteration(args.iteration)
+        .with_theme(theme_config)
+        .with_show_prompt(!args.no_prompt);
+
+    let result = replay::replay_session_with_options(&args.slug, options)?;
 
     // Print summary
     println!();

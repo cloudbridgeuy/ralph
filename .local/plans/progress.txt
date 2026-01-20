@@ -697,3 +697,86 @@ prompt = "Work on the highest priority feature.\n\nContext:\n- PRD: path/to/prd.
 - The prompt is stored in the session TOML file ✓
 - The prompt is available for replay to read ✓
 - All 537 tests pass, cargo xtask lint passes
+
+---
+
+## Prompt Display at Run Start and During Replay (2026-01-20)
+
+**Stories completed**:
+1. Display the prompt at the start of a run with formatting
+2. Display the prompt during replay
+
+**Problem**:
+The prompt passed to Claude CLI (after placeholder substitution) was being stored in session metadata but not displayed to the user. Users had no visibility into what prompt was actually sent to the LLM.
+
+**Changes**:
+
+### CLI Flags
+- Added `--no-prompt` flag to `RunArgs` in `cli.rs` to suppress prompt display during live execution
+- Added `--no-prompt` flag to `ReplayArgs` in `cli.rs` to suppress prompt display during replay
+
+### Prompt Display Infrastructure (startup module)
+- Added `PromptDisplay<'a>` struct to `startup/types.rs` to hold prompt content
+- Added `display_prompt()` function to `startup/display.rs` with terminal detection routing
+- Added `display_prompt_terminal()` in `startup/terminal.rs`:
+  - Header with '▶ Prompt' in magenta with visual separator
+  - Markdown rendering via `MarkdownRenderer` for embedded formatting
+  - Closing separator after prompt content
+- Added `display_prompt_plain()` in `startup/plain.rs`:
+  - Plain text header '> Prompt'
+  - No markdown rendering for piped output
+  - Plain separators
+
+### Live Execution Integration
+- Added `show_prompt: bool` field to `RunConfig` struct
+- Updated `run()` function to display prompt after startup info but before Iteration 1
+- Only shows prompt on fresh sessions (not on session continuation/retries)
+- Respects `--no-prompt` flag
+
+### Replay Integration
+- Created `ReplayOptions` struct with builder pattern for flexible replay configuration:
+  - `iteration: Option<u32>` - specific iteration to replay
+  - `theme_config: Option<ThemeConfig>` - theme configuration
+  - `show_prompt: bool` - whether to display prompt (default: true)
+- Added `replay_session_with_options()` as the main implementation
+- Refactored `replay_session_with_theme()` to use options internally
+- Reads `session.toml` to get stored prompt before rendering iterations
+- Only shows prompt when replaying from iteration 1 (not when replaying specific later iteration)
+- Gracefully handles older sessions without stored prompt
+
+### Error Handling
+- Added `ReplayError::ReadSessionMetadata` variant for session.toml read failures
+- Added `ReplayError::ParseSessionMetadata` variant for TOML parse failures
+
+**Key files modified**:
+- `crates/ralph/src/cli.rs` - Added `--no-prompt` flags
+- `crates/ralph/src/startup/types.rs` - Added `PromptDisplay` struct
+- `crates/ralph/src/startup/display.rs` - Added `display_prompt()` function
+- `crates/ralph/src/startup/terminal.rs` - Added terminal prompt display with markdown
+- `crates/ralph/src/startup/plain.rs` - Added plain text prompt display
+- `crates/ralph/src/startup/mod.rs` - Re-exported new types and functions
+- `crates/ralph/src/run/mod.rs` - Added `show_prompt` to RunConfig, display prompt before iterations
+- `crates/ralph/src/replay.rs` - Added `ReplayOptions`, prompt display during replay
+- `crates/ralph/src/main.rs` - Updated to pass `--no-prompt` flag through both paths
+
+**Behavior**:
+- **Live execution**: Prompt displayed by default after startup info, before Iteration 1
+  - Header: `▶ Prompt` in magenta with horizontal separator
+  - Content rendered with markdown formatting (bold, italic, headers, code, etc.)
+  - Suppressed with `--no-prompt` flag
+- **Replay**: Prompt displayed by default before Iteration 1 when available
+  - Same formatting as live execution
+  - Reads from `session.toml` metadata
+  - Gracefully skips if prompt wasn't stored (older sessions)
+  - Suppressed with `--no-prompt` flag
+
+**Acceptance criteria met**:
+- Prompt is displayed by default before Iteration 1 ✓
+- Prompt has visual header like other tool outputs ✓
+- Syntax highlighting (markdown) applied to prompt content ✓
+- `--no-prompt` flag suppresses prompt display ✓
+- Prompt is only shown once per session (at start) ✓
+- Replay shows the prompt before Iteration 1 ✓
+- Replay formatting matches live execution display ✓
+- Prompt is not shown if it wasn't stored (older sessions) ✓
+- All 537 tests pass, cargo xtask lint passes

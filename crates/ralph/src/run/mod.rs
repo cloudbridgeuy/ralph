@@ -14,8 +14,8 @@ use crate::iteration::{
 use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::signal;
 use crate::startup::{
-    display_iteration_header, display_iteration_summary, display_startup_info, IterationHeader,
-    IterationSummary, StartupInfo,
+    display_iteration_header, display_iteration_summary, display_prompt, display_startup_info,
+    IterationHeader, IterationSummary, PromptDisplay, StartupInfo,
 };
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
@@ -79,6 +79,9 @@ pub struct RunConfig {
     pub summarize_config: SummarizeConfig,
     /// Configuration for verbose tool output.
     pub verbose_tools_config: VerboseToolsConfig,
+    /// Whether to display the prompt before iterations begin.
+    /// When true, the prompt is shown before Iteration 1.
+    pub show_prompt: bool,
 }
 
 /// Result of running the iteration loop.
@@ -292,6 +295,14 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             session_dir: session_dir.clone(),
         };
         display_startup_info(&startup_info);
+
+        // Display the prompt if enabled
+        if config.show_prompt {
+            let prompt_display = PromptDisplay {
+                prompt: &config.prompt,
+            };
+            display_prompt(&prompt_display);
+        }
     }
 
     // 6. Execute iteration loop

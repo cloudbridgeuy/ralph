@@ -21,6 +21,8 @@ use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::iteration::IterationLog;
 use crate::replay_renderer::ReplayRenderer;
 use crate::session::{load_sessions_index, session_dir};
+use crate::startup::{display_prompt, PromptDisplay};
+use ralph_core::session::SessionMetadata;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -73,6 +75,18 @@ pub enum ReplayError {
     /// Failed to configure theme.
     #[error("Failed to configure theme: {0}")]
     ThemeError(#[from] ThemeError),
+
+    /// Failed to read session metadata.
+    #[error("Failed to read session metadata at {path}: {source}")]
+    ReadSessionMetadata {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to parse session metadata.
+    #[error("Failed to parse session metadata: {0}")]
+    ParseSessionMetadata(String),
 }
 
 /// Result of a replay operation.
@@ -82,6 +96,46 @@ pub struct ReplayResult {
     pub slug: String,
     /// Number of iterations replayed.
     pub iterations_replayed: usize,
+}
+
+/// Configuration for replay options.
+#[derive(Debug, Default, Clone)]
+pub struct ReplayOptions {
+    /// Optional specific iteration to replay (1-indexed).
+    pub iteration: Option<u32>,
+    /// Optional theme configuration.
+    pub theme_config: Option<ThemeConfig>,
+    /// Whether to show the prompt before iterations (default: true).
+    pub show_prompt: bool,
+}
+
+impl ReplayOptions {
+    /// Create new replay options with default values.
+    pub fn new() -> Self {
+        Self {
+            iteration: None,
+            theme_config: None,
+            show_prompt: true,
+        }
+    }
+
+    /// Set the iteration to replay.
+    pub fn with_iteration(mut self, iteration: Option<u32>) -> Self {
+        self.iteration = iteration;
+        self
+    }
+
+    /// Set the theme configuration.
+    pub fn with_theme(mut self, theme_config: Option<ThemeConfig>) -> Self {
+        self.theme_config = theme_config;
+        self
+    }
+
+    /// Set whether to show the prompt.
+    pub fn with_show_prompt(mut self, show_prompt: bool) -> Self {
+        self.show_prompt = show_prompt;
+        self
+    }
 }
 
 /// Replay a session's output to stdout.
@@ -113,7 +167,8 @@ pub struct ReplayResult {
 /// replay_session("my-session", Some(2)).unwrap();
 /// ```
 pub fn replay_session(slug: &str, iteration: Option<u32>) -> Result<ReplayResult, ReplayError> {
-    replay_session_with_theme(slug, iteration, None)
+    let options = ReplayOptions::new().with_iteration(iteration);
+    replay_session_with_options(slug, options)
 }
 
 /// Replay a session's output with custom theme configuration.
@@ -129,6 +184,25 @@ pub fn replay_session_with_theme(
     slug: &str,
     iteration: Option<u32>,
     theme_config: Option<ThemeConfig>,
+) -> Result<ReplayResult, ReplayError> {
+    let options = ReplayOptions::new()
+        .with_iteration(iteration)
+        .with_theme(theme_config);
+    replay_session_with_options(slug, options)
+}
+
+/// Replay a session's output with full options.
+///
+/// This is the main implementation that supports all replay options including
+/// theme configuration and prompt display control.
+///
+/// # Arguments
+///
+/// * `slug` - Session identifier to replay
+/// * `options` - Replay configuration options
+pub fn replay_session_with_options(
+    slug: &str,
+    options: ReplayOptions,
 ) -> Result<ReplayResult, ReplayError> {
     // Look up session in sessions index
     let index = load_sessions_index()?;
@@ -152,7 +226,7 @@ pub fn replay_session_with_theme(
     }
 
     // Filter to specific iteration if requested
-    let logs_to_replay = if let Some(n) = iteration {
+    let logs_to_replay = if let Some(n) = options.iteration {
         let log = iteration_logs.iter().find(|(seq, _)| *seq == n);
         match log {
             Some((_, path)) => vec![(n, path.clone())],
@@ -169,9 +243,20 @@ pub fn replay_session_with_theme(
     };
 
     // Use provided theme config or fall back to config file + environment variables
-    let effective_theme = theme_config.unwrap_or_else(ThemeConfig::from_config_and_env);
+    let effective_theme = options
+        .theme_config
+        .unwrap_or_else(ThemeConfig::from_config_and_env);
     let highlighter = Highlighter::with_config(effective_theme)?;
     let is_terminal = std::io::stdout().is_terminal();
+
+    // Display the prompt before iterations if enabled and we're starting from iteration 1
+    // (i.e., not replaying a specific later iteration)
+    let should_show_prompt =
+        options.show_prompt && (options.iteration.is_none() || options.iteration == Some(1));
+
+    if should_show_prompt {
+        try_display_session_prompt(&session_path);
+    }
 
     for (seq, path) in &logs_to_replay {
         replay_iteration(*seq, path, &highlighter, is_terminal)?;
@@ -181,6 +266,26 @@ pub fn replay_session_with_theme(
         slug: slug.to_string(),
         iterations_replayed: logs_to_replay.len(),
     })
+}
+
+/// Try to read session metadata and display the prompt if available.
+///
+/// This is a best-effort operation - errors are silently ignored to handle
+/// older sessions that may not have stored prompts.
+fn try_display_session_prompt(session_path: &std::path::Path) {
+    let session_toml_path = session_path.join("session.toml");
+    let content = match fs::read_to_string(&session_toml_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let metadata = match SessionMetadata::from_toml(&content) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    if let Some(ref prompt) = metadata.prompt {
+        let prompt_display = PromptDisplay { prompt };
+        display_prompt(&prompt_display);
+    }
 }
 
 /// Find all iteration logs in a session directory.

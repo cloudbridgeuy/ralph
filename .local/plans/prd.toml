@@ -571,7 +571,7 @@ steps = [
   "Display before Iteration 1 begins",
   "Add --no-prompt flag to suppress display",
 ]
-passes = false
+passes = true
 acceptance = [
   "Prompt is displayed by default before Iteration 1",
   "Prompt has visual header like other tool outputs",
@@ -588,7 +588,7 @@ steps = [
   "Render with same formatting as live execution",
   "Display before Iteration 1 in replay output",
 ]
-passes = false
+passes = true
 acceptance = [
   "Replay shows the prompt before Iteration 1",
   "Formatting matches live execution display",
