@@ -130,11 +130,11 @@ Iteration 1/3...
 
 Ralph uses a TOML configuration file stored in platform-specific directories:
 
-| Platform | Location |
-|----------|----------|
-| Linux | `~/.config/ralph/config.toml` |
-| macOS | `~/Library/Application Support/ralph/config.toml` |
-| Windows | `%APPDATA%\ralph\config.toml` |
+| Platform | Location                                          |
+| -------- | ------------------------------------------------- |
+| Linux    | `~/.config/ralph/config.toml`                     |
+| macOS    | `~/Library/Application Support/ralph/config.toml` |
+| Windows  | `%APPDATA%\ralph\config.toml`                     |
 
 ### Example Configuration
 
