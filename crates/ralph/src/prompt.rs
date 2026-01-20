@@ -66,7 +66,7 @@ pub fn prompt_on_failure(failure_summary: &str) -> Option<FailureAction> {
 
         let mut input = String::new();
         match io::stdin().read_line(&mut input) {
-            Ok(0) => return None, // EOF (Ctrl+D)
+            Ok(0) | Err(_) => return None, // EOF (Ctrl+D) or I/O error
             Ok(_) => {
                 let choice = input.trim().to_lowercase();
                 match choice.as_str() {
@@ -84,7 +84,6 @@ pub fn prompt_on_failure(failure_summary: &str) -> Option<FailureAction> {
                     }
                 }
             }
-            Err(_) => return None, // I/O error
         }
     }
 }
