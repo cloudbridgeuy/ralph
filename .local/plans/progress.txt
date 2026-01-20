@@ -332,3 +332,48 @@ Removed the legacy `replay_chunks` function and its conditional fallback from `r
 - ✅ The fallback branch checking for empty output_blocks is removed
 - ✅ replay_output_blocks is called directly without conditional
 - ✅ Code compiles and tests pass (572 tests passing)
+
+---
+
+## Spinner Line Clear Fix (2026-01-20)
+
+### Summary
+Fixed spinner display to properly clear the line before each redraw, preventing residual characters when the text length changes.
+
+**Location**: `crates/ralph/src/spinner.rs`
+
+### Problem
+The spinner used `\r` (carriage return) to return to the start of the line but didn't clear the remaining content. When the spinner text got shorter (e.g., when time changed from "59s" to "1m 0s", or when the context message changed from "Summarizing progress file..." to "Thinking..."), residual characters from the previous longer line would remain visible.
+
+### Solution
+Added `\x1b[K` (ANSI escape code for "clear to end of line") immediately after `\r` in the spinner output format.
+
+**Before:**
+```rust
+let spinner_line = format!(
+    "\r\x1b[36m{}\x1b[0m {} {}",
+    spinner_char, message, time_display
+);
+```
+
+**After:**
+```rust
+let spinner_line = format!(
+    "\r\x1b[K\x1b[36m{}\x1b[0m {} {}",
+    spinner_char, message, time_display
+);
+```
+
+### ANSI Escape Codes Reference
+| Code | Meaning |
+|------|---------|
+| `\r` | Carriage return (move cursor to start of line) |
+| `\x1b[K` | Erase in line (clear from cursor to end of line) |
+| `\x1b[36m` | Set text color to cyan |
+| `\x1b[0m` | Reset all text formatting |
+
+### Acceptance Criteria Met
+- ✅ Spinner format uses '\r\x1b[K' to clear the line before each redraw
+- ✅ No leftover characters appear when time format changes (e.g., '59s' → '1m 0s')
+- ✅ No leftover characters appear when spinner context changes
+- ✅ Spinner continues to display correctly in terminal output

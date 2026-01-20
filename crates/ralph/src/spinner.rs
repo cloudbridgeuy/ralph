@@ -27,7 +27,7 @@
 
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -37,6 +37,16 @@ pub const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '
 
 /// Interval between spinner frame updates.
 pub const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
+
+// ANSI escape sequences for terminal control
+/// Carriage return - moves cursor to beginning of line.
+const CR: &str = "\r";
+/// Clear from cursor to end of line.
+const CLEAR_EOL: &str = "\x1b[K";
+/// Set foreground color to cyan.
+const CYAN: &str = "\x1b[36m";
+/// Reset all text formatting.
+const RESET: &str = "\x1b[0m";
 
 /// The context or reason for showing the spinner.
 ///
@@ -91,7 +101,7 @@ pub struct Spinner {
     /// Total elapsed time from previous iterations in this session.
     session_elapsed_ms: u64,
     /// Current context for the spinner message.
-    context: Arc<std::sync::Mutex<SpinnerContext>>,
+    context: Arc<Mutex<SpinnerContext>>,
 }
 
 impl Default for Spinner {
@@ -101,33 +111,31 @@ impl Default for Spinner {
 }
 
 impl Spinner {
+    /// Internal constructor with all configuration options.
+    fn create(enabled: bool, session_elapsed_ms: u64) -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            thread_handle: None,
+            enabled,
+            iteration_start: Instant::now(),
+            session_elapsed_ms,
+            context: Arc::new(Mutex::new(SpinnerContext::default())),
+        }
+    }
+
     /// Create a new spinner.
     ///
     /// The spinner is enabled only when stdout is a terminal.
     /// When piped, all spinner methods are no-ops.
     pub fn new() -> Self {
-        Self {
-            running: Arc::new(AtomicBool::new(false)),
-            thread_handle: None,
-            enabled: std::io::stdout().is_terminal(),
-            iteration_start: Instant::now(),
-            session_elapsed_ms: 0,
-            context: Arc::new(std::sync::Mutex::new(SpinnerContext::default())),
-        }
+        Self::create(std::io::stdout().is_terminal(), 0)
     }
 
     /// Create a spinner with custom enable state.
     ///
     /// Useful for testing or forcing spinner behavior.
     pub fn with_enabled(enabled: bool) -> Self {
-        Self {
-            running: Arc::new(AtomicBool::new(false)),
-            thread_handle: None,
-            enabled,
-            iteration_start: Instant::now(),
-            session_elapsed_ms: 0,
-            context: Arc::new(std::sync::Mutex::new(SpinnerContext::default())),
-        }
+        Self::create(enabled, 0)
     }
 
     /// Create a spinner with session elapsed time from previous iterations.
@@ -136,14 +144,7 @@ impl Spinner {
     ///
     /// * `session_elapsed_ms` - Accumulated time from previous iterations
     pub fn with_session_elapsed(session_elapsed_ms: u64) -> Self {
-        Self {
-            running: Arc::new(AtomicBool::new(false)),
-            thread_handle: None,
-            enabled: std::io::stdout().is_terminal(),
-            iteration_start: Instant::now(),
-            session_elapsed_ms,
-            context: Arc::new(std::sync::Mutex::new(SpinnerContext::default())),
-        }
+        Self::create(std::io::stdout().is_terminal(), session_elapsed_ms)
     }
 
     /// Check if the spinner is currently running.
@@ -285,7 +286,7 @@ fn run_spinner(
     running: Arc<AtomicBool>,
     iteration_start: Instant,
     session_elapsed_ms: u64,
-    context: Arc<std::sync::Mutex<SpinnerContext>>,
+    context: Arc<Mutex<SpinnerContext>>,
 ) {
     let mut frame = 0;
     let mut stdout = std::io::stdout();
@@ -309,8 +310,11 @@ fn run_spinner(
             .unwrap_or("Working...");
 
         // Build the spinner line
+        // Use CR to return to start, then CLEAR_EOL to clear to end of line
+        // This prevents residual characters when text length changes
+        // (e.g., "59s" → "1m 0s" or context message changes)
         let spinner_line = format!(
-            "\r\x1b[36m{}\x1b[0m {} {}",
+            "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {}",
             spinner_char, message, time_display
         );
 
@@ -368,7 +372,7 @@ fn format_time_short(secs: u64) -> String {
 fn clear_spinner_line() {
     let mut stdout = std::io::stdout();
     // Move to beginning of line, clear to end of line
-    let _ = write!(stdout, "\r\x1b[K");
+    let _ = write!(stdout, "{CR}{CLEAR_EOL}");
     let _ = stdout.flush();
 }
 

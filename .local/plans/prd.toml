@@ -114,7 +114,7 @@ steps = [
   "Observe the spinner when context changes (e.g., 'Thinking...' to 'Running tool...')",
   "Verify no residual characters appear when the line gets shorter",
 ]
-passes = false
+passes = true
 acceptance = [
   "Spinner format uses '\\r\\x1b[K' to clear the line before each redraw",
   "No leftover characters appear when time format changes (e.g., '59s' → '1m 0s')",
@@ -154,4 +154,22 @@ acceptance = [
   "Headers, bold, italic, inline code, and code blocks are rendered with appropriate styling",
   "Plain output (piped/non-terminal) displays raw text without ANSI codes",
   "Rendering is consistent with markdown styling used elsewhere in the app",
+]
+
+[[stories]]
+category = "spinner"
+description = "As a user, I want the spinner to display session name, current iteration, and remaining iterations so I can track progress during execution."
+steps = [
+  "Run ralph with a multi-iteration session",
+  "Observe the spinner displays session name, iteration progress (e.g., 2/5), and time info",
+  "Verify the format follows: '⠇ Running tool... Session: <name> | Iteration: 2/5 | 3m 43s | Total: 20m 40s'",
+  "Verify the iteration count updates as iterations complete",
+]
+passes = false
+acceptance = [
+  "Spinner displays session name",
+  "Spinner displays current iteration number and total iterations (e.g., 'Iteration: 2/5')",
+  "Format uses segmented style with pipe separators",
+  "Information updates correctly as iterations progress",
+  "Session metadata is passed to the spinner context",
 ]
