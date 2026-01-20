@@ -4,7 +4,7 @@ use super::timeout::try_wait_child;
 use super::types::{StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS};
 use crate::highlight::ThemeConfig;
 use crate::signal;
-use crate::spinner::{Spinner, SpinnerContext};
+use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
@@ -13,21 +13,37 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Configuration for subprocess invocation with spinner.
+///
+/// Groups parameters to keep function signatures under 5 arguments.
+#[derive(Debug, Clone)]
+pub struct SpinnerSubprocessConfig {
+    /// The command string to execute.
+    pub command: String,
+    /// Maximum duration in seconds before killing the subprocess.
+    pub timeout_secs: u64,
+    /// Configuration for syntax highlighting theme.
+    pub theme_config: ThemeConfig,
+    /// Accumulated time from previous iterations in this session.
+    pub session_elapsed_ms: u64,
+    /// Configuration for verbose tool output.
+    pub verbose_tools: VerboseToolsConfig,
+    /// Session metadata for spinner display (slug, iteration info).
+    pub session_info: SpinnerSessionInfo,
+}
+
 /// Invokes a command with stream processing, theme configuration, and spinner display.
 ///
 /// This extends [`super::invoke_subprocess_with_theme`] with spinner support:
 /// - Shows an animated spinner while waiting for LLM to respond
 /// - Displays elapsed time updating every second
+/// - Displays session name and iteration progress (if provided)
 /// - Automatically stops spinner when first output arrives
 /// - Only shows spinner when stdout is a terminal
 ///
 /// # Arguments
 ///
-/// * `command` - The command string to execute (should produce stream-json output)
-/// * `timeout_secs` - Maximum duration in seconds before killing the subprocess
-/// * `theme_config` - Configuration for syntax highlighting theme
-/// * `session_elapsed_ms` - Accumulated time from previous iterations in this session
-/// * `verbose_tools` - Configuration for verbose tool output
+/// * `config` - Configuration for the subprocess invocation
 ///
 /// # Returns
 ///
@@ -36,30 +52,28 @@ use std::time::{Duration, Instant};
 /// # Example
 ///
 /// ```no_run
-/// use ralph::subprocess::invoke_subprocess_with_spinner;
+/// use ralph::subprocess::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
 /// use ralph::highlight::ThemeConfig;
 /// use ralph::stream_processor::VerboseToolsConfig;
+/// use ralph::spinner::SpinnerSessionInfo;
 ///
-/// let config = ThemeConfig::new().with_theme("Monokai Extended");
-/// let result = invoke_subprocess_with_spinner(
-///     "claude --output-format stream-json -p 'hello'",
-///     300,
-///     config,
-///     0, // No prior session time
-///     VerboseToolsConfig::new(),
-/// );
+/// let config = SpinnerSubprocessConfig {
+///     command: "claude --output-format stream-json -p 'hello'".to_string(),
+///     timeout_secs: 300,
+///     theme_config: ThemeConfig::new().with_theme("Monokai Extended"),
+///     session_elapsed_ms: 0,
+///     verbose_tools: VerboseToolsConfig::new(),
+///     session_info: SpinnerSessionInfo::new("brave-panda".to_string(), 1, 5),
+/// };
+/// let result = invoke_subprocess_with_spinner_config(&config);
 /// ```
-pub fn invoke_subprocess_with_spinner(
-    command: &str,
-    timeout_secs: u64,
-    theme_config: ThemeConfig,
-    session_elapsed_ms: u64,
-    verbose_tools: VerboseToolsConfig,
+pub fn invoke_subprocess_with_spinner_config(
+    config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     // Spawn subprocess with stdout/stderr captured and stdin inherited
     let mut child = Command::new("sh")
         .arg("-c")
-        .arg(command)
+        .arg(&config.command)
         .stdin(Stdio::inherit()) // Inherit stdin for interactive prompts
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -84,11 +98,16 @@ pub fn invoke_subprocess_with_spinner(
     let is_terminal = std::io::stdout().is_terminal();
 
     // Create stream processor with theme configuration and verbose tools
-    let mut processor =
-        StreamProcessor::with_verbose_tools(theme_config, is_terminal, is_terminal, verbose_tools)?;
+    let mut processor = StreamProcessor::with_verbose_tools(
+        config.theme_config.clone(),
+        is_terminal,
+        is_terminal,
+        config.verbose_tools.clone(),
+    )?;
 
-    // Create and start spinner
-    let mut spinner = Spinner::with_session_elapsed(session_elapsed_ms);
+    // Create and start spinner with session context
+    let mut spinner =
+        Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone());
     spinner.start();
 
     // Track time for gap detection and spinner control
@@ -116,7 +135,7 @@ pub fn invoke_subprocess_with_spinner(
 
     // Track timeout
     let start = Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
+    let timeout = Duration::from_secs(config.timeout_secs);
 
     // Process stdout line by line with timeout checking
     // Use a separate thread to read lines so we can check timeout
@@ -199,7 +218,7 @@ pub fn invoke_subprocess_with_spinner(
             let stream_result = processor.finish();
 
             return Err(SubprocessError::Timeout {
-                timeout_secs,
+                timeout_secs: config.timeout_secs,
                 partial_result: Box::new(StreamingSubprocessResult {
                     exit_code: -1, // Indicate killed
                     stderr: stderr_captured,

@@ -13,7 +13,7 @@
 //! 2. [`invoke_subprocess_with_stream_processing`] - Adds JSON parsing and highlighting
 //! 3. [`invoke_subprocess_with_timeout`] - Adds timeout enforcement
 //! 4. [`invoke_subprocess_with_theme`] - Adds custom theme configuration
-//! 5. [`invoke_subprocess_with_spinner`] - Adds spinner display with gap detection
+//! 5. [`invoke_subprocess_with_spinner_config`] - Adds spinner display with session info
 
 mod basic;
 mod spinner;
@@ -24,7 +24,7 @@ mod types;
 
 // Re-export public API
 pub use basic::invoke_subprocess;
-pub use spinner::invoke_subprocess_with_spinner;
+pub use spinner::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
 pub use streaming::invoke_subprocess_with_stream_processing;
 pub use themed::invoke_subprocess_with_theme;
 pub use timeout::invoke_subprocess_with_timeout;

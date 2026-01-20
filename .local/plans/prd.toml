@@ -165,7 +165,7 @@ steps = [
   "Verify the format follows: '⠇ Running tool... Session: <name> | Iteration: 2/5 | 3m 43s | Total: 20m 40s'",
   "Verify the iteration count updates as iterations complete",
 ]
-passes = false
+passes = true
 acceptance = [
   "Spinner displays session name",
   "Spinner displays current iteration number and total iterations (e.g., 'Iteration: 2/5')",

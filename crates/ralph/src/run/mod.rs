@@ -13,13 +13,15 @@ use crate::iteration::{
 };
 use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::signal;
+use crate::spinner::SpinnerSessionInfo;
 use crate::startup::{
     display_iteration_header, display_iteration_summary, display_prompt, display_startup_info,
-    IterationHeader, IterationSummary, PromptDisplay, StartupInfo,
+    AttachedFile, IterationHeader, IterationSummary, PromptDisplay, StartupInfo,
 };
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
-    invoke_subprocess_with_spinner, invoke_subprocess_with_timeout, SubprocessError,
+    invoke_subprocess_with_spinner_config, invoke_subprocess_with_timeout, SpinnerSubprocessConfig,
+    SubprocessError,
 };
 use crate::summarize::{maybe_summarize_progress, SummarizeConfig};
 use ralph_core::completion::{check_completion, CompletionReason};
@@ -125,6 +127,10 @@ struct InvocationConfig<'a> {
     session_elapsed_ms: u64,
     /// Configuration for verbose tool output.
     verbose_tools_config: &'a VerboseToolsConfig,
+    /// Session slug for spinner display.
+    session_slug: &'a str,
+    /// Maximum iterations for spinner display.
+    max_iterations: usize,
 }
 
 /// Error type for run operations.
@@ -298,8 +304,15 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
 
         // Display the prompt if enabled
         if config.show_prompt {
+            // Build attached files from context paths
+            let attached_files = vec![
+                AttachedFile::new(config.context_paths.design.clone()),
+                AttachedFile::new(config.context_paths.prd.clone()),
+                AttachedFile::new(config.context_paths.progress.clone()),
+            ];
             let prompt_display = PromptDisplay {
                 prompt: &config.prompt,
+                attached_files,
             };
             display_prompt(&prompt_display);
         }
@@ -359,7 +372,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         let prd_snapshot = prd_before.clone();
 
         // Invoke LLM subprocess with retry logic, timeout, spinner, and stream processing
-        // Pass accumulated session time for spinner display
+        // Pass accumulated session time and session info for spinner display
         let invocation_config = InvocationConfig {
             command: &config.command,
             max_attempts: config.max_attempts,
@@ -368,6 +381,8 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             theme_config: config.theme_config.as_ref(),
             session_elapsed_ms: total_duration_ms.unwrap_or(0),
             verbose_tools_config: &config.verbose_tools_config,
+            session_slug: &session_slug,
+            max_iterations,
         };
         let result = match invoke_with_failure_recovery(&invocation_config) {
             Ok(r) => r,
@@ -588,7 +603,7 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
 
 /// Invoke subprocess with automatic failure recovery and timeout support.
 ///
-/// This function wraps `invoke_subprocess_with_spinner` or `invoke_subprocess_with_timeout`
+/// This function wraps `invoke_subprocess_with_spinner_config` or `invoke_subprocess_with_timeout`
 /// with failure recovery logic:
 /// - On non-zero exit code, prints raw text/stderr and re-attempts
 /// - On timeout, prints partial output and re-attempts
@@ -612,16 +627,19 @@ fn invoke_with_failure_recovery(
         // Use spinner-aware subprocess if theme config provided, otherwise use default
         let result = match config.theme_config {
             Some(theme) => {
-                match invoke_subprocess_with_spinner(
-                    config.command,
-                    config.timeout_secs,
-                    theme.clone(),
-                    config.session_elapsed_ms,
-                    config.verbose_tools_config.clone(),
-                ) {
-                    Ok(r) => Ok(r),
-                    Err(e) => Err(e),
-                }
+                let spinner_config = SpinnerSubprocessConfig {
+                    command: config.command.to_string(),
+                    timeout_secs: config.timeout_secs,
+                    theme_config: theme.clone(),
+                    session_elapsed_ms: config.session_elapsed_ms,
+                    verbose_tools: config.verbose_tools_config.clone(),
+                    session_info: SpinnerSessionInfo::new(
+                        config.session_slug.to_string(),
+                        config.iteration,
+                        config.max_iterations,
+                    ),
+                };
+                invoke_subprocess_with_spinner_config(&spinner_config)
             }
             None => invoke_subprocess_with_timeout(
                 config.command,

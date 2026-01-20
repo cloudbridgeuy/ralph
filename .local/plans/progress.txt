@@ -559,3 +559,84 @@ struct CountdownState {
 
 ### Test Count
 596 tests passing
+
+---
+
+## Spinner Session Info Display (2026-01-20)
+
+### Summary
+Added session name and iteration progress display to the spinner during LLM execution. The spinner now shows:
+- Session slug (e.g., "Session: brave-panda")
+- Iteration progress (e.g., "Iteration: 2/5")
+- Elapsed time and total session time
+
+**Format**: `⠋ Thinking... Session: brave-panda | Iteration: 2/5 | 12s • Total: 1m 45s`
+
+### Implementation Details
+
+**New types in `crates/ralph/src/spinner.rs`:**
+```rust
+/// Session metadata for spinner display.
+pub struct SpinnerSessionInfo {
+    pub slug: Option<String>,
+    pub current_iteration: Option<usize>,
+    pub max_iterations: Option<usize>,
+}
+```
+
+**New constructor:**
+```rust
+/// Create a spinner with full session context.
+pub fn with_session_context(session_elapsed_ms: u64, session_info: SpinnerSessionInfo) -> Self
+```
+
+**New config struct in `crates/ralph/src/subprocess/spinner.rs`:**
+```rust
+/// Configuration for subprocess invocation with spinner.
+pub struct SpinnerSubprocessConfig {
+    pub command: String,
+    pub timeout_secs: u64,
+    pub theme_config: ThemeConfig,
+    pub session_elapsed_ms: u64,
+    pub verbose_tools: VerboseToolsConfig,
+    pub session_info: SpinnerSessionInfo,
+}
+```
+
+### Changes Made
+1. **`crates/ralph/src/spinner.rs`**:
+   - Added `SpinnerSessionInfo` struct with slug, current_iteration, max_iterations
+   - Added `session_info: Arc<SpinnerSessionInfo>` field to `Spinner` struct
+   - Added `with_session_context()` constructor
+   - Added `format_session_info()` helper function
+   - Updated `run_spinner()` to display session info with pipe separators
+   - Added 8 new tests for session info functionality
+
+2. **`crates/ralph/src/subprocess/spinner.rs`**:
+   - Added `SpinnerSubprocessConfig` struct to bundle parameters
+   - Renamed `invoke_subprocess_with_spinner` to `invoke_subprocess_with_spinner_config`
+   - Updated to accept config struct and pass session info to spinner
+
+3. **`crates/ralph/src/subprocess/mod.rs`**:
+   - Updated exports to include `SpinnerSubprocessConfig` and renamed function
+
+4. **`crates/ralph/src/run/mod.rs`**:
+   - Added `session_slug` and `max_iterations` to `InvocationConfig`
+   - Updated `invoke_with_failure_recovery()` to build `SpinnerSubprocessConfig`
+   - Passes session slug and iteration info from run loop to subprocess
+
+### Display Logic
+- If session info is available, format is: `⠋ [message] Session: X | Iteration: Y/Z | [time]`
+- If no session info, falls back to original format: `⠋ [message] [time]`
+- Session info segments are joined with pipe separators (`|`)
+- Slug-only or iteration-only displays are supported
+
+### Acceptance Criteria Met
+- ✅ Spinner displays session name
+- ✅ Spinner displays current iteration number and total iterations (e.g., 'Iteration: 2/5')
+- ✅ Format uses segmented style with pipe separators
+- ✅ Information updates correctly as iterations progress
+- ✅ Session metadata is passed to the spinner context
+
+### Test Count
+604 tests passing (917 total including ralph_core)

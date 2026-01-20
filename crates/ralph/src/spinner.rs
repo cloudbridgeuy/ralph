@@ -80,11 +80,42 @@ impl SpinnerContext {
     }
 }
 
+/// Session metadata for spinner display.
+///
+/// Groups session context information to display alongside the spinner,
+/// keeping the function signatures under 5 arguments.
+#[derive(Debug, Clone, Default)]
+pub struct SpinnerSessionInfo {
+    /// Session slug/name (e.g., "brave-panda").
+    pub slug: Option<String>,
+    /// Current iteration number (1-indexed).
+    pub current_iteration: Option<usize>,
+    /// Total number of iterations for the session.
+    pub max_iterations: Option<usize>,
+}
+
+impl SpinnerSessionInfo {
+    /// Create new session info with all fields.
+    pub fn new(slug: String, current_iteration: usize, max_iterations: usize) -> Self {
+        Self {
+            slug: Some(slug),
+            current_iteration: Some(current_iteration),
+            max_iterations: Some(max_iterations),
+        }
+    }
+
+    /// Check if any session info is available.
+    pub fn has_info(&self) -> bool {
+        self.slug.is_some() || self.current_iteration.is_some()
+    }
+}
+
 /// A spinner that displays while waiting for LLM responses.
 ///
 /// The spinner runs on a background thread and shows:
 /// - An animated spinner character
 /// - A contextual message (e.g., "Waiting for response...", "Thinking...")
+/// - Session name and iteration progress (if provided)
 /// - Elapsed time in seconds or minutes:seconds format
 ///
 /// Call [`start`](Spinner::start) to begin spinning and [`stop`](Spinner::stop)
@@ -102,6 +133,8 @@ pub struct Spinner {
     session_elapsed_ms: u64,
     /// Current context for the spinner message.
     context: Arc<Mutex<SpinnerContext>>,
+    /// Session metadata for display.
+    session_info: Arc<SpinnerSessionInfo>,
 }
 
 impl Default for Spinner {
@@ -112,7 +145,7 @@ impl Default for Spinner {
 
 impl Spinner {
     /// Internal constructor with all configuration options.
-    fn create(enabled: bool, session_elapsed_ms: u64) -> Self {
+    fn create(enabled: bool, session_elapsed_ms: u64, session_info: SpinnerSessionInfo) -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
             thread_handle: None,
@@ -120,6 +153,7 @@ impl Spinner {
             iteration_start: Instant::now(),
             session_elapsed_ms,
             context: Arc::new(Mutex::new(SpinnerContext::default())),
+            session_info: Arc::new(session_info),
         }
     }
 
@@ -128,14 +162,18 @@ impl Spinner {
     /// The spinner is enabled only when stdout is a terminal.
     /// When piped, all spinner methods are no-ops.
     pub fn new() -> Self {
-        Self::create(std::io::stdout().is_terminal(), 0)
+        Self::create(
+            std::io::stdout().is_terminal(),
+            0,
+            SpinnerSessionInfo::default(),
+        )
     }
 
     /// Create a spinner with custom enable state.
     ///
     /// Useful for testing or forcing spinner behavior.
     pub fn with_enabled(enabled: bool) -> Self {
-        Self::create(enabled, 0)
+        Self::create(enabled, 0, SpinnerSessionInfo::default())
     }
 
     /// Create a spinner with session elapsed time from previous iterations.
@@ -144,7 +182,25 @@ impl Spinner {
     ///
     /// * `session_elapsed_ms` - Accumulated time from previous iterations
     pub fn with_session_elapsed(session_elapsed_ms: u64) -> Self {
-        Self::create(std::io::stdout().is_terminal(), session_elapsed_ms)
+        Self::create(
+            std::io::stdout().is_terminal(),
+            session_elapsed_ms,
+            SpinnerSessionInfo::default(),
+        )
+    }
+
+    /// Create a spinner with full session context.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_elapsed_ms` - Accumulated time from previous iterations
+    /// * `session_info` - Session metadata (slug, iteration numbers)
+    pub fn with_session_context(session_elapsed_ms: u64, session_info: SpinnerSessionInfo) -> Self {
+        Self::create(
+            std::io::stdout().is_terminal(),
+            session_elapsed_ms,
+            session_info,
+        )
     }
 
     /// Check if the spinner is currently running.
@@ -199,10 +255,17 @@ impl Spinner {
         let iteration_start = self.iteration_start;
         let session_elapsed_ms = self.session_elapsed_ms;
         let context_arc = Arc::clone(&self.context);
+        let session_info = Arc::clone(&self.session_info);
 
         // Spawn spinner thread
         let handle = thread::spawn(move || {
-            run_spinner(running, iteration_start, session_elapsed_ms, context_arc);
+            run_spinner(
+                running,
+                iteration_start,
+                session_elapsed_ms,
+                context_arc,
+                session_info,
+            );
         });
 
         self.thread_handle = Some(handle);
@@ -287,6 +350,7 @@ fn run_spinner(
     iteration_start: Instant,
     session_elapsed_ms: u64,
     context: Arc<Mutex<SpinnerContext>>,
+    session_info: Arc<SpinnerSessionInfo>,
 ) {
     let mut frame = 0;
     let mut stdout = std::io::stdout();
@@ -309,14 +373,25 @@ fn run_spinner(
             .map(|ctx| ctx.message())
             .unwrap_or("Working...");
 
+        // Format session info if available
+        let session_display = format_session_info(&session_info);
+
         // Build the spinner line
         // Use CR to return to start, then CLEAR_EOL to clear to end of line
         // This prevents residual characters when text length changes
         // (e.g., "59s" → "1m 0s" or context message changes)
-        let spinner_line = format!(
-            "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {}",
-            spinner_char, message, time_display
-        );
+        // Format: "⠋ Thinking... Session: brave-panda | Iteration: 2/5 | 12s • Total: 1m 45s"
+        let spinner_line = if session_display.is_empty() {
+            format!(
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {}",
+                spinner_char, message, time_display
+            )
+        } else {
+            format!(
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {}",
+                spinner_char, message, session_display, time_display
+            )
+        };
 
         // Write and flush
         let _ = write!(stdout, "{}", spinner_line);
@@ -328,6 +403,25 @@ fn run_spinner(
         // Sleep for the interval
         thread::sleep(SPINNER_INTERVAL);
     }
+}
+
+/// Format session info for spinner display.
+///
+/// # Format
+///
+/// Returns segments like "Session: brave-panda | Iteration: 2/5" or empty string if no info.
+fn format_session_info(info: &SpinnerSessionInfo) -> String {
+    let mut parts = Vec::new();
+
+    if let Some(ref slug) = info.slug {
+        parts.push(format!("Session: {}", slug));
+    }
+
+    if let (Some(current), Some(max)) = (info.current_iteration, info.max_iterations) {
+        parts.push(format!("Iteration: {}/{}", current, max));
+    }
+
+    parts.join(" | ")
 }
 
 /// Format elapsed time for spinner display.
@@ -611,5 +705,84 @@ mod tests {
         assert_eq!(spinner.get_context(), SpinnerContext::Buffering);
 
         spinner.stop();
+    }
+
+    // Session info tests
+
+    #[test]
+    fn test_spinner_session_info_default() {
+        let info = SpinnerSessionInfo::default();
+        assert!(info.slug.is_none());
+        assert!(info.current_iteration.is_none());
+        assert!(info.max_iterations.is_none());
+        assert!(!info.has_info());
+    }
+
+    #[test]
+    fn test_spinner_session_info_new() {
+        let info = SpinnerSessionInfo::new("brave-panda".to_string(), 2, 5);
+        assert_eq!(info.slug, Some("brave-panda".to_string()));
+        assert_eq!(info.current_iteration, Some(2));
+        assert_eq!(info.max_iterations, Some(5));
+        assert!(info.has_info());
+    }
+
+    #[test]
+    fn test_spinner_session_info_partial() {
+        let info = SpinnerSessionInfo {
+            slug: Some("test-session".to_string()),
+            ..Default::default()
+        };
+        assert!(info.has_info());
+
+        let info2 = SpinnerSessionInfo {
+            current_iteration: Some(1),
+            ..Default::default()
+        };
+        assert!(info2.has_info());
+    }
+
+    #[test]
+    fn test_format_session_info_empty() {
+        let info = SpinnerSessionInfo::default();
+        let display = format_session_info(&info);
+        assert_eq!(display, "");
+    }
+
+    #[test]
+    fn test_format_session_info_full() {
+        let info = SpinnerSessionInfo::new("brave-panda".to_string(), 2, 5);
+        let display = format_session_info(&info);
+        assert_eq!(display, "Session: brave-panda | Iteration: 2/5");
+    }
+
+    #[test]
+    fn test_format_session_info_slug_only() {
+        let info = SpinnerSessionInfo {
+            slug: Some("test-session".to_string()),
+            ..Default::default()
+        };
+        let display = format_session_info(&info);
+        assert_eq!(display, "Session: test-session");
+    }
+
+    #[test]
+    fn test_format_session_info_iteration_only() {
+        let info = SpinnerSessionInfo {
+            current_iteration: Some(3),
+            max_iterations: Some(10),
+            ..Default::default()
+        };
+        let display = format_session_info(&info);
+        assert_eq!(display, "Iteration: 3/10");
+    }
+
+    #[test]
+    fn test_spinner_with_session_context() {
+        let info = SpinnerSessionInfo::new("brave-panda".to_string(), 1, 3);
+        let spinner = Spinner::with_session_context(5000, info);
+        assert_eq!(spinner.session_elapsed_ms, 5000);
+        assert!(spinner.session_info.has_info());
+        assert_eq!(spinner.session_info.slug, Some("brave-panda".to_string()));
     }
 }
