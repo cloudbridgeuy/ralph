@@ -14,6 +14,7 @@ use std::fs;
 use similar::{ChangeTag, TextDiff};
 
 use crate::diff_highlight::highlight_with_basic_colors;
+use crate::render::ansi;
 use ralph_core::stream::ToolInvocation;
 
 use super::super::processor::StreamProcessor;
@@ -25,20 +26,6 @@ const MAX_BLOCK_LINES: usize = 30;
 
 /// Maximum lines to show in a unified diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
-
-/// ANSI color codes for background highlighting.
-/// Vibrant red background (24-bit RGB: 100, 40, 40) - distinguishable deletion indicator
-const RED_BG: &str = "\x1b[48;2;100;40;40m";
-/// Vibrant green background (24-bit RGB: 40, 90, 40) - distinguishable addition indicator
-const GREEN_BG: &str = "\x1b[48;2;40;90;40m";
-/// Reset all attributes
-const RESET: &str = "\x1b[0m";
-/// Dim gray foreground
-const DIM: &str = "\x1b[90m";
-/// Cyan foreground
-const CYAN: &str = "\x1b[36m";
-/// Green foreground (for checkmark)
-const GREEN: &str = "\x1b[32m";
 
 /// Format an Edit tool result using before/after display from snapshot.
 ///
@@ -89,19 +76,36 @@ fn format_before_after_highlighted(
     let mut output = String::new();
 
     // File path header with box drawing
-    output.push_str(&format!("{}── {} ──{}\n", CYAN, file_path, RESET));
+    output.push_str(&format!(
+        "{}── {} ──{}\n",
+        ansi::CYAN,
+        file_path,
+        ansi::RESET
+    ));
 
     // Before block
     output.push_str(&format_highlighted_block(
-        processor, "Before:", old_str, language, RED_BG,
+        processor,
+        "Before:",
+        old_str,
+        language,
+        ansi::RED_BG,
     ));
 
     // Horizontal separator
-    output.push_str(&format!("{}─────────────────────────{}\n", DIM, RESET));
+    output.push_str(&format!(
+        "{}─────────────────────────{}\n",
+        ansi::DIM,
+        ansi::RESET
+    ));
 
     // After block
     output.push_str(&format_highlighted_block(
-        processor, "After:", new_str, language, GREEN_BG,
+        processor,
+        "After:",
+        new_str,
+        language,
+        ansi::GREEN_BG,
     ));
 
     output
@@ -118,11 +122,11 @@ fn format_highlighted_block(
     let mut output = String::new();
 
     // Label
-    output.push_str(&format!("{}{}{}\n", DIM, label, RESET));
+    output.push_str(&format!("{}{}{}\n", ansi::DIM, label, ansi::RESET));
 
     // Handle empty content
     if content.is_empty() {
-        output.push_str(&format!("{}(empty){}\n", DIM, RESET));
+        output.push_str(&format!("{}(empty){}\n", ansi::DIM, ansi::RESET));
         return output;
     }
 
@@ -155,8 +159,8 @@ fn format_highlighted_block(
             "{}{:>width$} {}│{} {}\n",
             bg_color,
             line_num,
-            RESET,
-            RESET,
+            ansi::RESET,
+            ansi::RESET,
             line,
             width = line_count_width
         ));
@@ -166,9 +170,9 @@ fn format_highlighted_block(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            DIM,
+            ansi::DIM,
             line_count - MAX_BLOCK_LINES,
-            RESET
+            ansi::RESET
         ));
     }
 
@@ -240,7 +244,11 @@ fn format_no_changes_message(processor: &StreamProcessor, file_path: &str) -> St
     if processor.highlighting_enabled {
         format!(
             "{}✓{} {}Edit: {} (no changes){}\n",
-            GREEN, RESET, DIM, file_path, RESET
+            ansi::GREEN,
+            ansi::RESET,
+            ansi::DIM,
+            file_path,
+            ansi::RESET
         )
     } else {
         format!("  Edit: {} (no changes)\n", file_path)
@@ -346,7 +354,12 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
         let mut output = String::new();
 
         // File path header with box drawing
-        output.push_str(&format!("{}── {} ──{}\n", CYAN, file_path, RESET));
+        output.push_str(&format!(
+            "{}── {} ──{}\n",
+            ansi::CYAN,
+            file_path,
+            ansi::RESET
+        ));
 
         // The highlighted diff content wrapped in diff fences
         output.push_str("```diff\n");
@@ -360,9 +373,9 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
-                DIM,
+                ansi::DIM,
                 line_count - MAX_DIFF_LINES,
-                RESET
+                ansi::RESET
             ));
         }
 
@@ -523,7 +536,7 @@ mod tests {
         assert!(output.contains("Before:"));
         assert!(output.contains("After:"));
         // Should contain the background color codes
-        assert!(output.contains(RED_BG) || output.contains(GREEN_BG));
+        assert!(output.contains(ansi::RED_BG) || output.contains(ansi::GREEN_BG));
     }
 
     #[test]

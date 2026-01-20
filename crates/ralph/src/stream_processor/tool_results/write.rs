@@ -12,6 +12,8 @@
 
 use std::fs;
 
+use crate::render::ansi;
+
 use super::super::processor::StreamProcessor;
 use super::super::types::WriteSnapshot;
 use super::super::utils::extract_language_from_path;
@@ -21,22 +23,6 @@ const MAX_NEW_FILE_LINES: usize = 50;
 
 /// Maximum lines to show in a before/after block before truncating.
 const MAX_BLOCK_LINES: usize = 30;
-
-/// ANSI color codes for background highlighting.
-/// Vibrant red background (24-bit RGB: 100, 40, 40) - distinguishable deletion indicator
-const RED_BG: &str = "\x1b[48;2;100;40;40m";
-/// Vibrant green background (24-bit RGB: 40, 90, 40) - distinguishable addition indicator
-const GREEN_BG: &str = "\x1b[48;2;40;90;40m";
-/// Reset all attributes
-const RESET: &str = "\x1b[0m";
-/// Dim gray foreground
-const DIM: &str = "\x1b[90m";
-/// Cyan foreground
-const CYAN: &str = "\x1b[36m";
-/// Yellow foreground (for indicators)
-const YELLOW: &str = "\x1b[33m";
-/// Green foreground (for checkmark)
-const GREEN: &str = "\x1b[32m";
 
 /// Format a Write tool result using a snapshot.
 ///
@@ -105,19 +91,36 @@ fn format_before_after_highlighted(
     let mut output = String::new();
 
     // File path header with box drawing
-    output.push_str(&format!("{}── {} ──{}\n", CYAN, file_path, RESET));
+    output.push_str(&format!(
+        "{}── {} ──{}\n",
+        ansi::CYAN,
+        file_path,
+        ansi::RESET
+    ));
 
     // Before block
     output.push_str(&format_highlighted_block(
-        processor, "Before:", before, language, RED_BG,
+        processor,
+        "Before:",
+        before,
+        language,
+        ansi::RED_BG,
     ));
 
     // Horizontal separator
-    output.push_str(&format!("{}─────────────────────────{}\n", DIM, RESET));
+    output.push_str(&format!(
+        "{}─────────────────────────{}\n",
+        ansi::DIM,
+        ansi::RESET
+    ));
 
     // After block
     output.push_str(&format_highlighted_block(
-        processor, "After:", after, language, GREEN_BG,
+        processor,
+        "After:",
+        after,
+        language,
+        ansi::GREEN_BG,
     ));
 
     output
@@ -134,11 +137,11 @@ fn format_highlighted_block(
     let mut output = String::new();
 
     // Label
-    output.push_str(&format!("{}{}{}\n", DIM, label, RESET));
+    output.push_str(&format!("{}{}{}\n", ansi::DIM, label, ansi::RESET));
 
     // Handle empty content
     if content.is_empty() {
-        output.push_str(&format!("{}(empty){}\n", DIM, RESET));
+        output.push_str(&format!("{}(empty){}\n", ansi::DIM, ansi::RESET));
         return output;
     }
 
@@ -171,8 +174,8 @@ fn format_highlighted_block(
             "{}{:>width$} {}│{} {}\n",
             bg_color,
             line_num,
-            RESET,
-            RESET,
+            ansi::RESET,
+            ansi::RESET,
             line,
             width = line_count_width
         ));
@@ -182,9 +185,9 @@ fn format_highlighted_block(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            DIM,
+            ansi::DIM,
             line_count - MAX_BLOCK_LINES,
-            RESET
+            ansi::RESET
         ));
     }
 
@@ -265,7 +268,12 @@ fn format_no_changes_message(
     if processor.highlighting_enabled {
         format!(
             "{}✓{} {}Write: {} {}{}\n",
-            GREEN, RESET, DIM, file_path, indicator, RESET
+            ansi::GREEN,
+            ansi::RESET,
+            ansi::DIM,
+            file_path,
+            indicator,
+            ansi::RESET
         )
     } else {
         format!("  Write: {} {}\n", file_path, indicator)
@@ -300,7 +308,12 @@ fn format_new_file_highlighted(
     // File path header with box drawing and (new file) indicator
     output.push_str(&format!(
         "{}── {} {}(new file){} {}──{}\n",
-        CYAN, file_path, YELLOW, RESET, CYAN, RESET
+        ansi::CYAN,
+        file_path,
+        ansi::YELLOW,
+        ansi::RESET,
+        ansi::CYAN,
+        ansi::RESET
     ));
 
     // Count and potentially truncate lines
@@ -329,10 +342,10 @@ fn format_new_file_highlighted(
         let line_num = i + 1;
         output.push_str(&format!(
             "{}{:>width$} {}│{} {}\n",
-            GREEN_BG,
+            ansi::GREEN_BG,
             line_num,
-            RESET,
-            RESET,
+            ansi::RESET,
+            ansi::RESET,
             line,
             width = line_count_width
         ));
@@ -342,9 +355,9 @@ fn format_new_file_highlighted(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            DIM,
+            ansi::DIM,
             line_count - MAX_NEW_FILE_LINES,
-            RESET
+            ansi::RESET
         ));
     }
 
@@ -451,8 +464,8 @@ mod tests {
         assert!(output.contains("Before:"));
         assert!(output.contains("After:"));
         // Should contain both background color codes
-        assert!(output.contains(RED_BG));
-        assert!(output.contains(GREEN_BG));
+        assert!(output.contains(ansi::RED_BG));
+        assert!(output.contains(ansi::GREEN_BG));
     }
 
     #[test]
@@ -559,7 +572,7 @@ mod tests {
         let output = format_new_file_highlighted(&processor, "new.rs", "let x = 1;", Some("rust"));
 
         // Should contain green background ANSI code
-        assert!(output.contains(GREEN_BG));
+        assert!(output.contains(ansi::GREEN_BG));
     }
 
     #[test]
