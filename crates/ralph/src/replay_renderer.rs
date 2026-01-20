@@ -1,22 +1,45 @@
 //! Replay renderer for OutputBlock serialization.
 //!
 //! This module provides rendering functions for replaying OutputBlock instances
-//! with the same visual output as live execution. It uses the same highlighting
-//! and formatting logic to ensure replay output is visually identical.
+//! with the same visual output as live execution. It uses shared rendering
+//! functions to ensure replay output is visually identical to live execution.
 //!
 //! # Design
 //!
-//! The renderer follows the same patterns as the stream processor's event handler:
+//! The renderer delegates to shared rendering functions in the `render` module:
 //! - Text blocks are rendered with markdown/code/diff highlighting
-//! - Tool invocations show the `▶ ToolName` header with arguments
-//! - Tool results show success/error indicators with content
+//! - Tool invocations use shared render_*_invocation functions
+//! - Tool results use shared render_*_result functions
 //! - Separators emit a single newline
 
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::highlight::Highlighter;
 use crate::render::{
-    extract_language_from_path, group_files_by_directory, highlight_grep_match,
-    normalize_cat_n_format,
+    // Shared invocation renderers
+    render_bash_invocation,
+    // Shared result renderers
+    render_bash_result,
+    render_default_invocation,
+    render_default_result,
+    render_edit_before_after,
+    render_edit_diff,
+    render_glob_invocation,
+    render_glob_result,
+    render_grep_invocation,
+    render_grep_result,
+    render_no_changes_message,
+    render_notebook_edit,
+    render_read_invocation,
+    render_read_result,
+    render_todowrite_invocation,
+    render_todowrite_result,
+    render_write_new_file,
+    render_write_no_changes,
+    // Types
+    GrepInvocationParams,
+    NotebookEditParams,
+    RenderContext,
+    TodoDisplayItem,
 };
 use crate::stream_processor::{
     OutputBlock, TextBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock,
@@ -42,6 +65,15 @@ impl ReplayRenderer {
             code_highlighter: highlighter,
             markdown_skin: MadSkin::default(),
             highlighting_enabled: is_terminal,
+        }
+    }
+
+    /// Create a RenderContext for use with shared rendering functions.
+    fn render_context(&self) -> RenderContext<'_> {
+        if self.highlighting_enabled {
+            RenderContext::terminal(&self.code_highlighter)
+        } else {
+            RenderContext::plain(&self.code_highlighter)
         }
     }
 
@@ -97,841 +129,123 @@ impl ReplayRenderer {
 
     /// Render a tool invocation block.
     fn render_tool_invocation(&self, block: &ToolInvocationBlock) -> String {
+        let ctx = self.render_context();
+
         match &block.variant {
-            ToolInvocationVariant::Bash { command, .. } => self.render_bash_invocation(command),
-            grep @ ToolInvocationVariant::Grep { .. } => self.render_grep_invocation(grep),
+            ToolInvocationVariant::Bash { command, .. } => render_bash_invocation(&ctx, command),
+            ToolInvocationVariant::Grep {
+                pattern,
+                path,
+                output_mode,
+                glob,
+                file_type,
+                case_insensitive,
+            } => {
+                let params = GrepInvocationParams {
+                    pattern,
+                    path: path.as_deref(),
+                    output_mode: output_mode.as_deref(),
+                    glob: glob.as_deref(),
+                    file_type: file_type.as_deref(),
+                    case_insensitive: *case_insensitive,
+                };
+                render_grep_invocation(&ctx, &params)
+            }
             ToolInvocationVariant::Read {
                 file_path,
                 offset,
                 limit,
-            } => self.render_read_invocation(file_path, *offset, *limit),
+            } => render_read_invocation(&ctx, file_path, *offset, *limit),
             ToolInvocationVariant::Glob { pattern, path } => {
-                self.render_glob_invocation(pattern, path.as_deref())
+                render_glob_invocation(&ctx, pattern, path.as_deref())
             }
-            ToolInvocationVariant::TodoWrite { todos } => self.render_todowrite_invocation(todos),
+            ToolInvocationVariant::TodoWrite { todos } => {
+                let display_items: Vec<TodoDisplayItem> = todos
+                    .iter()
+                    .map(|t| TodoDisplayItem {
+                        content: &t.content,
+                        status: &t.status,
+                        active_form: t.active_form.as_deref(),
+                    })
+                    .collect();
+                render_todowrite_invocation(&ctx, &display_items)
+            }
             ToolInvocationVariant::Default { key_argument, .. } => {
-                self.render_default_invocation(&block.tool_name, key_argument.as_deref())
+                render_default_invocation(&ctx, &block.tool_name, key_argument.as_deref())
             }
-        }
-    }
-
-    /// Render Bash tool invocation.
-    fn render_bash_invocation(&self, command: &str) -> String {
-        let is_multiline = command.contains('\n');
-
-        if self.highlighting_enabled {
-            let mut output = String::new();
-            output.push_str("\x1b[36m▶ Bash\x1b[0m\n");
-
-            if is_multiline {
-                output.push_str("```sh\n");
-                let highlighted = self.code_highlighter.highlight(command, Some("sh"));
-                output.push_str(&highlighted);
-                if !highlighted.ends_with('\n') {
-                    output.push('\n');
-                }
-                output.push_str("```\n");
-            } else {
-                output.push_str("  ");
-                let highlighted = self.code_highlighter.highlight(command, Some("sh"));
-                let trimmed = highlighted.trim_end_matches("\x1b[0m");
-                output.push_str(trimmed);
-                output.push_str("\x1b[0m\n");
-            }
-
-            output
-        } else if is_multiline {
-            let mut output = String::new();
-            output.push_str("> Bash\n```sh\n");
-            output.push_str(command);
-            if !command.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("```\n");
-            output
-        } else {
-            format!("> Bash\n  {}\n", command)
-        }
-    }
-
-    /// Render Grep tool invocation (verbose mode).
-    fn render_grep_invocation(&self, variant: &ToolInvocationVariant) -> String {
-        let ToolInvocationVariant::Grep {
-            pattern,
-            path,
-            output_mode,
-            glob,
-            file_type,
-            case_insensitive,
-        } = variant
-        else {
-            return String::new();
-        };
-
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            output.push_str("\x1b[36m▶ Grep\x1b[0m\n");
-
-            // Pattern with regex highlighting
-            output.push_str("  pattern: ");
-            let highlighted = self.code_highlighter.highlight(pattern, Some("regex"));
-            output.push_str(&highlighted);
-            output.push('\n');
-
-            // Path
-            if let Some(p) = path {
-                output.push_str(&format!("  path: \x1b[90m{}\x1b[0m\n", p));
-            }
-
-            // Options
-            if let Some(mode) = output_mode {
-                output.push_str(&format!("  mode: \x1b[90m{}\x1b[0m\n", mode));
-            }
-            if let Some(g) = glob {
-                output.push_str(&format!("  glob: \x1b[90m{}\x1b[0m\n", g));
-            }
-            if let Some(ft) = file_type {
-                output.push_str(&format!("  type: \x1b[90m{}\x1b[0m\n", ft));
-            }
-            if *case_insensitive {
-                output.push_str("  case-insensitive: \x1b[90mtrue\x1b[0m\n");
-            }
-        } else {
-            output.push_str("> Grep\n");
-            output.push_str(&format!("  pattern: {}\n", pattern));
-            if let Some(p) = path {
-                output.push_str(&format!("  path: {}\n", p));
-            }
-            if let Some(mode) = output_mode {
-                output.push_str(&format!("  mode: {}\n", mode));
-            }
-            if let Some(g) = glob {
-                output.push_str(&format!("  glob: {}\n", g));
-            }
-            if let Some(ft) = file_type {
-                output.push_str(&format!("  type: {}\n", ft));
-            }
-            if *case_insensitive {
-                output.push_str("  case-insensitive: true\n");
-            }
-        }
-
-        output
-    }
-
-    /// Render Read tool invocation (verbose mode).
-    fn render_read_invocation(
-        &self,
-        file_path: &str,
-        offset: Option<u64>,
-        limit: Option<u64>,
-    ) -> String {
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            output.push_str("\x1b[36m▶ Read\x1b[0m\n");
-            output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", file_path));
-
-            if let Some(off) = offset {
-                output.push_str(&format!("  offset: \x1b[90m{}\x1b[0m\n", off));
-            }
-            if let Some(lim) = limit {
-                output.push_str(&format!("  limit: \x1b[90m{}\x1b[0m\n", lim));
-            }
-        } else {
-            output.push_str("> Read\n");
-            output.push_str(&format!("  {}\n", file_path));
-            if let Some(off) = offset {
-                output.push_str(&format!("  offset: {}\n", off));
-            }
-            if let Some(lim) = limit {
-                output.push_str(&format!("  limit: {}\n", lim));
-            }
-        }
-
-        output
-    }
-
-    /// Render Glob tool invocation (verbose mode).
-    fn render_glob_invocation(&self, pattern: &str, path: Option<&str>) -> String {
-        if self.highlighting_enabled {
-            let mut output = String::new();
-            output.push_str("\x1b[36m▶ Glob\x1b[0m\n");
-            output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", pattern));
-            if let Some(p) = path {
-                output.push_str(&format!("  in: \x1b[90m{}\x1b[0m\n", p));
-            }
-            output
-        } else {
-            let mut output = String::new();
-            output.push_str("> Glob\n");
-            output.push_str(&format!("  {}\n", pattern));
-            if let Some(p) = path {
-                output.push_str(&format!("  in: {}\n", p));
-            }
-            output
-        }
-    }
-
-    /// Render TodoWrite tool invocation (verbose mode).
-    fn render_todowrite_invocation(&self, todos: &[crate::stream_processor::TodoItem]) -> String {
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            output.push_str("\x1b[36m▶ TodoWrite\x1b[0m\n");
-
-            for todo in todos {
-                let status_icon = match todo.status.as_str() {
-                    "completed" => "\x1b[32m✓\x1b[0m",
-                    "in_progress" => "\x1b[33m⋯\x1b[0m",
-                    _ => "\x1b[90m○\x1b[0m",
-                };
-                output.push_str(&format!("  {} {}\n", status_icon, todo.content));
-            }
-        } else {
-            output.push_str("> TodoWrite\n");
-
-            for todo in todos {
-                let status_marker = match todo.status.as_str() {
-                    "completed" => "[x]",
-                    "in_progress" => "[~]",
-                    _ => "[ ]",
-                };
-                output.push_str(&format!("  {} {}\n", status_marker, todo.content));
-            }
-        }
-
-        output
-    }
-
-    /// Render default tool invocation.
-    fn render_default_invocation(&self, tool_name: &str, key_argument: Option<&str>) -> String {
-        if self.highlighting_enabled {
-            format!(
-                "\x1b[36m▶ {}\x1b[0m{}\n",
-                tool_name,
-                if let Some(arg) = key_argument {
-                    format!(" \x1b[90m{}\x1b[0m", arg)
-                } else {
-                    String::new()
-                }
-            )
-        } else {
-            format!("> {} {}\n", tool_name, key_argument.unwrap_or_default())
         }
     }
 
     /// Render a tool result block.
     fn render_tool_result(&self, block: &ToolResultBlock) -> String {
+        let ctx = self.render_context();
+
         match &block.variant {
             ToolResultVariant::Bash { content, truncated } => {
-                self.render_bash_result(block.is_error, content.as_deref(), *truncated)
+                render_bash_result(&ctx, block.is_error, content.as_deref(), *truncated)
             }
             ToolResultVariant::EditBeforeAfter {
                 file_path,
                 old_content,
                 new_content,
-            } => self.render_edit_before_after(file_path, old_content, new_content),
+            } => render_edit_before_after(&ctx, file_path, old_content, new_content),
             ToolResultVariant::EditDiff {
                 file_path,
                 diff_content,
-            } => self.render_edit_diff(file_path, diff_content),
+            } => render_edit_diff(&ctx, file_path, diff_content),
             ToolResultVariant::EditNoChanges { file_path } => {
-                self.render_no_changes_message(file_path, "edit")
+                render_no_changes_message(&ctx, file_path, "edit")
             }
             ToolResultVariant::WriteNewFile { file_path, content } => {
-                self.render_write_new_file(file_path, content)
+                render_write_new_file(&ctx, file_path, content)
             }
             ToolResultVariant::WriteOverwrite {
                 file_path,
                 before_content,
                 after_content,
-            } => self.render_write_overwrite(file_path, before_content, after_content),
+            } => render_edit_before_after(&ctx, file_path, before_content, after_content),
             ToolResultVariant::WriteNoChanges {
                 file_path,
                 is_new_file,
-            } => self.render_write_no_changes(file_path, *is_new_file),
+            } => render_write_no_changes(&ctx, file_path, *is_new_file),
             ToolResultVariant::Read {
                 file_path,
                 content,
                 line_count,
                 truncated,
-            } => self.render_read_result(file_path, content, *line_count, *truncated),
+            } => render_read_result(&ctx, file_path, content, *line_count, *truncated),
             ToolResultVariant::Grep {
                 match_count,
                 output_mode,
                 content,
-            } => self.render_grep_result(*match_count, output_mode, content),
+            } => render_grep_result(&ctx, *match_count, output_mode, content),
             ToolResultVariant::Glob {
                 file_count,
                 content,
                 truncated,
-            } => self.render_glob_result(*file_count, content, *truncated),
+            } => render_glob_result(&ctx, *file_count, content, *truncated),
             ToolResultVariant::TodoWrite { message } => {
-                self.render_todowrite_result(block.is_error, message.as_deref())
+                render_todowrite_result(&ctx, block.is_error, message.as_deref())
             }
-            notebook @ ToolResultVariant::NotebookEdit { .. } => {
-                self.render_notebook_edit(notebook)
+            ToolResultVariant::NotebookEdit {
+                notebook_path,
+                cell_identifier,
+                cell_type,
+                edit_mode,
+                diff_content,
+            } => {
+                let params = NotebookEditParams {
+                    notebook_path,
+                    cell_identifier,
+                    cell_type: cell_type.as_deref(),
+                    edit_mode,
+                    diff_content,
+                };
+                render_notebook_edit(&ctx, &params)
             }
             ToolResultVariant::Default { content } => {
-                self.render_default_result(block.is_error, content.as_deref())
+                render_default_result(&ctx, block.is_error, content.as_deref())
             }
-        }
-    }
-
-    /// Render Bash result.
-    fn render_bash_result(&self, is_error: bool, content: Option<&str>, truncated: bool) -> String {
-        if self.highlighting_enabled {
-            if is_error {
-                let mut output = "\x1b[31m✗ Error\x1b[0m\n".to_string();
-                if let Some(c) = content {
-                    output.push_str(&format!("\x1b[90m{}\x1b[0m\n", c));
-                }
-                output
-            } else if let Some(c) = content {
-                let mut output = format!("\x1b[90m{}\x1b[0m\n", c);
-                if truncated {
-                    output.push_str("\x1b[90m(output truncated)\x1b[0m\n");
-                }
-                output
-            } else {
-                "\x1b[32m✓\x1b[0m\n".to_string()
-            }
-        } else if is_error {
-            let mut output = "! Error\n".to_string();
-            if let Some(c) = content {
-                output.push_str(c);
-                output.push('\n');
-            }
-            output
-        } else if let Some(c) = content {
-            let mut output = c.to_string();
-            output.push('\n');
-            if truncated {
-                output.push_str("(output truncated)\n");
-            }
-            output
-        } else {
-            "OK\n".to_string()
-        }
-    }
-
-    /// Render Edit before/after result.
-    fn render_edit_before_after(
-        &self,
-        file_path: &str,
-        old_content: &str,
-        new_content: &str,
-    ) -> String {
-        let mut output = String::new();
-
-        // File header
-        if self.highlighting_enabled {
-            output.push_str(&format!("\x1b[90m{}\x1b[0m\n", file_path));
-        } else {
-            output.push_str(&format!("{}\n", file_path));
-        }
-
-        // Detect language for syntax highlighting
-        let language = extract_language_from_path(file_path);
-
-        // Before block
-        output.push_str(&self.render_content_block(old_content, language, true));
-
-        // Separator
-        if self.highlighting_enabled {
-            output.push_str("\x1b[90m────────────────────\x1b[0m\n");
-        } else {
-            output.push_str("────────────────────\n");
-        }
-
-        // After block
-        output.push_str(&self.render_content_block(new_content, language, false));
-
-        output
-    }
-
-    /// Render a content block with line numbers and background color.
-    fn render_content_block(
-        &self,
-        content: &str,
-        language: Option<&str>,
-        is_before: bool,
-    ) -> String {
-        let mut output = String::new();
-        let lines: Vec<&str> = content.lines().collect();
-        let max_line_width = lines.len().to_string().len().max(3);
-
-        for (i, line) in lines.iter().enumerate() {
-            let line_num = i + 1;
-            let line_num_str = format!("{:>width$}", line_num, width = max_line_width);
-
-            if self.highlighting_enabled {
-                // Line number with background color
-                let bg_color = if is_before {
-                    "\x1b[48;2;100;40;40m" // Red background
-                } else {
-                    "\x1b[48;2;40;90;40m" // Green background
-                };
-                output.push_str(&format!("{}{} \x1b[0m ", bg_color, line_num_str));
-
-                // Content with syntax highlighting
-                let highlighted = if let Some(lang) = language {
-                    self.code_highlighter.highlight(line, Some(lang))
-                } else {
-                    line.to_string()
-                };
-                output.push_str(highlighted.trim_end_matches("\x1b[0m"));
-                output.push_str("\x1b[0m\n");
-            } else {
-                output.push_str(&format!("{} │ {}\n", line_num_str, line));
-            }
-        }
-
-        output
-    }
-
-    /// Render Edit diff result.
-    fn render_edit_diff(&self, file_path: &str, diff_content: &str) -> String {
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            output.push_str(&format!("\x1b[90m{}\x1b[0m\n", file_path));
-            output.push_str(&highlight_with_basic_colors(diff_content));
-        } else {
-            output.push_str(&format!("{}\n", file_path));
-            output.push_str(diff_content);
-        }
-        output.push('\n');
-
-        output
-    }
-
-    /// Render no changes message.
-    fn render_no_changes_message(&self, file_path: &str, tool: &str) -> String {
-        if self.highlighting_enabled {
-            format!(
-                "\x1b[90m{}\x1b[0m\n\x1b[33m⚠ No changes ({})\x1b[0m\n",
-                file_path, tool
-            )
-        } else {
-            format!("{}\nNo changes ({})\n", file_path, tool)
-        }
-    }
-
-    /// Render Write new file result.
-    fn render_write_new_file(&self, file_path: &str, content: &str) -> String {
-        let mut output = String::new();
-
-        // File header with (new file) indicator
-        if self.highlighting_enabled {
-            output.push_str(&format!(
-                "\x1b[90m{}\x1b[0m \x1b[32m(new file)\x1b[0m\n",
-                file_path
-            ));
-        } else {
-            output.push_str(&format!("{} (new file)\n", file_path));
-        }
-
-        // Content with green background line numbers
-        let language = extract_language_from_path(file_path);
-        output.push_str(&self.render_content_block(content, language, false));
-
-        output
-    }
-
-    /// Render Write overwrite result.
-    fn render_write_overwrite(
-        &self,
-        file_path: &str,
-        before_content: &str,
-        after_content: &str,
-    ) -> String {
-        self.render_edit_before_after(file_path, before_content, after_content)
-    }
-
-    /// Render Write no changes result.
-    fn render_write_no_changes(&self, file_path: &str, is_new_file: bool) -> String {
-        if is_new_file {
-            if self.highlighting_enabled {
-                format!(
-                    "\x1b[90m{}\x1b[0m \x1b[32m(new file)\x1b[0m\n\x1b[33m⚠ Empty file created\x1b[0m\n",
-                    file_path
-                )
-            } else {
-                format!("{} (new file)\nEmpty file created\n", file_path)
-            }
-        } else {
-            self.render_no_changes_message(file_path, "write")
-        }
-    }
-
-    /// Render Read result (verbose mode).
-    ///
-    /// Normalizes cat-n format and displays with syntax highlighting, matching stream processor.
-    fn render_read_result(
-        &self,
-        file_path: &str,
-        content: &str,
-        line_count: usize,
-        truncated: bool,
-    ) -> String {
-        const MAX_CONTENT_LINES: usize = 100;
-
-        // Empty result
-        if content.is_empty() {
-            return if self.highlighting_enabled {
-                "\x1b[90m(empty file)\x1b[0m\n".to_string()
-            } else {
-                "(empty file)\n".to_string()
-            };
-        }
-
-        // Check for binary file indicator
-        if content.contains("(binary file)") || content.starts_with('\u{0}') {
-            return if self.highlighting_enabled {
-                "\x1b[90m(binary file)\x1b[0m\n".to_string()
-            } else {
-                "(binary file)\n".to_string()
-            };
-        }
-
-        // Normalize cat-n format before processing
-        let normalized_content = normalize_cat_n_format(content);
-
-        // Count lines for potential truncation
-        let lines: Vec<&str> = normalized_content.lines().collect();
-        let actual_line_count = lines.len();
-        let (display_lines, should_truncate) = if actual_line_count > MAX_CONTENT_LINES {
-            (&lines[..MAX_CONTENT_LINES], true)
-        } else {
-            (&lines[..], truncated)
-        };
-
-        let language = extract_language_from_path(file_path);
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            // Results header showing line count
-            let line_word = if line_count == 1 { "line" } else { "lines" };
-            output.push_str(&format!(
-                "\x1b[32m✓\x1b[0m \x1b[90m{} {}\x1b[0m\n",
-                line_count, line_word
-            ));
-
-            // Apply syntax highlighting to the content
-            let content_to_highlight = display_lines.join("\n");
-            let highlighted = if language.is_some() {
-                self.code_highlighter
-                    .highlight(&content_to_highlight, language)
-            } else {
-                content_to_highlight.clone()
-            };
-
-            // Display highlighted content with indentation
-            for line in highlighted.lines() {
-                output.push_str(&format!("  {}\n", line));
-            }
-
-            if should_truncate {
-                output.push_str(&format!(
-                    "\x1b[90m... {} more lines\x1b[0m\n",
-                    actual_line_count.saturating_sub(MAX_CONTENT_LINES)
-                ));
-            }
-        } else {
-            // Plain text format
-            let line_word = if line_count == 1 { "line" } else { "lines" };
-            output.push_str(&format!("{} {}\n", line_count, line_word));
-
-            for line in display_lines {
-                output.push_str(&format!("  {}\n", line));
-            }
-
-            if should_truncate {
-                output.push_str(&format!(
-                    "... {} more lines\n",
-                    actual_line_count.saturating_sub(MAX_CONTENT_LINES)
-                ));
-            }
-        }
-
-        output
-    }
-
-    /// Render Grep result (verbose mode).
-    ///
-    /// Formats based on output mode with appropriate coloring, matching stream processor.
-    fn render_grep_result(&self, match_count: usize, output_mode: &str, content: &str) -> String {
-        const MAX_RESULT_LINES: usize = 100;
-
-        // Empty result
-        if content.is_empty() {
-            return if self.highlighting_enabled {
-                "\x1b[90m(no matches)\x1b[0m\n".to_string()
-            } else {
-                "(no matches)\n".to_string()
-            };
-        }
-
-        // Count lines for potential truncation
-        let lines: Vec<&str> = content.lines().collect();
-        let line_count = lines.len();
-        let (display_lines, truncated) = if line_count > MAX_RESULT_LINES {
-            (&lines[..MAX_RESULT_LINES], true)
-        } else {
-            (&lines[..], false)
-        };
-
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            // Results header showing match count
-            let match_word = if match_count == 1 { "match" } else { "matches" };
-            output.push_str(&format!(
-                "\x1b[32m✓\x1b[0m \x1b[90m{} {}\x1b[0m\n",
-                match_count, match_word
-            ));
-
-            // Format based on output mode
-            match output_mode {
-                "files_with_matches" => {
-                    // Just file paths - show them in dim color
-                    for line in display_lines {
-                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
-                    }
-                }
-                "content" => {
-                    // Content with line numbers - highlight the content portion
-                    for line in display_lines {
-                        let highlighted_line = highlight_grep_match(line);
-                        output.push_str(&format!("  {}\n", highlighted_line));
-                    }
-                }
-                "count" => {
-                    // Just counts - show path:count pairs
-                    for line in display_lines {
-                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
-                    }
-                }
-                _ => {
-                    // Unknown mode - show raw
-                    for line in display_lines {
-                        output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
-                    }
-                }
-            }
-
-            if truncated {
-                output.push_str(&format!(
-                    "\x1b[90m... {} more lines\x1b[0m\n",
-                    line_count - MAX_RESULT_LINES
-                ));
-            }
-        } else {
-            // Plain text format
-            let match_word = if match_count == 1 { "match" } else { "matches" };
-            output.push_str(&format!("{} {}\n", match_count, match_word));
-
-            for line in display_lines {
-                output.push_str(&format!("  {}\n", line));
-            }
-
-            if truncated {
-                output.push_str(&format!(
-                    "... {} more lines\n",
-                    line_count - MAX_RESULT_LINES
-                ));
-            }
-        }
-
-        output
-    }
-
-    /// Render Glob result (verbose mode).
-    ///
-    /// Groups files by directory for readability, matching stream processor format.
-    fn render_glob_result(&self, file_count: usize, content: &str, truncated: bool) -> String {
-        const MAX_RESULT_LINES: usize = 200;
-
-        // Empty result
-        if content.is_empty() {
-            return if self.highlighting_enabled {
-                "\x1b[90m(no matches)\x1b[0m\n".to_string()
-            } else {
-                "(no matches)\n".to_string()
-            };
-        }
-
-        // Parse file paths from content
-        let files: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
-
-        // Group files by directory for readability
-        let grouped = group_files_by_directory(&files);
-
-        // Determine if we need to truncate based on total display lines
-        let total_display_lines: usize = grouped
-            .values()
-            .map(|paths| paths.len() + 1) // +1 for directory header
-            .sum();
-        let should_truncate = truncated || total_display_lines > MAX_RESULT_LINES;
-
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            // Results header showing match count
-            let file_word = if file_count == 1 { "file" } else { "files" };
-            output.push_str(&format!(
-                "\x1b[32m✓\x1b[0m \x1b[90m{} {} matched\x1b[0m\n",
-                file_count, file_word
-            ));
-
-            // Display files grouped by directory
-            let mut lines_shown = 0;
-            for (dir, paths) in &grouped {
-                if should_truncate && lines_shown >= MAX_RESULT_LINES {
-                    break;
-                }
-
-                // Directory header
-                if dir.is_empty() {
-                    output.push_str("  \x1b[1m.\x1b[0m\n");
-                } else {
-                    output.push_str(&format!("  \x1b[1m{}/\x1b[0m\n", dir));
-                }
-                lines_shown += 1;
-
-                // Files in this directory
-                for path in paths {
-                    if should_truncate && lines_shown >= MAX_RESULT_LINES {
-                        break;
-                    }
-                    // Extract just the filename part
-                    let filename = path.rsplit('/').next().unwrap_or(path);
-                    output.push_str(&format!("    \x1b[90m{}\x1b[0m\n", filename));
-                    lines_shown += 1;
-                }
-            }
-
-            if should_truncate && lines_shown < file_count {
-                output.push_str(&format!(
-                    "\x1b[90m... {} more files\x1b[0m\n",
-                    file_count.saturating_sub(lines_shown)
-                ));
-            }
-        } else {
-            // Plain text format
-            let file_word = if file_count == 1 { "file" } else { "files" };
-            output.push_str(&format!("{} {} matched\n", file_count, file_word));
-
-            let mut lines_shown = 0;
-            for (dir, paths) in &grouped {
-                if should_truncate && lines_shown >= MAX_RESULT_LINES {
-                    break;
-                }
-
-                // Directory header
-                if dir.is_empty() {
-                    output.push_str("  .\n");
-                } else {
-                    output.push_str(&format!("  {}/\n", dir));
-                }
-                lines_shown += 1;
-
-                // Files in this directory
-                for path in paths {
-                    if should_truncate && lines_shown >= MAX_RESULT_LINES {
-                        break;
-                    }
-                    let filename = path.rsplit('/').next().unwrap_or(path);
-                    output.push_str(&format!("    {}\n", filename));
-                    lines_shown += 1;
-                }
-            }
-
-            if should_truncate && lines_shown < file_count {
-                output.push_str(&format!(
-                    "... {} more files\n",
-                    file_count.saturating_sub(lines_shown)
-                ));
-            }
-        }
-
-        output
-    }
-
-    /// Render TodoWrite result.
-    fn render_todowrite_result(&self, is_error: bool, message: Option<&str>) -> String {
-        if self.highlighting_enabled {
-            if is_error {
-                format!(
-                    "\x1b[31m✗\x1b[0m {}\n",
-                    message.unwrap_or("Failed to update todos")
-                )
-            } else {
-                format!("\x1b[32m✓\x1b[0m {}\n", message.unwrap_or("Todos updated"))
-            }
-        } else if is_error {
-            format!("! {}\n", message.unwrap_or("Failed to update todos"))
-        } else {
-            format!("  {}\n", message.unwrap_or("Todos updated"))
-        }
-    }
-
-    /// Render NotebookEdit result.
-    fn render_notebook_edit(&self, variant: &ToolResultVariant) -> String {
-        let ToolResultVariant::NotebookEdit {
-            notebook_path,
-            cell_identifier,
-            cell_type,
-            edit_mode,
-            diff_content,
-        } = variant
-        else {
-            return String::new();
-        };
-
-        let mut output = String::new();
-
-        if self.highlighting_enabled {
-            output.push_str(&format!(
-                "\x1b[90m{}\x1b[0m cell {} ({}) [{}]\n",
-                notebook_path,
-                cell_identifier,
-                cell_type.as_deref().unwrap_or("code"),
-                edit_mode
-            ));
-            output.push_str(&highlight_with_basic_colors(diff_content));
-        } else {
-            output.push_str(&format!(
-                "{} cell {} ({}) [{}]\n",
-                notebook_path,
-                cell_identifier,
-                cell_type.as_deref().unwrap_or("code"),
-                edit_mode
-            ));
-            output.push_str(diff_content);
-        }
-        output.push('\n');
-
-        output
-    }
-
-    /// Render default result.
-    fn render_default_result(&self, is_error: bool, content: Option<&str>) -> String {
-        let display_content = content.unwrap_or("(no output)");
-
-        if self.highlighting_enabled {
-            if is_error {
-                format!("\x1b[31m✗ Error:\x1b[0m {}\n", display_content)
-            } else {
-                format!("\x1b[32m✓\x1b[0m \x1b[90m{}\x1b[0m\n", display_content)
-            }
-        } else if is_error {
-            format!("! Error: {}\n", display_content)
-        } else {
-            format!("  {}\n", display_content)
         }
     }
 }

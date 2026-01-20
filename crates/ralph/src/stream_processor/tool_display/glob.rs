@@ -1,8 +1,11 @@
 //! Glob tool invocation formatting (verbose mode).
 //!
 //! Formats Glob tool invocations with detailed parameter display.
+//! Delegates to the shared render module for consistent formatting.
 
 use ralph_core::stream::ToolInvocation;
+
+use crate::render::{render_glob_invocation, RenderContext};
 
 use super::super::processor::StreamProcessor;
 
@@ -22,33 +25,14 @@ pub fn format_glob_tool_invocation_verbose(
         .unwrap_or("*");
 
     // Extract optional search path
-    let search_path = invocation
-        .input
-        .get("path")
-        .and_then(|v| v.as_str())
-        .unwrap_or(".");
+    let path = invocation.input.get("path").and_then(|v| v.as_str());
 
-    if processor.highlighting_enabled {
-        let mut output = String::new();
-
-        // Header with tool name
-        output.push_str("\x1b[36m▶ Glob\x1b[0m\n");
-
-        // Pattern line - show full pattern without truncation
-        output.push_str(&format!("  \x1b[1mPattern:\x1b[0m {}\n", pattern));
-
-        // Search path
-        output.push_str(&format!("  \x1b[90mPath:\x1b[0m {}\n", search_path));
-
-        output
+    // Use shared renderer with processor's highlighter
+    let ctx = if processor.highlighting_enabled {
+        RenderContext::terminal(&processor.code_highlighter)
     } else {
-        // Plain text for non-terminal
-        let mut output = String::new();
+        RenderContext::plain(&processor.code_highlighter)
+    };
 
-        output.push_str("> Glob\n");
-        output.push_str(&format!("  Pattern: {}\n", pattern));
-        output.push_str(&format!("  Path: {}\n", search_path));
-
-        output
-    }
+    render_glob_invocation(&ctx, pattern, path)
 }

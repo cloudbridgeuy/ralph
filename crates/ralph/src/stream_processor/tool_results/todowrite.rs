@@ -1,8 +1,11 @@
 //! TodoWrite tool result formatting (verbose mode).
 //!
 //! Formats TodoWrite tool results with confirmation messages.
+//! Delegates to the shared render module for consistent formatting.
 
 use ralph_core::stream::ToolResult;
+
+use crate::render::{render_todowrite_result, RenderContext};
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
@@ -16,24 +19,19 @@ pub fn format_todowrite_tool_result_verbose(
     processor: &StreamProcessor,
     result: &ToolResult,
 ) -> String {
-    if result.is_error {
-        let error_content = result
-            .content
-            .as_ref()
-            .map(|c| truncate_string(c, 200))
-            .unwrap_or_else(|| "(todo update failed)".to_string());
-
-        return if processor.highlighting_enabled {
-            format!("\x1b[31m✗ TodoWrite error:\x1b[0m {}\n", error_content)
-        } else {
-            format!("! TodoWrite error: {}\n", error_content)
-        };
-    }
-
-    // Success case - show confirmation message
-    if processor.highlighting_enabled {
-        "\x1b[32m✓\x1b[0m \x1b[90mtodos updated\x1b[0m\n".to_string()
+    // For errors, use truncated content as message
+    let message = if result.is_error {
+        result.content.as_ref().map(|c| truncate_string(c, 200))
     } else {
-        "(todos updated)\n".to_string()
-    }
+        Some("todos updated".to_string())
+    };
+
+    // Use shared renderer with processor's highlighter
+    let ctx = if processor.highlighting_enabled {
+        RenderContext::terminal(&processor.code_highlighter)
+    } else {
+        RenderContext::plain(&processor.code_highlighter)
+    };
+
+    render_todowrite_result(&ctx, result.is_error, message.as_deref())
 }

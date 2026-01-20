@@ -1,12 +1,14 @@
 //! Grep tool result formatting (verbose mode).
 //!
 //! Formats Grep tool results with match highlighting.
+//! Delegates to the shared render module for consistent formatting.
 
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
+use crate::render::{render_grep_result, RenderContext};
+
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
-use crate::render::highlight_grep_match;
 
 /// Format a Grep tool result with verbose output.
 ///
@@ -17,8 +19,6 @@ pub fn format_grep_tool_result_verbose(
     invocation: ToolInvocation,
     result: &ToolResult,
 ) -> String {
-    const MAX_RESULT_LINES: usize = 100;
-
     if result.is_error {
         // Error case - show error message
         let error_content = result
@@ -36,15 +36,6 @@ pub fn format_grep_tool_result_verbose(
 
     let content = result.content.as_deref().unwrap_or("");
 
-    // Empty result
-    if content.is_empty() {
-        return if processor.highlighting_enabled {
-            "\x1b[90m(no matches)\x1b[0m\n".to_string()
-        } else {
-            "(no matches)\n".to_string()
-        };
-    }
-
     // Get the output mode to determine formatting
     let output_mode = invocation
         .input
@@ -52,84 +43,17 @@ pub fn format_grep_tool_result_verbose(
         .and_then(|v| v.as_str())
         .unwrap_or("files_with_matches");
 
-    // Count lines for potential truncation
-    let lines: Vec<&str> = content.lines().collect();
-    let line_count = lines.len();
-    let (display_lines, truncated) = if line_count > MAX_RESULT_LINES {
-        (&lines[..MAX_RESULT_LINES], true)
+    // Count matches (non-empty lines)
+    let match_count = content.lines().filter(|l| !l.is_empty()).count();
+
+    // Use shared renderer with processor's highlighter
+    let ctx = if processor.highlighting_enabled {
+        RenderContext::terminal(&processor.code_highlighter)
     } else {
-        (&lines[..], false)
+        RenderContext::plain(&processor.code_highlighter)
     };
 
-    if processor.highlighting_enabled {
-        let mut output = String::new();
-
-        // Results header showing match count
-        let match_word = if line_count == 1 { "match" } else { "matches" };
-        output.push_str(&format!(
-            "\x1b[32m✓\x1b[0m \x1b[90m{} {}\x1b[0m\n",
-            line_count, match_word
-        ));
-
-        // Format based on output mode
-        match output_mode {
-            "files_with_matches" => {
-                // Just file paths - show them in dim color
-                for line in display_lines {
-                    output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
-                }
-            }
-            "content" => {
-                // Content with line numbers - highlight the pattern
-                for line in display_lines {
-                    // Format: filename:line_number:content
-                    // Try to highlight the matched pattern in the line
-                    let highlighted_line = highlight_grep_match(line);
-                    output.push_str(&format!("  {}\n", highlighted_line));
-                }
-            }
-            "count" => {
-                // Just counts - show path:count pairs
-                for line in display_lines {
-                    output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
-                }
-            }
-            _ => {
-                // Unknown mode - show raw
-                for line in display_lines {
-                    output.push_str(&format!("  \x1b[90m{}\x1b[0m\n", line));
-                }
-            }
-        }
-
-        if truncated {
-            output.push_str(&format!(
-                "\x1b[90m... {} more lines\x1b[0m\n",
-                line_count - MAX_RESULT_LINES
-            ));
-        }
-
-        output
-    } else {
-        // Plain text format
-        let mut output = String::new();
-
-        let match_word = if line_count == 1 { "match" } else { "matches" };
-        output.push_str(&format!("{} {}\n", line_count, match_word));
-
-        for line in display_lines {
-            output.push_str(&format!("  {}\n", line));
-        }
-
-        if truncated {
-            output.push_str(&format!(
-                "... {} more lines\n",
-                line_count - MAX_RESULT_LINES
-            ));
-        }
-
-        output
-    }
+    render_grep_result(&ctx, match_count, output_mode, content)
 }
 
 // Tests for highlight_grep_match are in crate::render::utils

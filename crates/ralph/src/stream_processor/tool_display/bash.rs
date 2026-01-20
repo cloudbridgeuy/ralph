@@ -1,8 +1,11 @@
 //! Bash tool invocation formatting.
 //!
 //! Formats Bash tool invocations with syntax highlighting.
+//! Delegates to the shared render module for consistent formatting.
 
 use ralph_core::stream::ToolInvocation;
+
+use crate::render::{render_bash_invocation, RenderContext};
 
 use super::super::processor::StreamProcessor;
 
@@ -21,49 +24,12 @@ pub fn format_bash_tool_invocation(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // Check if this is a multi-line command
-    let is_multiline = command.contains('\n');
-
-    if processor.highlighting_enabled {
-        let mut output = String::new();
-
-        // Header with tool name
-        output.push_str("\x1b[36m▶ Bash\x1b[0m\n");
-
-        if is_multiline {
-            // Multi-line: wrap in a code block with shell highlighting
-            output.push_str("```sh\n");
-            let highlighted = processor.code_highlighter.highlight(command, Some("sh"));
-            output.push_str(&highlighted);
-            if !highlighted.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("```\n");
-        } else {
-            // Single-line: show inline with highlighting
-            output.push_str("  ");
-            let highlighted = processor.code_highlighter.highlight(command, Some("sh"));
-            // Remove trailing reset if present to add our own formatting
-            let trimmed = highlighted.trim_end_matches("\x1b[0m");
-            output.push_str(trimmed);
-            output.push_str("\x1b[0m\n");
-        }
-
-        output
+    // Use shared renderer with processor's highlighter
+    let ctx = if processor.highlighting_enabled {
+        RenderContext::terminal(&processor.code_highlighter)
     } else {
-        // Plain text for non-terminal
-        if is_multiline {
-            let mut output = String::new();
-            output.push_str("> Bash\n");
-            output.push_str("```sh\n");
-            output.push_str(command);
-            if !command.ends_with('\n') {
-                output.push('\n');
-            }
-            output.push_str("```\n");
-            output
-        } else {
-            format!("> Bash\n  {}\n", command)
-        }
-    }
+        RenderContext::plain(&processor.code_highlighter)
+    };
+
+    render_bash_invocation(&ctx, command)
 }

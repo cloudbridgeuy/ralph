@@ -1,8 +1,11 @@
 //! Read tool invocation formatting (verbose mode).
 //!
 //! Formats Read tool invocations with file path and range information.
+//! Delegates to the shared render module for consistent formatting.
 
 use ralph_core::stream::ToolInvocation;
+
+use crate::render::{render_read_invocation, RenderContext};
 
 use super::super::processor::StreamProcessor;
 
@@ -25,47 +28,12 @@ pub fn format_read_tool_invocation_verbose(
     let offset = invocation.input.get("offset").and_then(|v| v.as_u64());
     let limit = invocation.input.get("limit").and_then(|v| v.as_u64());
 
-    if processor.highlighting_enabled {
-        let mut output = String::new();
-
-        // Header with tool name
-        output.push_str("\x1b[36m▶ Read\x1b[0m\n");
-
-        // File path
-        output.push_str(&format!("  \x1b[1mFile:\x1b[0m {}\n", file_path));
-
-        // Optional range info
-        let mut range_parts = Vec::new();
-        if let Some(o) = offset {
-            range_parts.push(format!("offset: {}", o));
-        }
-        if let Some(l) = limit {
-            range_parts.push(format!("limit: {}", l));
-        }
-        if !range_parts.is_empty() {
-            output.push_str(&format!("  \x1b[90m[{}]\x1b[0m\n", range_parts.join(", ")));
-        }
-
-        output
+    // Use shared renderer with processor's highlighter
+    let ctx = if processor.highlighting_enabled {
+        RenderContext::terminal(&processor.code_highlighter)
     } else {
-        // Plain text for non-terminal
-        let mut output = String::new();
+        RenderContext::plain(&processor.code_highlighter)
+    };
 
-        output.push_str("> Read\n");
-        output.push_str(&format!("  File: {}\n", file_path));
-
-        // Optional range info
-        let mut range_parts = Vec::new();
-        if let Some(o) = offset {
-            range_parts.push(format!("offset: {}", o));
-        }
-        if let Some(l) = limit {
-            range_parts.push(format!("limit: {}", l));
-        }
-        if !range_parts.is_empty() {
-            output.push_str(&format!("  [{}]\n", range_parts.join(", ")));
-        }
-
-        output
-    }
+    render_read_invocation(&ctx, file_path, offset, limit)
 }
