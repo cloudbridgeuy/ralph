@@ -12,10 +12,12 @@
 //! - Tool results show success/error indicators with content
 //! - Separators emit a single newline
 
-use std::collections::BTreeMap;
-
 use crate::diff_highlight::highlight_with_basic_colors;
 use crate::highlight::Highlighter;
+use crate::render::{
+    extract_language_from_path, group_files_by_directory, highlight_grep_match,
+    normalize_cat_n_format,
+};
 use crate::stream_processor::{
     OutputBlock, TextBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock,
     ToolResultVariant,
@@ -934,138 +936,6 @@ impl ReplayRenderer {
     }
 }
 
-/// Group file paths by their parent directory.
-///
-/// Returns a sorted map of directory -> list of full file paths.
-fn group_files_by_directory<'a>(files: &[&'a str]) -> BTreeMap<String, Vec<&'a str>> {
-    let mut grouped: BTreeMap<String, Vec<&'a str>> = BTreeMap::new();
-
-    for file in files {
-        let dir = match file.rfind('/') {
-            Some(pos) => file[..pos].to_string(),
-            None => String::new(), // No directory, use empty string for root
-        };
-        grouped.entry(dir).or_default().push(file);
-    }
-
-    grouped
-}
-
-/// Extract line number from a cat-n formatted line, if present.
-/// Returns (line_number_str, rest_of_line) or None if not a cat-n line.
-fn extract_line_number(line: &str) -> Option<(&str, &str)> {
-    // Try to find separator: tab or arrow character
-    let separator_pos = line.find('\t').or_else(|| line.find('→'));
-
-    if let Some(sep_pos) = separator_pos {
-        let prefix = &line[..sep_pos];
-        // Arrow is multi-byte UTF-8, so we need to handle it properly
-        let rest = if line[sep_pos..].starts_with('→') {
-            &line[sep_pos + '→'.len_utf8()..]
-        } else {
-            &line[sep_pos + 1..] // tab is single byte
-        };
-
-        // Check if prefix is whitespace followed by digits
-        let trimmed = prefix.trim_start();
-        if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) {
-            return Some((trimmed, rest));
-        }
-    }
-    None
-}
-
-/// Highlight a grep match within a line of output.
-///
-/// Attempts to find and highlight the matched portion of the line.
-/// For content mode output (filename:line_number:content), this highlights
-/// the content portion where the pattern matched.
-fn highlight_grep_match(line: &str) -> String {
-    // Parse the line format: filename:line_number:content or just filename
-    // We apply dim styling to the filename:line_number prefix
-    // and yellow styling to the content
-
-    // Try to find the pattern ":number:" which indicates content mode
-    if let Some(first_colon) = line.find(':') {
-        if let Some(second_colon_offset) = line[first_colon + 1..].find(':') {
-            let second_colon = first_colon + 1 + second_colon_offset;
-            // Check if the part between colons is a number
-            let potential_line_num = &line[first_colon + 1..second_colon];
-            if potential_line_num.chars().all(|c| c.is_ascii_digit()) {
-                // This looks like filename:line_number:content format
-                let prefix = &line[..second_colon + 1];
-                let content = &line[second_colon + 1..];
-                return format!("\x1b[90m{}\x1b[0m\x1b[93m{}\x1b[0m", prefix, content);
-            }
-        }
-    }
-
-    // Default: just show the line in dim color
-    format!("\x1b[90m{}\x1b[0m", line)
-}
-
-/// Normalize Claude CLI's `cat -n` line number format to a cleaner pipe-separated format.
-///
-/// Transforms lines from:
-/// - `     1\tcontent` → ` 1 │ content`
-/// - `    12→content` → `12 │ content`
-/// - `   123\tcontent` → `123 │ content`
-///
-/// Handles both tab (`\t`) and arrow (`→`) separators as Claude CLI may use either.
-/// Line numbers are right-aligned to the width of the largest line number.
-/// Lines that don't match the pattern are passed through unchanged.
-fn normalize_cat_n_format(content: &str) -> String {
-    let lines: Vec<&str> = content.lines().collect();
-
-    // First pass: find max line number width
-    let max_width = lines
-        .iter()
-        .filter_map(|line| extract_line_number(line))
-        .map(|(num, _)| num.len())
-        .max()
-        .unwrap_or(1);
-
-    // Second pass: format with consistent width
-    lines
-        .iter()
-        .map(|line| {
-            if let Some((num, rest)) = extract_line_number(line) {
-                format!("{:>width$} │ {}", num, rest, width = max_width)
-            } else {
-                line.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Extract programming language from file path extension.
-fn extract_language_from_path(file_path: &str) -> Option<&'static str> {
-    let ext = file_path.rsplit('.').next()?;
-    match ext {
-        "rs" => Some("rust"),
-        "py" => Some("python"),
-        "js" => Some("javascript"),
-        "ts" => Some("typescript"),
-        "tsx" | "jsx" => Some("tsx"),
-        "go" => Some("go"),
-        "java" => Some("java"),
-        "c" | "h" => Some("c"),
-        "cpp" | "cc" | "cxx" | "hpp" => Some("cpp"),
-        "rb" => Some("ruby"),
-        "sh" | "bash" | "zsh" => Some("bash"),
-        "json" => Some("json"),
-        "yaml" | "yml" => Some("yaml"),
-        "toml" => Some("toml"),
-        "md" | "markdown" => Some("markdown"),
-        "html" | "htm" => Some("html"),
-        "css" => Some("css"),
-        "sql" => Some("sql"),
-        "xml" => Some("xml"),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1269,14 +1139,7 @@ mod tests {
         assert!(result.contains("fn main() {}"));
     }
 
-    #[test]
-    fn test_extract_language_from_path() {
-        assert_eq!(extract_language_from_path("test.rs"), Some("rust"));
-        assert_eq!(extract_language_from_path("test.py"), Some("python"));
-        assert_eq!(extract_language_from_path("test.js"), Some("javascript"));
-        assert_eq!(extract_language_from_path("test.unknown"), None);
-        assert_eq!(extract_language_from_path("no_extension"), None);
-    }
+    // Tests for extract_language_from_path are in crate::render::utils
 
     #[test]
     fn test_render_with_highlighting_has_ansi() {
@@ -1419,55 +1282,6 @@ mod tests {
         assert!(result.contains("(no matches)"));
     }
 
-    #[test]
-    fn test_group_files_by_directory() {
-        let files = vec!["src/main.rs", "src/lib.rs", "tests/test.rs", "Cargo.toml"];
-        let grouped = group_files_by_directory(&files);
-        assert_eq!(grouped.len(), 3);
-        assert!(grouped.contains_key("src"));
-        assert!(grouped.contains_key("tests"));
-        assert!(grouped.contains_key("")); // root files
-        assert_eq!(grouped.get("src").map(|v| v.len()), Some(2));
-    }
-
-    #[test]
-    fn test_normalize_cat_n_format_single_digit() {
-        let input = "     1\tfn main() {";
-        let expected = "1 │ fn main() {";
-        assert_eq!(normalize_cat_n_format(input), expected);
-    }
-
-    #[test]
-    fn test_normalize_cat_n_format_arrow_separator() {
-        let input = "       1→fn main() {";
-        let expected = "1 │ fn main() {";
-        assert_eq!(normalize_cat_n_format(input), expected);
-    }
-
-    #[test]
-    fn test_normalize_cat_n_format_alignment() {
-        let input = "       9→line nine\n      10→line ten";
-        let expected = " 9 │ line nine\n10 │ line ten";
-        assert_eq!(normalize_cat_n_format(input), expected);
-    }
-
-    #[test]
-    fn test_highlight_grep_match_content_format() {
-        let line = "src/main.rs:10:fn main() {}";
-        let result = highlight_grep_match(line);
-        // Should contain ANSI codes for highlighting
-        assert!(result.contains("\x1b[90m"));
-        assert!(result.contains("\x1b[93m"));
-        assert!(result.contains("src/main.rs:10:"));
-        assert!(result.contains("fn main() {}"));
-    }
-
-    #[test]
-    fn test_highlight_grep_match_simple_path() {
-        let line = "src/main.rs";
-        let result = highlight_grep_match(line);
-        // Should be dimmed but not split
-        assert!(result.contains("\x1b[90m"));
-        assert!(result.contains("src/main.rs"));
-    }
+    // Tests for group_files_by_directory, normalize_cat_n_format, and highlight_grep_match
+    // are in crate::render::utils
 }

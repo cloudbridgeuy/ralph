@@ -6,6 +6,7 @@ use ralph_core::stream::{ToolInvocation, ToolResult};
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
+use crate::render::highlight_grep_match;
 
 /// Format a Grep tool result with verbose output.
 ///
@@ -43,13 +44,6 @@ pub fn format_grep_tool_result_verbose(
             "(no matches)\n".to_string()
         };
     }
-
-    // Extract the pattern for highlighting context
-    let pattern = invocation
-        .input
-        .get("pattern")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
 
     // Get the output mode to determine formatting
     let output_mode = invocation
@@ -90,7 +84,7 @@ pub fn format_grep_tool_result_verbose(
                 for line in display_lines {
                     // Format: filename:line_number:content
                     // Try to highlight the matched pattern in the line
-                    let highlighted_line = highlight_grep_match(line, pattern);
+                    let highlighted_line = highlight_grep_match(line);
                     output.push_str(&format!("  {}\n", highlighted_line));
                 }
             }
@@ -138,31 +132,4 @@ pub fn format_grep_tool_result_verbose(
     }
 }
 
-/// Highlight a grep match within a line of output.
-///
-/// Attempts to find and highlight the matched portion of the line.
-/// For content mode output (filename:line_number:content), this highlights
-/// the content portion where the pattern matched.
-fn highlight_grep_match(line: &str, _pattern: &str) -> String {
-    // Parse the line format: filename:line_number:content or just filename
-    // For simplicity, we'll just apply dim styling to the filename:line_number prefix
-    // and normal styling to the content
-
-    // Try to find the pattern ":number:" which indicates content mode
-    if let Some(first_colon) = line.find(':') {
-        if let Some(second_colon_offset) = line[first_colon + 1..].find(':') {
-            let second_colon = first_colon + 1 + second_colon_offset;
-            // Check if the part between colons is a number
-            let potential_line_num = &line[first_colon + 1..second_colon];
-            if potential_line_num.chars().all(|c| c.is_ascii_digit()) {
-                // This looks like filename:line_number:content format
-                let prefix = &line[..second_colon + 1];
-                let content = &line[second_colon + 1..];
-                return format!("\x1b[90m{}\x1b[0m\x1b[93m{}\x1b[0m", prefix, content);
-            }
-        }
-    }
-
-    // Default: just show the line in dim color
-    format!("\x1b[90m{}\x1b[0m", line)
-}
+// Tests for highlight_grep_match are in crate::render::utils

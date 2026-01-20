@@ -821,3 +821,81 @@ The codebase has two distinct rendering paths - stream_processor for live execut
 - Each function's location is documented (stream_processor vs replay_renderer) ✓
 - The scope of refactoring work is understood before implementation begins ✓
 - All 537 tests pass, cargo xtask lint passes
+
+---
+
+## Shared Rendering Module (2026-01-20)
+
+**Story**: Create shared rendering module with generic writer parameter
+
+**Problem**:
+The codebase had significant code duplication between stream_processor (live execution) and replay_renderer (session replay). Both paths had identical implementations of:
+- `extract_line_number()` - Parse cat-n format line numbers
+- `normalize_cat_n_format()` - Transform Claude CLI line numbers to pipe format
+- `group_files_by_directory()` - Group file paths by parent directory
+- `highlight_grep_match()` - Highlight grep content mode output
+- `extract_language_from_path()` - Detect programming language from file extension
+
+**Changes**:
+- Created new `crates/ralph/src/render/` module with:
+  - `mod.rs` - Module exports and documentation
+  - `utils.rs` - Shared utility functions (consolidated from both paths)
+- Updated `stream_processor/tool_results/read.rs` to use `crate::render::normalize_cat_n_format`
+- Updated `stream_processor/tool_results/glob.rs` to use `crate::render::group_files_by_directory`
+- Updated `stream_processor/tool_results/grep.rs` to use `crate::render::highlight_grep_match`
+- Updated `stream_processor/utils.rs` to re-export `extract_language_from_path` from render module
+- Updated `replay_renderer.rs` to import all utilities from `crate::render`
+- Removed 19 duplicated tests (now in `render/utils.rs`)
+- Removed ~200 lines of duplicated code
+
+**Key files**:
+- `crates/ralph/src/render/mod.rs` - New shared rendering module
+- `crates/ralph/src/render/utils.rs` - Consolidated utility functions with 30 tests
+- `crates/ralph/src/stream_processor/tool_results/read.rs` - Updated imports
+- `crates/ralph/src/stream_processor/tool_results/glob.rs` - Updated imports
+- `crates/ralph/src/stream_processor/tool_results/grep.rs` - Updated imports
+- `crates/ralph/src/stream_processor/utils.rs` - Re-export from render
+- `crates/ralph/src/replay_renderer.rs` - Updated imports, removed duplicates
+
+**Utility functions consolidated**:
+
+1. **`extract_line_number()`** - Parse `     1\tcontent` or `     1→content` format
+   - Returns `Option<(&str, &str)>` with line number and rest of line
+   - Handles both tab and arrow UTF-8 separators
+
+2. **`normalize_cat_n_format()`** - Transform Claude CLI cat-n format
+   - Input: `     1\tfn main()` → Output: `1 │ fn main()`
+   - Right-aligns line numbers to max width
+   - 19 tests covering all edge cases
+
+3. **`group_files_by_directory()`** - Group file paths by parent directory
+   - Returns `BTreeMap<String, Vec<&str>>` (sorted for consistent output)
+   - Root files grouped under empty string key
+   - 3 tests for various scenarios
+
+4. **`highlight_grep_match()`** - Format grep content mode output
+   - Parses `filename:line_number:content` format
+   - Applies dim styling to prefix, yellow to content
+   - Removed unused `pattern` parameter from stream processor version
+   - 3 tests for format detection
+
+5. **`extract_language_from_path()`** - Detect language from file extension
+   - Supports 40+ file types (Rust, Python, JS/TS, Go, C/C++, etc.)
+   - Consolidated stream processor's comprehensive version (70+ extensions)
+   - replay_renderer's limited version (15 extensions) superseded
+   - 8 tests for various extensions
+
+**Design decisions**:
+- Used comprehensive `extract_language_from_path` from stream_processor (more complete)
+- Used cleaner `highlight_grep_match` signature from replay_renderer (no unused param)
+- Re-export from `stream_processor/utils.rs` for backward compatibility
+- All tests moved to render/utils.rs as single source of truth
+
+**Acceptance criteria met**:
+- Shared rendering module exists with all utility functions ✓
+- All functions are pure (no I/O, no side effects) ✓
+- 30 unit tests verify correct behavior ✓
+- No direct stdout writes in the rendering module ✓
+- Live execution output unchanged (verified by 545 passing tests) ✓
+- Replay output unchanged (verified by 545 passing tests) ✓
+- All 545 tests pass, cargo xtask lint passes ✓

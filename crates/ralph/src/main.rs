@@ -18,6 +18,7 @@ pub mod iterations;
 pub mod markdown;
 pub mod paths;
 mod prompt;
+pub mod render;
 pub mod replay;
 pub mod replay_renderer;
 mod run;

@@ -7,6 +7,9 @@
 use super::types::KeyArgument;
 use serde_json::Value;
 
+// Re-export language detection from shared render module for backward compatibility
+pub use crate::render::extract_language_from_path;
+
 /// Extract the most relevant argument from a tool invocation for display.
 ///
 /// Different tools have different key arguments:
@@ -103,75 +106,4 @@ pub fn truncate_multiline(s: &str, max_lines: usize) -> (String, bool) {
     }
 }
 
-/// Extract language hint from a file path based on extension.
-///
-/// Returns the language token that can be used with syntect for syntax highlighting.
-/// Returns None for unknown extensions.
-pub fn extract_language_from_path(file_path: &str) -> Option<&'static str> {
-    // Get the extension from the file path
-    let extension = std::path::Path::new(file_path)
-        .extension()
-        .and_then(|ext| ext.to_str())?;
-
-    // Map common extensions to syntect language tokens
-    match extension.to_lowercase().as_str() {
-        // Rust
-        "rs" => Some("rust"),
-        // Python
-        "py" | "pyw" | "pyi" => Some("python"),
-        // JavaScript/TypeScript
-        "js" | "mjs" | "cjs" => Some("javascript"),
-        "ts" | "mts" | "cts" => Some("typescript"),
-        "jsx" => Some("jsx"),
-        "tsx" => Some("tsx"),
-        // Web
-        "html" | "htm" => Some("html"),
-        "css" => Some("css"),
-        "scss" | "sass" => Some("scss"),
-        // Shell
-        "sh" | "bash" | "zsh" => Some("sh"),
-        // C/C++
-        "c" | "h" => Some("c"),
-        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some("cpp"),
-        // Go
-        "go" => Some("go"),
-        // Java/Kotlin
-        "java" => Some("java"),
-        "kt" | "kts" => Some("kotlin"),
-        // Ruby
-        "rb" => Some("ruby"),
-        // PHP
-        "php" => Some("php"),
-        // Swift
-        "swift" => Some("swift"),
-        // Data formats
-        "json" => Some("json"),
-        "yaml" | "yml" => Some("yaml"),
-        "toml" => Some("toml"),
-        "xml" => Some("xml"),
-        // Markup
-        "md" | "markdown" => Some("markdown"),
-        // SQL
-        "sql" => Some("sql"),
-        // Docker
-        "dockerfile" => Some("dockerfile"),
-        // Makefile
-        "mk" | "makefile" => Some("makefile"),
-        // Config
-        "ini" | "cfg" => Some("ini"),
-        // Diff
-        "diff" | "patch" => Some("diff"),
-        // Other
-        "lua" => Some("lua"),
-        "vim" => Some("viml"),
-        "hs" => Some("haskell"),
-        "ml" | "mli" => Some("ocaml"),
-        "ex" | "exs" => Some("elixir"),
-        "erl" | "hrl" => Some("erlang"),
-        "clj" | "cljs" | "cljc" => Some("clojure"),
-        "scala" | "sc" => Some("scala"),
-        "r" => Some("r"),
-        "pl" | "pm" => Some("perl"),
-        _ => None,
-    }
-}
+// Tests for extract_language_from_path are in crate::render::utils

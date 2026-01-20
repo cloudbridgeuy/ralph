@@ -485,7 +485,7 @@ steps = [
   "Implement OutputBlock rendering for all variants",
   "Add unit tests using Vec<u8> as the writer",
 ]
-passes = false
+passes = true
 acceptance = [
   "Shared rendering module exists with all OutputBlock variant handlers",
   "All rendering functions accept a generic writer parameter",

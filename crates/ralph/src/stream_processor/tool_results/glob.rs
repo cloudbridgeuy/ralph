@@ -2,12 +2,11 @@
 //!
 //! Formats Glob tool results with all matched files displayed.
 
-use std::collections::BTreeMap;
-
 use ralph_core::stream::ToolResult;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
+use crate::render::group_files_by_directory;
 
 /// Format a Glob tool result with verbose output.
 ///
@@ -144,66 +143,4 @@ pub fn format_glob_tool_result_verbose(processor: &StreamProcessor, result: &Too
     }
 }
 
-/// Group file paths by their parent directory.
-///
-/// Returns a sorted map of directory -> list of full file paths.
-fn group_files_by_directory<'a>(files: &[&'a str]) -> BTreeMap<String, Vec<&'a str>> {
-    let mut grouped: BTreeMap<String, Vec<&'a str>> = BTreeMap::new();
-
-    for file in files {
-        let dir = match file.rfind('/') {
-            Some(pos) => file[..pos].to_string(),
-            None => String::new(), // No directory, use empty string for root
-        };
-        grouped.entry(dir).or_default().push(file);
-    }
-
-    grouped
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_group_files_by_directory() {
-        let files = vec![
-            "src/main.rs",
-            "src/lib.rs",
-            "tests/integration.rs",
-            "Cargo.toml",
-        ];
-
-        let grouped = group_files_by_directory(&files);
-
-        assert_eq!(grouped.len(), 3);
-        assert_eq!(grouped.get("src").map(|v| v.len()), Some(2));
-        assert_eq!(grouped.get("tests").map(|v| v.len()), Some(1));
-        assert_eq!(grouped.get("").map(|v| v.len()), Some(1)); // root files
-    }
-
-    #[test]
-    fn test_group_files_nested_directories() {
-        let files = vec![
-            "src/stream_processor/mod.rs",
-            "src/stream_processor/types.rs",
-            "src/run/mod.rs",
-        ];
-
-        let grouped = group_files_by_directory(&files);
-
-        assert_eq!(grouped.len(), 2);
-        assert_eq!(
-            grouped.get("src/stream_processor").map(|v| v.len()),
-            Some(2)
-        );
-        assert_eq!(grouped.get("src/run").map(|v| v.len()), Some(1));
-    }
-
-    #[test]
-    fn test_group_files_empty_input() {
-        let files: Vec<&str> = vec![];
-        let grouped = group_files_by_directory(&files);
-        assert!(grouped.is_empty());
-    }
-}
+// Tests for group_files_by_directory are in crate::render::utils
