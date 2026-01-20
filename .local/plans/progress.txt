@@ -780,3 +780,44 @@ The prompt passed to Claude CLI (after placeholder substitution) was being store
 - Replay formatting matches live execution display ✓
 - Prompt is not shown if it wasn't stored (older sessions) ✓
 - All 537 tests pass, cargo xtask lint passes
+
+---
+
+## Rendering Code Audit (2026-01-20)
+
+**Story**: Audit rendering code to identify duplication between live execution and replay
+
+**Problem**:
+The codebase has two distinct rendering paths - stream_processor for live execution and replay_renderer for session replay - with significant code duplication. This audit documents the duplication to scope future consolidation work.
+
+**Changes**:
+- Created `docs/rendering-audit.md` with comprehensive documentation of:
+  - Architecture overview with data flow diagrams
+  - Tool invocation rendering functions (6 in stream_processor, 7 in replay_renderer)
+  - Tool result rendering functions (10 in stream_processor, 14 in replay_renderer)
+  - Critical duplications identified (line normalization, file grouping, grep highlighting, language detection)
+  - Medium duplications identified (Read/Grep/Glob result formatting, content block display)
+  - Shared utilities analysis
+  - Consolidation checklist with 5 phases
+  - Recommended module structure for refactoring
+
+**Key file**: `docs/rendering-audit.md`
+
+**Critical Duplications Found**:
+1. **Line number normalization** (~70 lines) - `extract_line_number()` and `normalize_cat_n_format()` in both paths
+2. **File directory grouping** (~20 lines) - `group_files_by_directory()` identical in both paths
+3. **Grep match highlighting** (~30 lines) - `highlight_grep_match()` same core logic
+4. **Language detection** (~70 lines) - `extract_language_from_path()` different implementations
+
+**Recommended Refactoring Path**:
+1. Extract shared utilities to `crates/ralph/src/render/utils.rs`
+2. Create shared rendering module with generic `impl Write` parameter
+3. Migrate live execution to use shared module
+4. Migrate replay to use shared module
+5. Remove duplicated code from both paths
+
+**Acceptance criteria met**:
+- A clear list of duplicated rendering functions exists ✓
+- Each function's location is documented (stream_processor vs replay_renderer) ✓
+- The scope of refactoring work is understood before implementation begins ✓
+- All 537 tests pass, cargo xtask lint passes
