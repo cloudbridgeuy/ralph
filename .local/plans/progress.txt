@@ -503,3 +503,59 @@ The countdown display now shows: `⠋ Next block in 3s... [n: next]`
 
 ### Test Count
 589 tests passing
+
+---
+
+## Replay Pause/Resume (2026-01-20)
+
+### Summary
+Added the ability to pause and resume the countdown during replay by pressing 'p'. This allows users to take time to read content without the countdown progressing.
+
+**Location**: `crates/ralph/src/replay_countdown.rs`
+
+### Implementation Details
+
+**New types:**
+```rust
+/// Key action result from checking input.
+enum KeyAction {
+    None,
+    Skip,
+    TogglePause,
+}
+
+/// State for the countdown loop.
+struct CountdownState {
+    remaining: Duration,
+    paused: bool,
+    frame: usize,
+}
+```
+
+**Key bindings:**
+- `p` / `P` - Toggle pause/play
+- `n` / `N` / `Space` - Skip to next block (works when paused too)
+- `Ctrl+C` - Skip (before SIGINT handler)
+
+**Display states:**
+- Running: `⠋ Next block in 3s... [n: next | p: pause]`
+- Paused: `⏸ Paused [p: play | n: next]`
+
+**Color coding:**
+- Running: Cyan spinner (`\x1b[36m`)
+- Paused: Yellow pause icon (`\x1b[33m`)
+
+### Technical Notes
+- Refactored from elapsed-time tracking to remaining-time tracking
+- When paused, `last_tick` is reset each iteration to avoid counting paused time
+- Resuming continues from the remaining time, not from the beginning
+- The `classify_key()` function centralizes key classification for both skip and pause
+
+### Acceptance Criteria Met
+- ✅ Pressing a designated key toggles pause/play during the countdown
+- ✅ The paused state is visually indicated (e.g., 'Paused [p: play]')
+- ✅ The countdown resumes from the remaining time, not from the beginning
+- ✅ The pause/play key is documented in the spinner display
+
+### Test Count
+596 tests passing

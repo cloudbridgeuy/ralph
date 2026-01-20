@@ -8,6 +8,7 @@
 //! - Animated spinner with countdown timer
 //! - Updates every second with remaining time
 //! - Skip key support (press 'n' or Space to skip to next block)
+//! - Pause/resume support (press 'p' to toggle)
 //! - Clears automatically before the next block
 //! - No display when delay is 0 or stdout is not a terminal
 //!
@@ -16,7 +17,9 @@
 //! ```no_run
 //! use ralph::replay_countdown::wait_with_countdown;
 //!
-//! // Wait 3 seconds with countdown display (can be skipped with 'n' or Space)
+//! // Wait 3 seconds with countdown display
+//! // - Press 'n' or Space to skip to next block
+//! // - Press 'p' to pause/resume
 //! wait_with_countdown(3.0, true);
 //! ```
 
@@ -30,11 +33,16 @@ use std::time::{Duration, Instant};
 const CR: &str = "\r";
 const CLEAR_EOL: &str = "\x1b[K";
 const CYAN: &str = "\x1b[36m";
+const YELLOW: &str = "\x1b[33m";
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 
+// Pause indicator character
+const PAUSE_CHAR: char = '⏸';
+
 /// The result of waiting with countdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub enum CountdownResult {
     /// The countdown completed naturally.
     Completed,
@@ -44,7 +52,7 @@ pub enum CountdownResult {
 
 /// Wait for the specified duration with an animated countdown display.
 ///
-/// Shows a spinner with countdown like: "⠋ Next block in 3s... [n: next]"
+/// Shows a spinner with countdown like: "⠋ Next block in 3s... [n: next | p: pause]"
 ///
 /// # Arguments
 ///
@@ -62,6 +70,7 @@ pub enum CountdownResult {
 /// - If not a terminal, waits without displaying anything
 /// - Otherwise, shows animated countdown and clears when done
 /// - User can press 'n' or Space to skip to the next block
+/// - User can press 'p' to pause/resume the countdown
 pub fn wait_with_countdown(delay_secs: f64, is_terminal: bool) -> CountdownResult {
     if delay_secs <= 0.0 {
         return CountdownResult::Completed;
@@ -97,77 +106,128 @@ fn run_countdown(delay_secs: f64) -> CountdownResult {
     result
 }
 
+/// Key action result from checking input.
+enum KeyAction {
+    None,
+    Skip,
+    TogglePause,
+}
+
+/// State for the countdown loop.
+struct CountdownState {
+    remaining: Duration,
+    paused: bool,
+    frame: usize,
+}
+
+impl CountdownState {
+    fn new(delay_secs: f64) -> Self {
+        Self {
+            remaining: Duration::from_secs_f64(delay_secs),
+            paused: false,
+            frame: 0,
+        }
+    }
+}
+
 /// The main countdown loop that handles animation and key events.
 fn run_countdown_loop(delay_secs: f64) -> CountdownResult {
-    let start = Instant::now();
-    let total_duration = Duration::from_secs_f64(delay_secs);
-    let mut frame = 0;
+    let mut state = CountdownState::new(delay_secs);
     let mut stdout = std::io::stdout();
+    let mut last_tick = Instant::now();
 
     loop {
-        let elapsed = start.elapsed();
-        if elapsed >= total_duration {
-            return CountdownResult::Completed;
+        // Check for key actions
+        match check_for_key_action() {
+            KeyAction::Skip => return CountdownResult::Skipped,
+            KeyAction::TogglePause => state.paused = !state.paused,
+            KeyAction::None => {}
         }
 
-        // Check for skip key
-        if let Some(result) = check_for_skip_key() {
-            return result;
+        // Update remaining time if not paused
+        if !state.paused {
+            let now = Instant::now();
+            let elapsed = now.duration_since(last_tick);
+            last_tick = now;
+
+            if elapsed >= state.remaining {
+                return CountdownResult::Completed;
+            }
+            state.remaining -= elapsed;
+        } else {
+            // Reset last_tick when paused so we don't count paused time
+            last_tick = Instant::now();
         }
 
-        let remaining = total_duration - elapsed;
-        let remaining_secs = remaining.as_secs_f64().ceil() as u64;
+        // Render the display
+        render_countdown_line(&mut stdout, &state);
 
-        // Get current spinner character
-        let spinner_char = SPINNER_CHARS[frame % SPINNER_CHARS.len()];
-
-        // Build countdown line with skip hint
-        let countdown_line = format!(
-            "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {DIM}Next block in {}s... [n: next]{RESET}",
-            spinner_char, remaining_secs
-        );
-
-        // Write and flush
-        let _ = write!(stdout, "{}", countdown_line);
-        let _ = stdout.flush();
-
-        frame += 1;
+        state.frame += 1;
         std::thread::sleep(SPINNER_INTERVAL);
     }
 }
 
-/// Check if a skip key was pressed.
-///
-/// Returns `Some(CountdownResult::Skipped)` if a skip key was pressed,
-/// `None` otherwise.
-fn check_for_skip_key() -> Option<CountdownResult> {
+/// Render the countdown line (running or paused state).
+fn render_countdown_line(stdout: &mut std::io::Stdout, state: &CountdownState) {
+    let line = if state.paused {
+        format!("{CR}{CLEAR_EOL}{YELLOW}{PAUSE_CHAR}{RESET} {DIM}Paused [p: play | n: next]{RESET}")
+    } else {
+        let remaining_secs = state.remaining.as_secs_f64().ceil() as u64;
+        let spinner_char = SPINNER_CHARS[state.frame % SPINNER_CHARS.len()];
+        format!(
+            "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {DIM}Next block in {}s... [n: next | p: pause]{RESET}",
+            spinner_char, remaining_secs
+        )
+    };
+
+    let _ = write!(stdout, "{}", line);
+    let _ = stdout.flush();
+}
+
+/// Check for key actions (skip or pause toggle).
+fn check_for_key_action() -> KeyAction {
     // Poll with zero timeout - non-blocking check
     if event::poll(Duration::ZERO).unwrap_or(false) {
         if let Ok(Event::Key(key_event)) = event::read() {
-            if is_skip_key(key_event) {
-                return Some(CountdownResult::Skipped);
-            }
+            return classify_key(key_event);
         }
     }
-    None
+    KeyAction::None
 }
 
-/// Check if a key event is a skip key.
+/// Classify a key event as a specific action.
 ///
-/// Skip keys are:
-/// - 'n' (next)
-/// - Space
-fn is_skip_key(key_event: KeyEvent) -> bool {
+/// Key mappings:
+/// - 'n', 'N', Space, Ctrl+C: Skip to next block
+/// - 'p', 'P': Toggle pause/play
+fn classify_key(key_event: KeyEvent) -> KeyAction {
     // Only handle key press events, not release or repeat
     if key_event.kind != crossterm::event::KeyEventKind::Press {
-        return false;
+        return KeyAction::None;
     }
 
     match key_event.code {
-        KeyCode::Char('n' | 'N' | ' ') => key_event.modifiers.is_empty(),
-        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => true,
-        _ => false,
+        // Skip keys
+        KeyCode::Char('n' | 'N' | ' ') if key_event.modifiers.is_empty() => KeyAction::Skip,
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyAction::Skip
+        }
+        // Pause toggle
+        KeyCode::Char('p' | 'P') if key_event.modifiers.is_empty() => KeyAction::TogglePause,
+        _ => KeyAction::None,
     }
+}
+
+/// Check if a key event is a skip key (for use in tests).
+#[cfg(test)]
+fn is_skip_key(key_event: KeyEvent) -> bool {
+    matches!(classify_key(key_event), KeyAction::Skip)
+}
+
+/// Check if a key event is a pause toggle key (for use in tests).
+#[cfg(test)]
+fn is_pause_key(key_event: KeyEvent) -> bool {
+    matches!(classify_key(key_event), KeyAction::TogglePause)
 }
 
 /// Clear the current line.
@@ -303,5 +363,51 @@ mod tests {
     fn test_is_not_skip_key_n_with_modifier() {
         let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
         assert!(!is_skip_key(key));
+    }
+
+    #[test]
+    fn test_is_pause_key_p() {
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty());
+        assert!(is_pause_key(key));
+    }
+
+    #[test]
+    fn test_is_pause_key_p_uppercase() {
+        let key = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::empty());
+        assert!(is_pause_key(key));
+    }
+
+    #[test]
+    fn test_is_not_pause_key_with_modifier() {
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(!is_pause_key(key));
+    }
+
+    #[test]
+    fn test_is_not_pause_key_other() {
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
+        assert!(!is_pause_key(key));
+    }
+
+    #[test]
+    fn test_p_is_not_skip_key() {
+        // Ensure 'p' doesn't trigger skip (it's pause)
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty());
+        assert!(!is_skip_key(key));
+    }
+
+    #[test]
+    fn test_n_is_not_pause_key() {
+        // Ensure 'n' doesn't trigger pause (it's skip)
+        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
+        assert!(!is_pause_key(key));
+    }
+
+    #[test]
+    fn test_countdown_state_new() {
+        let state = CountdownState::new(5.0);
+        assert_eq!(state.remaining.as_secs_f64(), 5.0);
+        assert!(!state.paused);
+        assert_eq!(state.frame, 0);
     }
 }

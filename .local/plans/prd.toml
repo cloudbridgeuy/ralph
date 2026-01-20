@@ -79,7 +79,7 @@ steps = [
   "Press the pause key again to resume",
   "Observe the countdown resumes from where it left off",
 ]
-passes = false
+passes = true
 acceptance = [
   "Pressing a designated key toggles pause/play during the countdown",
   "The paused state is visually indicated (e.g., 'Paused [p: play]')",

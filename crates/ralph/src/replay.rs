@@ -286,7 +286,7 @@ fn try_display_session_prompt(session_path: &std::path::Path) {
         Err(_) => return,
     };
     if let Some(ref prompt) = metadata.prompt {
-        let prompt_display = PromptDisplay { prompt };
+        let prompt_display = PromptDisplay::from_prompt(prompt);
         display_prompt(&prompt_display);
     }
 }
@@ -383,7 +383,7 @@ fn replay_iteration(
     for block in &log.output_blocks {
         let rendered = renderer.render(block);
         print!("{}", rendered);
-        apply_delay_with_countdown(delay_secs);
+        let _ = apply_delay_with_countdown(delay_secs);
     }
 
     Ok(())
