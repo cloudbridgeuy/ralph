@@ -24,6 +24,7 @@ pub mod replay_countdown;
 pub mod replay_renderer;
 mod run;
 mod session;
+pub mod sessions_display;
 pub mod signal;
 pub mod spinner;
 pub mod startup;
@@ -377,85 +378,15 @@ fn execute_run_with_prompting(
 
 /// Execute the sessions command.
 ///
-/// Lists all sessions from the global sessions index, optionally filtered
-/// by project path or outcome status.
+/// Lists all sessions from the global sessions index with detailed metadata
+/// (cost, duration, tokens), optionally filtered by project path or outcome.
 fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let index = session::load_sessions_index()?;
+    let filter = sessions_display::SessionsFilter {
+        project: args.project,
+        outcome: args.outcome,
+    };
 
-    // Filter sessions based on arguments
-    let mut sessions: Vec<_> = index
-        .sessions
-        .iter()
-        .filter(|s| {
-            // Filter by project if specified
-            if let Some(ref project_filter) = args.project {
-                if !s.project.display().to_string().contains(project_filter) {
-                    return false;
-                }
-            }
-
-            // Filter by outcome if specified
-            if let Some(ref outcome_filter) = args.outcome {
-                let outcome_str = s.outcome.to_string();
-                if !outcome_str.eq_ignore_ascii_case(outcome_filter) {
-                    return false;
-                }
-            }
-
-            true
-        })
-        .collect();
-
-    // Sort by date (most recent first)
-    sessions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
-
-    if sessions.is_empty() {
-        if args.project.is_some() || args.outcome.is_some() {
-            println!("No sessions found matching the specified filters.");
-        } else {
-            println!("No sessions found. Run 'ralph run' to start a session.");
-        }
-        return Ok(());
-    }
-
-    // Print header
-    println!(
-        "{:<20} {:<40} {:<20} {:<6} {:<12}",
-        "SLUG", "PROJECT", "DATE", "ITERS", "OUTCOME"
-    );
-    println!("{}", "-".repeat(100));
-
-    // Print sessions
-    for session in &sessions {
-        // Truncate project path if too long
-        let project_str = session.project.display().to_string();
-        let project_display = if project_str.len() > 38 {
-            format!("...{}", &project_str[project_str.len() - 35..])
-        } else {
-            project_str
-        };
-
-        // Format date
-        let date_str = session.started_at.format("%Y-%m-%d %H:%M").to_string();
-
-        // Format outcome with color hints (no actual ANSI for now, keeping it simple)
-        let outcome_str = match session.outcome {
-            SessionOutcome::Completed => "completed",
-            SessionOutcome::InProgress => "in_progress",
-            SessionOutcome::Aborted => "aborted",
-            SessionOutcome::Failed => "failed",
-            SessionOutcome::Interrupted => "interrupted",
-        };
-
-        println!(
-            "{:<20} {:<40} {:<20} {:<6} {:<12}",
-            session.slug, project_display, date_str, session.iterations, outcome_str
-        );
-    }
-
-    // Print summary
-    println!();
-    println!("Total: {} session(s)", sessions.len());
+    sessions_display::list_sessions(filter)?;
 
     Ok(())
 }

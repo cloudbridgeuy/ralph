@@ -640,3 +640,75 @@ pub struct SpinnerSubprocessConfig {
 
 ### Test Count
 604 tests passing (917 total including ralph_core)
+
+---
+
+## Sessions Detailed Metadata Display (2026-01-20)
+
+### Summary
+Implemented a rich session listing with aggregated metadata from iteration logs, including cost, duration, and token counts. The `ralph sessions` command now shows detailed information in a formatted table.
+
+**Location**: `crates/ralph/src/sessions_display.rs`
+
+### Implementation Details
+
+**New module structure:**
+- `sessions_display.rs` - Functional core (aggregation) + Imperative shell (I/O + display)
+
+**Core types:**
+```rust
+/// Aggregated session statistics from iteration logs.
+pub struct SessionStats {
+    pub total_cost_usd: Option<f64>,
+    pub total_duration_ms: Option<u64>,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
+/// A session entry with aggregated statistics.
+pub struct SessionWithStats {
+    pub entry: SessionEntry,
+    pub stats: SessionStats,
+}
+```
+
+**Pure functions (Functional Core):**
+- `aggregate_iteration_stats(&[IterationLog]) -> SessionStats` - Aggregates metadata from iteration logs
+- `format_duration(ms: u64) -> String` - Human-readable duration (e.g., "2m 5s")
+- `format_tokens(count: u64) -> String` - Token count with K suffix (e.g., "150.0K")
+- `format_cost(cost: f64) -> String` - Cost formatting (e.g., "$1.50")
+- `truncate_left(s: &str, max_len: usize) -> String` - String truncation with "..." prefix
+
+**Display format:**
+```
+SLUG               PROJECT                   DATE             ITERS DURATION     COST      TOKENS OUTCOME
+---------------------------------------------------------------------------------------------------------
+brave-panda        .../Projects/Rust/ralph   2026-01-20 10:30     5   2m 45s   $1.23  150K/50K  completed
+                -> ralph replay brave-panda
+quiet-mountain     .../Projects/Rust/foo     2026-01-19 14:20     3      45s   $0.50   80K/20K  failed
+                -> ralph replay quiet-mountain
+```
+
+**Features:**
+- Dynamically shows columns based on available data (cost, tokens shown only if present)
+- Color-coded outcome status in terminal mode (green for completed, red for failed, etc.)
+- Replay command hint shown for each session
+- Summary line with totals (sessions, cost, duration, tokens)
+- Graceful handling of missing metadata (shows "-" for missing fields)
+
+### Changes Made
+1. **Created `crates/ralph/src/sessions_display.rs`** - New module with aggregation logic and display
+2. **Updated `crates/ralph/src/main.rs`**:
+   - Added `sessions_display` module
+   - Simplified `execute_sessions()` to use the new module
+3. **Added 16 unit tests** for pure functions in sessions_display.rs
+
+### Acceptance Criteria Met
+- ✅ Session metadata includes: name, iterations, result status, total cost, total duration, token counts
+- ✅ Data is displayed in a formatted table layout
+- ✅ Each session shows the replay command hint (e.g., 'ralph replay <slug>')
+- ✅ Sessions without complete metadata display gracefully (no crashes on missing fields)
+- ✅ No backwards compatibility required - old session formats show partial data
+
+### Test Count
+616 tests passing

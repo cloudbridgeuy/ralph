@@ -173,3 +173,21 @@ acceptance = [
   "Information updates correctly as iterations progress",
   "Session metadata is passed to the spinner context",
 ]
+
+[[stories]]
+category = "sessions"
+description = "As a user, I want the sessions command to display detailed metadata (cost, duration, tokens, iterations) in a formatted table so I can review session history."
+steps = [
+  "Run `ralph sessions` after completing one or more sessions",
+  "Observe each session displays: name, iterations (planned vs actual), result, cost, duration, and tokens",
+  "Verify the table formatting is clean and readable",
+  "Verify the replay command hint is shown for each session",
+]
+passes = true
+acceptance = [
+  "Session metadata includes: name, iterations (planned/actual), result status, total cost, total duration, token counts (input/output)",
+  "Data is displayed in a formatted table layout",
+  "Each session shows the replay command hint (e.g., 'ralph replay <slug>')",
+  "Sessions without complete metadata display gracefully (no crashes on missing fields)",
+  "No backwards compatibility required - old session formats can be ignored or show partial data",
+]
