@@ -32,6 +32,10 @@ These principles are non-negotiable when working on this codebase:
 
 6. **Maximum 5 Function Arguments**: Functions with more than 5 arguments must use config/options structs. This is enforced by `clippy::too_many_arguments` with threshold 5 (see `clippy.toml`). Test code may have exceptions where it makes tests clearer.
 
+7. **No Serial or Integration Tests**: Tests must not use `#[serial]` or modify global state (environment variables, current directory). Integration tests that spawn subprocesses or require sequential execution are not permitted. Prefer unit tests on pure functions.
+
+8. **Code Formatting**: All code must be formatted with `cargo fmt`. Run `cargo xtask lint` before committing to ensure formatting compliance. Install git hooks with `cargo xtask lint --install-hooks` for automatic pre-commit formatting checks.
+
 **Example - Refactoring too many arguments:**
 
 ```rust
