@@ -100,6 +100,30 @@ pub fn aggregate_iteration_stats(logs: &[IterationLog]) -> SessionStats {
     stats
 }
 
+/// Aggregate totals from a list of session stats (pure function).
+///
+/// Computes combined totals across multiple sessions.
+pub fn aggregate_session_totals(sessions: &[SessionWithStats]) -> SessionStats {
+    let mut totals = SessionStats::default();
+
+    for session in sessions {
+        if let Some(cost) = session.stats.total_cost_usd {
+            *totals.total_cost_usd.get_or_insert(0.0) += cost;
+        }
+        if let Some(duration) = session.stats.total_duration_ms {
+            *totals.total_duration_ms.get_or_insert(0) += duration;
+        }
+        if let Some(input) = session.stats.input_tokens {
+            *totals.input_tokens.get_or_insert(0) += input;
+        }
+        if let Some(output) = session.stats.output_tokens {
+            *totals.output_tokens.get_or_insert(0) += output;
+        }
+    }
+
+    totals
+}
+
 /// Format duration in milliseconds to a human-readable string (pure function).
 ///
 /// # Examples
@@ -147,9 +171,13 @@ pub fn format_cost(cost: f64) -> String {
 }
 
 /// Truncate a string from the left with "..." prefix (pure function).
+///
+/// Uses character-based iteration to safely handle Unicode strings.
 pub fn truncate_left(s: &str, max_len: usize) -> String {
-    if s.len() > max_len {
-        format!("...{}", &s[s.len() - (max_len - 3)..])
+    let char_count = s.chars().count();
+    if char_count > max_len {
+        let skip = char_count - (max_len - 3);
+        format!("...{}", s.chars().skip(skip).collect::<String>())
     } else {
         s.to_string()
     }
@@ -190,6 +218,29 @@ fn load_session_iteration_logs(slug: &str) -> Vec<IterationLog> {
     logs
 }
 
+/// Check if a session matches the filter criteria (pure function).
+///
+/// Enables independent unit testing of filter logic.
+fn matches_filter(session: &SessionEntry, filter: &SessionsFilter) -> bool {
+    if let Some(ref project_filter) = filter.project {
+        if !session
+            .project
+            .display()
+            .to_string()
+            .contains(project_filter)
+        {
+            return false;
+        }
+    }
+    if let Some(ref outcome_filter) = filter.outcome {
+        let outcome_str = session.outcome.to_string();
+        if !outcome_str.eq_ignore_ascii_case(outcome_filter) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Load all sessions with their aggregated statistics.
 fn load_sessions_with_stats(
     filter: &SessionsFilter,
@@ -199,24 +250,7 @@ fn load_sessions_with_stats(
     let mut sessions: Vec<SessionWithStats> = index
         .sessions
         .into_iter()
-        .filter(|s| {
-            // Filter by project if specified
-            if let Some(ref project_filter) = filter.project {
-                if !s.project.display().to_string().contains(project_filter) {
-                    return false;
-                }
-            }
-
-            // Filter by outcome if specified
-            if let Some(ref outcome_filter) = filter.outcome {
-                let outcome_str = s.outcome.to_string();
-                if !outcome_str.eq_ignore_ascii_case(outcome_filter) {
-                    return false;
-                }
-            }
-
-            true
-        })
+        .filter(|s| matches_filter(s, filter))
         .map(|entry| {
             let logs = load_session_iteration_logs(&entry.slug);
             let stats = aggregate_iteration_stats(&logs);
@@ -252,43 +286,28 @@ pub fn list_sessions(filter: SessionsFilter) -> Result<(), SessionsDisplayError>
 
     let is_terminal = std::io::stdout().is_terminal();
 
-    // Determine columns to show
-    // Base columns: SLUG, PROJECT, DATE, ITERS, OUTCOME
-    // Optional columns: DURATION, COST, TOKENS (IN/OUT)
+    // Display table
     display_sessions_table(&sessions, has_cost_data, has_token_data, is_terminal);
 
-    // Calculate totals
-    let mut total_cost: Option<f64> = None;
-    let mut total_duration: Option<u64> = None;
-    let mut total_input_tokens: Option<u64> = None;
-    let mut total_output_tokens: Option<u64> = None;
+    // Calculate and display summary
+    let totals = aggregate_session_totals(&sessions);
+    display_summary(sessions.len(), &totals);
 
-    for session in &sessions {
-        if let Some(cost) = session.stats.total_cost_usd {
-            *total_cost.get_or_insert(0.0) += cost;
-        }
-        if let Some(duration) = session.stats.total_duration_ms {
-            *total_duration.get_or_insert(0) += duration;
-        }
-        if let Some(input) = session.stats.input_tokens {
-            *total_input_tokens.get_or_insert(0) += input;
-        }
-        if let Some(output) = session.stats.output_tokens {
-            *total_output_tokens.get_or_insert(0) += output;
-        }
-    }
+    Ok(())
+}
 
-    // Print summary
+/// Display summary line with totals (imperative shell).
+fn display_summary(session_count: usize, totals: &SessionStats) {
     println!();
-    let mut summary_parts = vec![format!("{} session(s)", sessions.len())];
+    let mut summary_parts = vec![format!("{} session(s)", session_count)];
 
-    if let Some(cost) = total_cost {
+    if let Some(cost) = totals.total_cost_usd {
         summary_parts.push(format!("Total cost: {}", format_cost(cost)));
     }
-    if let Some(duration) = total_duration {
+    if let Some(duration) = totals.total_duration_ms {
         summary_parts.push(format!("Total duration: {}", format_duration(duration)));
     }
-    if let (Some(input), Some(output)) = (total_input_tokens, total_output_tokens) {
+    if let (Some(input), Some(output)) = (totals.input_tokens, totals.output_tokens) {
         summary_parts.push(format!(
             "Tokens: {} in / {} out",
             format_tokens(input),
@@ -297,8 +316,6 @@ pub fn list_sessions(filter: SessionsFilter) -> Result<(), SessionsDisplayError>
     }
 
     println!("{}", summary_parts.join(" | "));
-
-    Ok(())
 }
 
 /// Display sessions in a formatted table.
@@ -556,6 +573,117 @@ mod tests {
         let failed = format_outcome(SessionOutcome::Failed, true);
         assert!(failed.contains("\x1b[31m")); // Red
         assert!(failed.contains("failed"));
+    }
+
+    #[test]
+    fn test_truncate_left_unicode() {
+        // Test with Unicode characters to ensure UTF-8 safety
+        let unicode_path = "/Users/日本語/プロジェクト";
+        let truncated = truncate_left(unicode_path, 15);
+        assert!(truncated.starts_with("..."));
+        assert_eq!(truncated.chars().count(), 15);
+    }
+
+    #[test]
+    fn test_matches_filter_no_filter() {
+        let filter = SessionsFilter::default();
+        let entry =
+            create_test_session_entry("test-slug", "/test/project", SessionOutcome::Completed);
+        assert!(matches_filter(&entry, &filter));
+    }
+
+    #[test]
+    fn test_matches_filter_project_match() {
+        let filter = SessionsFilter {
+            project: Some("project".to_string()),
+            outcome: None,
+        };
+        let entry =
+            create_test_session_entry("test-slug", "/test/project", SessionOutcome::Completed);
+        assert!(matches_filter(&entry, &filter));
+    }
+
+    #[test]
+    fn test_matches_filter_project_no_match() {
+        let filter = SessionsFilter {
+            project: Some("other".to_string()),
+            outcome: None,
+        };
+        let entry =
+            create_test_session_entry("test-slug", "/test/project", SessionOutcome::Completed);
+        assert!(!matches_filter(&entry, &filter));
+    }
+
+    #[test]
+    fn test_matches_filter_outcome_match() {
+        let filter = SessionsFilter {
+            project: None,
+            outcome: Some("completed".to_string()),
+        };
+        let entry =
+            create_test_session_entry("test-slug", "/test/project", SessionOutcome::Completed);
+        assert!(matches_filter(&entry, &filter));
+    }
+
+    #[test]
+    fn test_matches_filter_outcome_no_match() {
+        let filter = SessionsFilter {
+            project: None,
+            outcome: Some("failed".to_string()),
+        };
+        let entry =
+            create_test_session_entry("test-slug", "/test/project", SessionOutcome::Completed);
+        assert!(!matches_filter(&entry, &filter));
+    }
+
+    #[test]
+    fn test_aggregate_session_totals() {
+        let sessions = vec![
+            create_test_session_with_stats(Some(0.10), Some(1000), Some(100), Some(50)),
+            create_test_session_with_stats(Some(0.20), Some(2000), Some(200), Some(100)),
+            create_test_session_with_stats(None, None, None, None),
+        ];
+
+        let totals = aggregate_session_totals(&sessions);
+
+        assert!((totals.total_cost_usd.unwrap() - 0.30).abs() < 0.0001);
+        assert_eq!(totals.total_duration_ms, Some(3000));
+        assert_eq!(totals.input_tokens, Some(300));
+        assert_eq!(totals.output_tokens, Some(150));
+    }
+
+    // Helper to create test session entry
+    fn create_test_session_entry(
+        slug: &str,
+        project: &str,
+        outcome: SessionOutcome,
+    ) -> SessionEntry {
+        SessionEntry {
+            slug: slug.to_string(),
+            project: std::path::PathBuf::from(project),
+            started_at: chrono::Utc::now(),
+            completed_at: None,
+            iterations: 1,
+            outcome,
+        }
+    }
+
+    // Helper to create test session with stats
+    fn create_test_session_with_stats(
+        cost: Option<f64>,
+        duration: Option<u64>,
+        input: Option<u64>,
+        output: Option<u64>,
+    ) -> SessionWithStats {
+        SessionWithStats {
+            entry: create_test_session_entry("test", "/test", SessionOutcome::Completed),
+            stats: SessionStats {
+                total_cost_usd: cost,
+                total_duration_ms: duration,
+                input_tokens: input,
+                output_tokens: output,
+            },
+        }
     }
 
     // Helper to create test iteration logs
