@@ -308,3 +308,27 @@ Added an animated countdown spinner displayed between output blocks when the `--
 - ✅ The countdown shows remaining seconds (updating each second)
 - ✅ The spinner is cleared before rendering the next block
 - ✅ No spinner is shown when --delay is omitted or set to 0
+
+---
+
+## Remove Legacy replay_chunks (2026-01-20)
+
+### Summary
+Removed the legacy `replay_chunks` function and its conditional fallback from `replay.rs`. The function was only needed for sessions created before the `output_blocks` format was introduced.
+
+### Changes Made
+1. **Deleted `replay_chunks` function** (~30 lines) from `crates/ralph/src/replay.rs`
+2. **Removed conditional fallback** that checked `log.output_blocks.is_empty()`
+3. **Inlined replay logic** - `ReplayRenderer` is now used directly in `replay_iteration`
+4. **Removed unused import** - `crate::diff_highlight::highlight_with_basic_colors`
+5. **Updated documentation** - Removed fallback references from `docs/output-blocks.md`
+
+### Code Reduction
+- ~40 lines of code removed from `replay.rs`
+- Simplified data flow (no more branching on output_blocks presence)
+
+### Acceptance Criteria Met
+- ✅ The replay_chunks function is deleted from replay.rs
+- ✅ The fallback branch checking for empty output_blocks is removed
+- ✅ replay_output_blocks is called directly without conditional
+- ✅ Code compiles and tests pass (572 tests passing)

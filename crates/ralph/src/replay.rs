@@ -16,7 +16,6 @@
 //! replay_session("quiet-mountain", Some(3)).unwrap();
 //! ```
 
-use crate::diff_highlight::highlight_with_basic_colors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::iteration::IterationLog;
 use crate::replay_countdown::apply_delay_with_countdown;
@@ -26,7 +25,7 @@ use crate::startup::{display_prompt, PromptDisplay};
 use ralph_core::session::SessionMetadata;
 use std::fs;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Error type for replay operations.
 #[derive(Debug, thiserror::Error)]
@@ -226,14 +225,8 @@ pub fn replay_session_with_options(
     // Get session directory
     let session_path = session_dir(slug);
 
-    // Find all iteration logs
+    // Find all iteration logs (returns error if none found)
     let iteration_logs = find_iteration_logs(&session_path, slug)?;
-
-    if iteration_logs.is_empty() {
-        return Err(ReplayError::NoIterations {
-            slug: slug.to_string(),
-        });
-    }
 
     // Filter to specific iteration if requested
     let logs_to_replay = if let Some(n) = options.iteration {
@@ -302,7 +295,7 @@ fn try_display_session_prompt(session_path: &std::path::Path) {
 ///
 /// Returns a sorted list of (sequence_number, path) pairs.
 fn find_iteration_logs(
-    session_path: &PathBuf,
+    session_path: &Path,
     slug: &str,
 ) -> Result<Vec<(u32, PathBuf)>, ReplayError> {
     let entries = fs::read_dir(session_path).map_err(|e| ReplayError::ReadSessionDir {
@@ -344,7 +337,7 @@ fn find_iteration_logs(
 /// Replay a single iteration to stdout.
 fn replay_iteration(
     sequence: u32,
-    path: &PathBuf,
+    path: &Path,
     highlighter: &Highlighter,
     is_terminal: bool,
     delay_secs: Option<f64>,
@@ -384,24 +377,7 @@ fn replay_iteration(
 
     println!();
 
-    // Prefer output_blocks for replay (newer format with full tool rendering)
-    // Fall back to chunks for older session files without output_blocks
-    if !log.output_blocks.is_empty() {
-        replay_output_blocks(&log, highlighter, is_terminal, delay_secs);
-    } else {
-        replay_chunks(&log, highlighter, is_terminal, delay_secs);
-    }
-
-    Ok(())
-}
-
-/// Replay using output_blocks (newer format with full tool rendering).
-fn replay_output_blocks(
-    log: &IterationLog,
-    highlighter: &Highlighter,
-    is_terminal: bool,
-    delay_secs: Option<f64>,
-) {
+    // Render output blocks for replay
     let renderer = ReplayRenderer::new(highlighter.clone(), is_terminal);
 
     for block in &log.output_blocks {
@@ -409,48 +385,8 @@ fn replay_output_blocks(
         print!("{}", rendered);
         apply_delay_with_countdown(delay_secs);
     }
-}
 
-/// Replay using chunks (legacy format, text-only).
-fn replay_chunks(
-    log: &IterationLog,
-    highlighter: &Highlighter,
-    is_terminal: bool,
-    delay_secs: Option<f64>,
-) {
-    for chunk in &log.chunks {
-        match chunk.chunk_type.as_str() {
-            "prose" => {
-                // Prose: print as-is
-                println!("{}", chunk.content);
-            }
-            "code" => {
-                // Code: apply syntax highlighting
-                let highlighted = if is_terminal {
-                    highlighter.highlight(&chunk.content, chunk.language.as_deref())
-                } else {
-                    chunk.content.clone()
-                };
-                println!("```{}", chunk.language.as_deref().unwrap_or(""));
-                print!("{}", highlighted);
-                println!("```");
-            }
-            "diff" => {
-                // Diff: apply diff highlighting
-                let highlighted = if is_terminal {
-                    highlight_with_basic_colors(&chunk.content)
-                } else {
-                    chunk.content.clone()
-                };
-                print!("{}", highlighted);
-            }
-            _ => {
-                // Unknown chunk type: print as-is
-                println!("{}", chunk.content);
-            }
-        }
-        apply_delay_with_countdown(delay_secs);
-    }
+    Ok(())
 }
 
 #[cfg(test)]

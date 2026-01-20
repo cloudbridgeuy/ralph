@@ -121,3 +121,37 @@ acceptance = [
   "No leftover characters appear when spinner context changes",
   "Spinner continues to display correctly in terminal output",
 ]
+
+[[stories]]
+category = "replay"
+description = "As a developer, I want the legacy replay_chunks function removed so the codebase has no dead code."
+steps = [
+  "Search for replay_chunks function in the codebase",
+  "Verify it no longer exists",
+  "Run `cargo build` to confirm the code compiles",
+  "Run `ralph replay <slug>` on a session with output_blocks to verify replay still works",
+]
+passes = true
+acceptance = [
+  "The replay_chunks function is deleted from replay.rs",
+  "The fallback branch checking for empty output_blocks is removed",
+  "replay_output_blocks is called directly without conditional",
+  "Code compiles and tests pass",
+]
+
+[[stories]]
+category = "prompt-display"
+description = "As a user, I want the prompt content rendered as markdown so formatted text displays correctly in the terminal."
+steps = [
+  "Run ralph with a prompt containing markdown (headers, bold, code blocks, lists)",
+  "Observe the '▶ Prompt' section renders markdown with proper formatting",
+  "Verify headers, bold text, inline code, and code blocks are styled appropriately",
+  "Verify plain (non-terminal) output remains raw text",
+]
+passes = false
+acceptance = [
+  "The existing MarkdownRenderer is used to render prompt content in terminal output",
+  "Headers, bold, italic, inline code, and code blocks are rendered with appropriate styling",
+  "Plain output (piped/non-terminal) displays raw text without ANSI codes",
+  "Rendering is consistent with markdown styling used elsewhere in the app",
+]

@@ -192,20 +192,19 @@ new_content = "fn new() {}"
 When replaying a session:
 
 1. **Load**: Read iteration TOML file and deserialize `IterationLog`
-2. **Check Format**: Use `output_blocks` if present, fall back to `chunks` for legacy sessions
-3. **Render**: `ReplayRenderer` converts each block back to formatted output
-4. **Display**: Print to stdout, recreating the original terminal experience
+2. **Render**: `ReplayRenderer` converts each block back to formatted output
+3. **Display**: Print to stdout, recreating the original terminal experience
 
 ```rust
 // In replay.rs
-if !log.output_blocks.is_empty() {
-    replay_output_blocks(&log, highlighter, is_terminal);
-} else {
-    replay_chunks(&log, highlighter, is_terminal);  // Legacy fallback
+let renderer = ReplayRenderer::new(highlighter.clone(), is_terminal);
+for block in &log.output_blocks {
+    let rendered = renderer.render(block);
+    print!("{}", rendered);
 }
 ```
 
-Legacy sessions stored only text content in `chunks` (prose, code, diff). The newer `output_blocks` format captures full tool invocation and result data for complete replay fidelity.
+The `output_blocks` format captures full tool invocation and result data for complete replay fidelity.
 
 ## Design Decisions
 
