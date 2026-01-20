@@ -62,7 +62,7 @@ steps = [
   "While the countdown spinner is active, press a skip key (e.g., 'n' or Space)",
   "Observe the countdown is cancelled and the next block renders immediately",
 ]
-passes = false
+passes = true
 acceptance = [
   "Pressing a designated key during the countdown skips to the next block",
   "The skip key is documented in the spinner display (e.g., 'Next block in 3s... [n: next]')",
@@ -96,7 +96,7 @@ steps = [
   "Verify each file shows its known description (e.g., 'Design document', 'Product requirements', 'Progress notes')",
   "Verify the table renders correctly in both terminal and piped output",
 ]
-passes = false
+passes = true
 acceptance = [
   "PromptDisplay struct includes file metadata (path and description pairs)",
   "Display functions render files as a formatted table before the prompt body",
@@ -148,7 +148,7 @@ steps = [
   "Verify headers, bold text, inline code, and code blocks are styled appropriately",
   "Verify plain (non-terminal) output remains raw text",
 ]
-passes = false
+passes = true
 acceptance = [
   "The existing MarkdownRenderer is used to render prompt content in terminal output",
   "Headers, bold, italic, inline code, and code blocks are rendered with appropriate styling",

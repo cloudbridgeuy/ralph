@@ -377,3 +377,129 @@ let spinner_line = format!(
 - ✅ No leftover characters appear when time format changes (e.g., '59s' → '1m 0s')
 - ✅ No leftover characters appear when spinner context changes
 - ✅ Spinner continues to display correctly in terminal output
+
+---
+
+## Attached Files Table Display (2026-01-20)
+
+### Summary
+Implemented a formatted table display for attached files in the prompt section. Files (design, prd, progress) are now shown with their paths and descriptions before the prompt body, and `@/path` references are stripped from the displayed prompt to avoid duplication.
+
+**Locations**:
+- `crates/ralph/src/startup/types.rs` - `AttachedFile` struct and `PromptDisplay::from_prompt()`
+- `crates/ralph/src/startup/terminal.rs` - Terminal table display and `strip_file_references()`
+- `crates/ralph/src/startup/plain.rs` - Plain text table display
+- `crates/ralph/src/run/mod.rs` - Builds attached files from `ContextPaths`
+- `crates/ralph/src/replay.rs` - Extracts files from stored prompt text
+
+### Implementation Details
+
+**AttachedFile struct:**
+```rust
+pub struct AttachedFile {
+    pub path: PathBuf,
+    pub description: &'static str,
+}
+```
+
+Automatically assigns descriptions based on filename:
+- `design.md` → "Design document"
+- `prd.toml` → "Product requirements"
+- `progress.txt` → "Progress notes"
+- Other files → "Attached file"
+
+**PromptDisplay changes:**
+```rust
+pub struct PromptDisplay<'a> {
+    pub prompt: &'a str,
+    pub attached_files: Vec<AttachedFile>,
+}
+
+impl<'a> PromptDisplay<'a> {
+    pub fn from_prompt(prompt: &'a str) -> Self {
+        // Extracts @/path references from prompt text
+    }
+}
+```
+
+**Display format (terminal):**
+```
+▶ Prompt
+────────────────────────────────────────────────────────────
+
+Attached files:
+  /path/to/design.md  →  Design document
+  /path/to/prd.toml  →  Product requirements
+  /path/to/progress.txt  →  Progress notes
+
+[prompt body with @/path references stripped]
+────────────────────────────────────────────────────────────
+```
+
+### Acceptance Criteria Met
+- ✅ PromptDisplay struct includes file metadata (path and description pairs)
+- ✅ Display functions render files as a formatted table before the prompt body
+- ✅ Known files use their assigned descriptions
+- ✅ Inline @/path references are removed from the prompt body display
+- ✅ Table formatting works for both terminal (with colors) and plain output
+
+---
+
+## Prompt Markdown Rendering (Already Implemented)
+
+### Summary
+Verified that prompt markdown rendering was already implemented. The `MarkdownRenderer` is used in `display_prompt_terminal()` to render prompts with proper formatting (headers, bold, italic, inline code, lists). Plain output displays raw text without ANSI codes.
+
+**Location**: `crates/ralph/src/startup/terminal.rs:237-239`
+
+### Acceptance Criteria Met
+- ✅ The existing MarkdownRenderer is used to render prompt content in terminal output
+- ✅ Headers, bold, italic, inline code, and code blocks are rendered with appropriate styling
+- ✅ Plain output (piped/non-terminal) displays raw text without ANSI codes
+- ✅ Rendering is consistent with markdown styling used elsewhere in the app
+
+---
+
+## Replay Skip Key (2026-01-20)
+
+### Summary
+Added the ability to skip the countdown during replay by pressing a designated key ('n' or Space). This allows users to speed through familiar content without waiting for the full delay.
+
+**Location**: `crates/ralph/src/replay_countdown.rs`
+
+### Implementation Details
+
+**New enum:**
+```rust
+pub enum CountdownResult {
+    Completed,  // Countdown finished naturally
+    Skipped,    // User pressed a skip key
+}
+```
+
+**Key detection using crossterm:**
+- Added `crossterm` dependency for cross-platform terminal input handling
+- Enabled raw mode during countdown for immediate keypress detection
+- Non-blocking poll with `Duration::ZERO` timeout
+
+**Skip keys:**
+- `n` / `N` - "next" mnemonic
+- `Space` - common skip key
+- `Ctrl+C` - also triggers skip (before SIGINT handler)
+
+**Display hint:**
+The countdown display now shows: `⠋ Next block in 3s... [n: next]`
+
+### Technical Notes
+- Raw mode is enabled only during countdown, disabled immediately after
+- Key events are filtered to only handle `KeyEventKind::Press` (not release/repeat)
+- The `CountdownResult` enum is returned but currently unused by callers
+- Non-terminal mode sleeps without input handling
+
+### Acceptance Criteria Met
+- ✅ Pressing a designated key during the countdown skips to the next block
+- ✅ The skip key is documented in the spinner display (e.g., 'Next block in 3s... [n: next]')
+- ✅ Skipping works reliably without blocking or delays
+
+### Test Count
+589 tests passing

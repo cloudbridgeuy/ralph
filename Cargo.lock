@@ -953,6 +953,7 @@ dependencies = [
  "chrono",
  "clap",
  "color-eyre",
+ "crossterm",
  "ctrlc",
  "dirs",
  "ralph_core",
