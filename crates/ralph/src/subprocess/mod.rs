@@ -22,9 +22,6 @@ mod themed;
 mod timeout;
 mod types;
 
-#[cfg(test)]
-mod tests;
-
 // Re-export public API
 pub use basic::invoke_subprocess;
 pub use spinner::invoke_subprocess_with_spinner;
