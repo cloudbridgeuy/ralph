@@ -1,578 +1,83 @@
-I've prepared a condensed summary that reduces the original ~1000 lines down to ~100 lines. The summary preserves:
+Now I'll create a condensed summary preserving key technical decisions and implementation details.
 
-- **Architecture overview**: Layer completion status, key file locations
-- **Key implementation details**: Session management, CLI flags, stream processing, verbose tool rendering, diff display system
-- **Code quality enforcements**: Clippy rules and CLAUDE.md requirements
-- **Bug fixes**: All 5 significant bug fixes documented
-- **File locations**: Key source, documentation, and test files
-- **Test coverage**: Summary of integration and unit tests
+# Ralph Progress Summary (Condensed)
 
-The summary removes:
-- Individual story completion entries (consolidated into status)
-- Detailed acceptance criteria (already verified and in code)
-- Step-by-step implementation narratives
-- Redundant file change lists per feature
-- Verbose test case listings
-
-I need your permission to write the file. Please grant write access to `/Users/guzmanmonne/Projects/Rust/ralph/.local/plans/progress.txt`.
+**Last Updated**: 2026-01-20
+**Test Count**: 566 tests passing
 
 ---
 
-## Write Tool Before/After Display (2026-01-08)
+## Architecture Overview
 
-**Story**: Use before/after display for Write tool overwrites
+### Core Modules
+| Module | Purpose |
+|--------|---------|
+| `crates/ralph/src/render/` | Shared rendering utilities (live + replay) |
+| `crates/ralph/src/stream_processor/` | Live execution output processing |
+| `crates/ralph/src/replay_renderer.rs` | Session replay rendering (orchestration) |
+| `crates/ralph/src/replay.rs` | Replay command implementation |
 
-**Changes**:
-- Replaced unified diff output with before/after blocks for Write tool overwrites
-- Added `format_before_after_display()`, `format_before_after_highlighted()`, and `format_before_after_plain()` functions
-- Added `format_highlighted_block()` and `format_plain_block()` helper functions
-- Added `RED_BG` constant for before block styling
-- Removed unified diff generation code (`generate_diff_from_snapshot`, `generate_unified_diff`, `highlight_with_basic_colors` import)
-- Updated `MAX_DIFF_LINES` to `MAX_BLOCK_LINES` (30 lines per block)
-
-**Key file**: `crates/ralph/src/stream_processor/tool_results/write.rs`
-
-**Behavior**:
-- New files: Display with green line number background, "(new file)" indicator
-- Overwrites: Display before block (red line numbers) and after block (green line numbers), separated by horizontal rule
-- Both blocks have syntax highlighting based on file extension
-- Blocks truncate at 30 lines with "... N more lines" indicator
-
-**Tests added**:
-- `test_format_before_after_plain` - verifies plain text before/after output
-- `test_format_before_after_plain_empty_before` / `_empty_after` - handles empty content
-- `test_format_before_after_plain_has_separator` - verifies horizontal separator
-- `test_format_before_after_highlighted_has_ansi_codes` - verifies ANSI codes present
-- `test_format_before_after_highlighted_has_separator` - verifies dim separator
-- `test_format_plain_block_truncation` / `_no_truncation` - truncation at 30 lines
-- `test_format_plain_block_has_line_numbers` - line number formatting
+### Key Files
+- `crates/ralph/src/stream_processor/output_block.rs` - OutputBlock enum and all variants
+- `crates/ralph/src/stream_processor/block_builders.rs` - Builder functions for creating OutputBlocks
+- `crates/ralph/src/render/utils.rs` - Shared utility functions (30 tests)
+- `crates/ralph/src/render/tool_renderers.rs` - ANSI color constants, shared rendering functions
 
 ---
 
-## Progress Summarization Spinner (2026-01-19)
+## OutputBlock System
 
-**Story**: Show spinner with elapsed time during progress file summarization
-
-**Changes**:
-- Added `Summarizing` variant to `SpinnerContext` enum with message "Summarizing progress file..."
-- Modified `maybe_summarize_progress()` to create and manage a spinner during the summarization subprocess
-- Removed the initial `eprintln!` message (spinner now shows this information)
-- Spinner starts before command execution and stops after (or on error)
-- Terminal detection handled by existing Spinner infrastructure (no spinner when piped)
-
-**Key files**:
-- `crates/ralph/src/spinner.rs` - Added `Summarizing` context variant
-- `crates/ralph/src/summarize.rs` - Integrated spinner into main entry point
-
-**Behavior**:
-- When summarization is triggered, spinner shows: "⠋ Summarizing progress file... 5s"
-- Elapsed time updates every second (uses existing spinner time formatting)
-- Spinner clears before success/failure message
-- Success shows: "Progress file summarized: N lines → M lines"
-- Failure shows via warning in caller: "Warning: Failed to summarize progress file: ..."
-- No spinner when stdout is not a terminal (handled by Spinner::new())
-
----
-
-## Progress Summarization Permission Fix (2026-01-19)
-
-**Story**: Ensure prompt.txt summarizer invokes Claude with read/write permissions so summarization succeeds
-
-**Problem**:
-The default summarization command was `claude -p {prompt}` which ran Claude without any permission mode. Without explicit permission bypass, Claude CLI may prompt interactively for permission confirmations, which blocks the non-interactive subprocess.
-
-**Changes**:
-- Updated `SUMMARIZE_COMMAND` default from `"claude -p {prompt}"` to `"claude --dangerously-skip-permissions -p {prompt}"`
-- Added test `test_default_summarize_command_has_permission_bypass` to verify the permission flag
-- Updated `test_build_summarize_command_default_templates` to reflect new command format
-
-**Key files**:
-- `crates/core/src/context.rs` - Updated `SUMMARIZE_COMMAND` constant
-- `crates/ralph/src/summarize.rs` - Updated test assertion
-
-**Rationale**:
-The summarization workflow doesn't require Claude to access files directly - it receives the progress file content as part of the prompt and outputs the summary to stdout. The Rust code then writes the output to the file. However, Claude CLI without explicit permission mode may still prompt interactively, which fails in a subprocess. Using `--dangerously-skip-permissions` ensures the subprocess completes without blocking.
-
----
-
-## Development Documentation (2026-01-19)
-
-**Story**: Document local development build instructions
-
-**Changes**:
-- Created `docs/development.md` with comprehensive local development documentation
-- Added link to development guide in `README.md` Documentation section
-
-**Key file**: `docs/development.md`
-
-**Documentation covers**:
-- Prerequisites: Rust 1.82.0+ (MSRV), cargo, git
-- Building: `cargo build` (debug) and `cargo build --release`
-- Running: `cargo run -- <command>` patterns
-- Testing: `cargo test` with various options
-- Code quality: `cargo xtask lint` with all subcommands (--fix, --force, --install-hooks)
-- Installation: `cargo xtask install` with path options
-- Workspace structure: Detailed breakdown of crates/core, crates/ralph, xtask
-- Crate responsibilities table: ralph_core (pure logic), ralph (CLI/I/O), xtask (automation)
-- Code standards: Clippy rules, formatting requirements
-- Environment variables for development
-- Troubleshooting: Common issues and solutions
-
-**Acceptance criteria met**:
-- Developer can clone repo and build with documented commands
-- MSRV 1.82.0 specified
-- cargo build, cargo test, cargo run documented
-- cargo xtask install explained for local installation
-- Workspace layout explained (crates/ralph, crates/core, xtask)
-
----
-
-## Polished README (2026-01-19)
-
-**Story**: Create polished README with visual appeal and clear structure
-
-**Changes**:
-- Rewrote README.md with enhanced visual structure
-- Added ASCII art banner with ralph logo
-- Added badges for license and Rust version
-- Added one-liner description explaining ralph's purpose
-- Added Features section highlighting key capabilities
-- Added Table of Contents for easy navigation
-- Added Example Output section showing typical ralph usage
-- Structured with clear sections: Features, Install, Quick Start, Config, Documentation, Contributing, License
-- Added Contributing section welcoming new contributors
-
-**Key file**: `README.md`
-
-**Acceptance criteria met**:
-- README has visual header (ASCII art banner with styled title)
-- One-liner clearly explains ralph's purpose
-- Badges show license and Rust version at a glance
-- Example Output section demonstrates actual usage
-- Sections are well-organized with consistent formatting
-- Links to detailed docs (CLI Reference, Configuration, PRD Format, Development)
-- Contributing section welcomes new contributors
-
----
-
-## OutputBlock Enum for Replay Serialization (2026-01-19)
-
-**Stories completed**:
-1. Unify output structs into a single enum type for collection
-2. Ensure output enum and all variants are serializable
-
-**Changes**:
-- Created new module `crates/ralph/src/stream_processor/output_block.rs`
-- Implemented `OutputBlock` enum with variants: `Text`, `ToolInvocation`, `ToolResult`, `Separator`
-- Created supporting structs: `TextBlock`, `ToolInvocationBlock`, `ToolResultBlock`
-- Implemented `ToolInvocationVariant` enum with tool-specific invocation data (Bash, Grep, Read, Glob, TodoWrite, Default)
-- Implemented `ToolResultVariant` enum with tool-specific result data (Bash, EditBeforeAfter, EditDiff, EditNoChanges, WriteNewFile, WriteOverwrite, WriteNoChanges, Read, Grep, Glob, TodoWrite, NotebookEdit, Default)
-- Added `TodoItem` struct for TodoWrite display
-- All types derive `Serialize` and `Deserialize` for TOML serialization
-- Re-exported public types from `stream_processor` module
-
-**Key file**: `crates/ralph/src/stream_processor/output_block.rs`
-
-**Tests added** (10 tests):
-- `test_output_block_text_serialization` - round-trip text block through TOML
-- `test_output_block_separator_serialization` - round-trip separator
-- `test_tool_invocation_bash_serialization` - Bash invocation serialization
-- `test_tool_result_bash_serialization` - Bash result serialization
-- `test_tool_result_edit_before_after_serialization` - Edit before/after serialization
-- `test_tool_result_write_new_file_serialization` - Write new file serialization
-- `test_tool_invocation_grep_serialization` - Grep invocation with all options
-- `test_tool_invocation_todowrite_serialization` - TodoWrite with todo items
-- `test_code_chunk_serialization` - Code chunk with language
-- `test_diff_chunk_serialization` - Diff chunk
-
-**Design decisions**:
-- Each variant captures **data** not rendered strings, enabling re-rendering with different settings
-- Uses `#[serde(tag = "type", rename_all = "snake_case")]` for clean TOML format
-- Tool-specific data uses nested enums (`ToolInvocationVariant`, `ToolResultVariant`) for type safety
-- Leverages existing `ParsedChunk` from ralph_core which already has serialization
-
-**Acceptance criteria met**:
-- Single enum type contains variants for all output types
-- Each variant wraps corresponding data struct
-- All types derive Serialize and Deserialize
-- 10 unit tests verify round-trip serialization through TOML
-
----
-
-## Output Block Accumulation During Execution (2026-01-19)
-
-**Story**: Accumulate output blocks during execution
-
-**Changes**:
-- Added `output_blocks: Vec<OutputBlock>` field to `StreamProcessor` struct
-- Added `output_blocks` field to `StreamProcessorResult` struct
-- Created `block_builders.rs` module with helper functions for building OutputBlocks from tool data
-- Updated `handle_event()` to push OutputBlocks as they render:
-  - Separator blocks when visual separators are emitted
-  - Tool invocation blocks when tool invocations are displayed
-  - Tool result blocks when tool results are displayed
-- Updated `process_text_for_output()` to push text blocks as chunks are collected
-- Updated `flush_pending_chunks()` to push text blocks when flushing
-- Added getter method `output_blocks()` to StreamProcessor for accessing accumulated blocks
-- Updated `finish()` to include output_blocks in the result
-
-**Key files**:
-- `crates/ralph/src/stream_processor/processor.rs` - Added field, initializers, getter, and finish() update
-- `crates/ralph/src/stream_processor/types.rs` - Added field to StreamProcessorResult
-- `crates/ralph/src/stream_processor/event_handler.rs` - Push blocks during event handling
-- `crates/ralph/src/stream_processor/block_builders.rs` - New module with builder functions
-
-**Block builders implemented**:
-- `build_tool_invocation_block()` - Creates invocation blocks from ToolInvocation data
-- `build_default_result_block()` - Creates result blocks with content
-- `build_edit_before_after_block()` - For Edit tool (prepared for future use)
-- `build_write_new_file_block()` - For Write tool (prepared for future use)
-- `build_write_overwrite_block()` - For Write tool (prepared for future use)
-- `build_bash_result_block()` - For Bash tool (prepared for future use)
-
-**Tests added** (7 tests in block_builders.rs):
-- `test_build_bash_invocation_block` - Verifies Bash invocation data extraction
-- `test_build_grep_invocation_block` - Verifies Grep invocation with all options
-- `test_build_default_invocation_block` - Verifies default fallback for unknown tools
-- `test_build_todowrite_invocation_block` - Verifies TodoWrite with todo items
-- `test_build_edit_before_after_block` - Verifies Edit snapshot conversion
-- `test_build_bash_result_block` - Verifies Bash result creation
-
-**Acceptance criteria met**:
-- A Vec<OutputBlock> accumulates each block as it renders to stdout
-- The Vec preserves the order blocks were printed
-- Accumulation does not affect live rendering performance or behavior (O(1) push per block)
-
----
-
-## Serialize Output Blocks to Session TOML on Normal Completion (2026-01-19)
-
-**Story**: Serialize output blocks to session TOML on normal completion
-
-**Changes**:
-- Added `output_blocks: Vec<OutputBlock>` field to `IterationLog` struct
-- Added import for `OutputBlock` in `crates/ralph/src/iteration/log.rs`
-- Updated `run/mod.rs` to pass `output_blocks` from `StreamProcessorResult` to `IterationLog`
-- Field uses `#[serde(default, skip_serializing_if = "Vec::is_empty")]` for backward compatibility
-- Updated all test files that construct `IterationLog` instances to include `output_blocks: vec![]`
-
-**Key files**:
-- `crates/ralph/src/iteration/log.rs` - Added `output_blocks` field to IterationLog struct
-- `crates/ralph/src/run/mod.rs` - Pass output_blocks when creating IterationLog
-- `crates/ralph/src/iteration/tests/*.rs` - Updated test fixtures
-- `crates/ralph/src/iterations.rs` - Updated test helper
-- `crates/ralph/src/replay.rs` - Updated test helper
-- `crates/ralph/src/iteration/writer.rs` - Updated doctest example
-
-**Data flow**:
-1. StreamProcessor accumulates OutputBlocks during execution
-2. StreamProcessor.finish() returns StreamProcessorResult with output_blocks
-3. Run loop creates IterationLog with cloned output_blocks
-4. write_iteration_log() serializes IterationLog (including output_blocks) to TOML
-
-**TOML format** (when output_blocks present):
-```toml
-[[output_blocks]]
-type = "text"
-[output_blocks.chunk]
-chunk_type = { Prose = {} }
-content = "Hello, world!"
-
-[[output_blocks]]
-type = "tool_invocation"
-tool_name = "Bash"
-invocation_type = "bash"
-command = "ls -la"
-
-[[output_blocks]]
-type = "separator"
-```
-
-**Acceptance criteria met**:
-- The accumulated Vec<OutputBlock> is serialized to the session TOML file (iteration-N.toml)
-- Serialization occurs after successful completion (via write_iteration_log in run loop)
-- The TOML file contains all output blocks from the session (507 tests pass)
-
----
-
-## Replay Rendering with OutputBlocks (2026-01-19)
-
-**Story**: Replay deserializes and renders output blocks identically to live execution
-
-**Changes**:
-- Created new module `crates/ralph/src/replay_renderer.rs` with `ReplayRenderer` struct
-- Implemented rendering for all `OutputBlock` variants (Text, ToolInvocation, ToolResult, Separator)
-- Updated `replay.rs` to use `output_blocks` when available, falling back to `chunks` for older sessions
-- Added `Clone` derive to `Highlighter` to allow cloning for replay renderer
-- Added token usage display in iteration header metadata
-
-**Key files**:
-- `crates/ralph/src/replay_renderer.rs` - New replay renderer module (750+ lines)
-- `crates/ralph/src/replay.rs` - Updated to prefer output_blocks, added token display
-- `crates/ralph/src/highlight.rs` - Added Clone derive to Highlighter
-- `crates/ralph/src/main.rs` - Added replay_renderer module
-
-**ReplayRenderer features**:
-- Text blocks: Prose (markdown rendering), Code (syntax highlighting), Diff (diff colors)
-- Tool invocations: Bash (shell highlighting), Grep (verbose), Read, Glob, TodoWrite, Default
-- Tool results: Bash, EditBeforeAfter, EditDiff, WriteNewFile, WriteOverwrite, Read, Grep, Glob, TodoWrite, NotebookEdit, Default
-- Terminal detection for ANSI color support
-- Same rendering patterns as live execution stream processor
-
-**Tests added** (15 tests in replay_renderer.rs):
-- `test_render_separator` - Separator renders as newline
-- `test_render_prose_plain` - Prose text rendering
-- `test_render_code_plain` - Code block with fences
-- `test_render_diff_plain` - Diff block rendering
-- `test_render_bash_invocation_plain` - Bash tool header
-- `test_render_bash_invocation_multiline_plain` - Multi-line bash commands
-- `test_render_bash_result_success_plain` - Bash success output
-- `test_render_bash_result_error_plain` - Bash error output
-- `test_render_default_invocation_plain` - Default tool header
-- `test_render_todowrite_invocation_plain` - TodoWrite with status icons
-- `test_render_edit_before_after_plain` - Before/after blocks with separator
-- `test_render_write_new_file_plain` - New file indicator
-- `test_extract_language_from_path` - File extension to language mapping
-- `test_render_with_highlighting_has_ansi` - ANSI codes when terminal
-- `test_render_without_highlighting_no_ansi` - No ANSI when not terminal
-
-**Acceptance criteria met**:
-- Replay deserializes `Vec<OutputBlock>` from session TOML (via existing IterationLog deserialization)
-- Replay renders each block using same logic as live execution (ReplayRenderer mirrors stream_processor patterns)
-- Replay displays iteration headers with metadata (model, cost, duration, tokens)
-- Replay output is visually identical to live execution (same highlighting, colors, formatting)
-
----
-
-## Persist Output Blocks on SIGTERM/SIGINT Interruption (2026-01-19)
-
-**Story**: Persist output blocks on SIGTERM or SIGINT interruption
-
-**Problem**:
-When an interrupt signal (Ctrl+C / SIGINT or SIGTERM) occurred during subprocess execution, the partial output blocks accumulated by the StreamProcessor were being discarded. The `SubprocessError::Interrupted` variant contained a `partial_result` with the accumulated data, but this was being ignored when converting to `RunError::Interrupted`.
-
-**Changes**:
-- Extended `RunError::Interrupted` variant with two new fields:
-  - `partial_result: Option<Box<StreamingSubprocessResult>>` - Contains output blocks accumulated before interrupt
-  - `pending_before: Option<usize>` - Number of pending stories at iteration start (for partial log)
-- Updated `invoke_with_failure_recovery` to capture and propagate the partial result from subprocess interrupts
-- Updated the main run loop to handle interrupts during subprocess execution by propagating session context
-- Added logic in `main.rs` `execute_run_with_prompting` to write a partial iteration log when an interrupt occurs during subprocess execution
-- Added `into_option()` method to `LogMetadata` for clean conditional serialization
-
-**Key files**:
-- `crates/ralph/src/run/mod.rs` - Extended `RunError::Interrupted`, updated interrupt handling
-- `crates/ralph/src/main.rs` - Added partial iteration log writing on interrupt
-- `crates/ralph/src/iteration/metadata.rs` - Added `into_option()` method
-
-**Data flow on interrupt**:
-1. Signal handler sets `INTERRUPTED` flag
-2. `invoke_subprocess_with_spinner` detects flag, drains output, calls `processor.finish()`
-3. Returns `SubprocessError::Interrupted { partial_result }` with accumulated output blocks
-4. `invoke_with_failure_recovery` converts to `RunError::Interrupted` preserving partial result
-5. Main run loop fills in session context (slug, iterations, pending_before)
-6. `execute_run_with_prompting` writes partial iteration log to session TOML
-7. Session is finalized as "interrupted"
-
-**Behavior**:
-- When `ralph run` is interrupted during subprocess execution, a partial `iteration-N.toml` is written
-- The partial log contains all output blocks accumulated up to the point of interruption
-- Partial sessions can be replayed with `ralph replay <session-slug>`, showing output up to interruption
-- Interrupts at other points (start of iteration, after log write) continue to work as before
-
-**Acceptance criteria met**:
-- Signal handlers are installed for SIGTERM and SIGINT (via ctrlc crate, already present)
-- On signal, the accumulated Vec<OutputBlock> is serialized before exit
-- Partial sessions can be replayed showing blocks up to the interruption
-
----
-
-## Non-Exhaustive Attribute for Output Block Enums (2026-01-19)
-
-**Story**: Add #[non_exhaustive] attribute to output block enum
-
-**Changes**:
-- Added `#[non_exhaustive]` attribute to `OutputBlock` enum
-- Added `#[non_exhaustive]` attribute to `ToolInvocationVariant` enum
-- Added `#[non_exhaustive]` attribute to `ToolResultVariant` enum
-
-**Key file**: `crates/ralph/src/stream_processor/output_block.rs`
-
-**Rationale**:
-The `#[non_exhaustive]` attribute ensures that adding new variants to these enums in the future won't be a breaking change for downstream code that pattern-matches on them. This is a Rust best practice for public enums that are expected to evolve over time. All three enums (`OutputBlock`, `ToolInvocationVariant`, `ToolResultVariant`) may gain new variants as new tools are supported or new output types are added.
-
-**Acceptance criteria met**:
-- OutputBlock enum has #[non_exhaustive] attribute
-- ToolInvocationVariant enum has #[non_exhaustive] attribute
-- ToolResultVariant enum has #[non_exhaustive] attribute
-- Adding new variants in the future won't be a breaking change for downstream match expressions
-- All 522 tests pass
-
----
-
-## Test Helper for Output Block Serialization (2026-01-19)
-
-**Story**: Create test helper for output block serialization tests
-
-**Changes**:
-- Created new module `crates/ralph/src/stream_processor/test_helpers.rs`
-- Added `assert_toml_roundtrip<T>()` - Generic helper for testing TOML serialization round-trips
-- Added `create_test_invocation()` - Helper to create ToolInvocation from name and JSON input
-- Added `expect_tool_invocation()` - Helper to extract ToolInvocationBlock with descriptive panic
-- Updated 10 tests in `output_block.rs` to use `assert_toml_roundtrip()`
-- Updated 4 tests in `block_builders.rs` to use `create_test_invocation()` and `expect_tool_invocation()`
-
-**Key file**: `crates/ralph/src/stream_processor/test_helpers.rs`
-
-**Test reduction examples**:
-
-Before (repeated in 10 tests):
+### Enum Structure
 ```rust
-let serialized = toml::to_string(&block).unwrap();
-let deserialized: OutputBlock = toml::from_str(&serialized).unwrap();
-assert_eq!(block, deserialized);
-```
-
-After:
-```rust
-assert_toml_roundtrip(&block);
-```
-
-Before (repeated in 4 tests):
-```rust
-let invocation = ToolInvocation {
-    id: "test-id".to_string(),
-    name: "Bash".to_string(),
-    input: json!({...}).as_object().unwrap().clone().into_iter().collect(),
-};
-match block {
-    OutputBlock::ToolInvocation(inv) => { ... }
-    _ => panic!("Expected ToolInvocation"),
+#[non_exhaustive]
+enum OutputBlock {
+    Text(TextBlock),
+    ToolInvocation(ToolInvocationBlock),
+    ToolResult(ToolResultBlock),
+    Separator,
 }
 ```
 
-After:
-```rust
-let invocation = create_test_invocation("Bash", json!({...}));
-let inv = expect_tool_invocation(block);
-```
+### ToolInvocationVariant (6 variants)
+- `Bash { command, description }` - Shell commands
+- `Grep { pattern, path, output_mode, glob, case_insensitive, type_ }` - Search (uses GrepInvocationBuilder)
+- `Read { file_path, offset, limit }` - File reading
+- `Glob { pattern, path }` - File pattern matching
+- `TodoWrite { todos: Vec<TodoItem> }` - Task management
+- `Default { content }` - Fallback for unknown tools
 
-**Acceptance criteria met**:
-- Test helper reduces boilerplate in output block tests (14 tests simplified)
-- Existing tests pass using the new helper (all 522 tests pass)
+### ToolResultVariant (12 variants)
+- `Bash { content, exit_code }` - Shell output
+- `EditBeforeAfter { file_path, before, after }` - Edit with before/after content
+- `EditDiff { file_path, diff }` - Edit with unified diff
+- `EditNoChanges { file_path, message }` - No-op edit
+- `WriteNewFile { file_path, content }` - New file creation
+- `WriteOverwrite { file_path, before, after }` - File overwrite
+- `WriteNoChanges { file_path }` - No-op write
+- `Read { file_path, content, line_count, truncated }` - File content
+- `Grep { content, match_count, output_mode }` - Search results
+- `Glob { content, file_count, truncated }` - Matched files
+- `TodoWrite { message }` - Task update confirmation
+- `NotebookEdit { notebook_path, cell_id, operation, content, old_content }` - Jupyter edits
+- `Default { content }` - Fallback
 
----
-
-## Builder Pattern for Output Block Structs (2026-01-19)
-
-**Story**: Add builder pattern for output block structs
-
-**Analysis**:
-Examined all output block structs to identify candidates for builder pattern:
-- `TextBlock`: 1 field - too simple
-- `ToolInvocationBlock`: 2 fields - too simple
-- `ToolResultBlock`: 3 fields - too simple
-- `ToolInvocationVariant::Grep`: 6 fields (1 required, 5 optional) - good candidate
-- `ToolResultVariant::NotebookEdit`: 5 fields (4 required, 1 optional) - considered but only 1 optional field
-
-**Changes**:
-- Created `GrepInvocationBuilder` for `ToolInvocationVariant::Grep` with fluent API
-- Builder has sensible defaults (`case_insensitive: false`, all optional fields `None`)
-- Updated `block_builders.rs` to use `GrepInvocationBuilder` for Grep invocation construction
-- Updated `test_tool_invocation_grep_serialization` to demonstrate builder usage
-- Initially created `NotebookEditResultBuilder` but removed it per "No Dead Code" principle (no production usage)
-
-**Key file**: `crates/ralph/src/stream_processor/output_block.rs`
-
-**Builder API example**:
-```rust
-let variant = GrepInvocationBuilder::new("fn main")
-    .path("src/")
-    .output_mode("content")
-    .glob("*.rs")
-    .case_insensitive(true)
-    .build();
-```
-
-**Tests added** (3 tests):
-- `test_grep_builder_minimal` - verifies default values
-- `test_grep_builder_all_options` - verifies all options set
-- `test_grep_builder_serialization_roundtrip` - verifies TOML round-trip
-
-**Production usage** (block_builders.rs):
-```rust
-let mut builder = GrepInvocationBuilder::new(pattern);
-if let Some(path) = invocation.input.get("path").and_then(|v| v.as_str()) {
-    builder = builder.path(path);
-}
-// ... conditional optional field setting
-builder.build()
-```
-
-**Acceptance criteria met**:
-- Builder pattern available for complex output block structs (GrepInvocationBuilder)
-- Builders have sensible defaults (false for case_insensitive, None for optional fields)
-- Construction is more ergonomic than direct struct initialization
-- All 525 tests pass
+### Design Decisions
+- Variants capture **data** not rendered strings (re-rendering with different settings)
+- Uses `#[serde(tag = "type", rename_all = "snake_case")]` for clean TOML
+- `#[non_exhaustive]` on all enums for forward compatibility
+- `GrepInvocationBuilder` for ergonomic 6-field construction
 
 ---
 
-## Output Block Documentation (2026-01-19)
+## Data Flow
 
-**Story**: Document output block integration and data flow
+### Live Execution
+1. StreamProcessor accumulates `Vec<OutputBlock>` during execution
+2. Each event handler pushes blocks as they render to stdout
+3. `finish()` returns `StreamProcessorResult` with output_blocks
+4. `IterationLog` receives output_blocks, serializes to `iteration-N.toml`
 
-**Changes**:
-- Created `docs/output-blocks.md` with comprehensive documentation of the output block architecture
-
-**Key file**: `docs/output-blocks.md`
-
-**Documentation covers**:
-- Architecture diagram showing live execution → serialization → replay flow
-- OutputBlock enum structure and all variants
-- ToolInvocationVariant mapping table (Bash, Grep, Read, Glob, TodoWrite, Default)
-- ToolResultVariant mapping table (Bash, Edit variants, Write variants, Read, Grep, Glob, TodoWrite, NotebookEdit, Default)
-- Key implementation files with responsibilities
-- Data flow details for each phase (live execution, serialization, replay)
-- Design decisions and rationale
-- Snapshot pattern for before/after capture
-- Non-exhaustive enums for forward compatibility
-- Interrupt handling behavior
-- Testing approach with round-trip assertions
-
-**Acceptance criteria met**:
-- Documentation explains the full output block lifecycle (live execution → TOML → replay)
-- ASCII diagram clarifies the data flow visually
-- New contributors can understand how replay works from this document
-
----
-
-## Capture Specialized ToolResultVariant During Live Execution (2026-01-20)
-
-**Story**: Capture specialized ToolResultVariant during live execution instead of Default
-
-**Problem**:
-Previously, Read, Grep, Glob, and TodoWrite tool results were all being serialized with the `Default` variant, discarding valuable metadata like line counts, match counts, and file counts. This metadata was available during live execution (used by verbose formatters) but not captured for replay.
-
-**Changes**:
-- Added specialized handlers for Read, Grep, Glob, and TodoWrite in `event_handler.rs` match statement (lines 284-341)
-- Imported previously unused block builders: `build_read_result_block`, `build_grep_result_block`, `build_glob_result_block`, `build_todowrite_result_block`
-- Removed dead code: `build_write_new_file_block` and `build_write_overwrite_block` (redundant with `build_write_result_block`)
-- Each handler extracts metadata from tool results:
-  - Read: file_path, line_count, truncated flag
-  - Grep: match_count, output_mode, content
-  - Glob: file_count, content, truncated flag
-  - TodoWrite: message from result
-
-**Key file**: `crates/ralph/src/stream_processor/event_handler.rs`
-
-**Metadata extraction logic**:
-- `line_count`: `content.lines().count()`
-- `match_count`: `content.lines().filter(|l| !l.is_empty()).count()`
-- `file_count`: Same as match_count for Glob results
-- `truncated`: Checks for "... (truncated)" or "Output truncated" in content
-- `output_mode`: Extracted from invocation input, defaults to "files_with_matches"
-
-**TOML format** (for Read tool result):
+### Serialization (TOML)
 ```toml
 [[output_blocks]]
 type = "tool_result"
@@ -587,443 +92,191 @@ line_count = 50
 truncated = false
 ```
 
-**Acceptance criteria met**:
-- Edit tool results serialize as EditBeforeAfter or EditDiff variants (already working)
-- Write tool results serialize as WriteNewFile or WriteOverwrite variants (already working)
-- Read tool results serialize as Read variant with content and line count ✓
-- Grep/Glob results serialize with match counts and file lists ✓
-- TodoWrite results serialize with message ✓
-- Default variant only used for truly unknown tools ✓
-- All 525 tests pass, cargo xtask lint passes
+### Replay
+1. `replay.rs` reads `iteration-N.toml`, deserializes `Vec<OutputBlock>`
+2. Falls back to `chunks` for older sessions without output_blocks
+3. `ReplayRenderer` renders each block using shared `crate::render` functions
+4. Output visually identical to live execution
 
 ---
 
-## Replay Renders Tool Results with Same Formatting as Live Execution (2026-01-20)
+## Shared Rendering Module (`crates/ralph/src/render/`)
 
-**Story**: Verify replay renders tool results with same formatting as live execution
+### Consolidated Utilities
+| Function | Purpose |
+|----------|---------|
+| `extract_line_number()` | Parse `     1\tcontent` format |
+| `normalize_cat_n_format()` | Transform Claude CLI line numbers to `1 │ content` |
+| `group_files_by_directory()` | Group paths by parent dir (BTreeMap for sorted output) |
+| `highlight_grep_match()` | Format grep content mode output |
+| `extract_language_from_path()` | Detect language from extension (70+ types) |
 
-**Problem**:
-The replay renderer was using simpler formatting compared to the stream processor during live execution. Specific differences:
-1. Glob results were shown as flat lists instead of grouped by directory
-2. Read results didn't normalize Claude CLI's cat-n format (arrow → separators)
-3. Grep results didn't handle different output modes (files_with_matches, content, count)
-
-**Changes**:
-- Updated `render_glob_result()` to group files by directory (matching stream processor)
-- Updated `render_read_result()` to normalize cat-n format and show checkmark header
-- Updated `render_grep_result()` to handle output modes with proper formatting and truncation
-- Added `group_files_by_directory()` helper function
-- Added `extract_line_number()` helper function for parsing cat-n format
-- Added `normalize_cat_n_format()` helper function
-- Added `highlight_grep_match()` helper function for content mode
-
-**Key file**: `crates/ralph/src/replay_renderer.rs`
-
-**Tests added** (12 new tests):
-- `test_render_glob_result_grouped_by_directory` - Verifies files grouped by directory
-- `test_render_glob_result_empty` - Handles empty results
-- `test_render_read_result_normalizes_cat_n` - Verifies cat-n normalization
-- `test_render_read_result_empty` - Handles empty files
-- `test_render_grep_result_files_mode` - Verifies files_with_matches mode
-- `test_render_grep_result_empty` - Handles no matches
-- `test_group_files_by_directory` - Unit test for directory grouping
-- `test_normalize_cat_n_format_single_digit` - Single digit line numbers
-- `test_normalize_cat_n_format_arrow_separator` - Arrow separator handling
-- `test_normalize_cat_n_format_alignment` - Line number alignment
-- `test_highlight_grep_match_content_format` - Content mode highlighting
-- `test_highlight_grep_match_simple_path` - Simple path handling
-
-**Formatting behavior**:
-- **Glob**: Groups files by parent directory, shows directory headers with bold, filenames indented
-- **Read**: Normalizes `     1→content` to `1 │ content` with proper alignment, shows checkmark + line count header
-- **Grep**: Handles modes (files_with_matches=dim paths, content=highlighted matches, count=dim pairs)
-
-**Acceptance criteria met**:
-- Edit results show before/after blocks with colored line numbers ✓
-- Write results show new file content or overwrite diff ✓
-- Read results show syntax-highlighted content with normalized line numbers ✓
-- Grep/Glob results show match counts and file paths with proper formatting ✓
-- Formatting is visually identical between live and replay ✓
-- All 537 tests pass, cargo xtask lint passes
-
----
-
-## Capture and Store Prompt in Session (2026-01-20)
-
-**Story**: Capture and store the prompt passed to the claude CLI
-
-**Problem**:
-The prompt passed to Claude CLI (after placeholder substitution) was not being stored anywhere, making it impossible for replay to show what prompt was used for a session.
-
-**Changes**:
-- Added `prompt: Option<String>` field to `SessionMetadata` struct in `crates/core/src/session.rs`
-- Updated `SessionMetadata::new()` to accept a prompt parameter
-- Added `prompt: String` field to `RunConfig` in `crates/ralph/src/run/mod.rs`
-- Updated `initialize_session_directory()` and `initialize_session()` to accept prompt parameter
-- Updated `execute_run_with_prompting()` to pass prompt through the call chain
-- Prompt is captured after placeholder substitution (e.g., `{design_file}`, `{prd_file}`, etc.) but before shell escaping
-
-**Key files**:
-- `crates/core/src/session.rs` - Added prompt field to SessionMetadata, updated constructor
-- `crates/ralph/src/session.rs` - Updated initialize functions to accept prompt
-- `crates/ralph/src/run/mod.rs` - Added prompt to RunConfig, pass to initialize_session
-- `crates/ralph/src/main.rs` - Pass prompt to execute_run_with_prompting and RunConfig
-
-**Data flow**:
-1. `resolve_prompt()` constructs the prompt with placeholder substitution (line 95 in main.rs)
-2. Prompt is passed to `execute_run_with_prompting()` as a new parameter
-3. Prompt is stored in `RunConfig` struct
-4. On first run (starting_iteration == 0), `initialize_session()` is called with `Some(config.prompt.clone())`
-5. `SessionMetadata::new()` stores the prompt
-6. `session.toml` is written with the prompt field
-
-**TOML format** (when prompt present):
-```toml
-slug = "quiet-mountain"
-project = "/path/to/project"
-started_at = "2026-01-20T10:00:00Z"
-iterations = 3
-outcome = "completed"
-prompt = "Work on the highest priority feature.\n\nContext:\n- PRD: path/to/prd.toml"
+### ANSI Color Constants
+```rust
+RED_BG = "48;2;140;45;45"   // Vibrant red for "before" blocks
+GREEN_BG = "48;2;45;130;45" // Vibrant green for "after" blocks
 ```
 
-**Tests added** (4 new tests):
-- `test_session_metadata_new_with_prompt` - Verifies prompt is stored in struct
-- `test_session_metadata_prompt_toml_roundtrip` - Verifies prompt serialization/deserialization
-- `test_session_metadata_prompt_not_serialized_when_none` - Verifies prompt not in TOML when None
+---
 
-**Acceptance criteria met**:
-- The prompt string (as passed to claude CLI) is captured before invocation ✓
-- The prompt is stored in the session TOML file ✓
-- The prompt is available for replay to read ✓
-- All 537 tests pass, cargo xtask lint passes
+## Session Management
+
+### Prompt Storage
+- `SessionMetadata.prompt: Option<String>` stores the resolved prompt
+- Captured after placeholder substitution (`{design_file}`, etc.)
+- Written to `session.toml` with other metadata
+
+### Prompt Display
+- `--no-prompt` flag suppresses display (both `run` and `replay` commands)
+- Header: `▶ Prompt` in magenta with separators
+- Content rendered with markdown formatting
+- Only shown on fresh sessions (not continuation/retries)
+
+### Replay Options
+```rust
+struct ReplayOptions {
+    iteration: Option<u32>,     // Specific iteration
+    theme_config: Option<ThemeConfig>,
+    show_prompt: bool,          // Default: true
+    delay_secs: Option<f64>,    // Pause between blocks
+}
+```
 
 ---
 
-## Prompt Display at Run Start and During Replay (2026-01-20)
+## Interrupt Handling
 
-**Stories completed**:
-1. Display the prompt at the start of a run with formatting
-2. Display the prompt during replay
+### SIGTERM/SIGINT Persistence
+1. Signal sets `INTERRUPTED` flag
+2. Subprocess drains output, calls `processor.finish()`
+3. Returns `SubprocessError::Interrupted { partial_result }`
+4. `RunError::Interrupted` carries `partial_result` and `pending_before`
+5. Main loop writes partial `iteration-N.toml`
+6. Session finalized as "interrupted"
 
-**Problem**:
-The prompt passed to Claude CLI (after placeholder substitution) was being stored in session metadata but not displayed to the user. Users had no visibility into what prompt was actually sent to the LLM.
-
-**Changes**:
-
-### CLI Flags
-- Added `--no-prompt` flag to `RunArgs` in `cli.rs` to suppress prompt display during live execution
-- Added `--no-prompt` flag to `ReplayArgs` in `cli.rs` to suppress prompt display during replay
-
-### Prompt Display Infrastructure (startup module)
-- Added `PromptDisplay<'a>` struct to `startup/types.rs` to hold prompt content
-- Added `display_prompt()` function to `startup/display.rs` with terminal detection routing
-- Added `display_prompt_terminal()` in `startup/terminal.rs`:
-  - Header with '▶ Prompt' in magenta with visual separator
-  - Markdown rendering via `MarkdownRenderer` for embedded formatting
-  - Closing separator after prompt content
-- Added `display_prompt_plain()` in `startup/plain.rs`:
-  - Plain text header '> Prompt'
-  - No markdown rendering for piped output
-  - Plain separators
-
-### Live Execution Integration
-- Added `show_prompt: bool` field to `RunConfig` struct
-- Updated `run()` function to display prompt after startup info but before Iteration 1
-- Only shows prompt on fresh sessions (not on session continuation/retries)
-- Respects `--no-prompt` flag
-
-### Replay Integration
-- Created `ReplayOptions` struct with builder pattern for flexible replay configuration:
-  - `iteration: Option<u32>` - specific iteration to replay
-  - `theme_config: Option<ThemeConfig>` - theme configuration
-  - `show_prompt: bool` - whether to display prompt (default: true)
-- Added `replay_session_with_options()` as the main implementation
-- Refactored `replay_session_with_theme()` to use options internally
-- Reads `session.toml` to get stored prompt before rendering iterations
-- Only shows prompt when replaying from iteration 1 (not when replaying specific later iteration)
-- Gracefully handles older sessions without stored prompt
-
-### Error Handling
-- Added `ReplayError::ReadSessionMetadata` variant for session.toml read failures
-- Added `ReplayError::ParseSessionMetadata` variant for TOML parse failures
-
-**Key files modified**:
-- `crates/ralph/src/cli.rs` - Added `--no-prompt` flags
-- `crates/ralph/src/startup/types.rs` - Added `PromptDisplay` struct
-- `crates/ralph/src/startup/display.rs` - Added `display_prompt()` function
-- `crates/ralph/src/startup/terminal.rs` - Added terminal prompt display with markdown
-- `crates/ralph/src/startup/plain.rs` - Added plain text prompt display
-- `crates/ralph/src/startup/mod.rs` - Re-exported new types and functions
-- `crates/ralph/src/run/mod.rs` - Added `show_prompt` to RunConfig, display prompt before iterations
-- `crates/ralph/src/replay.rs` - Added `ReplayOptions`, prompt display during replay
-- `crates/ralph/src/main.rs` - Updated to pass `--no-prompt` flag through both paths
-
-**Behavior**:
-- **Live execution**: Prompt displayed by default after startup info, before Iteration 1
-  - Header: `▶ Prompt` in magenta with horizontal separator
-  - Content rendered with markdown formatting (bold, italic, headers, code, etc.)
-  - Suppressed with `--no-prompt` flag
-- **Replay**: Prompt displayed by default before Iteration 1 when available
-  - Same formatting as live execution
-  - Reads from `session.toml` metadata
-  - Gracefully skips if prompt wasn't stored (older sessions)
-  - Suppressed with `--no-prompt` flag
-
-**Acceptance criteria met**:
-- Prompt is displayed by default before Iteration 1 ✓
-- Prompt has visual header like other tool outputs ✓
-- Syntax highlighting (markdown) applied to prompt content ✓
-- `--no-prompt` flag suppresses prompt display ✓
-- Prompt is only shown once per session (at start) ✓
-- Replay shows the prompt before Iteration 1 ✓
-- Replay formatting matches live execution display ✓
-- Prompt is not shown if it wasn't stored (older sessions) ✓
-- All 537 tests pass, cargo xtask lint passes
+**Result**: Partial sessions can be replayed showing output up to interruption.
 
 ---
 
-## Rendering Code Audit (2026-01-20)
+## Tool Result Rendering
 
-**Story**: Audit rendering code to identify duplication between live execution and replay
+### Write Tool (Before/After Display)
+- New files: Green line numbers, "(new file)" indicator
+- Overwrites: Before block (red), horizontal rule, after block (green)
+- Truncation at 30 lines (`MAX_BLOCK_LINES`)
+- File: `stream_processor/tool_results/write.rs`
 
-**Problem**:
-The codebase has two distinct rendering paths - stream_processor for live execution and replay_renderer for session replay - with significant code duplication. This audit documents the duplication to scope future consolidation work.
+### Edit Tool
+- Before/after blocks with colored line numbers
+- Diff format when appropriate
+- Uses same color constants as Write tool
 
-**Changes**:
-- Created `docs/rendering-audit.md` with comprehensive documentation of:
-  - Architecture overview with data flow diagrams
-  - Tool invocation rendering functions (6 in stream_processor, 7 in replay_renderer)
-  - Tool result rendering functions (10 in stream_processor, 14 in replay_renderer)
-  - Critical duplications identified (line normalization, file grouping, grep highlighting, language detection)
-  - Medium duplications identified (Read/Grep/Glob result formatting, content block display)
-  - Shared utilities analysis
-  - Consolidation checklist with 5 phases
-  - Recommended module structure for refactoring
+### Read Tool
+- Normalizes Claude CLI cat-n format (`→` to `│`)
+- Shows checkmark + line count header
+- Syntax highlighting based on file extension
 
-**Key file**: `docs/rendering-audit.md`
+### Grep Tool
+- `files_with_matches`: Dim file paths
+- `content`: Highlighted matches with `filename:line_number:content` format
+- `count`: Dim pairs
 
-**Critical Duplications Found**:
-1. **Line number normalization** (~70 lines) - `extract_line_number()` and `normalize_cat_n_format()` in both paths
-2. **File directory grouping** (~20 lines) - `group_files_by_directory()` identical in both paths
-3. **Grep match highlighting** (~30 lines) - `highlight_grep_match()` same core logic
-4. **Language detection** (~70 lines) - `extract_language_from_path()` different implementations
-
-**Recommended Refactoring Path**:
-1. Extract shared utilities to `crates/ralph/src/render/utils.rs`
-2. Create shared rendering module with generic `impl Write` parameter
-3. Migrate live execution to use shared module
-4. Migrate replay to use shared module
-5. Remove duplicated code from both paths
-
-**Acceptance criteria met**:
-- A clear list of duplicated rendering functions exists ✓
-- Each function's location is documented (stream_processor vs replay_renderer) ✓
-- The scope of refactoring work is understood before implementation begins ✓
-- All 537 tests pass, cargo xtask lint passes
+### Glob Tool
+- Groups files by directory with bold headers
+- Filenames indented under directory
 
 ---
 
-## Shared Rendering Module (2026-01-20)
+## Progress Summarization
 
-**Story**: Create shared rendering module with generic writer parameter
+### Configuration
+- Default command: `claude --dangerously-skip-permissions -p {prompt}`
+- Permission bypass required (non-interactive subprocess)
+- Spinner shows "Summarizing progress file..." with elapsed time
 
-**Problem**:
-The codebase had significant code duplication between stream_processor (live execution) and replay_renderer (session replay). Both paths had identical implementations of:
-- `extract_line_number()` - Parse cat-n format line numbers
-- `normalize_cat_n_format()` - Transform Claude CLI line numbers to pipe format
-- `group_files_by_directory()` - Group file paths by parent directory
-- `highlight_grep_match()` - Highlight grep content mode output
-- `extract_language_from_path()` - Detect programming language from file extension
-
-**Changes**:
-- Created new `crates/ralph/src/render/` module with:
-  - `mod.rs` - Module exports and documentation
-  - `utils.rs` - Shared utility functions (consolidated from both paths)
-- Updated `stream_processor/tool_results/read.rs` to use `crate::render::normalize_cat_n_format`
-- Updated `stream_processor/tool_results/glob.rs` to use `crate::render::group_files_by_directory`
-- Updated `stream_processor/tool_results/grep.rs` to use `crate::render::highlight_grep_match`
-- Updated `stream_processor/utils.rs` to re-export `extract_language_from_path` from render module
-- Updated `replay_renderer.rs` to import all utilities from `crate::render`
-- Removed 19 duplicated tests (now in `render/utils.rs`)
-- Removed ~200 lines of duplicated code
-
-**Key files**:
-- `crates/ralph/src/render/mod.rs` - New shared rendering module
-- `crates/ralph/src/render/utils.rs` - Consolidated utility functions with 30 tests
-- `crates/ralph/src/stream_processor/tool_results/read.rs` - Updated imports
-- `crates/ralph/src/stream_processor/tool_results/glob.rs` - Updated imports
-- `crates/ralph/src/stream_processor/tool_results/grep.rs` - Updated imports
-- `crates/ralph/src/stream_processor/utils.rs` - Re-export from render
-- `crates/ralph/src/replay_renderer.rs` - Updated imports, removed duplicates
-
-**Utility functions consolidated**:
-
-1. **`extract_line_number()`** - Parse `     1\tcontent` or `     1→content` format
-   - Returns `Option<(&str, &str)>` with line number and rest of line
-   - Handles both tab and arrow UTF-8 separators
-
-2. **`normalize_cat_n_format()`** - Transform Claude CLI cat-n format
-   - Input: `     1\tfn main()` → Output: `1 │ fn main()`
-   - Right-aligns line numbers to max width
-   - 19 tests covering all edge cases
-
-3. **`group_files_by_directory()`** - Group file paths by parent directory
-   - Returns `BTreeMap<String, Vec<&str>>` (sorted for consistent output)
-   - Root files grouped under empty string key
-   - 3 tests for various scenarios
-
-4. **`highlight_grep_match()`** - Format grep content mode output
-   - Parses `filename:line_number:content` format
-   - Applies dim styling to prefix, yellow to content
-   - Removed unused `pattern` parameter from stream processor version
-   - 3 tests for format detection
-
-5. **`extract_language_from_path()`** - Detect language from file extension
-   - Supports 40+ file types (Rust, Python, JS/TS, Go, C/C++, etc.)
-   - Consolidated stream processor's comprehensive version (70+ extensions)
-   - replay_renderer's limited version (15 extensions) superseded
-   - 8 tests for various extensions
-
-**Design decisions**:
-- Used comprehensive `extract_language_from_path` from stream_processor (more complete)
-- Used cleaner `highlight_grep_match` signature from replay_renderer (no unused param)
-- Re-export from `stream_processor/utils.rs` for backward compatibility
-- All tests moved to render/utils.rs as single source of truth
-
-**Acceptance criteria met**:
-- Shared rendering module exists with all utility functions ✓
-- All functions are pure (no I/O, no side effects) ✓
-- 30 unit tests verify correct behavior ✓
-- No direct stdout writes in the rendering module ✓
-- Live execution output unchanged (verified by 545 passing tests) ✓
-- Replay output unchanged (verified by 545 passing tests) ✓
-- All 545 tests pass, cargo xtask lint passes ✓
+### Behavior
+- Success: "Progress file summarized: N lines → M lines"
+- Failure: Warning in caller
+- No spinner when stdout not a terminal
 
 ---
 
-## Unified Rendering Refactor Completion (2026-01-20)
+## Documentation Files
 
-**Stories completed**:
-1. Migrate live execution to use shared rendering module
-2. Migrate replay to use shared rendering module
-3. Remove duplicated rendering code from replay_renderer
-
-**Problem**:
-The replay_renderer.rs had dead code methods that were never called. These methods (`render_read_result`, `render_grep_result`, `render_glob_result`, `render_todowrite_result`, `render_notebook_edit`, `render_default_result`) were older implementations that had been superseded by the shared `crate::render` module functions.
-
-Additionally:
-- `render_notebook_edit` had 6 arguments, violating the 5-argument limit rule
-- Several tests expected incorrect label formats after the shared renderer changes
-- `render_bash_result` didn't handle empty string content as "no output"
-
-**Changes**:
-- **Dead code removal**: Removed ~370 lines of dead code from `replay_renderer.rs` (methods at lines 237-603)
-- **NotebookEditParams struct**: Created params struct in `render/tool_renderers.rs` to replace 6-argument function
-- **Updated render_notebook_edit**: Now takes `&RenderContext` and `&NotebookEditParams` (2 args instead of 6)
-- **Fixed render_bash_result**: Treats empty string content as None for "success" display
-- **Fixed render_glob_invocation**: Added "Pattern:" and "Path:" labels with default path "."
-- **Fixed render_grep_invocation**: Capitalized labels ("Pattern:", "Path:", "Mode:")
-- **Updated tests**: Fixed tests expecting old label formats
-
-**Key files modified**:
-- `crates/ralph/src/replay_renderer.rs` - Removed dead code, fixed imports
-- `crates/ralph/src/render/tool_renderers.rs` - Added NotebookEditParams, fixed renderers
-- `crates/ralph/src/render/mod.rs` - Exported NotebookEditParams
-
-**Data flow (final state)**:
-1. Stream processor tool_display/tool_results files import shared functions from `crate::render`
-2. Replay renderer imports shared functions from `crate::render`
-3. Both paths use identical rendering logic
-4. No rendering duplication exists
-
-**Acceptance criteria met**:
-- No duplicated rendering logic remains in replay_renderer.rs ✓
-- replay_renderer.rs is significantly smaller (orchestration only) ✓
-- All 558 tests pass ✓
-- No dead code warnings from clippy ✓
-- cargo xtask lint passes ✓
+| File | Purpose |
+|------|---------|
+| `docs/output-blocks.md` | OutputBlock architecture and data flow |
+| `docs/rendering-audit.md` | Rendering duplication analysis |
+| `docs/development.md` | Local development guide |
+| `README.md` | Polished with ASCII banner, badges, ToC |
 
 ---
 
-## Vibrant Line Number Background Colors (2026-01-20)
+## Test Helpers
 
-**Story**: Make before/after line number colors more vibrant and visible
-
-**Problem**:
-The red and green background colors used for "before" and "after" blocks in Edit/Write tool diffs were desaturated and difficult to distinguish. The original values (RGB 100,40,40 for red and 40,90,40 for green) didn't provide enough visual contrast.
-
-**Changes**:
-- Updated `RED_BG` from `48;2;100;40;40` (RGB 100,40,40) to `48;2;140;45;45` (RGB 140,45,45)
-- Updated `GREEN_BG` from `48;2;40;90;40` (RGB 40,90,40) to `48;2;45;130;45` (RGB 45,130,45)
-- Consolidated color constants to use the central `ansi` module in `render/tool_renderers.rs`
-- Updated `edit.rs` to import from `crate::render::ansi` instead of defining local constants
-- Updated `write.rs` to import from `crate::render::ansi` instead of defining local constants
-- Removed ~20 lines of duplicated constant definitions
-
-**Key files modified**:
-- `crates/ralph/src/render/tool_renderers.rs` - Central color definitions with vibrant values
-- `crates/ralph/src/stream_processor/tool_results/edit.rs` - Import from central module
-- `crates/ralph/src/stream_processor/tool_results/write.rs` - Import from central module
-
-**Color rationale**:
-- New red (140,45,45): More saturated with higher red component for immediate visibility
-- New green (45,130,45): More saturated with higher green component for clear distinction
-- Both colors remain dark enough to work on light terminal themes
-- Both colors are vibrant enough to "pop" on dark terminal themes
-- Syntax highlighting remains readable on both backgrounds
-
-**Acceptance criteria met**:
-- Red and green line number backgrounds are immediately distinguishable ✓
-- Colors pop without being distracting or garish ✓
-- Syntax highlighting on code content remains clearly readable ✓
-- Works well on both dark and light terminal themes ✓
-- All 558 tests pass, cargo xtask lint passes ✓
+### `stream_processor/test_helpers.rs`
+```rust
+assert_toml_roundtrip(&block);  // Serialize → deserialize → assert_eq
+create_test_invocation("Bash", json!({...}));  // Quick ToolInvocation creation
+expect_tool_invocation(block);  // Extract with descriptive panic
+```
 
 ---
 
-## Replay Delay Flag (2026-01-20)
+## CLI Flags Added
 
-**Story**: Add --delay flag to replay command for configurable pause between output blocks
+### `run` Command
+- `--no-prompt` - Suppress prompt display at session start
 
-**Problem**:
-Users replaying sessions with large output blocks had no way to pace the output. All blocks rendered immediately, making it difficult to follow along with the replay at a comfortable reading pace.
+### `replay` Command
+- `--no-prompt` - Suppress prompt display
+- `--delay <SECONDS>` - Pause between output blocks (float, e.g., 0.5, 1, 2.5)
 
-**Changes**:
-- Added `--delay <SECONDS>` flag to `ReplayArgs` in `crates/ralph/src/cli.rs`
-- Added `delay_secs: Option<f64>` field to `ReplayOptions` struct
-- Added `with_delay()` builder method to `ReplayOptions`
-- Updated `replay_iteration()` to accept and pass delay parameter
-- Updated `replay_output_blocks()` to sleep between blocks when delay specified
-- Updated `replay_chunks()` (legacy format) to sleep between chunks when delay specified
-- Updated `execute_replay()` in main.rs to pass delay through options
+---
 
-**Key files**:
-- `crates/ralph/src/cli.rs` - Added `--delay` flag to ReplayArgs
-- `crates/ralph/src/replay.rs` - Added delay support to ReplayOptions and replay functions
-- `crates/ralph/src/main.rs` - Wired delay flag through to replay options
+## Bug Fixes Applied
 
-**Implementation details**:
-- Delay is applied after each output block/chunk is rendered
-- Uses `std::thread::sleep(Duration::from_secs_f64(secs))` for precise fractional seconds
-- Stdout is flushed before sleeping to ensure output is visible
-- Zero or negative delays are treated as no-delay (no sleep call)
-- Both output_blocks (new format) and chunks (legacy format) support delay
+1. **Progress summarization permission** - Added `--dangerously-skip-permissions` to subprocess
+2. **Empty bash result** - Treats empty string content as None for "success" display
+3. **Glob invocation labels** - Added "Pattern:" and "Path:" with default path "."
+4. **Grep invocation labels** - Capitalized labels ("Pattern:", "Path:", "Mode:")
+5. **NotebookEdit args** - Created `NotebookEditParams` struct (was 6 args, now 2)
+6. **Line number colors** - Made RED_BG/GREEN_BG more vibrant for visibility
 
-**Tests added** (8 tests):
-- `test_replay_with_delay` - Verifies delay flag parsing with float value
-- `test_replay_with_delay_integer` - Verifies integer value converts to float
-- `test_replay_with_delay_fractional` - Verifies fractional second support
-- `test_replay_without_delay` - Verifies default is None
-- `test_replay_options_default` - Verifies ReplayOptions defaults include delay_secs: None
-- `test_replay_options_with_delay` - Verifies with_delay() builder sets value
-- `test_replay_options_with_delay_none` - Verifies with_delay(None) works
-- `test_replay_options_builder_chain` - Verifies all builder methods chain correctly
+---
 
-**Acceptance criteria met**:
-- A `--delay <seconds>` flag is added to the replay command ✓
-- The flag accepts positive floating-point values (e.g., 0.5, 1, 2.5) ✓
-- When provided, replay pauses for the specified duration between each output block ✓
-- When omitted, replay behaves as before with no delay (zero cost default) ✓
-- The flag is documented in `--help` output ✓
-- All 566 tests pass, cargo xtask lint passes ✓
+## Code Quality
+
+### Removed Dead Code
+- ~370 lines from `replay_renderer.rs` (superseded by shared render module)
+- ~200 lines of duplicated utilities (consolidated to `render/utils.rs`)
+- `build_write_new_file_block`, `build_write_overwrite_block` (redundant)
+- 19 duplicated tests (moved to `render/utils.rs`)
+
+### Enforced Patterns
+- Max 5 function arguments (NotebookEditParams for 6-arg function)
+- All ANSI colors centralized in `render/tool_renderers.rs`
+- Re-exports from `stream_processor/utils.rs` for backward compatibility
+
+---
+
+## Lint File Length Check (2026-01-20)
+
+### Implementation
+Added a new lint check that enforces a 1000-line maximum for Rust files.
+
+**Location**: `xtask/src/lint/mod.rs`
+
+### Details
+- `run_file_length_check()` function added as check #6 in the lint pipeline
+- Uses `git ls-files` to find all tracked `.rs` files
+- Counts lines using `BufReader::lines()`
+- Reports violations with file path and line count
+- `MAX_FILE_LINES` constant set to 1000
+
+### Acceptance Criteria Met
+- ✅ File length check added to lint command
+- ✅ Scans all .rs files in workspace (via git ls-files)
+- ✅ Files exceeding 1000 lines cause lint to fail
+- ✅ Error output lists violating files with path and line count
+- ✅ Files at or under 1000 lines pass silently

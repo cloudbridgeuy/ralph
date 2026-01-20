@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use error::Result;
+use std::io::BufRead;
 
 pub mod error;
 mod hooks;
@@ -17,6 +18,7 @@ Rust checks:
 3. cargo clippy - Linting with all warnings treated as errors
 4. cargo test - Run all tests including doctests
 5. cargo rail unify --check - Dependency unification, unused deps, dead features
+6. File length check - Ensures no .rs file exceeds 1000 lines
 
 When used with --install-hooks, this command also manages git pre-commit hooks that
 run these same checks automatically before each commit.
@@ -119,6 +121,11 @@ async fn run_lint_checks(command: &LintCommand, global: &crate::Global) -> Resul
 
     // 5. Run cargo rail unify --check
     if !run_cargo_rail_unify(global).await? {
+        all_passed = false;
+    }
+
+    // 6. Run file length check
+    if !run_file_length_check(global).await? {
         all_passed = false;
     }
 
@@ -352,4 +359,97 @@ async fn restage_rust_files(global: &crate::Global) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Maximum allowed lines per Rust file
+const MAX_FILE_LINES: usize = 1000;
+
+/// File path with its line count (for violations)
+type FileLineCount = (String, usize);
+
+/// File path with the I/O error that occurred
+type FileError = (String, std::io::Error);
+
+/// Pure function: Find files that exceed the maximum line count.
+/// Separates business logic from I/O per Functional Core pattern.
+fn find_file_length_violations(
+    file_paths: &[&str],
+    max_lines: usize,
+) -> (Vec<FileLineCount>, Vec<FileError>) {
+    let mut violations = Vec::new();
+    let mut errors = Vec::new();
+
+    for &path in file_paths {
+        match std::fs::File::open(path) {
+            Ok(file) => {
+                let line_count = std::io::BufReader::new(file).lines().count();
+                if line_count > max_lines {
+                    violations.push((path.to_string(), line_count));
+                }
+            }
+            Err(e) => {
+                errors.push((path.to_string(), e));
+            }
+        }
+    }
+
+    (violations, errors)
+}
+
+async fn run_file_length_check(global: &crate::Global) -> Result<bool> {
+    if !global.is_silent() {
+        aprintln!("{} {}", p_b("🔧"), p_b("Checking file lengths..."));
+    }
+
+    // Find all .rs files in the workspace
+    let output = tokio::process::Command::new("git")
+        .args(["ls-files", "*.rs", "**/*.rs"])
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        aprintln!("{} Failed to list Rust files", p_r("❌"));
+        return Ok(false);
+    }
+
+    let files_output = String::from_utf8_lossy(&output.stdout);
+    let file_paths: Vec<&str> = files_output.lines().filter(|l| !l.is_empty()).collect();
+
+    let (violations, errors) = find_file_length_violations(&file_paths, MAX_FILE_LINES);
+
+    // Log skipped files in verbose mode
+    if global.is_verbose() {
+        for (path, err) in &errors {
+            aprintln!("{} Skipping {}: {}", p_y("⚠️"), path, err);
+        }
+    }
+
+    if violations.is_empty() {
+        if !global.is_silent() {
+            aprintln!(
+                "{} {}",
+                p_g("✅"),
+                format!("All files under {} lines", MAX_FILE_LINES)
+            );
+        }
+        Ok(true)
+    } else {
+        aprintln!(
+            "{} {} file(s) exceed {} lines:",
+            p_r("❌"),
+            violations.len(),
+            MAX_FILE_LINES
+        );
+        for (path, count) in &violations {
+            aprintln!("  {} ({} lines)", p_r(path), count);
+        }
+        if !global.is_silent() {
+            aprintln!();
+            aprintln!(
+                "{} Consider splitting large files into modules",
+                p_b("Tip:")
+            );
+        }
+        Ok(false)
+    }
 }

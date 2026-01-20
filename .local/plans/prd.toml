@@ -28,7 +28,7 @@ steps = [
   "Run `cargo xtask lint` again",
   "Observe that the check fails and reports the offending file(s) with their line counts",
 ]
-passes = false
+passes = true
 acceptance = [
   "A file length check is added to the lint command",
   "The check scans all .rs files in the workspace (including tests)",
@@ -85,4 +85,22 @@ acceptance = [
   "The paused state is visually indicated (e.g., 'Paused [p: play]')",
   "The countdown resumes from the remaining time, not from the beginning",
   "The pause/play key is documented in the spinner display",
+]
+
+[[stories]]
+category = "prompt-display"
+description = "As a user, I want attached files displayed as a formatted table with descriptions so I can understand what each file represents."
+steps = [
+  "Run ralph with a prompt that includes attached files (design, prd, progress)",
+  "Observe the '▶ Prompt' section displays files as a table with columns for path and description",
+  "Verify each file shows its known description (e.g., 'Design document', 'Product requirements', 'Progress notes')",
+  "Verify the table renders correctly in both terminal and piped output",
+]
+passes = false
+acceptance = [
+  "PromptDisplay struct includes file metadata (path and description pairs)",
+  "Display functions render files as a formatted table before the prompt body",
+  "Known files use their assigned descriptions: design.md → 'Design document', prd.toml → 'Product requirements', progress.txt → 'Progress notes'",
+  "Inline @/path references are removed from the prompt body display",
+  "Table formatting works for both terminal (with colors) and plain output",
 ]
