@@ -305,75 +305,25 @@ impl StreamingChunkBuffer {
     /// assert_eq!(chunks.len(), 1);
     /// ```
     pub fn process_line(&mut self, line: &str) -> Vec<ParsedChunk> {
-        let mut result = Vec::new();
-
         match &self.state {
             BufferState::Prose => {
-                // Check for opening fence
                 if let Some(lang) = parse_fence_open(line) {
-                    // Flush any buffered prose before starting a code block
-                    if let Some(prose_chunk) = self.flush_prose_buffer() {
-                        result.push(prose_chunk);
-                    }
-
-                    // Start a code block
-                    let is_diff = lang.as_deref() == Some("diff");
-                    self.state = BufferState::Code {
-                        language: lang,
-                        is_diff,
-                    };
-                    self.buffer.clear();
+                    self.start_code_block(lang)
+                } else if self.prose_buffer_threshold == 0 {
+                    self.emit_eager_prose(line)
                 } else {
-                    // Handle prose based on buffering mode
-                    if self.prose_buffer_threshold == 0 {
-                        // Eager mode: emit each line immediately
-                        // Emit all lines including empty ones to preserve whitespace
-                        let chunk = ParsedChunk::prose(line);
-                        self.emitted_count += 1;
-                        result.push(chunk);
-                    } else {
-                        // Buffered mode: accumulate lines until threshold
-                        if !self.buffer.is_empty() {
-                            self.buffer.push('\n');
-                        }
-                        self.buffer.push_str(line);
-                        self.buffered_prose_lines += 1;
-
-                        // Check if we've reached the threshold
-                        if self.buffered_prose_lines >= self.prose_buffer_threshold {
-                            if let Some(prose_chunk) = self.flush_prose_buffer() {
-                                result.push(prose_chunk);
-                            }
-                        }
-                    }
+                    self.accumulate_prose_line(line)
                 }
             }
-            BufferState::Code { language, is_diff } => {
-                // Check for closing fence
+            BufferState::Code { .. } => {
                 if is_fence_close(line) {
-                    // Emit the complete code/diff block
-                    let content = std::mem::take(&mut self.buffer);
-                    let chunk = if *is_diff {
-                        ParsedChunk::diff(content)
-                    } else {
-                        ParsedChunk::code(content, language.clone())
-                    };
-                    self.emitted_count += 1;
-                    result.push(chunk);
-
-                    // Return to prose state
-                    self.state = BufferState::Prose;
+                    self.close_code_block()
                 } else {
-                    // Accumulate code content
-                    if !self.buffer.is_empty() {
-                        self.buffer.push('\n');
-                    }
-                    self.buffer.push_str(line);
+                    self.accumulate_code_line(line);
+                    Vec::new()
                 }
             }
         }
-
-        result
     }
 
     /// Flush the buffered prose lines and return as a single chunk.
@@ -389,6 +339,75 @@ impl StreamingChunkBuffer {
         self.emitted_count += 1;
 
         Some(ParsedChunk::prose(content))
+    }
+
+    /// Handle a prose line in eager mode (threshold = 0).
+    ///
+    /// Returns a single-element vector with the prose chunk.
+    fn emit_eager_prose(&mut self, line: &str) -> Vec<ParsedChunk> {
+        let chunk = ParsedChunk::prose(line);
+        self.emitted_count += 1;
+        vec![chunk]
+    }
+
+    /// Handle a prose line in buffered mode (threshold > 0).
+    ///
+    /// Accumulates the line and returns chunks if threshold is reached.
+    fn accumulate_prose_line(&mut self, line: &str) -> Vec<ParsedChunk> {
+        if !self.buffer.is_empty() {
+            self.buffer.push('\n');
+        }
+        self.buffer.push_str(line);
+        self.buffered_prose_lines += 1;
+
+        if self.buffered_prose_lines >= self.prose_buffer_threshold {
+            self.flush_prose_buffer().into_iter().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Start a new code block, returning any flushed prose.
+    fn start_code_block(&mut self, language: Option<String>) -> Vec<ParsedChunk> {
+        let mut result = Vec::new();
+
+        // Flush any buffered prose before starting a code block
+        if let Some(prose_chunk) = self.flush_prose_buffer() {
+            result.push(prose_chunk);
+        }
+
+        let is_diff = language.as_deref() == Some("diff");
+        self.state = BufferState::Code { language, is_diff };
+        self.buffer.clear();
+
+        result
+    }
+
+    /// Close the current code block and emit the chunk.
+    fn close_code_block(&mut self) -> Vec<ParsedChunk> {
+        let (language, is_diff) = match &self.state {
+            BufferState::Code { language, is_diff } => (language.clone(), *is_diff),
+            BufferState::Prose => return Vec::new(),
+        };
+
+        let content = std::mem::take(&mut self.buffer);
+        let chunk = if is_diff {
+            ParsedChunk::diff(content)
+        } else {
+            ParsedChunk::code(content, language)
+        };
+        self.emitted_count += 1;
+        self.state = BufferState::Prose;
+
+        vec![chunk]
+    }
+
+    /// Accumulate a line of code content.
+    fn accumulate_code_line(&mut self, line: &str) {
+        if !self.buffer.is_empty() {
+            self.buffer.push('\n');
+        }
+        self.buffer.push_str(line);
     }
 
     /// Process multiple lines at once (convenience method).
@@ -475,22 +494,15 @@ impl StreamingChunkBuffer {
                     result.push(prose_chunk);
                 }
             }
-            BufferState::Code { language, is_diff } => {
-                // Emit unterminated code block
+            BufferState::Code { .. } => {
+                // Emit unterminated code block using existing helper
                 if !self.buffer.is_empty() {
-                    let content = std::mem::take(&mut self.buffer);
-                    let chunk = if *is_diff {
-                        ParsedChunk::diff(content)
-                    } else {
-                        ParsedChunk::code(content, language.clone())
-                    };
-                    self.emitted_count += 1;
-                    result.push(chunk);
+                    result.extend(self.close_code_block());
                 }
             }
         }
 
-        // Reset state
+        // Reset state (close_code_block already resets to Prose, but ensure clean state)
         self.state = BufferState::Prose;
         self.buffer.clear();
         self.buffered_prose_lines = 0;
