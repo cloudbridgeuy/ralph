@@ -3,6 +3,10 @@
 use super::batch::parse_chunks;
 use super::types::{ChunkType, ParsedChunk};
 
+/// Minimum number of diff-like lines required to classify text as an unfenced diff.
+/// Lines starting with `+` or `-` (excluding `++`/`--` headers) are counted.
+const MIN_DIFF_LINES_THRESHOLD: usize = 2;
+
 /// Detect if text contains unfenced diff content using heuristics.
 ///
 /// This function checks for common unified diff patterns like:
@@ -60,7 +64,7 @@ pub fn is_unfenced_diff(text: &str) -> bool {
         })
         .count();
 
-    diff_line_count >= 2
+    diff_line_count >= MIN_DIFF_LINES_THRESHOLD
 }
 
 /// Parse text that may contain unfenced diffs using heuristics.
