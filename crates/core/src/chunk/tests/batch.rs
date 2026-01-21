@@ -325,3 +325,49 @@ fn test_multiline_code_block() {
         "fn main() {\n    println!(\"Hello\");\n    println!(\"World\");\n}"
     );
 }
+
+// =============================================================================
+// Helper function tests
+// =============================================================================
+
+mod helpers {
+    use crate::chunk::{parse_chunks, ChunkType};
+
+    // We test the helpers indirectly through parse_chunks behavior
+    // since they are private functions
+
+    #[test]
+    fn flush_prose_preserves_content() {
+        // Verified through existing test_parse_simple_prose
+        let chunks = parse_chunks("Hello\nWorld");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "Hello\nWorld");
+    }
+
+    #[test]
+    fn append_line_joins_with_newline() {
+        // Verified through multi-line prose handling
+        let chunks = parse_chunks("Line1\nLine2\nLine3");
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].content, "Line1\nLine2\nLine3");
+    }
+
+    #[test]
+    fn emit_code_block_handles_diff() {
+        let chunks = parse_chunks("```diff\n-old\n+new\n```");
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(chunks[0].chunk_type, ChunkType::Diff));
+    }
+
+    #[test]
+    fn emit_code_block_handles_language() {
+        let chunks = parse_chunks("```typescript\nconst x = 1;\n```");
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0].chunk_type {
+            ChunkType::Code { language } => {
+                assert_eq!(language.as_deref(), Some("typescript"));
+            }
+            _ => panic!("Expected code chunk"),
+        }
+    }
+}

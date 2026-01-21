@@ -3,6 +3,40 @@
 use super::fence::{is_fence_close, parse_fence_open};
 use super::types::ParsedChunk;
 
+/// Flush accumulated prose into the chunks vector if non-empty.
+///
+/// This is a pure helper that takes ownership of the prose content.
+fn flush_prose(chunks: &mut Vec<ParsedChunk>, prose: &mut String) {
+    if !prose.is_empty() {
+        chunks.push(ParsedChunk::prose(std::mem::take(prose)));
+    }
+}
+
+/// Emit a completed code block chunk.
+///
+/// This is a pure helper that takes ownership of the code content.
+fn emit_code_block(
+    chunks: &mut Vec<ParsedChunk>,
+    content: &mut String,
+    language: &mut Option<String>,
+    is_diff: bool,
+) {
+    let code_content = std::mem::take(content);
+    if is_diff {
+        chunks.push(ParsedChunk::diff(code_content));
+    } else {
+        chunks.push(ParsedChunk::code(code_content, language.take()));
+    }
+}
+
+/// Append a line to a buffer, adding newline separator if buffer is non-empty.
+fn append_line(buffer: &mut String, line: &str) {
+    if !buffer.is_empty() {
+        buffer.push('\n');
+    }
+    buffer.push_str(line);
+}
+
 /// Parse text into typed chunks.
 ///
 /// This function scans text for fenced code blocks and diff patterns,
@@ -38,61 +72,41 @@ pub fn parse_chunks(text: &str) -> Vec<ParsedChunk> {
 
     for line in text.lines() {
         if !in_code_block {
-            // Check for opening fence
             if let Some(lang) = parse_fence_open(line) {
-                // Flush any accumulated prose
-                if !current_prose.is_empty() {
-                    chunks.push(ParsedChunk::prose(std::mem::take(&mut current_prose)));
-                }
-
+                flush_prose(&mut chunks, &mut current_prose);
                 in_code_block = true;
                 is_diff_block = lang.as_deref() == Some("diff");
                 code_block_language = lang;
                 code_block_content.clear();
             } else {
-                // Accumulate prose
-                if !current_prose.is_empty() {
-                    current_prose.push('\n');
-                }
-                current_prose.push_str(line);
+                append_line(&mut current_prose, line);
             }
+        } else if is_fence_close(line) {
+            emit_code_block(
+                &mut chunks,
+                &mut code_block_content,
+                &mut code_block_language,
+                is_diff_block,
+            );
+            in_code_block = false;
+            is_diff_block = false;
         } else {
-            // Inside a code block
-            if is_fence_close(line) {
-                // End of code block
-                if is_diff_block {
-                    chunks.push(ParsedChunk::diff(std::mem::take(&mut code_block_content)));
-                } else {
-                    chunks.push(ParsedChunk::code(
-                        std::mem::take(&mut code_block_content),
-                        code_block_language.take(),
-                    ));
-                }
-                in_code_block = false;
-                is_diff_block = false;
-            } else {
-                // Accumulate code content
-                if !code_block_content.is_empty() {
-                    code_block_content.push('\n');
-                }
-                code_block_content.push_str(line);
-            }
+            append_line(&mut code_block_content, line);
         }
     }
 
     // Handle unterminated code block
     if in_code_block && !code_block_content.is_empty() {
-        if is_diff_block {
-            chunks.push(ParsedChunk::diff(code_block_content));
-        } else {
-            chunks.push(ParsedChunk::code(code_block_content, code_block_language));
-        }
+        emit_code_block(
+            &mut chunks,
+            &mut code_block_content,
+            &mut code_block_language,
+            is_diff_block,
+        );
     }
 
     // Flush remaining prose
-    if !current_prose.is_empty() {
-        chunks.push(ParsedChunk::prose(current_prose));
-    }
+    flush_prose(&mut chunks, &mut current_prose);
 
     chunks
 }
