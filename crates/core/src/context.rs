@@ -279,16 +279,8 @@ pub fn determine_files_to_touch(
     progress_exists: bool,
 ) -> ContextFilesTouch {
     ContextFilesTouch {
-        design: if design_exists {
-            None
-        } else {
-            Some(paths.design.clone())
-        },
-        progress: if progress_exists {
-            None
-        } else {
-            Some(paths.progress.clone())
-        },
+        design: (!design_exists).then(|| paths.design.clone()),
+        progress: (!progress_exists).then(|| paths.progress.clone()),
     }
 }
 
