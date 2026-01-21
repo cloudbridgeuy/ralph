@@ -1,6 +1,6 @@
 //! Text accumulation utilities for streaming events.
 
-use super::events::{AssistantEvent, StreamEvent};
+use super::events::StreamEvent;
 
 /// Accumulates text across streaming assistant events.
 ///
@@ -224,9 +224,4 @@ pub fn accumulate_text<'a>(events: impl Iterator<Item = &'a StreamEvent>) -> Str
     }
     accumulator.finish();
     accumulator.get_all_text()
-}
-
-// Re-export AssistantEvent methods that use ToolInvocation
-impl AssistantEvent {
-    // Note: extract_text and extract_tool_invocations are implemented in extraction.rs
 }
