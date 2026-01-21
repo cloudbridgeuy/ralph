@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{
-    AttachedFile, IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo,
+    clean_blank_lines, AttachedFile, IterationHeader, IterationSummary, PromptDisplay, RunSummary,
+    StartupInfo,
 };
 
 fn create_test_info() -> StartupInfo {
@@ -533,4 +534,68 @@ fn test_prompt_display_from_prompt_relative_path() {
     let display = PromptDisplay::from_prompt(prompt);
     // Relative paths are supported (no leading /)
     assert!(!display.attached_files.is_empty());
+}
+
+#[test]
+fn test_prompt_display_stripped_prompt_removes_references() {
+    let prompt = "@/project/design.md @/project/prd.toml
+
+1. Do something
+2. Do another thing";
+
+    let display = PromptDisplay::from_prompt(prompt);
+    let stripped = display.stripped_prompt();
+
+    // Should not contain file references
+    assert!(!stripped.contains("@/project/design.md"));
+    assert!(!stripped.contains("@/project/prd.toml"));
+    // Should contain the actual content
+    assert!(stripped.contains("1. Do something"));
+    assert!(stripped.contains("2. Do another thing"));
+}
+
+#[test]
+fn test_prompt_display_stripped_prompt_preserves_content() {
+    let prompt = "No file references here, just content";
+    let display = PromptDisplay::from_prompt(prompt);
+    let stripped = display.stripped_prompt();
+    assert_eq!(stripped, prompt);
+}
+
+// Tests for clean_blank_lines
+
+#[test]
+fn test_clean_blank_lines_collapses_multiple() {
+    let input = "line1\n\n\n\nline2";
+    let result = clean_blank_lines(input);
+    assert_eq!(result, "line1\n\nline2");
+}
+
+#[test]
+fn test_clean_blank_lines_preserves_single() {
+    let input = "line1\n\nline2";
+    let result = clean_blank_lines(input);
+    assert_eq!(result, "line1\n\nline2");
+}
+
+#[test]
+fn test_clean_blank_lines_preserves_content_lines() {
+    let input = "line1\nline2\nline3";
+    let result = clean_blank_lines(input);
+    assert_eq!(result, "line1\nline2\nline3");
+}
+
+#[test]
+fn test_clean_blank_lines_empty_input() {
+    let input = "";
+    let result = clean_blank_lines(input);
+    assert_eq!(result, "");
+}
+
+#[test]
+fn test_clean_blank_lines_only_blanks() {
+    let input = "\n\n\n";
+    let result = clean_blank_lines(input);
+    // Multiple blank lines collapse to single newline
+    assert_eq!(result, "\n");
 }

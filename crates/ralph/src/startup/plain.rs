@@ -2,8 +2,7 @@
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{
-    strip_file_references, IterationHeader, IterationSummary, PromptDisplay, RunSummary,
-    StartupInfo, VERSION,
+    IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
 };
 
 /// Display startup info without terminal formatting.
@@ -226,8 +225,7 @@ pub(super) fn display_prompt_plain(prompt: &PromptDisplay) {
     println!();
 
     // Print the prompt with file references stripped (no markdown rendering)
-    let display_prompt = strip_file_references(prompt.prompt);
-    println!("{}", display_prompt);
+    println!("{}", prompt.stripped_prompt());
 
     // Closing separator
     println!("{}", "-".repeat(60));

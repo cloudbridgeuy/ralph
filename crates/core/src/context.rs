@@ -107,8 +107,8 @@ Output ONLY the summarized content, ready to replace the file. Do not include an
 
 ONLY WORK ON A SINGLE FEATURE.
 
-IF YOU NOTICE A FILE GOING OVER 1000 LINES CONSIDER UPDATING IT INTO A MODULE OR MOVING THE TESTS TO A DIFFERENT FILE, AND USE THE #[path = ...] PATTERN.
 {additional_prompt}
+
 If, while implementing the feature, you notice all stories in the PRD are complete, output {completion_marker}."#;
 }
 

@@ -712,3 +712,58 @@ quiet-mountain     .../Projects/Rust/foo     2026-01-19 14:20     3      45s   $
 
 ### Test Count
 616 tests passing
+
+---
+
+## Attached Files Table Display - Code Cleanup (2026-01-20)
+
+### Summary
+Committed the attached files table display feature that was previously implemented but not committed. The feature shows attached files (design.md, prd.toml, progress.txt) in a formatted table before the prompt body, with appropriate descriptions.
+
+### Implementation Details
+
+**Location**: `crates/ralph/src/startup/` module
+
+**Key components:**
+- `AttachedFile` struct in `types.rs` - Holds path and description
+- `PromptDisplay::from_prompt()` - Parses `@/path` references from stored prompts
+- `strip_file_references()` - Removes `@/path` references from displayed prompt
+- Terminal and plain text display functions updated to show the table
+
+**Code cleanup performed:**
+- Removed duplicated `strip_file_references()` and `clean_blank_lines()` functions from `plain.rs`
+- Now uses the canonical versions from `types.rs` via module-level import
+
+**File description mapping:**
+| Filename | Description |
+|----------|-------------|
+| `design.md` | Design document |
+| `prd.toml` | Product requirements |
+| `progress.txt` | Progress notes |
+| Other files | Attached file |
+
+### Test Count
+623 tests passing
+
+---
+
+## Dead Code Cleanup (2026-01-21)
+
+### Summary
+Removed 4 unused formatting functions from `crates/ralph/src/startup/formatters.rs` to fix clippy dead_code errors.
+
+**Location**: `crates/ralph/src/startup/formatters.rs`
+
+### Removed Functions
+- `format_iteration_text(iteration: usize, max_iterations: Option<usize>) -> String`
+- `format_stories_remaining(count: usize) -> String`
+- `format_iterations_completed(count: usize) -> String`
+- `format_cost_usd(cost: Option<f64>) -> String`
+
+These functions were never called anywhere in the codebase. Per CLAUDE.md principle "No Dead Code", they were deleted rather than being annotated with `#[allow(dead_code)]`.
+
+### Code Reduction
+~32 lines of dead code removed.
+
+### Test Count
+630 tests passing (ralph crate) + 313 tests (ralph_core crate)
