@@ -130,14 +130,12 @@ impl ThemeConfig {
     ///
     /// If the config file doesn't exist or fails to parse, falls back to env + defaults.
     pub fn from_config_and_env() -> Self {
-        // Start with config file settings (if available)
-        let config_theme = crate::config::AppConfig::load()
-            .ok()
-            .and_then(|c| c.theme.name);
-        let config_no_background = crate::config::AppConfig::load()
-            .ok()
-            .map(|c| c.theme.no_background)
-            .unwrap_or(false);
+        // Load config file once
+        let app_config = crate::config::AppConfig::load().ok();
+
+        // Extract config file settings
+        let config_theme = app_config.as_ref().and_then(|c| c.theme.name.clone());
+        let config_no_background = app_config.map(|c| c.theme.no_background).unwrap_or(false);
 
         // Get environment variable values
         let env_theme = std::env::var(RALPH_THEME_ENV).ok();
