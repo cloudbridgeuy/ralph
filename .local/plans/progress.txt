@@ -821,3 +821,68 @@ The `execute_ask` function currently prints the prompt and returns Ok(()). This 
 
 ### Test Count
 650 tests passing (ralph crate) + 334 tests passing (ralph_core crate)
+
+---
+
+## Ask Command - Core Execution (2026-01-22)
+
+### Summary
+Implemented core ask execution functionality that invokes the claude subprocess and displays the response with syntax highlighting. This is story 2 in the ask command PRD.
+
+**Location**: `crates/ralph/src/ask.rs`
+
+### Implementation Details
+
+**New module `ask.rs`:**
+```rust
+/// Configuration for the ask command.
+pub struct AskConfig {
+    pub prompt: String,
+    pub timeout_secs: u64,
+    pub theme_config: ThemeConfig,
+    pub verbose_tools: VerboseToolsConfig,
+}
+
+/// Error type for ask command operations.
+pub enum AskError {
+    NoPrompt,
+    Subprocess(SubprocessError),
+    NonZeroExit { exit_code: i32 },
+}
+
+/// Execute a single-shot LLM prompt and display the response.
+pub fn ask(config: AskConfig) -> Result<(), AskError>
+```
+
+**Command format:**
+```
+claude --verbose --permission-mode acceptEdits --output-format stream-json -p '{prompt}'
+```
+
+**Key features:**
+- Uses `invoke_subprocess_with_spinner_config()` for spinner display during LLM response
+- Leverages existing stream processor for output parsing and syntax highlighting
+- Proper shell escaping for prompts with single quotes
+- Signal handler initialization for graceful shutdown
+
+### Changes Made
+1. **Created `crates/ralph/src/ask.rs`**:
+   - `AskConfig` struct with prompt, timeout, theme, verbose tools configuration
+   - `AskError` enum for error handling
+   - `build_command()` pure function for command construction
+   - `ask()` function as main entry point
+
+2. **Updated `crates/ralph/src/main.rs`**:
+   - Added `mod ask;` module declaration
+   - Replaced stub `execute_ask` with full implementation
+   - Initializes signal handler
+   - Builds theme config from config file and env vars
+   - Calls `ask::ask()` with constructed config
+
+### Acceptance Criteria Met
+- ✅ `ralph ask 'what is 2+2'` invokes claude and displays the response with syntax highlighting
+- ✅ Spinner shows while waiting for LLM response
+- ✅ `cargo xtask lint` passes without errors
+
+### Test Count
+656 tests passing (ralph crate) + 334 tests passing (ralph_core crate)

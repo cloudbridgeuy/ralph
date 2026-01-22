@@ -28,7 +28,7 @@ steps = [
   "Wire up `execute_ask` in main.rs to call the new `ask()` function",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
   "`ralph ask 'what is 2+2'` invokes claude and displays the response with syntax highlighting",
   "Spinner shows while waiting for LLM response",

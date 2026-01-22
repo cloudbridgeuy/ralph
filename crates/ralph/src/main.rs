@@ -7,6 +7,7 @@
 // Threshold configured in clippy.toml (too-many-arguments-threshold = 5).
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
+mod ask;
 mod cli;
 pub mod config;
 pub mod diff_highlight;
@@ -484,12 +485,21 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
 /// Sends a single-shot prompt to the LLM and displays the response.
 /// This is a simplified interface for quick LLM interactions.
 fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // Print the prompt if provided
-    if let Some(prompt) = &args.prompt {
-        println!("Prompt: {}", prompt);
-    } else {
-        println!("No prompt provided. Use: ralph ask 'your prompt here'");
+    // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
+    if let Err(e) = signal::init() {
+        eprintln!("Warning: Failed to initialize signal handler: {}", e);
     }
+
+    // Build ask config - validation happens in ask::ask()
+    let config = ask::AskConfig {
+        prompt: args.prompt.unwrap_or_default(),
+        theme_config: highlight::ThemeConfig::from_config_and_env(),
+        ..Default::default()
+    };
+
+    // Execute the ask command
+    ask::ask(config)?;
+
     Ok(())
 }
 
