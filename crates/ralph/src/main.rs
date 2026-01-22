@@ -10,6 +10,7 @@
 mod cli;
 pub mod config;
 pub mod diff_highlight;
+pub mod formatting;
 mod git;
 pub mod highlight;
 mod init;

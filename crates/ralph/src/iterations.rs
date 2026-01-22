@@ -19,6 +19,7 @@
 //! }).unwrap();
 //! ```
 
+use crate::formatting::format_duration;
 use crate::iteration::IterationLog;
 use crate::paths;
 use crate::session::load_sessions_index;
@@ -381,19 +382,6 @@ fn display_iterations_table(
     }
 
     println!("{}", summary_parts.join(" | "));
-}
-
-/// Format duration in milliseconds to a human-readable string.
-fn format_duration(ms: u64) -> String {
-    if ms < 1000 {
-        format!("{}ms", ms)
-    } else if ms < 60_000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else {
-        let minutes = ms / 60_000;
-        let seconds = (ms % 60_000) / 1000;
-        format!("{}m {}s", minutes, seconds)
-    }
 }
 
 #[cfg(test)]
