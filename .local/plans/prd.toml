@@ -62,7 +62,7 @@ steps = [
   "Save as `iteration-1.toml` in session directory",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
   "`ralph ask 'hello'` creates `iteration-1.toml` in the session directory",
   "`ralph replay <slug>` successfully replays the ask session output",

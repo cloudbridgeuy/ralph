@@ -960,3 +960,95 @@ Session 'fuzzy-walrus' created.
 
 ### Test Count
 659 tests passing (ralph crate) + 334 tests passing (ralph_core crate)
+
+---
+
+## Ask Command - Iteration Logging (2026-01-22)
+
+### Summary
+Added iteration logging for replay compatibility in the `ask` command. Each ask session now writes an `iteration-1.toml` file that captures all output blocks, tool calls, chunks, and metadata, enabling faithful replay with `ralph replay`.
+
+**Location**: `crates/ralph/src/ask.rs`
+
+### Implementation Details
+
+**New error variant:**
+```rust
+pub enum AskError {
+    // ... existing variants ...
+    Iteration(#[from] IterationError),  // NEW: Iteration log write failures
+}
+```
+
+**New imports:**
+```rust
+use crate::iteration::{
+    write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata, LogToolCall,
+};
+use chrono::Utc;
+```
+
+**New pure function `build_iteration_log`:**
+```rust
+fn build_iteration_log(
+    result: &StreamingSubprocessResult,
+    started_at: DateTime<Utc>,
+    completed_at: DateTime<Utc>,
+) -> IterationLog
+```
+
+Extracts from `StreamProcessorResult`:
+- `LogMetadata` from `metadata` and `costs` (session_id, model, cost_usd, duration_ms, usage)
+- `LogToolCall` from `tool_interactions` (id, name, input, result, is_error)
+- `Chunk` from `chunks` (prose, code, diff with language hints)
+- `OutputBlock` from `output_blocks` (for faithful replay)
+
+**Updated `ask` function flow:**
+1. Capture `started_at` timestamp before session initialization
+2. Initialize session (creates `session.toml`)
+3. Invoke subprocess with spinner
+4. Capture `completed_at` timestamp
+5. Build iteration log using `build_iteration_log()`
+6. Write iteration log to session directory using `write_iteration_log()`
+7. Check exit code (after writing log to preserve partial data on failure)
+
+**Iteration log structure for ask:**
+- `sequence: 1` (ask always creates iteration 1)
+- `pending_before: 0` (ask has no stories)
+- `pending_after: 0` (ask has no stories)
+- All other fields populated from subprocess result
+
+### Changes Made
+1. **`crates/ralph/src/ask.rs`**:
+   - Added imports for iteration module types
+   - Added `Iteration(IterationError)` variant to `AskError`
+   - Added `build_iteration_log()` pure function
+   - Updated `ask()` to capture timestamps and write iteration log
+   - Added 6 new tests for iteration logging functionality
+
+### Tests Added
+- `test_ask_error_iteration_display` - Tests IterationError display formatting
+- `test_build_iteration_log_basic` - Tests basic log construction with defaults
+- `test_build_iteration_log_with_metadata` - Tests metadata extraction
+- `test_build_iteration_log_with_tool_interactions` - Tests tool call extraction
+- `test_build_iteration_log_with_chunks` - Tests chunk conversion
+- `test_build_iteration_log_preserves_non_zero_exit` - Tests exit code preservation
+- `test_build_iteration_log_preserves_timestamps` - Tests timestamp preservation
+
+### Code Simplifications Applied
+After code review by the code-simplifier agent, the following improvements were made:
+
+1. **Import types in function signature**: Imported `StreamingSubprocessResult` and used `DateTime<Utc>` instead of fully-qualified paths
+2. **Added `# Returns` section to docstring**: Improved documentation consistency with other functions
+3. **Used `LogMetadata::into_option()`**: Replaced inline conditional with existing API method
+4. **Hoisted shared test imports**: Moved `StreamProcessorResult` import to module level
+5. **Created test helper functions**: Added `make_test_result()` and `make_test_result_with_exit()` to reduce boilerplate
+6. **Added timestamp preservation test**: New test verifies timestamps are correctly passed through
+
+### Acceptance Criteria Met
+- ✅ `ralph ask 'hello'` creates `iteration-1.toml` in the session directory
+- ✅ `ralph replay <slug>` successfully replays the ask session output
+- ✅ `cargo xtask lint` passes without errors
+
+### Test Count
+667 tests passing (ralph crate) + 334 tests passing (ralph_core crate)
