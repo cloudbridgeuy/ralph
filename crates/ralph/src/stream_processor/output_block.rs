@@ -11,6 +11,41 @@
 //! - Rendering is handled by separate functions that take OutputBlock variants
 //! - The enum preserves the order of output blocks for faithful replay
 //! - Enums are marked `#[non_exhaustive]` for forward compatibility when adding new variants
+//!
+//! # Variant Count Rationale
+//!
+//! `ToolResultVariant` has 12 variants, one for each tool type that requires
+//! specialized result handling. This is intentional:
+//!
+//! - **Type safety**: Each variant enforces the correct data structure for its tool
+//! - **Exhaustive matching**: Adding a new tool requires handling in all renderers
+//! - **Serialization stability**: Each variant serializes to a distinct TOML structure
+//!
+//! The variants are:
+//!
+//! | Variant | Tool | Purpose |
+//! |---------|------|---------|
+//! | `Bash` | Bash | Command output with truncation indicator |
+//! | `EditBeforeAfter` | Edit | Before/after text replacement |
+//! | `EditDiff` | Edit | Unified diff format |
+//! | `EditNoChanges` | Edit | No-op indicator |
+//! | `WriteNewFile` | Write | New file creation |
+//! | `WriteOverwrite` | Write | File overwrite with diff |
+//! | `WriteNoChanges` | Write | No-op indicator |
+//! | `Read` | Read | File content with metadata |
+//! | `Grep` | Grep | Search results with match count |
+//! | `Glob` | Glob | File list with truncation |
+//! | `TodoWrite` | TodoWrite | Task list confirmation |
+//! | `NotebookEdit` | NotebookEdit | Jupyter cell diff |
+//! | `Default` | Other | Generic content display |
+//!
+//! # Adding a New Tool Variant
+//!
+//! When adding support for a new tool, you need to:
+//! 1. Add a variant to `ToolResultVariant` (this file)
+//! 2. Add a builder function in `block_builders.rs`
+//! 3. Add a handler in `result_handlers.rs`
+//! 4. Add a renderer in `render/tool_renderers/results/`
 
 use ralph_core::chunk::ParsedChunk;
 use serde::{Deserialize, Serialize};
