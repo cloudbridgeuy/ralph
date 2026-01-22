@@ -19,11 +19,11 @@ mod tests;
 
 // Re-export public API
 pub use display::{
-    display_iteration_header, display_iteration_summary, display_prompt, display_run_summary,
-    display_startup_info,
+    display_ask_summary, display_iteration_header, display_iteration_summary, display_prompt,
+    display_run_summary, display_startup_info,
 };
 pub use formatters::format_duration;
 pub use types::{
-    AttachedFile, IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo,
-    VERSION,
+    AskSummary, AttachedFile, IterationHeader, IterationSummary, PromptDisplay, RunSummary,
+    StartupInfo, VERSION,
 };

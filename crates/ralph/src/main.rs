@@ -504,10 +504,30 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Execute the ask command
     let result = ask::ask(config)?;
 
-    // Display session info for replay
-    println!();
-    println!("Session '{}' created.", result.slug);
-    println!("Replay: ralph replay {}", result.slug);
+    // Finalize session based on exit code
+    let outcome = match result.exit_code {
+        0 => SessionOutcome::Completed,
+        _ => SessionOutcome::Failed,
+    };
+    if let Err(e) = session::finalize_session(&result.slug, 1, outcome) {
+        eprintln!("Warning: Failed to finalize session: {}", e);
+    }
+
+    // Display summary (always, even on failure)
+    let summary = startup::AskSummary {
+        slug: result.slug.clone(),
+        success: result.exit_code == 0,
+        cost_usd: result.cost_usd,
+        duration_ms: result.duration_ms,
+        input_tokens: result.input_tokens,
+        output_tokens: result.output_tokens,
+    };
+    startup::display_ask_summary(&summary);
+
+    // Return error for non-zero exit
+    if result.exit_code != 0 {
+        return Err(format!("LLM subprocess exited with code {}", result.exit_code).into());
+    }
 
     Ok(())
 }

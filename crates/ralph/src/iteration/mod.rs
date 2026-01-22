@@ -12,8 +12,6 @@
 //! events, extracting session information from system init events and cost/usage
 //! data from result events.
 
-#![allow(dead_code)] // Module not yet used by CLI commands
-
 mod chunk;
 mod error;
 mod log;

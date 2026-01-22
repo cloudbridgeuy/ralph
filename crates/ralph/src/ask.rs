@@ -86,10 +86,6 @@ pub enum AskError {
     #[error("Subprocess failed: {0}")]
     Subprocess(#[from] SubprocessError),
 
-    /// LLM returned non-zero exit code.
-    #[error("LLM subprocess exited with code {exit_code}")]
-    NonZeroExit { exit_code: i32 },
-
     /// Session initialization failed.
     #[error("Session initialization failed: {0}")]
     Session(#[from] SessionError),
@@ -168,11 +164,25 @@ fn build_iteration_log(
     }
 }
 
-/// Result of a successful ask command execution.
+/// Result of an ask command execution.
+///
+/// Contains the session information and metrics for display and finalization.
+/// This is returned even on failure (non-zero exit code) so that the caller
+/// can finalize the session with the appropriate outcome.
 #[derive(Debug)]
 pub struct AskResult {
     /// The session slug that was created.
     pub slug: String,
+    /// Exit code from the subprocess (0 = success).
+    pub exit_code: i32,
+    /// Cost in USD for this request.
+    pub cost_usd: Option<f64>,
+    /// Duration in milliseconds.
+    pub duration_ms: Option<u64>,
+    /// Input tokens used.
+    pub input_tokens: Option<u64>,
+    /// Output tokens generated.
+    pub output_tokens: Option<u64>,
 }
 
 /// Execute a single-shot LLM prompt and display the response.
@@ -253,14 +263,34 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     // Write iteration log to session directory
     write_iteration_log(&session_dir, &iteration_log)?;
 
-    // Check exit code (after writing log to preserve partial data)
-    if result.exit_code != 0 {
-        return Err(AskError::NonZeroExit {
-            exit_code: result.exit_code,
-        });
-    }
+    // Extract metrics from iteration log metadata for result
+    let (cost_usd, duration_ms, input_tokens, output_tokens) =
+        extract_metrics_from_log(&iteration_log);
 
-    Ok(AskResult { slug })
+    Ok(AskResult {
+        slug,
+        exit_code: result.exit_code,
+        cost_usd,
+        duration_ms,
+        input_tokens,
+        output_tokens,
+    })
+}
+
+/// Extract cost and token metrics from an iteration log.
+///
+/// This is a pure function that extracts optional metrics from the metadata.
+fn extract_metrics_from_log(
+    log: &IterationLog,
+) -> (Option<f64>, Option<u64>, Option<u64>, Option<u64>) {
+    let metadata = log.metadata.as_ref();
+
+    let cost_usd = metadata.and_then(|m| m.cost_usd);
+    let duration_ms = metadata.and_then(|m| m.duration_ms);
+    let input_tokens = metadata.and_then(|m| m.usage.as_ref().map(|u| u.input_tokens));
+    let output_tokens = metadata.and_then(|m| m.usage.as_ref().map(|u| u.output_tokens));
+
+    (cost_usd, duration_ms, input_tokens, output_tokens)
 }
 
 #[cfg(test)]
@@ -360,8 +390,18 @@ mod tests {
         // Test that AskResult can be constructed with the expected fields
         let result = AskResult {
             slug: "test-slug".to_string(),
+            exit_code: 0,
+            cost_usd: Some(0.05),
+            duration_ms: Some(5000),
+            input_tokens: Some(100),
+            output_tokens: Some(200),
         };
         assert_eq!(result.slug, "test-slug");
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.cost_usd, Some(0.05));
+        assert_eq!(result.duration_ms, Some(5000));
+        assert_eq!(result.input_tokens, Some(100));
+        assert_eq!(result.output_tokens, Some(200));
     }
 
     #[test]
@@ -369,11 +409,6 @@ mod tests {
         let error = AskError::NoPrompt;
         let msg = format!("{}", error);
         assert!(msg.contains("No prompt provided"));
-
-        let error = AskError::NonZeroExit { exit_code: 1 };
-        let msg = format!("{}", error);
-        assert!(msg.contains("exit"));
-        assert!(msg.contains("1"));
     }
 
     #[test]

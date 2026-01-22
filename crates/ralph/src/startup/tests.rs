@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{
-    clean_blank_lines, AttachedFile, IterationHeader, IterationSummary, PromptDisplay, RunSummary,
-    StartupInfo,
+    clean_blank_lines, AskSummary, AttachedFile, IterationHeader, IterationSummary, PromptDisplay,
+    RunSummary, StartupInfo,
 };
 
 fn create_test_info() -> StartupInfo {
@@ -598,4 +598,101 @@ fn test_clean_blank_lines_only_blanks() {
     let result = clean_blank_lines(input);
     // Multiple blank lines collapse to single newline
     assert_eq!(result, "\n");
+}
+
+// Tests for AskSummary
+
+fn create_test_ask_summary() -> AskSummary {
+    AskSummary {
+        slug: "test-ask".to_string(),
+        success: true,
+        cost_usd: Some(0.05),
+        duration_ms: Some(10_000),
+        input_tokens: Some(500),
+        output_tokens: Some(1500),
+    }
+}
+
+#[test]
+fn test_ask_summary_creation() {
+    let summary = create_test_ask_summary();
+    assert_eq!(summary.slug, "test-ask");
+    assert!(summary.success);
+    assert_eq!(summary.cost_usd, Some(0.05));
+    assert_eq!(summary.duration_ms, Some(10_000));
+    assert_eq!(summary.input_tokens, Some(500));
+    assert_eq!(summary.output_tokens, Some(1500));
+}
+
+#[test]
+fn test_ask_summary_failed() {
+    let summary = AskSummary {
+        slug: "failed-ask".to_string(),
+        success: false,
+        cost_usd: Some(0.01),
+        duration_ms: Some(5_000),
+        input_tokens: Some(100),
+        output_tokens: None,
+    };
+    assert!(!summary.success);
+    assert_eq!(summary.slug, "failed-ask");
+    assert_eq!(summary.cost_usd, Some(0.01));
+}
+
+#[test]
+fn test_ask_summary_with_none_values() {
+    let summary = AskSummary {
+        slug: "minimal-ask".to_string(),
+        success: true,
+        cost_usd: None,
+        duration_ms: None,
+        input_tokens: None,
+        output_tokens: None,
+    };
+    assert!(summary.success);
+    assert!(summary.cost_usd.is_none());
+    assert!(summary.duration_ms.is_none());
+    assert!(summary.input_tokens.is_none());
+    assert!(summary.output_tokens.is_none());
+}
+
+#[test]
+fn test_ask_summary_clone() {
+    let original = create_test_ask_summary();
+    let cloned = original.clone();
+    assert_eq!(original.slug, cloned.slug);
+    assert_eq!(original.success, cloned.success);
+    assert_eq!(original.cost_usd, cloned.cost_usd);
+    assert_eq!(original.duration_ms, cloned.duration_ms);
+}
+
+#[test]
+fn test_ask_summary_zero_cost() {
+    // Zero cost is valid (e.g., cached responses)
+    let summary = AskSummary {
+        slug: "cached-ask".to_string(),
+        success: true,
+        cost_usd: Some(0.0),
+        duration_ms: Some(100),
+        input_tokens: Some(0),
+        output_tokens: Some(0),
+    };
+    assert_eq!(summary.cost_usd, Some(0.0));
+    assert_eq!(summary.input_tokens, Some(0));
+    assert_eq!(summary.output_tokens, Some(0));
+}
+
+#[test]
+fn test_ask_summary_large_values() {
+    // Large token counts and costs
+    let summary = AskSummary {
+        slug: "big-ask".to_string(),
+        success: true,
+        cost_usd: Some(5.5678),
+        duration_ms: Some(300_000), // 5 minutes
+        input_tokens: Some(100_000),
+        output_tokens: Some(50_000),
+    };
+    assert_eq!(summary.cost_usd, Some(5.5678));
+    assert_eq!(summary.input_tokens, Some(100_000));
 }

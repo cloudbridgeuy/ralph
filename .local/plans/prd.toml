@@ -78,7 +78,7 @@ steps = [
   "Display summary with cost, duration, and token usage after execution",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
   "`ralph sessions` shows correct outcome status for ask sessions",
   "Summary displays cost and duration after `ralph ask` completes",

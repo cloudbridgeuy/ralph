@@ -2,7 +2,7 @@
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{
-    IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
+    AskSummary, IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
 };
 
 /// Display startup info without terminal formatting.
@@ -229,4 +229,56 @@ pub(super) fn display_prompt_plain(prompt: &PromptDisplay) {
 
     // Closing separator
     println!("{}", "-".repeat(60));
+}
+
+/// Display ask summary without terminal formatting.
+pub(super) fn display_ask_summary_plain(summary: &AskSummary) {
+    println!();
+
+    // Status
+    let status_text = if summary.success {
+        "Ask Complete"
+    } else {
+        "Ask Failed"
+    };
+    println!("{}", status_text);
+    println!();
+
+    // Session slug
+    println!("Session: {}", summary.slug);
+
+    println!();
+    println!("--- Metrics ---");
+
+    // Cost
+    let cost_str = summary
+        .cost_usd
+        .map(|c| format!("${:.4}", c))
+        .unwrap_or_else(|| "N/A".to_string());
+    println!("Cost: {}", cost_str);
+
+    // Duration
+    let duration_str = summary
+        .duration_ms
+        .map(format_duration)
+        .unwrap_or_else(|| "N/A".to_string());
+    println!("Duration: {}", duration_str);
+
+    // Tokens
+    let has_tokens = summary.input_tokens.is_some() || summary.output_tokens.is_some();
+    if has_tokens {
+        let input_str = summary
+            .input_tokens
+            .map(format_token_count)
+            .unwrap_or_else(|| "N/A".to_string());
+        let output_str = summary
+            .output_tokens
+            .map(format_token_count)
+            .unwrap_or_else(|| "N/A".to_string());
+        println!("Tokens: {} input | {} output", input_str, output_str);
+    }
+
+    println!();
+    println!("Replay with: ralph replay {}", summary.slug);
+    println!();
 }

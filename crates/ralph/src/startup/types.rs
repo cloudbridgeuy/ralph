@@ -100,6 +100,23 @@ pub struct RunSummary {
     pub final_pending_stories: usize,
 }
 
+/// Information for ask command summary display.
+#[derive(Debug, Clone)]
+pub struct AskSummary {
+    /// The session slug.
+    pub slug: String,
+    /// Whether the ask succeeded (exit code 0).
+    pub success: bool,
+    /// Cost in USD.
+    pub cost_usd: Option<f64>,
+    /// Duration in milliseconds.
+    pub duration_ms: Option<u64>,
+    /// Input tokens used.
+    pub input_tokens: Option<u64>,
+    /// Output tokens generated.
+    pub output_tokens: Option<u64>,
+}
+
 /// Metadata about an attached file for prompt display.
 #[derive(Debug, Clone)]
 pub struct AttachedFile {
