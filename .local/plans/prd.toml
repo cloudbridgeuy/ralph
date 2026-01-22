@@ -1,13 +1,188 @@
+# ralph ask - Single-shot LLM prompt command with session persistence
+
 [[stories]]
-category = "functional"
-description = "As a developer, I don't want any lint or test issue in the codebase."
+category = "feature"
+description = "Add basic `ask` subcommand CLI skeleton with prompt argument"
 steps = [
-  "Run the `cargo xtask lint` command an gather the output",
-  "Fix the issues found on the output.",
-  "Re-run the `cargo xtask lint` command to check if the warnings and issues were fixed, or if new ones appear.",
-  "Repeat the process until all lint and tests pass",
+  "Add `AskArgs` struct to `crates/ralph/src/cli.rs` with a single `prompt: Option<String>` argument",
+  "Add `Ask(AskArgs)` variant to the `Commands` enum in `cli.rs`",
+  "Add `Commands::Ask(args) => execute_ask(args)` match arm in `main.rs`",
+  "Create stub `execute_ask` function that prints the prompt and returns Ok(())",
+  "Run `cargo xtask lint` to verify no errors",
 ]
 passes = true
 acceptance = [
-  "The `cargo xtask lint` command passes without warnings, erros, or issues.",
+  "`ralph ask 'hello'` prints the prompt and exits successfully",
+  "`ralph ask --help` shows help for the ask subcommand",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Implement core ask execution - invoke claude subprocess and display output"
+steps = [
+  "Create `crates/ralph/src/ask.rs` module with `AskConfig` struct and `ask()` function",
+  "Build the claude command: `claude --verbose --permission-mode acceptEdits --output-format stream-json -p {prompt}`",
+  "Use `subprocess::invoke_subprocess_with_spinner_config()` to invoke the command",
+  "Process and display the output using the existing stream processor",
+  "Wire up `execute_ask` in main.rs to call the new `ask()` function",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask 'what is 2+2'` invokes claude and displays the response with syntax highlighting",
+  "Spinner shows while waiting for LLM response",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Add session creation and persistence for ask command"
+steps = [
+  "Generate session slug using `session::resolve_session_slug()` when not provided",
+  "Initialize session with `session::initialize_session()` storing the prompt",
+  "Create session directory structure in data dir",
+  "Write `session.toml` with metadata including the prompt",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask 'hello'` creates a new session directory with `session.toml`",
+  "Session metadata includes the prompt text",
+  "`ralph sessions` shows the new session",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Add iteration logging for replay compatibility"
+steps = [
+  "After subprocess completes, build `IterationLog` with sequence=1, timestamps, exit_code, metadata, output_blocks",
+  "Write iteration log using `iteration::write_iteration_log()`",
+  "Save as `iteration-1.toml` in session directory",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask 'hello'` creates `iteration-1.toml` in the session directory",
+  "`ralph replay <slug>` successfully replays the ask session output",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Finalize session after ask execution completes"
+steps = [
+  "Call `session::finalize_session()` with appropriate outcome (Completed or Failed based on exit code)",
+  "Update sessions index with final iteration count",
+  "Display summary with cost, duration, and token usage after execution",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph sessions` shows correct outcome status for ask sessions",
+  "Summary displays cost and duration after `ralph ask` completes",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Add --slug flag to specify session name for new sessions"
+steps = [
+  "Add `slug: Option<String>` field to `AskArgs` with `#[arg(long)]`",
+  "Pass slug to `AskConfig` and use it instead of auto-generating when provided",
+  "Add conflict with continuation flags (--continue, --session)",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask --slug my-test 'hello'` creates session with slug 'my-test'",
+  "`ralph ask --slug my-test --continue 'hello'` shows conflict error",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Add --session flag to continue a specific existing session"
+steps = [
+  "Add `session: Option<String>` field to `AskArgs` with `#[arg(short = 'S', long)]`",
+  "When --session provided, load existing session metadata and validate it exists",
+  "Count existing iteration logs to determine next sequence number",
+  "Create new iteration with sequence = previous + 1",
+  "Update session with new iteration count on finalization",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask --session <slug> 'follow up'` adds iteration-2 to existing session",
+  "`ralph ask --session nonexistent 'hello'` shows error that session not found",
+  "`ralph replay <slug>` shows both iterations",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Add --continue flag to continue the most recent session"
+steps = [
+  "Add `continue_session: bool` field to `AskArgs` with `#[arg(short, long)]`",
+  "When --continue provided, load sessions index and find most recent by started_at",
+  "Error if no sessions exist",
+  "Reuse continuation logic from --session flag",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask --continue 'follow up'` adds iteration to most recent session",
+  "`ralph ask --continue 'hello'` with no existing sessions shows appropriate error",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Add theme inheritance from global configuration"
+steps = [
+  "Add `theme: Option<String>` and `no_background: bool` fields to `AskArgs`",
+  "Use `highlight::resolve_theme_config()` to resolve theme (CLI > env > config > default)",
+  "Pass resolved theme config to subprocess invocation",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask 'hello'` uses theme from global config when not specified",
+  "`ralph ask --theme 'Solarized (dark)' 'hello'` overrides global config",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Add remaining CLI flags: timeout, verbose-tools, no-prompt"
+steps = [
+  "Add `timeout: u64` field with default 600 seconds",
+  "Add `verbose_tools: Option<String>` field for tool verbosity control",
+  "Add `no_prompt: bool` field to suppress prompt display",
+  "Wire all flags through to `AskConfig` and execution",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`ralph ask --timeout 60 'hello'` uses 60 second timeout",
+  "`ralph ask --verbose-tools 'hello'` shows verbose tool output",
+  "`ralph ask --no-prompt 'hello'` does not display the prompt",
+  "`cargo xtask lint` passes without errors",
+]
+
+[[stories]]
+category = "feature"
+description = "Support reading prompt from stdin when not provided as argument"
+steps = [
+  "When `prompt` argument is None, read from stdin",
+  "Handle non-interactive stdin (piped input)",
+  "Error if stdin is empty and no prompt provided",
+  "Run `cargo xtask lint` to verify no errors",
+]
+passes = false
+acceptance = [
+  "`echo 'hello' | ralph ask` reads prompt from stdin",
+  "`ralph ask` with no argument and no stdin shows helpful error",
+  "`cargo xtask lint` passes without errors",
 ]

@@ -34,7 +34,7 @@ pub mod subprocess;
 pub mod summarize;
 
 use clap::Parser;
-use cli::{Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
+use cli::{AskArgs, Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
 use prompt::{prompt_on_failure, FailureAction};
 use ralph_core::context::{defaults, substitute_template_placeholders, ContextPaths};
 use ralph_core::session::SessionOutcome;
@@ -129,6 +129,7 @@ fn main() -> ExitCode {
         Commands::Iterations(args) => execute_iterations(args),
         Commands::Replay(args) => execute_replay(args),
         Commands::Themes => execute_themes(),
+        Commands::Ask(args) => execute_ask(args),
     };
 
     match result {
@@ -475,6 +476,20 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("You can also load custom .tmTheme files by specifying a file path.");
 
+    Ok(())
+}
+
+/// Execute the ask command.
+///
+/// Sends a single-shot prompt to the LLM and displays the response.
+/// This is a simplified interface for quick LLM interactions.
+fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
+    // Print the prompt if provided
+    if let Some(prompt) = &args.prompt {
+        println!("Prompt: {}", prompt);
+    } else {
+        println!("No prompt provided. Use: ralph ask 'your prompt here'");
+    }
     Ok(())
 }
 

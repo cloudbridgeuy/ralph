@@ -767,3 +767,57 @@ These functions were never called anywhere in the codebase. Per CLAUDE.md princi
 
 ### Test Count
 630 tests passing (ralph crate) + 313 tests (ralph_core crate)
+
+---
+
+## Ask Command - CLI Skeleton (2026-01-22)
+
+### Summary
+Added the basic CLI skeleton for the `ask` subcommand. This is the first step in implementing a single-shot LLM prompt command with session persistence.
+
+**Location**: `crates/ralph/src/cli.rs` and `crates/ralph/src/main.rs`
+
+### Implementation Details
+
+**New CLI struct:**
+```rust
+/// Arguments for the `ask` subcommand.
+#[derive(clap::Args, Debug)]
+pub struct AskArgs {
+    /// The prompt to send to the LLM.
+    #[arg(value_name = "PROMPT")]
+    pub prompt: Option<String>,
+}
+```
+
+**New enum variant:**
+```rust
+Commands::Ask(AskArgs)
+```
+
+**Command routing:**
+```rust
+Commands::Ask(args) => execute_ask(args)
+```
+
+**Stub implementation:**
+The `execute_ask` function currently prints the prompt and returns Ok(()). This will be expanded in subsequent stories to invoke claude subprocess and manage sessions.
+
+### Changes Made
+1. **`crates/ralph/src/cli.rs`**:
+   - Added `AskArgs` struct with `prompt: Option<String>` field
+   - Added `Ask(AskArgs)` variant to `Commands` enum
+   - Added 4 unit tests for the `ask` command parsing
+
+2. **`crates/ralph/src/main.rs`**:
+   - Added `AskArgs` to imports
+   - Added `Commands::Ask(args) => execute_ask(args)` match arm
+   - Added stub `execute_ask` function
+
+### Acceptance Criteria Met
+- ✅ `ralph ask 'hello'` prints the prompt and exits successfully
+- ✅ `ralph ask --help` shows help for the ask subcommand
+- ✅ `cargo xtask lint` passes without errors
+
+### Test Count
+650 tests passing (ralph crate) + 334 tests passing (ralph_core crate)

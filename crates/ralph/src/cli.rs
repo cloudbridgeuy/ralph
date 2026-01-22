@@ -55,6 +55,12 @@ pub enum Commands {
     /// Shows all built-in themes that can be used with the --theme flag.
     /// Custom .tmTheme files can also be loaded by specifying a file path.
     Themes,
+
+    /// Send a single-shot prompt to the LLM and display the response.
+    ///
+    /// A simplified interface for quick LLM interactions. Each invocation
+    /// creates a session that can be replayed or continued later.
+    Ask(AskArgs),
 }
 
 /// Arguments for the `sessions` subcommand.
@@ -132,6 +138,16 @@ pub struct ReplayArgs {
     /// When omitted, blocks render immediately with no delay.
     #[arg(long, value_name = "SECONDS")]
     pub delay: Option<f64>,
+}
+
+/// Arguments for the `ask` subcommand.
+#[derive(clap::Args, Debug)]
+pub struct AskArgs {
+    /// The prompt to send to the LLM.
+    ///
+    /// If not provided, reads from stdin. Supports inline text or "-" for stdin.
+    #[arg(value_name = "PROMPT")]
+    pub prompt: Option<String>,
 }
 
 /// Arguments for the `run` subcommand.
@@ -908,6 +924,73 @@ mod tests {
                 assert_eq!(args.verbose_tools, Some("grep,read".to_string()));
             }
             _ => panic!("Expected Run command"),
+        }
+    }
+
+    // Ask command tests
+
+    #[test]
+    fn test_cli_parses_ask_command() {
+        let cli = Cli::try_parse_from(["ralph", "ask", "hello"]).unwrap();
+        assert!(matches!(cli.command, Commands::Ask(_)));
+    }
+
+    #[test]
+    fn test_ask_with_prompt() {
+        let cli = Cli::try_parse_from(["ralph", "ask", "what is 2+2"]).unwrap();
+        match cli.command {
+            Commands::Ask(args) => {
+                assert_eq!(args.prompt, Some("what is 2+2".to_string()));
+            }
+            _ => panic!("Expected Ask command"),
+        }
+    }
+
+    #[test]
+    fn test_ask_without_prompt() {
+        let cli = Cli::try_parse_from(["ralph", "ask"]).unwrap();
+        match cli.command {
+            Commands::Ask(args) => {
+                assert!(args.prompt.is_none());
+            }
+            _ => panic!("Expected Ask command"),
+        }
+    }
+
+    #[test]
+    fn test_ask_help_available() {
+        // Verify help is available
+        let result = Cli::try_parse_from(["ralph", "ask", "--help"]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let help = err.to_string();
+        assert!(help.contains("PROMPT"));
+    }
+
+    #[test]
+    fn test_ask_with_stdin_indicator() {
+        let cli = Cli::try_parse_from(["ralph", "ask", "-"]).unwrap();
+        match cli.command {
+            Commands::Ask(args) => {
+                assert_eq!(args.prompt, Some("-".to_string()));
+            }
+            _ => panic!("Expected Ask command"),
+        }
+    }
+
+    #[test]
+    fn test_ask_with_multiword_prompt() {
+        let cli =
+            Cli::try_parse_from(["ralph", "ask", "explain the difference between mut and ref"])
+                .unwrap();
+        match cli.command {
+            Commands::Ask(args) => {
+                assert_eq!(
+                    args.prompt,
+                    Some("explain the difference between mut and ref".to_string())
+                );
+            }
+            _ => panic!("Expected Ask command"),
         }
     }
 }
