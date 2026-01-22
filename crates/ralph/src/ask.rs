@@ -160,7 +160,7 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     }
 
     // Initialize session for persistence
-    let (slug, session_dir) = session::initialize_session(
+    let (slug, _session_dir) = session::initialize_session(
         config.slug.as_deref(),
         &config.project_path,
         Some(config.prompt.clone()),
@@ -192,9 +192,6 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
             exit_code: result.exit_code,
         });
     }
-
-    // session_dir will be used in future stories for iteration logging
-    let _ = session_dir;
 
     Ok(AskResult { slug })
 }
@@ -288,5 +285,16 @@ mod tests {
         let msg = format!("{}", error);
         assert!(msg.contains("exit"));
         assert!(msg.contains("1"));
+    }
+
+    #[test]
+    fn test_ask_error_session_display() {
+        let session_error = SessionError::DuplicateSlug {
+            slug: "test-session".to_string(),
+        };
+        let error = AskError::Session(session_error);
+        let msg = format!("{}", error);
+        assert!(msg.contains("Session initialization failed"));
+        assert!(msg.contains("test-session"));
     }
 }

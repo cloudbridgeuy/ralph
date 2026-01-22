@@ -507,7 +507,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Display session info for replay
     println!();
     println!("Session '{}' created.", result.slug);
-    println!("  -> ralph replay {}", result.slug);
+    println!("Replay: ralph replay {}", result.slug);
 
     Ok(())
 }
