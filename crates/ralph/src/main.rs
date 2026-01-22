@@ -483,22 +483,31 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
 /// Execute the ask command.
 ///
 /// Sends a single-shot prompt to the LLM and displays the response.
-/// This is a simplified interface for quick LLM interactions.
+/// Creates a session for persistence, allowing replay with `ralph replay`.
 fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
     if let Err(e) = signal::init() {
         eprintln!("Warning: Failed to initialize signal handler: {}", e);
     }
 
+    // Get current working directory as project path
+    let project_path = std::env::current_dir()?;
+
     // Build ask config - validation happens in ask::ask()
     let config = ask::AskConfig {
         prompt: args.prompt.unwrap_or_default(),
         theme_config: highlight::ThemeConfig::from_config_and_env(),
+        project_path,
         ..Default::default()
     };
 
     // Execute the ask command
-    ask::ask(config)?;
+    let result = ask::ask(config)?;
+
+    // Display session info for replay
+    println!();
+    println!("Session '{}' created.", result.slug);
+    println!("  -> ralph replay {}", result.slug);
 
     Ok(())
 }

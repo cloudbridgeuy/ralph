@@ -45,7 +45,7 @@ steps = [
   "Write `session.toml` with metadata including the prompt",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
   "`ralph ask 'hello'` creates a new session directory with `session.toml`",
   "Session metadata includes the prompt text",

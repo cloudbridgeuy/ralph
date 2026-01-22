@@ -886,3 +886,77 @@ claude --verbose --permission-mode acceptEdits --output-format stream-json -p '{
 
 ### Test Count
 656 tests passing (ralph crate) + 334 tests passing (ralph_core crate)
+
+---
+
+## Ask Command - Session Persistence (2026-01-22)
+
+### Summary
+Added session creation and persistence for the `ask` command. Each invocation now creates a session that can be viewed with `ralph sessions` and replayed with `ralph replay`.
+
+**Location**: `crates/ralph/src/ask.rs` and `crates/ralph/src/main.rs`
+
+### Implementation Details
+
+**Updated `AskConfig` struct:**
+```rust
+pub struct AskConfig {
+    pub prompt: String,
+    pub timeout_secs: u64,
+    pub theme_config: ThemeConfig,
+    pub verbose_tools: VerboseToolsConfig,
+    pub project_path: PathBuf,  // NEW: Absolute path to the project directory
+    pub slug: Option<String>,   // NEW: Optional user-provided session slug
+}
+```
+
+**New `AskResult` struct:**
+```rust
+pub struct AskResult {
+    pub slug: String,  // The session slug that was created
+}
+```
+
+**New error variant:**
+```rust
+pub enum AskError {
+    // ... existing variants ...
+    Session(SessionError),  // NEW: Session initialization errors
+}
+```
+
+**Session creation flow:**
+1. Validate prompt is not empty
+2. Call `session::initialize_session()` to create session directory and metadata
+3. Store prompt text in `session.toml` for replay
+4. Build subprocess config with session info for spinner display
+5. Invoke subprocess and return result with session slug
+
+### Changes Made
+1. **`crates/ralph/src/ask.rs`**:
+   - Added `project_path: PathBuf` and `slug: Option<String>` to `AskConfig`
+   - Added `Session(SessionError)` variant to `AskError`
+   - Added `AskResult` struct to return session info
+   - Updated `ask()` to call `session::initialize_session()` before subprocess
+   - Spinner now shows session info (slug, iteration 1/1)
+   - Added 5 new tests for session-related functionality
+
+2. **`crates/ralph/src/main.rs`**:
+   - Updated `execute_ask()` to pass `project_path` (current working directory)
+   - Display session creation message with replay command hint
+
+### Display Output
+After successful execution:
+```
+Session 'fuzzy-walrus' created.
+  -> ralph replay fuzzy-walrus
+```
+
+### Acceptance Criteria Met
+- ✅ `ralph ask 'hello'` creates a new session directory with `session.toml`
+- ✅ Session metadata includes the prompt text
+- ✅ `ralph sessions` shows the new session
+- ✅ `cargo xtask lint` passes without errors
+
+### Test Count
+659 tests passing (ralph crate) + 334 tests passing (ralph_core crate)
