@@ -28,6 +28,7 @@ mod block_builders;
 mod event_handler;
 mod output_block;
 mod processor;
+mod result_handlers;
 mod tool_display;
 mod tool_results;
 mod types;
@@ -38,7 +39,7 @@ pub use output_block::{
     GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem, ToolInvocationBlock,
     ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
-pub use processor::StreamProcessor;
+pub use processor::{StreamProcessor, StreamProcessorBuilder};
 pub use types::{StreamProcessorResult, VerboseToolsConfig};
 
 // Re-export for tests

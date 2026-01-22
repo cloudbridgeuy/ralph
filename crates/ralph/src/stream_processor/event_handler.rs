@@ -9,18 +9,16 @@ use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
-use super::block_builders::{
-    build_bash_result_block, build_default_result_block, build_edit_before_after_block,
-    build_edit_diff_block, build_glob_result_block, build_grep_result_block,
-    build_notebook_edit_block, build_read_result_block, build_todowrite_result_block,
-    build_tool_invocation_block, build_write_result_block,
-};
+use super::block_builders::build_tool_invocation_block;
 use super::output_block::OutputBlock;
 use super::processor::StreamProcessor;
+use super::result_handlers::{
+    handle_bash_result, handle_default_result, handle_edit_result, handle_glob_result,
+    handle_grep_result, handle_notebook_result, handle_read_result, handle_todowrite_result,
+    handle_write_result,
+};
 use super::tool_display;
-use super::tool_results;
 use super::types::{EditSnapshot, NotebookSnapshot, WriteSnapshot};
-use super::utils::{count_non_empty_lines, is_content_truncated};
 
 impl StreamProcessor {
     /// Process a single line of stream-json output.
@@ -165,204 +163,41 @@ impl StreamProcessor {
                             .as_ref()
                             .and_then(|id| self.pending_notebook_snapshots.remove(id));
 
-                        // Capture invocation info for block building before the match consumes it
-                        let invocation_name = invocation.as_ref().map(|i| i.name.clone());
-
-                        // Determine formatting approach and build output block based on tool type and snapshots
-                        let (formatted, block) = match &invocation {
+                        // Use dedicated handlers for each tool type
+                        let output = match &invocation {
                             Some(inv) if inv.name == "Edit" && !result.is_error => {
-                                // Edit tool - check for diff content or use snapshot
-                                if let Some(ref snap) = edit_snapshot {
-                                    let has_diff_content = result
-                                        .content
-                                        .as_ref()
-                                        .map(|c| ralph_core::chunk::is_unfenced_diff(c))
-                                        .unwrap_or(false);
-
-                                    if has_diff_content {
-                                        // Result contains diff - use diff formatting and block
-                                        let fmt = tool_results::format_tool_result_with_context(
-                                            self,
-                                            result,
-                                            Some(inv.clone()),
-                                        );
-                                        let blk = build_edit_diff_block(
-                                            &snap.file_path,
-                                            result.content.as_deref().unwrap_or(""),
-                                        );
-                                        (fmt, blk)
-                                    } else {
-                                        // No diff in result - generate from snapshot
-                                        let fmt = tool_results::format_edit_result_with_snapshot(
-                                            self,
-                                            snap.clone(),
-                                        );
-                                        let blk = build_edit_before_after_block(snap);
-                                        (fmt, blk)
-                                    }
-                                } else {
-                                    let fmt = tool_results::format_tool_result_with_context(
-                                        self,
-                                        result,
-                                        invocation.clone(),
-                                    );
-                                    let blk = build_default_result_block(
-                                        &inv.name,
-                                        result.content.as_deref(),
-                                        result.is_error,
-                                    );
-                                    (fmt, blk)
-                                }
+                                handle_edit_result(self, result, inv, edit_snapshot.as_ref())
                             }
                             Some(inv) if inv.name == "Write" && !result.is_error => {
-                                // Write tool - generate diff from snapshot
-                                if let Some(ref snap) = write_snapshot {
-                                    let fmt = tool_results::format_write_result_with_snapshot(
-                                        self,
-                                        snap.clone(),
-                                    );
-                                    // Read the new file content to determine which variant to use
-                                    let new_content = std::fs::read_to_string(&snap.file_path).ok();
-                                    let blk =
-                                        build_write_result_block(snap, new_content.as_deref());
-                                    (fmt, blk)
-                                } else {
-                                    let fmt = tool_results::format_tool_result_with_context(
-                                        self,
-                                        result,
-                                        invocation.clone(),
-                                    );
-                                    let blk = build_default_result_block(
-                                        &inv.name,
-                                        result.content.as_deref(),
-                                        result.is_error,
-                                    );
-                                    (fmt, blk)
-                                }
+                                handle_write_result(self, result, inv, write_snapshot.as_ref())
                             }
                             Some(inv) if inv.name == "NotebookEdit" && !result.is_error => {
-                                // NotebookEdit tool - generate diff from snapshot
-                                if let Some(ref snap) = notebook_snapshot {
-                                    let fmt = tool_results::format_notebook_result_with_snapshot(
-                                        self,
-                                        snap.clone(),
-                                    );
-                                    // Extract new_source from invocation input
-                                    let new_source = inv
-                                        .input
-                                        .get("new_source")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
-                                    let blk = build_notebook_edit_block(snap, new_source);
-                                    (fmt, blk)
-                                } else {
-                                    let fmt = tool_results::format_tool_result_with_context(
-                                        self,
-                                        result,
-                                        invocation.clone(),
-                                    );
-                                    let blk = build_default_result_block(
-                                        &inv.name,
-                                        result.content.as_deref(),
-                                        result.is_error,
-                                    );
-                                    (fmt, blk)
-                                }
+                                handle_notebook_result(
+                                    self,
+                                    result,
+                                    inv,
+                                    notebook_snapshot.as_ref(),
+                                )
                             }
                             Some(inv) if inv.name == "Bash" => {
-                                // Bash tool - use specialized block
-                                let fmt = tool_results::format_tool_result_with_context(
-                                    self,
-                                    result,
-                                    invocation.clone(),
-                                );
-                                let blk = build_bash_result_block(
-                                    result.content.as_deref(),
-                                    result.is_error,
-                                );
-                                (fmt, blk)
+                                handle_bash_result(self, result, Some(inv))
                             }
                             Some(inv) if inv.name == "Read" && !result.is_error => {
-                                // Read tool - extract metadata for specialized block
-                                let fmt = tool_results::format_tool_result_with_context(
-                                    self,
-                                    result,
-                                    invocation.clone(),
-                                );
-                                let content = result.content.as_deref().unwrap_or("");
-                                let line_count = content.lines().count();
-                                let truncated = is_content_truncated(content);
-                                let file_path = inv
-                                    .input
-                                    .get("file_path")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                let blk = build_read_result_block(
-                                    file_path, content, line_count, truncated,
-                                );
-                                (fmt, blk)
+                                handle_read_result(self, result, inv)
                             }
                             Some(inv) if inv.name == "Grep" && !result.is_error => {
-                                // Grep tool - extract metadata for specialized block
-                                let fmt = tool_results::format_tool_result_with_context(
-                                    self,
-                                    result,
-                                    invocation.clone(),
-                                );
-                                let content = result.content.as_deref().unwrap_or("");
-                                let match_count = count_non_empty_lines(content);
-                                let output_mode = inv
-                                    .input
-                                    .get("output_mode")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("files_with_matches");
-                                let blk =
-                                    build_grep_result_block(match_count, output_mode, content);
-                                (fmt, blk)
+                                handle_grep_result(self, result, inv)
                             }
                             Some(inv) if inv.name == "Glob" && !result.is_error => {
-                                // Glob tool - extract metadata for specialized block
-                                let fmt = tool_results::format_tool_result_with_context(
-                                    self,
-                                    result,
-                                    invocation.clone(),
-                                );
-                                let content = result.content.as_deref().unwrap_or("");
-                                let file_count = count_non_empty_lines(content);
-                                let truncated = is_content_truncated(content);
-                                let blk = build_glob_result_block(file_count, content, truncated);
-                                (fmt, blk)
+                                handle_glob_result(self, result, inv)
                             }
                             Some(inv) if inv.name == "TodoWrite" => {
-                                // TodoWrite tool - use specialized block (message is from result)
-                                let fmt = tool_results::format_tool_result_with_context(
-                                    self,
-                                    result,
-                                    invocation.clone(),
-                                );
-                                let blk = build_todowrite_result_block(result.content.as_deref());
-                                (fmt, blk)
+                                handle_todowrite_result(self, result, Some(inv))
                             }
-                            _ => {
-                                // Other tools or errors - use regular formatting
-                                let fmt = tool_results::format_tool_result_with_context(
-                                    self,
-                                    result,
-                                    invocation.clone(),
-                                );
-                                let tool_name = invocation_name.as_deref().unwrap_or("Unknown");
-                                let blk = build_default_result_block(
-                                    tool_name,
-                                    result.content.as_deref(),
-                                    result.is_error,
-                                );
-                                (fmt, blk)
-                            }
+                            _ => handle_default_result(self, result, invocation.as_ref()),
                         };
-                        output_parts.push(formatted);
-
-                        // Accumulate tool result block for replay
-                        self.output_blocks.push(block);
+                        output_parts.push(output.formatted);
+                        self.output_blocks.push(output.block);
                     }
                 }
             }
