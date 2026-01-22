@@ -5,7 +5,7 @@
 
 use ralph_core::stream::ToolResult;
 
-use crate::render::{render_glob_result, RenderContext};
+use crate::render::render_glob_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
@@ -38,14 +38,7 @@ pub fn format_glob_tool_result_verbose(processor: &StreamProcessor, result: &Too
     // Check for truncation indicators
     let truncated = content.contains("... (truncated)") || content.contains("Output truncated");
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_glob_result(&ctx, file_count, content, truncated)
+    render_glob_result(&processor.render_context(), file_count, content, truncated)
 }
 
 // Tests for group_files_by_directory are in crate::render::utils

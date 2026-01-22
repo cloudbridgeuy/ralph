@@ -5,7 +5,7 @@
 
 use ralph_core::stream::ToolInvocation;
 
-use crate::render::{render_glob_invocation, RenderContext};
+use crate::render::render_glob_invocation;
 
 use super::super::processor::StreamProcessor;
 
@@ -27,12 +27,5 @@ pub fn format_glob_tool_invocation_verbose(
     // Extract optional search path
     let path = invocation.input.get("path").and_then(|v| v.as_str());
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_glob_invocation(&ctx, pattern, path)
+    render_glob_invocation(&processor.render_context(), pattern, path)
 }

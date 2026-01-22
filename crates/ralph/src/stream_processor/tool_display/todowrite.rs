@@ -5,7 +5,7 @@
 
 use ralph_core::stream::ToolInvocation;
 
-use crate::render::{render_todowrite_invocation, RenderContext, TodoDisplayItem};
+use crate::render::{render_todowrite_invocation, TodoDisplayItem};
 
 use super::super::processor::StreamProcessor;
 
@@ -35,12 +35,5 @@ pub fn format_todowrite_tool_invocation_verbose(
         })
         .collect();
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_todowrite_invocation(&ctx, &todos)
+    render_todowrite_invocation(&processor.render_context(), &todos)
 }

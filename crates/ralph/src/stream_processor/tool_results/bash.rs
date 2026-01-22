@@ -5,7 +5,7 @@
 
 use ralph_core::stream::ToolResult;
 
-use crate::render::{render_bash_result, RenderContext};
+use crate::render::render_bash_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_multiline;
@@ -26,12 +26,10 @@ pub fn format_bash_tool_result(processor: &StreamProcessor, result: &ToolResult)
         (None, false)
     };
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_bash_result(&ctx, result.is_error, content.as_deref(), truncated)
+    render_bash_result(
+        &processor.render_context(),
+        result.is_error,
+        content.as_deref(),
+        truncated,
+    )
 }

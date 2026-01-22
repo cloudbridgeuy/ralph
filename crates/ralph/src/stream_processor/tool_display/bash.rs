@@ -5,7 +5,7 @@
 
 use ralph_core::stream::ToolInvocation;
 
-use crate::render::{render_bash_invocation, RenderContext};
+use crate::render::render_bash_invocation;
 
 use super::super::processor::StreamProcessor;
 
@@ -24,12 +24,5 @@ pub fn format_bash_tool_invocation(
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_bash_invocation(&ctx, command)
+    render_bash_invocation(&processor.render_context(), command)
 }

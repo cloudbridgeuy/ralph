@@ -5,7 +5,7 @@
 
 use ralph_core::stream::ToolResult;
 
-use crate::render::{render_todowrite_result, RenderContext};
+use crate::render::render_todowrite_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
@@ -26,12 +26,9 @@ pub fn format_todowrite_tool_result_verbose(
         Some("todos updated".to_string())
     };
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_todowrite_result(&ctx, result.is_error, message.as_deref())
+    render_todowrite_result(
+        &processor.render_context(),
+        result.is_error,
+        message.as_deref(),
+    )
 }

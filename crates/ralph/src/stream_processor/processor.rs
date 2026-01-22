@@ -86,6 +86,114 @@ pub struct StreamProcessor {
     pub(super) output_blocks: Vec<OutputBlock>,
 }
 
+/// Builder for constructing StreamProcessor instances.
+///
+/// Provides a fluent API for configuring all StreamProcessor options
+/// with sensible defaults.
+///
+/// # Example
+///
+/// ```
+/// use ralph::stream_processor::StreamProcessorBuilder;
+/// use ralph::highlight::ThemeConfig;
+///
+/// let processor = StreamProcessorBuilder::new()
+///     .highlighting(true)
+///     .show_tools(true)
+///     .theme_config(ThemeConfig::new().with_theme("Monokai Extended"))
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Debug, Default)]
+pub struct StreamProcessorBuilder {
+    highlighting: Option<bool>,
+    show_tools: Option<bool>,
+    theme_config: Option<ThemeConfig>,
+    verbose_tools: Option<VerboseToolsConfig>,
+}
+
+impl StreamProcessorBuilder {
+    /// Create a new builder with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set whether to enable syntax highlighting.
+    ///
+    /// If not set, defaults to terminal detection (enabled if stdout is a terminal).
+    pub fn highlighting(mut self, enabled: bool) -> Self {
+        self.highlighting = Some(enabled);
+        self
+    }
+
+    /// Set whether to display tool invocations.
+    ///
+    /// If not set, defaults to the highlighting setting.
+    pub fn show_tools(mut self, enabled: bool) -> Self {
+        self.show_tools = Some(enabled);
+        self
+    }
+
+    /// Set the theme configuration for syntax highlighting.
+    pub fn theme_config(mut self, config: ThemeConfig) -> Self {
+        self.theme_config = Some(config);
+        self
+    }
+
+    /// Set the verbose tools configuration.
+    pub fn verbose_tools(mut self, config: VerboseToolsConfig) -> Self {
+        self.verbose_tools = Some(config);
+        self
+    }
+
+    /// Build the StreamProcessor.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(StreamProcessor)` - Successfully configured processor
+    /// * `Err(ThemeError)` - If the theme configuration is invalid
+    pub fn build(self) -> Result<StreamProcessor, ThemeError> {
+        let is_terminal = std::io::stdout().is_terminal();
+
+        // Determine highlighting: explicit setting > terminal detection
+        let highlighting_enabled = self.highlighting.unwrap_or(is_terminal);
+
+        // Determine show_tools: explicit setting > highlighting setting
+        let show_tool_invocations = self.show_tools.unwrap_or(highlighting_enabled);
+
+        // Build highlighter
+        let code_highlighter = match self.theme_config {
+            Some(config) => Highlighter::with_config(config)?,
+            None => Highlighter::new(),
+        };
+
+        // Get verbose tools config
+        let verbose_tools_config = self.verbose_tools.unwrap_or_default();
+
+        Ok(StreamProcessor {
+            events: Vec::new(),
+            text_buffer: String::new(),
+            chunk_buffer: StreamingChunkBuffer::new(),
+            code_highlighter,
+            markdown_renderer: MarkdownRenderer::new(),
+            highlighting_enabled,
+            show_tool_invocations,
+            current_message_id: None,
+            collected_chunks: Vec::new(),
+            parse_errors: Vec::new(),
+            tool_correlator: ToolCorrelator::new(),
+            has_emitted_output: false,
+            response_count: 0,
+            pending_invocations: HashMap::new(),
+            verbose_tools_config,
+            pending_edit_snapshots: HashMap::new(),
+            pending_write_snapshots: HashMap::new(),
+            pending_notebook_snapshots: HashMap::new(),
+            output_blocks: Vec::new(),
+        })
+    }
+}
+
 impl Default for StreamProcessor {
     fn default() -> Self {
         Self::new()
@@ -105,41 +213,23 @@ impl StreamProcessor {
     ///
     /// let processor = StreamProcessor::new();
     /// ```
+    #[allow(clippy::expect_used)] // Builder with defaults cannot fail
     pub fn new() -> Self {
-        let is_terminal = std::io::stdout().is_terminal();
-        Self {
-            events: Vec::new(),
-            text_buffer: String::new(),
-            chunk_buffer: StreamingChunkBuffer::new(),
-            code_highlighter: Highlighter::new(),
-            markdown_renderer: MarkdownRenderer::new(),
-            highlighting_enabled: is_terminal,
-            show_tool_invocations: is_terminal,
-            current_message_id: None,
-            collected_chunks: Vec::new(),
-            parse_errors: Vec::new(),
-            tool_correlator: ToolCorrelator::new(),
-            has_emitted_output: false,
-            response_count: 0,
-            pending_invocations: HashMap::new(),
-            verbose_tools_config: VerboseToolsConfig::new(),
-            pending_edit_snapshots: HashMap::new(),
-            pending_write_snapshots: HashMap::new(),
-            pending_notebook_snapshots: HashMap::new(),
-            output_blocks: Vec::new(),
-        }
+        StreamProcessorBuilder::new()
+            .build()
+            .expect("default builder should not fail")
     }
 
     /// Create a processor with highlighting explicitly enabled/disabled.
     ///
     /// Useful for testing or when output will be displayed later.
     /// Tool invocations display follows the highlighting setting.
+    #[allow(clippy::expect_used)] // Builder with no theme config cannot fail
     pub fn with_highlighting(enabled: bool) -> Self {
-        Self {
-            highlighting_enabled: enabled,
-            show_tool_invocations: enabled,
-            ..Self::new()
-        }
+        StreamProcessorBuilder::new()
+            .highlighting(enabled)
+            .build()
+            .expect("builder without theme config should not fail")
     }
 
     /// Create a processor with custom settings.
@@ -148,12 +238,13 @@ impl StreamProcessor {
     ///
     /// * `highlighting` - Whether to apply syntax highlighting
     /// * `show_tools` - Whether to display tool invocations
+    #[allow(clippy::expect_used)] // Builder with no theme config cannot fail
     pub fn with_options(highlighting: bool, show_tools: bool) -> Self {
-        Self {
-            highlighting_enabled: highlighting,
-            show_tool_invocations: show_tools,
-            ..Self::new()
-        }
+        StreamProcessorBuilder::new()
+            .highlighting(highlighting)
+            .show_tools(show_tools)
+            .build()
+            .expect("builder without theme config should not fail")
     }
 
     /// Create a processor with custom settings and verbose tools configuration.
@@ -163,17 +254,18 @@ impl StreamProcessor {
     /// * `highlighting` - Whether to apply syntax highlighting
     /// * `show_tools` - Whether to display tool invocations
     /// * `verbose_tools` - Configuration for verbose tool output
+    #[allow(clippy::expect_used)] // Builder with no theme config cannot fail
     pub fn with_options_and_verbose(
         highlighting: bool,
         show_tools: bool,
         verbose_tools: VerboseToolsConfig,
     ) -> Self {
-        Self {
-            highlighting_enabled: highlighting,
-            show_tool_invocations: show_tools,
-            verbose_tools_config: verbose_tools,
-            ..Self::new()
-        }
+        StreamProcessorBuilder::new()
+            .highlighting(highlighting)
+            .show_tools(show_tools)
+            .verbose_tools(verbose_tools)
+            .build()
+            .expect("builder without theme config should not fail")
     }
 
     /// Create a processor with custom theme configuration.
@@ -197,30 +289,9 @@ impl StreamProcessor {
     /// let processor = StreamProcessor::with_theme_config(config).unwrap();
     /// ```
     pub fn with_theme_config(theme_config: ThemeConfig) -> Result<Self, ThemeError> {
-        let is_terminal = std::io::stdout().is_terminal();
-        let highlighter = Highlighter::with_config(theme_config)?;
-
-        Ok(Self {
-            events: Vec::new(),
-            text_buffer: String::new(),
-            chunk_buffer: StreamingChunkBuffer::new(),
-            code_highlighter: highlighter,
-            markdown_renderer: MarkdownRenderer::new(),
-            highlighting_enabled: is_terminal,
-            show_tool_invocations: is_terminal,
-            current_message_id: None,
-            collected_chunks: Vec::new(),
-            parse_errors: Vec::new(),
-            tool_correlator: ToolCorrelator::new(),
-            has_emitted_output: false,
-            response_count: 0,
-            pending_invocations: HashMap::new(),
-            verbose_tools_config: VerboseToolsConfig::new(),
-            pending_edit_snapshots: HashMap::new(),
-            pending_write_snapshots: HashMap::new(),
-            pending_notebook_snapshots: HashMap::new(),
-            output_blocks: Vec::new(),
-        })
+        StreamProcessorBuilder::new()
+            .theme_config(theme_config)
+            .build()
     }
 
     /// Create a processor with full configuration.
@@ -240,29 +311,11 @@ impl StreamProcessor {
         highlighting: bool,
         show_tools: bool,
     ) -> Result<Self, ThemeError> {
-        let highlighter = Highlighter::with_config(theme_config)?;
-
-        Ok(Self {
-            events: Vec::new(),
-            text_buffer: String::new(),
-            chunk_buffer: StreamingChunkBuffer::new(),
-            code_highlighter: highlighter,
-            markdown_renderer: MarkdownRenderer::new(),
-            highlighting_enabled: highlighting,
-            show_tool_invocations: show_tools,
-            current_message_id: None,
-            collected_chunks: Vec::new(),
-            parse_errors: Vec::new(),
-            tool_correlator: ToolCorrelator::new(),
-            has_emitted_output: false,
-            response_count: 0,
-            pending_invocations: HashMap::new(),
-            verbose_tools_config: VerboseToolsConfig::new(),
-            pending_edit_snapshots: HashMap::new(),
-            pending_write_snapshots: HashMap::new(),
-            pending_notebook_snapshots: HashMap::new(),
-            output_blocks: Vec::new(),
-        })
+        StreamProcessorBuilder::new()
+            .theme_config(theme_config)
+            .highlighting(highlighting)
+            .show_tools(show_tools)
+            .build()
     }
 
     /// Create a processor with verbose tools configuration.
@@ -284,29 +337,12 @@ impl StreamProcessor {
         show_tools: bool,
         verbose_tools: VerboseToolsConfig,
     ) -> Result<Self, ThemeError> {
-        let highlighter = Highlighter::with_config(theme_config)?;
-
-        Ok(Self {
-            events: Vec::new(),
-            text_buffer: String::new(),
-            chunk_buffer: StreamingChunkBuffer::new(),
-            code_highlighter: highlighter,
-            markdown_renderer: MarkdownRenderer::new(),
-            highlighting_enabled: highlighting,
-            show_tool_invocations: show_tools,
-            current_message_id: None,
-            collected_chunks: Vec::new(),
-            parse_errors: Vec::new(),
-            tool_correlator: ToolCorrelator::new(),
-            has_emitted_output: false,
-            response_count: 0,
-            pending_invocations: HashMap::new(),
-            verbose_tools_config: verbose_tools,
-            pending_edit_snapshots: HashMap::new(),
-            pending_write_snapshots: HashMap::new(),
-            pending_notebook_snapshots: HashMap::new(),
-            output_blocks: Vec::new(),
-        })
+        StreamProcessorBuilder::new()
+            .theme_config(theme_config)
+            .highlighting(highlighting)
+            .show_tools(show_tools)
+            .verbose_tools(verbose_tools)
+            .build()
     }
 
     /// Check if highlighting is enabled.
@@ -387,6 +423,18 @@ impl StreamProcessor {
     /// Check if verbose output is enabled for a specific tool.
     pub fn is_tool_verbose(&self, tool_name: &str) -> bool {
         self.verbose_tools_config.is_verbose(tool_name)
+    }
+
+    /// Create a render context based on the processor's highlighting setting.
+    ///
+    /// Returns a terminal context (with ANSI codes) when highlighting is enabled,
+    /// or a plain context otherwise.
+    pub fn render_context(&self) -> crate::render::RenderContext<'_> {
+        if self.highlighting_enabled {
+            crate::render::RenderContext::terminal(&self.code_highlighter)
+        } else {
+            crate::render::RenderContext::plain(&self.code_highlighter)
+        }
     }
 
     /// Get the accumulated output blocks.

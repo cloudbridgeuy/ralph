@@ -5,7 +5,7 @@
 
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
-use crate::render::{render_read_result, RenderContext};
+use crate::render::render_read_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
@@ -50,14 +50,13 @@ pub fn format_read_tool_result_verbose(
     // Check for truncation indicators
     let truncated = content.contains("... (truncated)") || content.contains("Output truncated");
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_read_result(&ctx, file_path, content, line_count, truncated)
+    render_read_result(
+        &processor.render_context(),
+        file_path,
+        content,
+        line_count,
+        truncated,
+    )
 }
 
 // Tests for normalize_cat_n_format and extract_line_number are in crate::render::utils

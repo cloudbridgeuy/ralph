@@ -5,7 +5,7 @@
 
 use ralph_core::stream::ToolInvocation;
 
-use crate::render::{render_read_invocation, RenderContext};
+use crate::render::render_read_invocation;
 
 use super::super::processor::StreamProcessor;
 
@@ -28,12 +28,5 @@ pub fn format_read_tool_invocation_verbose(
     let offset = invocation.input.get("offset").and_then(|v| v.as_u64());
     let limit = invocation.input.get("limit").and_then(|v| v.as_u64());
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_read_invocation(&ctx, file_path, offset, limit)
+    render_read_invocation(&processor.render_context(), file_path, offset, limit)
 }

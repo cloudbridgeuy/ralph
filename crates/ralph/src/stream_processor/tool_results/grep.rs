@@ -5,7 +5,7 @@
 
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
-use crate::render::{render_grep_result, RenderContext};
+use crate::render::render_grep_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
@@ -46,14 +46,12 @@ pub fn format_grep_tool_result_verbose(
     // Count matches (non-empty lines)
     let match_count = content.lines().filter(|l| !l.is_empty()).count();
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_grep_result(&ctx, match_count, output_mode, content)
+    render_grep_result(
+        &processor.render_context(),
+        match_count,
+        output_mode,
+        content,
+    )
 }
 
 // Tests for highlight_grep_match are in crate::render::utils

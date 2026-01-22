@@ -5,9 +5,10 @@
 
 use ralph_core::stream::ToolInvocation;
 
-use crate::render::{render_grep_invocation, GrepInvocationParams, RenderContext};
+use crate::render::{render_grep_invocation, GrepInvocationParams};
 
 use super::super::processor::StreamProcessor;
+use super::super::types::GrepParams;
 
 /// Format a Grep tool invocation with verbose output.
 ///
@@ -17,43 +18,17 @@ pub fn format_grep_tool_invocation_verbose(
     processor: &StreamProcessor,
     invocation: &ToolInvocation,
 ) -> String {
-    // Extract parameters from the invocation
-    let pattern = invocation
-        .input
-        .get("pattern")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let path = invocation.input.get("path").and_then(|v| v.as_str());
-
-    let output_mode = invocation.input.get("output_mode").and_then(|v| v.as_str());
-
-    let glob = invocation.input.get("glob").and_then(|v| v.as_str());
-
-    let file_type = invocation.input.get("type").and_then(|v| v.as_str());
-
-    let case_insensitive = invocation
-        .input
-        .get("-i")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let params = GrepParams::from_invocation_input(&invocation.input);
 
     // Build params struct for shared renderer
-    let params = GrepInvocationParams {
-        pattern,
-        path,
-        output_mode,
-        glob,
-        file_type,
-        case_insensitive,
+    let render_params = GrepInvocationParams {
+        pattern: &params.pattern,
+        path: params.path.as_deref(),
+        output_mode: params.output_mode.as_deref(),
+        glob: params.glob.as_deref(),
+        file_type: params.file_type.as_deref(),
+        case_insensitive: params.case_insensitive,
     };
 
-    // Use shared renderer with processor's highlighter
-    let ctx = if processor.highlighting_enabled {
-        RenderContext::terminal(&processor.code_highlighter)
-    } else {
-        RenderContext::plain(&processor.code_highlighter)
-    };
-
-    render_grep_invocation(&ctx, &params)
+    render_grep_invocation(&processor.render_context(), &render_params)
 }
