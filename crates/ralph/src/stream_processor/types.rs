@@ -200,3 +200,94 @@ pub struct NotebookSnapshot {
     /// The type of cell (code or markdown).
     pub cell_type: Option<String>,
 }
+
+/// Extracted parameters from a Grep tool invocation.
+///
+/// Used for both display formatting and output block building.
+#[derive(Debug, Clone, Default)]
+pub struct GrepParams {
+    /// The search pattern (required).
+    pub pattern: String,
+    /// Search path (optional).
+    pub path: Option<String>,
+    /// Output mode: "files_with_matches", "content", or "count".
+    pub output_mode: Option<String>,
+    /// Glob filter pattern.
+    pub glob: Option<String>,
+    /// File type filter.
+    pub file_type: Option<String>,
+    /// Case insensitive flag.
+    pub case_insensitive: bool,
+}
+
+impl GrepParams {
+    /// Extract Grep parameters from a tool invocation's input.
+    ///
+    /// This is a pure function that extracts all relevant fields from
+    /// the JSON input object.
+    pub fn from_invocation_input(input: &serde_json::Value) -> Self {
+        Self {
+            pattern: input
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            path: input.get("path").and_then(|v| v.as_str()).map(String::from),
+            output_mode: input
+                .get("output_mode")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            glob: input.get("glob").and_then(|v| v.as_str()).map(String::from),
+            file_type: input.get("type").and_then(|v| v.as_str()).map(String::from),
+            case_insensitive: input.get("-i").and_then(|v| v.as_bool()).unwrap_or(false),
+        }
+    }
+}
+
+#[cfg(test)]
+mod grep_params_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_grep_params_minimal() {
+        let input = json!({"pattern": "fn main"});
+        let params = GrepParams::from_invocation_input(&input);
+
+        assert_eq!(params.pattern, "fn main");
+        assert!(params.path.is_none());
+        assert!(params.output_mode.is_none());
+        assert!(params.glob.is_none());
+        assert!(params.file_type.is_none());
+        assert!(!params.case_insensitive);
+    }
+
+    #[test]
+    fn test_grep_params_full() {
+        let input = json!({
+            "pattern": "fn main",
+            "path": "src/",
+            "output_mode": "content",
+            "glob": "*.rs",
+            "type": "rust",
+            "-i": true
+        });
+        let params = GrepParams::from_invocation_input(&input);
+
+        assert_eq!(params.pattern, "fn main");
+        assert_eq!(params.path, Some("src/".to_string()));
+        assert_eq!(params.output_mode, Some("content".to_string()));
+        assert_eq!(params.glob, Some("*.rs".to_string()));
+        assert_eq!(params.file_type, Some("rust".to_string()));
+        assert!(params.case_insensitive);
+    }
+
+    #[test]
+    fn test_grep_params_empty_input() {
+        let input = json!({});
+        let params = GrepParams::from_invocation_input(&input);
+
+        assert_eq!(params.pattern, "");
+        assert!(!params.case_insensitive);
+    }
+}

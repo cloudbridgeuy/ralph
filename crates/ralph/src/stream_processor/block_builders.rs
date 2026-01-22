@@ -35,29 +35,23 @@ pub fn build_tool_invocation_block(invocation: &ToolInvocation) -> OutputBlock {
             }
         }
         "Grep" => {
-            let pattern = invocation
-                .input
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let params = super::types::GrepParams::from_invocation_input(&invocation.input);
 
-            // Use builder for cleaner construction with many optional fields
-            let mut builder = GrepInvocationBuilder::new(pattern);
-
-            if let Some(path) = invocation.input.get("path").and_then(|v| v.as_str()) {
+            let mut builder = GrepInvocationBuilder::new(&params.pattern);
+            if let Some(path) = &params.path {
                 builder = builder.path(path);
             }
-            if let Some(mode) = invocation.input.get("output_mode").and_then(|v| v.as_str()) {
+            if let Some(mode) = &params.output_mode {
                 builder = builder.output_mode(mode);
             }
-            if let Some(glob) = invocation.input.get("glob").and_then(|v| v.as_str()) {
+            if let Some(glob) = &params.glob {
                 builder = builder.glob(glob);
             }
-            if let Some(ft) = invocation.input.get("type").and_then(|v| v.as_str()) {
+            if let Some(ft) = &params.file_type {
                 builder = builder.file_type(ft);
             }
-            if let Some(ci) = invocation.input.get("-i").and_then(|v| v.as_bool()) {
-                builder = builder.case_insensitive(ci);
+            if params.case_insensitive {
+                builder = builder.case_insensitive(true);
             }
 
             builder.build()
