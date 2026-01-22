@@ -8,17 +8,6 @@ use std::io;
 /// If no output is received for this duration, spinner reappears.
 pub const DEFAULT_GAP_THRESHOLD_MS: u64 = 500;
 
-/// Result of a subprocess invocation.
-#[derive(Debug, Clone)]
-pub struct SubprocessResult {
-    /// The exit code from the subprocess.
-    pub exit_code: i32,
-    /// Captured stdout output.
-    pub stdout: String,
-    /// Captured stderr output.
-    pub stderr: String,
-}
-
 /// Error type for subprocess operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SubprocessError {

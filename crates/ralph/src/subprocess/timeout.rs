@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 /// Invokes a command with stream-json output parsing, syntax highlighting, and timeout.
 ///
-/// This extends [`super::invoke_subprocess_with_stream_processing`] with timeout support:
+/// This provides subprocess invocation with timeout support:
 /// - If the subprocess exceeds `timeout_secs`, it is killed and a `Timeout` error is returned
 /// - Partial output captured before timeout is included in the error
 ///

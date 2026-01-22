@@ -43,6 +43,82 @@ use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
 use summarize::SummarizeConfig;
 
+/// Context for handling subprocess failure recovery.
+struct FailureRecoveryContext {
+    /// Summary message to display to user.
+    summary: String,
+    /// Session slug for this run.
+    session_slug: String,
+    /// Iterations completed before failure.
+    iterations_completed: usize,
+    /// Total iterations from previous recovery attempts.
+    total_iterations_completed: usize,
+}
+
+/// Result of failure recovery handling.
+enum FailureRecoveryResult {
+    /// User chose to retry - continue the loop.
+    Retry { updated_total_iterations: usize },
+    /// Recovery was aborted (user chose or non-interactive).
+    Aborted(Box<dyn std::error::Error>),
+}
+
+/// Handle subprocess failure with user prompting and session finalization.
+///
+/// This is a pure-ish function that handles the common failure recovery pattern:
+/// 1. Update current_session_slug tracking
+/// 2. Prompt user (if interactive)
+/// 3. Handle Retry/Abort/None responses
+/// 4. Finalize session appropriately
+///
+/// Returns `FailureRecoveryResult::Retry` if user wants to continue,
+/// or `FailureRecoveryResult::Aborted` with the error to return.
+fn handle_failure_recovery(
+    ctx: &FailureRecoveryContext,
+    current_session_slug: &mut Option<String>,
+) -> FailureRecoveryResult {
+    // Track the session slug for potential recovery
+    if current_session_slug.is_none() {
+        *current_session_slug = Some(ctx.session_slug.clone());
+    }
+
+    match prompt_on_failure(&ctx.summary) {
+        Some(FailureAction::Retry) => {
+            // Continue the same session - don't finalize, just accumulate iterations
+            let updated = ctx.total_iterations_completed + ctx.iterations_completed;
+            eprintln!("\nContinuing run (session '{}')...\n", ctx.session_slug);
+            FailureRecoveryResult::Retry {
+                updated_total_iterations: updated,
+            }
+        }
+        Some(FailureAction::Abort) => {
+            // User chose to abort - finalize session as aborted
+            let final_iterations = ctx.total_iterations_completed + ctx.iterations_completed;
+            if let Err(e) = session::finalize_session(
+                &ctx.session_slug,
+                final_iterations as u32,
+                SessionOutcome::Aborted,
+            ) {
+                eprintln!("Warning: Failed to finalize session: {}", e);
+            }
+            FailureRecoveryResult::Aborted("Aborted by user".into())
+        }
+        None => {
+            // Non-interactive mode or EOF - finalize as failed and abort
+            let final_iterations = ctx.total_iterations_completed + ctx.iterations_completed;
+            if let Err(e) = session::finalize_session(
+                &ctx.session_slug,
+                final_iterations as u32,
+                SessionOutcome::Failed,
+            ) {
+                eprintln!("Warning: Failed to finalize session: {}", e);
+            }
+            eprintln!("Non-interactive mode - aborting.");
+            FailureRecoveryResult::Aborted(ctx.summary.clone().into())
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -208,54 +284,24 @@ fn execute_run_with_prompting(
                 session_slug,
                 iterations_completed,
             }) => {
-                // Track the session slug for potential recovery
-                if current_session_slug.is_none() {
-                    current_session_slug = Some(session_slug.clone());
-                }
+                let ctx = FailureRecoveryContext {
+                    summary: format!(
+                        "LLM subprocess failed with exit code {} after {} attempt(s).",
+                        exit_code, attempts
+                    ),
+                    session_slug,
+                    iterations_completed,
+                    total_iterations_completed,
+                };
 
-                // Subprocess failed after exhausting all attempts - prompt user
-                let summary = format!(
-                    "LLM subprocess failed with exit code {} after {} attempt(s).",
-                    exit_code, attempts
-                );
-
-                match prompt_on_failure(&summary) {
-                    Some(FailureAction::Retry) => {
-                        // Continue the same session - don't finalize, just accumulate iterations
-                        total_iterations_completed += iterations_completed;
-                        eprintln!("\nContinuing run (session '{}')...\n", session_slug);
-                        // Continue loop with the same session
+                match handle_failure_recovery(&ctx, &mut current_session_slug) {
+                    FailureRecoveryResult::Retry {
+                        updated_total_iterations,
+                    } => {
+                        total_iterations_completed = updated_total_iterations;
                         continue;
                     }
-                    Some(FailureAction::Abort) => {
-                        // User chose to abort - finalize session as aborted
-                        let final_iterations = total_iterations_completed + iterations_completed;
-                        if let Err(e) = session::finalize_session(
-                            &session_slug,
-                            final_iterations as u32,
-                            SessionOutcome::Aborted,
-                        ) {
-                            eprintln!("Warning: Failed to finalize session: {}", e);
-                        }
-                        return Err("Aborted by user".into());
-                    }
-                    None => {
-                        // Non-interactive mode or EOF - finalize as failed and abort
-                        let final_iterations = total_iterations_completed + iterations_completed;
-                        if let Err(e) = session::finalize_session(
-                            &session_slug,
-                            final_iterations as u32,
-                            SessionOutcome::Failed,
-                        ) {
-                            eprintln!("Warning: Failed to finalize session: {}", e);
-                        }
-                        eprintln!("Non-interactive mode - aborting.");
-                        return Err(format!(
-                            "LLM subprocess failed with exit code {} after {} attempt(s)",
-                            exit_code, attempts
-                        )
-                        .into());
-                    }
+                    FailureRecoveryResult::Aborted(err) => return Err(err),
                 }
             }
             Err(RunError::SubprocessTimedOut {
@@ -266,54 +312,24 @@ fn execute_run_with_prompting(
                 session_slug,
                 iterations_completed,
             }) => {
-                // Track the session slug for potential recovery
-                if current_session_slug.is_none() {
-                    current_session_slug = Some(session_slug.clone());
-                }
+                let ctx = FailureRecoveryContext {
+                    summary: format!(
+                        "LLM subprocess timed out after {} seconds ({} attempt(s)).",
+                        timeout_secs, attempts
+                    ),
+                    session_slug,
+                    iterations_completed,
+                    total_iterations_completed,
+                };
 
-                // Subprocess timed out after exhausting all attempts - prompt user
-                let summary = format!(
-                    "LLM subprocess timed out after {} seconds ({} attempt(s)).",
-                    timeout_secs, attempts
-                );
-
-                match prompt_on_failure(&summary) {
-                    Some(FailureAction::Retry) => {
-                        // Continue the same session - don't finalize, just accumulate iterations
-                        total_iterations_completed += iterations_completed;
-                        eprintln!("\nContinuing run (session '{}')...\n", session_slug);
-                        // Continue loop with the same session
+                match handle_failure_recovery(&ctx, &mut current_session_slug) {
+                    FailureRecoveryResult::Retry {
+                        updated_total_iterations,
+                    } => {
+                        total_iterations_completed = updated_total_iterations;
                         continue;
                     }
-                    Some(FailureAction::Abort) => {
-                        // User chose to abort - finalize session as aborted
-                        let final_iterations = total_iterations_completed + iterations_completed;
-                        if let Err(e) = session::finalize_session(
-                            &session_slug,
-                            final_iterations as u32,
-                            SessionOutcome::Aborted,
-                        ) {
-                            eprintln!("Warning: Failed to finalize session: {}", e);
-                        }
-                        return Err("Aborted by user".into());
-                    }
-                    None => {
-                        // Non-interactive mode or EOF - finalize as failed and abort
-                        let final_iterations = total_iterations_completed + iterations_completed;
-                        if let Err(e) = session::finalize_session(
-                            &session_slug,
-                            final_iterations as u32,
-                            SessionOutcome::Failed,
-                        ) {
-                            eprintln!("Warning: Failed to finalize session: {}", e);
-                        }
-                        eprintln!("Non-interactive mode - aborting.");
-                        return Err(format!(
-                            "LLM subprocess timed out after {} seconds ({} attempt(s))",
-                            timeout_secs, attempts
-                        )
-                        .into());
-                    }
+                    FailureRecoveryResult::Aborted(err) => return Err(err),
                 }
             }
             Err(RunError::Interrupted {
@@ -461,6 +477,61 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Input source for prompt resolution.
+#[derive(Debug, Clone, PartialEq)]
+enum PromptSource<'a> {
+    /// Read from stdin (when arg is "-")
+    Stdin,
+    /// Read from file at path
+    File(&'a Path),
+    /// Use inline string directly
+    Inline(&'a str),
+    /// No input provided
+    None,
+}
+
+/// Classify the input argument into a source type.
+///
+/// This is a pure function that determines how to interpret the argument:
+/// - "-" means stdin
+/// - An existing file path means read from file
+/// - Any other string is treated as inline content
+/// - None means no input
+fn classify_prompt_source(arg: Option<&str>) -> PromptSource<'_> {
+    match arg {
+        Some("-") => PromptSource::Stdin,
+        Some(value) => {
+            let path = Path::new(value);
+            if path.exists() && path.is_file() {
+                PromptSource::File(path)
+            } else {
+                PromptSource::Inline(value)
+            }
+        }
+        None => PromptSource::None,
+    }
+}
+
+/// Read content from a prompt source.
+///
+/// This is the imperative shell that performs actual I/O based on the source type.
+fn read_from_source(
+    source: PromptSource<'_>,
+    default: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    match source {
+        PromptSource::Stdin => {
+            use std::io::Read;
+            let mut content = String::new();
+            std::io::stdin().read_to_string(&mut content)?;
+            Ok(content)
+        }
+        PromptSource::File(path) => Ok(std::fs::read_to_string(path)?),
+        PromptSource::Inline(value) => Ok(value.to_string()),
+        PromptSource::None => Ok(default.unwrap_or("").to_string()),
+    }
+}
+
 /// Resolve the prompt from various sources.
 ///
 /// Loads the prompt template from one of three sources:
@@ -481,29 +552,8 @@ fn resolve_prompt(
     completion_marker: &str,
     additional_prompt: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let template = match prompt_arg {
-        Some("-") => {
-            // Read from stdin
-            use std::io::Read;
-            let mut prompt = String::new();
-            std::io::stdin().read_to_string(&mut prompt)?;
-            prompt
-        }
-        Some(value) => {
-            // Check if it's a file path
-            let path = Path::new(value);
-            if path.exists() && path.is_file() {
-                std::fs::read_to_string(path)?
-            } else {
-                // Treat as inline string
-                value.to_string()
-            }
-        }
-        None => {
-            // Use built-in default prompt template
-            defaults::PROMPT_TEMPLATE.to_string()
-        }
-    };
+    let source = classify_prompt_source(prompt_arg);
+    let template = read_from_source(source, Some(defaults::PROMPT_TEMPLATE))?;
 
     // Substitute placeholders in the template
     Ok(substitute_template_placeholders(
@@ -524,29 +574,8 @@ fn resolve_prompt(
 fn resolve_additional_prompt(
     additional_arg: Option<&str>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    match additional_arg {
-        Some("-") => {
-            // Read from stdin
-            use std::io::Read;
-            let mut content = String::new();
-            std::io::stdin().read_to_string(&mut content)?;
-            Ok(content)
-        }
-        Some(value) => {
-            // Check if it's a file path
-            let path = Path::new(value);
-            if path.exists() && path.is_file() {
-                Ok(std::fs::read_to_string(path)?)
-            } else {
-                // Treat as inline string
-                Ok(value.to_string())
-            }
-        }
-        None => {
-            // No additional prompt - return empty string
-            Ok(String::new())
-        }
-    }
+    let source = classify_prompt_source(additional_arg);
+    read_from_source(source, None)
 }
 
 /// Substitute {prompt} placeholder in command template.
@@ -570,30 +599,9 @@ fn build_summarize_config(args: &RunArgs) -> Result<SummarizeConfig, Box<dyn std
         });
     }
 
-    // Resolve summarize prompt (same pattern as resolve_additional_prompt)
-    let prompt = match args.summarize_prompt.as_deref() {
-        Some("-") => {
-            // Read from stdin
-            use std::io::Read;
-            let mut content = String::new();
-            std::io::stdin().read_to_string(&mut content)?;
-            content
-        }
-        Some(value) => {
-            // Check if it's a file path
-            let path = Path::new(value);
-            if path.exists() && path.is_file() {
-                std::fs::read_to_string(path)?
-            } else {
-                // Treat as inline string
-                value.to_string()
-            }
-        }
-        None => {
-            // Use default prompt
-            defaults::SUMMARIZE_PROMPT.to_string()
-        }
-    };
+    // Resolve summarize prompt using shared helper
+    let source = classify_prompt_source(args.summarize_prompt.as_deref());
+    let prompt = read_from_source(source, Some(defaults::SUMMARIZE_PROMPT))?;
 
     // Get command template
     let command = args
@@ -685,5 +693,46 @@ mod tests {
         assert!(result.starts_with("claude "));
         assert!(result.contains("--output-format stream-json"));
         assert!(result.contains("'my prompt'"));
+    }
+
+    #[test]
+    fn test_failure_recovery_context_creation() {
+        let ctx = FailureRecoveryContext {
+            summary: "Test failure".to_string(),
+            session_slug: "test-session".to_string(),
+            iterations_completed: 3,
+            total_iterations_completed: 5,
+        };
+
+        assert_eq!(ctx.summary, "Test failure");
+        assert_eq!(ctx.session_slug, "test-session");
+        assert_eq!(ctx.iterations_completed, 3);
+        assert_eq!(ctx.total_iterations_completed, 5);
+    }
+
+    #[test]
+    fn test_classify_prompt_source_stdin() {
+        assert_eq!(classify_prompt_source(Some("-")), PromptSource::Stdin);
+    }
+
+    #[test]
+    fn test_classify_prompt_source_none() {
+        assert_eq!(classify_prompt_source(None), PromptSource::None);
+    }
+
+    #[test]
+    fn test_classify_prompt_source_inline() {
+        // Non-existent path should be treated as inline
+        assert_eq!(
+            classify_prompt_source(Some("inline content")),
+            PromptSource::Inline("inline content")
+        );
+    }
+
+    #[test]
+    fn test_classify_prompt_source_file() {
+        // Use Cargo.toml as a file that definitely exists
+        let source = classify_prompt_source(Some("Cargo.toml"));
+        assert!(matches!(source, PromptSource::File(_)));
     }
 }

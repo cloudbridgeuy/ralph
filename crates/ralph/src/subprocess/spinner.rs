@@ -34,7 +34,7 @@ pub struct SpinnerSubprocessConfig {
 
 /// Invokes a command with stream processing, theme configuration, and spinner display.
 ///
-/// This extends [`super::invoke_subprocess_with_theme`] with spinner support:
+/// This extends [`super::invoke_subprocess_with_timeout`] with spinner support:
 /// - Shows an animated spinner while waiting for LLM to respond
 /// - Displays elapsed time updating every second
 /// - Displays session name and iteration progress (if provided)
