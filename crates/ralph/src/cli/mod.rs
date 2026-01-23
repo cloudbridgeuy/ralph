@@ -149,12 +149,14 @@ pub struct ReplayArgs {
 /// Arguments for the `ask` subcommand.
 #[derive(clap::Args, Debug)]
 pub struct AskArgs {
+    // --- Prompt ---
     /// The prompt to send to the LLM.
     ///
     /// If not provided, reads from stdin. Supports inline text or "-" for stdin.
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 
+    // --- Session ---
     /// Session name for the new session, or session to continue with --continue.
     ///
     /// Used to name the session directory for logs.
@@ -172,6 +174,7 @@ pub struct AskArgs {
     #[arg(short = 'c', long = "continue")]
     pub continue_session: bool,
 
+    // --- Theme ---
     /// Syntax highlighting theme.
     ///
     /// Use a built-in theme name (e.g., "Monokai Extended", "Solarized (dark)")
@@ -187,6 +190,35 @@ pub struct AskArgs {
     /// Can also be set via RALPH_NO_BACKGROUND environment variable or config file.
     #[arg(long)]
     pub no_background: bool,
+
+    // --- Execution ---
+    /// Timeout for LLM subprocess in seconds.
+    ///
+    /// If the subprocess exceeds this duration, it is killed and treated
+    /// as a failure. Prevents runaway processes.
+    /// Default: 600 seconds (10 minutes)
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
+
+    /// Enable verbose output for specific tools.
+    ///
+    /// Accepts a comma-separated list of tool names (case-insensitive).
+    /// When verbose is enabled for a tool, full input/output is shown
+    /// instead of truncated summaries.
+    ///
+    /// Examples:
+    ///   --verbose-tools              Enable verbose for all tools
+    ///   --verbose-tools=grep,bash    Enable for Grep and Bash only
+    ///   --verbose-tools=read         Enable for Read only
+    #[arg(long, value_name = "TOOLS", num_args = 0..=1, default_missing_value = "*")]
+    pub verbose_tools: Option<String>,
+
+    /// Suppress prompt display at the start of execution.
+    ///
+    /// By default, the prompt passed to the LLM is displayed before
+    /// execution begins. Use this flag to hide the prompt.
+    #[arg(long)]
+    pub no_prompt: bool,
 }
 
 /// Arguments for the `run` subcommand.

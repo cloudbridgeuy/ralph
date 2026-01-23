@@ -150,7 +150,7 @@ steps = [
   "Wire all flags through to `AskConfig` and execution",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
   "`ralph ask --timeout 60 'hello'` uses 60 second timeout",
   "`ralph ask --verbose-tools 'hello'` shows verbose tool output",

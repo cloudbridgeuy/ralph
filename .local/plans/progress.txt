@@ -206,3 +206,61 @@ ralph ask --theme 'Solarized (dark)' --no-background 'hello'
 2. Environment variables (`RALPH_THEME`, `RALPH_NO_BACKGROUND`)
 3. Config file (`~/.config/ralph/config.toml` under `[theme]` section)
 4. Built-in default (`base16-ocean.dark`) - lowest priority
+
+## Remaining CLI Flags for Ask Command (Story 9)
+
+Added `--timeout`, `--verbose-tools`, and `--no-prompt` flags to the `ask` subcommand.
+
+### Changes Made
+
+1. **AskArgs updated** (`crates/ralph/src/cli/mod.rs:190-221`):
+   - Added `timeout: u64` field with `#[arg(long, default_value_t = 600)]`
+   - Added `verbose_tools: Option<String>` with `#[arg(long, value_name = "TOOLS", num_args = 0..=1, default_missing_value = "*")]`
+   - Added `no_prompt: bool` field with `#[arg(long)]`
+   - Doc comments describe timeout behavior, verbose tools syntax, and prompt suppression
+
+2. **execute_ask() updated** (`crates/ralph/src/main.rs:488-550`):
+   - Parses `VerboseToolsConfig` from CLI arg with warning output for unknown tools
+   - Displays prompt using `startup::display_prompt()` when `!args.no_prompt && !prompt.is_empty()`
+   - Passes `timeout_secs` and `verbose_tools` to `AskConfig` (no longer uses `..Default::default()`)
+
+3. **Tests added** (`crates/ralph/src/cli/tests/ask.rs`):
+   - `test_ask_with_timeout` - timeout flag with custom value
+   - `test_ask_timeout_default` - default 600 seconds
+   - `test_ask_with_verbose_tools_all` - enable verbose for all tools
+   - `test_ask_with_verbose_tools_specific` - specific tools with `=` syntax
+   - `test_ask_without_verbose_tools` - default behavior
+   - `test_ask_with_no_prompt_flag` - boolean flag
+   - `test_ask_without_no_prompt_flag` - default behavior
+   - `test_ask_with_all_new_flags` - combined new flags
+   - `test_ask_with_all_flags_combined` - all ask flags together
+
+4. **CLI tests refactored**:
+   - Split `cli/tests.rs` into `cli/tests.rs` + `cli/tests/ask.rs` to stay under 1000 lines
+   - Ask tests now in separate file referenced via `#[path = "tests/ask.rs"]`
+
+### Usage
+
+```bash
+# Custom timeout (default 600 seconds)
+ralph ask --timeout 60 'hello'
+
+# Enable verbose output for all tools
+ralph ask 'hello' --verbose-tools
+
+# Enable verbose for specific tools
+ralph ask --verbose-tools=grep,bash 'hello'
+
+# Suppress prompt display
+ralph ask --no-prompt 'hello'
+
+# Combine all flags
+ralph ask --timeout 120 --verbose-tools=read --no-prompt 'hello'
+```
+
+### Key Design Decisions
+
+- Timeout flag uses same default as `run` command (600 seconds)
+- Verbose tools uses same syntax as `run` command (`*` for all, comma-separated for specific)
+- Prompt display happens before subprocess invocation (consistent with `run` command)
+- Prompt is only displayed when non-empty and `--no-prompt` is not set

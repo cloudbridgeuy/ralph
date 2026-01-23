@@ -506,10 +506,28 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     let theme_config = highlight::ThemeConfig::from_config_and_env()
         .merge_cli(args.theme.as_deref(), args.no_background);
 
+    // Parse verbose tools config from CLI args
+    let verbose_tools = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
+    // Print warnings about unknown tool names
+    for warning in verbose_tools.warnings() {
+        eprintln!("Warning: {}", warning);
+    }
+
+    // Get the prompt, defaulting to empty (validation happens in ask::ask())
+    let prompt = args.prompt.unwrap_or_default();
+
+    // Display prompt if enabled
+    if !args.no_prompt && !prompt.is_empty() {
+        let prompt_display = startup::PromptDisplay::from_prompt(&prompt);
+        startup::display_prompt(&prompt_display);
+    }
+
     // Build ask config - validation happens in ask::ask()
     let config = ask::AskConfig {
-        prompt: args.prompt.unwrap_or_default(),
+        prompt,
+        timeout_secs: args.timeout,
         theme_config,
+        verbose_tools,
         project_path,
         slug: if args.continue_session {
             None // Don't pass slug when continuing (it's in continuation info)
@@ -517,7 +535,6 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.session
         },
         continuation,
-        ..Default::default()
     };
 
     // Execute the ask command
