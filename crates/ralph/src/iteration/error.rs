@@ -22,4 +22,20 @@ pub enum IterationError {
         #[source]
         source: std::io::Error,
     },
+
+    /// Failed to read iteration log file
+    #[error("Failed to read iteration log at {path}: {source}")]
+    ReadLog {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to parse iteration log file
+    #[error("Failed to parse iteration log at {path}: {source}")]
+    ParseLog {
+        path: String,
+        #[source]
+        source: toml::de::Error,
+    },
 }

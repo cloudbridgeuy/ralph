@@ -9,7 +9,8 @@ use crate::git::capture_and_write_diff;
 use crate::highlight::ThemeConfig;
 use crate::init::{initialize_context_files, InitError};
 use crate::iteration::{
-    write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata, LogToolCall,
+    extract_response_text, write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata,
+    LogToolCall,
 };
 use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::signal;
@@ -446,6 +447,9 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Convert parsed chunks to iteration log chunks
         let chunks = Chunk::from_parsed_chunks(&result.stream_result.chunks);
 
+        // Extract response text from output blocks
+        let response = extract_response_text(&result.stream_result.output_blocks);
+
         // Write iteration log with extracted metadata, tool calls, typed chunks, and output blocks
         let iteration_log = IterationLog {
             sequence: iteration as u32,
@@ -454,6 +458,8 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             exit_code: result.exit_code,
             pending_before,
             pending_after: 0, // Will be updated below
+            prompt: None,     // Run command doesn't track prompt per iteration
+            response,
             metadata: if metadata.is_empty() {
                 None
             } else {

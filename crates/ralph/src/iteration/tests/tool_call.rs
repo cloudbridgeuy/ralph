@@ -211,6 +211,8 @@ fn test_iteration_log_with_tool_calls() {
         exit_code: 0,
         pending_before: 5,
         pending_after: 4,
+        prompt: None,
+        response: None,
         metadata: None,
         tool_calls: vec![
             LogToolCall {
@@ -305,6 +307,8 @@ fn test_write_iteration_log_with_tool_calls() {
         exit_code: 0,
         pending_before: 5,
         pending_after: 4,
+        prompt: None,
+        response: None,
         metadata: None,
         tool_calls: vec![LogToolCall {
             id: "toolu_01".to_string(),

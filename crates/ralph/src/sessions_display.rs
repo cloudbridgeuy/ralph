@@ -703,6 +703,8 @@ mod tests {
             exit_code: 0,
             pending_before: 0,
             pending_after: 0,
+            prompt: None,
+            response: None,
             metadata,
             tool_calls: vec![],
             chunks: vec![],

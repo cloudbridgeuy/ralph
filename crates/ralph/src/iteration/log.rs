@@ -61,6 +61,17 @@ pub struct IterationLog {
     pub pending_before: usize,
     /// Number of pending stories after this iteration
     pub pending_after: usize,
+    /// The user's prompt text for this iteration.
+    ///
+    /// For `ask` command sessions, this contains the user's input prompt.
+    /// For `run` command sessions, this is `None` because the run command
+    /// operates on PRD stories rather than user prompts per iteration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// The assistant's response text for this iteration.
+    /// Extracted from output_blocks (text content only, excluding tool output).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<String>,
     /// Metadata extracted from Claude's JSON streaming output.
     /// Contains session_id, model, cost, duration, and token usage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -76,4 +87,40 @@ pub struct IterationLog {
     /// Contains all visual output in display order for faithful replay.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_blocks: Vec<OutputBlock>,
+}
+
+/// Extract the assistant's response text from output blocks.
+///
+/// This pure function iterates over output blocks and concatenates the text
+/// content from `Text` blocks, which represent the assistant's prose, code,
+/// and diff responses. Tool invocations and results are excluded.
+///
+/// Returns `None` if no text content is present.
+///
+/// # Example
+///
+/// ```
+/// use ralph::iteration::extract_response_text;
+/// use ralph::stream_processor::OutputBlock;
+/// use ralph_core::chunk::ParsedChunk;
+///
+/// let blocks = vec![
+///     OutputBlock::text(ParsedChunk::prose("Hello, world!")),
+///     OutputBlock::text(ParsedChunk::code("fn main() {}", Some("rust".to_string()))),
+/// ];
+///
+/// let response = extract_response_text(&blocks);
+/// assert!(response.is_some());
+/// assert!(response.unwrap().contains("Hello, world!"));
+/// ```
+pub fn extract_response_text(output_blocks: &[OutputBlock]) -> Option<String> {
+    let text_parts: Vec<_> = output_blocks
+        .iter()
+        .filter_map(|block| match block {
+            OutputBlock::Text(text_block) => Some(text_block.chunk.content.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    (!text_parts.is_empty()).then(|| text_parts.join("\n\n"))
 }

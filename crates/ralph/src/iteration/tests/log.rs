@@ -17,6 +17,8 @@ fn test_iteration_log_serialization() {
         exit_code: 0,
         pending_before: 5,
         pending_after: 4,
+        prompt: None,
+        response: None,
         metadata: None,
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
@@ -79,6 +81,8 @@ fn test_iteration_log_empty_chunks() {
         exit_code: 1,
         pending_before: 5,
         pending_after: 5,
+        prompt: None,
+        response: None,
         metadata: None,
         tool_calls: vec![],
         chunks: vec![],
@@ -102,6 +106,8 @@ fn test_iteration_log_with_code_chunk() {
         exit_code: 0,
         pending_before: 2,
         pending_after: 1,
+        prompt: None,
+        response: None,
         metadata: None,
         tool_calls: vec![],
         chunks: vec![
@@ -138,6 +144,8 @@ fn test_iteration_log_with_metadata() {
         exit_code: 0,
         pending_before: 5,
         pending_after: 4,
+        prompt: None,
+        response: None,
         metadata: Some(LogMetadata {
             claude_session_id: Some("f5b6aaac-4316-454a-b086-a3f9e4351b1e".to_string()),
             model: Some("claude-opus-4-5-20251101".to_string()),
@@ -232,5 +240,130 @@ fn test_iteration_log_backward_compatible_without_metadata() {
 
     assert_eq!(log.sequence, 3);
     assert!(log.metadata.is_none());
+    assert_eq!(log.chunks.len(), 1);
+}
+
+// ==========================================================================
+// extract_response_text Tests
+// ==========================================================================
+
+#[test]
+fn test_extract_response_text_empty() {
+    use super::super::extract_response_text;
+    use crate::stream_processor::OutputBlock;
+
+    let blocks: Vec<OutputBlock> = vec![];
+    let result = extract_response_text(&blocks);
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_extract_response_text_single_text_block() {
+    use super::super::extract_response_text;
+    use crate::stream_processor::OutputBlock;
+    use ralph_core::chunk::ParsedChunk;
+
+    let blocks = vec![OutputBlock::text(ParsedChunk::prose("Hello, world!"))];
+    let result = extract_response_text(&blocks);
+    assert_eq!(result, Some("Hello, world!".to_string()));
+}
+
+#[test]
+fn test_extract_response_text_multiple_text_blocks() {
+    use super::super::extract_response_text;
+    use crate::stream_processor::OutputBlock;
+    use ralph_core::chunk::ParsedChunk;
+
+    let blocks = vec![
+        OutputBlock::text(ParsedChunk::prose("First paragraph.")),
+        OutputBlock::text(ParsedChunk::code("fn main() {}", Some("rust".to_string()))),
+        OutputBlock::text(ParsedChunk::prose("Second paragraph.")),
+    ];
+    let result = extract_response_text(&blocks);
+    assert!(result.is_some());
+    let text = result.unwrap();
+    assert!(text.contains("First paragraph."));
+    assert!(text.contains("fn main() {}"));
+    assert!(text.contains("Second paragraph."));
+}
+
+#[test]
+fn test_extract_response_text_ignores_non_text_blocks() {
+    use super::super::extract_response_text;
+    use crate::stream_processor::{OutputBlock, ToolInvocationVariant, ToolResultVariant};
+    use ralph_core::chunk::ParsedChunk;
+
+    let blocks = vec![
+        OutputBlock::text(ParsedChunk::prose("Assistant response.")),
+        OutputBlock::tool_invocation(
+            "Bash",
+            ToolInvocationVariant::Bash {
+                command: "ls".to_string(),
+                description: None,
+            },
+        ),
+        OutputBlock::tool_result(
+            "Bash",
+            false,
+            ToolResultVariant::Bash {
+                content: Some("file.txt".to_string()),
+                truncated: false,
+            },
+        ),
+        OutputBlock::separator(),
+    ];
+    let result = extract_response_text(&blocks);
+    assert_eq!(result, Some("Assistant response.".to_string()));
+}
+
+#[test]
+fn test_iteration_log_with_prompt_and_response() {
+    let now = chrono::Utc::now();
+    let log = IterationLog {
+        sequence: 1,
+        started_at: now,
+        completed_at: now,
+        exit_code: 0,
+        pending_before: 0,
+        pending_after: 0,
+        prompt: Some("What is 2+2?".to_string()),
+        response: Some("The answer is 4.".to_string()),
+        metadata: None,
+        tool_calls: vec![],
+        chunks: vec![],
+        output_blocks: vec![],
+    };
+
+    let toml_str = toml::to_string_pretty(&log).unwrap();
+
+    assert!(toml_str.contains(r#"prompt = "What is 2+2?""#));
+    assert!(toml_str.contains(r#"response = "The answer is 4.""#));
+
+    // Verify round-trip
+    let parsed: IterationLog = toml::from_str(&toml_str).unwrap();
+    assert_eq!(parsed.prompt, Some("What is 2+2?".to_string()));
+    assert_eq!(parsed.response, Some("The answer is 4.".to_string()));
+}
+
+#[test]
+fn test_iteration_log_backward_compatible_without_prompt_response() {
+    // Old logs without prompt/response fields should still parse
+    let old_toml = r#"
+        sequence = 1
+        started_at = "2025-01-06T14:30:00Z"
+        completed_at = "2025-01-06T14:35:00Z"
+        exit_code = 0
+        pending_before = 5
+        pending_after = 4
+
+        [[chunks]]
+        type = "prose"
+        content = "Old format without prompt/response"
+    "#;
+
+    let log: IterationLog = toml::from_str(old_toml).unwrap();
+
+    assert!(log.prompt.is_none());
+    assert!(log.response.is_none());
     assert_eq!(log.chunks.len(), 1);
 }

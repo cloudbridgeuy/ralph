@@ -356,6 +356,10 @@ fn execute_run_with_prompting(
                         exit_code: partial.exit_code,
                         pending_before: pending,
                         pending_after: pending, // Same as before since iteration was interrupted
+                        prompt: None,           // Run command doesn't track prompt per iteration
+                        response: iteration::extract_response_text(
+                            &partial.stream_result.output_blocks,
+                        ),
                         metadata: iteration::LogMetadata::from_extracted(
                             partial.stream_result.metadata.clone(),
                             partial.stream_result.costs.clone(),

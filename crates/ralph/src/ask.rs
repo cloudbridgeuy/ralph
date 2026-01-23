@@ -28,7 +28,9 @@
 
 use crate::highlight::ThemeConfig;
 use crate::iteration::{
-    write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata, LogToolCall,
+    extract_conversation_messages, extract_response_text, load_session_iterations,
+    write_iteration_log, Chunk, ConversationMessage, IterationError, IterationLog, LogMetadata,
+    LogToolCall,
 };
 use crate::session::{self, SessionError};
 use crate::spinner::SpinnerSessionInfo;
@@ -132,6 +134,59 @@ fn build_command(prompt: &str) -> String {
     )
 }
 
+/// Format conversation history for prepending to a new prompt.
+///
+/// Takes a list of previous conversation messages and formats them into a
+/// structured history block that can be prepended to a new prompt. This allows
+/// Claude to understand the context of a continued conversation.
+///
+/// # Format
+///
+/// The output format is:
+/// ```text
+/// <conversation_history>
+/// [User]: Previous prompt 1
+///
+/// [Assistant]: Previous response 1
+///
+/// [User]: Previous prompt 2
+///
+/// [Assistant]: Previous response 2
+/// </conversation_history>
+///
+/// [User]: {new_prompt}
+/// ```
+///
+/// # Arguments
+///
+/// * `messages` - Previous conversation messages in chronological order
+/// * `new_prompt` - The new prompt to append after the history
+///
+/// # Returns
+///
+/// The full prompt with conversation history prepended, or just the new prompt
+/// if there are no previous messages.
+fn format_conversation_history(messages: &[ConversationMessage], new_prompt: &str) -> String {
+    if messages.is_empty() {
+        return new_prompt.to_string();
+    }
+
+    let mut parts = vec!["<conversation_history>".to_string()];
+
+    for message in messages {
+        parts.push(format!("[User]: {}", message.prompt));
+        parts.push(String::new()); // Empty line between user and assistant
+        parts.push(format!("[Assistant]: {}", message.response));
+        parts.push(String::new()); // Empty line between turns
+    }
+
+    parts.push("</conversation_history>".to_string());
+    parts.push(String::new());
+    parts.push(format!("[User]: {}", new_prompt));
+
+    parts.join("\n")
+}
+
 /// Build an iteration log from subprocess result.
 ///
 /// This is a pure function that extracts metadata, tool calls, chunks,
@@ -140,6 +195,7 @@ fn build_command(prompt: &str) -> String {
 /// # Arguments
 ///
 /// * `result` - The subprocess result containing stream processing data
+/// * `prompt` - The user's prompt text for this iteration
 /// * `sequence` - The iteration sequence number
 /// * `started_at` - When the iteration started
 /// * `completed_at` - When the iteration completed
@@ -147,9 +203,10 @@ fn build_command(prompt: &str) -> String {
 /// # Returns
 ///
 /// An `IterationLog` populated with the given sequence, timestamps, exit code,
-/// and extracted metadata, tool calls, chunks, and output blocks.
+/// prompt, extracted response, metadata, tool calls, chunks, and output blocks.
 fn build_iteration_log(
     result: &StreamingSubprocessResult,
+    prompt: &str,
     sequence: u32,
     started_at: DateTime<Utc>,
     completed_at: DateTime<Utc>,
@@ -166,6 +223,9 @@ fn build_iteration_log(
     // Convert parsed chunks to iteration log chunks
     let chunks = Chunk::from_parsed_chunks(&result.stream_result.chunks);
 
+    // Extract the assistant's response text from output blocks
+    let response = extract_response_text(&result.stream_result.output_blocks);
+
     IterationLog {
         sequence,
         started_at,
@@ -173,6 +233,8 @@ fn build_iteration_log(
         exit_code: result.exit_code,
         pending_before: 0, // Ask command has no stories
         pending_after: 0,  // Ask command has no stories
+        prompt: Some(prompt.to_string()),
+        response,
         metadata: metadata.into_option(),
         tool_calls,
         chunks,
@@ -246,25 +308,33 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     let started_at = Utc::now();
 
     // Determine session info: either continue existing or create new
-    let (slug, session_dir, sequence) = if let Some(continuation) = config.continuation {
-        // Continue existing session
-        (
-            continuation.slug,
-            continuation.session_dir,
-            continuation.next_sequence,
-        )
-    } else {
-        // Create new session
-        let (slug, session_dir) = session::initialize_session(
-            config.slug.as_deref(),
-            &config.project_path,
-            Some(config.prompt.clone()),
-        )?;
-        (slug, session_dir, 1)
-    };
+    let (slug, session_dir, sequence, conversation_history) =
+        if let Some(ref continuation) = config.continuation {
+            // Continue existing session - load conversation history
+            let logs = load_session_iterations(&continuation.session_dir)?;
+            let messages = extract_conversation_messages(&logs);
+
+            (
+                continuation.slug.clone(),
+                continuation.session_dir.clone(),
+                continuation.next_sequence,
+                messages,
+            )
+        } else {
+            // Create new session
+            let (slug, session_dir) = session::initialize_session(
+                config.slug.as_deref(),
+                &config.project_path,
+                Some(config.prompt.clone()),
+            )?;
+            (slug, session_dir, 1, Vec::new())
+        };
+
+    // Build the full prompt with conversation history if continuing
+    let full_prompt = format_conversation_history(&conversation_history, &config.prompt);
 
     // Build the command
-    let command = build_command(&config.prompt);
+    let command = build_command(&full_prompt);
 
     // Build subprocess config with session info for spinner display
     let subprocess_config = SpinnerSubprocessConfig {
@@ -287,7 +357,8 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     let completed_at = Utc::now();
 
     // Build iteration log from subprocess result
-    let iteration_log = build_iteration_log(&result, sequence, started_at, completed_at);
+    let iteration_log =
+        build_iteration_log(&result, &config.prompt, sequence, started_at, completed_at);
 
     // Write iteration log to session directory
     write_iteration_log(&session_dir, &iteration_log)?;
@@ -472,12 +543,14 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, 1, started, completed);
+        let log = build_iteration_log(&result, "test prompt", 1, started, completed);
 
         assert_eq!(log.sequence, 1);
         assert_eq!(log.exit_code, 0);
         assert_eq!(log.pending_before, 0);
         assert_eq!(log.pending_after, 0);
+        assert_eq!(log.prompt, Some("test prompt".to_string()));
+        assert!(log.response.is_none()); // No output_blocks in default result
         assert!(log.metadata.is_none());
         assert!(log.tool_calls.is_empty());
         assert!(log.chunks.is_empty());
@@ -514,7 +587,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, 1, started, completed);
+        let log = build_iteration_log(&result, "test prompt", 1, started, completed);
 
         assert!(log.metadata.is_some());
         let log_metadata = log.metadata.unwrap();
@@ -558,7 +631,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, 1, started, completed);
+        let log = build_iteration_log(&result, "test prompt", 1, started, completed);
 
         assert_eq!(log.tool_calls.len(), 2);
         assert_eq!(log.tool_calls[0].name, "Read");
@@ -582,7 +655,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, 1, started, completed);
+        let log = build_iteration_log(&result, "test prompt", 1, started, completed);
 
         assert_eq!(log.chunks.len(), 2);
         assert_eq!(log.chunks[0].chunk_type, "prose");
@@ -596,7 +669,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, 1, started, completed);
+        let log = build_iteration_log(&result, "test prompt", 1, started, completed);
 
         assert_eq!(log.exit_code, 1);
     }
@@ -611,9 +684,82 @@ mod tests {
         let started = Utc.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
         let completed = Utc.with_ymd_and_hms(2025, 1, 1, 10, 5, 0).unwrap();
 
-        let log = build_iteration_log(&result, 1, started, completed);
+        let log = build_iteration_log(&result, "test prompt", 1, started, completed);
 
         assert_eq!(log.started_at, started);
         assert_eq!(log.completed_at, completed);
+    }
+
+    #[test]
+    fn test_format_conversation_history_empty_messages() {
+        let result = format_conversation_history(&[], "new prompt");
+        assert_eq!(result, "new prompt");
+    }
+
+    #[test]
+    fn test_format_conversation_history_single_message() {
+        let messages = vec![ConversationMessage::new(
+            "What is 2+2?".to_string(),
+            "The answer is 4.".to_string(),
+        )];
+
+        let result = format_conversation_history(&messages, "What is 3+3?");
+
+        assert!(result.starts_with("<conversation_history>"));
+        assert!(result.contains("[User]: What is 2+2?"));
+        assert!(result.contains("[Assistant]: The answer is 4."));
+        assert!(result.contains("</conversation_history>"));
+        assert!(result.ends_with("[User]: What is 3+3?"));
+    }
+
+    #[test]
+    fn test_format_conversation_history_multiple_messages() {
+        let messages = vec![
+            ConversationMessage::new("First question".to_string(), "First answer".to_string()),
+            ConversationMessage::new("Second question".to_string(), "Second answer".to_string()),
+        ];
+
+        let result = format_conversation_history(&messages, "Third question");
+
+        // Check structure
+        assert!(result.starts_with("<conversation_history>"));
+        assert!(result.contains("[User]: First question"));
+        assert!(result.contains("[Assistant]: First answer"));
+        assert!(result.contains("[User]: Second question"));
+        assert!(result.contains("[Assistant]: Second answer"));
+        assert!(result.contains("</conversation_history>"));
+        assert!(result.ends_with("[User]: Third question"));
+
+        // Check order - first message should appear before second
+        let first_idx = result.find("[User]: First question").unwrap();
+        let second_idx = result.find("[User]: Second question").unwrap();
+        assert!(first_idx < second_idx);
+    }
+
+    #[test]
+    fn test_format_conversation_history_with_empty_response() {
+        let messages = vec![ConversationMessage::new(
+            "Question".to_string(),
+            String::new(), // Empty response
+        )];
+
+        let result = format_conversation_history(&messages, "Follow up");
+
+        assert!(result.contains("[User]: Question"));
+        assert!(result.contains("[Assistant]: ")); // Empty response still included
+        assert!(result.ends_with("[User]: Follow up"));
+    }
+
+    #[test]
+    fn test_format_conversation_history_multiline_content() {
+        let messages = vec![ConversationMessage::new(
+            "Line 1\nLine 2".to_string(),
+            "Response line 1\nResponse line 2".to_string(),
+        )];
+
+        let result = format_conversation_history(&messages, "New prompt");
+
+        assert!(result.contains("[User]: Line 1\nLine 2"));
+        assert!(result.contains("[Assistant]: Response line 1\nResponse line 2"));
     }
 }

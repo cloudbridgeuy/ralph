@@ -4,6 +4,25 @@ use crate::iteration::{IterationError, IterationLog};
 use std::fs;
 use std::path::Path;
 
+/// Message from a conversation turn (prompt and response pair).
+///
+/// This struct holds the extracted prompt and response from an iteration log
+/// for use in building conversation history.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConversationMessage {
+    /// The user's prompt for this turn.
+    pub prompt: String,
+    /// The assistant's response for this turn (may be empty if unavailable).
+    pub response: String,
+}
+
+impl ConversationMessage {
+    /// Creates a new ConversationMessage.
+    pub fn new(prompt: String, response: String) -> Self {
+        Self { prompt, response }
+    }
+}
+
 /// Write an iteration log to disk.
 ///
 /// Creates a file named iteration-N.toml in the session directory where N is
@@ -75,6 +94,13 @@ pub fn write_iteration_log(
     Ok(log_path)
 }
 
+/// Check if a filename matches the iteration log pattern.
+///
+/// Iteration logs are named `iteration-N.toml` where N is the sequence number.
+fn is_iteration_log_file(name: &str) -> bool {
+    name.starts_with("iteration-") && name.ends_with(".toml")
+}
+
 /// Count the number of existing iteration logs in a session directory.
 ///
 /// Reads the session directory and counts files matching the pattern
@@ -101,10 +127,81 @@ pub fn count_iterations(session_dir: &Path) -> Result<u32, IterationError> {
             entry
                 .file_name()
                 .to_str()
-                .map(|name| name.starts_with("iteration-") && name.ends_with(".toml"))
+                .map(is_iteration_log_file)
                 .unwrap_or(false)
         })
         .count();
 
     Ok(count as u32)
+}
+
+/// Load all iteration logs for a session directory, sorted by sequence number.
+///
+/// Reads all `iteration-*.toml` files from the session directory and returns
+/// them sorted by sequence number (ascending, oldest first). This is useful
+/// for building conversation history when continuing a session.
+///
+/// # Arguments
+///
+/// * `session_dir` - Path to the session directory
+///
+/// # Returns
+///
+/// * `Ok(Vec<IterationLog>)` - All iteration logs sorted by sequence
+/// * `Err(IterationError)` - If reading or parsing fails
+pub fn load_session_iterations(session_dir: &Path) -> Result<Vec<IterationLog>, IterationError> {
+    let entries = fs::read_dir(session_dir).map_err(|e| IterationError::ReadSessionDir {
+        path: session_dir.display().to_string(),
+        source: e,
+    })?;
+
+    let mut logs: Vec<IterationLog> = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if is_iteration_log_file(name) {
+                let content = fs::read_to_string(&path).map_err(|e| IterationError::ReadLog {
+                    path: path.display().to_string(),
+                    source: e,
+                })?;
+
+                let log: IterationLog =
+                    toml::from_str(&content).map_err(|e| IterationError::ParseLog {
+                        path: path.display().to_string(),
+                        source: e,
+                    })?;
+
+                logs.push(log);
+            }
+        }
+    }
+
+    // Sort by sequence number (ascending, oldest first)
+    logs.sort_by_key(|log| log.sequence);
+
+    Ok(logs)
+}
+
+/// Extract conversation messages from iteration logs.
+///
+/// This is a pure function that transforms iteration logs into conversation
+/// messages by extracting the prompt and response from each log. Logs without
+/// a prompt are skipped (e.g., `run` command iterations).
+///
+/// # Arguments
+///
+/// * `logs` - Slice of iteration logs to extract messages from
+///
+/// # Returns
+///
+/// A vector of conversation messages in sequence order.
+pub fn extract_conversation_messages(logs: &[IterationLog]) -> Vec<ConversationMessage> {
+    logs.iter()
+        .filter_map(|log| {
+            log.prompt.as_ref().map(|prompt| {
+                ConversationMessage::new(prompt.clone(), log.response.clone().unwrap_or_default())
+            })
+        })
+        .collect()
 }

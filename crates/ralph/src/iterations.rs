@@ -399,6 +399,8 @@ mod tests {
             exit_code,
             pending_before: 5,
             pending_after: 4,
+            prompt: None,
+            response: None,
             metadata: None,
             tool_calls: vec![],
             chunks: vec![Chunk::prose(format!("Iteration {}", sequence))],
