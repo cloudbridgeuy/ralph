@@ -58,8 +58,21 @@ pub struct AskConfig {
     pub verbose_tools: VerboseToolsConfig,
     /// Absolute path to the project directory.
     pub project_path: PathBuf,
-    /// Optional user-provided session slug.
+    /// Optional user-provided session slug (for new sessions).
     pub slug: Option<String>,
+    /// Session continuation info (when continuing an existing session).
+    pub continuation: Option<ContinuationInfo>,
+}
+
+/// Information about continuing an existing session.
+#[derive(Debug, Clone)]
+pub struct ContinuationInfo {
+    /// The slug of the session to continue.
+    pub slug: String,
+    /// The sequence number for the new iteration.
+    pub next_sequence: u32,
+    /// Path to the existing session directory.
+    pub session_dir: PathBuf,
 }
 
 impl Default for AskConfig {
@@ -71,6 +84,7 @@ impl Default for AskConfig {
             verbose_tools: VerboseToolsConfig::new(),
             project_path: PathBuf::new(),
             slug: None,
+            continuation: None,
         }
     }
 }
@@ -126,15 +140,17 @@ fn build_command(prompt: &str) -> String {
 /// # Arguments
 ///
 /// * `result` - The subprocess result containing stream processing data
+/// * `sequence` - The iteration sequence number
 /// * `started_at` - When the iteration started
 /// * `completed_at` - When the iteration completed
 ///
 /// # Returns
 ///
-/// An `IterationLog` populated with sequence 1, timestamps, exit code,
+/// An `IterationLog` populated with the given sequence, timestamps, exit code,
 /// and extracted metadata, tool calls, chunks, and output blocks.
 fn build_iteration_log(
     result: &StreamingSubprocessResult,
+    sequence: u32,
     started_at: DateTime<Utc>,
     completed_at: DateTime<Utc>,
 ) -> IterationLog {
@@ -151,7 +167,7 @@ fn build_iteration_log(
     let chunks = Chunk::from_parsed_chunks(&result.stream_result.chunks);
 
     IterationLog {
-        sequence: 1, // Ask command always creates iteration 1
+        sequence,
         started_at,
         completed_at,
         exit_code: result.exit_code,
@@ -171,8 +187,10 @@ fn build_iteration_log(
 /// can finalize the session with the appropriate outcome.
 #[derive(Debug)]
 pub struct AskResult {
-    /// The session slug that was created.
+    /// The session slug that was created or continued.
     pub slug: String,
+    /// Total number of iterations in the session after this execution.
+    pub iteration_count: u32,
     /// Exit code from the subprocess (0 = success).
     pub exit_code: i32,
     /// Cost in USD for this request.
@@ -227,12 +245,23 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     // Capture start time for iteration log
     let started_at = Utc::now();
 
-    // Initialize session for persistence
-    let (slug, session_dir) = session::initialize_session(
-        config.slug.as_deref(),
-        &config.project_path,
-        Some(config.prompt.clone()),
-    )?;
+    // Determine session info: either continue existing or create new
+    let (slug, session_dir, sequence) = if let Some(continuation) = config.continuation {
+        // Continue existing session
+        (
+            continuation.slug,
+            continuation.session_dir,
+            continuation.next_sequence,
+        )
+    } else {
+        // Create new session
+        let (slug, session_dir) = session::initialize_session(
+            config.slug.as_deref(),
+            &config.project_path,
+            Some(config.prompt.clone()),
+        )?;
+        (slug, session_dir, 1)
+    };
 
     // Build the command
     let command = build_command(&config.prompt);
@@ -246,8 +275,8 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
         verbose_tools: config.verbose_tools,
         session_info: SpinnerSessionInfo {
             slug: Some(slug.clone()),
-            current_iteration: Some(1),
-            max_iterations: Some(1),
+            current_iteration: Some(sequence as usize),
+            max_iterations: None, // Unknown for ask command
         },
     };
 
@@ -258,7 +287,7 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     let completed_at = Utc::now();
 
     // Build iteration log from subprocess result
-    let iteration_log = build_iteration_log(&result, started_at, completed_at);
+    let iteration_log = build_iteration_log(&result, sequence, started_at, completed_at);
 
     // Write iteration log to session directory
     write_iteration_log(&session_dir, &iteration_log)?;
@@ -269,6 +298,7 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
 
     Ok(AskResult {
         slug,
+        iteration_count: sequence,
         exit_code: result.exit_code,
         cost_usd,
         duration_ms,
@@ -390,6 +420,7 @@ mod tests {
         // Test that AskResult can be constructed with the expected fields
         let result = AskResult {
             slug: "test-slug".to_string(),
+            iteration_count: 1,
             exit_code: 0,
             cost_usd: Some(0.05),
             duration_ms: Some(5000),
@@ -397,6 +428,7 @@ mod tests {
             output_tokens: Some(200),
         };
         assert_eq!(result.slug, "test-slug");
+        assert_eq!(result.iteration_count, 1);
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.cost_usd, Some(0.05));
         assert_eq!(result.duration_ms, Some(5000));
@@ -440,7 +472,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, started, completed);
+        let log = build_iteration_log(&result, 1, started, completed);
 
         assert_eq!(log.sequence, 1);
         assert_eq!(log.exit_code, 0);
@@ -482,7 +514,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, started, completed);
+        let log = build_iteration_log(&result, 1, started, completed);
 
         assert!(log.metadata.is_some());
         let log_metadata = log.metadata.unwrap();
@@ -526,7 +558,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, started, completed);
+        let log = build_iteration_log(&result, 1, started, completed);
 
         assert_eq!(log.tool_calls.len(), 2);
         assert_eq!(log.tool_calls[0].name, "Read");
@@ -550,7 +582,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, started, completed);
+        let log = build_iteration_log(&result, 1, started, completed);
 
         assert_eq!(log.chunks.len(), 2);
         assert_eq!(log.chunks[0].chunk_type, "prose");
@@ -564,7 +596,7 @@ mod tests {
         let started = Utc::now();
         let completed = Utc::now();
 
-        let log = build_iteration_log(&result, started, completed);
+        let log = build_iteration_log(&result, 1, started, completed);
 
         assert_eq!(log.exit_code, 1);
     }
@@ -579,7 +611,7 @@ mod tests {
         let started = Utc.with_ymd_and_hms(2025, 1, 1, 10, 0, 0).unwrap();
         let completed = Utc.with_ymd_and_hms(2025, 1, 1, 10, 5, 0).unwrap();
 
-        let log = build_iteration_log(&result, started, completed);
+        let log = build_iteration_log(&result, 1, started, completed);
 
         assert_eq!(log.started_at, started);
         assert_eq!(log.completed_at, completed);

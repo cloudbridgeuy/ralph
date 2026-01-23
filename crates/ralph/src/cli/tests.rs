@@ -755,3 +755,174 @@ fn test_ask_session_after_prompt() {
         _ => panic!("Expected Ask command"),
     }
 }
+
+#[test]
+fn test_ask_with_continue_flag() {
+    let cli = Cli::try_parse_from(["ralph", "ask", "--continue", "follow up"]).unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert!(args.continue_session);
+            assert_eq!(args.prompt, Some("follow up".to_string()));
+            assert!(args.session.is_none());
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_with_continue_short_flag() {
+    let cli = Cli::try_parse_from(["ralph", "ask", "-c", "follow up"]).unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert!(args.continue_session);
+            assert_eq!(args.prompt, Some("follow up".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_with_continue_and_session() {
+    // Continue a specific named session
+    let cli = Cli::try_parse_from([
+        "ralph",
+        "ask",
+        "--session",
+        "my-test",
+        "--continue",
+        "follow up",
+    ])
+    .unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert!(args.continue_session);
+            assert_eq!(args.session, Some("my-test".to_string()));
+            assert_eq!(args.prompt, Some("follow up".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_with_continue_session_short_flags() {
+    let cli = Cli::try_parse_from(["ralph", "ask", "-S", "my-test", "-c", "follow up"]).unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert!(args.continue_session);
+            assert_eq!(args.session, Some("my-test".to_string()));
+            assert_eq!(args.prompt, Some("follow up".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_without_continue_flag() {
+    // Default: continue_session is false
+    let cli = Cli::try_parse_from(["ralph", "ask", "hello"]).unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert!(!args.continue_session);
+            assert_eq!(args.prompt, Some("hello".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+// Theme flag tests for ask command
+
+#[test]
+fn test_ask_with_theme() {
+    let cli =
+        Cli::try_parse_from(["ralph", "ask", "--theme", "Monokai Extended", "hello"]).unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert_eq!(args.theme, Some("Monokai Extended".to_string()));
+            assert_eq!(args.prompt, Some("hello".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_with_no_background() {
+    let cli = Cli::try_parse_from(["ralph", "ask", "--no-background", "hello"]).unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert!(args.no_background);
+            assert_eq!(args.prompt, Some("hello".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_without_theme_flags() {
+    let cli = Cli::try_parse_from(["ralph", "ask", "hello"]).unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert!(args.theme.is_none());
+            assert!(!args.no_background);
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_with_theme_and_no_background() {
+    let cli = Cli::try_parse_from([
+        "ralph",
+        "ask",
+        "--theme",
+        "Solarized (dark)",
+        "--no-background",
+        "hello",
+    ])
+    .unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert_eq!(args.theme, Some("Solarized (dark)".to_string()));
+            assert!(args.no_background);
+            assert_eq!(args.prompt, Some("hello".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_theme_with_file_path() {
+    let cli = Cli::try_parse_from(["ralph", "ask", "--theme", "/path/to/theme.tmTheme", "hello"])
+        .unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert_eq!(args.theme, Some("/path/to/theme.tmTheme".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}
+
+#[test]
+fn test_ask_with_theme_and_continue() {
+    let cli = Cli::try_parse_from([
+        "ralph",
+        "ask",
+        "--theme",
+        "Monokai Extended",
+        "--no-background",
+        "--continue",
+        "--session",
+        "my-test",
+        "follow up",
+    ])
+    .unwrap();
+    match cli.command {
+        Commands::Ask(args) => {
+            assert_eq!(args.theme, Some("Monokai Extended".to_string()));
+            assert!(args.no_background);
+            assert!(args.continue_session);
+            assert_eq!(args.session, Some("my-test".to_string()));
+            assert_eq!(args.prompt, Some("follow up".to_string()));
+        }
+        _ => panic!("Expected Ask command"),
+    }
+}

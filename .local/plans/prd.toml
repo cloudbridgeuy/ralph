@@ -87,53 +87,40 @@ acceptance = [
 
 [[stories]]
 category = "feature"
-description = "Add --slug flag to specify session name for new sessions"
+description = "Add --session flag to specify session name for new sessions"
 steps = [
-  "Add `slug: Option<String>` field to `AskArgs` with `#[arg(long)]`",
-  "Pass slug to `AskConfig` and use it instead of auto-generating when provided",
-  "Add conflict with continuation flags (--continue, --session)",
+  "Add `session: Option<String>` field to `AskArgs` with `#[arg(short = 'S', long)]`",
+  "Pass session name to `AskConfig` and use it instead of auto-generating when provided",
+  "When `--session` is provided without `--continue`, create a new session with that name",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
-  "`ralph ask --slug my-test 'hello'` creates session with slug 'my-test'",
-  "`ralph ask --slug my-test --continue 'hello'` shows conflict error",
+  "`ralph ask --session my-test 'hello'` creates session with name 'my-test'",
+  "`ralph ask -S my-test 'hello'` works with short flag",
   "`cargo xtask lint` passes without errors",
 ]
 
 [[stories]]
 category = "feature"
-description = "Add --session flag to continue a specific existing session"
+description = "Add --continue flag to continue a session"
 steps = [
-  "Add `session: Option<String>` field to `AskArgs` with `#[arg(short = 'S', long)]`",
-  "When --session provided, load existing session metadata and validate it exists",
+  "Add `continue_session: bool` field to `AskArgs` with `#[arg(short, long)]`",
+  "When `--continue` alone is provided, load sessions index and find most recent by started_at",
+  "When `--session <name> --continue` is provided, load that specific session and continue it",
+  "Validate the session exists, error if not found",
   "Count existing iteration logs to determine next sequence number",
   "Create new iteration with sequence = previous + 1",
   "Update session with new iteration count on finalization",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
-acceptance = [
-  "`ralph ask --session <slug> 'follow up'` adds iteration-2 to existing session",
-  "`ralph ask --session nonexistent 'hello'` shows error that session not found",
-  "`ralph replay <slug>` shows both iterations",
-  "`cargo xtask lint` passes without errors",
-]
-
-[[stories]]
-category = "feature"
-description = "Add --continue flag to continue the most recent session"
-steps = [
-  "Add `continue_session: bool` field to `AskArgs` with `#[arg(short, long)]`",
-  "When --continue provided, load sessions index and find most recent by started_at",
-  "Error if no sessions exist",
-  "Reuse continuation logic from --session flag",
-  "Run `cargo xtask lint` to verify no errors",
-]
-passes = false
+passes = true
 acceptance = [
   "`ralph ask --continue 'follow up'` adds iteration to most recent session",
+  "`ralph ask --session my-test --continue 'follow up'` adds iteration to 'my-test' session",
+  "`ralph ask --session nonexistent --continue 'hello'` shows error that session not found",
   "`ralph ask --continue 'hello'` with no existing sessions shows appropriate error",
+  "`ralph replay <session>` shows all iterations",
   "`cargo xtask lint` passes without errors",
 ]
 
@@ -146,7 +133,7 @@ steps = [
   "Pass resolved theme config to subprocess invocation",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
   "`ralph ask 'hello'` uses theme from global config when not specified",
   "`ralph ask --theme 'Solarized (dark)' 'hello'` overrides global config",

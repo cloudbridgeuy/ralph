@@ -132,3 +132,56 @@ fn test_write_multiple_iteration_logs() {
     assert!(session_dir.join("iteration-1.toml").exists());
     assert!(session_dir.join("iteration-2.toml").exists());
 }
+
+#[test]
+fn test_count_iterations_empty_dir() {
+    let temp_dir = TempDir::new().unwrap();
+    let count = count_iterations(temp_dir.path()).unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn test_count_iterations_with_iterations() {
+    let temp_dir = TempDir::new().unwrap();
+    let session_dir = temp_dir.path();
+
+    let now = chrono::Utc::now();
+
+    // Write 3 iteration logs
+    for seq in 1..=3 {
+        let log = IterationLog {
+            sequence: seq,
+            started_at: now,
+            completed_at: now,
+            exit_code: 0,
+            pending_before: 0,
+            pending_after: 0,
+            metadata: None,
+            tool_calls: vec![],
+            chunks: vec![],
+            output_blocks: vec![],
+        };
+        write_iteration_log(session_dir, &log).unwrap();
+    }
+
+    let count = count_iterations(session_dir).unwrap();
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn test_count_iterations_ignores_other_files() {
+    let temp_dir = TempDir::new().unwrap();
+    let session_dir = temp_dir.path();
+
+    // Create some iteration files
+    fs::write(session_dir.join("iteration-1.toml"), "").unwrap();
+    fs::write(session_dir.join("iteration-2.toml"), "").unwrap();
+
+    // Create other files that should be ignored
+    fs::write(session_dir.join("session.toml"), "").unwrap();
+    fs::write(session_dir.join("notes.txt"), "").unwrap();
+    fs::write(session_dir.join("iteration.txt"), "").unwrap(); // Not .toml
+
+    let count = count_iterations(session_dir).unwrap();
+    assert_eq!(count, 2);
+}

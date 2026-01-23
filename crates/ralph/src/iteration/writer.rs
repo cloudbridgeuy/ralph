@@ -74,3 +74,37 @@ pub fn write_iteration_log(
 
     Ok(log_path)
 }
+
+/// Count the number of existing iteration logs in a session directory.
+///
+/// Reads the session directory and counts files matching the pattern
+/// `iteration-*.toml`. Returns the count, which can be used to determine
+/// the next sequence number (count + 1).
+///
+/// # Arguments
+///
+/// * `session_dir` - Path to the session directory
+///
+/// # Returns
+///
+/// * `Ok(u32)` - The number of existing iteration log files
+/// * `Err(IterationError)` - If reading the directory fails
+pub fn count_iterations(session_dir: &Path) -> Result<u32, IterationError> {
+    let entries = fs::read_dir(session_dir).map_err(|e| IterationError::ReadSessionDir {
+        path: session_dir.display().to_string(),
+        source: e,
+    })?;
+
+    let count = entries
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .map(|name| name.starts_with("iteration-") && name.ends_with(".toml"))
+                .unwrap_or(false)
+        })
+        .count();
+
+    Ok(count as u32)
+}

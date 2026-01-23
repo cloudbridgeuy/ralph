@@ -49,3 +49,160 @@ Implemented session finalization and summary display for the `ask` command:
 - Metrics display happens even on failure (user sees cost/duration)
 - Finalization errors are logged as warnings, not fatal
 - Exit code check happens after log write and finalization to preserve partial data
+
+## --session Flag for Ask Command (Story 6)
+
+Added `--session` flag with short `-S` to the `ask` subcommand for specifying session names.
+
+### Changes Made
+
+1. **AskArgs updated** (`crates/ralph/src/cli/mod.rs`):
+   - Renamed `slug` field to `session` for consistency with PRD naming
+   - Added short flag `-S` via `#[arg(short = 'S', long)]`
+   - Updated doc comments to describe session naming
+
+2. **execute_ask updated** (`crates/ralph/src/main.rs`):
+   - Changed to use `args.session` instead of `args.slug`
+   - Session name passed to `AskConfig.slug` for session creation
+
+3. **CLI module refactored**:
+   - Converted `cli.rs` (1069 lines) to directory-based module to fix line count violation
+   - Extracted tests to `crates/ralph/src/cli/tests.rs` (762 lines)
+   - Main definitions in `crates/ralph/src/cli/mod.rs` (309 lines)
+
+4. **Tests updated** (`crates/ralph/src/cli/tests.rs`):
+   - Renamed `test_ask_with_slug` → `test_ask_with_session`
+   - Added `test_ask_with_session_short_flag` for `-S` flag
+   - Updated all session-related test assertions
+
+### Usage
+
+```bash
+# Create session with specific name
+ralph ask --session my-test 'hello'
+
+# Short flag version
+ralph ask -S my-test 'hello'
+
+# Auto-generated session name (default behavior)
+ralph ask 'hello'
+```
+
+## --continue Flag for Ask Command (Story 7)
+
+Added `--continue` flag with short `-c` to continue existing sessions with new iterations.
+
+### Changes Made
+
+1. **AskArgs updated** (`crates/ralph/src/cli/mod.rs:146-172`):
+   - Added `continue_session: bool` field with `#[arg(short = 'c', long = "continue")]`
+   - Updated doc comments to describe continuation behavior
+
+2. **Session module** (`crates/ralph/src/session.rs`):
+   - Added `find_most_recent_session(project_path)` - finds most recent session for a project
+   - Added `find_session_by_slug(slug)` - finds session by name
+
+3. **Iteration module** (`crates/ralph/src/iteration/writer.rs`):
+   - Added `count_iterations(session_dir)` - counts existing iteration-*.toml files
+   - Added `IterationError::ReadSessionDir` variant for directory read errors
+
+4. **AskConfig updated** (`crates/ralph/src/ask.rs:46-90`):
+   - Added `continuation: Option<ContinuationInfo>` field
+   - New `ContinuationInfo` struct with: slug, next_sequence, session_dir
+
+5. **ask() function updated** (`crates/ralph/src/ask.rs:239-305`):
+   - Handles continuation mode (use existing session) or new session mode
+   - `build_iteration_log()` now accepts sequence parameter
+   - Returns `iteration_count` in `AskResult` for proper finalization
+
+6. **execute_ask() updated** (`crates/ralph/src/main.rs:487-585`):
+   - Added `resolve_continuation()` helper function
+   - When `--continue`: find session (by name or most recent), count iterations
+   - Passes continuation info to `AskConfig` when continuing
+   - Uses `result.iteration_count` for session finalization
+
+7. **Tests added** (`crates/ralph/src/cli/tests.rs`):
+   - `test_ask_with_continue_flag` - long flag
+   - `test_ask_with_continue_short_flag` - short flag `-c`
+   - `test_ask_with_continue_and_session` - combined flags
+   - `test_ask_with_continue_session_short_flags` - `-S` and `-c`
+   - `test_ask_without_continue_flag` - default behavior
+
+8. **Iteration writer tests** (`crates/ralph/src/iteration/tests/writer.rs`):
+   - `test_count_iterations_empty_dir`
+   - `test_count_iterations_with_iterations`
+   - `test_count_iterations_ignores_other_files`
+
+### Usage
+
+```bash
+# Continue most recent session for current project
+ralph ask --continue 'follow up question'
+ralph ask -c 'follow up question'
+
+# Continue specific named session
+ralph ask --session my-test --continue 'follow up'
+ralph ask -S my-test -c 'follow up'
+
+# Error handling
+# - Session not found: shows error with suggestion
+# - No sessions for project: shows helpful error message
+```
+
+### Key Design Decisions
+
+- Continuation mode uses existing session directory, no new session created
+- Sequence number determined by counting existing iteration-*.toml files
+- `iteration_count` returned in result for proper session finalization
+- `--session` flag serves dual purpose: name new session OR specify session to continue
+- Most recent session determined by `started_at` timestamp, filtered by project
+
+## Theme Inheritance for Ask Command (Story 8)
+
+Added `--theme` and `--no-background` flags to the `ask` subcommand for controlling syntax highlighting.
+
+### Changes Made
+
+1. **AskArgs updated** (`crates/ralph/src/cli/mod.rs:172-188`):
+   - Added `theme: Option<String>` field with `#[arg(long, value_name = "NAME")]`
+   - Added `no_background: bool` field with `#[arg(long)]`
+   - Doc comments describe theme resolution precedence and config file support
+
+2. **execute_ask() updated** (`crates/ralph/src/main.rs:504-510`):
+   - Theme config now uses `from_config_and_env().merge_cli()` pattern
+   - Follows same resolution precedence as `run` and `replay` commands
+   - Priority: CLI flag > environment variable > config file > default
+
+3. **Tests added** (`crates/ralph/src/cli/tests.rs`):
+   - `test_ask_with_theme` - long flag with theme name
+   - `test_ask_with_no_background` - boolean flag
+   - `test_ask_without_theme_flags` - default behavior
+   - `test_ask_with_theme_and_no_background` - combined flags
+   - `test_ask_theme_with_file_path` - custom .tmTheme file path
+
+### Usage
+
+```bash
+# Use default theme (from config file, env var, or built-in default)
+ralph ask 'hello'
+
+# Override with specific built-in theme
+ralph ask --theme 'Monokai Extended' 'hello'
+ralph ask --theme 'Solarized (dark)' 'hello'
+
+# Use custom theme file
+ralph ask --theme /path/to/custom.tmTheme 'hello'
+
+# Disable background colors
+ralph ask --no-background 'hello'
+
+# Combine theme and no-background
+ralph ask --theme 'Solarized (dark)' --no-background 'hello'
+```
+
+### Theme Resolution Precedence
+
+1. CLI flags (`--theme`, `--no-background`) - highest priority
+2. Environment variables (`RALPH_THEME`, `RALPH_NO_BACKGROUND`)
+3. Config file (`~/.config/ralph/config.toml` under `[theme]` section)
+4. Built-in default (`base16-ocean.dark`) - lowest priority

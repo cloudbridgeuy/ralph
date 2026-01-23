@@ -255,6 +255,54 @@ pub fn initialize_session(
     Ok((slug, session_path))
 }
 
+/// Find the most recent session for a given project.
+///
+/// This function loads the sessions index and finds the most recent session
+/// (by started_at timestamp) that belongs to the specified project.
+///
+/// # Arguments
+///
+/// * `project_path` - The absolute path to the project directory
+///
+/// # Returns
+///
+/// * `Ok(Some(SessionEntry))` - The most recent session for the project
+/// * `Ok(None)` - No sessions exist for this project
+/// * `Err(SessionError)` - If loading the sessions index fails
+pub fn find_most_recent_session(project_path: &Path) -> Result<Option<SessionEntry>, SessionError> {
+    let index = load_sessions_index()?;
+
+    // Find sessions for this project and get the most recent by started_at
+    let most_recent = index
+        .sessions
+        .into_iter()
+        .filter(|s| s.project == project_path)
+        .max_by_key(|s| s.started_at);
+
+    Ok(most_recent)
+}
+
+/// Find a session by its slug.
+///
+/// # Arguments
+///
+/// * `slug` - The session slug to look up
+///
+/// # Returns
+///
+/// * `Ok(SessionEntry)` - The session entry
+/// * `Err(SessionError::SessionNotFound)` - If no session with that slug exists
+pub fn find_session_by_slug(slug: &str) -> Result<SessionEntry, SessionError> {
+    let index = load_sessions_index()?;
+
+    index
+        .find_by_slug(slug)
+        .cloned()
+        .ok_or_else(|| SessionError::SessionNotFound {
+            slug: slug.to_string(),
+        })
+}
+
 /// Finalize a session by updating its outcome, iteration count, and completion timestamp.
 ///
 /// This function should be called when a run loop completes (successfully or not):

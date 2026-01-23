@@ -14,4 +14,12 @@ pub enum IterationError {
     /// Failed to serialize iteration log
     #[error("Failed to serialize iteration log: {0}")]
     SerializeLog(#[from] toml::ser::Error),
+
+    /// Failed to read session directory
+    #[error("Failed to read session directory at {path}: {source}")]
+    ReadSessionDir {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }

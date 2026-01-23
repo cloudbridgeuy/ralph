@@ -484,6 +484,7 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
 ///
 /// Sends a single-shot prompt to the LLM and displays the response.
 /// Creates a session for persistence, allowing replay with `ralph replay`.
+/// When --continue is used, continues an existing session instead.
 fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
     if let Err(e) = signal::init() {
@@ -493,12 +494,29 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Get current working directory as project path
     let project_path = std::env::current_dir()?;
 
+    // Determine continuation info if --continue flag is set
+    let continuation = if args.continue_session {
+        Some(resolve_continuation(&args.session, &project_path)?)
+    } else {
+        None
+    };
+
+    // Build theme configuration from config file, env vars, and CLI args
+    // Priority: CLI flag > environment variable > config file > default
+    let theme_config = highlight::ThemeConfig::from_config_and_env()
+        .merge_cli(args.theme.as_deref(), args.no_background);
+
     // Build ask config - validation happens in ask::ask()
     let config = ask::AskConfig {
         prompt: args.prompt.unwrap_or_default(),
-        theme_config: highlight::ThemeConfig::from_config_and_env(),
+        theme_config,
         project_path,
-        slug: args.session,
+        slug: if args.continue_session {
+            None // Don't pass slug when continuing (it's in continuation info)
+        } else {
+            args.session
+        },
+        continuation,
         ..Default::default()
     };
 
@@ -510,7 +528,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         0 => SessionOutcome::Completed,
         _ => SessionOutcome::Failed,
     };
-    if let Err(e) = session::finalize_session(&result.slug, 1, outcome) {
+    if let Err(e) = session::finalize_session(&result.slug, result.iteration_count, outcome) {
         eprintln!("Warning: Failed to finalize session: {}", e);
     }
 
@@ -531,6 +549,46 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Resolve session continuation info based on --continue flag and optional --session.
+///
+/// # Logic
+/// - If `session_name` is Some: find that specific session and continue it
+/// - If `session_name` is None: find the most recent session for the project
+///
+/// # Errors
+/// - Session not found (by name or no sessions for project)
+/// - Failed to count existing iterations
+fn resolve_continuation(
+    session_name: &Option<String>,
+    project_path: &Path,
+) -> Result<ask::ContinuationInfo, Box<dyn std::error::Error>> {
+    use crate::iteration::count_iterations;
+
+    let entry = if let Some(name) = session_name {
+        // Continue specific named session
+        session::find_session_by_slug(name)?
+    } else {
+        // Continue most recent session for this project
+        session::find_most_recent_session(project_path)?.ok_or_else(|| {
+            format!(
+                "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
+                project_path.display()
+            )
+        })?
+    };
+
+    // Get session directory and count existing iterations
+    let session_dir = session::session_dir(&entry.slug);
+    let existing_count = count_iterations(&session_dir)?;
+    let next_sequence = existing_count + 1;
+
+    Ok(ask::ContinuationInfo {
+        slug: entry.slug,
+        next_sequence,
+        session_dir,
+    })
 }
 
 /// Input source for prompt resolution.

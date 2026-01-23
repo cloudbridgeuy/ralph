@@ -28,7 +28,7 @@ pub use error::IterationError;
 pub use log::IterationLog;
 pub use metadata::LogMetadata;
 pub use tool_call::LogToolCall;
-pub use writer::write_iteration_log;
+pub use writer::{count_iterations, write_iteration_log};
 
 /// Maximum size in bytes for tool results before truncation.
 /// Results larger than this will be truncated with an indicator.

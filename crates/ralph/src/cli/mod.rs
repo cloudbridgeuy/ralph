@@ -116,14 +116,17 @@ pub struct ReplayArgs {
 
     /// Syntax highlighting theme.
     ///
-    /// Use a built-in theme name or a path to a custom .tmTheme file.
-    /// Can also be set via RALPH_THEME environment variable.
+    /// Use a built-in theme name (e.g., "Monokai Extended", "Solarized (dark)")
+    /// or a path to a custom .tmTheme file. Run 'ralph themes' to list available themes.
+    /// Can also be set via RALPH_THEME environment variable or config file.
     #[arg(long, value_name = "NAME")]
     pub theme: Option<String>,
 
     /// Disable background colors in syntax highlighting.
     ///
-    /// Can also be set via RALPH_NO_BACKGROUND environment variable.
+    /// When set, theme background colors are not applied, allowing the
+    /// terminal's default background to show through.
+    /// Can also be set via RALPH_NO_BACKGROUND environment variable or config file.
     #[arg(long)]
     pub no_background: bool,
 
@@ -152,13 +155,38 @@ pub struct AskArgs {
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<String>,
 
-    /// Session name for the new session.
+    /// Session name for the new session, or session to continue with --continue.
     ///
     /// Used to name the session directory for logs.
     /// Auto-generated as adjective-noun (e.g., "quiet-mountain") if omitted.
     /// Must be lowercase with exactly one hyphen (e.g., "my-session").
+    /// When used with --continue, specifies which session to continue.
     #[arg(short = 'S', long)]
     pub session: Option<String>,
+
+    /// Continue an existing session instead of creating a new one.
+    ///
+    /// When used alone, continues the most recent session for the current project.
+    /// When used with --session, continues the specified session.
+    /// Adds a new iteration to the session with the next sequence number.
+    #[arg(short = 'c', long = "continue")]
+    pub continue_session: bool,
+
+    /// Syntax highlighting theme.
+    ///
+    /// Use a built-in theme name (e.g., "Monokai Extended", "Solarized (dark)")
+    /// or a path to a custom .tmTheme file. Run 'ralph themes' to list available themes.
+    /// Can also be set via RALPH_THEME environment variable or config file.
+    #[arg(long, value_name = "NAME")]
+    pub theme: Option<String>,
+
+    /// Disable background colors in syntax highlighting.
+    ///
+    /// When set, theme background colors are not applied, allowing the
+    /// terminal's default background to show through.
+    /// Can also be set via RALPH_NO_BACKGROUND environment variable or config file.
+    #[arg(long)]
+    pub no_background: bool,
 }
 
 /// Arguments for the `run` subcommand.
