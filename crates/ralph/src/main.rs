@@ -498,6 +498,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         prompt: args.prompt.unwrap_or_default(),
         theme_config: highlight::ThemeConfig::from_config_and_env(),
         project_path,
+        slug: args.session,
         ..Default::default()
     };
 
