@@ -167,7 +167,7 @@ steps = [
   "Error if stdin is empty and no prompt provided",
   "Run `cargo xtask lint` to verify no errors",
 ]
-passes = false
+passes = true
 acceptance = [
   "`echo 'hello' | ralph ask` reads prompt from stdin",
   "`ralph ask` with no argument and no stdin shows helpful error",

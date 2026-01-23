@@ -264,3 +264,57 @@ ralph ask --timeout 120 --verbose-tools=read --no-prompt 'hello'
 - Verbose tools uses same syntax as `run` command (`*` for all, comma-separated for specific)
 - Prompt display happens before subprocess invocation (consistent with `run` command)
 - Prompt is only displayed when non-empty and `--no-prompt` is not set
+
+## Stdin Prompt Reading for Ask Command (Story 10)
+
+Added support for reading the prompt from stdin when no argument is provided.
+
+### Changes Made
+
+1. **New function `resolve_ask_prompt()`** (`crates/ralph/src/main.rs:711-749`):
+   - Handles prompt resolution from multiple sources
+   - When argument is provided: uses existing `classify_prompt_source()` for "-", file path, or inline
+   - When argument is None: checks `stdin.is_terminal()` to detect piped input
+   - If stdin is piped (non-terminal): reads from stdin
+   - If stdin is interactive (terminal): returns error with usage hint
+   - Validates prompt is non-empty after resolution
+
+2. **execute_ask() updated** (`crates/ralph/src/main.rs:517`):
+   - Now uses `resolve_ask_prompt()` instead of `args.prompt.unwrap_or_default()`
+
+3. **Tests added** (`crates/ralph/src/main.rs:909-952`):
+   - `test_resolve_ask_prompt_inline` - inline prompt works
+   - `test_resolve_ask_prompt_inline_with_whitespace` - whitespace preserved
+   - `test_resolve_ask_prompt_empty_string_error` - empty string errors
+   - `test_resolve_ask_prompt_whitespace_only_error` - whitespace-only errors
+   - `test_resolve_ask_prompt_from_file` - file path reading works
+
+### Usage
+
+```bash
+# Standard usage with argument
+ralph ask 'what is 2+2'
+
+# Read prompt from stdin (piped)
+echo 'what is 2+2' | ralph ask
+cat prompt.txt | ralph ask
+
+# Explicit stdin with "-"
+ralph ask -
+
+# File path (existing behavior)
+ralph ask /path/to/prompt.txt
+
+# Error cases
+ralph ask              # Error: No prompt provided (interactive terminal)
+ralph ask ''           # Error: Prompt cannot be empty
+echo '' | ralph ask    # Error: Prompt cannot be empty
+```
+
+### Key Design Decisions
+
+- Uses existing `classify_prompt_source()` and `read_from_source()` for consistency
+- Detects piped stdin via `std::io::stdin().is_terminal()` (false when piped)
+- Error messages include usage hints for better UX
+- Validates trimmed prompt for emptiness but preserves original whitespace in result
+- Note: Unit testing stdin behavior is limited since `is_terminal()` returns false in test runners

@@ -513,8 +513,8 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Warning: {}", warning);
     }
 
-    // Get the prompt, defaulting to empty (validation happens in ask::ask())
-    let prompt = args.prompt.unwrap_or_default();
+    // Resolve prompt from argument or stdin
+    let prompt = resolve_ask_prompt(args.prompt.as_deref())?;
 
     // Display prompt if enabled
     if !args.no_prompt && !prompt.is_empty() {
@@ -709,6 +709,45 @@ fn resolve_additional_prompt(
     read_from_source(source, None)
 }
 
+/// Resolve prompt for the ask command.
+///
+/// # Prompt Resolution
+/// 1. If argument is "-", read from stdin
+/// 2. If argument is a file path, read from file
+/// 3. If argument is any other string, use as inline prompt
+/// 4. If argument is None and stdin is piped (non-terminal), read from stdin
+/// 5. If argument is None and stdin is a terminal, error (no prompt provided)
+///
+/// After resolution, validates that the prompt is not empty.
+fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::error::Error>> {
+    use std::io::IsTerminal;
+
+    let prompt = match prompt_arg {
+        // Explicit argument provided - use classify_prompt_source
+        Some(_) => {
+            let source = classify_prompt_source(prompt_arg);
+            read_from_source(source, None)?
+        }
+        // No argument - check for piped stdin
+        None => {
+            if std::io::stdin().is_terminal() {
+                // Interactive terminal with no prompt - error
+                return Err("No prompt provided. Usage: ralph ask 'your prompt' or echo 'your prompt' | ralph ask".into());
+            }
+            // Non-interactive (piped) - read from stdin
+            read_from_source(PromptSource::Stdin, None)?
+        }
+    };
+
+    // Validate non-empty
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return Err("Prompt cannot be empty. Provide a prompt as an argument or via stdin.".into());
+    }
+
+    Ok(prompt)
+}
+
 /// Substitute {prompt} placeholder in command template.
 fn substitute_prompt_in_command(template: &str, prompt: &str) -> String {
     // Shell-escape the prompt for safe inclusion
@@ -866,4 +905,53 @@ mod tests {
         let source = classify_prompt_source(Some("Cargo.toml"));
         assert!(matches!(source, PromptSource::File(_)));
     }
+
+    // Tests for resolve_ask_prompt
+
+    #[test]
+    fn test_resolve_ask_prompt_inline() {
+        // Inline prompt should work
+        let result = resolve_ask_prompt(Some("hello world"));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "hello world");
+    }
+
+    #[test]
+    fn test_resolve_ask_prompt_inline_with_whitespace() {
+        // Whitespace is preserved in result but validated as non-empty
+        let result = resolve_ask_prompt(Some("  hello world  "));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "  hello world  ");
+    }
+
+    #[test]
+    fn test_resolve_ask_prompt_empty_string_error() {
+        // Empty string should error
+        let result = resolve_ask_prompt(Some(""));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_resolve_ask_prompt_whitespace_only_error() {
+        // Whitespace-only should error
+        let result = resolve_ask_prompt(Some("   \n\t  "));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_resolve_ask_prompt_from_file() {
+        // Read from existing file (Cargo.toml has content)
+        let result = resolve_ask_prompt(Some("Cargo.toml"));
+        assert!(result.is_ok());
+        let content = result.unwrap();
+        assert!(content.contains("[package]")); // Cargo.toml starts with [package]
+    }
+
+    // Note: Testing stdin behavior (None argument, "-" argument) is difficult in unit tests
+    // because stdin detection with is_terminal() returns false in test runners, making
+    // the behavior unpredictable. Integration tests with PTY would be needed.
 }
