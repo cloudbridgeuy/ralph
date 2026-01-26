@@ -45,6 +45,51 @@ use std::path::PathBuf;
 /// Default timeout for ask command (10 minutes).
 pub const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
+/// Default permission mode for ask command (allows tool execution).
+pub const DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
+
+/// Environment variable for permission mode override.
+const RALPH_PERMISSION_MODE_ENV: &str = "RALPH_PERMISSION_MODE";
+
+/// Resolve permission mode from multiple sources with precedence.
+///
+/// Resolution order (highest priority first):
+/// 1. CLI flag (passed as `cli_value`)
+/// 2. Environment variable (`RALPH_PERMISSION_MODE`)
+/// 3. Config file (`~/.config/ralph/config.toml` under `[ask]` section)
+/// 4. Default value (`bypassPermissions`)
+///
+/// # Arguments
+///
+/// * `cli_value` - The value from the CLI flag, if provided (None means not specified)
+///
+/// # Returns
+///
+/// The resolved permission mode string.
+pub fn resolve_permission_mode(cli_value: Option<&str>) -> String {
+    // If CLI value is explicitly set, use it (highest priority)
+    if let Some(mode) = cli_value {
+        return mode.to_string();
+    }
+
+    // Check environment variable
+    if let Ok(env_value) = std::env::var(RALPH_PERMISSION_MODE_ENV) {
+        if !env_value.is_empty() {
+            return env_value;
+        }
+    }
+
+    // Check config file
+    if let Ok(config) = crate::config::AppConfig::load() {
+        if let Some(config_value) = config.ask.permission_mode {
+            return config_value;
+        }
+    }
+
+    // Use default
+    DEFAULT_PERMISSION_MODE.to_string()
+}
+
 /// Configuration for the ask command.
 ///
 /// Groups all parameters needed to execute a single-shot LLM prompt.
@@ -64,6 +109,10 @@ pub struct AskConfig {
     pub slug: Option<String>,
     /// Session continuation info (when continuing an existing session).
     pub continuation: Option<ContinuationInfo>,
+    /// Clone info (when cloning from an existing session into a new one).
+    pub clone: Option<CloneInfo>,
+    /// Permission mode for tool execution (default, acceptEdits, plan, bypassPermissions).
+    pub permission_mode: String,
 }
 
 /// Information about continuing an existing session.
@@ -77,6 +126,15 @@ pub struct ContinuationInfo {
     pub session_dir: PathBuf,
 }
 
+/// Information about cloning from an existing session.
+#[derive(Debug, Clone)]
+pub struct CloneInfo {
+    /// The slug of the source session to clone from.
+    pub source_slug: String,
+    /// Path to the source session directory.
+    pub source_session_dir: PathBuf,
+}
+
 impl Default for AskConfig {
     fn default() -> Self {
         Self {
@@ -87,6 +145,8 @@ impl Default for AskConfig {
             project_path: PathBuf::new(),
             slug: None,
             continuation: None,
+            clone: None,
+            permission_mode: DEFAULT_PERMISSION_MODE.to_string(),
         }
     }
 }
@@ -115,22 +175,23 @@ pub enum AskError {
 ///
 /// Constructs the command with appropriate flags:
 /// - `--verbose` for detailed output
-/// - `--permission-mode acceptEdits` for non-interactive mode
+/// - `--permission-mode` with configurable mode (default: bypassPermissions)
 /// - `--output-format stream-json` for stream processing
 /// - `-p` for the prompt
 ///
 /// # Arguments
 ///
 /// * `prompt` - The prompt to send to the LLM
+/// * `permission_mode` - The permission mode for tool execution
 ///
 /// # Returns
 ///
 /// The full command string to execute.
-fn build_command(prompt: &str) -> String {
+fn build_command(prompt: &str, permission_mode: &str) -> String {
     let escaped = prompt.replace('\'', "'\"'\"'");
     format!(
-        "claude --verbose --permission-mode acceptEdits --output-format stream-json -p '{}'",
-        escaped
+        "claude --verbose --permission-mode {} --output-format stream-json -p '{}'",
+        permission_mode, escaped
     )
 }
 
@@ -307,9 +368,23 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     // Capture start time for iteration log
     let started_at = Utc::now();
 
-    // Determine session info: either continue existing or create new
+    // Determine session info: clone, continue existing, or create new
     let (slug, session_dir, sequence, conversation_history) =
-        if let Some(ref continuation) = config.continuation {
+        if let Some(ref clone_info) = config.clone {
+            // Clone mode: load conversation history from source, create NEW session
+            let logs = load_session_iterations(&clone_info.source_session_dir)?;
+            let messages = extract_conversation_messages(&logs);
+
+            // Create a new session (without user-provided slug, auto-generate)
+            let (new_slug, new_session_dir) = session::initialize_session_with_clone(
+                config.slug.as_deref(),
+                &config.project_path,
+                Some(config.prompt.clone()),
+                &clone_info.source_slug,
+            )?;
+
+            (new_slug, new_session_dir, 1, messages)
+        } else if let Some(ref continuation) = config.continuation {
             // Continue existing session - load conversation history
             let logs = load_session_iterations(&continuation.session_dir)?;
             let messages = extract_conversation_messages(&logs);
@@ -333,8 +408,8 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     // Build the full prompt with conversation history if continuing
     let full_prompt = format_conversation_history(&conversation_history, &config.prompt);
 
-    // Build the command
-    let command = build_command(&full_prompt);
+    // Build the command with configured permission mode
+    let command = build_command(&full_prompt, &config.permission_mode);
 
     // Build subprocess config with session info for spinner display
     let subprocess_config = SpinnerSubprocessConfig {
@@ -422,7 +497,43 @@ mod tests {
 
     #[test]
     fn test_build_command_simple() {
-        let cmd = build_command("hello");
+        let cmd = build_command("hello", "bypassPermissions");
+        assert_eq!(
+            cmd,
+            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'hello'"
+        );
+    }
+
+    #[test]
+    fn test_build_command_with_quotes() {
+        let cmd = build_command("it's a test", "bypassPermissions");
+        assert_eq!(
+            cmd,
+            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'it'\"'\"'s a test'"
+        );
+    }
+
+    #[test]
+    fn test_build_command_multiline() {
+        let cmd = build_command("line1\nline2", "bypassPermissions");
+        assert_eq!(
+            cmd,
+            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'line1\nline2'"
+        );
+    }
+
+    #[test]
+    fn test_build_command_shell_special_chars() {
+        let cmd = build_command("test $VAR `cmd`", "bypassPermissions");
+        assert_eq!(
+            cmd,
+            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'test $VAR `cmd`'"
+        );
+    }
+
+    #[test]
+    fn test_build_command_accept_edits_mode() {
+        let cmd = build_command("hello", "acceptEdits");
         assert_eq!(
             cmd,
             "claude --verbose --permission-mode acceptEdits --output-format stream-json -p 'hello'"
@@ -430,29 +541,20 @@ mod tests {
     }
 
     #[test]
-    fn test_build_command_with_quotes() {
-        let cmd = build_command("it's a test");
+    fn test_build_command_default_mode() {
+        let cmd = build_command("hello", "default");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode acceptEdits --output-format stream-json -p 'it'\"'\"'s a test'"
+            "claude --verbose --permission-mode default --output-format stream-json -p 'hello'"
         );
     }
 
     #[test]
-    fn test_build_command_multiline() {
-        let cmd = build_command("line1\nline2");
+    fn test_build_command_plan_mode() {
+        let cmd = build_command("hello", "plan");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode acceptEdits --output-format stream-json -p 'line1\nline2'"
-        );
-    }
-
-    #[test]
-    fn test_build_command_shell_special_chars() {
-        let cmd = build_command("test $VAR `cmd`");
-        assert_eq!(
-            cmd,
-            "claude --verbose --permission-mode acceptEdits --output-format stream-json -p 'test $VAR `cmd`'"
+            "claude --verbose --permission-mode plan --output-format stream-json -p 'hello'"
         );
     }
 
@@ -463,6 +565,7 @@ mod tests {
         assert_eq!(config.timeout_secs, DEFAULT_TIMEOUT_SECS);
         assert!(config.project_path.as_os_str().is_empty());
         assert!(config.slug.is_none());
+        assert_eq!(config.permission_mode, DEFAULT_PERMISSION_MODE);
     }
 
     #[test]
@@ -761,5 +864,28 @@ mod tests {
 
         assert!(result.contains("[User]: Line 1\nLine 2"));
         assert!(result.contains("[Assistant]: Response line 1\nResponse line 2"));
+    }
+
+    #[test]
+    fn test_resolve_permission_mode_cli_explicit() {
+        // CLI value should be used directly
+        let result = resolve_permission_mode(Some("acceptEdits"));
+        assert_eq!(result, "acceptEdits");
+    }
+
+    #[test]
+    fn test_resolve_permission_mode_cli_explicit_default() {
+        // Even if CLI value matches default, it should be used (explicit override)
+        let result = resolve_permission_mode(Some(DEFAULT_PERMISSION_MODE));
+        assert_eq!(result, DEFAULT_PERMISSION_MODE);
+    }
+
+    #[test]
+    fn test_resolve_permission_mode_none_returns_default() {
+        // Without CLI, env, or config, returns the default
+        // Note: This test is environment-dependent but should work in most test environments
+        let result = resolve_permission_mode(None);
+        // Result should be non-empty - either default or from env/config
+        assert!(!result.is_empty());
     }
 }
