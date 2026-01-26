@@ -158,6 +158,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Environment Configuration](docs/context/rust-cli-env-config.md) - Env vars, secrets, config precedence
 - [Project Structure](docs/context/rust-cli-project-structure.md) - Workspace setup, xtask, module organization
 - [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks
+- [Prompt Template System](docs/context/prompt-template.md) - Placeholders, customization, and two-phase workflow
 
 ## Glossary
 
