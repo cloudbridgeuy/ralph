@@ -199,6 +199,31 @@ pub fn initialize_session_directory(
     project_path: &Path,
     prompt: Option<String>,
 ) -> Result<PathBuf, SessionError> {
+    initialize_session_directory_internal(slug, project_path, prompt, None)
+}
+
+/// Create a session directory for a cloned session.
+///
+/// Same as `initialize_session_directory` but records the source session slug
+/// in the metadata for traceability.
+fn initialize_session_directory_with_clone(
+    slug: &str,
+    project_path: &Path,
+    prompt: Option<String>,
+    source_slug: &str,
+) -> Result<PathBuf, SessionError> {
+    initialize_session_directory_internal(slug, project_path, prompt, Some(source_slug))
+}
+
+/// Internal implementation for session directory initialization.
+///
+/// Handles both regular and cloned sessions to avoid code duplication.
+fn initialize_session_directory_internal(
+    slug: &str,
+    project_path: &Path,
+    prompt: Option<String>,
+    cloned_from: Option<&str>,
+) -> Result<PathBuf, SessionError> {
     // Create session directory
     let session_path = session_dir(slug);
     fs::create_dir_all(&session_path).map_err(|e| SessionError::CreateSessionDir {
@@ -206,8 +231,17 @@ pub fn initialize_session_directory(
         source: e,
     })?;
 
-    // Create session metadata
-    let metadata = SessionMetadata::new(slug.to_string(), project_path.to_path_buf(), prompt);
+    // Create session metadata (with or without clone source)
+    let metadata = if let Some(source_slug) = cloned_from {
+        SessionMetadata::new_cloned(
+            slug.to_string(),
+            project_path.to_path_buf(),
+            prompt,
+            source_slug,
+        )
+    } else {
+        SessionMetadata::new(slug.to_string(), project_path.to_path_buf(), prompt)
+    };
 
     // Write session.toml in the session directory
     let session_toml_path = session_path.join("session.toml");
@@ -252,6 +286,35 @@ pub fn initialize_session(
 ) -> Result<(String, PathBuf), SessionError> {
     let slug = resolve_session_slug(user_slug)?;
     let session_path = initialize_session_directory(&slug, project_path, prompt)?;
+    Ok((slug, session_path))
+}
+
+/// Initialize a new session that is cloned from an existing session.
+///
+/// Similar to `initialize_session`, but records the source session slug
+/// in the metadata for traceability. The new session gets an auto-generated
+/// slug (the source slug is passed separately for metadata).
+///
+/// # Arguments
+///
+/// * `user_slug` - Optional user-provided slug. If None, generates automatically.
+/// * `project_path` - Absolute path to the project directory
+/// * `prompt` - Optional prompt string (after placeholder substitution) for replay
+/// * `source_slug` - The slug of the source session being cloned
+///
+/// # Returns
+///
+/// * `Ok((slug, session_dir))` - The new slug and path to the session directory
+/// * `Err(SessionError)` - If initialization fails
+pub fn initialize_session_with_clone(
+    user_slug: Option<&str>,
+    project_path: &Path,
+    prompt: Option<String>,
+    source_slug: &str,
+) -> Result<(String, PathBuf), SessionError> {
+    let slug = resolve_session_slug(user_slug)?;
+    let session_path =
+        initialize_session_directory_with_clone(&slug, project_path, prompt, source_slug)?;
     Ok((slug, session_path))
 }
 
