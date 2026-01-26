@@ -77,9 +77,7 @@ Output ONLY the summarized content, ready to replace the file. Do not include an
     ///
     /// # Placeholders
     ///
-    /// - `{design_file}` - Path to the design document
     /// - `{prd_file}` - Path to the PRD file
-    /// - `{progress_file}` - Path to the progress notes file
     /// - `{completion_marker}` - The marker string to output when all stories are complete
     /// - `{additional_prompt}` - Additional instructions appended to the prompt (optional)
     ///
@@ -87,29 +85,55 @@ Output ONLY the summarized content, ready to replace the file. Do not include an
     ///
     /// The template uses `@` file references which are understood by Claude CLI
     /// to read and include the file contents in the context.
-    pub const PROMPT_TEMPLATE: &str = r#"@{design_file} @{prd_file} @{progress_file}
+    ///
+    /// # Workflow
+    ///
+    /// The prompt enforces a two-phase workflow:
+    /// 1. **Work Phase**: Implement the feature with lint checks
+    /// 2. **Commit Phase**: Update documentation per Progressive Disclosure, then commit
+    ///
+    /// Context retrieval uses:
+    /// - `git log --oneline -10` for recent commit history
+    /// - CLAUDE.md and docs/context/*.md for architectural context (Progressive Disclosure)
+    pub const PROMPT_TEMPLATE: &str = r#"@{prd_file}
 
-1. Find the highest-priority feature to work on and work on that feature.
+## Context Retrieval
+
+Before starting work:
+1. Run `git log --oneline -10` to understand recent changes and commit style
+2. Read CLAUDE.md for project conventions and architectural overview
+3. Consult linked docs/context/*.md files for detailed context on specific areas
+
+## Phase 1: Work
+
+1. Find the highest-priority feature to work on and implement it.
    This should be the one YOU decide has the highest priority - not necessarily the first in the list.
 
-2. Check that the 'cargo xtask lint' command passes successfully.
-   You can't mark a user story as complete if this command fails.
-   Even when the issue is not related to your current changes.
+2. Run 'cargo xtask lint' and ensure it passes.
+   You cannot mark a user story as complete if this command fails.
 
 3. Update the PRD with the work that was done by setting passes = true for completed stories.
 
-4. Append your progress to the progress.txt file.
-   Use this to leave a note for the next person working in the codebase.
-
-5. Make a git commit of that feature without Claude attribution.
-
-6. If you find some PRD is missing in order to complete or extend the task you are working on, you may append it to the PRD using the appropriate format.
+4. If you find the PRD is missing information to complete your task, append it using the appropriate format.
 
 ONLY WORK ON A SINGLE FEATURE.
 
+## Phase 2: Commit
+
+After the work is complete and lint passes:
+
+1. Update documentation following the Progressive Disclosure pattern:
+   - If your changes affect project conventions, update CLAUDE.md
+   - If your changes add detailed context for a specific area, create or update docs/context/*.md
+   - Link any new docs/context/*.md files from CLAUDE.md
+
+2. Make a semantic commit without Claude attribution:
+   - Use conventional commit format: feat|fix|refactor|docs|test|chore(scope): description
+   - The commit message should explain the "why" not just the "what"
+
 {additional_prompt}
 
-If, while implementing the feature, you notice all stories in the PRD are complete, output {completion_marker}."#;
+If all stories in the PRD are complete, output {completion_marker}."#;
 }
 
 /// Resolved paths for all context files.
@@ -439,18 +463,20 @@ mod tests {
     // Tests for PROMPT_TEMPLATE constant
 
     #[test]
-    fn test_default_prompt_template_contains_design_placeholder() {
-        assert!(defaults::PROMPT_TEMPLATE.contains("{design_file}"));
-    }
-
-    #[test]
     fn test_default_prompt_template_contains_prd_placeholder() {
         assert!(defaults::PROMPT_TEMPLATE.contains("{prd_file}"));
     }
 
     #[test]
-    fn test_default_prompt_template_contains_progress_placeholder() {
-        assert!(defaults::PROMPT_TEMPLATE.contains("{progress_file}"));
+    fn test_default_prompt_template_does_not_contain_design_placeholder() {
+        // Design file is no longer part of the simplified context model
+        assert!(!defaults::PROMPT_TEMPLATE.contains("{design_file}"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_does_not_contain_progress_placeholder() {
+        // Progress file is no longer part of the simplified context model
+        assert!(!defaults::PROMPT_TEMPLATE.contains("{progress_file}"));
     }
 
     #[test]
@@ -460,10 +486,10 @@ mod tests {
 
     #[test]
     fn test_default_prompt_template_uses_at_file_references() {
-        // Claude CLI uses @ for file references
-        assert!(defaults::PROMPT_TEMPLATE.contains("@{design_file}"));
+        // Claude CLI uses @ for file references - only PRD is referenced now
         assert!(defaults::PROMPT_TEMPLATE.contains("@{prd_file}"));
-        assert!(defaults::PROMPT_TEMPLATE.contains("@{progress_file}"));
+        assert!(!defaults::PROMPT_TEMPLATE.contains("@{design_file}"));
+        assert!(!defaults::PROMPT_TEMPLATE.contains("@{progress_file}"));
     }
 
     #[test]
@@ -472,6 +498,32 @@ mod tests {
         assert!(defaults::PROMPT_TEMPLATE.contains("highest-priority feature"));
         assert!(defaults::PROMPT_TEMPLATE.contains("passes = true"));
         assert!(defaults::PROMPT_TEMPLATE.contains("ONLY WORK ON A SINGLE FEATURE"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_includes_git_log_instruction() {
+        // Git history should be used for context
+        assert!(defaults::PROMPT_TEMPLATE.contains("git log"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_includes_progressive_disclosure() {
+        // Progressive Disclosure pattern should be referenced
+        assert!(defaults::PROMPT_TEMPLATE.contains("CLAUDE.md"));
+        assert!(defaults::PROMPT_TEMPLATE.contains("docs/context/"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_includes_semantic_commit() {
+        // Semantic commit format should be mentioned
+        assert!(defaults::PROMPT_TEMPLATE.contains("semantic commit"));
+    }
+
+    #[test]
+    fn test_default_prompt_template_has_phase_separation() {
+        // Two-phase workflow should be clear
+        assert!(defaults::PROMPT_TEMPLATE.contains("Phase 1: Work"));
+        assert!(defaults::PROMPT_TEMPLATE.contains("Phase 2: Commit"));
     }
 
     // Tests for substitute_template_placeholders function
@@ -521,15 +573,15 @@ mod tests {
         let result =
             substitute_template_placeholders(defaults::PROMPT_TEMPLATE, &paths, "COMPLETE", "");
 
-        assert!(result.contains("@/my/design.md"));
+        // Only PRD is referenced in the new template
         assert!(result.contains("@/my/prd.toml"));
-        assert!(result.contains("@/my/progress.txt"));
         assert!(result.contains("output COMPLETE"));
         // No remaining placeholders for known values
-        assert!(!result.contains("{design_file}"));
         assert!(!result.contains("{prd_file}"));
-        assert!(!result.contains("{progress_file}"));
         assert!(!result.contains("{completion_marker}"));
+        // Design and progress are not in the new template
+        assert!(!result.contains("@/my/design.md"));
+        assert!(!result.contains("@/my/progress.txt"));
     }
 
     #[test]
