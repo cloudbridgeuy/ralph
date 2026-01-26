@@ -53,7 +53,7 @@ ralph run [OPTIONS] [ITERATIONS]
 
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
-| `--prompt <PROMPT>` | `-p` | Built-in template | Custom prompt template. Supports file path, `-` for stdin, or inline string. Placeholders: `{design_file}`, `{prd_file}`, `{progress_file}` |
+| `--prompt <PROMPT>` | `-p` | Built-in template | Custom prompt template. Supports file path, `-` for stdin, or inline string. Placeholders: `{prd_file}` |
 | `--additional-prompt <TEXT>` | `-a` | None | Additional instructions to append to the prompt. Supports file path, `-` for stdin, or inline string. |
 | `--command <TEMPLATE>` | `-c` | `claude --permission-mode acceptEdits --output-format stream-json -p {prompt}` | Custom LLM invocation command template with `{prompt}` placeholder. |
 
@@ -61,9 +61,7 @@ ralph run [OPTIONS] [ITERATIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--design <PATH>` | `.local/designs/design.md` | Design document path |
 | `--prd <PATH>` | `.local/plans/prd.toml` | PRD (Product Requirements Document) file path |
-| `--progress <PATH>` | `.local/plans/progress.txt` | Progress notes file path |
 
 #### Execution Options
 
@@ -72,15 +70,6 @@ ralph run [OPTIONS] [ITERATIONS]
 | `--max-attempts <N>` | `3` | Maximum failure recovery attempts. Number of times to automatically re-attempt if the LLM subprocess fails. After exhausting all attempts, prompts user for action. |
 | `--timeout <SECONDS>` | `600` | Timeout for LLM subprocess in seconds. If exceeded, the subprocess is killed and treated as a failure (retry logic applies). |
 | `--completion-marker <STRING>` | `<promise>COMPLETE</promise>` | Custom completion marker. When found in LLM output, exits the loop immediately. |
-
-#### Progress Summarization
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--progress-max-lines <N>` | `1000` | Maximum lines in progress file before auto-summarization. Set to 0 to disable. |
-| `--summarize-command <CMD>` | `claude -p {prompt}` | Command to invoke for progress file summarization. |
-| `--summarize-prompt <PROMPT>` | Built-in template | Custom prompt for summarization. Placeholders: `{progress_file}`, `{progress_content}` |
-| `--no-summarize` | `false` | Disable automatic progress file summarization entirely. |
 
 #### Display Options
 
@@ -122,9 +111,6 @@ ralph run --timeout 1200
 
 # Run with custom completion marker
 ralph run --completion-marker "DONE"
-
-# Disable progress auto-summarization
-ralph run --no-summarize
 ```
 
 ---
