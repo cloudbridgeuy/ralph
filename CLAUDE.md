@@ -22,11 +22,11 @@ These principles are non-negotiable when working on this codebase:
 
 1. **No Dead Code**: Remove unused code immediately. This applies to both Rust and TypeScript. If code is not called, delete it.
 
-2. **Functional Core - Imperative Shell**: Follow this pattern strictly. Pure business logic in core modules, I/O operations in shell. See the dedicated section above for details.
+2. **Functional Core - Imperative Shell**: Follow this pattern strictly. Pure business logic in core modules, I/O operations in shell. See the dedicated section below for details.
 
 3. **Progressive Disclosure**: Keep documentation layered. High-level overview in CLAUDE.md, detailed docs in `docs/context/` files. Don't duplicate information.
 
-4. **Follow Existing Patterns**: When implementing features, use patterns already established in the codebase. Don't invent new approaches when existing ones work. Consistency trumps novelty
+4. **Follow Existing Patterns**: When implementing features, use patterns already established in the codebase. Don't invent new approaches when existing ones work. Consistency trumps novelty.
 
 5. **No .unwrap() or .expect() in Production Code**: Use proper error handling with `?` operator and Result/Option combinators. Test code may use `.unwrap()` for brevity. Any intentional panics must be documented with `#[allow(...)]` and comments explaining the invariant.
 
@@ -159,6 +159,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Project Structure](docs/context/rust-cli-project-structure.md) - Workspace setup, xtask, module organization
 - [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks
 - [Prompt Template System](docs/context/prompt-template.md) - Placeholders, customization, and two-phase workflow
+- [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 
 ## Glossary
 
