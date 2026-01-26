@@ -68,20 +68,11 @@ fn test_run_with_command_template() {
 }
 
 #[test]
-fn test_run_with_path_overrides() {
-    let cli = Cli::try_parse_from([
-        "ralph",
-        "run",
-        "--prd",
-        "/custom/prd.toml",
-        "--progress",
-        "/custom/progress.txt",
-    ])
-    .unwrap();
+fn test_run_with_prd_path() {
+    let cli = Cli::try_parse_from(["ralph", "run", "--prd", "/custom/prd.toml"]).unwrap();
     match cli.command {
         Commands::Run(args) => {
             assert_eq!(args.prd, Some(PathBuf::from("/custom/prd.toml")));
-            assert_eq!(args.progress, Some(PathBuf::from("/custom/progress.txt")));
         }
         _ => panic!("Expected Run command"),
     }
@@ -156,8 +147,6 @@ fn test_run_with_all_options() {
         "echo {prompt}",
         "--prd",
         "/p.toml",
-        "--progress",
-        "/pr.txt",
         "--max-attempts",
         "2",
         "--completion-marker",
@@ -173,7 +162,6 @@ fn test_run_with_all_options() {
             assert_eq!(args.prompt, Some("test prompt".to_string()));
             assert_eq!(args.command, Some("echo {prompt}".to_string()));
             assert_eq!(args.prd, Some(PathBuf::from("/p.toml")));
-            assert_eq!(args.progress, Some(PathBuf::from("/pr.txt")));
             assert_eq!(args.max_attempts, 2);
             assert_eq!(args.completion_marker, Some("END".to_string()));
             assert_eq!(args.timeout, 120);
@@ -481,87 +469,6 @@ fn test_iterations_with_all_filters() {
             assert_eq!(args.outcome, Some("failed".to_string()));
         }
         _ => panic!("Expected Iterations command"),
-    }
-}
-
-// Progress summarization flag tests
-
-#[test]
-fn test_run_default_progress_max_lines() {
-    let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
-    match cli.command {
-        Commands::Run(args) => {
-            assert_eq!(args.progress_max_lines, 1000);
-        }
-        _ => panic!("Expected Run command"),
-    }
-}
-
-#[test]
-fn test_run_with_progress_max_lines() {
-    let cli = Cli::try_parse_from(["ralph", "run", "--progress-max-lines", "500"]).unwrap();
-    match cli.command {
-        Commands::Run(args) => {
-            assert_eq!(args.progress_max_lines, 500);
-        }
-        _ => panic!("Expected Run command"),
-    }
-}
-
-#[test]
-fn test_run_with_summarize_command() {
-    let cli =
-        Cli::try_parse_from(["ralph", "run", "--summarize-command", "my-llm -p {prompt}"]).unwrap();
-    match cli.command {
-        Commands::Run(args) => {
-            assert_eq!(
-                args.summarize_command,
-                Some("my-llm -p {prompt}".to_string())
-            );
-        }
-        _ => panic!("Expected Run command"),
-    }
-}
-
-#[test]
-fn test_run_with_summarize_prompt() {
-    let cli = Cli::try_parse_from([
-        "ralph",
-        "run",
-        "--summarize-prompt",
-        "Summarize: {progress_content}",
-    ])
-    .unwrap();
-    match cli.command {
-        Commands::Run(args) => {
-            assert_eq!(
-                args.summarize_prompt,
-                Some("Summarize: {progress_content}".to_string())
-            );
-        }
-        _ => panic!("Expected Run command"),
-    }
-}
-
-#[test]
-fn test_run_with_no_summarize() {
-    let cli = Cli::try_parse_from(["ralph", "run", "--no-summarize"]).unwrap();
-    match cli.command {
-        Commands::Run(args) => {
-            assert!(args.no_summarize);
-        }
-        _ => panic!("Expected Run command"),
-    }
-}
-
-#[test]
-fn test_run_default_no_summarize() {
-    let cli = Cli::try_parse_from(["ralph", "run"]).unwrap();
-    match cli.command {
-        Commands::Run(args) => {
-            assert!(!args.no_summarize);
-        }
-        _ => panic!("Expected Run command"),
     }
 }
 

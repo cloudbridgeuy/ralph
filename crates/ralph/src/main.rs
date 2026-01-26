@@ -44,7 +44,6 @@ use run::{run, RunConfig, RunError};
 use std::path::Path;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
-use summarize::SummarizeConfig;
 
 /// Context for handling subprocess failure recovery.
 struct FailureRecoveryContext {
@@ -153,11 +152,6 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Resolve context file paths
     let project_root = std::env::current_dir()?;
     let prd_path = resolve_prd_path(&project_root, args.prd.as_deref());
-    // Progress path is still needed for summarization (to be removed in future)
-    let progress_path = args
-        .progress
-        .clone()
-        .unwrap_or_else(|| project_root.join(".local/plans/progress.txt"));
 
     // Determine command template
     let command_template = args
@@ -188,7 +182,6 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Execute run loop with failure recovery prompting
     let exec_config = RunExecutionConfig {
         prd_path,
-        progress_path,
         command,
         prompt,
         completion_marker,
@@ -199,7 +192,6 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 /// Config for run command execution.
 struct RunExecutionConfig {
     prd_path: std::path::PathBuf,
-    progress_path: std::path::PathBuf,
     command: String,
     prompt: String,
     completion_marker: String,
@@ -237,9 +229,6 @@ fn execute_run_with_prompting(
     let custom_completion_marker = args.completion_marker.is_some();
     let custom_additional_prompt = args.additional_prompt.is_some();
 
-    // Build summarization config from CLI args
-    let summarize_config = build_summarize_config(&args)?;
-
     // Parse verbose tools config from CLI args
     let verbose_tools_config = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
     // Print warnings about unknown tool names
@@ -256,7 +245,6 @@ fn execute_run_with_prompting(
             prompt: exec_config.prompt.clone(),
             completion_marker: exec_config.completion_marker.clone(),
             prd_path: exec_config.prd_path.clone(),
-            progress_path: exec_config.progress_path.clone(),
             max_attempts: args.max_attempts,
             // Pass the starting iteration number for session continuation
             starting_iteration: total_iterations_completed,
@@ -267,7 +255,6 @@ fn execute_run_with_prompting(
             custom_prompt,
             custom_completion_marker,
             custom_additional_prompt,
-            summarize_config: summarize_config.clone(),
             verbose_tools_config: verbose_tools_config.clone(),
             show_prompt: !args.no_prompt,
         };
@@ -955,36 +942,6 @@ fn substitute_prompt_in_command(template: &str, prompt: &str) -> String {
     let escaped = prompt.replace('\'', "'\"'\"'");
     let quoted_prompt = format!("'{}'", escaped);
     template.replace("{prompt}", &quoted_prompt)
-}
-
-/// Build summarization config from CLI arguments.
-///
-/// Resolves the summarize prompt from file, stdin, inline string, or default.
-fn build_summarize_config(args: &RunArgs) -> Result<SummarizeConfig, Box<dyn std::error::Error>> {
-    // If --no-summarize is set, return disabled config
-    if args.no_summarize {
-        return Ok(SummarizeConfig {
-            disabled: true,
-            ..Default::default()
-        });
-    }
-
-    // Resolve summarize prompt using shared helper
-    let source = classify_prompt_source(args.summarize_prompt.as_deref());
-    let prompt = read_from_source(source, Some(defaults::SUMMARIZE_PROMPT))?;
-
-    // Get command template
-    let command = args
-        .summarize_command
-        .clone()
-        .unwrap_or_else(|| defaults::SUMMARIZE_COMMAND.to_string());
-
-    Ok(SummarizeConfig {
-        max_lines: args.progress_max_lines,
-        command,
-        prompt,
-        disabled: false,
-    })
 }
 
 #[cfg(test)]

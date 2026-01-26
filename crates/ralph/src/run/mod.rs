@@ -24,7 +24,6 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, invoke_subprocess_with_timeout, SpinnerSubprocessConfig,
     SubprocessError,
 };
-use crate::summarize::{maybe_summarize_progress, SummarizeConfig};
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
@@ -50,8 +49,6 @@ pub struct RunConfig {
     pub completion_marker: String,
     /// Path to the PRD file.
     pub prd_path: PathBuf,
-    /// Path to the progress file (for summarization, to be removed in future).
-    pub progress_path: PathBuf,
     /// Maximum number of attempts when subprocess fails.
     /// A value of 3 means up to 4 total attempts (1 initial + 3 recovery attempts).
     pub max_attempts: usize,
@@ -75,8 +72,6 @@ pub struct RunConfig {
     pub custom_completion_marker: bool,
     /// Whether user provided additional prompt instructions.
     pub custom_additional_prompt: bool,
-    /// Configuration for progress file auto-summarization.
-    pub summarize_config: SummarizeConfig,
     /// Configuration for verbose tool output.
     pub verbose_tools_config: VerboseToolsConfig,
     /// Whether to display the prompt before iterations begin.
@@ -191,7 +186,7 @@ pub enum RunError {
     },
 
     /// PRD unchanged after iteration (stuck state)
-    #[error("PRD unchanged after iteration. LLM may be stuck. Check progress.txt for notes.")]
+    #[error("PRD unchanged after iteration. LLM may be stuck.")]
     PrdUnchanged,
 
     /// No pending stories to process
@@ -472,16 +467,6 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
                 partial_result: None,
                 pending_before: None,
             });
-        }
-
-        // Attempt progress file summarization if configured
-        if config.summarize_config.should_summarize() {
-            if let Err(e) =
-                maybe_summarize_progress(&config.progress_path, &config.summarize_config)
-            {
-                // Log warning but don't fail the run
-                eprintln!("Warning: Failed to summarize progress file: {}", e);
-            }
         }
 
         // Capture git diff

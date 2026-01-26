@@ -294,12 +294,6 @@ pub struct RunArgs {
     #[arg(long, value_name = "PATH")]
     pub prd: Option<PathBuf>,
 
-    /// Progress notes path.
-    ///
-    /// Default: .local/plans/progress.txt
-    #[arg(long, value_name = "PATH")]
-    pub progress: Option<PathBuf>,
-
     /// Maximum failure recovery attempts.
     ///
     /// Number of times to automatically re-attempt if the LLM subprocess fails.
@@ -345,36 +339,6 @@ pub struct RunArgs {
     /// Useful for adding project-specific or one-off instructions.
     #[arg(short = 'a', long)]
     pub additional_prompt: Option<String>,
-
-    /// Maximum lines in progress file before auto-summarization.
-    ///
-    /// After each iteration, if the progress file exceeds this line count,
-    /// it will be automatically summarized using the configured command.
-    /// Set to 0 to disable (default: 1000 lines).
-    #[arg(long, default_value_t = 1000)]
-    pub progress_max_lines: usize,
-
-    /// Command to invoke for progress file summarization.
-    ///
-    /// Used with {prompt} placeholder for the summarization prompt.
-    /// Default: claude -p {prompt}
-    #[arg(long, value_name = "COMMAND")]
-    pub summarize_command: Option<String>,
-
-    /// Custom prompt for progress file summarization.
-    ///
-    /// Supports file path, `-` for stdin, or inline string.
-    /// Placeholders: {progress_file}, {progress_content}
-    /// If not provided, uses a default summarization prompt.
-    #[arg(long, value_name = "PROMPT")]
-    pub summarize_prompt: Option<String>,
-
-    /// Disable automatic progress file summarization.
-    ///
-    /// When set, the progress file will never be automatically summarized,
-    /// regardless of its size.
-    #[arg(long)]
-    pub no_summarize: bool,
 
     /// Enable verbose output for specific tools.
     ///
