@@ -76,6 +76,27 @@ pub struct AppConfig {
     /// Theme configuration section.
     #[serde(default)]
     pub theme: ThemeSection,
+
+    /// Ask command configuration section.
+    #[serde(default)]
+    pub ask: AskSection,
+}
+
+/// Ask command configuration section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AskSection {
+    /// Permission mode for tool execution.
+    ///
+    /// Controls how Claude handles tool execution permissions:
+    /// - "default": Requires approval for all tools
+    /// - "acceptEdits": Auto-accepts file edits but requires approval for other tools
+    /// - "plan": Read-only mode, no tools can modify files
+    /// - "bypassPermissions": Auto-accepts all tool executions (default)
+    ///
+    /// SECURITY NOTE: bypassPermissions allows Claude to execute any tool without
+    /// confirmation. Use with caution in untrusted environments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
 }
 
 /// Theme configuration section.
@@ -305,6 +326,7 @@ mod tests {
                 name: Some("Monokai Extended".to_string()),
                 no_background: true,
             },
+            ask: AskSection::default(),
         };
 
         config.save_to(&path).unwrap();
@@ -357,6 +379,7 @@ mod tests {
                 name: None,
                 no_background: false,
             },
+            ask: AskSection::default(),
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
@@ -369,5 +392,56 @@ mod tests {
         let path = config_path();
         assert!(path.to_string_lossy().contains("ralph"));
         assert!(path.to_string_lossy().ends_with("config.toml"));
+    }
+
+    #[test]
+    fn test_default_ask_section() {
+        let config = AppConfig::new();
+        assert!(config.ask.permission_mode.is_none());
+    }
+
+    #[test]
+    fn test_load_ask_permission_mode() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+
+        fs::write(
+            &path,
+            r#"
+            [ask]
+            permission_mode = "acceptEdits"
+            "#,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.ask.permission_mode, Some("acceptEdits".to_string()));
+    }
+
+    #[test]
+    fn test_load_full_ask_and_theme() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+
+        fs::write(
+            &path,
+            r#"
+            [theme]
+            name = "Monokai Extended"
+            no_background = true
+
+            [ask]
+            permission_mode = "bypassPermissions"
+            "#,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.theme.name, Some("Monokai Extended".to_string()));
+        assert!(config.theme.no_background);
+        assert_eq!(
+            config.ask.permission_mode,
+            Some("bypassPermissions".to_string())
+        );
     }
 }
