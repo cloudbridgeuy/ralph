@@ -32,7 +32,6 @@ pub mod spinner;
 pub mod startup;
 pub mod stream_processor;
 pub mod subprocess;
-pub mod summarize;
 
 use clap::Parser;
 use cli::{AskArgs, Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
