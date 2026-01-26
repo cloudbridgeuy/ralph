@@ -3,34 +3,38 @@
 use crate::run::{run, RunConfig, RunError};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::summarize::SummarizeConfig;
-use ralph_core::context::ContextPaths;
 use std::fs;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
-fn create_test_paths(temp_dir: &TempDir) -> ContextPaths {
-    ContextPaths {
-        design: temp_dir.path().join(".local/designs/design.md"),
+/// Create test paths struct for convenience.
+struct TestPaths {
+    prd: PathBuf,
+    progress: PathBuf,
+}
+
+fn create_test_paths(temp_dir: &TempDir) -> TestPaths {
+    TestPaths {
         prd: temp_dir.path().join(".local/plans/prd.toml"),
         progress: temp_dir.path().join(".local/plans/progress.txt"),
     }
 }
 
 /// Create a default RunConfig for tests with the given paths.
-fn create_test_config(paths: ContextPaths) -> RunConfig {
+fn create_test_config(paths: TestPaths) -> RunConfig {
     RunConfig {
         max_iterations: Some(1),
         slug: Some("test-slug".to_string()),
         command: "echo 'test'".to_string(),
         prompt: "Test prompt content".to_string(),
         completion_marker: "<promise>COMPLETE</promise>".to_string(),
-        context_paths: paths,
+        prd_path: paths.prd,
+        progress_path: paths.progress,
         max_attempts: 3,
         starting_iteration: 0,
         timeout_secs: 600,
         theme_config: None,
         custom_prd_path: None,
-        custom_design_path: None,
-        custom_progress_path: None,
         custom_command: false,
         custom_prompt: false,
         custom_completion_marker: false,
@@ -64,6 +68,10 @@ fn test_run_error_when_no_pending_stories() {
     let prd_content = "[[stories]]\ndescription = \"Story 1\"\npasses = true\n";
     fs::create_dir_all(paths.prd.parent().unwrap()).unwrap();
     fs::write(&paths.prd, prd_content).unwrap();
+
+    // Create progress file (still needed for summarization)
+    fs::create_dir_all(paths.progress.parent().unwrap()).unwrap();
+    fs::write(&paths.progress, "").unwrap();
 
     let config = create_test_config(paths);
 

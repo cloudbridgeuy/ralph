@@ -1,19 +1,15 @@
-//! Context file path resolution and validation.
+//! Context file path resolution and template placeholders.
 //!
-//! This module provides pure functions for resolving context file paths
-//! and determining which files need to be created. Following the Functional
-//! Core pattern, all functions operate on data provided as arguments - no file I/O.
+//! This module provides pure functions for substituting placeholders in
+//! prompt templates. Following the Functional Core pattern, all functions
+//! operate on data provided as arguments - no file I/O.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Default paths and templates for context files and commands.
 pub mod defaults {
-    /// Default path for the design document.
-    pub const DESIGN_FILE: &str = ".local/designs/design.md";
     /// Default path for the PRD file.
     pub const PRD_FILE: &str = ".local/plans/prd.toml";
-    /// Default path for the progress file.
-    pub const PROGRESS_FILE: &str = ".local/plans/progress.txt";
 
     /// Default command template for summarizing the progress file.
     ///
@@ -136,44 +132,20 @@ After the work is complete and lint passes:
 If all stories in the PRD are complete, output {completion_marker}."#;
 }
 
-/// Resolved paths for all context files.
-#[derive(Debug, Clone)]
-pub struct ContextPaths {
-    /// Path to the design document.
-    pub design: PathBuf,
-    /// Path to the PRD file.
-    pub prd: PathBuf,
-    /// Path to the progress file.
-    pub progress: PathBuf,
-}
-
-impl ContextPaths {
-    /// Create context paths with defaults, applying any overrides.
-    ///
-    /// # Arguments
-    ///
-    /// * `project_root` - Base directory for resolving relative paths
-    /// * `design_override` - Optional override for design file path
-    /// * `prd_override` - Optional override for PRD file path
-    /// * `progress_override` - Optional override for progress file path
-    pub fn new(
-        project_root: &Path,
-        design_override: Option<&Path>,
-        prd_override: Option<&Path>,
-        progress_override: Option<&Path>,
-    ) -> Self {
-        Self {
-            design: design_override
-                .map(PathBuf::from)
-                .unwrap_or_else(|| project_root.join(defaults::DESIGN_FILE)),
-            prd: prd_override
-                .map(PathBuf::from)
-                .unwrap_or_else(|| project_root.join(defaults::PRD_FILE)),
-            progress: progress_override
-                .map(PathBuf::from)
-                .unwrap_or_else(|| project_root.join(defaults::PROGRESS_FILE)),
-        }
-    }
+/// Resolve the PRD path, using the override if provided or the default path.
+///
+/// # Arguments
+///
+/// * `project_root` - Base directory for resolving relative paths
+/// * `prd_override` - Optional override for PRD file path
+///
+/// # Returns
+///
+/// The resolved PRD path.
+pub fn resolve_prd_path(project_root: &Path, prd_override: Option<&Path>) -> std::path::PathBuf {
+    prd_override
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| project_root.join(defaults::PRD_FILE))
 }
 
 /// Substitute placeholders in a prompt template.
@@ -183,16 +155,14 @@ impl ContextPaths {
 ///
 /// # Placeholders
 ///
-/// - `{design_file}` - Replaced with the design file path
 /// - `{prd_file}` - Replaced with the PRD file path
-/// - `{progress_file}` - Replaced with the progress file path
 /// - `{completion_marker}` - Replaced with the completion marker string
 /// - `{additional_prompt}` - Replaced with additional prompt instructions
 ///
 /// # Arguments
 ///
 /// * `template` - The prompt template containing placeholders
-/// * `paths` - The context paths to substitute
+/// * `prd_path` - Path to the PRD file
 /// * `completion_marker` - The completion marker string
 /// * `additional_prompt` - Additional instructions to append
 ///
@@ -203,26 +173,27 @@ impl ContextPaths {
 /// # Example
 ///
 /// ```
-/// use ralph_core::context::{ContextPaths, substitute_template_placeholders};
+/// use ralph_core::context::substitute_template_placeholders;
 /// use std::path::Path;
 ///
-/// let paths = ContextPaths::new(Path::new("/project"), None, None, None);
-/// let template = "Read @{design_file} and @{prd_file}";
-/// let result = substitute_template_placeholders(template, &paths, "<promise>COMPLETE</promise>", "");
+/// let template = "Read @{prd_file}";
+/// let result = substitute_template_placeholders(
+///     template,
+///     Path::new("/project/.local/plans/prd.toml"),
+///     "<promise>COMPLETE</promise>",
+///     ""
+/// );
 ///
-/// assert!(result.contains("/project/.local/designs/design.md"));
 /// assert!(result.contains("/project/.local/plans/prd.toml"));
 /// ```
 pub fn substitute_template_placeholders(
     template: &str,
-    paths: &ContextPaths,
+    prd_path: &Path,
     completion_marker: &str,
     additional_prompt: &str,
 ) -> String {
     template
-        .replace("{design_file}", &paths.design.display().to_string())
-        .replace("{prd_file}", &paths.prd.display().to_string())
-        .replace("{progress_file}", &paths.progress.display().to_string())
+        .replace("{prd_file}", &prd_path.display().to_string())
         .replace("{completion_marker}", completion_marker)
         .replace("{additional_prompt}", additional_prompt)
 }
@@ -256,184 +227,28 @@ pub fn substitute_summarize_placeholders(
         .replace("{progress_content}", progress_content)
 }
 
-/// Result of checking which context files need to be touched.
-#[derive(Debug, Clone)]
-pub struct ContextFilesTouch {
-    /// Design file path if it needs to be created (doesn't exist).
-    pub design: Option<PathBuf>,
-    /// Progress file path if it needs to be created (doesn't exist).
-    pub progress: Option<PathBuf>,
-}
-
-impl ContextFilesTouch {
-    /// Returns true if any files need to be touched.
-    pub fn has_files_to_create(&self) -> bool {
-        self.design.is_some() || self.progress.is_some()
-    }
-
-    /// Returns an iterator over all files that need to be created.
-    pub fn files_to_create(&self) -> impl Iterator<Item = &PathBuf> {
-        self.design.iter().chain(self.progress.iter())
-    }
-}
-
-/// Determine which context files need to be touched based on existence flags.
-///
-/// This is a pure function - it takes existence information and returns
-/// which files need to be created. Actual file system checks happen at
-/// the shell layer.
-///
-/// # Arguments
-///
-/// * `paths` - The resolved context file paths
-/// * `design_exists` - Whether the design file already exists
-/// * `progress_exists` - Whether the progress file already exists
-///
-/// # Returns
-///
-/// A struct indicating which files need to be touched (created).
-///
-/// # Note
-///
-/// The PRD is never touched - if it doesn't exist, initialization should
-/// fail with an error. That check happens separately.
-pub fn determine_files_to_touch(
-    paths: &ContextPaths,
-    design_exists: bool,
-    progress_exists: bool,
-) -> ContextFilesTouch {
-    ContextFilesTouch {
-        design: (!design_exists).then(|| paths.design.clone()),
-        progress: (!progress_exists).then(|| paths.progress.clone()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    // Tests for resolve_prd_path
 
     #[test]
-    fn test_context_paths_with_defaults() {
+    fn test_resolve_prd_path_default() {
         let root = Path::new("/project");
-        let paths = ContextPaths::new(root, None, None, None);
-
-        assert_eq!(
-            paths.design,
-            PathBuf::from("/project/.local/designs/design.md")
-        );
-        assert_eq!(paths.prd, PathBuf::from("/project/.local/plans/prd.toml"));
-        assert_eq!(
-            paths.progress,
-            PathBuf::from("/project/.local/plans/progress.txt")
-        );
+        let path = resolve_prd_path(root, None);
+        assert_eq!(path, PathBuf::from("/project/.local/plans/prd.toml"));
     }
 
     #[test]
-    fn test_context_paths_with_overrides() {
+    fn test_resolve_prd_path_with_override() {
         let root = Path::new("/project");
-        let paths = ContextPaths::new(
-            root,
-            Some(Path::new("/custom/design.md")),
-            Some(Path::new("/custom/prd.toml")),
-            Some(Path::new("/custom/progress.txt")),
-        );
-
-        assert_eq!(paths.design, PathBuf::from("/custom/design.md"));
-        assert_eq!(paths.prd, PathBuf::from("/custom/prd.toml"));
-        assert_eq!(paths.progress, PathBuf::from("/custom/progress.txt"));
+        let path = resolve_prd_path(root, Some(Path::new("/custom/prd.toml")));
+        assert_eq!(path, PathBuf::from("/custom/prd.toml"));
     }
 
-    #[test]
-    fn test_context_paths_with_partial_overrides() {
-        let root = Path::new("/project");
-        let paths = ContextPaths::new(root, Some(Path::new("/custom/design.md")), None, None);
-
-        assert_eq!(paths.design, PathBuf::from("/custom/design.md"));
-        assert_eq!(paths.prd, PathBuf::from("/project/.local/plans/prd.toml"));
-        assert_eq!(
-            paths.progress,
-            PathBuf::from("/project/.local/plans/progress.txt")
-        );
-    }
-
-    #[test]
-    fn test_determine_files_to_touch_none_exist() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/project/.local/designs/design.md"),
-            prd: PathBuf::from("/project/.local/plans/prd.toml"),
-            progress: PathBuf::from("/project/.local/plans/progress.txt"),
-        };
-
-        let to_touch = determine_files_to_touch(&paths, false, false);
-
-        assert!(to_touch.has_files_to_create());
-        assert_eq!(
-            to_touch.design,
-            Some(PathBuf::from("/project/.local/designs/design.md"))
-        );
-        assert_eq!(
-            to_touch.progress,
-            Some(PathBuf::from("/project/.local/plans/progress.txt"))
-        );
-    }
-
-    #[test]
-    fn test_determine_files_to_touch_all_exist() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/project/.local/designs/design.md"),
-            prd: PathBuf::from("/project/.local/plans/prd.toml"),
-            progress: PathBuf::from("/project/.local/plans/progress.txt"),
-        };
-
-        let to_touch = determine_files_to_touch(&paths, true, true);
-
-        assert!(!to_touch.has_files_to_create());
-        assert_eq!(to_touch.design, None);
-        assert_eq!(to_touch.progress, None);
-    }
-
-    #[test]
-    fn test_determine_files_to_touch_partial() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/project/.local/designs/design.md"),
-            prd: PathBuf::from("/project/.local/plans/prd.toml"),
-            progress: PathBuf::from("/project/.local/plans/progress.txt"),
-        };
-
-        // Only design exists
-        let to_touch = determine_files_to_touch(&paths, true, false);
-        assert!(to_touch.has_files_to_create());
-        assert_eq!(to_touch.design, None);
-        assert_eq!(
-            to_touch.progress,
-            Some(PathBuf::from("/project/.local/plans/progress.txt"))
-        );
-
-        // Only progress exists
-        let to_touch = determine_files_to_touch(&paths, false, true);
-        assert!(to_touch.has_files_to_create());
-        assert_eq!(
-            to_touch.design,
-            Some(PathBuf::from("/project/.local/designs/design.md"))
-        );
-        assert_eq!(to_touch.progress, None);
-    }
-
-    #[test]
-    fn test_files_to_create_iterator() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/design.md"),
-            prd: PathBuf::from("/prd.toml"),
-            progress: PathBuf::from("/progress.txt"),
-        };
-
-        let to_touch = determine_files_to_touch(&paths, false, false);
-        let files: Vec<_> = to_touch.files_to_create().collect();
-
-        assert_eq!(files.len(), 2);
-        assert!(files.contains(&&PathBuf::from("/design.md")));
-        assert!(files.contains(&&PathBuf::from("/progress.txt")));
-    }
+    // Tests for defaults
 
     #[test]
     fn test_default_command_template_contains_stream_json() {
@@ -530,48 +345,29 @@ mod tests {
 
     #[test]
     fn test_substitute_all_placeholders() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/project/design.md"),
-            prd: PathBuf::from("/project/prd.toml"),
-            progress: PathBuf::from("/project/progress.txt"),
-        };
+        let prd_path = Path::new("/project/prd.toml");
+        let template = "{prd_file} {completion_marker} {additional_prompt}";
+        let result = substitute_template_placeholders(template, prd_path, "DONE", "extra");
 
-        let template =
-            "{design_file} {prd_file} {progress_file} {completion_marker} {additional_prompt}";
-        let result = substitute_template_placeholders(template, &paths, "DONE", "extra");
-
-        assert_eq!(
-            result,
-            "/project/design.md /project/prd.toml /project/progress.txt DONE extra"
-        );
+        assert_eq!(result, "/project/prd.toml DONE extra");
     }
 
     #[test]
     fn test_substitute_preserves_unknown_placeholders() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/design.md"),
-            prd: PathBuf::from("/prd.toml"),
-            progress: PathBuf::from("/progress.txt"),
-        };
+        let prd_path = Path::new("/prd.toml");
+        let template = "{prd_file} {unknown_placeholder} {another}";
+        let result = substitute_template_placeholders(template, prd_path, "DONE", "");
 
-        let template = "{design_file} {unknown_placeholder} {another}";
-        let result = substitute_template_placeholders(template, &paths, "DONE", "");
-
-        assert!(result.contains("/design.md"));
+        assert!(result.contains("/prd.toml"));
         assert!(result.contains("{unknown_placeholder}"));
         assert!(result.contains("{another}"));
     }
 
     #[test]
     fn test_substitute_with_default_prompt_template() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/my/design.md"),
-            prd: PathBuf::from("/my/prd.toml"),
-            progress: PathBuf::from("/my/progress.txt"),
-        };
-
+        let prd_path = Path::new("/my/prd.toml");
         let result =
-            substitute_template_placeholders(defaults::PROMPT_TEMPLATE, &paths, "COMPLETE", "");
+            substitute_template_placeholders(defaults::PROMPT_TEMPLATE, prd_path, "COMPLETE", "");
 
         // Only PRD is referenced in the new template
         assert!(result.contains("@/my/prd.toml"));
@@ -579,76 +375,50 @@ mod tests {
         // No remaining placeholders for known values
         assert!(!result.contains("{prd_file}"));
         assert!(!result.contains("{completion_marker}"));
-        // Design and progress are not in the new template
-        assert!(!result.contains("@/my/design.md"));
-        assert!(!result.contains("@/my/progress.txt"));
     }
 
     #[test]
     fn test_substitute_empty_template() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/design.md"),
-            prd: PathBuf::from("/prd.toml"),
-            progress: PathBuf::from("/progress.txt"),
-        };
-
-        let result = substitute_template_placeholders("", &paths, "DONE", "");
+        let prd_path = Path::new("/prd.toml");
+        let result = substitute_template_placeholders("", prd_path, "DONE", "");
         assert_eq!(result, "");
     }
 
     #[test]
     fn test_substitute_no_placeholders() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/design.md"),
-            prd: PathBuf::from("/prd.toml"),
-            progress: PathBuf::from("/progress.txt"),
-        };
-
+        let prd_path = Path::new("/prd.toml");
         let template = "No placeholders here";
-        let result = substitute_template_placeholders(template, &paths, "DONE", "");
+        let result = substitute_template_placeholders(template, prd_path, "DONE", "");
         assert_eq!(result, "No placeholders here");
     }
 
     #[test]
-    fn test_substitute_multiple_occurrences() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/design.md"),
-            prd: PathBuf::from("/prd.toml"),
-            progress: PathBuf::from("/progress.txt"),
-        };
-
-        let template = "{design_file} and also {design_file}";
-        let result = substitute_template_placeholders(template, &paths, "DONE", "");
-        assert_eq!(result, "/design.md and also /design.md");
+    fn test_substitute_multiple_prd_occurrences() {
+        let prd_path = Path::new("/prd.toml");
+        let template = "{prd_file} and also {prd_file}";
+        let result = substitute_template_placeholders(template, prd_path, "DONE", "");
+        assert_eq!(result, "/prd.toml and also /prd.toml");
     }
 
     #[test]
-    fn test_substitute_with_special_characters_in_paths() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/path with spaces/design.md"),
-            prd: PathBuf::from("/special!@#$/prd.toml"),
-            progress: PathBuf::from("/unicode/进度.txt"),
-        };
+    fn test_substitute_with_special_characters_in_path() {
+        let prd_path = Path::new("/special!@#$/prd.toml");
+        let template = "{prd_file}";
+        let result = substitute_template_placeholders(template, prd_path, "DONE", "");
 
-        let template = "{design_file}|{prd_file}|{progress_file}";
-        let result = substitute_template_placeholders(template, &paths, "DONE", "");
-
-        assert!(result.contains("/path with spaces/design.md"));
         assert!(result.contains("/special!@#$/prd.toml"));
-        assert!(result.contains("/unicode/进度.txt"));
     }
 
     #[test]
     fn test_substitute_additional_prompt() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/design.md"),
-            prd: PathBuf::from("/prd.toml"),
-            progress: PathBuf::from("/progress.txt"),
-        };
-
+        let prd_path = Path::new("/prd.toml");
         let template = "Main instructions\n\n{additional_prompt}";
-        let result =
-            substitute_template_placeholders(template, &paths, "DONE", "Custom extra instructions");
+        let result = substitute_template_placeholders(
+            template,
+            prd_path,
+            "DONE",
+            "Custom extra instructions",
+        );
 
         assert!(result.contains("Main instructions"));
         assert!(result.contains("Custom extra instructions"));
@@ -657,14 +427,9 @@ mod tests {
 
     #[test]
     fn test_substitute_empty_additional_prompt() {
-        let paths = ContextPaths {
-            design: PathBuf::from("/design.md"),
-            prd: PathBuf::from("/prd.toml"),
-            progress: PathBuf::from("/progress.txt"),
-        };
-
+        let prd_path = Path::new("/prd.toml");
         let template = "Instructions{additional_prompt}";
-        let result = substitute_template_placeholders(template, &paths, "DONE", "");
+        let result = substitute_template_placeholders(template, prd_path, "DONE", "");
 
         assert_eq!(result, "Instructions");
     }

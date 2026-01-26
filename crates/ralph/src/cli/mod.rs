@@ -277,7 +277,7 @@ pub struct RunArgs {
     /// Custom prompt template.
     ///
     /// Supports file path, `-` for stdin, or inline string.
-    /// Placeholders: {design_file}, {prd_file}, {progress_file}
+    /// Placeholders: {prd_file}, {progress_file}
     #[arg(short, long)]
     pub prompt: Option<String>,
 
@@ -287,12 +287,6 @@ pub struct RunArgs {
     /// Default: claude --permission-mode acceptEdits --output-format stream-json -p {prompt}
     #[arg(short, long, value_name = "TEMPLATE")]
     pub command: Option<String>,
-
-    /// Design document path.
-    ///
-    /// Default: .local/designs/design.md
-    #[arg(long, value_name = "PATH")]
-    pub design: Option<PathBuf>,
 
     /// PRD file path.
     ///

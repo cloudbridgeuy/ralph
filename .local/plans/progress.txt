@@ -318,3 +318,450 @@ echo '' | ralph ask    # Error: Prompt cannot be empty
 - Error messages include usage hints for better UX
 - Validates trimmed prompt for emptiness but preserves original whitespace in result
 - Note: Unit testing stdin behavior is limited since `is_terminal()` returns false in test runners
+
+## Prompt and Response Storage in Iteration Logs (Story 11)
+
+Added prompt and response fields to iteration logs for conversation history retrieval.
+
+### Changes Made
+
+1. **IterationLog struct updated** (`crates/ralph/src/iteration/log.rs`):
+   - Added `prompt: Option<String>` field for storing the user's prompt text
+   - Added `response: Option<String>` field for storing the assistant's response text
+   - Both fields use `#[serde(default, skip_serializing_if = "Option::is_none")]` for backward compatibility
+
+2. **extract_response_text() function** (`crates/ralph/src/iteration/log.rs`):
+   - New pure function that extracts text from `OutputBlock::Text` variants
+   - Concatenates text content with double newlines between blocks
+   - Returns `None` if no text content is present
+   - Exported via `crates/ralph/src/iteration/mod.rs`
+
+3. **build_iteration_log() updated** (`crates/ralph/src/ask.rs`):
+   - Now accepts prompt parameter and stores it in the log
+   - Calls `extract_response_text()` to populate the response field
+
+4. **Other iteration log creators updated**:
+   - `run/mod.rs`: Populates response field (prompt set to None for run command)
+   - `main.rs`: Partial iteration logs for interrupted sessions
+   - Test files: All test IterationLog constructors updated with prompt/response fields
+
+### Tests Added
+
+- `test_extract_response_text_empty` - empty blocks returns None
+- `test_extract_response_text_single_text_block` - single text block extraction
+- `test_extract_response_text_multiple_text_blocks` - multiple blocks joined with newlines
+- `test_extract_response_text_ignores_non_text_blocks` - tool invocations/results filtered out
+- `test_iteration_log_with_prompt_and_response` - serialization roundtrip
+- `test_iteration_log_backward_compatible_without_prompt_response` - old logs still parse
+
+### Example TOML Output
+
+```toml
+sequence = 1
+started_at = "2025-01-23T10:00:00Z"
+completed_at = "2025-01-23T10:01:00Z"
+exit_code = 0
+pending_before = 0
+pending_after = 0
+prompt = "What is 2+2?"
+response = "The answer is 4."
+
+[metadata]
+# ...
+
+[[chunks]]
+type = "prose"
+content = "The answer is 4."
+```
+
+### Key Design Decisions
+
+- Fields are optional with serde default for backward compatibility with existing logs
+- Response is extracted from Text blocks only (tool invocations/results excluded)
+- Prompt is stored for ask command; run command sets prompt to None (multi-turn PRD-driven)
+- The run command still populates response for potential future use
+
+## Conversation History for --continue Flag (Story 12)
+
+Implemented passing conversation history to Claude when continuing a session with `--continue`.
+
+### Changes Made
+
+1. **New iteration loading functions** (`crates/ralph/src/iteration/writer.rs`):
+   - `load_session_iterations(session_dir)` - Loads all iteration logs sorted by sequence
+   - `extract_conversation_messages(logs)` - Extracts prompt/response pairs from logs
+   - `ConversationMessage` struct - Holds prompt and response for a conversation turn
+
+2. **New error variants** (`crates/ralph/src/iteration/error.rs`):
+   - `IterationError::ReadLog` - For iteration log file read failures
+   - `IterationError::ParseLog` - For iteration log TOML parse failures
+
+3. **Conversation history formatting** (`crates/ralph/src/ask.rs`):
+   - `format_conversation_history(messages, new_prompt)` - Pure function that formats previous conversation turns with the new prompt
+   - Format uses `<conversation_history>` XML tags with `[User]:` and `[Assistant]:` prefixes
+
+4. **ask() function updated** (`crates/ralph/src/ask.rs:301-340`):
+   - When continuing a session, loads previous iteration logs
+   - Extracts conversation messages from logs
+   - Formats full prompt with history prepended
+   - Stores only the original user prompt in the new iteration log (not the full prompt)
+
+### Conversation History Format
+
+```text
+<conversation_history>
+[User]: Previous prompt 1
+
+[Assistant]: Previous response 1
+
+[User]: Previous prompt 2
+
+[Assistant]: Previous response 2
+</conversation_history>
+
+[User]: New prompt
+```
+
+### Key Design Decisions
+
+- Only the user's original prompt is stored in iteration logs (for history retrieval)
+- Full prompt with history is only used for the Claude subprocess command
+- Logs without prompts (run command iterations) are skipped when extracting history
+- Missing responses default to empty string
+- History is loaded in sequence order (oldest first) for chronological context
+
+### Tests Added
+
+- `test_format_conversation_history_empty_messages` - No history returns just the prompt
+- `test_format_conversation_history_single_message` - Single turn formatting
+- `test_format_conversation_history_multiple_messages` - Multi-turn ordering
+- `test_format_conversation_history_with_empty_response` - Handles missing responses
+- `test_format_conversation_history_multiline_content` - Preserves newlines in content
+- `test_load_session_iterations_empty` - Empty directory handling
+- `test_load_session_iterations_sorted_by_sequence` - Proper ordering
+- `test_load_session_iterations_ignores_non_iteration_files` - File filtering
+- `test_extract_conversation_messages_*` - Various extraction scenarios
+- `test_conversation_message_new` - Constructor test
+
+### Usage
+
+```bash
+# First question creates new session
+ralph ask 'What is Rust?'
+
+# Follow-up includes conversation history
+ralph ask --continue 'How does it compare to Go?'
+# Claude receives:
+# <conversation_history>
+# [User]: What is Rust?
+# [Assistant]: [Previous response about Rust]
+# </conversation_history>
+# [User]: How does it compare to Go?
+```
+
+## --history Flag for Ask Command (Story 14)
+
+Added `--history` flag to display session conversation history before optionally proceeding.
+
+### Changes Made
+
+1. **AskArgs updated** (`crates/ralph/src/cli/mod.rs:222-231`):
+   - Added `history: bool` field with `#[arg(long)]`
+   - Added `Clone` derive to AskArgs for reuse in execute_ask_with_history
+   - Doc comments describe history display behavior
+
+2. **ConversationHistory types** (`crates/ralph/src/startup/types.rs`):
+   - New `ConversationTurn` struct: prompt, response, iteration number
+   - New `ConversationHistory` struct: slug, turns vector
+   - `is_empty()` method for checking if history exists
+
+3. **Display functions** (`crates/ralph/src/startup/`):
+   - `display_conversation_history()` in display.rs with terminal detection
+   - `display_conversation_history_terminal()` in terminal.rs with colors and markdown rendering
+   - `display_conversation_history_plain()` in plain.rs for piped output
+
+4. **execute_ask() updated** (`crates/ralph/src/main.rs`):
+   - Added early check for `--history` flag to branch to `execute_ask_with_history()`
+   - New `execute_ask_with_history()` function handles history display logic
+   - New `execute_ask_core()` function for reuse when continuing after displaying history
+
+5. **Tests extraction** - Moved main.rs tests to `main_tests.rs` to stay under 1000 lines
+
+6. **Tests added** (`crates/ralph/src/cli/tests/ask.rs`):
+   - `test_ask_with_history_flag` - flag parsing
+   - `test_ask_without_history_flag` - default behavior
+   - `test_ask_history_with_continue` - combined with --continue
+   - `test_ask_history_with_continue_and_prompt` - with follow-up prompt
+   - `test_ask_history_with_session_and_continue` - with specific session
+   - `test_ask_history_with_all_flags` - combined with all other flags
+
+### Usage
+
+```bash
+# Display history for a specific session
+ralph ask --session foo --history
+
+# Display history for most recent session
+ralph ask --continue --history
+
+# Display history then ask new question
+ralph ask --continue --history 'follow up question'
+
+# Error: --history requires --session or --continue
+ralph ask --history  # Shows error message
+```
+
+### Key Design Decisions
+
+- `--history` requires `--session` or `--continue` to specify which session
+- If no prompt provided, displays history and exits
+- If prompt provided with `--continue`, displays history then proceeds with new prompt
+- History displays User/Assistant pairs with iteration numbers
+- Terminal output uses markdown rendering and colors
+- Plain output uses simple text formatting for piped output
+
+## --permission-mode Flag with Config File Support (Story 13)
+
+Added `--permission-mode` flag with full configuration support (CLI, env var, config file).
+
+### Changes Made
+
+1. **AskArgs updated** (`crates/ralph/src/cli/mod.rs:233-247`):
+   - Added `permission_mode: String` field with `#[arg(long, value_name = "MODE", default_value = "bypassPermissions")]`
+   - Doc comments describe all four modes and security implications
+   - Default is `bypassPermissions` to allow tools to execute
+
+2. **AskConfig updated** (`crates/ralph/src/ask.rs:68`):
+   - Added `permission_mode: String` field
+   - Added `DEFAULT_PERMISSION_MODE` constant set to `"bypassPermissions"`
+   - Added `RALPH_PERMISSION_MODE_ENV` constant for env var name
+
+3. **resolve_permission_mode() function** (`crates/ralph/src/ask.rs:69-92`):
+   - Resolves permission mode with precedence: CLI > env var > config file > default
+   - Checks `RALPH_PERMISSION_MODE` environment variable
+   - Loads config from `~/.config/ralph/config.toml` `[ask]` section
+   - Returns the CLI value if explicitly set (differs from default)
+
+4. **AppConfig extended** (`crates/ralph/src/config.rs:81-99`):
+   - Added `AskSection` struct with `permission_mode: Option<String>` field
+   - Added `ask: AskSection` field to `AppConfig`
+   - Both use serde default/skip_serializing_if for backward compatibility
+
+5. **build_command() updated** (`crates/ralph/src/ask.rs:136`):
+   - Now accepts `permission_mode` parameter
+   - Inserts the mode into the claude command string
+
+6. **execute_ask() updated** (`crates/ralph/src/main.rs`):
+   - Both `execute_ask()` and `execute_ask_core()` call `resolve_permission_mode()`
+   - Resolved value passed to `AskConfig.permission_mode`
+
+### Permission Modes
+
+- **default**: Requires approval for all tools
+- **acceptEdits**: Auto-accepts file edits, requires approval for other tools
+- **plan**: Read-only mode, no tools can modify files
+- **bypassPermissions**: Auto-accepts all tool executions (default for ask command)
+
+### Usage
+
+```bash
+# Default: bypassPermissions allows tool execution
+ralph ask 'run ls'
+
+# Override via CLI flag
+ralph ask --permission-mode acceptEdits 'run ls'
+ralph ask --permission-mode default 'run ls'
+ralph ask --permission-mode plan 'read this file'
+
+# Override via environment variable
+RALPH_PERMISSION_MODE=acceptEdits ralph ask 'run ls'
+
+# Override via config file (~/.config/ralph/config.toml)
+# [ask]
+# permission_mode = "acceptEdits"
+```
+
+### Resolution Precedence
+
+1. CLI flag (`--permission-mode`) - highest priority
+2. Environment variable (`RALPH_PERMISSION_MODE`)
+3. Config file (`~/.config/ralph/config.toml` under `[ask]` section)
+4. Default value (`bypassPermissions`) - lowest priority
+
+### Key Design Decisions
+
+- Default is `bypassPermissions` because `ask` is meant for single-shot tool execution
+- CLI flag uses `Option<String>` to distinguish "not specified" from "explicitly set to default"
+- If CLI is `Some(value)`, that value is used (highest priority) regardless of what the value is
+- If CLI is `None`, env var and config file are checked in order
+- Config file uses `[ask]` section to group ask-specific settings
+- Security warning in `--help` text about `bypassPermissions` mode
+- Backward compatible: old config files without `[ask]` section work fine
+
+## --clone-session Flag for Ask Command (Story 16)
+
+Added `--clone-session` flag to branch from existing session into a new session while preserving conversation history.
+
+### Changes Made
+
+1. **AskArgs updated** (`crates/ralph/src/cli/mod.rs:245-256`):
+   - Added `clone_session: bool` field with `#[arg(long)]`
+   - Doc comments describe clone behavior and interaction with --session/--continue
+
+2. **CloneInfo struct** (`crates/ralph/src/ask.rs:128-134`):
+   - New struct holding: `source_slug`, `source_session_dir`
+   - Used to pass clone source info to the ask() function
+
+3. **AskConfig updated** (`crates/ralph/src/ask.rs:115`):
+   - Added `clone: Option<CloneInfo>` field
+   - Mutually exclusive with `continuation` at runtime
+
+4. **SessionMetadata updated** (`crates/core/src/session.rs:544-547`):
+   - Added `cloned_from: Option<String>` field for traceability
+   - Added `new_cloned()` constructor for creating cloned session metadata
+
+5. **Session module** (`crates/ralph/src/session.rs:287-313`):
+   - Added `initialize_session_with_clone()` function
+   - Added `initialize_session_directory_with_clone()` helper
+   - Added `initialize_session_directory_internal()` to share logic
+
+6. **ask() function updated** (`crates/ralph/src/ask.rs:368-385`):
+   - New clone mode branch loads history from source, creates NEW session
+   - Uses `initialize_session_with_clone()` to record source session
+
+7. **execute_ask() updated** (`crates/ralph/src/main.rs:509-524`):
+   - Added validation: `--clone-session` requires `--session` or `--continue`
+   - Added `resolve_clone_source()` helper function
+   - Clone mode creates new session (doesn't continue existing one)
+
+8. **Tests added** (`crates/ralph/src/cli/tests/ask.rs`):
+   - `test_ask_with_clone_flag` - basic flag with session
+   - `test_ask_without_clone_flag` - default behavior
+   - `test_ask_clone_with_continue` - clone from most recent
+   - `test_ask_clone_with_session_and_continue` - clone from named session
+   - `test_ask_clone_with_all_flags` - combined flags
+
+### Usage
+
+```bash
+# Clone from a specific session
+ralph ask --session source-session --clone-session 'new direction'
+
+# Clone from most recent session
+ralph ask --continue --clone-session 'branch question'
+
+# Error: --clone-session requires --session or --continue
+ralph ask --clone-session 'question'  # Shows error
+```
+
+### Key Design Decisions
+
+- `--clone-session` requires `--session` or `--continue` to specify source
+- Clone always creates a NEW session with auto-generated slug
+- Original session remains unchanged
+- New session's metadata includes `cloned_from` field for traceability
+- Conversation history is loaded from source and prepended to prompt
+- Only the user's new prompt is stored in the iteration log (not history)
+- Clone mode and continuation mode are mutually exclusive at runtime
+
+## Simplified Context Model - PROMPT_TEMPLATE Rewrite (Story 1)
+
+Rewrote the `PROMPT_TEMPLATE` in `crates/core/src/context.rs` to implement the new simplified context model.
+
+### Changes Made
+
+1. **PROMPT_TEMPLATE simplified** (`crates/core/src/context.rs:74-113`):
+   - Removed `@{design_file}` and `@{progress_file}` references
+   - Now only references `@{prd_file}` for context
+   - Added Context Retrieval section with `git log` instructions
+   - Added Progressive Disclosure pattern (CLAUDE.md + docs/context/*.md)
+   - Clear two-phase workflow: Phase 1 (Work) and Phase 2 (Commit)
+   - Semantic commit instructions without Claude attribution
+
+2. **Doc comments updated**:
+   - Removed obsolete placeholder documentation
+   - Added workflow documentation explaining the two-phase approach
+   - Documented context retrieval strategy
+
+3. **Tests updated** (`crates/core/src/context.rs:463-530`):
+   - Added negative assertions for removed placeholders
+   - Added tests for git log instructions
+   - Added tests for Progressive Disclosure references
+   - Added tests for semantic commit mentions
+   - Added tests for phase separation
+
+### Key Design Decisions
+
+- Git history replaces progress notes for historical context
+- Progressive Disclosure (CLAUDE.md → docs/context/*.md) replaces design.md
+- PRD remains the only required context file reference
+- `substitute_template_placeholders` still handles all placeholders for backward compatibility with custom prompts
+- Two-phase workflow enforces separation of concerns: work first, then document and commit
+
+## Core Refactor - Replace ContextPaths with prd_path (Story 2)
+
+Simplified the context model by removing the `ContextPaths` struct and passing only `prd_path` directly.
+
+### Changes Made
+
+1. **ContextPaths removed** (`crates/core/src/context.rs`):
+   - Removed `ContextPaths` struct
+   - Removed `ContextFilesTouch` struct
+   - Removed `determine_files_to_touch()` function
+   - Added `resolve_prd_path()` function for path resolution
+   - Simplified `substitute_template_placeholders()` to only handle prd_file, completion_marker, and additional_prompt
+
+2. **defaults module simplified**:
+   - Removed `DESIGN_FILE` and `PROGRESS_FILE` constants
+   - Only `PRD_FILE` constant remains
+
+3. **init.rs simplified** (`crates/ralph/src/init.rs`):
+   - Removed file creation logic for design.md and progress.txt
+   - Only verifies PRD exists via `verify_prd_exists(prd_path)`
+   - Simplified `InitError` to only contain `PrdNotFound`
+
+4. **RunConfig updated** (`crates/ralph/src/run/mod.rs`):
+   - Replaced `context_paths: ContextPaths` with `prd_path: PathBuf`
+   - Added `progress_path: PathBuf` (still needed for summarization, to be removed in Story 5)
+   - Removed `custom_design_path` and `custom_progress_path` fields
+
+5. **StartupInfo updated** (`crates/ralph/src/startup/types.rs`):
+   - Removed `custom_design_path` and `custom_progress_path` fields
+   - Simplified `has_custom_config()` method
+
+6. **main.rs updated**:
+   - Uses `resolve_prd_path()` instead of `ContextPaths::new()`
+   - Created `RunExecutionConfig` struct to pass config to `execute_run_with_prompting()`
+   - Updated `resolve_prompt()` to take `prd_path: &Path` instead of `&ContextPaths`
+
+7. **Display functions updated**:
+   - Removed design/progress path display from terminal.rs and plain.rs
+   - Prompt display now only shows PRD as attached file
+
+### Key Design Decisions
+
+- `progress_path` retained in `RunConfig` for backward compatibility with summarization feature (Story 5 will remove)
+- `resolve_prd_path()` is a pure function for path resolution with override support
+- Prompt only includes PRD as attached file in display
+- Verification simplified to only check PRD existence
+
+## CLI Cleanup - Remove --design Flag (Story 3)
+
+Removed the `--design` CLI flag and related code as part of the simplified context model.
+
+### Changes Made
+
+1. **RunArgs updated** (`crates/ralph/src/cli/mod.rs:291-295`):
+   - Removed `design: Option<PathBuf>` field
+   - Removed associated doc comments
+
+2. **Tests updated** (`crates/ralph/src/cli/tests.rs`):
+   - Updated `test_run_with_path_overrides` - removed --design flag and assertion
+   - Updated `test_run_with_all_options` - removed --design flag and assertion
+
+### Notes
+
+- The `--design` flag was already dead code - defined but never used in execution
+- No config structs referenced `design_override` or `custom_design_path`
+- Story 2 had already removed `ContextPaths` and design file handling from core
+- This completes the CLI cleanup for design-related code

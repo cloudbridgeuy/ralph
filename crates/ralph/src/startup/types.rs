@@ -23,10 +23,6 @@ pub struct StartupInfo {
     pub iterations_from_arg: bool,
     /// Path to PRD file (only shown if custom).
     pub custom_prd_path: Option<PathBuf>,
-    /// Path to design file (only shown if custom).
-    pub custom_design_path: Option<PathBuf>,
-    /// Path to progress file (only shown if custom).
-    pub custom_progress_path: Option<PathBuf>,
     /// Whether a custom command template is used.
     pub custom_command: bool,
     /// Whether a custom prompt is used.
@@ -43,8 +39,6 @@ impl StartupInfo {
     /// Check if any custom configuration is being used.
     pub(super) fn has_custom_config(&self) -> bool {
         self.custom_prd_path.is_some()
-            || self.custom_design_path.is_some()
-            || self.custom_progress_path.is_some()
             || self.custom_command
             || self.custom_prompt
             || self.custom_completion_marker

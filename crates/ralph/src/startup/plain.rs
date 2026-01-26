@@ -40,12 +40,6 @@ pub(super) fn display_startup_plain(info: &StartupInfo) {
         if let Some(ref path) = info.custom_prd_path {
             println!("  --prd {}", path.display());
         }
-        if let Some(ref path) = info.custom_design_path {
-            println!("  --design {}", path.display());
-        }
-        if let Some(ref path) = info.custom_progress_path {
-            println!("  --progress {}", path.display());
-        }
         if info.custom_command {
             println!("  --command (custom)");
         }

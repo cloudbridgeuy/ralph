@@ -17,8 +17,6 @@ fn create_test_info() -> StartupInfo {
         max_iterations: 5,
         iterations_from_arg: false,
         custom_prd_path: None,
-        custom_design_path: None,
-        custom_progress_path: None,
         custom_command: false,
         custom_prompt: false,
         custom_completion_marker: false,
@@ -46,20 +44,6 @@ fn test_has_custom_config_none() {
 fn test_has_custom_config_prd() {
     let mut info = create_test_info();
     info.custom_prd_path = Some(PathBuf::from("/custom/prd.toml"));
-    assert!(info.has_custom_config());
-}
-
-#[test]
-fn test_has_custom_config_design() {
-    let mut info = create_test_info();
-    info.custom_design_path = Some(PathBuf::from("/custom/design.md"));
-    assert!(info.has_custom_config());
-}
-
-#[test]
-fn test_has_custom_config_progress() {
-    let mut info = create_test_info();
-    info.custom_progress_path = Some(PathBuf::from("/custom/progress.txt"));
     assert!(info.has_custom_config());
 }
 

@@ -72,8 +72,6 @@ fn test_run_with_path_overrides() {
     let cli = Cli::try_parse_from([
         "ralph",
         "run",
-        "--design",
-        "/custom/design.md",
         "--prd",
         "/custom/prd.toml",
         "--progress",
@@ -82,7 +80,6 @@ fn test_run_with_path_overrides() {
     .unwrap();
     match cli.command {
         Commands::Run(args) => {
-            assert_eq!(args.design, Some(PathBuf::from("/custom/design.md")));
             assert_eq!(args.prd, Some(PathBuf::from("/custom/prd.toml")));
             assert_eq!(args.progress, Some(PathBuf::from("/custom/progress.txt")));
         }
@@ -157,8 +154,6 @@ fn test_run_with_all_options() {
         "test prompt",
         "--command",
         "echo {prompt}",
-        "--design",
-        "/d.md",
         "--prd",
         "/p.toml",
         "--progress",
@@ -177,7 +172,6 @@ fn test_run_with_all_options() {
             assert_eq!(args.slug, Some("test-run".to_string()));
             assert_eq!(args.prompt, Some("test prompt".to_string()));
             assert_eq!(args.command, Some("echo {prompt}".to_string()));
-            assert_eq!(args.design, Some(PathBuf::from("/d.md")));
             assert_eq!(args.prd, Some(PathBuf::from("/p.toml")));
             assert_eq!(args.progress, Some(PathBuf::from("/pr.txt")));
             assert_eq!(args.max_attempts, 2);

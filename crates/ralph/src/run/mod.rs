@@ -7,7 +7,7 @@
 
 use crate::git::capture_and_write_diff;
 use crate::highlight::ThemeConfig;
-use crate::init::{initialize_context_files, InitError};
+use crate::init::{verify_prd_exists, InitError};
 use crate::iteration::{
     extract_response_text, write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata,
     LogToolCall,
@@ -26,7 +26,6 @@ use crate::subprocess::{
 };
 use crate::summarize::{maybe_summarize_progress, SummarizeConfig};
 use ralph_core::completion::{check_completion, CompletionReason};
-use ralph_core::context::ContextPaths;
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
 use std::fs;
@@ -49,8 +48,10 @@ pub struct RunConfig {
     pub prompt: String,
     /// Completion marker string to detect in output.
     pub completion_marker: String,
-    /// Context file paths.
-    pub context_paths: ContextPaths,
+    /// Path to the PRD file.
+    pub prd_path: PathBuf,
+    /// Path to the progress file (for summarization, to be removed in future).
+    pub progress_path: PathBuf,
     /// Maximum number of attempts when subprocess fails.
     /// A value of 3 means up to 4 total attempts (1 initial + 3 recovery attempts).
     pub max_attempts: usize,
@@ -66,10 +67,6 @@ pub struct RunConfig {
     pub theme_config: Option<ThemeConfig>,
     /// Whether user provided custom PRD path (for startup display).
     pub custom_prd_path: Option<PathBuf>,
-    /// Whether user provided custom design path (for startup display).
-    pub custom_design_path: Option<PathBuf>,
-    /// Whether user provided custom progress path (for startup display).
-    pub custom_progress_path: Option<PathBuf>,
     /// Whether user provided custom command template.
     pub custom_command: bool,
     /// Whether user provided custom prompt.
@@ -240,17 +237,17 @@ pub enum RunError {
 /// # Errors
 ///
 /// Returns `RunError` if:
-/// - Context file initialization fails
+/// - PRD file doesn't exist
 /// - Session initialization fails
 /// - PRD parsing fails
 /// - Subprocess invocation fails
 /// - PRD is unchanged after an iteration (stuck state)
 pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
-    // 1. Initialize context files (touch missing design/progress, verify PRD exists)
-    initialize_context_files(&config.context_paths)?;
+    // 1. Verify PRD exists
+    verify_prd_exists(&config.prd_path)?;
 
     // 2. Read PRD and analyze stories
-    let prd_content = read_prd_file(&config.context_paths.prd)?;
+    let prd_content = read_prd_file(&config.prd_path)?;
     let prd_analysis = parse_prd(&prd_content)?;
 
     // Pre-check: exit if zero pending stories
@@ -293,8 +290,6 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             max_iterations,
             iterations_from_arg,
             custom_prd_path: config.custom_prd_path.clone(),
-            custom_design_path: config.custom_design_path.clone(),
-            custom_progress_path: config.custom_progress_path.clone(),
             custom_command: config.custom_command,
             custom_prompt: config.custom_prompt,
             custom_completion_marker: config.custom_completion_marker,
@@ -305,12 +300,8 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
 
         // Display the prompt if enabled
         if config.show_prompt {
-            // Build attached files from context paths
-            let attached_files = vec![
-                AttachedFile::new(config.context_paths.design.clone()),
-                AttachedFile::new(config.context_paths.prd.clone()),
-                AttachedFile::new(config.context_paths.progress.clone()),
-            ];
+            // Build attached files from PRD path
+            let attached_files = vec![AttachedFile::new(config.prd_path.clone())];
             let prompt_display = PromptDisplay {
                 prompt: &config.prompt,
                 attached_files,
@@ -351,7 +342,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // The actual iteration number includes any completed iterations from prior retries
         let iteration = iteration_offset + relative_iteration;
         // Pre-iteration check: re-read PRD and count pending
-        let prd_before = read_prd_file(&config.context_paths.prd)?;
+        let prd_before = read_prd_file(&config.prd_path)?;
         let pending_before = count_pending_stories(&prd_before)?;
 
         // Early exit if no pending stories
@@ -486,7 +477,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         // Attempt progress file summarization if configured
         if config.summarize_config.should_summarize() {
             if let Err(e) =
-                maybe_summarize_progress(&config.context_paths.progress, &config.summarize_config)
+                maybe_summarize_progress(&config.progress_path, &config.summarize_config)
             {
                 // Log warning but don't fail the run
                 eprintln!("Warning: Failed to summarize progress file: {}", e);
@@ -533,7 +524,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         }
 
         // Post-iteration check: re-read PRD
-        let prd_after = read_prd_file(&config.context_paths.prd)?;
+        let prd_after = read_prd_file(&config.prd_path)?;
         let prd_changed = has_prd_changed(&prd_snapshot, &prd_after);
 
         // Count pending stories after iteration

@@ -38,7 +38,7 @@ use clap::Parser;
 use cli::{AskArgs, Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
 use iteration::{extract_conversation_messages, load_session_iterations};
 use prompt::{prompt_on_failure, FailureAction};
-use ralph_core::context::{defaults, substitute_template_placeholders, ContextPaths};
+use ralph_core::context::{defaults, resolve_prd_path, substitute_template_placeholders};
 use ralph_core::session::SessionOutcome;
 use run::{run, RunConfig, RunError};
 use std::path::Path;
@@ -152,12 +152,12 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve context file paths
     let project_root = std::env::current_dir()?;
-    let context_paths = ContextPaths::new(
-        &project_root,
-        args.design.as_deref(),
-        args.prd.as_deref(),
-        args.progress.as_deref(),
-    );
+    let prd_path = resolve_prd_path(&project_root, args.prd.as_deref());
+    // Progress path is still needed for summarization (to be removed in future)
+    let progress_path = args
+        .progress
+        .clone()
+        .unwrap_or_else(|| project_root.join(".local/plans/progress.txt"));
 
     // Determine command template
     let command_template = args
@@ -177,7 +177,7 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Resolve prompt template and substitute placeholders (including additional_prompt)
     let prompt = resolve_prompt(
         args.prompt.as_deref(),
-        &context_paths,
+        &prd_path,
         &completion_marker,
         &additional_prompt,
     )?;
@@ -186,7 +186,23 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let command = substitute_prompt_in_command(&command_template, &prompt);
 
     // Execute run loop with failure recovery prompting
-    execute_run_with_prompting(args, context_paths, command, prompt, completion_marker)
+    let exec_config = RunExecutionConfig {
+        prd_path,
+        progress_path,
+        command,
+        prompt,
+        completion_marker,
+    };
+    execute_run_with_prompting(args, exec_config)
+}
+
+/// Config for run command execution.
+struct RunExecutionConfig {
+    prd_path: std::path::PathBuf,
+    progress_path: std::path::PathBuf,
+    command: String,
+    prompt: String,
+    completion_marker: String,
 }
 
 /// Execute run loop with interactive failure recovery prompting.
@@ -200,10 +216,7 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
 /// attempts, and iterations are aggregated within the same session.
 fn execute_run_with_prompting(
     args: RunArgs,
-    context_paths: ContextPaths,
-    command: String,
-    prompt: String,
-    completion_marker: String,
+    exec_config: RunExecutionConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Track the session slug across recovery attempts. Once a session is created, we reuse it.
     let mut current_session_slug: Option<String> = None;
@@ -219,8 +232,6 @@ fn execute_run_with_prompting(
 
     // Track custom config flags for startup display
     let custom_prd_path = args.prd.clone();
-    let custom_design_path = args.design.clone();
-    let custom_progress_path = args.progress.clone();
     let custom_command = args.command.is_some();
     let custom_prompt = args.prompt.is_some();
     let custom_completion_marker = args.completion_marker.is_some();
@@ -241,18 +252,17 @@ fn execute_run_with_prompting(
         let config = RunConfig {
             max_iterations: args.iterations,
             slug: current_session_slug.clone().or_else(|| args.slug.clone()),
-            command: command.clone(),
-            prompt: prompt.clone(),
-            completion_marker: completion_marker.clone(),
-            context_paths: context_paths.clone(),
+            command: exec_config.command.clone(),
+            prompt: exec_config.prompt.clone(),
+            completion_marker: exec_config.completion_marker.clone(),
+            prd_path: exec_config.prd_path.clone(),
+            progress_path: exec_config.progress_path.clone(),
             max_attempts: args.max_attempts,
             // Pass the starting iteration number for session continuation
             starting_iteration: total_iterations_completed,
             timeout_secs: args.timeout,
             theme_config: theme_config.clone(),
             custom_prd_path: custom_prd_path.clone(),
-            custom_design_path: custom_design_path.clone(),
-            custom_progress_path: custom_progress_path.clone(),
             custom_command,
             custom_prompt,
             custom_completion_marker,
@@ -864,14 +874,12 @@ fn read_from_source(
 /// - The default template (if no argument is provided)
 ///
 /// After loading the template, placeholders are substituted with actual values:
-/// - `{design_file}` - Path to the design document
 /// - `{prd_file}` - Path to the PRD file
-/// - `{progress_file}` - Path to the progress notes file
 /// - `{completion_marker}` - The completion marker string
 /// - `{additional_prompt}` - Additional instructions appended to the prompt
 fn resolve_prompt(
     prompt_arg: Option<&str>,
-    context_paths: &ContextPaths,
+    prd_path: &Path,
     completion_marker: &str,
     additional_prompt: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
@@ -881,7 +889,7 @@ fn resolve_prompt(
     // Substitute placeholders in the template
     Ok(substitute_template_placeholders(
         &template,
-        context_paths,
+        prd_path,
         completion_marker,
         additional_prompt,
     ))

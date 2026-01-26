@@ -1,175 +1,227 @@
-# ralph ask - Single-shot LLM prompt command with session persistence
+# PRD: Simplified Context Model with Progressive Disclosure
+#
+# This PRD removes the design.md and progress.txt concepts in favor of:
+# - Git history for historical context (semantic commits)
+# - Progressive Disclosure pattern for architectural context (CLAUDE.md -> docs/context/*.md)
+# - PRD as the only required context file
 
 [[stories]]
-category = "feature"
-description = "Add basic `ask` subcommand CLI skeleton with prompt argument"
+category = "prompt-template"
+description = "Rewrite PROMPT_TEMPLATE with new workflow: git history, Progressive Disclosure, and phase separation"
 steps = [
-  "Add `AskArgs` struct to `crates/ralph/src/cli.rs` with a single `prompt: Option<String>` argument",
-  "Add `Ask(AskArgs)` variant to the `Commands` enum in `cli.rs`",
-  "Add `Commands::Ask(args) => execute_ask(args)` match arm in `main.rs`",
-  "Create stub `execute_ask` function that prints the prompt and returns Ok(())",
-  "Run `cargo xtask lint` to verify no errors",
+    "Review current PROMPT_TEMPLATE in crates/core/src/context.rs",
+    "Remove @{design_file} and @{progress_file} references",
+    "Keep only @{prd_file} as the context file reference",
+    "Add instructions to use 'git log --oneline' for recent commit context",
+    "Add instructions to consult CLAUDE.md and linked docs/context/*.md for architectural context",
+    "Add clear phase separation: work phase then commit phase",
+    "In commit phase: update relevant docs per Progressive Disclosure, make semantic commit",
+    "Instruct agent to determine which docs need updating based on the PRD story being implemented",
+    "Run cargo xtask lint to verify compilation"
 ]
 passes = true
 acceptance = [
-  "`ralph ask 'hello'` prints the prompt and exits successfully",
-  "`ralph ask --help` shows help for the ask subcommand",
-  "`cargo xtask lint` passes without errors",
+    "PROMPT_TEMPLATE only references @{prd_file}",
+    "Instructions tell agent to use git log for historical context",
+    "Instructions tell agent to consult CLAUDE.md for Progressive Disclosure docs",
+    "Clear phase separation: work first, then document and commit at end",
+    "Agent instructed to update docs/context/*.md or CLAUDE.md based on PRD story",
+    "Semantic commit instruction included without Claude attribution"
 ]
 
 [[stories]]
-category = "feature"
-description = "Implement core ask execution - invoke claude subprocess and display output"
+category = "core-refactor"
+description = "Replace ContextPaths struct with single prd_path parameter"
 steps = [
-  "Create `crates/ralph/src/ask.rs` module with `AskConfig` struct and `ask()` function",
-  "Build the claude command: `claude --verbose --permission-mode acceptEdits --output-format stream-json -p {prompt}`",
-  "Use `subprocess::invoke_subprocess_with_spinner_config()` to invoke the command",
-  "Process and display the output using the existing stream processor",
-  "Wire up `execute_ask` in main.rs to call the new `ask()` function",
-  "Run `cargo xtask lint` to verify no errors",
+    "Remove ContextPaths struct from crates/core/src/context.rs",
+    "Update substitute_template_placeholders to only handle prd_file placeholder",
+    "Remove design_file, progress_file, completion_marker, additional_prompt placeholders if unused",
+    "Update all call sites in ralph crate to pass prd path directly",
+    "Update RunConfig to use prd_path: PathBuf instead of context_paths: ContextPaths",
+    "Run cargo xtask lint to verify compilation"
 ]
 passes = true
 acceptance = [
-  "`ralph ask 'what is 2+2'` invokes claude and displays the response with syntax highlighting",
-  "Spinner shows while waiting for LLM response",
-  "`cargo xtask lint` passes without errors",
+    "ContextPaths struct removed from codebase",
+    "All references updated to use single prd path",
+    "substitute_template_placeholders simplified or removed if unnecessary",
+    "No compilation errors"
 ]
 
 [[stories]]
-category = "feature"
-description = "Add session creation and persistence for ask command"
+category = "cli-cleanup"
+description = "Remove --design flag and related code paths"
 steps = [
-  "Generate session slug using `session::resolve_session_slug()` when not provided",
-  "Initialize session with `session::initialize_session()` storing the prompt",
-  "Create session directory structure in data dir",
-  "Write `session.toml` with metadata including the prompt",
-  "Run `cargo xtask lint` to verify no errors",
+    "Remove --design argument from RunArgs in crates/ralph/src/cli/mod.rs",
+    "Remove design_override parameter from any config structs",
+    "Update execute_run in main.rs to not handle design path",
+    "Remove custom_design_path from RunConfig",
+    "Update any tests that reference --design flag",
+    "Run cargo xtask lint to verify compilation"
 ]
 passes = true
 acceptance = [
-  "`ralph ask 'hello'` creates a new session directory with `session.toml`",
-  "Session metadata includes the prompt text",
-  "`ralph sessions` shows the new session",
-  "`cargo xtask lint` passes without errors",
+    "--design flag removed from CLI",
+    "No references to design file path in CLI layer",
+    "Tests updated or removed as appropriate"
 ]
 
 [[stories]]
-category = "feature"
-description = "Add iteration logging for replay compatibility"
+category = "cli-cleanup"
+description = "Remove --progress flag and all summarization-related flags"
 steps = [
-  "After subprocess completes, build `IterationLog` with sequence=1, timestamps, exit_code, metadata, output_blocks",
-  "Write iteration log using `iteration::write_iteration_log()`",
-  "Save as `iteration-1.toml` in session directory",
-  "Run `cargo xtask lint` to verify no errors",
+    "Remove --progress argument from RunArgs",
+    "Remove --progress-max-lines argument",
+    "Remove --no-summarize argument",
+    "Remove --summarize-prompt argument",
+    "Remove --summarize-command argument",
+    "Update execute_run to not handle progress path or summarize config",
+    "Remove custom_progress_path from RunConfig",
+    "Remove summarize_config from RunConfig",
+    "Update any tests that reference these flags",
+    "Run cargo xtask lint to verify compilation"
 ]
-passes = true
+passes = false
 acceptance = [
-  "`ralph ask 'hello'` creates `iteration-1.toml` in the session directory",
-  "`ralph replay <slug>` successfully replays the ask session output",
-  "`cargo xtask lint` passes without errors",
+    "All progress and summarization CLI flags removed",
+    "No references to progress file path in CLI layer",
+    "No references to summarize config in CLI layer",
+    "Tests updated or removed as appropriate"
 ]
 
 [[stories]]
-category = "feature"
-description = "Finalize session after ask execution completes"
+category = "code-removal"
+description = "Delete summarize.rs module entirely"
 steps = [
-  "Call `session::finalize_session()` with appropriate outcome (Completed or Failed based on exit code)",
-  "Update sessions index with final iteration count",
-  "Display summary with cost, duration, and token usage after execution",
-  "Run `cargo xtask lint` to verify no errors",
+    "Remove crates/ralph/src/summarize.rs file",
+    "Remove mod summarize from main.rs",
+    "Remove SummarizeConfig import and usage from run/mod.rs",
+    "Remove maybe_summarize_progress call from iteration loop",
+    "Remove any re-exports of summarize types",
+    "Run cargo xtask lint to verify compilation"
 ]
-passes = true
+passes = false
 acceptance = [
-  "`ralph sessions` shows correct outcome status for ask sessions",
-  "Summary displays cost and duration after `ralph ask` completes",
-  "`cargo xtask lint` passes without errors",
+    "summarize.rs file deleted",
+    "No summarization code remains in codebase",
+    "Iteration loop no longer calls summarization",
+    "No compilation errors"
 ]
 
 [[stories]]
-category = "feature"
-description = "Add --session flag to specify session name for new sessions"
+category = "code-cleanup"
+description = "Simplify init.rs to only verify PRD exists"
 steps = [
-  "Add `session: Option<String>` field to `AskArgs` with `#[arg(short = 'S', long)]`",
-  "Pass session name to `AskConfig` and use it instead of auto-generating when provided",
-  "When `--session` is provided without `--continue`, create a new session with that name",
-  "Run `cargo xtask lint` to verify no errors",
+    "Review crates/ralph/src/init.rs",
+    "Remove logic that touches/creates design.md",
+    "Remove logic that touches/creates progress.txt",
+    "Keep only PRD existence verification",
+    "Update InitError variants to remove design/progress related errors",
+    "Update or remove determine_files_to_touch function in core",
+    "Run cargo xtask lint to verify compilation"
 ]
-passes = true
+passes = false
 acceptance = [
-  "`ralph ask --session my-test 'hello'` creates session with name 'my-test'",
-  "`ralph ask -S my-test 'hello'` works with short flag",
-  "`cargo xtask lint` passes without errors",
+    "init.rs only verifies PRD file exists",
+    "No auto-creation of design or progress files",
+    "InitError simplified to only PRD-related errors"
 ]
 
 [[stories]]
-category = "feature"
-description = "Add --continue flag to continue a session"
+category = "code-cleanup"
+description = "Update startup display to remove design and progress references"
 steps = [
-  "Add `continue_session: bool` field to `AskArgs` with `#[arg(short, long)]`",
-  "When `--continue` alone is provided, load sessions index and find most recent by started_at",
-  "When `--session <name> --continue` is provided, load that specific session and continue it",
-  "Validate the session exists, error if not found",
-  "Count existing iteration logs to determine next sequence number",
-  "Create new iteration with sequence = previous + 1",
-  "Update session with new iteration count on finalization",
-  "Run `cargo xtask lint` to verify no errors",
+    "Review crates/ralph/src/startup/ modules",
+    "Remove design file from StartupInfo struct",
+    "Remove progress file from StartupInfo struct",
+    "Remove AttachedFile entries for design and progress",
+    "Update display_startup_info to not show design/progress paths",
+    "Update terminal and plain display functions",
+    "Run cargo xtask lint to verify compilation"
 ]
-passes = true
+passes = false
 acceptance = [
-  "`ralph ask --continue 'follow up'` adds iteration to most recent session",
-  "`ralph ask --session my-test --continue 'follow up'` adds iteration to 'my-test' session",
-  "`ralph ask --session nonexistent --continue 'hello'` shows error that session not found",
-  "`ralph ask --continue 'hello'` with no existing sessions shows appropriate error",
-  "`ralph replay <session>` shows all iterations",
-  "`cargo xtask lint` passes without errors",
+    "StartupInfo no longer contains design or progress paths",
+    "Startup display only shows PRD file",
+    "No references to design/progress in startup output"
 ]
 
 [[stories]]
-category = "feature"
-description = "Add theme inheritance from global configuration"
+category = "code-cleanup"
+description = "Update run/mod.rs RunConfig to reflect simplified context model"
 steps = [
-  "Add `theme: Option<String>` and `no_background: bool` fields to `AskArgs`",
-  "Use `highlight::resolve_theme_config()` to resolve theme (CLI > env > config > default)",
-  "Pass resolved theme config to subprocess invocation",
-  "Run `cargo xtask lint` to verify no errors",
+    "Remove context_paths field from RunConfig",
+    "Add prd_path: PathBuf field to RunConfig",
+    "Remove custom_design_path field",
+    "Remove custom_progress_path field",
+    "Remove summarize_config field",
+    "Update run() function to use new config structure",
+    "Update iteration loop to not reference design/progress",
+    "Run cargo xtask lint to verify compilation"
 ]
-passes = true
+passes = false
 acceptance = [
-  "`ralph ask 'hello'` uses theme from global config when not specified",
-  "`ralph ask --theme 'Solarized (dark)' 'hello'` overrides global config",
-  "`cargo xtask lint` passes without errors",
+    "RunConfig uses prd_path instead of context_paths",
+    "No design, progress, or summarize fields in RunConfig",
+    "run() function works with simplified config"
 ]
 
 [[stories]]
-category = "feature"
-description = "Add remaining CLI flags: timeout, verbose-tools, no-prompt"
+category = "documentation"
+description = "Create docs/context/prompt-template.md documenting the prompt system"
 steps = [
-  "Add `timeout: u64` field with default 600 seconds",
-  "Add `verbose_tools: Option<String>` field for tool verbosity control",
-  "Add `no_prompt: bool` field to suppress prompt display",
-  "Wire all flags through to `AskConfig` and execution",
-  "Run `cargo xtask lint` to verify no errors",
+    "Create docs/context/prompt-template.md",
+    "Document the PROMPT_TEMPLATE structure and purpose",
+    "Document available placeholders (prd_file, completion_marker, additional_prompt)",
+    "Document how to override via --prompt CLI flag",
+    "Document how to provide a completely custom prompt file",
+    "Add examples of common customizations",
+    "Add link to this doc in CLAUDE.md Progressive Disclosure section"
 ]
-passes = true
+passes = false
 acceptance = [
-  "`ralph ask --timeout 60 'hello'` uses 60 second timeout",
-  "`ralph ask --verbose-tools 'hello'` shows verbose tool output",
-  "`ralph ask --no-prompt 'hello'` does not display the prompt",
-  "`cargo xtask lint` passes without errors",
+    "docs/context/prompt-template.md exists and is comprehensive",
+    "All current placeholders documented with examples",
+    "Override mechanisms documented",
+    "CLAUDE.md links to this file"
 ]
 
 [[stories]]
-category = "feature"
-description = "Support reading prompt from stdin when not provided as argument"
+category = "documentation"
+description = "Create docs/context/git-workflow.md documenting git and Progressive Disclosure practices"
 steps = [
-  "When `prompt` argument is None, read from stdin",
-  "Handle non-interactive stdin (piped input)",
-  "Error if stdin is empty and no prompt provided",
-  "Run `cargo xtask lint` to verify no errors",
+    "Create docs/context/git-workflow.md",
+    "Document semantic commit format (feat, fix, refactor, docs, etc.)",
+    "Document how agent should use git log for context retrieval",
+    "Document Progressive Disclosure pattern: CLAUDE.md -> docs/context/*.md",
+    "Document distinction: docs/context/ for AI, docs/ for humans",
+    "Document when and how to update documentation",
+    "Add link to this doc in CLAUDE.md Progressive Disclosure section"
 ]
-passes = true
+passes = false
 acceptance = [
-  "`echo 'hello' | ralph ask` reads prompt from stdin",
-  "`ralph ask` with no argument and no stdin shows helpful error",
-  "`cargo xtask lint` passes without errors",
+    "docs/context/git-workflow.md exists",
+    "Semantic commit format documented with examples",
+    "Git history usage pattern explained",
+    "Progressive Disclosure pattern fully documented",
+    "Directory structure conventions documented",
+    "CLAUDE.md links to this file"
+]
+
+[[stories]]
+category = "documentation"
+description = "Update CLAUDE.md to reflect simplified context model"
+steps = [
+    "Remove any references to design.md file",
+    "Remove any references to progress.txt file",
+    "Update Progressive Disclosure section with new docs",
+    "Ensure all docs/context/*.md files are linked",
+    "Document that git history replaces progress notes",
+    "Document that Progressive Disclosure replaces design.md"
+]
+passes = false
+acceptance = [
+    "No references to design.md or progress.txt in CLAUDE.md",
+    "Progressive Disclosure section is current and complete",
+    "New workflow clearly documented"
 ]

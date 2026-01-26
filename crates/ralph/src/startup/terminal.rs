@@ -41,12 +41,6 @@ pub(super) fn display_startup_terminal(info: &StartupInfo) {
         if let Some(ref path) = info.custom_prd_path {
             println!("  \x1b[2m--prd {}\x1b[0m", path.display());
         }
-        if let Some(ref path) = info.custom_design_path {
-            println!("  \x1b[2m--design {}\x1b[0m", path.display());
-        }
-        if let Some(ref path) = info.custom_progress_path {
-            println!("  \x1b[2m--progress {}\x1b[0m", path.display());
-        }
         if info.custom_command {
             println!("  \x1b[2m--command (custom)\x1b[0m");
         }
