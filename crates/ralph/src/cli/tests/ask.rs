@@ -445,3 +445,211 @@ fn test_ask_with_all_flags_combined() {
         _ => panic!("Expected Ask command"),
     }
 }
+
+// History flag tests for ask command
+
+#[test]
+fn test_ask_with_history_flag() {
+    let args = parse_ask_args(&["ralph", "ask", "--history", "--session", "foo"]);
+    assert!(args.history);
+    assert_eq!(args.session, Some("foo".to_string()));
+}
+
+#[test]
+fn test_ask_without_history_flag() {
+    let args = parse_ask_args(&["ralph", "ask", "hello"]);
+    assert!(!args.history);
+}
+
+#[test]
+fn test_ask_history_with_continue() {
+    let args = parse_ask_args(&["ralph", "ask", "--continue", "--history"]);
+    assert!(args.history);
+    assert!(args.continue_session);
+}
+
+#[test]
+fn test_ask_history_with_continue_and_prompt() {
+    let args = parse_ask_args(&["ralph", "ask", "--continue", "--history", "follow up"]);
+    assert!(args.history);
+    assert!(args.continue_session);
+    assert_eq!(args.prompt, Some("follow up".to_string()));
+}
+
+#[test]
+fn test_ask_history_with_session_and_continue() {
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--session",
+        "my-test",
+        "--continue",
+        "--history",
+    ]);
+    assert!(args.history);
+    assert!(args.continue_session);
+    assert_eq!(args.session, Some("my-test".to_string()));
+}
+
+#[test]
+fn test_ask_history_with_all_flags() {
+    // Test --history combined with other flags
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--session",
+        "my-test",
+        "--continue",
+        "--history",
+        "--theme",
+        "Monokai Extended",
+        "--no-prompt",
+        "follow up",
+    ]);
+    assert!(args.history);
+    assert!(args.continue_session);
+    assert_eq!(args.session, Some("my-test".to_string()));
+    assert_eq!(args.theme, Some("Monokai Extended".to_string()));
+    assert!(args.no_prompt);
+    assert_eq!(args.prompt, Some("follow up".to_string()));
+}
+
+// Permission mode flag tests for ask command
+
+#[test]
+fn test_ask_permission_mode_not_specified() {
+    let args = parse_ask_args(&["ralph", "ask", "hello"]);
+    assert!(args.permission_mode.is_none());
+}
+
+#[test]
+fn test_ask_permission_mode_accept_edits() {
+    let args = parse_ask_args(&["ralph", "ask", "--permission-mode", "acceptEdits", "hello"]);
+    assert_eq!(args.permission_mode, Some("acceptEdits".to_string()));
+    assert_eq!(args.prompt, Some("hello".to_string()));
+}
+
+#[test]
+fn test_ask_permission_mode_default_mode() {
+    let args = parse_ask_args(&["ralph", "ask", "--permission-mode", "default", "hello"]);
+    assert_eq!(args.permission_mode, Some("default".to_string()));
+}
+
+#[test]
+fn test_ask_permission_mode_plan() {
+    let args = parse_ask_args(&["ralph", "ask", "--permission-mode", "plan", "hello"]);
+    assert_eq!(args.permission_mode, Some("plan".to_string()));
+}
+
+#[test]
+fn test_ask_permission_mode_bypass() {
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--permission-mode",
+        "bypassPermissions",
+        "hello",
+    ]);
+    assert_eq!(args.permission_mode, Some("bypassPermissions".to_string()));
+}
+
+#[test]
+fn test_ask_permission_mode_with_other_flags() {
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--session",
+        "my-test",
+        "--permission-mode",
+        "acceptEdits",
+        "--timeout",
+        "120",
+        "hello",
+    ]);
+    assert_eq!(args.session, Some("my-test".to_string()));
+    assert_eq!(args.permission_mode, Some("acceptEdits".to_string()));
+    assert_eq!(args.timeout, 120);
+    assert_eq!(args.prompt, Some("hello".to_string()));
+}
+
+// Clone flag tests for ask command
+
+#[test]
+fn test_ask_with_clone_flag() {
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--session",
+        "source-session",
+        "--clone-session",
+        "new prompt",
+    ]);
+    assert!(args.clone_session);
+    assert_eq!(args.session, Some("source-session".to_string()));
+    assert_eq!(args.prompt, Some("new prompt".to_string()));
+}
+
+#[test]
+fn test_ask_without_clone_flag() {
+    let args = parse_ask_args(&["ralph", "ask", "hello"]);
+    assert!(!args.clone_session);
+}
+
+#[test]
+fn test_ask_clone_with_continue() {
+    // --clone-session with --continue clones from most recent session
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--continue",
+        "--clone-session",
+        "branch question",
+    ]);
+    assert!(args.clone_session);
+    assert!(args.continue_session);
+    assert_eq!(args.prompt, Some("branch question".to_string()));
+}
+
+#[test]
+fn test_ask_clone_with_session_and_continue() {
+    // --clone-session with --session and --continue clones from named session
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--session",
+        "my-source",
+        "--continue",
+        "--clone-session",
+        "new direction",
+    ]);
+    assert!(args.clone_session);
+    assert!(args.continue_session);
+    assert_eq!(args.session, Some("my-source".to_string()));
+    assert_eq!(args.prompt, Some("new direction".to_string()));
+}
+
+#[test]
+fn test_ask_clone_with_all_flags() {
+    // Test --clone-session combined with other flags
+    let args = parse_ask_args(&[
+        "ralph",
+        "ask",
+        "--session",
+        "source-session",
+        "--clone-session",
+        "--theme",
+        "Monokai Extended",
+        "--no-background",
+        "--timeout",
+        "120",
+        "--no-prompt",
+        "branch prompt",
+    ]);
+    assert!(args.clone_session);
+    assert_eq!(args.session, Some("source-session".to_string()));
+    assert_eq!(args.theme, Some("Monokai Extended".to_string()));
+    assert!(args.no_background);
+    assert_eq!(args.timeout, 120);
+    assert!(args.no_prompt);
+    assert_eq!(args.prompt, Some("branch prompt".to_string()));
+}

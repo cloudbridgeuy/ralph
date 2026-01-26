@@ -147,7 +147,7 @@ pub struct ReplayArgs {
 }
 
 /// Arguments for the `ask` subcommand.
-#[derive(clap::Args, Debug)]
+#[derive(clap::Args, Debug, Clone)]
 pub struct AskArgs {
     // --- Prompt ---
     /// The prompt to send to the LLM.
@@ -219,6 +219,41 @@ pub struct AskArgs {
     /// execution begins. Use this flag to hide the prompt.
     #[arg(long)]
     pub no_prompt: bool,
+
+    /// Display conversation history for the session.
+    ///
+    /// Shows all previous user prompts and assistant responses in chronological order.
+    /// Requires --session or --continue to specify which session to display history for.
+    /// If no prompt argument is provided, displays history and exits.
+    /// If a prompt argument is provided with --continue, displays history then proceeds.
+    #[arg(long)]
+    pub history: bool,
+
+    /// Permission mode for tool execution.
+    ///
+    /// Controls how Claude handles tool execution permissions:
+    /// - default: Requires approval for all tools
+    /// - acceptEdits: Auto-accepts file edits but requires approval for other tools
+    /// - plan: Read-only mode, no tools can modify files
+    /// - bypassPermissions: Auto-accepts all tool executions (default for ask command)
+    ///
+    /// SECURITY NOTE: bypassPermissions allows Claude to execute any tool without
+    /// confirmation. Use with caution in untrusted environments.
+    #[arg(long, value_name = "MODE")]
+    pub permission_mode: Option<String>,
+
+    /// Clone an existing session into a new session with its conversation history.
+    ///
+    /// Creates a new session pre-populated with the conversation history from the
+    /// source session. The original session remains unchanged. Use with --session
+    /// to specify the source session, or with --continue to clone from the most
+    /// recent session. The new session gets an auto-generated name.
+    ///
+    /// Example:
+    ///   ralph ask --session my-test --clone-session 'new direction'
+    ///   ralph ask --continue --clone-session 'branch question'
+    #[arg(long)]
+    pub clone_session: bool,
 }
 
 /// Arguments for the `run` subcommand.
