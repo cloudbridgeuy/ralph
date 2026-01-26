@@ -38,7 +38,6 @@
 - **Session Management** - Track progress across sessions with unique slugs and iteration history
 - **Rich Terminal Output** - Syntax highlighting for code, diffs, and tool results
 - **Failure Recovery** - Automatic retry logic with configurable attempts and timeouts
-- **Progress Tracking** - Persistent progress notes with automatic summarization
 - **Replay Sessions** - Review past sessions with full syntax highlighting
 - **Customizable Prompts** - Use custom prompt templates or add additional instructions
 - **Theme Support** - Multiple built-in themes or use custom `.tmTheme` files

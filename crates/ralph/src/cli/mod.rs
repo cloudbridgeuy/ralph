@@ -277,7 +277,7 @@ pub struct RunArgs {
     /// Custom prompt template.
     ///
     /// Supports file path, `-` for stdin, or inline string.
-    /// Placeholders: {prd_file}, {progress_file}
+    /// Placeholders: {prd_file}, {completion_marker}, {additional_prompt}
     #[arg(short, long)]
     pub prompt: Option<String>,
 
