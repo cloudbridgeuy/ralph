@@ -5,7 +5,8 @@ use std::io::IsTerminal;
 use super::plain;
 use super::terminal;
 use super::types::{
-    AskSummary, IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo,
+    AskSummary, ConversationHistory, IterationHeader, IterationSummary, PromptDisplay, RunSummary,
+    StartupInfo,
 };
 
 /// Display startup information to stdout.
@@ -96,5 +97,21 @@ pub fn display_ask_summary(summary: &AskSummary) {
         terminal::display_ask_summary_terminal(summary);
     } else {
         plain::display_ask_summary_plain(summary);
+    }
+}
+
+/// Display conversation history to stdout.
+///
+/// Shows all previous user prompts and assistant responses for a session
+/// in chronological order. The output format adapts based on terminal:
+/// - Terminal: Uses colors and markdown rendering
+/// - Piped: Uses plain text without ANSI codes
+pub fn display_conversation_history(history: &ConversationHistory) {
+    let is_terminal = std::io::stdout().is_terminal();
+
+    if is_terminal {
+        terminal::display_conversation_history_terminal(history);
+    } else {
+        plain::display_conversation_history_plain(history);
     }
 }

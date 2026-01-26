@@ -1,5 +1,6 @@
 //! Data structures for startup and iteration display.
 
+use crate::iteration::ConversationMessage;
 use std::path::{Path, PathBuf};
 
 /// Version of the ralph binary (from Cargo.toml).
@@ -234,6 +235,50 @@ fn extract_file_references(prompt: &str) -> Vec<AttachedFile> {
 /// as these are shown in the attached files table instead.
 pub(super) fn strip_file_references(prompt: &str) -> String {
     parse_prompt_file_references(prompt).0
+}
+
+/// A single turn in a conversation history for display.
+#[derive(Debug, Clone)]
+pub struct ConversationTurn {
+    /// The user's prompt for this turn.
+    pub prompt: String,
+    /// The assistant's response for this turn.
+    pub response: String,
+    /// The iteration number (1-indexed).
+    pub iteration: u32,
+}
+
+/// Conversation history for display.
+#[derive(Debug, Clone)]
+pub struct ConversationHistory {
+    /// The session slug.
+    pub slug: String,
+    /// The conversation turns in chronological order.
+    pub turns: Vec<ConversationTurn>,
+}
+
+impl ConversationHistory {
+    /// Create conversation history from iteration messages.
+    ///
+    /// Transforms a list of conversation messages into a display-ready history
+    /// by adding 1-indexed iteration numbers to each turn.
+    pub fn from_messages(slug: String, messages: Vec<ConversationMessage>) -> Self {
+        let turns = messages
+            .into_iter()
+            .enumerate()
+            .map(|(i, msg)| ConversationTurn {
+                prompt: msg.prompt,
+                response: msg.response,
+                iteration: (i + 1) as u32,
+            })
+            .collect();
+        Self { slug, turns }
+    }
+
+    /// Check if the conversation history is empty.
+    pub fn is_empty(&self) -> bool {
+        self.turns.is_empty()
+    }
 }
 
 /// Collapse multiple consecutive blank lines into a single blank line.

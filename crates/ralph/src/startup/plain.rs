@@ -2,7 +2,8 @@
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{
-    AskSummary, IterationHeader, IterationSummary, PromptDisplay, RunSummary, StartupInfo, VERSION,
+    AskSummary, ConversationHistory, IterationHeader, IterationSummary, PromptDisplay, RunSummary,
+    StartupInfo, VERSION,
 };
 
 /// Display startup info without terminal formatting.
@@ -280,5 +281,53 @@ pub(super) fn display_ask_summary_plain(summary: &AskSummary) {
 
     println!();
     println!("Replay with: ralph replay {}", summary.slug);
+    println!();
+}
+
+/// Display conversation history without terminal formatting.
+pub(super) fn display_conversation_history_plain(history: &ConversationHistory) {
+    println!();
+    println!("=== Conversation History: {} ===", history.slug);
+    println!();
+
+    if history.is_empty() {
+        println!("No conversation history found.");
+        println!();
+        return;
+    }
+
+    for turn in &history.turns {
+        // User message header
+        println!("> User (Iteration {})", turn.iteration);
+        println!("{}", "-".repeat(60));
+        println!();
+
+        // Print user prompt
+        println!("{}", turn.prompt);
+
+        println!();
+
+        // Assistant message header
+        println!("< Assistant");
+        println!("{}", "-".repeat(60));
+        println!();
+
+        // Print assistant response
+        if turn.response.is_empty() {
+            println!("(No response recorded)");
+        } else {
+            println!("{}", turn.response);
+        }
+
+        println!();
+        println!("{}", "=".repeat(60));
+        println!();
+    }
+
+    println!(
+        "{} turn(s) in session '{}'",
+        history.turns.len(),
+        history.slug
+    );
     println!();
 }
