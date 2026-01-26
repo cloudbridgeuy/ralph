@@ -125,9 +125,7 @@ impl AttachedFile {
     /// Create an attached file with a known description based on file name.
     ///
     /// Uses standard descriptions for known context files:
-    /// - `design.md` → "Design document"
     /// - `prd.toml` → "Product requirements"
-    /// - `progress.txt` → "Progress notes"
     /// - Other files → "Attached file"
     pub fn new(path: PathBuf) -> Self {
         let description = Self::description_for_path(&path);
@@ -138,13 +136,10 @@ impl AttachedFile {
     fn description_for_path(path: &Path) -> &'static str {
         path.file_name()
             .and_then(|name| name.to_str())
-            .map(|name| match name {
-                "design.md" => "Design document",
+            .map_or("Attached file", |name| match name {
                 "prd.toml" => "Product requirements",
-                "progress.txt" => "Progress notes",
                 _ => "Attached file",
             })
-            .unwrap_or("Attached file")
     }
 }
 

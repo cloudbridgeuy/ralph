@@ -433,9 +433,9 @@ fn test_run_summary_clone() {
 // Tests for AttachedFile
 
 #[test]
-fn test_attached_file_design() {
+fn test_attached_file_design_md_not_special_cased() {
     let file = AttachedFile::new(PathBuf::from("/project/.local/designs/design.md"));
-    assert_eq!(file.description, "Design document");
+    assert_eq!(file.description, "Attached file");
 }
 
 #[test]
@@ -445,9 +445,9 @@ fn test_attached_file_prd() {
 }
 
 #[test]
-fn test_attached_file_progress() {
+fn test_attached_file_progress_txt_not_special_cased() {
     let file = AttachedFile::new(PathBuf::from("/project/.local/plans/progress.txt"));
-    assert_eq!(file.description, "Progress notes");
+    assert_eq!(file.description, "Attached file");
 }
 
 #[test]
