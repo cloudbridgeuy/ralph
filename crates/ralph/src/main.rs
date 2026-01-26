@@ -36,6 +36,7 @@ pub mod summarize;
 
 use clap::Parser;
 use cli::{AskArgs, Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
+use iteration::{extract_conversation_messages, load_session_iterations};
 use prompt::{prompt_on_failure, FailureAction};
 use ralph_core::context::{defaults, substitute_template_placeholders, ContextPaths};
 use ralph_core::session::SessionOutcome;
@@ -489,6 +490,8 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
 /// Sends a single-shot prompt to the LLM and displays the response.
 /// Creates a session for persistence, allowing replay with `ralph replay`.
 /// When --continue is used, continues an existing session instead.
+/// When --clone is used, creates a new session with history from an existing one.
+/// When --history is used, displays the conversation history for the session.
 fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
     if let Err(e) = signal::init() {
@@ -498,8 +501,29 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Get current working directory as project path
     let project_path = std::env::current_dir()?;
 
-    // Determine continuation info if --continue flag is set
-    let continuation = if args.continue_session {
+    // Handle --history flag: requires --session or --continue
+    if args.history {
+        return execute_ask_with_history(&args, &project_path);
+    }
+
+    // Validate --clone requires --session or --continue to specify source
+    if args.clone_session && args.session.is_none() && !args.continue_session {
+        return Err(
+            "--clone requires --session or --continue to specify which session to clone from"
+                .into(),
+        );
+    }
+
+    // Determine clone info if --clone flag is set
+    let clone_info = if args.clone_session {
+        Some(resolve_clone_source(&args.session, &project_path)?)
+    } else {
+        None
+    };
+
+    // Determine continuation info if --continue flag is set (and not cloning)
+    // Clone mode always creates a new session, so it's mutually exclusive with continuation
+    let continuation = if args.continue_session && !args.clone_session {
         Some(resolve_continuation(&args.session, &project_path)?)
     } else {
         None
@@ -527,18 +551,21 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Build ask config - validation happens in ask::ask()
+    // When cloning, we don't pass a user slug since the new session gets auto-generated
     let config = ask::AskConfig {
         prompt,
         timeout_secs: args.timeout,
         theme_config,
         verbose_tools,
         project_path,
-        slug: if args.continue_session {
-            None // Don't pass slug when continuing (it's in continuation info)
+        slug: if args.continue_session || args.clone_session {
+            None // Don't pass slug when continuing or cloning (handled separately)
         } else {
             args.session
         },
         continuation,
+        clone: clone_info,
+        permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
     };
 
     // Execute the ask command
@@ -572,11 +599,34 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Resolve session continuation info based on --continue flag and optional --session.
+/// Find a session entry by name or get the most recent for the project.
+///
+/// This is a shared helper for both continuation and clone operations.
 ///
 /// # Logic
-/// - If `session_name` is Some: find that specific session and continue it
+/// - If `session_name` is Some: find that specific session
 /// - If `session_name` is None: find the most recent session for the project
+///
+/// # Errors
+/// - Session not found (by name or no sessions for project)
+fn find_session_entry(
+    session_name: &Option<String>,
+    project_path: &Path,
+) -> Result<ralph_core::session::SessionEntry, Box<dyn std::error::Error>> {
+    if let Some(name) = session_name {
+        Ok(session::find_session_by_slug(name)?)
+    } else {
+        session::find_most_recent_session(project_path)?.ok_or_else(|| {
+            format!(
+                "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
+                project_path.display()
+            )
+            .into()
+        })
+    }
+}
+
+/// Resolve session continuation info based on --continue flag and optional --session.
 ///
 /// # Errors
 /// - Session not found (by name or no sessions for project)
@@ -587,11 +637,56 @@ fn resolve_continuation(
 ) -> Result<ask::ContinuationInfo, Box<dyn std::error::Error>> {
     use crate::iteration::count_iterations;
 
-    let entry = if let Some(name) = session_name {
-        // Continue specific named session
+    let entry = find_session_entry(session_name, project_path)?;
+    let session_dir = session::session_dir(&entry.slug);
+    let existing_count = count_iterations(&session_dir)?;
+
+    Ok(ask::ContinuationInfo {
+        slug: entry.slug,
+        next_sequence: existing_count + 1,
+        session_dir,
+    })
+}
+
+/// Resolve the source session for cloning.
+///
+/// Unlike continuation, cloning creates a NEW session with history from the source.
+///
+/// # Errors
+/// - Session not found (by name or no sessions for project)
+fn resolve_clone_source(
+    session_name: &Option<String>,
+    project_path: &Path,
+) -> Result<ask::CloneInfo, Box<dyn std::error::Error>> {
+    let entry = find_session_entry(session_name, project_path)?;
+    let source_session_dir = session::session_dir(&entry.slug);
+
+    Ok(ask::CloneInfo {
+        source_slug: entry.slug,
+        source_session_dir,
+    })
+}
+
+/// Execute ask command with --history flag.
+///
+/// Displays the conversation history for a session. If a prompt is also provided
+/// with --continue, displays history then proceeds with the new prompt.
+fn execute_ask_with_history(
+    args: &AskArgs,
+    project_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // --history requires --session or --continue to specify which session
+    if args.session.is_none() && !args.continue_session {
+        return Err(
+            "--history requires --session or --continue to specify which session to display".into(),
+        );
+    }
+
+    // Resolve the session to display history for
+    let entry = if let Some(ref name) = args.session {
         session::find_session_by_slug(name)?
     } else {
-        // Continue most recent session for this project
+        // --continue without --session: find most recent session
         session::find_most_recent_session(project_path)?.ok_or_else(|| {
             format!(
                 "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
@@ -600,16 +695,109 @@ fn resolve_continuation(
         })?
     };
 
-    // Get session directory and count existing iterations
+    // Load iteration logs and extract conversation history
     let session_dir = session::session_dir(&entry.slug);
-    let existing_count = count_iterations(&session_dir)?;
-    let next_sequence = existing_count + 1;
+    let logs = load_session_iterations(&session_dir)?;
+    let messages = extract_conversation_messages(&logs);
 
-    Ok(ask::ContinuationInfo {
-        slug: entry.slug,
-        next_sequence,
-        session_dir,
-    })
+    // Build and display conversation history
+    let history = startup::ConversationHistory::from_messages(entry.slug.clone(), messages);
+    startup::display_conversation_history(&history);
+
+    // If a prompt was also provided with --continue, proceed with asking
+    if args.continue_session && args.prompt.is_some() {
+        let mut modified_args = args.clone();
+        modified_args.history = false;
+        return execute_ask_core(modified_args);
+    }
+
+    Ok(())
+}
+
+/// Core ask execution logic (extracted for reuse with --history flag).
+fn execute_ask_core(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
+    // Get current working directory as project path
+    let project_path = std::env::current_dir()?;
+
+    // Determine clone info if --clone flag is set
+    let clone_info = if args.clone_session {
+        Some(resolve_clone_source(&args.session, &project_path)?)
+    } else {
+        None
+    };
+
+    // Determine continuation info if --continue flag is set (and not cloning)
+    let continuation = if args.continue_session && !args.clone_session {
+        Some(resolve_continuation(&args.session, &project_path)?)
+    } else {
+        None
+    };
+
+    // Build theme configuration from config file, env vars, and CLI args
+    let theme_config = highlight::ThemeConfig::from_config_and_env()
+        .merge_cli(args.theme.as_deref(), args.no_background);
+
+    // Parse verbose tools config from CLI args
+    let verbose_tools = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
+    for warning in verbose_tools.warnings() {
+        eprintln!("Warning: {}", warning);
+    }
+
+    // Resolve prompt from argument or stdin
+    let prompt = resolve_ask_prompt(args.prompt.as_deref())?;
+
+    // Display prompt if enabled
+    if !args.no_prompt && !prompt.is_empty() {
+        let prompt_display = startup::PromptDisplay::from_prompt(&prompt);
+        startup::display_prompt(&prompt_display);
+    }
+
+    // Build ask config
+    let config = ask::AskConfig {
+        prompt,
+        timeout_secs: args.timeout,
+        theme_config,
+        verbose_tools,
+        project_path,
+        slug: if args.continue_session || args.clone_session {
+            None
+        } else {
+            args.session
+        },
+        continuation,
+        clone: clone_info,
+        permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
+    };
+
+    // Execute the ask command
+    let result = ask::ask(config)?;
+
+    // Finalize session based on exit code
+    let outcome = match result.exit_code {
+        0 => SessionOutcome::Completed,
+        _ => SessionOutcome::Failed,
+    };
+    if let Err(e) = session::finalize_session(&result.slug, result.iteration_count, outcome) {
+        eprintln!("Warning: Failed to finalize session: {}", e);
+    }
+
+    // Display summary
+    let summary = startup::AskSummary {
+        slug: result.slug.clone(),
+        success: result.exit_code == 0,
+        cost_usd: result.cost_usd,
+        duration_ms: result.duration_ms,
+        input_tokens: result.input_tokens,
+        output_tokens: result.output_tokens,
+    };
+    startup::display_ask_summary(&summary);
+
+    // Return error for non-zero exit
+    if result.exit_code != 0 {
+        return Err(format!("LLM subprocess exited with code {}", result.exit_code).into());
+    }
+
+    Ok(())
 }
 
 /// Input source for prompt resolution.
@@ -792,170 +980,5 @@ fn build_summarize_config(args: &RunArgs) -> Result<SummarizeConfig, Box<dyn std
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_substitute_prompt_simple() {
-        let result = substitute_prompt_in_command("echo {prompt}", "hello");
-        assert_eq!(result, "echo 'hello'");
-    }
-
-    #[test]
-    fn test_substitute_prompt_with_quotes() {
-        let result = substitute_prompt_in_command("echo {prompt}", "it's a test");
-        assert_eq!(result, "echo 'it'\"'\"'s a test'");
-    }
-
-    #[test]
-    fn test_substitute_prompt_claude_command() {
-        let result = substitute_prompt_in_command(
-            "claude --permission-mode acceptEdits --output-format stream-json -p {prompt}",
-            "test prompt",
-        );
-        assert_eq!(
-            result,
-            "claude --permission-mode acceptEdits --output-format stream-json -p 'test prompt'"
-        );
-    }
-
-    #[test]
-    fn test_substitute_prompt_custom_command_structure() {
-        // Custom commands can use any structure
-        let result = substitute_prompt_in_command("my-llm --input {prompt} --verbose", "hello");
-        assert_eq!(result, "my-llm --input 'hello' --verbose");
-    }
-
-    #[test]
-    fn test_substitute_prompt_custom_command_with_env_vars() {
-        // Custom command with environment variables and complex structure
-        let result =
-            substitute_prompt_in_command("OPENAI_KEY=$KEY openai-cli chat {prompt}", "query");
-        assert_eq!(result, "OPENAI_KEY=$KEY openai-cli chat 'query'");
-    }
-
-    #[test]
-    fn test_substitute_prompt_empty_prompt() {
-        let result = substitute_prompt_in_command("echo {prompt}", "");
-        assert_eq!(result, "echo ''");
-    }
-
-    #[test]
-    fn test_substitute_prompt_multiline() {
-        let result = substitute_prompt_in_command("echo {prompt}", "line1\nline2");
-        assert_eq!(result, "echo 'line1\nline2'");
-    }
-
-    #[test]
-    fn test_substitute_prompt_special_shell_chars() {
-        // Shell special characters should be safely escaped within single quotes
-        let result = substitute_prompt_in_command("echo {prompt}", "test $VAR `cmd` $(cmd)");
-        assert_eq!(result, "echo 'test $VAR `cmd` $(cmd)'");
-    }
-
-    #[test]
-    fn test_substitute_prompt_no_placeholder() {
-        // Command without {prompt} placeholder returns unchanged
-        let result = substitute_prompt_in_command("echo hello", "ignored");
-        assert_eq!(result, "echo hello");
-    }
-
-    #[test]
-    fn test_default_command_template_substitution() {
-        // Verify the default command template works correctly
-        let result = substitute_prompt_in_command(defaults::COMMAND_TEMPLATE, "my prompt");
-        assert!(result.starts_with("claude "));
-        assert!(result.contains("--output-format stream-json"));
-        assert!(result.contains("'my prompt'"));
-    }
-
-    #[test]
-    fn test_failure_recovery_context_creation() {
-        let ctx = FailureRecoveryContext {
-            summary: "Test failure".to_string(),
-            session_slug: "test-session".to_string(),
-            iterations_completed: 3,
-            total_iterations_completed: 5,
-        };
-
-        assert_eq!(ctx.summary, "Test failure");
-        assert_eq!(ctx.session_slug, "test-session");
-        assert_eq!(ctx.iterations_completed, 3);
-        assert_eq!(ctx.total_iterations_completed, 5);
-    }
-
-    #[test]
-    fn test_classify_prompt_source_stdin() {
-        assert_eq!(classify_prompt_source(Some("-")), PromptSource::Stdin);
-    }
-
-    #[test]
-    fn test_classify_prompt_source_none() {
-        assert_eq!(classify_prompt_source(None), PromptSource::None);
-    }
-
-    #[test]
-    fn test_classify_prompt_source_inline() {
-        // Non-existent path should be treated as inline
-        assert_eq!(
-            classify_prompt_source(Some("inline content")),
-            PromptSource::Inline("inline content")
-        );
-    }
-
-    #[test]
-    fn test_classify_prompt_source_file() {
-        // Use Cargo.toml as a file that definitely exists
-        let source = classify_prompt_source(Some("Cargo.toml"));
-        assert!(matches!(source, PromptSource::File(_)));
-    }
-
-    // Tests for resolve_ask_prompt
-
-    #[test]
-    fn test_resolve_ask_prompt_inline() {
-        // Inline prompt should work
-        let result = resolve_ask_prompt(Some("hello world"));
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "hello world");
-    }
-
-    #[test]
-    fn test_resolve_ask_prompt_inline_with_whitespace() {
-        // Whitespace is preserved in result but validated as non-empty
-        let result = resolve_ask_prompt(Some("  hello world  "));
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "  hello world  ");
-    }
-
-    #[test]
-    fn test_resolve_ask_prompt_empty_string_error() {
-        // Empty string should error
-        let result = resolve_ask_prompt(Some(""));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("cannot be empty"));
-    }
-
-    #[test]
-    fn test_resolve_ask_prompt_whitespace_only_error() {
-        // Whitespace-only should error
-        let result = resolve_ask_prompt(Some("   \n\t  "));
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("cannot be empty"));
-    }
-
-    #[test]
-    fn test_resolve_ask_prompt_from_file() {
-        // Read from existing file (Cargo.toml has content)
-        let result = resolve_ask_prompt(Some("Cargo.toml"));
-        assert!(result.is_ok());
-        let content = result.unwrap();
-        assert!(content.contains("[package]")); // Cargo.toml starts with [package]
-    }
-
-    // Note: Testing stdin behavior (None argument, "-" argument) is difficult in unit tests
-    // because stdin detection with is_terminal() returns false in test runners, making
-    // the behavior unpredictable. Integration tests with PTY would be needed.
-}
+#[path = "main_tests.rs"]
+mod tests;
