@@ -5,7 +5,7 @@
 
 use std::fs;
 
-use crate::diff_highlight::highlight_with_basic_colors;
+use crate::render::{render_code_block, render_diff_block, RenderContext};
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
@@ -259,11 +259,14 @@ impl StreamProcessor {
     /// For prose, markdown formatting is applied using termimad when terminal
     /// output is enabled. This renders headers, bold, italic, inline code,
     /// and lists with appropriate ANSI styling.
+    ///
+    /// Code and diff block rendering is delegated to shared functions in
+    /// the render module to ensure consistency with replay rendering.
     pub(super) fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
         match &chunk.chunk_type {
             ChunkType::Prose => {
                 if self.highlighting_enabled {
-                    // Render markdown formatting with termimad
+                    // Render markdown formatting with termimad (line-based for streaming)
                     self.markdown_renderer.render_line(&chunk.content)
                 } else {
                     // Plain text for non-terminal output
@@ -271,41 +274,21 @@ impl StreamProcessor {
                 }
             }
             ChunkType::Code { language } => {
-                // Format the opening fence with language hint
-                let opening_fence = match language {
-                    Some(lang) if !lang.is_empty() => format!("```{}", lang),
-                    _ => "```".to_string(),
-                };
-
-                // Highlight the code content (or leave plain if highlighting disabled)
-                let highlighted_content = if self.highlighting_enabled {
-                    let lang_ref = language.as_deref();
-                    self.code_highlighter.highlight(&chunk.content, lang_ref)
-                } else {
-                    chunk.content.clone()
-                };
-
-                // Build the full block with fences
-                format!("{}\n{}\n```", opening_fence, highlighted_content)
+                // Delegate to shared render function
+                let ctx = self.create_render_context();
+                render_code_block(&ctx, &chunk.content, language.as_deref())
             }
             ChunkType::Diff => {
-                // Format with visible diff fence
-                let opening_fence = "```diff";
-                let closing_fence = "```";
-
-                // Highlight the diff content
-                let highlighted_content = if self.highlighting_enabled {
-                    highlight_with_basic_colors(&chunk.content)
-                } else {
-                    chunk.content.clone()
-                };
-
-                format!(
-                    "{}\n{}\n{}",
-                    opening_fence, highlighted_content, closing_fence
-                )
+                // Delegate to shared render function
+                let ctx = self.create_render_context();
+                render_diff_block(&ctx, &chunk.content)
             }
         }
+    }
+
+    /// Create a render context for use with shared rendering functions.
+    fn create_render_context(&self) -> RenderContext<'_> {
+        RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
     }
 
     /// Flush any pending chunks from the buffer.

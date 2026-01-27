@@ -38,19 +38,24 @@ pub struct RenderContext<'a> {
 }
 
 impl<'a> RenderContext<'a> {
-    /// Create a context for terminal rendering (with ANSI codes).
-    pub fn terminal(highlighter: &'a Highlighter) -> Self {
+    /// Create a context with explicit terminal flag.
+    ///
+    /// Use this when you have a boolean flag for terminal mode.
+    /// For convenience, `terminal()` and `plain()` methods are also available.
+    pub fn new(highlighter: &'a Highlighter, terminal: bool) -> Self {
         Self {
             highlighter,
-            terminal: true,
+            terminal,
         }
+    }
+
+    /// Create a context for terminal rendering (with ANSI codes).
+    pub fn terminal(highlighter: &'a Highlighter) -> Self {
+        Self::new(highlighter, true)
     }
 
     /// Create a context for plain text rendering (no ANSI codes).
     pub fn plain(highlighter: &'a Highlighter) -> Self {
-        Self {
-            highlighter,
-            terminal: false,
-        }
+        Self::new(highlighter, false)
     }
 }

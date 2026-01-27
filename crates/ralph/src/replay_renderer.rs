@@ -12,7 +12,6 @@
 //! - Tool results use shared render_*_result functions
 //! - Separators emit a single newline
 
-use crate::diff_highlight::highlight_with_basic_colors;
 use crate::highlight::Highlighter;
 use crate::render::{
     // Shared invocation renderers
@@ -31,6 +30,7 @@ use crate::render::{
     render_notebook_edit,
     render_read_invocation,
     render_read_result,
+    render_text_block,
     render_todowrite_invocation,
     render_todowrite_result,
     render_write_new_file,
@@ -42,10 +42,8 @@ use crate::render::{
     TodoDisplayItem,
 };
 use crate::stream_processor::{
-    OutputBlock, TextBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock,
-    ToolResultVariant,
+    OutputBlock, ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
-use ralph_core::chunk::ChunkType;
 use termimad::MadSkin;
 
 /// Configuration for replay rendering.
@@ -70,11 +68,7 @@ impl ReplayRenderer {
 
     /// Create a RenderContext for use with shared rendering functions.
     fn render_context(&self) -> RenderContext<'_> {
-        if self.highlighting_enabled {
-            RenderContext::terminal(&self.code_highlighter)
-        } else {
-            RenderContext::plain(&self.code_highlighter)
-        }
+        RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
     }
 
     /// Render an output block to a string.
@@ -88,42 +82,21 @@ impl ReplayRenderer {
     }
 
     /// Render a text block (prose, code, or diff).
-    fn render_text(&self, block: &TextBlock) -> String {
+    fn render_text(&self, block: &crate::stream_processor::TextBlock) -> String {
+        let ctx = self.render_context();
+        let markdown_skin = if self.highlighting_enabled {
+            Some(&self.markdown_skin)
+        } else {
+            None
+        };
+        let rendered = render_text_block(&ctx, &block.chunk, markdown_skin);
+
+        // Add trailing newline for code and diff blocks to match original behavior
         match &block.chunk.chunk_type {
-            ChunkType::Prose => {
-                if self.highlighting_enabled {
-                    self.markdown_skin
-                        .term_text(&block.chunk.content)
-                        .to_string()
-                } else {
-                    block.chunk.content.clone()
-                }
+            ralph_core::chunk::ChunkType::Code { .. } | ralph_core::chunk::ChunkType::Diff => {
+                format!("{}\n", rendered)
             }
-            ChunkType::Code { language } => {
-                let opening_fence = match language {
-                    Some(lang) if !lang.is_empty() => format!("```{}", lang),
-                    _ => "```".to_string(),
-                };
-
-                let highlighted_content = if self.highlighting_enabled {
-                    let lang_ref = language.as_deref();
-                    self.code_highlighter
-                        .highlight(&block.chunk.content, lang_ref)
-                } else {
-                    block.chunk.content.clone()
-                };
-
-                format!("{}\n{}\n```\n", opening_fence, highlighted_content)
-            }
-            ChunkType::Diff => {
-                let highlighted_content = if self.highlighting_enabled {
-                    highlight_with_basic_colors(&block.chunk.content)
-                } else {
-                    block.chunk.content.clone()
-                };
-
-                format!("```diff\n{}\n```\n", highlighted_content)
-            }
+            ralph_core::chunk::ChunkType::Prose => rendered,
         }
     }
 

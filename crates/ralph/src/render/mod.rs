@@ -6,6 +6,7 @@
 //!
 //! # Module Structure
 //!
+//! - `text`: Shared text block rendering (prose, code, diff)
 //! - `utils`: Pure utility functions for line normalization, file grouping, etc.
 //! - `tool_renderers`: Shared tool rendering functions for invocations and results
 //!
@@ -16,6 +17,7 @@
 //! 3. **Single Source of Truth**: No duplication between rendering paths
 //! 4. **Data-Centric**: Renderers accept structured data, not processor references
 
+pub mod text;
 pub mod tool_renderers;
 pub mod utils;
 
@@ -24,6 +26,9 @@ pub use utils::{
     extract_language_from_path, extract_line_number, group_files_by_directory,
     highlight_grep_match, normalize_cat_n_format,
 };
+
+// Re-export text rendering
+pub use text::{render_code_block, render_diff_block, render_text_block};
 
 // Re-export tool renderer components
 pub use tool_renderers::{

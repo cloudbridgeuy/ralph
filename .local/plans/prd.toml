@@ -251,14 +251,15 @@ acceptance = [
 
 [[stories]]
 category = "runtime-control"
-description = "Implement non-blocking keyboard input monitoring during subprocess execution"
+description = "Implement non-blocking keyboard input monitoring for ralph run only"
 steps = [
     "Create keyboard input module in crates/ralph/src/keyboard.rs",
     "Implement non-blocking stdin reading using raw terminal mode",
     "Define KeyEvent enum for recognized keys (s, S, p, etc.)",
-    "Integrate keyboard monitoring with subprocess execution",
+    "Integrate keyboard monitoring with run loop ONLY (not ask command)",
     "Ensure keyboard monitoring works alongside spinner display",
     "Handle terminal restoration on exit/panic",
+    "Verify ralph ask does NOT use keyboard monitoring",
     "Run cargo xtask lint to verify compilation"
 ]
 passes = true
@@ -266,7 +267,8 @@ acceptance = [
     "Keyboard input detected without blocking subprocess",
     "Works correctly with terminal spinner",
     "Terminal state properly restored on exit",
-    "No interference with piped/non-interactive mode"
+    "No interference with piped/non-interactive mode",
+    "ralph ask command has NO keyboard monitoring"
 ]
 
 [[stories]]
@@ -375,6 +377,8 @@ category = "documentation"
 description = "Create docs/context/runtime-control.md documenting keyboard controls"
 steps = [
     "Create docs/context/runtime-control.md",
+    "Document that runtime controls apply ONLY to 'ralph run', NOT to 'ralph ask'",
+    "Explain why: run has iteration loop, ask is single-shot",
     "Document 's' for soft stop: pause after current iteration completes",
     "Document 'S' for hard stop: interrupt immediately, can resume",
     "Document 'p' for play/resume from both stopped states",
@@ -386,8 +390,209 @@ steps = [
 passes = false
 acceptance = [
     "docs/context/runtime-control.md exists",
+    "Clearly states controls are for 'ralph run' only",
     "All keyboard controls documented with clear behavior descriptions",
     "State machine diagram or explanation included",
     "Difference between soft and hard stop resume clearly explained",
+    "CLAUDE.md links to this file"
+]
+
+# =============================================================================
+# Code Quality - High Priority
+# =============================================================================
+
+[[stories]]
+category = "refactor"
+description = "ASK-DEDUP: Extract shared logic from execute_ask() and execute_ask_core()"
+steps = [
+    "Review main.rs:524-829 for duplicated code between execute_ask() and execute_ask_core()",
+    "Identify shared logic: theme config, prompt resolution, session finalization",
+    "Extract theme config building into helper function",
+    "Extract prompt resolution and display into helper function",
+    "Extract session finalization and summary display into helper function",
+    "Update both execute_ask() and execute_ask_core() to use shared helpers",
+    "Consider if execute_ask_core() can be eliminated entirely",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = true
+acceptance = [
+    "No duplicated logic between execute_ask() and execute_ask_core()",
+    "Shared helpers are well-named and documented",
+    "Both functions produce identical behavior as before",
+    "Code is easier to maintain"
+]
+
+[[stories]]
+category = "refactor"
+description = "RENDER-SEPARATE: Extract shared text rendering logic from highlight_chunk() and ReplayRenderer"
+steps = [
+    "Review event_handler.rs:262-309 highlight_chunk() implementation",
+    "Review replay_renderer.rs:91-128 ReplayRenderer::render_text() implementation",
+    "Identify common text rendering logic between them",
+    "Create shared render module or function for text highlighting",
+    "Update both call sites to use shared implementation",
+    "Ensure replay and live rendering remain consistent",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = true
+acceptance = [
+    "Text rendering logic exists in single location",
+    "Both highlight_chunk() and ReplayRenderer use shared code",
+    "Rendering output is identical to before",
+    "No duplicated highlighting/formatting logic"
+]
+
+[[stories]]
+category = "refactor"
+description = "RUN-SPLIT: Split run() function (531 lines) into smaller focused functions"
+steps = [
+    "Review run/mod.rs:282-813 run() function",
+    "Extract process_iteration() for single iteration logic",
+    "Extract handle_completion_check() for completion condition evaluation",
+    "Extract write_and_accumulate_metrics() for metrics tracking",
+    "Extract handle_subprocess_result() for result processing",
+    "Keep run() as orchestrator calling extracted functions",
+    "Ensure each extracted function is under 100 lines",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "run() function reduced to orchestration logic only",
+    "Extracted functions are focused and well-named",
+    "Each function under 100 lines",
+    "No change in behavior",
+    "Easier to understand iteration flow"
+]
+
+# =============================================================================
+# Code Quality - Lower Priority
+# =============================================================================
+
+[[stories]]
+category = "refactor"
+description = "TOOL-ROUTING: Simplify tool result routing match guards in event_handler.rs"
+steps = [
+    "Review event_handler.rs:167-198 tool result routing code",
+    "Replace verbose match guards with cleaner pattern",
+    "Use invocation.as_ref().map(|i| i.name.as_str()) approach",
+    "Ensure all tool types are still handled correctly",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "Tool routing code is more readable",
+    "Match expression is cleaner without verbose guards",
+    "All tool types handled identically to before"
+]
+
+[[stories]]
+category = "refactor"
+description = "WARN-HELPER: Create centralized warn_if_err() helper for consistent warning messages"
+steps = [
+    "Audit codebase for warning message patterns",
+    "Identify inconsistent eprintln!(\"Warning: ...\") usages",
+    "Create warn_if_err() helper that logs warning if Result is Err",
+    "Create warn() helper for direct warning messages",
+    "Place helpers in appropriate shared module",
+    "Update existing warning sites to use helpers",
+    "Ensure consistent format: 'Warning: {context}: {error}'",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "warn_if_err() and warn() helpers exist",
+    "Warning messages follow consistent format",
+    "Existing warning sites updated to use helpers",
+    "No change in user-visible behavior"
+]
+
+# =============================================================================
+# Bug Fixes
+# =============================================================================
+
+[[stories]]
+category = "bugfix"
+description = "Fix raw terminal mode breaking stdout output and signal handling"
+steps = [
+    "Identify that keyboard.rs enable_raw_mode() corrupts subprocess stdout",
+    "Research alternative approaches for non-blocking keyboard input",
+    "Option 1: Use separate thread with cooked mode, only poll when subprocess idle",
+    "Option 2: Use signal-based approach (e.g., SIGUSR1) instead of keyboard",
+    "Option 3: Remove keyboard monitoring entirely, use only Ctrl+C with state machine",
+    "Implement chosen solution that doesn't interfere with subprocess output",
+    "Ensure SIGTERM/SIGINT handling works correctly",
+    "Test that tool output displays correctly",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "Subprocess stdout output displays correctly (no garbled text)",
+    "SIGTERM and SIGINT signals are handled properly",
+    "If keyboard controls retained: they work without breaking output",
+    "All existing tests pass"
+]
+
+# =============================================================================
+# Command Documentation
+# =============================================================================
+
+[[stories]]
+category = "documentation"
+description = "Create docs/context/ralph-run.md with comprehensive run command documentation"
+steps = [
+    "Create docs/context/ralph-run.md",
+    "Document purpose: PRD-driven iteration loop for automated development",
+    "Document all CLI flags with descriptions and defaults",
+    "Document the iteration loop flow: PRD check → invoke claude → write logs → git diff → completion check",
+    "Document session management: creation, iteration logs, finalization",
+    "Document completion conditions: all stories done, completion marker, max iterations",
+    "Document failure recovery: retry logic, user prompting, session continuation",
+    "Document signal handling: SIGINT/SIGTERM behavior",
+    "Document runtime controls: s/S/p/q keys (link to runtime-control.md)",
+    "Document output: startup info, iteration headers, summaries, spinner",
+    "Document configuration precedence: CLI > env > config file > defaults",
+    "Add examples for common usage patterns",
+    "Add link to this doc in CLAUDE.md Progressive Disclosure section"
+]
+passes = false
+acceptance = [
+    "docs/context/ralph-run.md exists and is comprehensive",
+    "All CLI flags documented with types, defaults, and examples",
+    "Iteration loop flow clearly explained with diagram or steps",
+    "Session lifecycle documented (creation → iterations → finalization)",
+    "Failure recovery behavior documented",
+    "Runtime keyboard controls referenced",
+    "Examples cover common use cases",
+    "CLAUDE.md links to this file"
+]
+
+[[stories]]
+category = "documentation"
+description = "Create docs/context/ralph-ask.md with comprehensive ask command documentation"
+steps = [
+    "Create docs/context/ralph-ask.md",
+    "Document purpose: single-shot prompts to claude with session persistence",
+    "Document all CLI flags with descriptions and defaults",
+    "Document prompt resolution: inline, file path, stdin, piped input",
+    "Document session management: new sessions, --continue, --clone-session",
+    "Document conversation history: --history flag, history format in logs",
+    "Document --session flag: naming new sessions vs specifying existing",
+    "Document theme configuration: --theme, --no-background, precedence",
+    "Document --permission-mode: modes available, security implications",
+    "Document --timeout and --verbose-tools flags",
+    "Document output: prompt display, streaming response, summary",
+    "Document interaction with ralph sessions/iterations/replay commands",
+    "Add examples for common usage patterns",
+    "Add link to this doc in CLAUDE.md Progressive Disclosure section"
+]
+passes = false
+acceptance = [
+    "docs/context/ralph-ask.md exists and is comprehensive",
+    "All CLI flags documented with types, defaults, and examples",
+    "Prompt resolution from various sources documented",
+    "Session continuation and cloning clearly explained",
+    "Conversation history feature documented",
+    "Permission modes documented with security notes",
+    "Examples cover: basic usage, continuation, history, piping",
     "CLAUDE.md links to this file"
 ]
