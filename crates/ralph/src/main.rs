@@ -148,6 +148,10 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Warning: Failed to initialize signal handler: {}", e);
     }
 
+    // Generate a claude session UUID for this ralph session
+    // This UUID is consistent across all iterations and used for resume capability
+    let claude_session_id = uuid::Uuid::new_v4().to_string();
+
     // Resolve context file paths
     let project_root = std::env::current_dir()?;
     let prd_path = resolve_prd_path(&project_root, args.prd.as_deref());
@@ -175,8 +179,8 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         &additional_prompt,
     )?;
 
-    // Substitute {prompt} in command template
-    let command = substitute_prompt_in_command(&command_template, &prompt);
+    // Substitute {prompt} and {session_id} in command template
+    let command = substitute_prompt_in_command(&command_template, &prompt, &claude_session_id);
 
     // Execute run loop with failure recovery prompting
     let exec_config = RunExecutionConfig {
@@ -934,13 +938,26 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
     Ok(prompt)
 }
 
-/// Substitute {prompt} placeholder in command template.
-fn substitute_prompt_in_command(template: &str, prompt: &str) -> String {
+/// Substitute `{prompt}` and `{session_id}` placeholders in command template.
+///
+/// # Placeholders
+///
+/// - `{prompt}` - Replaced with the shell-escaped prompt (wrapped in single quotes)
+/// - `{session_id}` - Replaced with the Claude session UUID for resume capability
+///
+/// # Arguments
+///
+/// * `template` - The command template containing placeholders
+/// * `prompt` - The prompt text to substitute
+/// * `session_id` - The UUID v4 session identifier for Claude CLI
+fn substitute_prompt_in_command(template: &str, prompt: &str, session_id: &str) -> String {
     // Shell-escape the prompt for safe inclusion
     // For now, just wrap in single quotes and escape internal single quotes
     let escaped = prompt.replace('\'', "'\"'\"'");
     let quoted_prompt = format!("'{}'", escaped);
-    template.replace("{prompt}", &quoted_prompt)
+    template
+        .replace("{prompt}", &quoted_prompt)
+        .replace("{session_id}", session_id)
 }
 
 #[cfg(test)]

@@ -175,6 +175,7 @@ pub enum AskError {
 ///
 /// Constructs the command with appropriate flags:
 /// - `--verbose` for detailed output
+/// - `--session-id` for session UUID (resume capability)
 /// - `--permission-mode` with configurable mode (default: bypassPermissions)
 /// - `--output-format stream-json` for stream processing
 /// - `-p` for the prompt
@@ -183,15 +184,16 @@ pub enum AskError {
 ///
 /// * `prompt` - The prompt to send to the LLM
 /// * `permission_mode` - The permission mode for tool execution
+/// * `session_id` - The session UUID for resume capability
 ///
 /// # Returns
 ///
 /// The full command string to execute.
-fn build_command(prompt: &str, permission_mode: &str) -> String {
+fn build_command(prompt: &str, permission_mode: &str, session_id: &str) -> String {
     let escaped = prompt.replace('\'', "'\"'\"'");
     format!(
-        "claude --verbose --permission-mode {} --output-format stream-json -p '{}'",
-        permission_mode, escaped
+        "claude --verbose --session-id {} --permission-mode {} --output-format stream-json -p '{}'",
+        session_id, permission_mode, escaped
     )
 }
 
@@ -365,6 +367,10 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
         return Err(AskError::NoPrompt);
     }
 
+    // Generate a claude session UUID for this ask invocation
+    // This UUID enables resume capability via claude's --session-id flag
+    let claude_session_id = uuid::Uuid::new_v4().to_string();
+
     // Capture start time for iteration log
     let started_at = Utc::now();
 
@@ -408,8 +414,8 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     // Build the full prompt with conversation history if continuing
     let full_prompt = format_conversation_history(&conversation_history, &config.prompt);
 
-    // Build the command with configured permission mode
-    let command = build_command(&full_prompt, &config.permission_mode);
+    // Build the command with configured permission mode and session UUID
+    let command = build_command(&full_prompt, &config.permission_mode, &claude_session_id);
 
     // Build subprocess config with session info for spinner display
     let subprocess_config = SpinnerSubprocessConfig {
@@ -497,65 +503,75 @@ mod tests {
 
     #[test]
     fn test_build_command_simple() {
-        let cmd = build_command("hello", "bypassPermissions");
+        let cmd = build_command("hello", "bypassPermissions", "test-uuid");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'hello'"
+            "claude --verbose --session-id test-uuid --permission-mode bypassPermissions --output-format stream-json -p 'hello'"
         );
     }
 
     #[test]
     fn test_build_command_with_quotes() {
-        let cmd = build_command("it's a test", "bypassPermissions");
+        let cmd = build_command("it's a test", "bypassPermissions", "test-uuid");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'it'\"'\"'s a test'"
+            "claude --verbose --session-id test-uuid --permission-mode bypassPermissions --output-format stream-json -p 'it'\"'\"'s a test'"
         );
     }
 
     #[test]
     fn test_build_command_multiline() {
-        let cmd = build_command("line1\nline2", "bypassPermissions");
+        let cmd = build_command("line1\nline2", "bypassPermissions", "test-uuid");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'line1\nline2'"
+            "claude --verbose --session-id test-uuid --permission-mode bypassPermissions --output-format stream-json -p 'line1\nline2'"
         );
     }
 
     #[test]
     fn test_build_command_shell_special_chars() {
-        let cmd = build_command("test $VAR `cmd`", "bypassPermissions");
+        let cmd = build_command("test $VAR `cmd`", "bypassPermissions", "test-uuid");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode bypassPermissions --output-format stream-json -p 'test $VAR `cmd`'"
+            "claude --verbose --session-id test-uuid --permission-mode bypassPermissions --output-format stream-json -p 'test $VAR `cmd`'"
         );
     }
 
     #[test]
     fn test_build_command_accept_edits_mode() {
-        let cmd = build_command("hello", "acceptEdits");
+        let cmd = build_command("hello", "acceptEdits", "test-uuid");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode acceptEdits --output-format stream-json -p 'hello'"
+            "claude --verbose --session-id test-uuid --permission-mode acceptEdits --output-format stream-json -p 'hello'"
         );
     }
 
     #[test]
     fn test_build_command_default_mode() {
-        let cmd = build_command("hello", "default");
+        let cmd = build_command("hello", "default", "test-uuid");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode default --output-format stream-json -p 'hello'"
+            "claude --verbose --session-id test-uuid --permission-mode default --output-format stream-json -p 'hello'"
         );
     }
 
     #[test]
     fn test_build_command_plan_mode() {
-        let cmd = build_command("hello", "plan");
+        let cmd = build_command("hello", "plan", "test-uuid");
         assert_eq!(
             cmd,
-            "claude --verbose --permission-mode plan --output-format stream-json -p 'hello'"
+            "claude --verbose --session-id test-uuid --permission-mode plan --output-format stream-json -p 'hello'"
         );
+    }
+
+    #[test]
+    fn test_build_command_with_uuid() {
+        let cmd = build_command(
+            "prompt",
+            "bypassPermissions",
+            "550e8400-e29b-41d4-a716-446655440000",
+        );
+        assert!(cmd.contains("--session-id 550e8400-e29b-41d4-a716-446655440000"));
     }
 
     #[test]

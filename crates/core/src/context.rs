@@ -14,15 +14,21 @@ pub mod defaults {
     /// Default command template for invoking the LLM.
     ///
     /// Uses Claude CLI with:
+    /// - `--session-id {session_id}`: Session UUID for resume capability
     /// - `--permission-mode acceptEdits`: Auto-accept file edits
     /// - `--output-format stream-json`: JSON streaming output for metadata extraction
     /// - `-p {prompt}`: Prompt placeholder to be substituted
+    ///
+    /// # Placeholders
+    ///
+    /// - `{session_id}` - A UUID v4 generated per ralph run/ask session for resume capability
+    /// - `{prompt}` - The full prompt text (shell-escaped and quoted)
     ///
     /// **Important**: The `--output-format stream-json` flag is required for ralph to extract
     /// session metadata (model, costs, usage) and tool interactions from the output.
     /// Custom commands can override this format, but metadata extraction will be unavailable.
     pub const COMMAND_TEMPLATE: &str =
-        "claude --verbose --permission-mode acceptEdits --output-format stream-json -p {prompt}";
+        "claude --verbose --session-id {session_id} --permission-mode acceptEdits --output-format stream-json -p {prompt}";
 
     /// Default completion marker string.
     ///
@@ -203,6 +209,11 @@ mod tests {
     #[test]
     fn test_default_command_template_uses_claude() {
         assert!(defaults::COMMAND_TEMPLATE.starts_with("claude "));
+    }
+
+    #[test]
+    fn test_default_command_template_contains_session_id_placeholder() {
+        assert!(defaults::COMMAND_TEMPLATE.contains("--session-id {session_id}"));
     }
 
     #[test]

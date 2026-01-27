@@ -81,7 +81,7 @@ steps = [
     "Update any tests that reference these flags",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "All progress and summarization CLI flags removed",
     "No references to progress file path in CLI layer",
@@ -100,7 +100,7 @@ steps = [
     "Remove any re-exports of summarize types",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "summarize.rs file deleted",
     "No summarization code remains in codebase",
@@ -120,7 +120,7 @@ steps = [
     "Update or remove determine_files_to_touch function in core",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "init.rs only verifies PRD file exists",
     "No auto-creation of design or progress files",
@@ -139,7 +139,7 @@ steps = [
     "Update terminal and plain display functions",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "StartupInfo no longer contains design or progress paths",
     "Startup display only shows PRD file",
@@ -159,7 +159,7 @@ steps = [
     "Update iteration loop to not reference design/progress",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "RunConfig uses prd_path instead of context_paths",
     "No design, progress, or summarize fields in RunConfig",
@@ -178,7 +178,7 @@ steps = [
     "Add examples of common customizations",
     "Add link to this doc in CLAUDE.md Progressive Disclosure section"
 ]
-passes = false
+passes = true
 acceptance = [
     "docs/context/prompt-template.md exists and is comprehensive",
     "All current placeholders documented with examples",
@@ -198,7 +198,7 @@ steps = [
     "Document when and how to update documentation",
     "Add link to this doc in CLAUDE.md Progressive Disclosure section"
 ]
-passes = false
+passes = true
 acceptance = [
     "docs/context/git-workflow.md exists",
     "Semantic commit format documented with examples",
@@ -219,9 +219,175 @@ steps = [
     "Document that git history replaces progress notes",
     "Document that Progressive Disclosure replaces design.md"
 ]
-passes = false
+passes = true
 acceptance = [
     "No references to design.md or progress.txt in CLAUDE.md",
     "Progressive Disclosure section is current and complete",
     "New workflow clearly documented"
+]
+
+# =============================================================================
+# Runtime Control Features
+# =============================================================================
+
+[[stories]]
+category = "runtime-control"
+description = "Add claude session UUID tracking for subprocess invocations"
+steps = [
+    "Generate UUID v4 for each ralph session",
+    "Pass --session-id <uuid> to claude subprocess in command template",
+    "Store the claude session UUID in ralph's session metadata",
+    "Update iteration logs to include the claude session UUID",
+    "Ensure UUID is consistent across all iterations in a session",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = true
+acceptance = [
+    "Ralph generates a UUID for claude sessions",
+    "--session-id flag passed to claude subprocess",
+    "UUID stored in ralph session metadata for later retrieval",
+    "Same UUID used for all iterations within a ralph session"
+]
+
+[[stories]]
+category = "runtime-control"
+description = "Implement non-blocking keyboard input monitoring during subprocess execution"
+steps = [
+    "Create keyboard input module in crates/ralph/src/keyboard.rs",
+    "Implement non-blocking stdin reading using raw terminal mode",
+    "Define KeyEvent enum for recognized keys (s, S, p, etc.)",
+    "Integrate keyboard monitoring with subprocess execution",
+    "Ensure keyboard monitoring works alongside spinner display",
+    "Handle terminal restoration on exit/panic",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "Keyboard input detected without blocking subprocess",
+    "Works correctly with terminal spinner",
+    "Terminal state properly restored on exit",
+    "No interference with piped/non-interactive mode"
+]
+
+[[stories]]
+category = "runtime-control"
+description = "Implement soft stop with 's' key to pause after current iteration completes"
+steps = [
+    "Add SoftStopRequested and SoftStopped states to run loop state machine",
+    "On 's' keypress during execution: set soft stop flag",
+    "Display visual indicator that soft stop is pending",
+    "Let current iteration complete fully including commit",
+    "Enter SoftStopped state after iteration completes",
+    "Display message: iteration complete, press 'p' to continue or 'q' to quit",
+    "Wait for user input ('p' to resume, 'q' to quit)",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "'s' key triggers soft stop during execution",
+    "Current iteration completes fully before pausing",
+    "User sees visual feedback that soft stop is pending",
+    "After iteration: user can press 'p' to continue or 'q' to quit",
+    "Session NOT finalized until user quits"
+]
+
+[[stories]]
+category = "runtime-control"
+description = "Implement hard stop with 'S' key to pause claude process for later resume"
+steps = [
+    "Add HardStopped state to run loop state machine",
+    "On 'S' keypress: send SIGTERM to claude subprocess",
+    "Save current state: claude session UUID, iteration number, ralph session slug",
+    "Display message indicating session can be resumed with 'p'",
+    "Enter paused state waiting for 'p' or 'q' to quit",
+    "Persist paused state to disk for crash recovery",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "'S' key terminates claude subprocess immediately",
+    "Claude session UUID preserved for resume",
+    "User informed they can press 'p' to resume",
+    "Paused state persisted to allow resume after ralph restart"
+]
+
+[[stories]]
+category = "runtime-control"
+description = "Implement resume with 'p' key from both soft-stopped and hard-stopped states"
+steps = [
+    "On 'p' keypress from SoftStopped state: start next iteration normally",
+    "On 'p' keypress from HardStopped state: resume interrupted iteration",
+    "For hard stop resume: build claude command with --session-id <saved-uuid>",
+    "For hard stop resume: add continuation prompt 'Continue working from where you left off'",
+    "Clear stopped state and return to Running on resume",
+    "Handle case where claude session expired or unavailable (hard stop only)",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "'p' from soft-stopped starts next iteration fresh",
+    "'p' from hard-stopped resumes with same --session-id UUID",
+    "Hard stop resume includes continuation prompt",
+    "Iteration numbering continues correctly in both cases",
+    "Error handling for expired/unavailable sessions (hard stop)"
+]
+
+[[stories]]
+category = "spinner-enhancement"
+description = "Add key binding hints to spinner status line during execution"
+steps = [
+    "Review current spinner line format in crates/ralph/src/spinner.rs",
+    "Add key binding section to spinner line: [s: pause | S: stop]",
+    "Position key hints after existing info (session, iteration, elapsed time)",
+    "When soft-stop pending: update to show [finishing...]",
+    "Use dim/muted color for key hints to not distract from main info",
+    "Ensure spinner line doesn't exceed terminal width gracefully",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "Spinner line shows key bindings during normal execution",
+    "Key hints visually distinct (dimmed) from main status info",
+    "Hints update to reflect pending soft-stop state",
+    "Line handles narrow terminals gracefully"
+]
+
+[[stories]]
+category = "runtime-control"
+description = "Update state display for paused and stopped states (not spinner)"
+steps = [
+    "When entering soft-stopped state: clear spinner and show status line",
+    "Soft-stopped display: 'Paused after iteration N. Press p to continue, q to quit'",
+    "When entering hard-stopped state: clear spinner and show status line",
+    "Hard-stopped display: 'Interrupted. Press p to resume, q to quit'",
+    "Ensure display works in both terminal and plain modes",
+    "Run cargo xtask lint to verify compilation"
+]
+passes = false
+acceptance = [
+    "Stopped states show clear status message",
+    "Available key commands shown for each stopped state",
+    "Graceful fallback for non-interactive mode"
+]
+
+[[stories]]
+category = "documentation"
+description = "Create docs/context/runtime-control.md documenting keyboard controls"
+steps = [
+    "Create docs/context/runtime-control.md",
+    "Document 's' for soft stop: pause after current iteration completes",
+    "Document 'S' for hard stop: interrupt immediately, can resume",
+    "Document 'p' for play/resume from both stopped states",
+    "Document 'q' for quit from any stopped state",
+    "Document state machine: Running → Soft-stopping → Soft-stopped, Running → Hard-stopped",
+    "Explain difference: soft-stopped starts fresh iteration, hard-stopped resumes with --session-id",
+    "Add link to this doc in CLAUDE.md Progressive Disclosure section"
+]
+passes = false
+acceptance = [
+    "docs/context/runtime-control.md exists",
+    "All keyboard controls documented with clear behavior descriptions",
+    "State machine diagram or explanation included",
+    "Difference between soft and hard stop resume clearly explained",
+    "CLAUDE.md links to this file"
 ]
