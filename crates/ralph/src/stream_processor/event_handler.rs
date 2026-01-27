@@ -139,62 +139,45 @@ impl StreamProcessor {
                 // Display tool results if enabled
                 if self.show_tool_invocations {
                     for result in &user_event.message.content {
-                        // Look up the original invocation to get the tool name
-                        let invocation = result
-                            .tool_use_id
-                            .as_ref()
-                            .and_then(|id| self.pending_invocations.remove(id));
+                        // Extract tool_use_id once for looking up pending data
+                        let tool_use_id = result.tool_use_id.as_ref();
+                        let invocation =
+                            tool_use_id.and_then(|id| self.pending_invocations.remove(id));
+                        let edit_snapshot =
+                            tool_use_id.and_then(|id| self.pending_edit_snapshots.remove(id));
+                        let write_snapshot =
+                            tool_use_id.and_then(|id| self.pending_write_snapshots.remove(id));
+                        let notebook_snapshot =
+                            tool_use_id.and_then(|id| self.pending_notebook_snapshots.remove(id));
 
-                        // Remove any pending Edit snapshot (cleanup)
-                        let edit_snapshot = result
-                            .tool_use_id
-                            .as_ref()
-                            .and_then(|id| self.pending_edit_snapshots.remove(id));
-
-                        // Remove any pending Write snapshot (cleanup)
-                        let write_snapshot = result
-                            .tool_use_id
-                            .as_ref()
-                            .and_then(|id| self.pending_write_snapshots.remove(id));
-
-                        // Remove any pending NotebookEdit snapshot (cleanup)
-                        let notebook_snapshot = result
-                            .tool_use_id
-                            .as_ref()
-                            .and_then(|id| self.pending_notebook_snapshots.remove(id));
-
-                        // Use dedicated handlers for each tool type
-                        let output = match &invocation {
-                            Some(inv) if inv.name == "Edit" && !result.is_error => {
-                                handle_edit_result(self, result, inv, edit_snapshot.as_ref())
-                            }
-                            Some(inv) if inv.name == "Write" && !result.is_error => {
-                                handle_write_result(self, result, inv, write_snapshot.as_ref())
-                            }
-                            Some(inv) if inv.name == "NotebookEdit" && !result.is_error => {
-                                handle_notebook_result(
+                        // Route to dedicated handlers based on tool type.
+                        // Bash/TodoWrite handle both success and error; file-modifying tools
+                        // fall through to default on error since their custom handlers expect success.
+                        let output = if let Some(inv) = &invocation {
+                            match (inv.name.as_str(), result.is_error) {
+                                ("Edit", false) => {
+                                    handle_edit_result(self, result, inv, edit_snapshot.as_ref())
+                                }
+                                ("Write", false) => {
+                                    handle_write_result(self, result, inv, write_snapshot.as_ref())
+                                }
+                                ("NotebookEdit", false) => handle_notebook_result(
                                     self,
                                     result,
                                     inv,
                                     notebook_snapshot.as_ref(),
-                                )
+                                ),
+                                ("Bash", _) => handle_bash_result(self, result, Some(inv)),
+                                ("Read", false) => handle_read_result(self, result, inv),
+                                ("Grep", false) => handle_grep_result(self, result, inv),
+                                ("Glob", false) => handle_glob_result(self, result, inv),
+                                ("TodoWrite", _) => {
+                                    handle_todowrite_result(self, result, Some(inv))
+                                }
+                                _ => handle_default_result(self, result, Some(inv)),
                             }
-                            Some(inv) if inv.name == "Bash" => {
-                                handle_bash_result(self, result, Some(inv))
-                            }
-                            Some(inv) if inv.name == "Read" && !result.is_error => {
-                                handle_read_result(self, result, inv)
-                            }
-                            Some(inv) if inv.name == "Grep" && !result.is_error => {
-                                handle_grep_result(self, result, inv)
-                            }
-                            Some(inv) if inv.name == "Glob" && !result.is_error => {
-                                handle_glob_result(self, result, inv)
-                            }
-                            Some(inv) if inv.name == "TodoWrite" => {
-                                handle_todowrite_result(self, result, Some(inv))
-                            }
-                            _ => handle_default_result(self, result, invocation.as_ref()),
+                        } else {
+                            handle_default_result(self, result, None)
                         };
                         output_parts.push(output.formatted);
                         self.output_blocks.push(output.block);
