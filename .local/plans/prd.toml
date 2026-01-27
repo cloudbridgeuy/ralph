@@ -344,7 +344,7 @@ steps = [
     "Ensure spinner line doesn't exceed terminal width gracefully",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "Spinner line shows key bindings during normal execution",
     "Key hints visually distinct (dimmed) from main status info",

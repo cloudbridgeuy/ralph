@@ -305,7 +305,8 @@ fn invoke_subprocess_impl(
                 match event {
                     KeyEvent::SoftStop if !soft_stop_requested => {
                         soft_stop_requested = true;
-                        eprintln!("\n[Soft stop requested - will pause after iteration completes]");
+                        // Update spinner to show [finishing...] instead of key hints
+                        spinner.set_soft_stop_requested(true);
                     }
                     KeyEvent::HardStop => {
                         // Hard stop: immediately kill the subprocess

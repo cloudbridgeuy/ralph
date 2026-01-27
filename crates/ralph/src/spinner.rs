@@ -117,6 +117,10 @@ impl SpinnerSessionInfo {
 /// - A contextual message (e.g., "Waiting for response...", "Thinking...")
 /// - Session name and iteration progress (if provided)
 /// - Elapsed time in seconds or minutes:seconds format
+/// - Key binding hints (dimmed) showing available controls
+///
+/// When a soft stop is requested, the key hints change to show "[finishing...]"
+/// to indicate that the current iteration will complete before pausing.
 ///
 /// Call [`start`](Spinner::start) to begin spinning and [`stop`](Spinner::stop)
 /// to clear the spinner when output arrives.
@@ -135,6 +139,8 @@ pub struct Spinner {
     context: Arc<Mutex<SpinnerContext>>,
     /// Session metadata for display.
     session_info: Arc<SpinnerSessionInfo>,
+    /// Whether a soft stop has been requested.
+    soft_stop_requested: Arc<AtomicBool>,
 }
 
 impl Default for Spinner {
@@ -154,6 +160,7 @@ impl Spinner {
             session_elapsed_ms,
             context: Arc::new(Mutex::new(SpinnerContext::default())),
             session_info: Arc::new(session_info),
+            soft_stop_requested: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -251,21 +258,18 @@ impl Spinner {
         self.running.store(true, Ordering::SeqCst);
 
         // Clone shared state for the thread
-        let running = Arc::clone(&self.running);
-        let iteration_start = self.iteration_start;
-        let session_elapsed_ms = self.session_elapsed_ms;
-        let context_arc = Arc::clone(&self.context);
-        let session_info = Arc::clone(&self.session_info);
+        let config = SpinnerThreadConfig {
+            running: Arc::clone(&self.running),
+            iteration_start: self.iteration_start,
+            session_elapsed_ms: self.session_elapsed_ms,
+            context: Arc::clone(&self.context),
+            session_info: Arc::clone(&self.session_info),
+            soft_stop_requested: Arc::clone(&self.soft_stop_requested),
+        };
 
         // Spawn spinner thread
         let handle = thread::spawn(move || {
-            run_spinner(
-                running,
-                iteration_start,
-                session_elapsed_ms,
-                context_arc,
-                session_info,
-            );
+            run_spinner(config);
         });
 
         self.thread_handle = Some(handle);
@@ -288,6 +292,19 @@ impl Spinner {
     /// Get the current spinner context.
     pub fn get_context(&self) -> SpinnerContext {
         self.context.lock().map(|ctx| *ctx).unwrap_or_default()
+    }
+
+    /// Set the soft stop requested flag.
+    ///
+    /// When set to true, the spinner will display "[finishing...]" instead of
+    /// the key binding hints to indicate a soft stop is pending.
+    pub fn set_soft_stop_requested(&self, requested: bool) {
+        self.soft_stop_requested.store(requested, Ordering::SeqCst);
+    }
+
+    /// Check if a soft stop has been requested.
+    pub fn is_soft_stop_requested(&self) -> bool {
+        self.soft_stop_requested.load(Ordering::SeqCst)
     }
 
     /// Stop the spinner and clear the display.
@@ -341,17 +358,38 @@ impl Drop for Spinner {
     }
 }
 
+/// Internal configuration for the spinner thread.
+///
+/// Groups parameters to keep the `run_spinner` function under 5 arguments.
+/// This struct is not exposed in the public API.
+struct SpinnerThreadConfig {
+    /// Flag to signal the spinner thread to stop.
+    running: Arc<AtomicBool>,
+    /// Start time of the current iteration.
+    iteration_start: Instant,
+    /// Total elapsed time from previous iterations in this session.
+    session_elapsed_ms: u64,
+    /// Current context for the spinner message.
+    context: Arc<Mutex<SpinnerContext>>,
+    /// Session metadata for display.
+    session_info: Arc<SpinnerSessionInfo>,
+    /// Whether a soft stop has been requested.
+    soft_stop_requested: Arc<AtomicBool>,
+}
+
 /// Run the spinner animation loop.
 ///
 /// This function runs on a background thread and displays the spinner
 /// until the running flag is set to false.
-fn run_spinner(
-    running: Arc<AtomicBool>,
-    iteration_start: Instant,
-    session_elapsed_ms: u64,
-    context: Arc<Mutex<SpinnerContext>>,
-    session_info: Arc<SpinnerSessionInfo>,
-) {
+fn run_spinner(config: SpinnerThreadConfig) {
+    let SpinnerThreadConfig {
+        running,
+        iteration_start,
+        session_elapsed_ms,
+        context,
+        session_info,
+        soft_stop_requested,
+    } = config;
     let mut frame = 0;
     let mut stdout = std::io::stdout();
 
@@ -376,20 +414,24 @@ fn run_spinner(
         // Format session info if available
         let session_display = format_session_info(&session_info);
 
+        // Format key binding hints
+        let is_soft_stop = soft_stop_requested.load(Ordering::SeqCst);
+        let key_hints = format_key_hints(is_soft_stop);
+
         // Build the spinner line
         // Use CR to return to start, then CLEAR_EOL to clear to end of line
         // This prevents residual characters when text length changes
         // (e.g., "59s" → "1m 0s" or context message changes)
-        // Format: "⠋ Thinking... Session: brave-panda | Iteration: 2/5 | 12s • Total: 1m 45s"
+        // Format: "⠋ Thinking... Session: brave-panda | Iteration: 2/5 | 12s • Total: 1m 45s [s: pause | S: stop]"
         let spinner_line = if session_display.is_empty() {
             format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {}",
-                spinner_char, message, time_display
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} {}",
+                spinner_char, message, time_display, key_hints
             )
         } else {
             format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {}",
-                spinner_char, message, session_display, time_display
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {} {}",
+                spinner_char, message, session_display, time_display, key_hints
             )
         };
 
@@ -422,6 +464,32 @@ fn format_session_info(info: &SpinnerSessionInfo) -> String {
     }
 
     parts.join(" | ")
+}
+
+/// Key hints displayed during normal execution (dimmed).
+const KEY_HINTS_NORMAL: &str = "\x1b[2m[s: pause | S: stop]\x1b[0m";
+/// Key hints displayed when soft stop is requested (dimmed).
+const KEY_HINTS_FINISHING: &str = "\x1b[2m[finishing...]\x1b[0m";
+
+/// Format key binding hints for spinner display.
+///
+/// Shows available keyboard controls in a dimmed style so they don't distract
+/// from the main status information.
+///
+/// # Arguments
+///
+/// * `soft_stop_requested` - Whether a soft stop has been requested
+///
+/// # Returns
+///
+/// - Normal state: "[s: pause | S: stop]" (dimmed)
+/// - Soft stop requested: "[finishing...]" (dimmed)
+fn format_key_hints(soft_stop_requested: bool) -> &'static str {
+    if soft_stop_requested {
+        KEY_HINTS_FINISHING
+    } else {
+        KEY_HINTS_NORMAL
+    }
 }
 
 /// Format elapsed time for spinner display.
@@ -784,5 +852,67 @@ mod tests {
         assert_eq!(spinner.session_elapsed_ms, 5000);
         assert!(spinner.session_info.has_info());
         assert_eq!(spinner.session_info.slug, Some("brave-panda".to_string()));
+    }
+
+    // Key hints tests
+
+    #[test]
+    fn test_format_key_hints_normal() {
+        let hints = format_key_hints(false);
+        // Should return the normal key hints constant
+        assert_eq!(hints, KEY_HINTS_NORMAL);
+        // Should contain the key bindings
+        assert!(hints.contains("s: pause"));
+        assert!(hints.contains("S: stop"));
+    }
+
+    #[test]
+    fn test_format_key_hints_soft_stop_requested() {
+        let hints = format_key_hints(true);
+        // Should return the finishing key hints constant
+        assert_eq!(hints, KEY_HINTS_FINISHING);
+        // Should show finishing message instead of key bindings
+        assert!(hints.contains("finishing..."));
+        assert!(!hints.contains("s: pause"));
+        assert!(!hints.contains("S: stop"));
+    }
+
+    // Soft stop flag tests
+
+    #[test]
+    fn test_spinner_soft_stop_default_false() {
+        let spinner = Spinner::with_enabled(false);
+        assert!(!spinner.is_soft_stop_requested());
+    }
+
+    #[test]
+    fn test_spinner_set_soft_stop_requested() {
+        let spinner = Spinner::with_enabled(false);
+        assert!(!spinner.is_soft_stop_requested());
+
+        spinner.set_soft_stop_requested(true);
+        assert!(spinner.is_soft_stop_requested());
+
+        spinner.set_soft_stop_requested(false);
+        assert!(!spinner.is_soft_stop_requested());
+    }
+
+    #[test]
+    fn test_spinner_soft_stop_while_running() {
+        let mut spinner = Spinner::with_enabled(true);
+        spinner.start();
+        thread::sleep(Duration::from_millis(10));
+        assert!(spinner.is_running());
+        assert!(!spinner.is_soft_stop_requested());
+
+        // Set soft stop while running
+        spinner.set_soft_stop_requested(true);
+        assert!(spinner.is_soft_stop_requested());
+
+        // Spinner should still be running
+        assert!(spinner.is_running());
+
+        spinner.stop();
+        assert!(!spinner.is_running());
     }
 }
