@@ -261,7 +261,7 @@ steps = [
     "Handle terminal restoration on exit/panic",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "Keyboard input detected without blocking subprocess",
     "Works correctly with terminal spinner",

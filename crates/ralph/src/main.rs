@@ -17,6 +17,7 @@ pub mod highlight;
 mod init;
 pub mod iteration;
 pub mod iterations;
+pub mod keyboard;
 pub mod markdown;
 pub mod paths;
 mod prompt;
