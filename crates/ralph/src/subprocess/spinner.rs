@@ -1,7 +1,10 @@
 //! Subprocess invocation with spinner display and gap detection.
 
 use super::timeout::try_wait_child;
-use super::types::{StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS};
+use super::types::{
+    StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_HARD_STOPPED,
+    EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
+};
 use crate::highlight::ThemeConfig;
 use crate::keyboard::{KeyEvent, KeyboardMonitor};
 use crate::signal;
@@ -250,7 +253,7 @@ fn invoke_subprocess_impl(
             return Err(SubprocessError::Timeout {
                 timeout_secs: config.timeout_secs,
                 partial_result: Box::new(StreamingSubprocessResult {
-                    exit_code: -1, // Indicate killed
+                    exit_code: EXIT_CODE_KILLED,
                     stderr: stderr_captured,
                     stream_result,
                     soft_stop_requested,
@@ -288,7 +291,7 @@ fn invoke_subprocess_impl(
 
             return Err(SubprocessError::Interrupted {
                 partial_result: Box::new(StreamingSubprocessResult {
-                    exit_code: -2, // Indicate interrupted
+                    exit_code: EXIT_CODE_INTERRUPTED,
                     stderr: stderr_captured,
                     stream_result,
                     soft_stop_requested,
@@ -296,12 +299,53 @@ fn invoke_subprocess_impl(
             });
         }
 
-        // Check for soft stop keypress (only if keyboard monitor is provided and not already requested)
-        if !soft_stop_requested {
-            if let Some(monitor) = keyboard_monitor {
-                if matches!(monitor.poll(), Some(KeyEvent::SoftStop)) {
-                    soft_stop_requested = true;
-                    eprintln!("\n[Soft stop requested - will pause after iteration completes]");
+        // Check for keyboard events (only if keyboard monitor is provided)
+        if let Some(monitor) = keyboard_monitor {
+            if let Some(event) = monitor.poll() {
+                match event {
+                    KeyEvent::SoftStop if !soft_stop_requested => {
+                        soft_stop_requested = true;
+                        eprintln!("\n[Soft stop requested - will pause after iteration completes]");
+                    }
+                    KeyEvent::HardStop => {
+                        // Hard stop: immediately kill the subprocess
+                        if spinner_active {
+                            spinner.stop();
+                        }
+
+                        eprintln!("\n[Hard stop requested - terminating subprocess]");
+
+                        // Kill the subprocess
+                        let _ = child.kill();
+                        let _ = child.wait(); // Clean up zombie
+
+                        // Drain any remaining output that was received
+                        while let Ok(line_result) = line_rx.try_recv() {
+                            if let Ok(line) = line_result {
+                                if let Some(output) = processor.process_line(&line) {
+                                    print!("{}", output);
+                                    let _ = io::stdout().flush();
+                                }
+                            }
+                        }
+
+                        // Wait for threads
+                        let _ = stdout_thread.join();
+                        let stderr_captured = stderr_thread.join().unwrap_or_default();
+
+                        // Finish stream processing to get partial result
+                        let stream_result = processor.finish();
+
+                        return Err(SubprocessError::HardStopped {
+                            partial_result: Box::new(StreamingSubprocessResult {
+                                exit_code: EXIT_CODE_HARD_STOPPED,
+                                stderr: stderr_captured,
+                                stream_result,
+                                soft_stop_requested,
+                            }),
+                        });
+                    }
+                    _ => {} // Ignore other events (Resume, Quit handled at run loop level)
                 }
             }
         }

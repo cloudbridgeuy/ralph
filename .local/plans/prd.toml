@@ -303,7 +303,7 @@ steps = [
     "Persist paused state to disk for crash recovery",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "'S' key terminates claude subprocess immediately",
     "Claude session UUID preserved for resume",

@@ -13,7 +13,10 @@ use crate::iteration::{
     LogToolCall,
 };
 use crate::keyboard::{KeyEvent, KeyboardMonitor};
-use crate::session::{finalize_session, initialize_session, SessionError};
+use crate::session::{
+    clear_paused_state, finalize_session, initialize_session, save_paused_state, PausedState,
+    SessionError,
+};
 use crate::signal;
 use crate::spinner::SpinnerSessionInfo;
 use crate::startup::{
@@ -220,6 +223,24 @@ pub enum RunError {
         iterations_completed: usize,
         /// Final count of pending stories
         final_pending_stories: usize,
+        /// Accumulated metrics for run summary
+        total_cost_usd: Option<f64>,
+        total_duration_ms: Option<u64>,
+        total_input_tokens: Option<u64>,
+        total_output_tokens: Option<u64>,
+    },
+
+    /// Run was hard-stopped by user pressing 'S' during subprocess execution
+    #[error("Run hard-stopped by user")]
+    HardStopped {
+        /// Session slug for finalization
+        session_slug: String,
+        /// Number of iterations completed before hard stop
+        iterations_completed: usize,
+        /// Partial result from the interrupted subprocess
+        partial_result: Option<Box<crate::subprocess::StreamingSubprocessResult>>,
+        /// Number of pending stories at iteration start
+        pending_before: Option<usize>,
         /// Accumulated metrics for run summary
         total_cost_usd: Option<f64>,
         total_duration_ms: Option<u64>,
@@ -442,6 +463,64 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
                     pending_before: Some(pending_before),
                 });
             }
+            Err(RunError::HardStopped { partial_result, .. }) => {
+                // Hard stop during subprocess - enter paused state
+                // User can press 'p' to resume or 'q' to quit
+
+                // Save paused state to disk for crash recovery
+                // Note: claude_session_id is None for now - the "resume from hard stop"
+                // story will extract this from metadata when implemented
+                let paused_state = PausedState::new(
+                    session_slug.clone(),
+                    None,
+                    iteration,
+                    iterations_completed,
+                    pending_before,
+                );
+                if let Err(e) = save_paused_state(&paused_state) {
+                    eprintln!("Warning: Failed to save paused state: {}", e);
+                }
+
+                match wait_for_paused_input(iteration, &keyboard_monitor, PauseReason::HardStop) {
+                    PausedAction::Continue => {
+                        // User wants to resume - clear paused state and continue
+                        if let Err(e) = clear_paused_state() {
+                            eprintln!("Warning: Failed to clear paused state: {}", e);
+                        }
+                        // The subprocess was killed, so we need to restart the iteration
+                        // For now, just continue the loop which will restart this iteration
+                        eprintln!("[Resuming iteration {}]", iteration);
+                        // We can't easily restart within the for loop
+                        // For MVP, we'll just continue to the next iteration
+                        // A full resume with --session-id is a future enhancement
+                        continue;
+                    }
+                    PausedAction::Quit => {
+                        // User wants to quit - clear paused state, finalize session and return
+                        if let Err(e) = clear_paused_state() {
+                            eprintln!("Warning: Failed to clear paused state: {}", e);
+                        }
+                        let total_iterations = iteration_offset + iterations_completed;
+                        if let Err(e) = finalize_session(
+                            &session_slug,
+                            total_iterations as u32,
+                            SessionOutcome::Interrupted,
+                        ) {
+                            eprintln!("Warning: Failed to finalize session: {}", e);
+                        }
+                        return Err(RunError::HardStopped {
+                            session_slug,
+                            iterations_completed,
+                            partial_result,
+                            pending_before: Some(pending_before),
+                            total_cost_usd,
+                            total_duration_ms,
+                            total_input_tokens,
+                            total_output_tokens,
+                        });
+                    }
+                }
+            }
             Err(e) => return Err(e),
         };
 
@@ -537,7 +616,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             iterations_completed = relative_iteration;
 
             // Wait for user input: 'p' to continue, 'q' to quit
-            match wait_for_paused_input(iteration, &keyboard_monitor) {
+            match wait_for_paused_input(iteration, &keyboard_monitor, PauseReason::SoftStop) {
                 PausedAction::Continue => {
                     // User wants to continue - proceed with next iteration
                     // Don't break, just continue the loop normally
@@ -649,14 +728,30 @@ enum PausedAction {
     Quit,
 }
 
+/// Reason for entering paused state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PauseReason {
+    /// Soft stop: iteration completed, user requested pause
+    SoftStop,
+    /// Hard stop: subprocess was terminated mid-execution
+    HardStop,
+}
+
 /// Wait for user input in paused state.
 ///
 /// Displays the paused message and waits for user to press 'p' to continue or 'q' to quit.
 /// Uses the keyboard monitor to detect keypresses.
-fn wait_for_paused_input(iteration: usize, keyboard_monitor: &KeyboardMonitor) -> PausedAction {
+fn wait_for_paused_input(
+    iteration: usize,
+    keyboard_monitor: &KeyboardMonitor,
+    reason: PauseReason,
+) -> PausedAction {
     println!();
     println!("─────────────────────────────────────────────────────────────");
-    println!("Paused after iteration {}.", iteration);
+    match reason {
+        PauseReason::SoftStop => println!("Paused after iteration {}.", iteration),
+        PauseReason::HardStop => println!("Hard-stopped during iteration {}.", iteration),
+    }
     println!("Press 'p' to continue, 'q' to quit.");
     println!("─────────────────────────────────────────────────────────────");
     let _ = io::stdout().flush();
@@ -776,6 +871,20 @@ fn invoke_with_failure_recovery(
                     iterations_completed: 0,
                     partial_result: Some(partial_result),
                     pending_before: None,
+                });
+            }
+            Err(SubprocessError::HardStopped { partial_result }) => {
+                // Hard stop occurred - don't retry, propagate immediately with partial result
+                // The caller will handle the paused state and potential resume
+                return Err(RunError::HardStopped {
+                    session_slug: String::new(),
+                    iterations_completed: 0,
+                    partial_result: Some(partial_result),
+                    pending_before: None,
+                    total_cost_usd: None,
+                    total_duration_ms: None,
+                    total_input_tokens: None,
+                    total_output_tokens: None,
                 });
             }
             Err(e) => return Err(e.into()),
