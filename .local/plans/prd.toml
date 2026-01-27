@@ -323,7 +323,7 @@ steps = [
     "Handle case where claude session expired or unavailable (hard stop only)",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "'p' from soft-stopped starts next iteration fresh",
     "'p' from hard-stopped resumes with same --session-id UUID",
@@ -363,7 +363,7 @@ steps = [
     "Ensure display works in both terminal and plain modes",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "Stopped states show clear status message",
     "Available key commands shown for each stopped state",

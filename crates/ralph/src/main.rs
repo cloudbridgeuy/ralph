@@ -189,6 +189,7 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         command,
         prompt,
         completion_marker,
+        claude_session_id,
     };
     execute_run_with_prompting(args, exec_config)
 }
@@ -199,6 +200,8 @@ struct RunExecutionConfig {
     command: String,
     prompt: String,
     completion_marker: String,
+    /// Claude session ID (UUID) for resume capability.
+    claude_session_id: String,
 }
 
 /// Execute run loop with interactive failure recovery prompting.
@@ -261,6 +264,7 @@ fn execute_run_with_prompting(
             custom_additional_prompt,
             verbose_tools_config: verbose_tools_config.clone(),
             show_prompt: !args.no_prompt,
+            claude_session_id: exec_config.claude_session_id.clone(),
         };
 
         // Execute the run loop

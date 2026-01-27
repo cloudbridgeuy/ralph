@@ -5,6 +5,8 @@
 //! session management, subprocess invocation, PRD parsing, completion detection,
 //! and git diff capture.
 
+mod recovery;
+
 use crate::git::capture_and_write_diff;
 use crate::highlight::ThemeConfig;
 use crate::init::{verify_prd_exists, InitError};
@@ -18,19 +20,16 @@ use crate::session::{
     SessionError,
 };
 use crate::signal;
-use crate::spinner::SpinnerSessionInfo;
 use crate::startup::{
     display_iteration_header, display_iteration_summary, display_prompt, display_startup_info,
     AttachedFile, IterationHeader, IterationSummary, PromptDisplay, StartupInfo,
 };
 use crate::stream_processor::VerboseToolsConfig;
-use crate::subprocess::{
-    invoke_subprocess_with_keyboard, invoke_subprocess_with_timeout, SpinnerSubprocessConfig,
-    SubprocessError,
-};
+use crate::subprocess::SubprocessError;
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
+use recovery::{invoke_resume_iteration, invoke_with_failure_recovery};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -82,6 +81,9 @@ pub struct RunConfig {
     /// Whether to display the prompt before iterations begin.
     /// When true, the prompt is shown before Iteration 1.
     pub show_prompt: bool,
+    /// Claude session ID (UUID) for resume capability.
+    /// This is passed to claude CLI via --session-id for conversation persistence.
+    pub claude_session_id: String,
 }
 
 /// Result of running the iteration loop.
@@ -468,11 +470,10 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
                 // User can press 'p' to resume or 'q' to quit
 
                 // Save paused state to disk for crash recovery
-                // Note: claude_session_id is None for now - the "resume from hard stop"
-                // story will extract this from metadata when implemented
+                // Include claude_session_id for resume capability
                 let paused_state = PausedState::new(
                     session_slug.clone(),
-                    None,
+                    Some(config.claude_session_id.clone()),
                     iteration,
                     iterations_completed,
                     pending_before,
@@ -483,17 +484,117 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
 
                 match wait_for_paused_input(iteration, &keyboard_monitor, PauseReason::HardStop) {
                     PausedAction::Continue => {
-                        // User wants to resume - clear paused state and continue
+                        // User wants to resume - clear paused state and invoke with resume command
                         if let Err(e) = clear_paused_state() {
                             eprintln!("Warning: Failed to clear paused state: {}", e);
                         }
-                        // The subprocess was killed, so we need to restart the iteration
-                        // For now, just continue the loop which will restart this iteration
-                        eprintln!("[Resuming iteration {}]", iteration);
-                        // We can't easily restart within the for loop
-                        // For MVP, we'll just continue to the next iteration
-                        // A full resume with --session-id is a future enhancement
-                        continue;
+                        eprintln!(
+                            "[Resuming iteration {} with continuation prompt]",
+                            iteration
+                        );
+
+                        // Build a resume command with continuation prompt
+                        // The same --session-id is used, plus a continuation message
+                        let resume_result = invoke_resume_iteration(&InvocationConfig {
+                            command: &config.command,
+                            max_attempts: config.max_attempts,
+                            timeout_secs: config.timeout_secs,
+                            iteration,
+                            theme_config: config.theme_config.as_ref(),
+                            session_elapsed_ms: total_duration_ms.unwrap_or(0),
+                            verbose_tools_config: &config.verbose_tools_config,
+                            session_slug: &session_slug,
+                            max_iterations,
+                            keyboard_monitor: &keyboard_monitor,
+                        });
+
+                        match resume_result {
+                            Ok(result) => {
+                                // Resume succeeded - accumulate metrics from the resumed iteration
+                                eprintln!("[Resume completed - continuing to next iteration]");
+                                iterations_completed = relative_iteration;
+
+                                // Accumulate metrics from the resumed iteration
+                                if let Some(cost) = result.stream_result.costs.cost_usd {
+                                    total_cost_usd = Some(total_cost_usd.unwrap_or(0.0) + cost);
+                                }
+                                if let Some(duration) = result.stream_result.costs.duration_ms {
+                                    total_duration_ms =
+                                        Some(total_duration_ms.unwrap_or(0) + duration);
+                                }
+                                if let Some(usage) = &result.stream_result.costs.usage {
+                                    total_input_tokens =
+                                        Some(total_input_tokens.unwrap_or(0) + usage.input_tokens);
+                                    total_output_tokens = Some(
+                                        total_output_tokens.unwrap_or(0) + usage.output_tokens,
+                                    );
+                                }
+
+                                // Check for soft stop in resume result
+                                if result.is_soft_stop_requested() {
+                                    match wait_for_paused_input(
+                                        iteration,
+                                        &keyboard_monitor,
+                                        PauseReason::SoftStop,
+                                    ) {
+                                        PausedAction::Continue => {}
+                                        PausedAction::Quit => {
+                                            let total_iterations =
+                                                iteration_offset + iterations_completed;
+                                            if let Err(e) = finalize_session(
+                                                &session_slug,
+                                                total_iterations as u32,
+                                                SessionOutcome::Completed,
+                                            ) {
+                                                eprintln!(
+                                                    "Warning: Failed to finalize session: {}",
+                                                    e
+                                                );
+                                            }
+                                            return Err(RunError::SoftStopped {
+                                                session_slug,
+                                                iterations_completed,
+                                                final_pending_stories,
+                                                total_cost_usd,
+                                                total_duration_ms,
+                                                total_input_tokens,
+                                                total_output_tokens,
+                                            });
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            Err(RunError::HardStopped {
+                                partial_result: new_partial,
+                                ..
+                            }) => {
+                                // Another hard stop during resume - recurse the pause logic
+                                // For simplicity, we'll just save state and wait again
+                                let new_paused_state = PausedState::new(
+                                    session_slug.clone(),
+                                    Some(config.claude_session_id.clone()),
+                                    iteration,
+                                    iterations_completed,
+                                    pending_before,
+                                );
+                                if let Err(e) = save_paused_state(&new_paused_state) {
+                                    eprintln!("Warning: Failed to save paused state: {}", e);
+                                }
+                                // Return to let the outer loop handle it on next iteration
+                                return Err(RunError::HardStopped {
+                                    session_slug,
+                                    iterations_completed,
+                                    partial_result: new_partial,
+                                    pending_before: Some(pending_before),
+                                    total_cost_usd,
+                                    total_duration_ms,
+                                    total_input_tokens,
+                                    total_output_tokens,
+                                });
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
                     PausedAction::Quit => {
                         // User wants to quit - clear paused state, finalize session and return
@@ -768,172 +869,4 @@ fn wait_for_paused_input(
         // Small sleep to avoid busy-waiting
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-}
-
-/// Invoke subprocess with automatic failure recovery and timeout support.
-///
-/// This function wraps `invoke_subprocess_with_spinner_config` or `invoke_subprocess_with_timeout`
-/// with failure recovery logic:
-/// - On non-zero exit code, prints raw text/stderr and re-attempts
-/// - On timeout, prints partial output and re-attempts
-/// - Prints attempt number for each attempt
-/// - Returns error with captured output if all attempts exhausted
-///
-/// # Arguments
-///
-/// * `config` - Configuration for the invocation including command, max_attempts,
-///   timeout_secs, iteration number, theme_config, and session_elapsed_ms
-///
-/// # Returns
-///
-/// Returns the `StreamingSubprocessResult` on success (exit code 0).
-fn invoke_with_failure_recovery(
-    config: &InvocationConfig,
-) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
-    let total_attempts = config.max_attempts + 1; // max_attempts of 3 means 4 total attempts (1 initial + 3 recovery)
-
-    for attempt in 1..=total_attempts {
-        // Use spinner-aware subprocess with keyboard monitoring if theme config provided
-        let result = match config.theme_config {
-            Some(theme) => {
-                let spinner_config = SpinnerSubprocessConfig {
-                    command: config.command.to_string(),
-                    timeout_secs: config.timeout_secs,
-                    theme_config: theme.clone(),
-                    session_elapsed_ms: config.session_elapsed_ms,
-                    verbose_tools: config.verbose_tools_config.clone(),
-                    session_info: SpinnerSessionInfo::new(
-                        config.session_slug.to_string(),
-                        config.iteration,
-                        config.max_iterations,
-                    ),
-                };
-                // Use keyboard-aware subprocess to detect soft stop
-                invoke_subprocess_with_keyboard(&spinner_config, config.keyboard_monitor)
-            }
-            None => invoke_subprocess_with_timeout(
-                config.command,
-                config.timeout_secs,
-                config.verbose_tools_config.clone(),
-            ),
-        };
-
-        let result = match result {
-            Ok(r) => r,
-            Err(SubprocessError::Timeout {
-                timeout_secs: ts,
-                partial_result,
-            }) => {
-                // Timeout occurred
-                eprintln!(
-                    "\n[Iteration {}] LLM subprocess timed out after {} seconds (attempt {}/{})",
-                    config.iteration, ts, attempt, total_attempts
-                );
-
-                // Print partial output from timed out attempt
-                let raw_text = &partial_result.stream_result.raw_text;
-                if !raw_text.is_empty() {
-                    eprintln!("\n--- partial output ---");
-                    eprint!("{}", raw_text);
-                    if !raw_text.ends_with('\n') {
-                        eprintln!();
-                    }
-                }
-
-                if !partial_result.stderr.is_empty() {
-                    eprintln!("\n--- stderr ---");
-                    eprint!("{}", partial_result.stderr);
-                    if !partial_result.stderr.ends_with('\n') {
-                        eprintln!();
-                    }
-                }
-
-                if attempt < total_attempts {
-                    eprintln!("\nRe-attempting...\n");
-                    continue;
-                } else {
-                    // All attempts exhausted due to timeout
-                    return Err(RunError::SubprocessTimedOut {
-                        timeout_secs: ts,
-                        attempts: total_attempts,
-                        raw_text: partial_result.stream_result.raw_text,
-                        stderr: partial_result.stderr,
-                        session_slug: String::new(),
-                        iterations_completed: 0,
-                    });
-                }
-            }
-            Err(SubprocessError::Interrupted { partial_result }) => {
-                // Interrupt occurred - don't retry, propagate immediately with partial result
-                // The caller will handle session finalization and write partial iteration log
-                return Err(RunError::Interrupted {
-                    session_slug: String::new(),
-                    iterations_completed: 0,
-                    partial_result: Some(partial_result),
-                    pending_before: None,
-                });
-            }
-            Err(SubprocessError::HardStopped { partial_result }) => {
-                // Hard stop occurred - don't retry, propagate immediately with partial result
-                // The caller will handle the paused state and potential resume
-                return Err(RunError::HardStopped {
-                    session_slug: String::new(),
-                    iterations_completed: 0,
-                    partial_result: Some(partial_result),
-                    pending_before: None,
-                    total_cost_usd: None,
-                    total_duration_ms: None,
-                    total_input_tokens: None,
-                    total_output_tokens: None,
-                });
-            }
-            Err(e) => return Err(e.into()),
-        };
-
-        if result.exit_code == 0 {
-            return Ok(result);
-        }
-
-        // Non-zero exit code - handle failure recovery
-        eprintln!(
-            "\n[Iteration {}] LLM subprocess failed with exit code {} (attempt {}/{})",
-            config.iteration, result.exit_code, attempt, total_attempts
-        );
-
-        // Print captured output from failed attempt
-        let raw_text = &result.stream_result.raw_text;
-        if !raw_text.is_empty() {
-            eprintln!("\n--- captured output ---");
-            eprint!("{}", raw_text);
-            if !raw_text.ends_with('\n') {
-                eprintln!();
-            }
-        }
-
-        if !result.stderr.is_empty() {
-            eprintln!("\n--- stderr ---");
-            eprint!("{}", result.stderr);
-            if !result.stderr.ends_with('\n') {
-                eprintln!();
-            }
-        }
-
-        if attempt < total_attempts {
-            eprintln!("\nRe-attempting...\n");
-        } else {
-            // All attempts exhausted - return error with placeholder session info
-            // The caller will fill in the actual session_slug and iterations_completed
-            return Err(RunError::SubprocessFailed {
-                exit_code: result.exit_code,
-                attempts: total_attempts,
-                raw_text: result.stream_result.raw_text,
-                stderr: result.stderr,
-                session_slug: String::new(),
-                iterations_completed: 0,
-            });
-        }
-    }
-
-    // This should never be reached due to the return in the loop
-    unreachable!("Loop should have returned or errored")
 }

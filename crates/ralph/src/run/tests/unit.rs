@@ -26,6 +26,7 @@ fn create_test_config(prd_path: PathBuf) -> RunConfig {
         custom_additional_prompt: false,
         verbose_tools_config: VerboseToolsConfig::new(),
         show_prompt: false, // Don't display prompt in tests
+        claude_session_id: "test-session-id".to_string(),
     }
 }
 
