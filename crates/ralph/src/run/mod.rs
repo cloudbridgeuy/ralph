@@ -12,6 +12,7 @@ use crate::iteration::{
     extract_response_text, write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata,
     LogToolCall,
 };
+use crate::keyboard::{KeyEvent, KeyboardMonitor};
 use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::signal;
 use crate::spinner::SpinnerSessionInfo;
@@ -21,13 +22,14 @@ use crate::startup::{
 };
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
-    invoke_subprocess_with_spinner_config, invoke_subprocess_with_timeout, SpinnerSubprocessConfig,
+    invoke_subprocess_with_keyboard, invoke_subprocess_with_timeout, SpinnerSubprocessConfig,
     SubprocessError,
 };
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[cfg(test)]
@@ -104,7 +106,6 @@ pub struct RunResult {
 ///
 /// Groups parameters needed by `invoke_with_failure_recovery` to keep
 /// the function signature under 5 arguments.
-#[derive(Debug, Clone)]
 struct InvocationConfig<'a> {
     /// Full command to invoke the LLM.
     command: &'a str,
@@ -124,6 +125,8 @@ struct InvocationConfig<'a> {
     session_slug: &'a str,
     /// Maximum iterations for spinner display.
     max_iterations: usize,
+    /// Keyboard monitor for soft stop detection.
+    keyboard_monitor: &'a KeyboardMonitor,
 }
 
 /// Error type for run operations.
@@ -206,6 +209,22 @@ pub enum RunError {
         partial_result: Option<Box<crate::subprocess::StreamingSubprocessResult>>,
         /// Number of pending stories at iteration start (for partial iteration log)
         pending_before: Option<usize>,
+    },
+
+    /// Run was soft-stopped by user pressing 's' and then 'q' to quit
+    #[error("Run soft-stopped by user")]
+    SoftStopped {
+        /// Session slug for finalization
+        session_slug: String,
+        /// Number of iterations completed before soft stop
+        iterations_completed: usize,
+        /// Final count of pending stories
+        final_pending_stories: usize,
+        /// Accumulated metrics for run summary
+        total_cost_usd: Option<f64>,
+        total_duration_ms: Option<u64>,
+        total_input_tokens: Option<u64>,
+        total_output_tokens: Option<u64>,
     },
 }
 
@@ -323,6 +342,10 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
     // If max_iterations is 5 and we've already done 2 (iteration_offset), only run 3 more
     let remaining_iterations = max_iterations.saturating_sub(iteration_offset);
 
+    // Create and start keyboard monitor for soft stop detection
+    let mut keyboard_monitor = KeyboardMonitor::new();
+    keyboard_monitor.start();
+
     for relative_iteration in 1..=remaining_iterations {
         // Check for interrupt at the start of each iteration
         if signal::is_interrupted() {
@@ -370,6 +393,7 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             verbose_tools_config: &config.verbose_tools_config,
             session_slug: &session_slug,
             max_iterations,
+            keyboard_monitor: &keyboard_monitor,
         };
         let result = match invoke_with_failure_recovery(&invocation_config) {
             Ok(r) => r,
@@ -508,6 +532,39 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             total_output_tokens = Some(total_output_tokens.unwrap_or(0) + tokens);
         }
 
+        // Check for soft stop request - if user pressed 's' during iteration
+        if result.is_soft_stop_requested() {
+            iterations_completed = relative_iteration;
+
+            // Wait for user input: 'p' to continue, 'q' to quit
+            match wait_for_paused_input(iteration, &keyboard_monitor) {
+                PausedAction::Continue => {
+                    // User wants to continue - proceed with next iteration
+                    // Don't break, just continue the loop normally
+                }
+                PausedAction::Quit => {
+                    // User wants to quit - finalize session and return
+                    let total_iterations = iteration_offset + iterations_completed;
+                    if let Err(e) = finalize_session(
+                        &session_slug,
+                        total_iterations as u32,
+                        SessionOutcome::Completed,
+                    ) {
+                        eprintln!("Warning: Failed to finalize session: {}", e);
+                    }
+                    return Err(RunError::SoftStopped {
+                        session_slug,
+                        iterations_completed,
+                        final_pending_stories,
+                        total_cost_usd,
+                        total_duration_ms,
+                        total_input_tokens,
+                        total_output_tokens,
+                    });
+                }
+            }
+        }
+
         // Post-iteration check: re-read PRD
         let prd_after = read_prd_file(&config.prd_path)?;
         let prd_changed = has_prd_changed(&prd_snapshot, &prd_after);
@@ -583,6 +640,41 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
     })
 }
 
+/// User action from paused state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PausedAction {
+    /// User pressed 'p' to continue
+    Continue,
+    /// User pressed 'q' to quit
+    Quit,
+}
+
+/// Wait for user input in paused state.
+///
+/// Displays the paused message and waits for user to press 'p' to continue or 'q' to quit.
+/// Uses the keyboard monitor to detect keypresses.
+fn wait_for_paused_input(iteration: usize, keyboard_monitor: &KeyboardMonitor) -> PausedAction {
+    println!();
+    println!("─────────────────────────────────────────────────────────────");
+    println!("Paused after iteration {}.", iteration);
+    println!("Press 'p' to continue, 'q' to quit.");
+    println!("─────────────────────────────────────────────────────────────");
+    let _ = io::stdout().flush();
+
+    // Poll for resume or quit
+    loop {
+        if let Some(event) = keyboard_monitor.poll() {
+            match event {
+                KeyEvent::Resume => return PausedAction::Continue,
+                KeyEvent::Quit => return PausedAction::Quit,
+                _ => {} // Ignore other keys
+            }
+        }
+        // Small sleep to avoid busy-waiting
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Invoke subprocess with automatic failure recovery and timeout support.
 ///
 /// This function wraps `invoke_subprocess_with_spinner_config` or `invoke_subprocess_with_timeout`
@@ -606,7 +698,7 @@ fn invoke_with_failure_recovery(
     let total_attempts = config.max_attempts + 1; // max_attempts of 3 means 4 total attempts (1 initial + 3 recovery)
 
     for attempt in 1..=total_attempts {
-        // Use spinner-aware subprocess if theme config provided, otherwise use default
+        // Use spinner-aware subprocess with keyboard monitoring if theme config provided
         let result = match config.theme_config {
             Some(theme) => {
                 let spinner_config = SpinnerSubprocessConfig {
@@ -621,7 +713,8 @@ fn invoke_with_failure_recovery(
                         config.max_iterations,
                     ),
                 };
-                invoke_subprocess_with_spinner_config(&spinner_config)
+                // Use keyboard-aware subprocess to detect soft stop
+                invoke_subprocess_with_keyboard(&spinner_config, config.keyboard_monitor)
             }
             None => invoke_subprocess_with_timeout(
                 config.command,

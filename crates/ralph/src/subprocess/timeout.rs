@@ -147,6 +147,7 @@ pub fn invoke_subprocess_with_timeout(
                 exit_code,
                 stderr: stderr_captured,
                 stream_result,
+                soft_stop_requested: false,
             });
         }
 
@@ -179,6 +180,7 @@ pub fn invoke_subprocess_with_timeout(
                     exit_code: -1, // Indicate killed
                     stderr: stderr_captured,
                     stream_result,
+                    soft_stop_requested: false,
                 }),
             });
         }

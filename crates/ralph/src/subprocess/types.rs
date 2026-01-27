@@ -47,4 +47,14 @@ pub struct StreamingSubprocessResult {
     pub stderr: String,
     /// Processed stream result with chunks, metadata, and tool interactions.
     pub stream_result: StreamProcessorResult,
+    /// Whether a soft stop was requested during execution.
+    /// When true, the iteration should complete but the run loop should pause afterward.
+    pub soft_stop_requested: bool,
+}
+
+impl StreamingSubprocessResult {
+    /// Returns true if a soft stop was requested during execution.
+    pub fn is_soft_stop_requested(&self) -> bool {
+        self.soft_stop_requested
+    }
 }

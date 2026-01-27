@@ -486,6 +486,7 @@ mod tests {
             exit_code: 0,
             stderr: String::new(),
             stream_result,
+            soft_stop_requested: false,
         }
     }
 
@@ -498,6 +499,7 @@ mod tests {
             exit_code,
             stderr: String::new(),
             stream_result,
+            soft_stop_requested: false,
         }
     }
 

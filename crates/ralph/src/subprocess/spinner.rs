@@ -3,6 +3,7 @@
 use super::timeout::try_wait_child;
 use super::types::{StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS};
 use crate::highlight::ThemeConfig;
+use crate::keyboard::{KeyEvent, KeyboardMonitor};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
@@ -70,6 +71,31 @@ pub struct SpinnerSubprocessConfig {
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
+    invoke_subprocess_impl(config, None)
+}
+
+/// Invokes a subprocess with a keyboard monitor for soft stop detection.
+///
+/// This variant accepts a reference to a KeyboardMonitor to check for soft stop ('s')
+/// keypresses during execution. When a soft stop is detected, the subprocess continues
+/// to completion but the result will have `soft_stop_requested` set to true.
+///
+/// # Arguments
+///
+/// * `config` - Configuration for the subprocess invocation
+/// * `keyboard_monitor` - Reference to the keyboard monitor for checking key events
+pub fn invoke_subprocess_with_keyboard(
+    config: &SpinnerSubprocessConfig,
+    keyboard_monitor: &KeyboardMonitor,
+) -> Result<StreamingSubprocessResult, SubprocessError> {
+    invoke_subprocess_impl(config, Some(keyboard_monitor))
+}
+
+/// Internal implementation that handles both variants.
+fn invoke_subprocess_impl(
+    config: &SpinnerSubprocessConfig,
+    keyboard_monitor: Option<&KeyboardMonitor>,
+) -> Result<StreamingSubprocessResult, SubprocessError> {
     // Spawn subprocess with stdout/stderr captured and stdin inherited
     let mut child = Command::new("sh")
         .arg("-c")
@@ -117,6 +143,9 @@ pub fn invoke_subprocess_with_spinner_config(
 
     // Track whether we're in a tool invocation (to determine spinner context)
     let mut pending_tool_count: usize = 0;
+
+    // Track soft stop request state
+    let mut soft_stop_requested = false;
 
     // Create channel to receive stderr from background thread
     let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
@@ -186,6 +215,7 @@ pub fn invoke_subprocess_with_spinner_config(
                 exit_code,
                 stderr: stderr_captured,
                 stream_result,
+                soft_stop_requested,
             });
         }
 
@@ -223,6 +253,7 @@ pub fn invoke_subprocess_with_spinner_config(
                     exit_code: -1, // Indicate killed
                     stderr: stderr_captured,
                     stream_result,
+                    soft_stop_requested,
                 }),
             });
         }
@@ -260,8 +291,19 @@ pub fn invoke_subprocess_with_spinner_config(
                     exit_code: -2, // Indicate interrupted
                     stderr: stderr_captured,
                     stream_result,
+                    soft_stop_requested,
                 }),
             });
+        }
+
+        // Check for soft stop keypress (only if keyboard monitor is provided and not already requested)
+        if !soft_stop_requested {
+            if let Some(monitor) = keyboard_monitor {
+                if matches!(monitor.poll(), Some(KeyEvent::SoftStop)) {
+                    soft_stop_requested = true;
+                    eprintln!("\n[Soft stop requested - will pause after iteration completes]");
+                }
+            }
         }
 
         // Try to receive a line with a short timeout

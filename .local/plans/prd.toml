@@ -282,7 +282,7 @@ steps = [
     "Wait for user input ('p' to resume, 'q' to quit)",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "'s' key triggers soft stop during execution",
     "Current iteration completes fully before pausing",

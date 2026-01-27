@@ -393,6 +393,30 @@ fn execute_run_with_prompting(
                 eprintln!("Interrupted. Session '{}' saved.", session_slug);
                 return Err("Interrupted by signal".into());
             }
+            Err(RunError::SoftStopped {
+                session_slug,
+                iterations_completed,
+                final_pending_stories,
+                total_cost_usd,
+                total_duration_ms,
+                total_input_tokens,
+                total_output_tokens,
+            }) => {
+                // User soft-stopped and chose to quit - display summary and exit cleanly
+                let total_iterations = total_iterations_completed + iterations_completed;
+                let run_summary = startup::RunSummary {
+                    slug: session_slug,
+                    iterations_completed: total_iterations,
+                    completion_reason: Some("SoftStopped".to_string()),
+                    total_cost_usd,
+                    total_duration_ms,
+                    total_input_tokens,
+                    total_output_tokens,
+                    final_pending_stories,
+                };
+                startup::display_run_summary(&run_summary);
+                return Ok(()); // Clean exit - not an error
+            }
             Err(e) => {
                 // Other errors - propagate immediately
                 return Err(e.into());
