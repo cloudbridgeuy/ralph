@@ -14,9 +14,6 @@ pub const EXIT_CODE_KILLED: i32 = -1;
 /// Exit code indicating subprocess was interrupted by signal (SIGINT/SIGTERM).
 pub const EXIT_CODE_INTERRUPTED: i32 = -2;
 
-/// Exit code indicating subprocess was hard-stopped by user pressing 'S'.
-pub const EXIT_CODE_HARD_STOPPED: i32 = -3;
-
 /// Error type for subprocess operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SubprocessError {
@@ -43,12 +40,6 @@ pub enum SubprocessError {
         partial_result: Box<StreamingSubprocessResult>,
     },
 
-    #[error("Subprocess hard-stopped by user pressing 'S'")]
-    HardStopped {
-        /// Partial output captured before hard stop
-        partial_result: Box<StreamingSubprocessResult>,
-    },
-
     #[error("Invalid theme configuration: {0}")]
     ThemeError(#[from] ThemeError),
 }
@@ -62,14 +53,4 @@ pub struct StreamingSubprocessResult {
     pub stderr: String,
     /// Processed stream result with chunks, metadata, and tool interactions.
     pub stream_result: StreamProcessorResult,
-    /// Whether a soft stop was requested during execution.
-    /// When true, the iteration should complete but the run loop should pause afterward.
-    pub soft_stop_requested: bool,
-}
-
-impl StreamingSubprocessResult {
-    /// Returns true if a soft stop was requested during execution.
-    pub fn is_soft_stop_requested(&self) -> bool {
-        self.soft_stop_requested
-    }
 }

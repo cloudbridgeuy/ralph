@@ -2,11 +2,10 @@
 
 use super::timeout::try_wait_child;
 use super::types::{
-    StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_HARD_STOPPED,
-    EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
+    StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
+    EXIT_CODE_KILLED,
 };
 use crate::highlight::ThemeConfig;
-use crate::keyboard::{KeyEvent, KeyboardMonitor};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
@@ -74,31 +73,6 @@ pub struct SpinnerSubprocessConfig {
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
-    invoke_subprocess_impl(config, None)
-}
-
-/// Invokes a subprocess with a keyboard monitor for soft stop detection.
-///
-/// This variant accepts a reference to a KeyboardMonitor to check for soft stop ('s')
-/// keypresses during execution. When a soft stop is detected, the subprocess continues
-/// to completion but the result will have `soft_stop_requested` set to true.
-///
-/// # Arguments
-///
-/// * `config` - Configuration for the subprocess invocation
-/// * `keyboard_monitor` - Reference to the keyboard monitor for checking key events
-pub fn invoke_subprocess_with_keyboard(
-    config: &SpinnerSubprocessConfig,
-    keyboard_monitor: &KeyboardMonitor,
-) -> Result<StreamingSubprocessResult, SubprocessError> {
-    invoke_subprocess_impl(config, Some(keyboard_monitor))
-}
-
-/// Internal implementation that handles both variants.
-fn invoke_subprocess_impl(
-    config: &SpinnerSubprocessConfig,
-    keyboard_monitor: Option<&KeyboardMonitor>,
-) -> Result<StreamingSubprocessResult, SubprocessError> {
     // Spawn subprocess with stdout/stderr captured and stdin inherited
     let mut child = Command::new("sh")
         .arg("-c")
@@ -146,9 +120,6 @@ fn invoke_subprocess_impl(
 
     // Track whether we're in a tool invocation (to determine spinner context)
     let mut pending_tool_count: usize = 0;
-
-    // Track soft stop request state
-    let mut soft_stop_requested = false;
 
     // Create channel to receive stderr from background thread
     let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
@@ -218,7 +189,6 @@ fn invoke_subprocess_impl(
                 exit_code,
                 stderr: stderr_captured,
                 stream_result,
-                soft_stop_requested,
             });
         }
 
@@ -256,7 +226,6 @@ fn invoke_subprocess_impl(
                     exit_code: EXIT_CODE_KILLED,
                     stderr: stderr_captured,
                     stream_result,
-                    soft_stop_requested,
                 }),
             });
         }
@@ -294,61 +263,8 @@ fn invoke_subprocess_impl(
                     exit_code: EXIT_CODE_INTERRUPTED,
                     stderr: stderr_captured,
                     stream_result,
-                    soft_stop_requested,
                 }),
             });
-        }
-
-        // Check for keyboard events (only if keyboard monitor is provided)
-        if let Some(monitor) = keyboard_monitor {
-            if let Some(event) = monitor.poll() {
-                match event {
-                    KeyEvent::SoftStop if !soft_stop_requested => {
-                        soft_stop_requested = true;
-                        // Update spinner to show [finishing...] instead of key hints
-                        spinner.set_soft_stop_requested(true);
-                    }
-                    KeyEvent::HardStop => {
-                        // Hard stop: immediately kill the subprocess
-                        if spinner_active {
-                            spinner.stop();
-                        }
-
-                        eprintln!("\n[Hard stop requested - terminating subprocess]");
-
-                        // Kill the subprocess
-                        let _ = child.kill();
-                        let _ = child.wait(); // Clean up zombie
-
-                        // Drain any remaining output that was received
-                        while let Ok(line_result) = line_rx.try_recv() {
-                            if let Ok(line) = line_result {
-                                if let Some(output) = processor.process_line(&line) {
-                                    print!("{}", output);
-                                    let _ = io::stdout().flush();
-                                }
-                            }
-                        }
-
-                        // Wait for threads
-                        let _ = stdout_thread.join();
-                        let stderr_captured = stderr_thread.join().unwrap_or_default();
-
-                        // Finish stream processing to get partial result
-                        let stream_result = processor.finish();
-
-                        return Err(SubprocessError::HardStopped {
-                            partial_result: Box::new(StreamingSubprocessResult {
-                                exit_code: EXIT_CODE_HARD_STOPPED,
-                                stderr: stderr_captured,
-                                stream_result,
-                                soft_stop_requested,
-                            }),
-                        });
-                    }
-                    _ => {} // Ignore other events (Resume, Quit handled at run loop level)
-                }
-            }
         }
 
         // Try to receive a line with a short timeout

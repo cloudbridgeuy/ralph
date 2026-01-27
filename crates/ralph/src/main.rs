@@ -17,7 +17,6 @@ pub mod highlight;
 mod init;
 pub mod iteration;
 pub mod iterations;
-pub mod keyboard;
 pub mod markdown;
 pub mod paths;
 mod prompt;
@@ -189,7 +188,6 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         command,
         prompt,
         completion_marker,
-        claude_session_id,
     };
     execute_run_with_prompting(args, exec_config)
 }
@@ -200,8 +198,6 @@ struct RunExecutionConfig {
     command: String,
     prompt: String,
     completion_marker: String,
-    /// Claude session ID (UUID) for resume capability.
-    claude_session_id: String,
 }
 
 /// Execute run loop with interactive failure recovery prompting.
@@ -264,7 +260,6 @@ fn execute_run_with_prompting(
             custom_additional_prompt,
             verbose_tools_config: verbose_tools_config.clone(),
             show_prompt: !args.no_prompt,
-            claude_session_id: exec_config.claude_session_id.clone(),
         };
 
         // Execute the run loop
@@ -397,30 +392,6 @@ fn execute_run_with_prompting(
                 eprintln!("Interrupted. Session '{}' saved.", session_slug);
                 return Err("Interrupted by signal".into());
             }
-            Err(RunError::SoftStopped {
-                session_slug,
-                iterations_completed,
-                final_pending_stories,
-                total_cost_usd,
-                total_duration_ms,
-                total_input_tokens,
-                total_output_tokens,
-            }) => {
-                // User soft-stopped and chose to quit - display summary and exit cleanly
-                let total_iterations = total_iterations_completed + iterations_completed;
-                let run_summary = startup::RunSummary {
-                    slug: session_slug,
-                    iterations_completed: total_iterations,
-                    completion_reason: Some("SoftStopped".to_string()),
-                    total_cost_usd,
-                    total_duration_ms,
-                    total_input_tokens,
-                    total_output_tokens,
-                    final_pending_stories,
-                };
-                startup::display_run_summary(&run_summary);
-                return Ok(()); // Clean exit - not an error
-            }
             Err(e) => {
                 // Other errors - propagate immediately
                 return Err(e.into());
@@ -535,6 +506,14 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         return execute_ask_with_history(&args, &project_path);
     }
 
+    execute_ask_core(&args, &project_path)
+}
+
+/// Core ask execution logic.
+///
+/// Validates arguments, builds configuration, displays prompt, and executes the ask command.
+/// Assumes signal handler is already initialized by caller.
+fn execute_ask_core(args: &AskArgs, project_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     // Validate --clone requires --session or --continue to specify source
     if args.clone_session && args.session.is_none() && !args.continue_session {
         return Err(
@@ -543,9 +522,29 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    // Build ask config from args
+    let config = build_ask_config(args, project_path)?;
+
+    // Display prompt if enabled
+    if !args.no_prompt && !config.prompt.is_empty() {
+        let prompt_display = startup::PromptDisplay::from_prompt(&config.prompt);
+        startup::display_prompt(&prompt_display);
+    }
+
+    // Execute the ask command and handle finalization
+    execute_and_finalize_ask(config)
+}
+
+/// Build AskConfig from CLI arguments.
+///
+/// Groups prompt, theme config, verbose tools, continuation, and clone info resolution.
+fn build_ask_config(
+    args: &AskArgs,
+    project_path: &Path,
+) -> Result<ask::AskConfig, Box<dyn std::error::Error>> {
     // Determine clone info if --clone flag is set
     let clone_info = if args.clone_session {
-        Some(resolve_clone_source(&args.session, &project_path)?)
+        Some(resolve_clone_source(&args.session, project_path)?)
     } else {
         None
     };
@@ -553,7 +552,7 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Determine continuation info if --continue flag is set (and not cloning)
     // Clone mode always creates a new session, so it's mutually exclusive with continuation
     let continuation = if args.continue_session && !args.clone_session {
-        Some(resolve_continuation(&args.session, &project_path)?)
+        Some(resolve_continuation(&args.session, project_path)?)
     } else {
         None
     };
@@ -573,30 +572,27 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Resolve prompt from argument or stdin
     let prompt = resolve_ask_prompt(args.prompt.as_deref())?;
 
-    // Display prompt if enabled
-    if !args.no_prompt && !prompt.is_empty() {
-        let prompt_display = startup::PromptDisplay::from_prompt(&prompt);
-        startup::display_prompt(&prompt_display);
-    }
-
     // Build ask config - validation happens in ask::ask()
     // When cloning, we don't pass a user slug since the new session gets auto-generated
-    let config = ask::AskConfig {
+    Ok(ask::AskConfig {
         prompt,
         timeout_secs: args.timeout,
         theme_config,
         verbose_tools,
-        project_path,
+        project_path: project_path.to_path_buf(),
         slug: if args.continue_session || args.clone_session {
             None // Don't pass slug when continuing or cloning (handled separately)
         } else {
-            args.session
+            args.session.clone()
         },
         continuation,
         clone: clone_info,
         permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
-    };
+    })
+}
 
+/// Execute ask and handle session finalization and summary display.
+fn execute_and_finalize_ask(config: ask::AskConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Execute the ask command
     let result = ask::ask(config)?;
 
@@ -712,17 +708,7 @@ fn execute_ask_with_history(
     }
 
     // Resolve the session to display history for
-    let entry = if let Some(ref name) = args.session {
-        session::find_session_by_slug(name)?
-    } else {
-        // --continue without --session: find most recent session
-        session::find_most_recent_session(project_path)?.ok_or_else(|| {
-            format!(
-                "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
-                project_path.display()
-            )
-        })?
-    };
+    let entry = find_session_entry(&args.session, project_path)?;
 
     // Load iteration logs and extract conversation history
     let session_dir = session::session_dir(&entry.slug);
@@ -735,95 +721,7 @@ fn execute_ask_with_history(
 
     // If a prompt was also provided with --continue, proceed with asking
     if args.continue_session && args.prompt.is_some() {
-        let mut modified_args = args.clone();
-        modified_args.history = false;
-        return execute_ask_core(modified_args);
-    }
-
-    Ok(())
-}
-
-/// Core ask execution logic (extracted for reuse with --history flag).
-fn execute_ask_core(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // Get current working directory as project path
-    let project_path = std::env::current_dir()?;
-
-    // Determine clone info if --clone flag is set
-    let clone_info = if args.clone_session {
-        Some(resolve_clone_source(&args.session, &project_path)?)
-    } else {
-        None
-    };
-
-    // Determine continuation info if --continue flag is set (and not cloning)
-    let continuation = if args.continue_session && !args.clone_session {
-        Some(resolve_continuation(&args.session, &project_path)?)
-    } else {
-        None
-    };
-
-    // Build theme configuration from config file, env vars, and CLI args
-    let theme_config = highlight::ThemeConfig::from_config_and_env()
-        .merge_cli(args.theme.as_deref(), args.no_background);
-
-    // Parse verbose tools config from CLI args
-    let verbose_tools = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
-    for warning in verbose_tools.warnings() {
-        eprintln!("Warning: {}", warning);
-    }
-
-    // Resolve prompt from argument or stdin
-    let prompt = resolve_ask_prompt(args.prompt.as_deref())?;
-
-    // Display prompt if enabled
-    if !args.no_prompt && !prompt.is_empty() {
-        let prompt_display = startup::PromptDisplay::from_prompt(&prompt);
-        startup::display_prompt(&prompt_display);
-    }
-
-    // Build ask config
-    let config = ask::AskConfig {
-        prompt,
-        timeout_secs: args.timeout,
-        theme_config,
-        verbose_tools,
-        project_path,
-        slug: if args.continue_session || args.clone_session {
-            None
-        } else {
-            args.session
-        },
-        continuation,
-        clone: clone_info,
-        permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
-    };
-
-    // Execute the ask command
-    let result = ask::ask(config)?;
-
-    // Finalize session based on exit code
-    let outcome = match result.exit_code {
-        0 => SessionOutcome::Completed,
-        _ => SessionOutcome::Failed,
-    };
-    if let Err(e) = session::finalize_session(&result.slug, result.iteration_count, outcome) {
-        eprintln!("Warning: Failed to finalize session: {}", e);
-    }
-
-    // Display summary
-    let summary = startup::AskSummary {
-        slug: result.slug.clone(),
-        success: result.exit_code == 0,
-        cost_usd: result.cost_usd,
-        duration_ms: result.duration_ms,
-        input_tokens: result.input_tokens,
-        output_tokens: result.output_tokens,
-    };
-    startup::display_ask_summary(&summary);
-
-    // Return error for non-zero exit
-    if result.exit_code != 0 {
-        return Err(format!("LLM subprocess exited with code {}", result.exit_code).into());
+        return execute_ask_core(args, project_path);
     }
 
     Ok(())

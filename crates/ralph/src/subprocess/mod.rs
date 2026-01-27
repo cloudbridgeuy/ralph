@@ -17,8 +17,6 @@ mod timeout;
 mod types;
 
 // Re-export public API
-pub use spinner::{
-    invoke_subprocess_with_keyboard, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,
-};
+pub use spinner::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
 pub use timeout::invoke_subprocess_with_timeout;
 pub use types::{StreamingSubprocessResult, SubprocessError};
