@@ -160,6 +160,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks
 - [Prompt Template System](docs/context/prompt-template.md) - Placeholders, customization, and two-phase workflow
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
+- [Runtime Control](docs/context/runtime-control.md) - Keyboard controls for pausing, stopping, and resuming sessions
 
 ## Glossary
 
