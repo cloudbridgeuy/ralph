@@ -195,22 +195,24 @@ acceptance = [
 
 [[stories]]
 category = "bugfix"
-description = "Keep raw mode enabled during spinner display regardless of output frequency"
+description = "Always keep raw mode enabled during subprocess execution, disable only for print calls"
 steps = [
   "Open crates/ralph/src/subprocess/spinner.rs",
-  "After writing output (around line 527), re-enable raw mode if spinner is active",
-  "After writing stderr (around line 554), re-enable raw mode if spinner is active",
-  "Ensure raw mode is only fully disabled when spinner stops or subprocess exits",
-  "Run ralph and press 's' while output is streaming rapidly",
-  "Verify keypresses are captured and not echoed to terminal",
+  "Remove the spinner_active check from raw mode re-enable logic",
+  "After every print!/eprintln! call, immediately re-enable raw mode unconditionally",
+  "Move keyboard.poll() outside the gap detection block so it runs every loop iteration",
+  "Ensure raw mode is enabled at subprocess start and stays on until subprocess exits",
+  "Run ralph and press 's' while output is streaming continuously",
+  "Verify keypresses are captured even during rapid output display",
 ]
 passes = true
 acceptance = [
-  "Raw mode remains enabled whenever spinner is showing key hints",
-  "Keypresses are captured even during rapid output streaming",
-  "Keys (s, S, p) are not echoed to terminal at any time during spinner display",
-  "Raw mode is properly disabled before subprocess output is printed (to avoid corruption)",
-  "Raw mode is re-enabled immediately after output is printed if spinner is active",
+  "Raw mode is enabled for entire subprocess execution duration",
+  "Raw mode is only disabled momentarily during print! calls, then re-enabled",
+  "Keyboard polling happens on every loop iteration (not just during gaps)",
+  "Keys (s, S, p) are never echoed to terminal regardless of output frequency",
+  "Soft stop, hard stop, and pause work even while output is streaming",
+  "Subprocess output is never corrupted by raw mode (disable before print)",
 ]
 
 # ============================================================================
