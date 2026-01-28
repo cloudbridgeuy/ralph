@@ -22,7 +22,7 @@
 //!    prevent terminal output corruption, then immediately re-enabled
 //! 3. **Panic safety**: [`KeyboardState`] uses [`RawModeGuard`] (RAII pattern)
 //!    from the [`crate::keyboard`] module, ensuring cleanup on all exit paths
-//! 4. **Non-terminal**: Raw mode is never enabled when stdout is not a TTY
+//! 4. **Non-terminal**: Raw mode is never enabled when stdin is not a TTY
 //!
 //! This differs from [`crate::replay_countdown`] which only enables raw mode
 //! during countdown display, since the subprocess loop needs to capture keys
@@ -88,6 +88,10 @@ pub struct SpinnerSubprocessOutcome {
 
 /// Manages raw mode state for keyboard input during subprocess execution.
 ///
+/// This struct tracks whether **stdin** is a terminal to enable keyboard controls.
+/// Note: Output formatting (highlighting, tool display) depends on stdout being
+/// a terminal and is handled separately in the subprocess runner.
+///
 /// This is kept separate from `SpinnerSubprocessConfig` because it tracks
 /// mutable runtime state (raw mode guard, detected actions) rather than
 /// configuration. This separation follows the Functional Core / Imperative
@@ -98,8 +102,8 @@ pub struct SpinnerSubprocessOutcome {
 /// before print!/eprintln! calls to avoid corrupting terminal output, then
 /// immediately re-enabled.
 struct KeyboardState {
-    /// Whether we're in an interactive terminal.
-    is_terminal: bool,
+    /// Whether stdin is a terminal (enables keyboard controls).
+    stdin_is_terminal: bool,
     /// Current raw mode guard (Some when raw mode is active).
     raw_mode_guard: Option<RawModeGuard>,
     /// Last detected keyboard action (for returning to caller).
@@ -112,9 +116,9 @@ struct KeyboardState {
 
 impl KeyboardState {
     /// Create new keyboard state.
-    fn new(is_terminal: bool) -> Self {
+    fn new(stdin_is_terminal: bool) -> Self {
         Self {
-            is_terminal,
+            stdin_is_terminal,
             raw_mode_guard: None,
             detected_action: None,
             is_paused: false,
@@ -128,7 +132,7 @@ impl KeyboardState {
     /// Raw mode should be enabled for the entire subprocess execution,
     /// only disabled momentarily for print calls.
     fn enable_raw_mode(&mut self) {
-        if !self.is_terminal || self.raw_mode_guard.is_some() {
+        if !self.stdin_is_terminal || self.raw_mode_guard.is_some() {
             return;
         }
         self.raw_mode_guard = Some(RawModeGuard::new());
@@ -288,7 +292,7 @@ fn join_output_threads(
 /// - Enabled during spinner display to allow non-blocking keyboard polling
 /// - Disabled before any subprocess output is written to prevent corruption
 /// - Disabled on all exit paths (completion, timeout, interrupt, error)
-/// - Skipped entirely when stdout is not a terminal (non-interactive mode)
+/// - Skipped entirely when stdin is not a terminal (non-interactive mode)
 ///
 /// # Keyboard Polling
 ///
@@ -338,7 +342,9 @@ fn join_output_threads(
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> SpinnerSubprocessOutcome {
-    let mut keyboard = KeyboardState::new(std::io::stdout().is_terminal());
+    // Check stdin for terminal (not stdout) because keyboard input comes from stdin.
+    // This allows keyboard controls when stdout is redirected but stdin is interactive.
+    let mut keyboard = KeyboardState::new(std::io::stdin().is_terminal());
     let subprocess_result = run_subprocess_with_spinner(config, &mut keyboard);
     SpinnerSubprocessOutcome {
         subprocess_result,
@@ -375,11 +381,13 @@ fn run_subprocess_with_spinner(
     let stdout_reader = BufReader::new(stdout);
     let stderr_reader = BufReader::new(stderr);
 
-    // Create stream processor with theme configuration and verbose tools
+    // Create stream processor with theme configuration and verbose tools.
+    // Output formatting depends on stdout being a terminal (not stdin).
+    let stdout_is_terminal = std::io::stdout().is_terminal();
     let mut processor = StreamProcessor::with_verbose_tools(
         config.theme_config.clone(),
-        keyboard.is_terminal,
-        keyboard.is_terminal,
+        stdout_is_terminal,
+        stdout_is_terminal,
         config.verbose_tools.clone(),
     )?;
 

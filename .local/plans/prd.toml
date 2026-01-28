@@ -15,7 +15,7 @@ steps = [
 ]
 passes = true
 acceptance = [
-  "Raw terminal mode is only enabled during countdown/pause UI, never during subprocess execution",
+  "Raw terminal mode is enabled during subprocess execution but disabled momentarily for print calls",
   "All raw mode enable calls have corresponding disable calls in finally-style cleanup (even on error/panic)",
   "Subprocess stdout output (from claude CLI) is never garbled or corrupted by terminal mode changes",
   "Key events (n, N, Space, p, P, Ctrl+C) are correctly classified and handled only when raw mode is active",
@@ -215,6 +215,26 @@ acceptance = [
   "Subprocess output is never corrupted by raw mode (disable before print)",
 ]
 
+[[stories]]
+category = "bugfix"
+description = "Check stdin (not stdout) is a terminal before enabling raw mode for keyboard input"
+steps = [
+  "Open crates/ralph/src/subprocess/spinner.rs",
+  "Change line 341 from std::io::stdout().is_terminal() to std::io::stdin().is_terminal()",
+  "Run ralph with piped stdin (e.g., cat <<EOF | ralph run --additional-prompt -)",
+  "Verify keypresses are NOT captured (stdin is not a terminal)",
+  "Verify no error occurs and ralph runs normally without keyboard controls",
+  "Run ralph directly (no pipe) and verify keypresses ARE captured",
+]
+passes = true
+acceptance = [
+  "KeyboardState checks stdin.is_terminal() instead of stdout.is_terminal()",
+  "Raw mode is only enabled when stdin is an interactive terminal",
+  "When stdin is piped, keyboard controls are gracefully disabled",
+  "When stdin is a terminal, keyboard controls (s, S, p) work correctly",
+  "No key echoing occurs in either piped or terminal mode",
+]
+
 # ============================================================================
 # Documentation for Keyboard Controls
 # ============================================================================
@@ -267,7 +287,7 @@ steps = [
   "Explain keyboard polling integration with subprocess I/O loop",
   "Verify comments are accurate to implementation",
 ]
-passes = false
+passes = true
 acceptance = [
   "Module doc comment explains when raw mode is enabled/disabled",
   "RawModeGuard pattern is documented with panic safety notes",
@@ -285,7 +305,7 @@ steps = [
   "Document pause state and output buffering behavior",
   "Verify comments match implementation behavior",
 ]
-passes = false
+passes = true
 acceptance = [
   "Soft stop flag and iteration boundary check are commented",
   "Hard stop behavior (SIGINT to subprocess, paused state file) is documented",
