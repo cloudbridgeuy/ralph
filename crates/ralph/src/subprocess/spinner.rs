@@ -329,7 +329,7 @@ fn run_subprocess_with_spinner(
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(&config.command)
-        .stdin(Stdio::inherit()) // Inherit stdin for interactive prompts
+        .stdin(Stdio::null()) // Null stdin so parent can capture keypresses for controls
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;

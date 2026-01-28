@@ -171,6 +171,28 @@ acceptance = [
   "No regression in HardStop or Pause behavior",
 ]
 
+[[stories]]
+category = "bugfix"
+description = "Change subprocess stdin from inherit to null so parent can capture keypresses"
+steps = [
+  "Open crates/ralph/src/subprocess/spinner.rs",
+  "Locate the Command::new spawn block (around line 329)",
+  "Change .stdin(Stdio::inherit()) to .stdin(Stdio::null())",
+  "Run ralph with multiple iterations and press 's' during spinner display",
+  "Verify keypress is NOT echoed to terminal",
+  "Verify spinner hints change to '[finishing...]' when 's' is pressed",
+  "Verify 'p' toggles pause state and 'S' triggers hard stop",
+]
+passes = true
+acceptance = [
+  "Keypresses (s, S, p) are not echoed to terminal output",
+  "Keypresses are captured by crossterm and trigger appropriate actions",
+  "Soft stop (s) updates spinner to '[finishing...]' and exits after iteration",
+  "Hard stop (S) kills subprocess immediately",
+  "Pause (p) toggles pause state with output buffering",
+  "Claude CLI execution is not affected (prompts passed via command line)",
+]
+
 # ============================================================================
 # Documentation for Keyboard Controls
 # ============================================================================

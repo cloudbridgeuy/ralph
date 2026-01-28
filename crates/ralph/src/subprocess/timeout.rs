@@ -57,7 +57,7 @@ pub fn invoke_subprocess_with_timeout(
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(command)
-        .stdin(Stdio::inherit()) // Inherit stdin for interactive prompts
+        .stdin(Stdio::null()) // Subprocess does not need stdin; prevents blocking on input
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
