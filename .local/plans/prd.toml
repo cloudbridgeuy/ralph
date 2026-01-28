@@ -193,6 +193,26 @@ acceptance = [
   "Claude CLI execution is not affected (prompts passed via command line)",
 ]
 
+[[stories]]
+category = "bugfix"
+description = "Keep raw mode enabled during spinner display regardless of output frequency"
+steps = [
+  "Open crates/ralph/src/subprocess/spinner.rs",
+  "After writing output (around line 527), re-enable raw mode if spinner is active",
+  "After writing stderr (around line 554), re-enable raw mode if spinner is active",
+  "Ensure raw mode is only fully disabled when spinner stops or subprocess exits",
+  "Run ralph and press 's' while output is streaming rapidly",
+  "Verify keypresses are captured and not echoed to terminal",
+]
+passes = true
+acceptance = [
+  "Raw mode remains enabled whenever spinner is showing key hints",
+  "Keypresses are captured even during rapid output streaming",
+  "Keys (s, S, p) are not echoed to terminal at any time during spinner display",
+  "Raw mode is properly disabled before subprocess output is printed (to avoid corruption)",
+  "Raw mode is re-enabled immediately after output is printed if spinner is active",
+]
+
 # ============================================================================
 # Documentation for Keyboard Controls
 # ============================================================================
@@ -210,7 +230,7 @@ steps = [
   "Explain raw mode lifecycle and how stdout corruption is avoided",
   "Verify all key behaviors match implementation",
 ]
-passes = false
+passes = true
 acceptance = [
   "Section 'Why No Keyboard Controls' is removed",
   "New 'Keyboard Controls' section documents all three keys with behaviors",
@@ -228,7 +248,7 @@ steps = [
   "Add description of dynamic hint states (running, finishing, paused)",
   "Verify example matches actual spinner output format",
 ]
-passes = false
+passes = true
 acceptance = [
   "Spinner example shows key hints (e.g., '[s: stop | S: hard stop | p: pause]')",
   "Dynamic states documented (hints change when soft stop requested or paused)",

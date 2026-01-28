@@ -552,6 +552,10 @@ fn run_subprocess_with_spinner(
                     while let Ok(line) = stderr_rx.try_recv() {
                         eprintln!("{}", line);
                     }
+                    // Re-enable raw mode if spinner is active to continue keyboard polling
+                    if spinner_active {
+                        keyboard.enable_raw_mode();
+                    }
                 }
 
                 // Gap detection: if no output for threshold duration, show spinner
