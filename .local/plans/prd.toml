@@ -387,7 +387,7 @@ steps = [
     "Explain difference: soft-stopped starts fresh iteration, hard-stopped resumes with --session-id",
     "Add link to this doc in CLAUDE.md Progressive Disclosure section"
 ]
-passes = false
+passes = true
 acceptance = [
     "docs/context/runtime-control.md exists",
     "Clearly states controls are for 'ralph run' only",
@@ -455,7 +455,7 @@ steps = [
     "Ensure each extracted function is under 100 lines",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "run() function reduced to orchestration logic only",
     "Extracted functions are focused and well-named",
@@ -478,7 +478,7 @@ steps = [
     "Ensure all tool types are still handled correctly",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "Tool routing code is more readable",
     "Match expression is cleaner without verbose guards",
@@ -498,7 +498,7 @@ steps = [
     "Ensure consistent format: 'Warning: {context}: {error}'",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "warn_if_err() and warn() helpers exist",
     "Warning messages follow consistent format",
@@ -524,7 +524,7 @@ steps = [
     "Test that tool output displays correctly",
     "Run cargo xtask lint to verify compilation"
 ]
-passes = false
+passes = true
 acceptance = [
     "Subprocess stdout output displays correctly (no garbled text)",
     "SIGTERM and SIGINT signals are handled properly",
@@ -554,7 +554,7 @@ steps = [
     "Add examples for common usage patterns",
     "Add link to this doc in CLAUDE.md Progressive Disclosure section"
 ]
-passes = false
+passes = true
 acceptance = [
     "docs/context/ralph-run.md exists and is comprehensive",
     "All CLI flags documented with types, defaults, and examples",
