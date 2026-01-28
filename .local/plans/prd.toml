@@ -145,3 +145,106 @@ acceptance = [
   "Ctrl+C handling remains unchanged (triggers signal::is_interrupted())",
   "Unknown keys are ignored without error",
 ]
+
+# ============================================================================
+# Bugfixes for Keyboard Controls
+# ============================================================================
+
+[[stories]]
+category = "bugfix"
+description = "Add missing SoftStop handler to update spinner hints to [finishing...] state"
+steps = [
+  "Open crates/ralph/src/subprocess/spinner.rs",
+  "Locate the keyboard.poll() handler block (around line 559)",
+  "Add SoftStop handler after HardStop block and before Pause block",
+  "When SoftStop detected: call spinner.set_key_hint_state(KeyHintState::Finishing)",
+  "Do not clear the action (let it propagate to caller for loop exit)",
+  "Run ralph with multiple iterations and press 's' during execution",
+  "Verify spinner hints change to '[finishing...]' immediately",
+]
+passes = true
+acceptance = [
+  "Pressing 's' updates spinner hints to '[finishing...]' within one spinner tick",
+  "Subprocess continues running normally after 's' is pressed",
+  "SoftStop action is returned to caller (not cleared like Pause)",
+  "Run loop exits after current iteration completes",
+  "No regression in HardStop or Pause behavior",
+]
+
+# ============================================================================
+# Documentation for Keyboard Controls
+# ============================================================================
+# These stories ensure the keyboard controls feature is properly documented
+# in both user-facing docs and code comments.
+# ============================================================================
+
+[[stories]]
+category = "documentation"
+description = "Update runtime-control.md to document keyboard controls during execution"
+steps = [
+  "Open docs/context/runtime-control.md",
+  "Replace 'Why No Keyboard Controls' section with 'Keyboard Controls' section",
+  "Document s key (soft stop), S key (hard stop), and p key (pause/resume)",
+  "Explain raw mode lifecycle and how stdout corruption is avoided",
+  "Verify all key behaviors match implementation",
+]
+passes = false
+acceptance = [
+  "Section 'Why No Keyboard Controls' is removed",
+  "New 'Keyboard Controls' section documents all three keys with behaviors",
+  "Raw mode lifecycle is explained (when enabled, when disabled, RAII guard)",
+  "Non-interactive mode behavior is documented (keyboard controls skipped)",
+  "Code locations table includes new files if any were added",
+]
+
+[[stories]]
+category = "documentation"
+description = "Update ralph-run.md spinner section to include key binding hints"
+steps = [
+  "Open docs/context/ralph-run.md",
+  "Update 'Spinner During Execution' section with key hints example",
+  "Add description of dynamic hint states (running, finishing, paused)",
+  "Verify example matches actual spinner output format",
+]
+passes = false
+acceptance = [
+  "Spinner example shows key hints (e.g., '[s: stop | S: hard stop | p: pause]')",
+  "Dynamic states documented (hints change when soft stop requested or paused)",
+  "Example format matches implementation exactly",
+]
+
+[[stories]]
+category = "documentation"
+description = "Add code comments explaining raw mode lifecycle in subprocess spinner"
+steps = [
+  "Open crates/ralph/src/subprocess/spinner.rs",
+  "Add module-level doc comment explaining raw mode strategy",
+  "Document RawModeGuard usage and panic safety",
+  "Explain keyboard polling integration with subprocess I/O loop",
+  "Verify comments are accurate to implementation",
+]
+passes = false
+acceptance = [
+  "Module doc comment explains when raw mode is enabled/disabled",
+  "RawModeGuard pattern is documented with panic safety notes",
+  "Keyboard polling location and non-blocking behavior is commented",
+  "Comments reference related code in replay_countdown.rs for pattern consistency",
+]
+
+[[stories]]
+category = "documentation"
+description = "Add code comments for key event handling in run loop"
+steps = [
+  "Open crates/ralph/src/run/mod.rs",
+  "Document soft stop flag checking at iteration boundaries",
+  "Document hard stop signal propagation to subprocess",
+  "Document pause state and output buffering behavior",
+  "Verify comments match implementation behavior",
+]
+passes = false
+acceptance = [
+  "Soft stop flag and iteration boundary check are commented",
+  "Hard stop behavior (SIGINT to subprocess, paused state file) is documented",
+  "Pause/resume logic is explained with buffer handling notes",
+  "Comments are concise and follow existing code style",
+]

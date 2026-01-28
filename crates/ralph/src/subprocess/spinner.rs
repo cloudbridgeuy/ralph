@@ -11,9 +11,24 @@
 //! keyboard input during wait periods. This enables interactive controls
 //! like soft stop, hard stop, and pause (implemented in caller layers).
 //!
-//! Raw terminal mode is enabled only during spinner display periods and
-//! disabled before subprocess output is written, ensuring output is never
-//! corrupted by terminal mode changes.
+//! # Raw Mode Lifecycle
+//!
+//! Raw terminal mode is carefully managed to avoid corrupting subprocess output:
+//!
+//! 1. **When enabled**: During spinner display periods only
+//! 2. **When disabled**: Before any subprocess stdout/stderr is written
+//! 3. **Panic safety**: [`KeyboardState`] uses [`RawModeGuard`] (RAII pattern)
+//!    from the [`crate::keyboard`] module, ensuring cleanup on all exit paths
+//! 4. **Non-terminal**: Raw mode is never enabled when stdout is not a TTY
+//!
+//! This pattern is consistent with [`crate::replay_countdown`], which uses
+//! the same approach for keyboard input during replay delays.
+//!
+//! # Keyboard Polling
+//!
+//! Keyboard polling uses `event::poll(Duration::ZERO)` for non-blocking input
+//! detection. This is called during the 100ms timeout between subprocess output
+//! line checks, allowing responsive key handling without blocking I/O.
 
 use super::timeout::try_wait_child;
 use super::types::{
@@ -582,6 +597,13 @@ fn run_subprocess_with_spinner(
                                 stream_result: processor.finish(),
                             }),
                         });
+                    }
+
+                    // Check if soft stop was requested - update hints but let subprocess continue
+                    // The action is NOT cleared (unlike Pause) so it propagates to caller
+                    // for iteration boundary checking
+                    if keyboard.matches_action(RunKeyAction::SoftStop) {
+                        spinner.set_key_hint_state(KeyHintState::Finishing);
                     }
 
                     // Check if pause was requested - toggle pause state
