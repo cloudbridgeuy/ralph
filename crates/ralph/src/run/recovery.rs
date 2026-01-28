@@ -3,11 +3,34 @@
 //! This module handles automatic retry logic for failed subprocess invocations.
 
 use super::{InvocationConfig, RunError};
+use crate::keyboard::RunKeyAction;
 use crate::spinner::SpinnerSessionInfo;
 use crate::subprocess::{
     invoke_subprocess_with_spinner_config, invoke_subprocess_with_timeout, SpinnerSubprocessConfig,
-    SubprocessError,
+    StreamingSubprocessResult, SubprocessError,
 };
+
+/// Print captured output with a header, ensuring trailing newline.
+fn print_captured_output(header: &str, content: &str) {
+    if content.is_empty() {
+        return;
+    }
+    eprintln!("\n--- {} ---", header);
+    eprint!("{}", content);
+    if !content.ends_with('\n') {
+        eprintln!();
+    }
+}
+
+/// Result of subprocess invocation with failure recovery.
+///
+/// Bundles the subprocess result with any keyboard action detected during execution.
+pub struct RecoveryOutcome {
+    /// The subprocess execution result.
+    pub subprocess_result: StreamingSubprocessResult,
+    /// Keyboard action detected during execution (if any).
+    pub key_action: Option<RunKeyAction>,
+}
 
 /// Invoke subprocess with automatic failure recovery and timeout support.
 ///
@@ -25,15 +48,18 @@ use crate::subprocess::{
 ///
 /// # Returns
 ///
-/// Returns the `StreamingSubprocessResult` on success (exit code 0).
+/// Returns a `RecoveryOutcome` containing the subprocess result and any detected key action.
 pub fn invoke_with_failure_recovery(
     config: &InvocationConfig,
-) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
+) -> Result<RecoveryOutcome, RunError> {
     let total_attempts = config.max_attempts + 1; // max_attempts of 3 means 4 total attempts (1 initial + 3 recovery)
+
+    // Track the most recent key action detected across attempts
+    let mut detected_key_action: Option<RunKeyAction> = None;
 
     for attempt in 1..=total_attempts {
         // Use spinner-aware subprocess if theme config provided
-        let result = match config.theme_config {
+        let (subprocess_result, key_action) = match config.theme_config {
             Some(theme) => {
                 let spinner_config = SpinnerSubprocessConfig {
                     command: config.command.to_string(),
@@ -47,18 +73,25 @@ pub fn invoke_with_failure_recovery(
                         config.max_iterations,
                     ),
                 };
-                // invoke_subprocess_with_spinner_config returns SpinnerSubprocessOutcome
-                // Extract subprocess_result to match expected type
-                invoke_subprocess_with_spinner_config(&spinner_config).subprocess_result
+                let outcome = invoke_subprocess_with_spinner_config(&spinner_config);
+                (outcome.subprocess_result, outcome.key_action)
             }
-            None => invoke_subprocess_with_timeout(
-                config.command,
-                config.timeout_secs,
-                config.verbose_tools_config.clone(),
+            None => (
+                invoke_subprocess_with_timeout(
+                    config.command,
+                    config.timeout_secs,
+                    config.verbose_tools_config.clone(),
+                ),
+                None,
             ),
         };
 
-        let result = match result {
+        // Capture any detected key action
+        if key_action.is_some() {
+            detected_key_action = key_action;
+        }
+
+        let result = match subprocess_result {
             Ok(r) => r,
             Err(SubprocessError::Timeout {
                 timeout_secs: ts,
@@ -71,22 +104,8 @@ pub fn invoke_with_failure_recovery(
                 );
 
                 // Print partial output from timed out attempt
-                let raw_text = &partial_result.stream_result.raw_text;
-                if !raw_text.is_empty() {
-                    eprintln!("\n--- partial output ---");
-                    eprint!("{}", raw_text);
-                    if !raw_text.ends_with('\n') {
-                        eprintln!();
-                    }
-                }
-
-                if !partial_result.stderr.is_empty() {
-                    eprintln!("\n--- stderr ---");
-                    eprint!("{}", partial_result.stderr);
-                    if !partial_result.stderr.ends_with('\n') {
-                        eprintln!();
-                    }
-                }
+                print_captured_output("partial output", &partial_result.stream_result.raw_text);
+                print_captured_output("stderr", &partial_result.stderr);
 
                 if attempt < total_attempts {
                     eprintln!("\nRe-attempting...\n");
@@ -117,7 +136,10 @@ pub fn invoke_with_failure_recovery(
         };
 
         if result.exit_code == 0 {
-            return Ok(result);
+            return Ok(RecoveryOutcome {
+                subprocess_result: result,
+                key_action: detected_key_action,
+            });
         }
 
         // Non-zero exit code - handle failure recovery
@@ -127,22 +149,8 @@ pub fn invoke_with_failure_recovery(
         );
 
         // Print captured output from failed attempt
-        let raw_text = &result.stream_result.raw_text;
-        if !raw_text.is_empty() {
-            eprintln!("\n--- captured output ---");
-            eprint!("{}", raw_text);
-            if !raw_text.ends_with('\n') {
-                eprintln!();
-            }
-        }
-
-        if !result.stderr.is_empty() {
-            eprintln!("\n--- stderr ---");
-            eprint!("{}", result.stderr);
-            if !result.stderr.ends_with('\n') {
-                eprintln!();
-            }
-        }
+        print_captured_output("captured output", &result.stream_result.raw_text);
+        print_captured_output("stderr", &result.stderr);
 
         if attempt < total_attempts {
             eprintln!("\nRe-attempting...\n");

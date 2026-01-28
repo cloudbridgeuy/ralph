@@ -79,7 +79,7 @@ steps = [
   "Verify current iteration completes normally",
   "Verify the run loop exits after current iteration without starting the next",
 ]
-passes = false
+passes = true
 acceptance = [
   "Pressing 's' sets a soft-stop flag checked at iteration boundaries",
   "Current subprocess execution is not interrupted",

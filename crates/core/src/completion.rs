@@ -10,6 +10,8 @@ pub enum CompletionReason {
     AllStoriesComplete,
     /// The completion marker was found in the LLM output
     MarkerFound,
+    /// User requested soft stop via 's' key - finish current iteration then exit
+    SoftStop,
 }
 
 /// Checks if the iteration loop should complete based on pending story count
@@ -142,5 +144,14 @@ mod tests {
         let output = "Done\n  <promise>COMPLETE</promise>  \n";
         let result = check_completion(1, output, "<promise>COMPLETE</promise>");
         assert_eq!(result, Some(CompletionReason::MarkerFound));
+    }
+
+    #[test]
+    fn test_soft_stop_variant_exists() {
+        // SoftStop is set externally by the run loop, not by check_completion
+        let reason = CompletionReason::SoftStop;
+        assert_eq!(reason, CompletionReason::SoftStop);
+        assert_ne!(reason, CompletionReason::AllStoriesComplete);
+        assert_ne!(reason, CompletionReason::MarkerFound);
     }
 }

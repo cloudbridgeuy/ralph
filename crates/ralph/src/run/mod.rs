@@ -14,6 +14,7 @@ use crate::iteration::{
     extract_response_text, write_iteration_log, Chunk, IterationError, IterationLog, LogMetadata,
     LogToolCall,
 };
+use crate::keyboard::RunKeyAction;
 use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::signal;
 use crate::startup::{
@@ -26,7 +27,7 @@ use crate::warn::warn_if_err;
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
-use recovery::invoke_with_failure_recovery;
+use recovery::{invoke_with_failure_recovery, RecoveryOutcome};
 use std::fs;
 use std::path::PathBuf;
 
@@ -299,8 +300,15 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             SingleIterationResult::Stuck => {
                 return Err(RunError::PrdUnchanged);
             }
-            SingleIterationResult::Continue => {
+            SingleIterationResult::Continue(key_action) => {
                 state.iterations_completed = relative_iteration;
+
+                // Handle soft stop: finish after current iteration
+                if matches!(key_action, Some(RunKeyAction::SoftStop)) {
+                    eprintln!("\nSoft stop requested. Finishing after this iteration.");
+                    state.completion_reason = Some(CompletionReason::SoftStop);
+                    break;
+                }
             }
         }
     }
@@ -427,9 +435,9 @@ fn handle_subprocess_invocation(
     session_slug: &str,
     iterations_completed: usize,
     pending_before: usize,
-) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
+) -> Result<RecoveryOutcome, RunError> {
     match invoke_with_failure_recovery(config) {
-        Ok(r) => Ok(r),
+        Ok(outcome) => Ok(outcome),
         Err(RunError::SubprocessFailed {
             exit_code,
             attempts,
@@ -512,8 +520,8 @@ impl IterationState {
 
 /// Result of processing a single iteration.
 enum SingleIterationResult {
-    /// Continue to next iteration
-    Continue,
+    /// Continue to next iteration (includes any detected key action)
+    Continue(Option<RunKeyAction>),
     /// Stop with completion reason
     Complete(CompletionReason),
     /// PRD unchanged - stuck state (session already finalized)
@@ -568,12 +576,16 @@ fn process_single_iteration(
         max_iterations,
     };
 
-    let result = handle_subprocess_invocation(
+    let recovery_outcome = handle_subprocess_invocation(
         &invocation_config,
         session_slug,
         state.iterations_completed,
         pending_before,
     )?;
+
+    // Extract subprocess result and key action from recovery outcome
+    let result = recovery_outcome.subprocess_result;
+    let key_action = recovery_outcome.key_action;
 
     // Write iteration log
     let mut iteration_log = build_iteration_log(iteration, pending_before, &result);
@@ -627,7 +639,7 @@ fn process_single_iteration(
         return Ok(SingleIterationResult::Stuck);
     }
 
-    Ok(SingleIterationResult::Continue)
+    Ok(SingleIterationResult::Continue(key_action))
 }
 
 /// Display startup information and optional prompt.
