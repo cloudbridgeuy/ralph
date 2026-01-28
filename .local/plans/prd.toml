@@ -585,7 +585,7 @@ steps = [
     "Add examples for common usage patterns",
     "Add link to this doc in CLAUDE.md Progressive Disclosure section"
 ]
-passes = false
+passes = true
 acceptance = [
     "docs/context/ralph-ask.md exists and is comprehensive",
     "All CLI flags documented with types, defaults, and examples",

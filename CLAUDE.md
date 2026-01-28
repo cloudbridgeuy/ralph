@@ -162,6 +162,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [Runtime Control](docs/context/runtime-control.md) - Signal-based interruption and session finalization
 - [ralph run Command](docs/context/ralph-run.md) - PRD-driven iteration loop, CLI flags, session management
+- [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, session continuation, conversation history
 
 ## Glossary
 
