@@ -61,7 +61,7 @@ steps = [
   "Verify raw mode is restored after subprocess output completes",
   "Verify raw mode is disabled on all exit paths (success, error, Ctrl+C)",
 ]
-passes = false
+passes = true
 acceptance = [
   "Raw mode is only active during spinner UI rendering, never during subprocess output",
   "RawModeGuard RAII pattern ensures cleanup on panic or error",

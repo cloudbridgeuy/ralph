@@ -135,6 +135,37 @@ impl KeyboardState {
     }
 }
 
+/// Drains remaining stdout lines from the channel and processes them.
+///
+/// Called during exit handling to ensure all buffered output is displayed
+/// before the subprocess result is returned.
+fn drain_stdout(line_rx: &mpsc::Receiver<io::Result<String>>, processor: &mut StreamProcessor) {
+    while let Ok(line_result) = line_rx.try_recv() {
+        if let Ok(line) = line_result {
+            if let Some(output) = processor.process_line(&line) {
+                print!("{}", output);
+                let _ = io::stdout().flush();
+            }
+        }
+    }
+}
+
+/// Drains remaining stderr lines from the channel.
+fn drain_stderr(stderr_rx: &mpsc::Receiver<String>) {
+    while let Ok(line) = stderr_rx.try_recv() {
+        eprintln!("{}", line);
+    }
+}
+
+/// Waits for output threads to finish and returns the captured stderr.
+fn join_output_threads(
+    stdout_thread: thread::JoinHandle<()>,
+    stderr_thread: thread::JoinHandle<String>,
+) -> String {
+    let _ = stdout_thread.join();
+    stderr_thread.join().unwrap_or_default()
+}
+
 /// Invokes a command with stream processing, theme configuration, and spinner display.
 ///
 /// This extends [`super::invoke_subprocess_with_timeout`] with spinner support:
@@ -143,6 +174,15 @@ impl KeyboardState {
 /// - Displays session name and iteration progress (if provided)
 /// - Automatically stops spinner when first output arrives
 /// - Only shows spinner when stdout is a terminal
+///
+/// # Terminal Raw Mode
+///
+/// Raw mode is automatically managed during execution to enable keyboard input
+/// polling without corrupting subprocess output:
+/// - Enabled during spinner display to allow non-blocking keyboard polling
+/// - Disabled before any subprocess output is written to prevent corruption
+/// - Disabled on all exit paths (completion, timeout, interrupt, error)
+/// - Skipped entirely when stdout is not a terminal (non-interactive mode)
 ///
 /// # Arguments
 ///
@@ -266,36 +306,21 @@ pub fn invoke_subprocess_with_spinner_config(
             if spinner_active {
                 spinner.stop();
             }
+            // Disable raw mode before draining output to prevent corruption
+            keyboard.disable_raw_mode();
 
-            // Process completed, drain remaining output
-            while let Ok(line_result) = line_rx.try_recv() {
-                if let Ok(line) = line_result {
-                    if let Some(output) = processor.process_line(&line) {
-                        print!("{}", output);
-                        let _ = io::stdout().flush();
-                    }
-                }
-            }
-
-            // Drain any remaining stderr
-            while let Ok(line) = stderr_rx.try_recv() {
-                eprintln!("{}", line);
-            }
-
-            // Wait for threads to finish
-            let _ = stdout_thread.join();
-            let stderr_captured = stderr_thread.join().unwrap_or_default();
+            // Drain remaining output and wait for threads
+            drain_stdout(&line_rx, &mut processor);
+            drain_stderr(&stderr_rx);
+            let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
 
             // Extract exit code
             let exit_code = status.code().ok_or(SubprocessError::Signaled)?;
 
-            // Finish stream processing
-            let stream_result = processor.finish();
-
             return Ok(StreamingSubprocessResult {
                 exit_code,
                 stderr: stderr_captured,
-                stream_result,
+                stream_result: processor.finish(),
             });
         }
 
@@ -305,34 +330,23 @@ pub fn invoke_subprocess_with_spinner_config(
             if spinner_active {
                 spinner.stop();
             }
+            // Disable raw mode before draining output to prevent corruption
+            keyboard.disable_raw_mode();
 
             // Kill the subprocess
             let _ = child.kill();
             let _ = child.wait(); // Clean up zombie
 
-            // Drain any remaining output that was received
-            while let Ok(line_result) = line_rx.try_recv() {
-                if let Ok(line) = line_result {
-                    if let Some(output) = processor.process_line(&line) {
-                        print!("{}", output);
-                        let _ = io::stdout().flush();
-                    }
-                }
-            }
-
-            // Wait for threads
-            let _ = stdout_thread.join();
-            let stderr_captured = stderr_thread.join().unwrap_or_default();
-
-            // Finish stream processing to get partial result
-            let stream_result = processor.finish();
+            // Drain remaining output and wait for threads
+            drain_stdout(&line_rx, &mut processor);
+            let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
 
             return Err(SubprocessError::Timeout {
                 timeout_secs: config.timeout_secs,
                 partial_result: Box::new(StreamingSubprocessResult {
                     exit_code: EXIT_CODE_KILLED,
                     stderr: stderr_captured,
-                    stream_result,
+                    stream_result: processor.finish(),
                 }),
             });
         }
@@ -343,33 +357,22 @@ pub fn invoke_subprocess_with_spinner_config(
             if spinner_active {
                 spinner.stop();
             }
+            // Disable raw mode before draining output to prevent corruption
+            keyboard.disable_raw_mode();
 
             // Kill the subprocess gracefully
             let _ = child.kill();
             let _ = child.wait(); // Clean up zombie
 
-            // Drain any remaining output that was received
-            while let Ok(line_result) = line_rx.try_recv() {
-                if let Ok(line) = line_result {
-                    if let Some(output) = processor.process_line(&line) {
-                        print!("{}", output);
-                        let _ = io::stdout().flush();
-                    }
-                }
-            }
-
-            // Wait for threads
-            let _ = stdout_thread.join();
-            let stderr_captured = stderr_thread.join().unwrap_or_default();
-
-            // Finish stream processing to get partial result
-            let stream_result = processor.finish();
+            // Drain remaining output and wait for threads
+            drain_stdout(&line_rx, &mut processor);
+            let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
 
             return Err(SubprocessError::Interrupted {
                 partial_result: Box::new(StreamingSubprocessResult {
                     exit_code: EXIT_CODE_INTERRUPTED,
                     stderr: stderr_captured,
-                    stream_result,
+                    stream_result: processor.finish(),
                 }),
             });
         }
@@ -409,6 +412,8 @@ pub fn invoke_subprocess_with_spinner_config(
                     if spinner_active {
                         spinner.stop();
                     }
+                    // Disable raw mode before returning error
+                    keyboard.disable_raw_mode();
                     return Err(SubprocessError::OutputCaptureFailed(format!(
                         "Failed to read stdout: {}",
                         e
@@ -416,9 +421,13 @@ pub fn invoke_subprocess_with_spinner_config(
                 }
             },
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Check for stderr output
-                while let Ok(line) = stderr_rx.try_recv() {
+                // Check for stderr output (disable raw mode temporarily for clean output)
+                if let Ok(line) = stderr_rx.try_recv() {
+                    keyboard.disable_raw_mode();
                     eprintln!("{}", line);
+                    while let Ok(line) = stderr_rx.try_recv() {
+                        eprintln!("{}", line);
+                    }
                 }
 
                 // Gap detection: if no output for threshold duration, show spinner
