@@ -4,90 +4,77 @@ use super::*;
 
 #[test]
 fn test_substitute_prompt_simple() {
-    let result = substitute_prompt_in_command("echo {prompt}", "hello", "test-uuid");
+    let result = substitute_prompt_in_command("echo {prompt}", "hello");
     assert_eq!(result, "echo 'hello'");
 }
 
 #[test]
 fn test_substitute_prompt_with_quotes() {
-    let result = substitute_prompt_in_command("echo {prompt}", "it's a test", "test-uuid");
+    let result = substitute_prompt_in_command("echo {prompt}", "it's a test");
     assert_eq!(result, "echo 'it'\"'\"'s a test'");
 }
 
 #[test]
 fn test_substitute_prompt_claude_command() {
     let result = substitute_prompt_in_command(
-        "claude --session-id {session_id} --permission-mode acceptEdits --output-format stream-json -p {prompt}",
+        "claude --permission-mode acceptEdits --output-format stream-json -p {prompt}",
         "test prompt",
-        "abc-123-def",
     );
     assert_eq!(
         result,
-        "claude --session-id abc-123-def --permission-mode acceptEdits --output-format stream-json -p 'test prompt'"
+        "claude --permission-mode acceptEdits --output-format stream-json -p 'test prompt'"
     );
 }
 
 #[test]
 fn test_substitute_prompt_custom_command_structure() {
     // Custom commands can use any structure
-    let result = substitute_prompt_in_command("my-llm --input {prompt} --verbose", "hello", "uuid");
+    let result = substitute_prompt_in_command("my-llm --input {prompt} --verbose", "hello");
     assert_eq!(result, "my-llm --input 'hello' --verbose");
 }
 
 #[test]
 fn test_substitute_prompt_custom_command_with_env_vars() {
     // Custom command with environment variables and complex structure
-    let result =
-        substitute_prompt_in_command("OPENAI_KEY=$KEY openai-cli chat {prompt}", "query", "uuid");
+    let result = substitute_prompt_in_command("OPENAI_KEY=$KEY openai-cli chat {prompt}", "query");
     assert_eq!(result, "OPENAI_KEY=$KEY openai-cli chat 'query'");
 }
 
 #[test]
 fn test_substitute_prompt_empty_prompt() {
-    let result = substitute_prompt_in_command("echo {prompt}", "", "uuid");
+    let result = substitute_prompt_in_command("echo {prompt}", "");
     assert_eq!(result, "echo ''");
 }
 
 #[test]
 fn test_substitute_prompt_multiline() {
-    let result = substitute_prompt_in_command("echo {prompt}", "line1\nline2", "uuid");
+    let result = substitute_prompt_in_command("echo {prompt}", "line1\nline2");
     assert_eq!(result, "echo 'line1\nline2'");
 }
 
 #[test]
 fn test_substitute_prompt_special_shell_chars() {
     // Shell special characters should be safely escaped within single quotes
-    let result = substitute_prompt_in_command("echo {prompt}", "test $VAR `cmd` $(cmd)", "uuid");
+    let result = substitute_prompt_in_command("echo {prompt}", "test $VAR `cmd` $(cmd)");
     assert_eq!(result, "echo 'test $VAR `cmd` $(cmd)'");
 }
 
 #[test]
 fn test_substitute_prompt_no_placeholder() {
     // Command without {prompt} placeholder returns unchanged
-    let result = substitute_prompt_in_command("echo hello", "ignored", "uuid");
+    let result = substitute_prompt_in_command("echo hello", "ignored");
     assert_eq!(result, "echo hello");
 }
 
 #[test]
 fn test_default_command_template_substitution() {
     // Verify the default command template works correctly
-    let result =
-        substitute_prompt_in_command(defaults::COMMAND_TEMPLATE, "my prompt", "my-session-uuid");
+    let result = substitute_prompt_in_command(defaults::COMMAND_TEMPLATE, "my prompt");
     assert!(result.starts_with("claude "));
     assert!(result.contains("--output-format stream-json"));
     assert!(result.contains("'my prompt'"));
-    assert!(result.contains("--session-id my-session-uuid"));
-}
-
-#[test]
-fn test_substitute_session_id() {
-    // Verify session_id placeholder substitution works
-    let result = substitute_prompt_in_command(
-        "claude --session-id {session_id} -p {prompt}",
-        "prompt",
-        "550e8400-e29b-41d4-a716-446655440000",
-    );
-    assert!(result.contains("--session-id 550e8400-e29b-41d4-a716-446655440000"));
+    // Session ID is NOT in default template - each iteration is a fresh session
+    assert!(!result.contains("--session-id"));
 }
 
 #[test]
