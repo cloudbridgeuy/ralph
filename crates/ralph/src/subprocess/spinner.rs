@@ -17,13 +17,13 @@
 
 use super::timeout::try_wait_child;
 use super::types::{
-    StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
-    EXIT_CODE_KILLED,
+    StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_HARD_STOP,
+    EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
 use crate::highlight::ThemeConfig;
 use crate::keyboard::{check_for_run_action, RawModeGuard, RunKeyAction};
 use crate::signal;
-use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
+use crate::spinner::{KeyHintState, Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
@@ -84,6 +84,10 @@ struct KeyboardState {
     raw_mode_guard: Option<RawModeGuard>,
     /// Last detected keyboard action (for returning to caller).
     detected_action: Option<RunKeyAction>,
+    /// Whether output is currently paused.
+    is_paused: bool,
+    /// Buffer for output while paused.
+    pause_buffer: Vec<String>,
 }
 
 impl KeyboardState {
@@ -93,6 +97,8 @@ impl KeyboardState {
             is_terminal,
             raw_mode_guard: None,
             detected_action: None,
+            is_paused: false,
+            pause_buffer: Vec::new(),
         }
     }
 
@@ -139,6 +145,58 @@ impl KeyboardState {
     /// clearing it so subsequent calls return None.
     fn take_action(&mut self) -> Option<RunKeyAction> {
         self.detected_action.take()
+    }
+
+    /// Check if the detected action matches a specific action.
+    fn matches_action(&self, action: RunKeyAction) -> bool {
+        self.detected_action == Some(action)
+    }
+
+    /// Clear the detected action without returning it.
+    fn clear_action(&mut self) {
+        self.detected_action = None;
+    }
+
+    /// Toggle the pause state.
+    ///
+    /// When pausing, returns an empty Vec.
+    /// When resuming, returns buffered output for immediate display.
+    fn toggle_pause(&mut self) -> Vec<String> {
+        self.is_paused = !self.is_paused;
+        if self.is_paused {
+            Vec::new()
+        } else {
+            std::mem::take(&mut self.pause_buffer)
+        }
+    }
+
+    /// Check if currently paused.
+    fn is_paused(&self) -> bool {
+        self.is_paused
+    }
+
+    /// Buffer output for later display when paused.
+    fn buffer_output(&mut self, output: String) {
+        self.pause_buffer.push(output);
+    }
+
+    /// Drain any remaining buffered output (called on exit).
+    fn drain_buffer(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pause_buffer)
+    }
+}
+
+/// Drains the pause buffer, printing any buffered output.
+///
+/// Called during exit handling to ensure output buffered while paused
+/// is displayed before the subprocess result is returned.
+fn drain_pause_buffer(keyboard: &mut KeyboardState) {
+    let buffered = keyboard.drain_buffer();
+    if !buffered.is_empty() {
+        for output in buffered {
+            print!("{}", output);
+        }
+        let _ = io::stdout().flush();
     }
 }
 
@@ -341,6 +399,9 @@ fn run_subprocess_with_spinner(
             // Disable raw mode before draining output to prevent corruption
             keyboard.disable_raw_mode();
 
+            // Drain any output buffered while paused
+            drain_pause_buffer(keyboard);
+
             // Drain remaining output and wait for threads
             drain_stdout(&line_rx, &mut processor);
             drain_stderr(&stderr_rx);
@@ -369,6 +430,9 @@ fn run_subprocess_with_spinner(
             let _ = child.kill();
             let _ = child.wait(); // Clean up zombie
 
+            // Drain any output buffered while paused
+            drain_pause_buffer(keyboard);
+
             // Drain remaining output and wait for threads
             drain_stdout(&line_rx, &mut processor);
             let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
@@ -395,6 +459,9 @@ fn run_subprocess_with_spinner(
             // Kill the subprocess gracefully
             let _ = child.kill();
             let _ = child.wait(); // Clean up zombie
+
+            // Drain any output buffered while paused
+            drain_pause_buffer(keyboard);
 
             // Drain remaining output and wait for threads
             drain_stdout(&line_rx, &mut processor);
@@ -426,17 +493,25 @@ fn run_subprocess_with_spinner(
                     }
 
                     if let Some(output) = processor.process_line(&line) {
-                        // Stop spinner on visible output
-                        if spinner_active {
-                            spinner.stop();
-                            spinner_active = false;
+                        // Check pause state first to avoid unnecessary clone
+                        if keyboard.is_paused() {
+                            // Buffer output while paused - don't print or stop spinner
+                            keyboard.buffer_output(output);
+                            // Still update last_output_time so we know output is arriving
+                            last_output_time = Instant::now();
+                        } else {
+                            // Stop spinner on visible output
+                            if spinner_active {
+                                spinner.stop();
+                                spinner_active = false;
+                            }
+                            // Disable raw mode before writing output to prevent corruption
+                            keyboard.disable_raw_mode();
+                            print!("{}", output);
+                            let _ = io::stdout().flush();
+                            // Update last output time
+                            last_output_time = Instant::now();
                         }
-                        // Disable raw mode before writing output to prevent corruption
-                        keyboard.disable_raw_mode();
-                        print!("{}", output);
-                        let _ = io::stdout().flush();
-                        // Update last output time
-                        last_output_time = Instant::now();
                     }
                 }
                 Err(e) => {
@@ -446,6 +521,8 @@ fn run_subprocess_with_spinner(
                     }
                     // Disable raw mode before returning error
                     keyboard.disable_raw_mode();
+                    // Drain any output buffered while paused
+                    drain_pause_buffer(keyboard);
                     return Err(SubprocessError::OutputCaptureFailed(format!(
                         "Failed to read stdout: {}",
                         e
@@ -479,7 +556,65 @@ fn run_subprocess_with_spinner(
                 // Poll for keyboard input during wait periods
                 // This allows interactive controls (soft stop, hard stop, pause)
                 // to be detected without blocking subprocess I/O
-                keyboard.poll();
+                if keyboard.poll() {
+                    // Check if hard stop was requested - kill subprocess immediately
+                    if keyboard.matches_action(RunKeyAction::HardStop) {
+                        if spinner_active {
+                            spinner.stop();
+                        }
+                        keyboard.disable_raw_mode();
+
+                        // Kill the subprocess
+                        let _ = child.kill();
+                        let _ = child.wait();
+
+                        // Drain any output buffered while paused
+                        drain_pause_buffer(keyboard);
+
+                        // Drain remaining output and wait for threads
+                        drain_stdout(&line_rx, &mut processor);
+                        let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
+
+                        return Err(SubprocessError::HardStop {
+                            partial_result: Box::new(StreamingSubprocessResult {
+                                exit_code: EXIT_CODE_HARD_STOP,
+                                stderr: stderr_captured,
+                                stream_result: processor.finish(),
+                            }),
+                        });
+                    }
+
+                    // Check if pause was requested - toggle pause state
+                    if keyboard.matches_action(RunKeyAction::Pause) {
+                        // Clear the detected action so it's not returned to caller
+                        // (pause is handled locally, not propagated up)
+                        keyboard.clear_action();
+
+                        // Toggle pause and get any buffered output to display
+                        let buffered = keyboard.toggle_pause();
+
+                        // Update spinner hint to show pause state
+                        if keyboard.is_paused() {
+                            spinner.set_key_hint_state(KeyHintState::Paused);
+                        } else {
+                            spinner.set_key_hint_state(KeyHintState::Running);
+                            // Flush buffered output on resume
+                            if !buffered.is_empty() {
+                                // Stop spinner before displaying output
+                                if spinner_active {
+                                    spinner.stop();
+                                    spinner_active = false;
+                                }
+                                keyboard.disable_raw_mode();
+                                for output in buffered {
+                                    print!("{}", output);
+                                }
+                                let _ = io::stdout().flush();
+                                last_output_time = Instant::now();
+                            }
+                        }
+                    }
+                }
 
                 // Continue loop to check process status and timeout
             }

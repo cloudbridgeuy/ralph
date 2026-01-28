@@ -98,7 +98,7 @@ steps = [
   "Verify paused state file is written to {data_dir}/paused.toml",
   "Verify the session can be resumed later with ralph run --resume",
 ]
-passes = false
+passes = true
 acceptance = [
   "Pressing 'S' sends SIGINT to running subprocess",
   "Paused state file contains session ID, current story index, and iteration number",
@@ -118,7 +118,7 @@ steps = [
   "Press 'p' again to resume",
   "Verify buffered output is displayed and execution continues",
 ]
-passes = false
+passes = true
 acceptance = [
   "Pressing 'p' toggles pause state",
   "Subprocess continues running while paused (output buffered)",
