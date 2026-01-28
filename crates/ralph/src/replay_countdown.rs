@@ -12,6 +12,25 @@
 //! - Clears automatically before the next block
 //! - No display when delay is 0 or stdout is not a terminal
 //!
+//! # Raw Mode Lifecycle
+//!
+//! This module carefully manages terminal raw mode to enable keypress detection
+//! while ensuring subprocess output is never corrupted:
+//!
+//! 1. **When raw mode is enabled**: Only during the countdown display between
+//!    output blocks. Raw mode allows reading individual keypresses without
+//!    requiring Enter.
+//!
+//! 2. **When raw mode is disabled**: During all subprocess execution (claude CLI
+//!    calls) and normal output rendering. This ensures subprocess stdout is
+//!    never affected by terminal mode changes.
+//!
+//! 3. **Panic safety**: The [`RawModeGuard`] struct ensures raw mode is always
+//!    disabled via its `Drop` implementation, even if the countdown loop panics.
+//!
+//! 4. **Non-terminal handling**: When stdout is not a terminal (e.g., piped to
+//!    a file), raw mode is never enabled and keyboard input is not processed.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -39,6 +58,33 @@ const RESET: &str = "\x1b[0m";
 
 // Pause indicator character
 const PAUSE_CHAR: char = '⏸';
+
+/// RAII guard for terminal raw mode.
+///
+/// Ensures raw mode is disabled when dropped, providing panic safety.
+/// Raw mode must be disabled before any subprocess execution to prevent
+/// stdout corruption.
+#[must_use = "guard must be held to keep raw mode active; dropping disables raw mode"]
+struct RawModeGuard {
+    enabled: bool,
+}
+
+impl RawModeGuard {
+    /// Enable raw mode and return a guard that disables it on drop.
+    fn new() -> Self {
+        Self {
+            enabled: terminal::enable_raw_mode().is_ok(),
+        }
+    }
+}
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            let _ = terminal::disable_raw_mode();
+        }
+    }
+}
 
 /// The result of waiting with countdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,21 +132,21 @@ pub fn wait_with_countdown(delay_secs: f64, is_terminal: bool) -> CountdownResul
 }
 
 /// Run the countdown animation with skip key support.
+///
+/// Raw mode is enabled only for the duration of the countdown loop. The
+/// `RawModeGuard` ensures raw mode is disabled even if the loop panics,
+/// preventing terminal corruption.
 fn run_countdown(delay_secs: f64) -> CountdownResult {
     // Flush any pending output before starting countdown
     let _ = std::io::stdout().flush();
 
-    // Enable raw mode for keypress detection
-    let raw_mode_enabled = terminal::enable_raw_mode().is_ok();
+    // Enable raw mode for keypress detection. The guard ensures raw mode is
+    // disabled when it goes out of scope (normal return or panic).
+    let _guard = RawModeGuard::new();
 
     let result = run_countdown_loop(delay_secs);
 
-    // Disable raw mode before clearing line and returning
-    if raw_mode_enabled {
-        let _ = terminal::disable_raw_mode();
-    }
-
-    // Clear the countdown line
+    // Clear the countdown line (guard drops after this, disabling raw mode)
     clear_line();
 
     result
@@ -131,6 +177,10 @@ impl CountdownState {
 }
 
 /// The main countdown loop that handles animation and key events.
+///
+/// This function runs while raw mode is active (managed by the caller).
+/// It uses non-blocking key polling to check for user input without
+/// blocking the animation updates.
 fn run_countdown_loop(delay_secs: f64) -> CountdownResult {
     let mut state = CountdownState::new(delay_secs);
     let mut stdout = std::io::stdout();
@@ -185,8 +235,13 @@ fn render_countdown_line(stdout: &mut std::io::Stdout, state: &CountdownState) {
 }
 
 /// Check for key actions (skip or pause toggle).
+///
+/// Uses zero-timeout polling for non-blocking input detection. This allows
+/// the countdown animation to continue updating while checking for keys.
+/// Requires raw mode to be active for proper keypress detection.
 fn check_for_key_action() -> KeyAction {
-    // Poll with zero timeout - non-blocking check
+    // Poll with zero timeout - non-blocking check. Returns immediately if
+    // no key is available, allowing the animation loop to continue.
     if event::poll(Duration::ZERO).unwrap_or(false) {
         if let Ok(Event::Key(key_event)) = event::read() {
             return classify_key(key_event);
@@ -409,5 +464,17 @@ mod tests {
         assert_eq!(state.remaining.as_secs_f64(), 5.0);
         assert!(!state.paused);
         assert_eq!(state.frame, 0);
+    }
+
+    #[test]
+    fn test_raw_mode_guard_tracks_enabled_state() {
+        // Test that guard tracks the enabled state correctly
+        // Note: We can't test actual raw mode in unit tests (requires terminal)
+        // but we can verify the guard struct behavior
+        let guard = RawModeGuard { enabled: true };
+        assert!(guard.enabled);
+
+        let guard2 = RawModeGuard { enabled: false };
+        assert!(!guard2.enabled);
     }
 }
