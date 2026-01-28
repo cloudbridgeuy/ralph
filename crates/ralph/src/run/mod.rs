@@ -22,6 +22,7 @@ use crate::startup::{
 };
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::SubprocessError;
+use crate::warn::warn_if_err;
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
@@ -236,89 +237,35 @@ pub enum RunError {
 /// - Subprocess invocation fails
 /// - PRD is unchanged after an iteration (stuck state)
 pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
-    // 1. Verify PRD exists
+    // 1. Verify PRD exists and analyze stories
     verify_prd_exists(&config.prd_path)?;
-
-    // 2. Read PRD and analyze stories
     let prd_content = read_prd_file(&config.prd_path)?;
     let prd_analysis = parse_prd(&prd_content)?;
 
-    // Pre-check: exit if zero pending stories
     if prd_analysis.pending_count == 0 {
         return Err(RunError::NoPendingStories);
     }
 
-    // 3. Determine max iterations (use provided or default to pending count)
+    // 2. Determine max iterations
     let max_iterations = config.max_iterations.unwrap_or(prd_analysis.pending_count);
-    let iterations_from_arg = config.max_iterations.is_some();
 
-    // 4. Initialize or continue session
-    let project_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let (session_slug, session_dir) = if config.starting_iteration > 0 {
-        // Continuing an existing session - reuse the slug and get the session directory
-        if let Some(slug) = config.slug.as_deref() {
-            let dir = crate::session::session_dir(slug);
-            (slug.to_string(), dir)
-        } else {
-            // This shouldn't happen - if starting_iteration > 0, we should have a slug
-            // Fall back to initializing a new session (no prompt for fallback case)
-            initialize_session(None, &project_path, None)?
-        }
-    } else {
-        // First run - initialize a new session with the prompt
-        initialize_session(
-            config.slug.as_deref(),
-            &project_path,
-            Some(config.prompt.clone()),
-        )?
-    };
+    // 3. Initialize or continue session
+    let (session_slug, session_dir) = initialize_run_session(&config)?;
 
-    // 5. Display startup information (only on first run, not retries)
+    // 4. Display startup information (only on first run)
     if config.starting_iteration == 0 {
-        let startup_info = StartupInfo {
-            slug: session_slug.clone(),
-            total_stories: prd_analysis.total_stories,
-            pending_stories: prd_analysis.pending_count,
-            completed_stories: prd_analysis.completed_count,
+        display_startup(
+            &config,
+            &session_slug,
+            &session_dir,
+            &prd_analysis,
             max_iterations,
-            iterations_from_arg,
-            custom_prd_path: config.custom_prd_path.clone(),
-            custom_command: config.custom_command,
-            custom_prompt: config.custom_prompt,
-            custom_completion_marker: config.custom_completion_marker,
-            custom_additional_prompt: config.custom_additional_prompt,
-            session_dir: session_dir.clone(),
-        };
-        display_startup_info(&startup_info);
-
-        // Display the prompt if enabled
-        if config.show_prompt {
-            // Build attached files from PRD path
-            let attached_files = vec![AttachedFile::new(config.prd_path.clone())];
-            let prompt_display = PromptDisplay {
-                prompt: &config.prompt,
-                attached_files,
-            };
-            display_prompt(&prompt_display);
-        }
+        );
     }
 
-    // 6. Execute iteration loop
-    let mut iterations_completed = 0;
-    let mut completion_reason = None;
-    let mut final_pending_stories = prd_analysis.pending_count;
-
-    // Accumulators for aggregated metrics
-    let mut total_cost_usd: Option<f64> = None;
-    let mut total_duration_ms: Option<u64> = None;
-    let mut total_input_tokens: Option<u64> = None;
-    let mut total_output_tokens: Option<u64> = None;
-
-    // Calculate iteration numbers: if continuing a session, offset by starting_iteration
+    // 5. Execute iteration loop
+    let mut state = IterationState::new(prd_analysis.pending_count);
     let iteration_offset = config.starting_iteration;
-
-    // Calculate remaining iterations: respect the total limit across session continuations
-    // If max_iterations is 5 and we've already done 2 (iteration_offset), only run 3 more
     let remaining_iterations = max_iterations.saturating_sub(iteration_offset);
 
     for relative_iteration in 1..=remaining_iterations {
@@ -326,250 +273,58 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         if signal::is_interrupted() {
             return Err(RunError::Interrupted {
                 session_slug,
-                iterations_completed,
+                iterations_completed: state.iterations_completed,
                 partial_result: None,
                 pending_before: None,
             });
         }
 
-        // The actual iteration number includes any completed iterations from prior retries
         let iteration = iteration_offset + relative_iteration;
-        // Pre-iteration check: re-read PRD and count pending
-        let prd_before = read_prd_file(&config.prd_path)?;
-        let pending_before = count_pending_stories(&prd_before)?;
-
-        // Early exit if no pending stories
-        if pending_before == 0 {
-            completion_reason = Some(CompletionReason::AllStoriesComplete);
-            break;
-        }
-
-        // Display iteration header before starting work
-        // max_iterations is the total user-specified limit (not adjusted for offset)
-        let header = IterationHeader {
+        let result = process_single_iteration(
+            &config,
+            &session_slug,
+            &session_dir,
             iteration,
-            max_iterations: Some(max_iterations),
-            pending_stories: pending_before,
-        };
-        display_iteration_header(&header);
-
-        // Snapshot PRD content for change detection
-        let prd_snapshot = prd_before.clone();
-
-        // Invoke LLM subprocess with retry logic, timeout, spinner, and stream processing
-        // Pass accumulated session time and session info for spinner display
-        let invocation_config = InvocationConfig {
-            command: &config.command,
-            max_attempts: config.max_attempts,
-            timeout_secs: config.timeout_secs,
-            iteration,
-            theme_config: config.theme_config.as_ref(),
-            session_elapsed_ms: total_duration_ms.unwrap_or(0),
-            verbose_tools_config: &config.verbose_tools_config,
-            session_slug: &session_slug,
             max_iterations,
-        };
-        let result = match invoke_with_failure_recovery(&invocation_config) {
-            Ok(r) => r,
-            Err(RunError::SubprocessFailed {
-                exit_code,
-                attempts,
-                raw_text,
-                stderr,
-                ..
-            }) => {
-                // Subprocess failed - return error with session info for caller to finalize
-                // The caller will determine whether to mark as "failed" or "aborted"
-                return Err(RunError::SubprocessFailed {
-                    exit_code,
-                    attempts,
-                    raw_text,
-                    stderr,
-                    session_slug,
-                    iterations_completed,
-                });
+            relative_iteration,
+            &mut state,
+        )?;
+
+        match result {
+            SingleIterationResult::Complete(reason) => {
+                state.completion_reason = Some(reason);
+                state.iterations_completed = relative_iteration;
+                break;
             }
-            Err(RunError::SubprocessTimedOut {
-                timeout_secs,
-                attempts,
-                raw_text,
-                stderr,
-                ..
-            }) => {
-                // Subprocess timed out - return error with session info for caller to finalize
-                return Err(RunError::SubprocessTimedOut {
-                    timeout_secs,
-                    attempts,
-                    raw_text,
-                    stderr,
-                    session_slug,
-                    iterations_completed,
-                });
+            SingleIterationResult::Stuck => {
+                return Err(RunError::PrdUnchanged);
             }
-            Err(RunError::Interrupted { partial_result, .. }) => {
-                // Interrupt during subprocess - propagate with session context and pending_before
-                // The caller will write partial iteration log and finalize session
-                return Err(RunError::Interrupted {
-                    session_slug,
-                    iterations_completed,
-                    partial_result,
-                    pending_before: Some(pending_before),
-                });
+            SingleIterationResult::Continue => {
+                state.iterations_completed = relative_iteration;
             }
-            Err(e) => return Err(e),
-        };
-
-        // Build metadata from stream processing result
-        let metadata = LogMetadata::from_extracted(
-            result.stream_result.metadata.clone(),
-            result.stream_result.costs.clone(),
-        );
-
-        // Build tool calls from stream processing result
-        let tool_calls = LogToolCall::from_interactions(&result.stream_result.tool_interactions);
-
-        // Convert parsed chunks to iteration log chunks
-        let chunks = Chunk::from_parsed_chunks(&result.stream_result.chunks);
-
-        // Extract response text from output blocks
-        let response = extract_response_text(&result.stream_result.output_blocks);
-
-        // Write iteration log with extracted metadata, tool calls, typed chunks, and output blocks
-        let iteration_log = IterationLog {
-            sequence: iteration as u32,
-            started_at: chrono::Utc::now(),
-            completed_at: chrono::Utc::now(),
-            exit_code: result.exit_code,
-            pending_before,
-            pending_after: 0, // Will be updated below
-            prompt: None,     // Run command doesn't track prompt per iteration
-            response,
-            metadata: if metadata.is_empty() {
-                None
-            } else {
-                Some(metadata)
-            },
-            tool_calls,
-            chunks,
-            output_blocks: result.stream_result.output_blocks.clone(),
-        };
-
-        write_iteration_log(&session_dir, &iteration_log)?;
-
-        // Check for interrupt after writing iteration log (preserves partial data)
-        if signal::is_interrupted() {
-            // Return interrupt error - iteration log already saved
-            return Err(RunError::Interrupted {
-                session_slug,
-                iterations_completed: relative_iteration, // Include this completed iteration
-                partial_result: None,
-                pending_before: None,
-            });
         }
-
-        // Capture git diff
-        let diff_path = session_dir.join(format!("iteration-{}.diff", iteration));
-        if let Err(e) = capture_and_write_diff(&diff_path) {
-            eprintln!("Warning: Failed to capture git diff: {}", e);
-        }
-
-        // Display iteration summary with cost, duration, and token usage
-        let (input_tokens, output_tokens) = result
-            .stream_result
-            .costs
-            .usage
-            .as_ref()
-            .map(|u| (Some(u.input_tokens), Some(u.output_tokens)))
-            .unwrap_or((None, None));
-
-        let summary = IterationSummary {
-            iteration,
-            cost_usd: result.stream_result.costs.cost_usd,
-            duration_ms: result.stream_result.costs.duration_ms,
-            model: result.stream_result.metadata.model.clone(),
-            input_tokens,
-            output_tokens,
-        };
-        display_iteration_summary(&summary);
-
-        // Accumulate metrics for final summary
-        if let Some(cost) = result.stream_result.costs.cost_usd {
-            total_cost_usd = Some(total_cost_usd.unwrap_or(0.0) + cost);
-        }
-        if let Some(duration) = result.stream_result.costs.duration_ms {
-            total_duration_ms = Some(total_duration_ms.unwrap_or(0) + duration);
-        }
-        if let Some(tokens) = input_tokens {
-            total_input_tokens = Some(total_input_tokens.unwrap_or(0) + tokens);
-        }
-        if let Some(tokens) = output_tokens {
-            total_output_tokens = Some(total_output_tokens.unwrap_or(0) + tokens);
-        }
-
-        // Post-iteration check: re-read PRD
-        let prd_after = read_prd_file(&config.prd_path)?;
-        let prd_changed = has_prd_changed(&prd_snapshot, &prd_after);
-
-        // Count pending stories after iteration
-        let pending_after = count_pending_stories(&prd_after)?;
-        final_pending_stories = pending_after;
-
-        // Update iteration log with pending_after
-        let mut updated_log = iteration_log.clone();
-        updated_log.pending_after = pending_after;
-        write_iteration_log(&session_dir, &updated_log)?;
-
-        // Check completion conditions (use raw_text for completion marker detection)
-        // This check happens BEFORE the PRD unchanged check because:
-        // 1. If completion marker is found, user explicitly wants to stop
-        // 2. If all stories are complete, we should exit successfully
-        if let Some(reason) = check_completion(
-            pending_after,
-            &result.stream_result.raw_text,
-            &config.completion_marker,
-        ) {
-            completion_reason = Some(reason);
-            iterations_completed = relative_iteration;
-            break;
-        }
-
-        // Error if PRD unchanged (stuck state) - only check if no completion condition met
-        // This ensures that completion markers take precedence over the "stuck" detection
-        if !prd_changed {
-            // Finalize session as failed before returning error
-            // Use total iterations including prior retries
-            let total_so_far = iteration_offset + relative_iteration;
-            if let Err(e) =
-                finalize_session(&session_slug, total_so_far as u32, SessionOutcome::Failed)
-            {
-                eprintln!("Warning: Failed to finalize session: {}", e);
-            }
-            return Err(RunError::PrdUnchanged);
-        }
-
-        iterations_completed = relative_iteration;
     }
 
-    // Finalize session as completed (use total iterations including prior retries)
-    let total_iterations = iteration_offset + iterations_completed;
-    if let Err(e) = finalize_session(
-        &session_slug,
-        total_iterations as u32,
-        SessionOutcome::Completed,
-    ) {
-        eprintln!("Warning: Failed to finalize session: {}", e);
-    }
+    // Finalize session as completed
+    let total_iterations = iteration_offset + state.iterations_completed;
+    warn_if_err(
+        finalize_session(
+            &session_slug,
+            total_iterations as u32,
+            SessionOutcome::Completed,
+        ),
+        "Failed to finalize session",
+    );
 
-    // Return result with aggregated metrics
     Ok(RunResult {
         slug: session_slug,
-        iterations_completed,
-        completion_reason,
-        final_pending_stories,
-        total_cost_usd,
-        total_duration_ms,
-        total_input_tokens,
-        total_output_tokens,
+        iterations_completed: state.iterations_completed,
+        completion_reason: state.completion_reason,
+        final_pending_stories: state.final_pending_stories,
+        total_cost_usd: state.metrics.total_cost_usd,
+        total_duration_ms: state.metrics.total_duration_ms,
+        total_input_tokens: state.metrics.total_input_tokens,
+        total_output_tokens: state.metrics.total_output_tokens,
     })
 }
 
@@ -579,4 +334,333 @@ fn read_prd_file(path: &PathBuf) -> Result<String, RunError> {
         path: path.display().to_string(),
         source: e,
     })
+}
+
+/// Accumulated metrics across iterations.
+#[derive(Debug, Default)]
+struct AccumulatedMetrics {
+    total_cost_usd: Option<f64>,
+    total_duration_ms: Option<u64>,
+    total_input_tokens: Option<u64>,
+    total_output_tokens: Option<u64>,
+}
+
+impl AccumulatedMetrics {
+    /// Add metrics from a single iteration result.
+    fn add_from_result(&mut self, result: &crate::subprocess::StreamingSubprocessResult) {
+        if let Some(cost) = result.stream_result.costs.cost_usd {
+            self.total_cost_usd = Some(self.total_cost_usd.unwrap_or(0.0) + cost);
+        }
+        if let Some(duration) = result.stream_result.costs.duration_ms {
+            self.total_duration_ms = Some(self.total_duration_ms.unwrap_or(0) + duration);
+        }
+        if let Some(ref usage) = result.stream_result.costs.usage {
+            self.total_input_tokens =
+                Some(self.total_input_tokens.unwrap_or(0) + usage.input_tokens);
+            self.total_output_tokens =
+                Some(self.total_output_tokens.unwrap_or(0) + usage.output_tokens);
+        }
+    }
+
+    /// Get elapsed time for spinner display.
+    fn elapsed_ms(&self) -> u64 {
+        self.total_duration_ms.unwrap_or(0)
+    }
+}
+
+/// Build an iteration log from subprocess result.
+fn build_iteration_log(
+    iteration: usize,
+    pending_before: usize,
+    result: &crate::subprocess::StreamingSubprocessResult,
+) -> IterationLog {
+    let metadata = LogMetadata::from_extracted(
+        result.stream_result.metadata.clone(),
+        result.stream_result.costs.clone(),
+    );
+    let tool_calls = LogToolCall::from_interactions(&result.stream_result.tool_interactions);
+    let chunks = Chunk::from_parsed_chunks(&result.stream_result.chunks);
+    let response = extract_response_text(&result.stream_result.output_blocks);
+
+    IterationLog {
+        sequence: iteration as u32,
+        started_at: chrono::Utc::now(),
+        completed_at: chrono::Utc::now(),
+        exit_code: result.exit_code,
+        pending_before,
+        pending_after: 0, // Updated later after PRD re-read
+        prompt: None,     // Run command doesn't track prompt per iteration
+        response,
+        metadata: if metadata.is_empty() {
+            None
+        } else {
+            Some(metadata)
+        },
+        tool_calls,
+        chunks,
+        output_blocks: result.stream_result.output_blocks.clone(),
+    }
+}
+
+/// Display iteration summary with cost, duration, and token usage.
+fn display_iteration_metrics(
+    iteration: usize,
+    result: &crate::subprocess::StreamingSubprocessResult,
+) {
+    let usage = result.stream_result.costs.usage.as_ref();
+    let summary = IterationSummary {
+        iteration,
+        cost_usd: result.stream_result.costs.cost_usd,
+        duration_ms: result.stream_result.costs.duration_ms,
+        model: result.stream_result.metadata.model.clone(),
+        input_tokens: usage.map(|u| u.input_tokens),
+        output_tokens: usage.map(|u| u.output_tokens),
+    };
+    display_iteration_summary(&summary);
+}
+
+/// Handle subprocess invocation with error context enrichment.
+///
+/// Wraps `invoke_with_failure_recovery` to add session context to errors.
+fn handle_subprocess_invocation(
+    config: &InvocationConfig,
+    session_slug: &str,
+    iterations_completed: usize,
+    pending_before: usize,
+) -> Result<crate::subprocess::StreamingSubprocessResult, RunError> {
+    match invoke_with_failure_recovery(config) {
+        Ok(r) => Ok(r),
+        Err(RunError::SubprocessFailed {
+            exit_code,
+            attempts,
+            raw_text,
+            stderr,
+            ..
+        }) => Err(RunError::SubprocessFailed {
+            exit_code,
+            attempts,
+            raw_text,
+            stderr,
+            session_slug: session_slug.to_string(),
+            iterations_completed,
+        }),
+        Err(RunError::SubprocessTimedOut {
+            timeout_secs,
+            attempts,
+            raw_text,
+            stderr,
+            ..
+        }) => Err(RunError::SubprocessTimedOut {
+            timeout_secs,
+            attempts,
+            raw_text,
+            stderr,
+            session_slug: session_slug.to_string(),
+            iterations_completed,
+        }),
+        Err(RunError::Interrupted { partial_result, .. }) => Err(RunError::Interrupted {
+            session_slug: session_slug.to_string(),
+            iterations_completed,
+            partial_result,
+            pending_before: Some(pending_before),
+        }),
+        Err(e) => Err(e),
+    }
+}
+
+/// Initialize or continue a session based on configuration.
+fn initialize_run_session(config: &RunConfig) -> Result<(String, PathBuf), RunError> {
+    let project_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    if config.starting_iteration > 0 {
+        // Continuing an existing session
+        if let Some(slug) = config.slug.as_deref() {
+            let dir = crate::session::session_dir(slug);
+            Ok((slug.to_string(), dir))
+        } else {
+            // Fallback: initialize new session (shouldn't happen if starting_iteration > 0)
+            Ok(initialize_session(None, &project_path, None)?)
+        }
+    } else {
+        // First run: initialize new session with prompt
+        Ok(initialize_session(
+            config.slug.as_deref(),
+            &project_path,
+            Some(config.prompt.clone()),
+        )?)
+    }
+}
+
+/// State maintained across iterations.
+struct IterationState {
+    iterations_completed: usize,
+    completion_reason: Option<CompletionReason>,
+    final_pending_stories: usize,
+    metrics: AccumulatedMetrics,
+}
+
+impl IterationState {
+    fn new(initial_pending: usize) -> Self {
+        Self {
+            iterations_completed: 0,
+            completion_reason: None,
+            final_pending_stories: initial_pending,
+            metrics: AccumulatedMetrics::default(),
+        }
+    }
+}
+
+/// Result of processing a single iteration.
+enum SingleIterationResult {
+    /// Continue to next iteration
+    Continue,
+    /// Stop with completion reason
+    Complete(CompletionReason),
+    /// PRD unchanged - stuck state (session already finalized)
+    Stuck,
+}
+
+/// Process a single iteration of the run loop.
+///
+/// Returns whether to continue, complete, or if stuck.
+#[allow(clippy::too_many_arguments)]
+fn process_single_iteration(
+    config: &RunConfig,
+    session_slug: &str,
+    session_dir: &std::path::Path,
+    iteration: usize,
+    max_iterations: usize,
+    relative_iteration: usize,
+    state: &mut IterationState,
+) -> Result<SingleIterationResult, RunError> {
+    // Pre-iteration check: re-read PRD and count pending
+    let prd_before = read_prd_file(&config.prd_path)?;
+    let pending_before = count_pending_stories(&prd_before)?;
+
+    // Early exit if no pending stories
+    if pending_before == 0 {
+        return Ok(SingleIterationResult::Complete(
+            CompletionReason::AllStoriesComplete,
+        ));
+    }
+
+    // Display iteration header
+    let header = IterationHeader {
+        iteration,
+        max_iterations: Some(max_iterations),
+        pending_stories: pending_before,
+    };
+    display_iteration_header(&header);
+
+    // Snapshot PRD content for change detection
+    let prd_snapshot = prd_before.clone();
+
+    // Invoke LLM subprocess with retry logic
+    let invocation_config = InvocationConfig {
+        command: &config.command,
+        max_attempts: config.max_attempts,
+        timeout_secs: config.timeout_secs,
+        iteration,
+        theme_config: config.theme_config.as_ref(),
+        session_elapsed_ms: state.metrics.elapsed_ms(),
+        verbose_tools_config: &config.verbose_tools_config,
+        session_slug,
+        max_iterations,
+    };
+
+    let result = handle_subprocess_invocation(
+        &invocation_config,
+        session_slug,
+        state.iterations_completed,
+        pending_before,
+    )?;
+
+    // Write iteration log
+    let mut iteration_log = build_iteration_log(iteration, pending_before, &result);
+    write_iteration_log(session_dir, &iteration_log)?;
+
+    // Check for interrupt after writing iteration log
+    if signal::is_interrupted() {
+        return Err(RunError::Interrupted {
+            session_slug: session_slug.to_string(),
+            iterations_completed: relative_iteration,
+            partial_result: None,
+            pending_before: None,
+        });
+    }
+
+    // Capture git diff
+    let diff_path = session_dir.join(format!("iteration-{}.diff", iteration));
+    warn_if_err(
+        capture_and_write_diff(&diff_path),
+        "Failed to capture git diff",
+    );
+
+    // Display summary and accumulate metrics
+    display_iteration_metrics(iteration, &result);
+    state.metrics.add_from_result(&result);
+
+    // Post-iteration: re-read PRD and check completion
+    let prd_after = read_prd_file(&config.prd_path)?;
+    let pending_after = count_pending_stories(&prd_after)?;
+    state.final_pending_stories = pending_after;
+
+    // Update iteration log with pending_after
+    iteration_log.pending_after = pending_after;
+    write_iteration_log(session_dir, &iteration_log)?;
+
+    // Check completion conditions first (marker or all stories complete)
+    if let Some(reason) = check_completion(
+        pending_after,
+        &result.stream_result.raw_text,
+        &config.completion_marker,
+    ) {
+        return Ok(SingleIterationResult::Complete(reason));
+    }
+
+    // Check for stuck state (PRD unchanged)
+    if !has_prd_changed(&prd_snapshot, &prd_after) {
+        warn_if_err(
+            finalize_session(session_slug, iteration as u32, SessionOutcome::Failed),
+            "Failed to finalize session",
+        );
+        return Ok(SingleIterationResult::Stuck);
+    }
+
+    Ok(SingleIterationResult::Continue)
+}
+
+/// Display startup information and optional prompt.
+fn display_startup(
+    config: &RunConfig,
+    session_slug: &str,
+    session_dir: &std::path::Path,
+    prd_analysis: &ralph_core::prd::PrdAnalysis,
+    max_iterations: usize,
+) {
+    let iterations_from_arg = config.max_iterations.is_some();
+    let startup_info = StartupInfo {
+        slug: session_slug.to_string(),
+        total_stories: prd_analysis.total_stories,
+        pending_stories: prd_analysis.pending_count,
+        completed_stories: prd_analysis.completed_count,
+        max_iterations,
+        iterations_from_arg,
+        custom_prd_path: config.custom_prd_path.clone(),
+        custom_command: config.custom_command,
+        custom_prompt: config.custom_prompt,
+        custom_completion_marker: config.custom_completion_marker,
+        custom_additional_prompt: config.custom_additional_prompt,
+        session_dir: session_dir.to_path_buf(),
+    };
+    display_startup_info(&startup_info);
+
+    if config.show_prompt {
+        let attached_files = vec![AttachedFile::new(config.prd_path.clone())];
+        let prompt_display = PromptDisplay {
+            prompt: &config.prompt,
+            attached_files,
+        };
+        display_prompt(&prompt_display);
+    }
 }

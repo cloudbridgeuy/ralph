@@ -32,6 +32,7 @@ pub mod spinner;
 pub mod startup;
 pub mod stream_processor;
 pub mod subprocess;
+pub mod warn;
 
 use clap::Parser;
 use cli::{AskArgs, Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
@@ -43,6 +44,7 @@ use run::{run, RunConfig, RunError};
 use std::path::Path;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
+use warn::{warn, warn_if_err};
 
 /// Context for handling subprocess failure recovery.
 struct FailureRecoveryContext {
@@ -95,25 +97,27 @@ fn handle_failure_recovery(
         Some(FailureAction::Abort) => {
             // User chose to abort - finalize session as aborted
             let final_iterations = ctx.total_iterations_completed + ctx.iterations_completed;
-            if let Err(e) = session::finalize_session(
-                &ctx.session_slug,
-                final_iterations as u32,
-                SessionOutcome::Aborted,
-            ) {
-                eprintln!("Warning: Failed to finalize session: {}", e);
-            }
+            warn_if_err(
+                session::finalize_session(
+                    &ctx.session_slug,
+                    final_iterations as u32,
+                    SessionOutcome::Aborted,
+                ),
+                "Failed to finalize session",
+            );
             FailureRecoveryResult::Aborted("Aborted by user".into())
         }
         None => {
             // Non-interactive mode or EOF - finalize as failed and abort
             let final_iterations = ctx.total_iterations_completed + ctx.iterations_completed;
-            if let Err(e) = session::finalize_session(
-                &ctx.session_slug,
-                final_iterations as u32,
-                SessionOutcome::Failed,
-            ) {
-                eprintln!("Warning: Failed to finalize session: {}", e);
-            }
+            warn_if_err(
+                session::finalize_session(
+                    &ctx.session_slug,
+                    final_iterations as u32,
+                    SessionOutcome::Failed,
+                ),
+                "Failed to finalize session",
+            );
             eprintln!("Non-interactive mode - aborting.");
             FailureRecoveryResult::Aborted(ctx.summary.clone().into())
         }
@@ -144,13 +148,7 @@ fn main() -> ExitCode {
 /// Execute the run command.
 fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
-    if let Err(e) = signal::init() {
-        eprintln!("Warning: Failed to initialize signal handler: {}", e);
-    }
-
-    // Generate a claude session UUID for this ralph session
-    // This UUID is consistent across all iterations and used for resume capability
-    let claude_session_id = uuid::Uuid::new_v4().to_string();
+    warn_if_err(signal::init(), "Failed to initialize signal handler");
 
     // Resolve context file paths
     let project_root = std::env::current_dir()?;
@@ -179,8 +177,8 @@ fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
         &additional_prompt,
     )?;
 
-    // Substitute {prompt} and {session_id} in command template
-    let command = substitute_prompt_in_command(&command_template, &prompt, &claude_session_id);
+    // Substitute {prompt} in command template
+    let command = substitute_prompt_in_command(&command_template, &prompt);
 
     // Execute run loop with failure recovery prompting
     let exec_config = RunExecutionConfig {
@@ -236,7 +234,7 @@ fn execute_run_with_prompting(
     let verbose_tools_config = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
     // Print warnings about unknown tool names
     for warning in verbose_tools_config.warnings() {
-        eprintln!("Warning: {}", warning);
+        warn(warning);
     }
 
     loop {
@@ -373,22 +371,22 @@ fn execute_run_with_prompting(
                         output_blocks: partial.stream_result.output_blocks.clone(),
                     };
 
-                    if let Err(e) = iteration::write_iteration_log(&session_dir, &partial_log) {
-                        eprintln!("Warning: Failed to write partial iteration log: {}", e);
-                    } else {
-                        eprintln!("Partial iteration {} saved.", iteration);
+                    match iteration::write_iteration_log(&session_dir, &partial_log) {
+                        Ok(_) => eprintln!("Partial iteration {} saved.", iteration),
+                        Err(e) => warn(format!("Failed to write partial iteration log: {e}")),
                     }
                 }
 
                 // Finalize session as interrupted
                 let final_iterations = total_iterations_completed + iterations_completed;
-                if let Err(e) = session::finalize_session(
-                    &session_slug,
-                    final_iterations as u32,
-                    SessionOutcome::Interrupted,
-                ) {
-                    eprintln!("Warning: Failed to finalize session: {}", e);
-                }
+                warn_if_err(
+                    session::finalize_session(
+                        &session_slug,
+                        final_iterations as u32,
+                        SessionOutcome::Interrupted,
+                    ),
+                    "Failed to finalize session",
+                );
                 eprintln!("Interrupted. Session '{}' saved.", session_slug);
                 return Err("Interrupted by signal".into());
             }
@@ -494,9 +492,7 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
 /// When --history is used, displays the conversation history for the session.
 fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
-    if let Err(e) = signal::init() {
-        eprintln!("Warning: Failed to initialize signal handler: {}", e);
-    }
+    warn_if_err(signal::init(), "Failed to initialize signal handler");
 
     // Get current working directory as project path
     let project_path = std::env::current_dir()?;
@@ -566,7 +562,7 @@ fn build_ask_config(
     let verbose_tools = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
     // Print warnings about unknown tool names
     for warning in verbose_tools.warnings() {
-        eprintln!("Warning: {}", warning);
+        warn(warning);
     }
 
     // Resolve prompt from argument or stdin
@@ -601,9 +597,10 @@ fn execute_and_finalize_ask(config: ask::AskConfig) -> Result<(), Box<dyn std::e
         0 => SessionOutcome::Completed,
         _ => SessionOutcome::Failed,
     };
-    if let Err(e) = session::finalize_session(&result.slug, result.iteration_count, outcome) {
-        eprintln!("Warning: Failed to finalize session: {}", e);
-    }
+    warn_if_err(
+        session::finalize_session(&result.slug, result.iteration_count, outcome),
+        "Failed to finalize session",
+    );
 
     // Display summary (always, even on failure)
     let summary = startup::AskSummary {
@@ -865,26 +862,22 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
     Ok(prompt)
 }
 
-/// Substitute `{prompt}` and `{session_id}` placeholders in command template.
+/// Substitute `{prompt}` placeholder in command template.
 ///
 /// # Placeholders
 ///
 /// - `{prompt}` - Replaced with the shell-escaped prompt (wrapped in single quotes)
-/// - `{session_id}` - Replaced with the Claude session UUID for resume capability
 ///
 /// # Arguments
 ///
 /// * `template` - The command template containing placeholders
 /// * `prompt` - The prompt text to substitute
-/// * `session_id` - The UUID v4 session identifier for Claude CLI
-fn substitute_prompt_in_command(template: &str, prompt: &str, session_id: &str) -> String {
+fn substitute_prompt_in_command(template: &str, prompt: &str) -> String {
     // Shell-escape the prompt for safe inclusion
     // For now, just wrap in single quotes and escape internal single quotes
     let escaped = prompt.replace('\'', "'\"'\"'");
     let quoted_prompt = format!("'{}'", escaped);
-    template
-        .replace("{prompt}", &quoted_prompt)
-        .replace("{session_id}", session_id)
+    template.replace("{prompt}", &quoted_prompt)
 }
 
 #[cfg(test)]

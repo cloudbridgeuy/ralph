@@ -3,6 +3,7 @@
 //! This module handles capturing git diffs after each iteration for auditing purposes.
 //! It follows the Imperative Shell pattern - all functions perform I/O operations.
 
+use crate::warn::warn;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
@@ -185,7 +186,7 @@ pub fn capture_and_write_diff(diff_path: &Path) -> Result<(), GitError> {
     if !diff.is_git_repo {
         // Not a git repository - write empty file and warn
         write_diff_file(diff_path, "")?;
-        eprintln!("Warning: Not a git repository. Skipping diff capture.");
+        warn("Not a git repository. Skipping diff capture.");
         return Ok(());
     }
 
