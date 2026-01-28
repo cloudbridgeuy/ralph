@@ -426,7 +426,9 @@ pub fn ask(config: AskConfig) -> Result<AskResult, AskError> {
     };
 
     // Invoke subprocess with spinner
-    let result = invoke_subprocess_with_spinner_config(&subprocess_config)?;
+    // key_action is intentionally ignored for ask command (single-shot execution)
+    let outcome = invoke_subprocess_with_spinner_config(&subprocess_config);
+    let result = outcome.subprocess_result?;
 
     // Capture completion time
     let completed_at = Utc::now();

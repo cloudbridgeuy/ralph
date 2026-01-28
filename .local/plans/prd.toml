@@ -137,7 +137,7 @@ steps = [
   "Press keys rapidly and verify no input is lost",
   "Verify Ctrl+C still triggers interrupt signal as before",
 ]
-passes = false
+passes = true
 acceptance = [
   "Keyboard polling uses event::poll(Duration::ZERO) pattern from replay_countdown.rs",
   "Subprocess output latency is not noticeably increased by keyboard polling",

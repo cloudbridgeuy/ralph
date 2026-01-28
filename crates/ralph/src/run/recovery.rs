@@ -47,7 +47,9 @@ pub fn invoke_with_failure_recovery(
                         config.max_iterations,
                     ),
                 };
-                invoke_subprocess_with_spinner_config(&spinner_config)
+                // invoke_subprocess_with_spinner_config returns SpinnerSubprocessOutcome
+                // Extract subprocess_result to match expected type
+                invoke_subprocess_with_spinner_config(&spinner_config).subprocess_result
             }
             None => invoke_subprocess_with_timeout(
                 config.command,
