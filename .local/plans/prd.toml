@@ -1,567 +1,147 @@
-# PRD: Simplified Context Model with Progressive Disclosure
-#
-# This PRD removes the design.md and progress.txt concepts in favor of:
-# - Git history for historical context (semantic commits)
-# - Progressive Disclosure pattern for architectural context (CLAUDE.md -> docs/context/*.md)
-# - PRD as the only required context file
+# Ralph PRD - Key Mapping and stdout Integrity
 
 [[stories]]
-category = "prompt-template"
-description = "Rewrite PROMPT_TEMPLATE with new workflow: git history, Progressive Disclosure, and phase separation"
+category = "internal"
+actor = "developer"
+description = "Ensure key mappings in ralph main loop work correctly without breaking stdout"
 steps = [
-  "Review current PROMPT_TEMPLATE in crates/core/src/context.rs",
-  "Remove @{design_file} and @{progress_file} references",
-  "Keep only @{prd_file} as the context file reference",
-  "Add instructions to use 'git log --oneline' for recent commit context",
-  "Add instructions to consult CLAUDE.md and linked docs/context/*.md for architectural context",
-  "Add clear phase separation: work phase then commit phase",
-  "In commit phase: update relevant docs per Progressive Disclosure, make semantic commit",
-  "Instruct agent to determine which docs need updating based on the PRD story being implemented",
-  "Run cargo xtask lint to verify compilation",
+  "Audit all code paths that enable raw terminal mode (crossterm::terminal::enable_raw_mode)",
+  "Verify raw mode is always paired with disable_raw_mode in all exit paths (success, error, panic)",
+  "Ensure raw mode is never active during subprocess execution that writes to stdout",
+  "Add test coverage for key event classification (skip keys, pause keys, modifier handling)",
+  "Verify countdown display clears properly before subprocess output resumes",
+  "Test keyboard handling behavior when stdout is not a terminal (non-interactive mode)",
+  "Document the raw mode lifecycle and its interaction with subprocess output in code comments",
 ]
 passes = true
 acceptance = [
-  "PROMPT_TEMPLATE only references @{prd_file}",
-  "Instructions tell agent to use git log for historical context",
-  "Instructions tell agent to consult CLAUDE.md for Progressive Disclosure docs",
-  "Clear phase separation: work first, then document and commit at end",
-  "Agent instructed to update docs/context/*.md or CLAUDE.md based on PRD story",
-  "Semantic commit instruction included without Claude attribution",
+  "Raw terminal mode is only enabled during countdown/pause UI, never during subprocess execution",
+  "All raw mode enable calls have corresponding disable calls in finally-style cleanup (even on error/panic)",
+  "Subprocess stdout output (from claude CLI) is never garbled or corrupted by terminal mode changes",
+  "Key events (n, N, Space, p, P, Ctrl+C) are correctly classified and handled only when raw mode is active",
+  "Unit tests exist for key classification functions covering all documented key mappings",
+  "Non-terminal execution (piped output, CI) skips raw mode entirely and processes output correctly",
+  "No regression in existing replay --delay functionality with skip/pause controls",
+  "Manual testing confirms: ralph replay with --delay shows clean output interspersed with countdown UI",
 ]
 
+# ============================================================================
+# Keyboard Controls for Main Run Loop (ralph run)
+# ============================================================================
+# These stories implement interactive keyboard controls during iteration
+# execution, following the layered implementation with signal propagation
+# approach (Approach 1).
+# ============================================================================
+
 [[stories]]
-category = "core-refactor"
-description = "Replace ContextPaths struct with single prd_path parameter"
+category = "keyboard-control"
+description = "Display key binding hints in the spinner during iteration execution"
 steps = [
-  "Remove ContextPaths struct from crates/core/src/context.rs",
-  "Update substitute_template_placeholders to only handle prd_file placeholder",
-  "Remove design_file, progress_file, completion_marker, additional_prompt placeholders if unused",
-  "Update all call sites in ralph crate to pass prd path directly",
-  "Update RunConfig to use prd_path: PathBuf instead of context_paths: ContextPaths",
-  "Run cargo xtask lint to verify compilation",
+  "Run ralph with a multi-iteration session",
+  "Observe the spinner display while an iteration is running",
+  "Verify key hints appear in the spinner line (e.g., '[s: soft stop | S: hard stop | p: pause]')",
+  "Verify hints update to '[finishing...]' when soft stop is requested",
+  "Verify hints update to '[paused - p: resume]' when paused",
 ]
 passes = true
 acceptance = [
-  "ContextPaths struct removed from codebase",
-  "All references updated to use single prd path",
-  "substitute_template_placeholders simplified or removed if unnecessary",
-  "No compilation errors",
+  "Spinner line includes key binding hints when running in interactive terminal",
+  "Key hints are hidden when stdout is not a TTY (non-interactive mode)",
+  "Hints dynamically update to reflect current state (running, finishing, paused)",
+  "Spinner animation continues smoothly with hints displayed",
 ]
 
 [[stories]]
-category = "cli-cleanup"
-description = "Remove --design flag and related code paths"
+category = "keyboard-control"
+description = "Enable raw terminal mode during spinner execution for keyboard input"
 steps = [
-  "Remove --design argument from RunArgs in crates/ralph/src/cli/mod.rs",
-  "Remove design_override parameter from any config structs",
-  "Update execute_run in main.rs to not handle design path",
-  "Remove custom_design_path from RunConfig",
-  "Update any tests that reference --design flag",
-  "Run cargo xtask lint to verify compilation",
+  "Run ralph with a multi-iteration session in an interactive terminal",
+  "Verify raw mode is enabled when spinner starts",
+  "Verify raw mode is disabled before subprocess stdout is written",
+  "Verify raw mode is restored after subprocess output completes",
+  "Verify raw mode is disabled on all exit paths (success, error, Ctrl+C)",
 ]
-passes = true
+passes = false
 acceptance = [
-  "--design flag removed from CLI",
-  "No references to design file path in CLI layer",
-  "Tests updated or removed as appropriate",
+  "Raw mode is only active during spinner UI rendering, never during subprocess output",
+  "RawModeGuard RAII pattern ensures cleanup on panic or error",
+  "Subprocess stdout output is never garbled by terminal mode changes",
+  "Non-interactive execution skips raw mode entirely",
 ]
 
 [[stories]]
-category = "cli-cleanup"
-description = "Remove --progress flag and all summarization-related flags"
+category = "keyboard-control"
+description = "Implement soft stop (s key) to finish current iteration then exit"
 steps = [
-  "Remove --progress argument from RunArgs",
-  "Remove --progress-max-lines argument",
-  "Remove --no-summarize argument",
-  "Remove --summarize-prompt argument",
-  "Remove --summarize-command argument",
-  "Update execute_run to not handle progress path or summarize config",
-  "Remove custom_progress_path from RunConfig",
-  "Remove summarize_config from RunConfig",
-  "Update any tests that reference these flags",
-  "Run cargo xtask lint to verify compilation",
+  "Run ralph with multiple iterations configured",
+  "Press 's' during an iteration execution",
+  "Verify spinner hints change to '[finishing...]'",
+  "Verify current iteration completes normally",
+  "Verify the run loop exits after current iteration without starting the next",
 ]
-passes = true
+passes = false
 acceptance = [
-  "All progress and summarization CLI flags removed",
-  "No references to progress file path in CLI layer",
-  "No references to summarize config in CLI layer",
-  "Tests updated or removed as appropriate",
+  "Pressing 's' sets a soft-stop flag checked at iteration boundaries",
+  "Current subprocess execution is not interrupted",
+  "Progress file is updated with completed iteration results",
+  "Exit message indicates soft stop was requested",
+  "Pressing 's' multiple times has no additional effect",
 ]
 
 [[stories]]
-category = "code-removal"
-description = "Delete summarize.rs module entirely"
+category = "keyboard-control"
+description = "Implement hard stop (S key) to immediately halt and save paused state"
 steps = [
-  "Remove crates/ralph/src/summarize.rs file",
-  "Remove mod summarize from main.rs",
-  "Remove SummarizeConfig import and usage from run/mod.rs",
-  "Remove maybe_summarize_progress call from iteration loop",
-  "Remove any re-exports of summarize types",
-  "Run cargo xtask lint to verify compilation",
+  "Run ralph with multiple iterations configured",
+  "Press 'S' (shift+s) during an iteration execution",
+  "Verify subprocess receives interrupt signal and terminates",
+  "Verify paused state file is written to {data_dir}/paused.toml",
+  "Verify the session can be resumed later with ralph run --resume",
 ]
-passes = true
+passes = false
 acceptance = [
-  "summarize.rs file deleted",
-  "No summarization code remains in codebase",
-  "Iteration loop no longer calls summarization",
-  "No compilation errors",
+  "Pressing 'S' sends SIGINT to running subprocess",
+  "Paused state file contains session ID, current story index, and iteration number",
+  "Exit message indicates hard stop with resume instructions",
+  "Partial iteration output is not written to progress file",
+  "Raw mode is properly disabled before exit",
 ]
 
 [[stories]]
-category = "code-cleanup"
-description = "Simplify init.rs to only verify PRD exists"
+category = "keyboard-control"
+description = "Implement pause (p key) to suspend and resume iteration execution"
 steps = [
-  "Review crates/ralph/src/init.rs",
-  "Remove logic that touches/creates design.md",
-  "Remove logic that touches/creates progress.txt",
-  "Keep only PRD existence verification",
-  "Update InitError variants to remove design/progress related errors",
-  "Update or remove determine_files_to_touch function in core",
-  "Run cargo xtask lint to verify compilation",
+  "Run ralph with a multi-iteration session",
+  "Press 'p' during iteration execution",
+  "Verify spinner shows paused state with '[paused - p: resume]'",
+  "Verify subprocess output continues to buffer internally",
+  "Press 'p' again to resume",
+  "Verify buffered output is displayed and execution continues",
 ]
-passes = true
+passes = false
 acceptance = [
-  "init.rs only verifies PRD file exists",
-  "No auto-creation of design or progress files",
-  "InitError simplified to only PRD-related errors",
+  "Pressing 'p' toggles pause state",
+  "Subprocess continues running while paused (output buffered)",
+  "Spinner animation stops and shows pause indicator when paused",
+  "Resuming displays any buffered output immediately",
+  "Pause state does not affect iteration timing or results",
 ]
 
 [[stories]]
-category = "code-cleanup"
-description = "Update startup display to remove design and progress references"
+category = "keyboard-control"
+description = "Poll keyboard events without blocking subprocess I/O"
 steps = [
-  "Review crates/ralph/src/startup/ modules",
-  "Remove design file from StartupInfo struct",
-  "Remove progress file from StartupInfo struct",
-  "Remove AttachedFile entries for design and progress",
-  "Update display_startup_info to not show design/progress paths",
-  "Update terminal and plain display functions",
-  "Run cargo xtask lint to verify compilation",
+  "Run ralph with a multi-iteration session",
+  "Verify keyboard polling uses non-blocking poll with zero timeout",
+  "Verify subprocess stdout is read and displayed with minimal latency",
+  "Press keys rapidly and verify no input is lost",
+  "Verify Ctrl+C still triggers interrupt signal as before",
 ]
-passes = true
+passes = false
 acceptance = [
-  "StartupInfo no longer contains design or progress paths",
-  "Startup display only shows PRD file",
-  "No references to design/progress in startup output",
-]
-
-[[stories]]
-category = "code-cleanup"
-description = "Update run/mod.rs RunConfig to reflect simplified context model"
-steps = [
-  "Remove context_paths field from RunConfig",
-  "Add prd_path: PathBuf field to RunConfig",
-  "Remove custom_design_path field",
-  "Remove custom_progress_path field",
-  "Remove summarize_config field",
-  "Update run() function to use new config structure",
-  "Update iteration loop to not reference design/progress",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "RunConfig uses prd_path instead of context_paths",
-  "No design, progress, or summarize fields in RunConfig",
-  "run() function works with simplified config",
-]
-
-[[stories]]
-category = "documentation"
-description = "Create docs/context/prompt-template.md documenting the prompt system"
-steps = [
-  "Create docs/context/prompt-template.md",
-  "Document the PROMPT_TEMPLATE structure and purpose",
-  "Document available placeholders (prd_file, completion_marker, additional_prompt)",
-  "Document how to override via --prompt CLI flag",
-  "Document how to provide a completely custom prompt file",
-  "Add examples of common customizations",
-  "Add link to this doc in CLAUDE.md Progressive Disclosure section",
-]
-passes = true
-acceptance = [
-  "docs/context/prompt-template.md exists and is comprehensive",
-  "All current placeholders documented with examples",
-  "Override mechanisms documented",
-  "CLAUDE.md links to this file",
-]
-
-[[stories]]
-category = "documentation"
-description = "Create docs/context/git-workflow.md documenting git and Progressive Disclosure practices"
-steps = [
-  "Create docs/context/git-workflow.md",
-  "Document semantic commit format (feat, fix, refactor, docs, etc.)",
-  "Document how agent should use git log for context retrieval",
-  "Document Progressive Disclosure pattern: CLAUDE.md -> docs/context/*.md",
-  "Document distinction: docs/context/ for AI, docs/ for humans",
-  "Document when and how to update documentation",
-  "Add link to this doc in CLAUDE.md Progressive Disclosure section",
-]
-passes = true
-acceptance = [
-  "docs/context/git-workflow.md exists",
-  "Semantic commit format documented with examples",
-  "Git history usage pattern explained",
-  "Progressive Disclosure pattern fully documented",
-  "Directory structure conventions documented",
-  "CLAUDE.md links to this file",
-]
-
-[[stories]]
-category = "documentation"
-description = "Update CLAUDE.md to reflect simplified context model"
-steps = [
-  "Remove any references to design.md file",
-  "Remove any references to progress.txt file",
-  "Update Progressive Disclosure section with new docs",
-  "Ensure all docs/context/*.md files are linked",
-  "Document that git history replaces progress notes",
-  "Document that Progressive Disclosure replaces design.md",
-]
-passes = true
-acceptance = [
-  "No references to design.md or progress.txt in CLAUDE.md",
-  "Progressive Disclosure section is current and complete",
-  "New workflow clearly documented",
-]
-
-# =============================================================================
-# Runtime Control Features
-# =============================================================================
-
-[[stories]]
-category = "runtime-control"
-description = "Add claude session UUID tracking for subprocess invocations"
-steps = [
-  "Generate UUID v4 for each ralph session",
-  "Pass --session-id <uuid> to claude subprocess in command template",
-  "Store the claude session UUID in ralph's session metadata",
-  "Update iteration logs to include the claude session UUID",
-  "Ensure UUID is consistent across all iterations in a session",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "Ralph generates a UUID for claude sessions",
-  "--session-id flag passed to claude subprocess",
-  "UUID stored in ralph session metadata for later retrieval",
-  "Same UUID used for all iterations within a ralph session",
-]
-
-[[stories]]
-category = "runtime-control"
-description = "Implement non-blocking keyboard input monitoring for ralph run only"
-# DESCOPED: Raw terminal mode for keyboard input corrupts subprocess stdout.
-# Decision: Use signal-based interruption (Ctrl+C) instead. See docs/context/runtime-control.md
-steps = [
-  "DESCOPED - keyboard monitoring removed due to terminal mode conflicts",
-  "Signal-based interruption via SIGINT/SIGTERM implemented instead",
-  "Documentation updated in docs/context/runtime-control.md",
-]
-passes = true
-acceptance = [
-  "Signal-based interruption works correctly",
-  "Ctrl+C cleanly interrupts and finalizes session",
-  "Documentation explains why keyboard controls were descoped",
-]
-
-[[stories]]
-category = "runtime-control"
-description = "Implement soft stop with 's' key to pause after current iteration completes"
-# DESCOPED: Raw terminal mode for keyboard input corrupts subprocess stdout.
-# Decision: Use signal-based interruption (Ctrl+C) instead. See docs/context/runtime-control.md
-steps = [
-  "DESCOPED - soft stop via 's' key removed due to terminal mode conflicts",
-  "Alternative: Use Ctrl+C for immediate interruption with session finalization",
-]
-passes = true
-acceptance = [
-  "Signal-based interruption provides similar capability",
-  "Sessions are properly finalized on interrupt",
-]
-
-[[stories]]
-category = "runtime-control"
-description = "Implement hard stop with 'S' key to pause claude process for later resume"
-# DESCOPED: Raw terminal mode for keyboard input corrupts subprocess stdout.
-# Decision: Use signal-based interruption (Ctrl+C) instead. See docs/context/runtime-control.md
-steps = [
-  "DESCOPED - hard stop via 'S' key removed due to terminal mode conflicts",
-  "Alternative: Ctrl+C provides immediate interruption with graceful shutdown",
-]
-passes = true
-acceptance = [
-  "Signal-based interruption provides immediate stop capability",
-  "Session state properly preserved on interrupt",
-]
-
-[[stories]]
-category = "runtime-control"
-description = "Implement resume with 'p' key from both soft-stopped and hard-stopped states"
-# DESCOPED: Raw terminal mode for keyboard input corrupts subprocess stdout.
-# Decision: Use signal-based interruption (Ctrl+C) instead. See docs/context/runtime-control.md
-steps = [
-  "DESCOPED - resume via 'p' key removed along with keyboard-based pause/stop",
-  "Alternative: Start new session when ready to continue work",
-]
-passes = true
-acceptance = [
-  "Users can start new sessions to continue work after interrupt",
-]
-
-[[stories]]
-category = "spinner-enhancement"
-description = "Add key binding hints to spinner status line during execution"
-# DESCOPED: Keyboard controls removed due to terminal mode conflicts.
-# No key bindings to display since signal-based interruption is used instead.
-steps = [
-  "DESCOPED - key binding hints not applicable without keyboard controls",
-  "Spinner shows session info, iteration, and elapsed time",
-]
-passes = true
-acceptance = [
-  "Spinner displays relevant status information",
-  "No misleading key binding hints shown",
-]
-
-[[stories]]
-category = "runtime-control"
-description = "Update state display for paused and stopped states (not spinner)"
-# DESCOPED: Keyboard-based paused/stopped states removed due to terminal mode conflicts.
-# Interruption via Ctrl+C displays appropriate message and finalizes session.
-steps = [
-  "DESCOPED - paused/stopped states not applicable without keyboard controls",
-  "Interrupt message displayed when Ctrl+C is pressed",
-  "Session finalization message shown after interrupt",
-]
-passes = true
-acceptance = [
-  "Interrupt displays clear status message",
-  "Session saved message shown after finalization",
-]
-
-[[stories]]
-category = "documentation"
-description = "Create docs/context/runtime-control.md documenting keyboard controls"
-steps = [
-  "Create docs/context/runtime-control.md",
-  "Document that runtime controls apply ONLY to 'ralph run', NOT to 'ralph ask'",
-  "Explain why: run has iteration loop, ask is single-shot",
-  "Document 's' for soft stop: pause after current iteration completes",
-  "Document 'S' for hard stop: interrupt immediately, can resume",
-  "Document 'p' for play/resume from both stopped states",
-  "Document 'q' for quit from any stopped state",
-  "Document state machine: Running → Soft-stopping → Soft-stopped, Running → Hard-stopped",
-  "Explain difference: soft-stopped starts fresh iteration, hard-stopped resumes with --session-id",
-  "Add link to this doc in CLAUDE.md Progressive Disclosure section",
-]
-passes = true
-acceptance = [
-  "docs/context/runtime-control.md exists",
-  "Clearly states controls are for 'ralph run' only",
-  "All keyboard controls documented with clear behavior descriptions",
-  "State machine diagram or explanation included",
-  "Difference between soft and hard stop resume clearly explained",
-  "CLAUDE.md links to this file",
-]
-
-# =============================================================================
-# Code Quality - High Priority
-# =============================================================================
-
-[[stories]]
-category = "refactor"
-description = "ASK-DEDUP: Extract shared logic from execute_ask() and execute_ask_core()"
-steps = [
-  "Review main.rs:524-829 for duplicated code between execute_ask() and execute_ask_core()",
-  "Identify shared logic: theme config, prompt resolution, session finalization",
-  "Extract theme config building into helper function",
-  "Extract prompt resolution and display into helper function",
-  "Extract session finalization and summary display into helper function",
-  "Update both execute_ask() and execute_ask_core() to use shared helpers",
-  "Consider if execute_ask_core() can be eliminated entirely",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "No duplicated logic between execute_ask() and execute_ask_core()",
-  "Shared helpers are well-named and documented",
-  "Both functions produce identical behavior as before",
-  "Code is easier to maintain",
-]
-
-[[stories]]
-category = "refactor"
-description = "RENDER-SEPARATE: Extract shared text rendering logic from highlight_chunk() and ReplayRenderer"
-steps = [
-  "Review event_handler.rs:262-309 highlight_chunk() implementation",
-  "Review replay_renderer.rs:91-128 ReplayRenderer::render_text() implementation",
-  "Identify common text rendering logic between them",
-  "Create shared render module or function for text highlighting",
-  "Update both call sites to use shared implementation",
-  "Ensure replay and live rendering remain consistent",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "Text rendering logic exists in single location",
-  "Both highlight_chunk() and ReplayRenderer use shared code",
-  "Rendering output is identical to before",
-  "No duplicated highlighting/formatting logic",
-]
-
-[[stories]]
-category = "refactor"
-description = "RUN-SPLIT: Split run() function (531 lines) into smaller focused functions"
-steps = [
-  "Review run/mod.rs:282-813 run() function",
-  "Extract process_iteration() for single iteration logic",
-  "Extract handle_completion_check() for completion condition evaluation",
-  "Extract write_and_accumulate_metrics() for metrics tracking",
-  "Extract handle_subprocess_result() for result processing",
-  "Keep run() as orchestrator calling extracted functions",
-  "Ensure each extracted function is under 100 lines",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "run() function reduced to orchestration logic only",
-  "Extracted functions are focused and well-named",
-  "Each function under 100 lines",
-  "No change in behavior",
-  "Easier to understand iteration flow",
-]
-
-# =============================================================================
-# Code Quality - Lower Priority
-# =============================================================================
-
-[[stories]]
-category = "refactor"
-description = "TOOL-ROUTING: Simplify tool result routing match guards in event_handler.rs"
-steps = [
-  "Review event_handler.rs:167-198 tool result routing code",
-  "Replace verbose match guards with cleaner pattern",
-  "Use invocation.as_ref().map(|i| i.name.as_str()) approach",
-  "Ensure all tool types are still handled correctly",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "Tool routing code is more readable",
-  "Match expression is cleaner without verbose guards",
-  "All tool types handled identically to before",
-]
-
-[[stories]]
-category = "refactor"
-description = "WARN-HELPER: Create centralized warn_if_err() helper for consistent warning messages"
-steps = [
-  "Audit codebase for warning message patterns",
-  "Identify inconsistent eprintln!(\"Warning: ...\") usages",
-  "Create warn_if_err() helper that logs warning if Result is Err",
-  "Create warn() helper for direct warning messages",
-  "Place helpers in appropriate shared module",
-  "Update existing warning sites to use helpers",
-  "Ensure consistent format: 'Warning: {context}: {error}'",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "warn_if_err() and warn() helpers exist",
-  "Warning messages follow consistent format",
-  "Existing warning sites updated to use helpers",
-  "No change in user-visible behavior",
-]
-
-# =============================================================================
-# Bug Fixes
-# =============================================================================
-
-[[stories]]
-category = "bugfix"
-description = "Fix raw terminal mode breaking stdout output and signal handling"
-steps = [
-  "Identify that keyboard.rs enable_raw_mode() corrupts subprocess stdout",
-  "Research alternative approaches for non-blocking keyboard input",
-  "Option 1: Use separate thread with cooked mode, only poll when subprocess idle",
-  "Option 2: Use signal-based approach (e.g., SIGUSR1) instead of keyboard",
-  "Option 3: Remove keyboard monitoring entirely, use only Ctrl+C with state machine",
-  "Implement chosen solution that doesn't interfere with subprocess output",
-  "Ensure SIGTERM/SIGINT handling works correctly",
-  "Test that tool output displays correctly",
-  "Run cargo xtask lint to verify compilation",
-]
-passes = true
-acceptance = [
-  "Subprocess stdout output displays correctly (no garbled text)",
-  "SIGTERM and SIGINT signals are handled properly",
-  "If keyboard controls retained: they work without breaking output",
-  "All existing tests pass",
-]
-
-# =============================================================================
-# Command Documentation
-# =============================================================================
-
-[[stories]]
-category = "documentation"
-description = "Create docs/context/ralph-run.md with comprehensive run command documentation"
-steps = [
-  "Create docs/context/ralph-run.md",
-  "Document purpose: PRD-driven iteration loop for automated development",
-  "Document all CLI flags with descriptions and defaults",
-  "Document the iteration loop flow: PRD check → invoke claude → write logs → git diff → completion check",
-  "Document session management: creation, iteration logs, finalization",
-  "Document completion conditions: all stories done, completion marker, max iterations",
-  "Document failure recovery: retry logic, user prompting, session continuation",
-  "Document signal handling: SIGINT/SIGTERM behavior",
-  "Document runtime controls: s/S/p/q keys (link to runtime-control.md)",
-  "Document output: startup info, iteration headers, summaries, spinner",
-  "Document configuration precedence: CLI > env > config file > defaults",
-  "Add examples for common usage patterns",
-  "Add link to this doc in CLAUDE.md Progressive Disclosure section",
-]
-passes = true
-acceptance = [
-  "docs/context/ralph-run.md exists and is comprehensive",
-  "All CLI flags documented with types, defaults, and examples",
-  "Iteration loop flow clearly explained with diagram or steps",
-  "Session lifecycle documented (creation → iterations → finalization)",
-  "Failure recovery behavior documented",
-  "Runtime keyboard controls referenced",
-  "Examples cover common use cases",
-  "CLAUDE.md links to this file",
-]
-
-[[stories]]
-category = "documentation"
-description = "Create docs/context/ralph-ask.md with comprehensive ask command documentation"
-steps = [
-  "Create docs/context/ralph-ask.md",
-  "Document purpose: single-shot prompts to claude with session persistence",
-  "Document all CLI flags with descriptions and defaults",
-  "Document prompt resolution: inline, file path, stdin, piped input",
-  "Document session management: new sessions, --continue, --clone-session",
-  "Document conversation history: --history flag, history format in logs",
-  "Document --session flag: naming new sessions vs specifying existing",
-  "Document theme configuration: --theme, --no-background, precedence",
-  "Document --permission-mode: modes available, security implications",
-  "Document --timeout and --verbose-tools flags",
-  "Document output: prompt display, streaming response, summary",
-  "Document interaction with ralph sessions/iterations/replay commands",
-  "Add examples for common usage patterns",
-  "Add link to this doc in CLAUDE.md Progressive Disclosure section",
-]
-passes = true
-acceptance = [
-  "docs/context/ralph-ask.md exists and is comprehensive",
-  "All CLI flags documented with types, defaults, and examples",
-  "Prompt resolution from various sources documented",
-  "Session continuation and cloning clearly explained",
-  "Conversation history feature documented",
-  "Permission modes documented with security notes",
-  "Examples cover: basic usage, continuation, history, piping",
-  "CLAUDE.md links to this file",
+  "Keyboard polling uses event::poll(Duration::ZERO) pattern from replay_countdown.rs",
+  "Subprocess output latency is not noticeably increased by keyboard polling",
+  "All key presses are captured and processed",
+  "Ctrl+C handling remains unchanged (triggers signal::is_interrupted())",
+  "Unknown keys are ignored without error",
 ]

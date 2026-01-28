@@ -11,6 +11,16 @@
 //! - Iteration-level and session-level time tracking
 //! - Terminal detection (no spinner when piped)
 //! - Thread-safe start/stop control
+//! - Key binding hints showing available controls (when in interactive terminal)
+//!
+//! # Key Binding Hints
+//!
+//! When running in an interactive terminal, the spinner displays key hints
+//! that update based on the current state:
+//!
+//! - **Running**: `[s: stop | S: halt | p: pause]`
+//! - **Finishing** (soft stop requested): `[finishing...]`
+//! - **Paused**: `[paused - p: resume]`
 //!
 //! # Example
 //!
@@ -18,13 +28,14 @@
 //! use ralph::spinner::Spinner;
 //!
 //! let spinner = Spinner::new();
-//! spinner.start(); // Shows: ⠋ Waiting for response... 0s
+//! spinner.start(); // Shows: ⠋ Waiting for response... 0s [s: stop | S: halt | p: pause]
 //!
 //! // ... wait for output ...
 //!
 //! spinner.stop(); // Clears the spinner line
 //! ```
 
+use crate::ansi::{CLEAR_EOL, CR, CYAN, DIM, RESET, YELLOW};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,16 +48,6 @@ pub const SPINNER_CHARS: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '
 
 /// Interval between spinner frame updates.
 pub const SPINNER_INTERVAL: Duration = Duration::from_millis(80);
-
-// ANSI escape sequences for terminal control
-/// Carriage return - moves cursor to beginning of line.
-const CR: &str = "\r";
-/// Clear from cursor to end of line.
-const CLEAR_EOL: &str = "\x1b[K";
-/// Set foreground color to cyan.
-const CYAN: &str = "\x1b[36m";
-/// Reset all text formatting.
-const RESET: &str = "\x1b[0m";
 
 /// The context or reason for showing the spinner.
 ///
@@ -76,6 +77,36 @@ impl SpinnerContext {
             Self::WaitingForTool => "Running tool...",
             Self::Buffering => "Buffering code...",
             Self::Summarizing => "Summarizing progress file...",
+        }
+    }
+}
+
+/// State for key binding hints displayed in the spinner.
+///
+/// The hints update dynamically based on user actions:
+/// - Running: Shows all available key bindings
+/// - Finishing: Shows that soft stop was requested and current iteration will complete
+/// - Paused: Shows pause indicator and resume key
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyHintState {
+    /// Normal running state - show all available key bindings.
+    #[default]
+    Running,
+    /// Soft stop requested - finishing current iteration.
+    Finishing,
+    /// Execution is paused.
+    Paused,
+}
+
+impl KeyHintState {
+    /// Get the key hints display string for this state.
+    ///
+    /// Returns the formatted hint text including ANSI colors.
+    pub fn hint_text(&self) -> &'static str {
+        match self {
+            Self::Running => "[s: stop | S: halt | p: pause]",
+            Self::Finishing => "[finishing...]",
+            Self::Paused => "[paused - p: resume]",
         }
     }
 }
@@ -139,6 +170,8 @@ pub struct Spinner {
     context: Arc<Mutex<SpinnerContext>>,
     /// Session metadata for display.
     session_info: Arc<SpinnerSessionInfo>,
+    /// Current state for key hint display.
+    key_hint_state: Arc<Mutex<KeyHintState>>,
 }
 
 impl Default for Spinner {
@@ -158,6 +191,7 @@ impl Spinner {
             session_elapsed_ms,
             context: Arc::new(Mutex::new(SpinnerContext::default())),
             session_info: Arc::new(session_info),
+            key_hint_state: Arc::new(Mutex::new(KeyHintState::default())),
         }
     }
 
@@ -261,6 +295,7 @@ impl Spinner {
             session_elapsed_ms: self.session_elapsed_ms,
             context: Arc::clone(&self.context),
             session_info: Arc::clone(&self.session_info),
+            key_hint_state: Arc::clone(&self.key_hint_state),
         };
 
         // Spawn spinner thread
@@ -288,6 +323,25 @@ impl Spinner {
     /// Get the current spinner context.
     pub fn get_context(&self) -> SpinnerContext {
         self.context.lock().map(|ctx| *ctx).unwrap_or_default()
+    }
+
+    /// Set the key hint state.
+    ///
+    /// This changes the key binding hints displayed by the spinner.
+    /// Used to indicate soft stop requested (Finishing) or paused state.
+    ///
+    /// # Arguments
+    ///
+    /// * `state` - The new key hint state to display
+    pub fn set_key_hint_state(&self, state: KeyHintState) {
+        if let Ok(mut hint) = self.key_hint_state.lock() {
+            *hint = state;
+        }
+    }
+
+    /// Get the current key hint state.
+    pub fn get_key_hint_state(&self) -> KeyHintState {
+        self.key_hint_state.lock().map(|s| *s).unwrap_or_default()
     }
 
     /// Stop the spinner and clear the display.
@@ -356,6 +410,8 @@ struct SpinnerThreadConfig {
     context: Arc<Mutex<SpinnerContext>>,
     /// Session metadata for display.
     session_info: Arc<SpinnerSessionInfo>,
+    /// Current key hint state for display.
+    key_hint_state: Arc<Mutex<KeyHintState>>,
 }
 
 /// Run the spinner animation loop.
@@ -369,6 +425,7 @@ fn run_spinner(config: SpinnerThreadConfig) {
         session_elapsed_ms,
         context,
         session_info,
+        key_hint_state,
     } = config;
     let mut frame = 0;
     let mut stdout = std::io::stdout();
@@ -394,20 +451,26 @@ fn run_spinner(config: SpinnerThreadConfig) {
         // Format session info if available
         let session_display = format_session_info(&session_info);
 
+        // Get key hints based on current state
+        let key_hints = key_hint_state
+            .lock()
+            .map(|state| format_key_hints(*state))
+            .unwrap_or_default();
+
         // Build the spinner line
         // Use CR to return to start, then CLEAR_EOL to clear to end of line
         // This prevents residual characters when text length changes
         // (e.g., "59s" → "1m 0s" or context message changes)
-        // Format: "⠋ Thinking... Session: brave-panda | Iteration: 2/5 | 12s • Total: 1m 45s"
+        // Format: "⠋ Thinking... Session: brave-panda | Iteration: 2/5 | 12s [s: stop | S: halt | p: pause]"
         let spinner_line = if session_display.is_empty() {
             format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {}",
-                spinner_char, message, time_display
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} {}",
+                spinner_char, message, time_display, key_hints
             )
         } else {
             format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {}",
-                spinner_char, message, session_display, time_display
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {} {}",
+                spinner_char, message, session_display, time_display, key_hints
             )
         };
 
@@ -421,6 +484,19 @@ fn run_spinner(config: SpinnerThreadConfig) {
         // Sleep for the interval
         thread::sleep(SPINNER_INTERVAL);
     }
+}
+
+/// Format key hints with ANSI styling based on state.
+///
+/// Returns the key hints string with appropriate styling:
+/// - Running: dimmed hints showing all controls
+/// - Finishing/Paused: yellow indicator for active states
+fn format_key_hints(state: KeyHintState) -> String {
+    let color = match state {
+        KeyHintState::Running => DIM,
+        KeyHintState::Finishing | KeyHintState::Paused => YELLOW,
+    };
+    format!("{color}{}{RESET}", state.hint_text())
 }
 
 /// Format session info for spinner display.
@@ -802,5 +878,84 @@ mod tests {
         assert_eq!(spinner.session_elapsed_ms, 5000);
         assert!(spinner.session_info.has_info());
         assert_eq!(spinner.session_info.slug, Some("brave-panda".to_string()));
+    }
+
+    // Key hint state tests
+
+    #[test]
+    fn test_key_hint_state_default() {
+        assert_eq!(KeyHintState::default(), KeyHintState::Running);
+    }
+
+    #[test]
+    fn test_key_hint_state_hint_text() {
+        assert_eq!(
+            KeyHintState::Running.hint_text(),
+            "[s: stop | S: halt | p: pause]"
+        );
+        assert_eq!(KeyHintState::Finishing.hint_text(), "[finishing...]");
+        assert_eq!(KeyHintState::Paused.hint_text(), "[paused - p: resume]");
+    }
+
+    #[test]
+    fn test_spinner_key_hint_state_default() {
+        let spinner = Spinner::with_enabled(false);
+        assert_eq!(spinner.get_key_hint_state(), KeyHintState::Running);
+    }
+
+    #[test]
+    fn test_spinner_set_key_hint_state() {
+        let spinner = Spinner::with_enabled(false);
+        assert_eq!(spinner.get_key_hint_state(), KeyHintState::Running);
+
+        spinner.set_key_hint_state(KeyHintState::Finishing);
+        assert_eq!(spinner.get_key_hint_state(), KeyHintState::Finishing);
+
+        spinner.set_key_hint_state(KeyHintState::Paused);
+        assert_eq!(spinner.get_key_hint_state(), KeyHintState::Paused);
+    }
+
+    #[test]
+    fn test_spinner_key_hint_state_while_running() {
+        let mut spinner = Spinner::with_enabled(true);
+        spinner.start();
+        thread::sleep(Duration::from_millis(10));
+        assert!(spinner.is_running());
+
+        // Change key hint state while running
+        spinner.set_key_hint_state(KeyHintState::Finishing);
+        assert_eq!(spinner.get_key_hint_state(), KeyHintState::Finishing);
+
+        spinner.set_key_hint_state(KeyHintState::Paused);
+        assert_eq!(spinner.get_key_hint_state(), KeyHintState::Paused);
+
+        spinner.stop();
+    }
+
+    #[test]
+    fn test_format_key_hints_running() {
+        let result = format_key_hints(KeyHintState::Running);
+        // Should contain the hint text with dim styling
+        assert!(result.contains("[s: stop | S: halt | p: pause]"));
+        assert!(result.contains(DIM));
+        assert!(result.contains(RESET));
+    }
+
+    #[test]
+    fn test_format_key_hints_finishing() {
+        let result = format_key_hints(KeyHintState::Finishing);
+        // Should contain the finishing text with yellow styling
+        assert!(result.contains("[finishing...]"));
+        assert!(result.contains(YELLOW));
+        assert!(result.contains(RESET));
+    }
+
+    #[test]
+    fn test_format_key_hints_paused() {
+        let result = format_key_hints(KeyHintState::Paused);
+        // Should contain the paused text with yellow styling
+        assert!(result.contains("[paused - p: resume]"));
+        assert!(result.contains(YELLOW));
+        assert!(result.contains(RESET));
     }
 }

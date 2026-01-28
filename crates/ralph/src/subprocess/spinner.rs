@@ -1,4 +1,19 @@
 //! Subprocess invocation with spinner display and gap detection.
+//!
+//! This module handles subprocess invocation with interactive features:
+//! - Animated spinner during wait periods
+//! - Gap detection to show spinner when LLM is thinking
+//! - Keyboard input polling for interactive controls
+//!
+//! # Keyboard Controls
+//!
+//! When running in an interactive terminal, the subprocess loop polls for
+//! keyboard input during wait periods. This enables interactive controls
+//! like soft stop, hard stop, and pause (implemented in caller layers).
+//!
+//! Raw terminal mode is enabled only during spinner display periods and
+//! disabled before subprocess output is written, ensuring output is never
+//! corrupted by terminal mode changes.
 
 use super::timeout::try_wait_child;
 use super::types::{
@@ -6,6 +21,7 @@ use super::types::{
     EXIT_CODE_KILLED,
 };
 use crate::highlight::ThemeConfig;
+use crate::keyboard::{check_for_run_action, RawModeGuard, RunKeyAction};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
@@ -33,6 +49,90 @@ pub struct SpinnerSubprocessConfig {
     pub verbose_tools: VerboseToolsConfig,
     /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
+}
+
+/// Result of subprocess invocation including any detected keyboard action.
+///
+/// This struct will be used when implementing keyboard actions (Stories 4-6).
+/// For now, the current function returns just the subprocess result.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct SpinnerSubprocessOutcome {
+    /// The subprocess result.
+    pub result: Result<StreamingSubprocessResult, SubprocessError>,
+    /// Keyboard action detected during execution (if any).
+    pub key_action: Option<RunKeyAction>,
+}
+
+/// Manages raw mode state for keyboard input during subprocess execution.
+///
+/// Raw mode is enabled only during spinner display periods to allow
+/// non-blocking keyboard polling. It is disabled before any subprocess
+/// output is written to avoid corrupting terminal output.
+struct KeyboardState {
+    /// Whether we're in an interactive terminal.
+    is_terminal: bool,
+    /// Current raw mode guard (Some when raw mode is active).
+    raw_mode_guard: Option<RawModeGuard>,
+    /// Last detected keyboard action (for returning to caller).
+    detected_action: Option<RunKeyAction>,
+}
+
+impl KeyboardState {
+    /// Create new keyboard state.
+    fn new(is_terminal: bool) -> Self {
+        Self {
+            is_terminal,
+            raw_mode_guard: None,
+            detected_action: None,
+        }
+    }
+
+    /// Enable raw mode for keyboard input (during spinner display).
+    ///
+    /// This is a no-op if already enabled or if not in a terminal.
+    fn enable_raw_mode(&mut self) {
+        if !self.is_terminal || self.raw_mode_guard.is_some() {
+            return;
+        }
+        self.raw_mode_guard = Some(RawModeGuard::new());
+    }
+
+    /// Disable raw mode before subprocess output.
+    ///
+    /// Raw mode must be disabled before writing subprocess output to
+    /// prevent terminal corruption.
+    fn disable_raw_mode(&mut self) {
+        // Dropping the guard disables raw mode
+        self.raw_mode_guard = None;
+    }
+
+    /// Poll for keyboard input (non-blocking).
+    ///
+    /// Returns true if a significant action was detected that the caller
+    /// should handle. Raw mode must be enabled for this to work.
+    fn poll(&mut self) -> bool {
+        if self.raw_mode_guard.is_none() {
+            return false;
+        }
+
+        let action = check_for_run_action();
+        match action {
+            RunKeyAction::None => false,
+            action => {
+                self.detected_action = Some(action);
+                true
+            }
+        }
+    }
+
+    /// Get the detected action (if any).
+    ///
+    /// This method will be used when implementing keyboard actions (Stories 4-6).
+    #[allow(dead_code)]
+    fn take_action(&mut self) -> Option<RunKeyAction> {
+        self.detected_action.take()
+    }
 }
 
 /// Invokes a command with stream processing, theme configuration, and spinner display.
@@ -117,6 +217,13 @@ pub fn invoke_subprocess_with_spinner_config(
     let mut last_output_time = Instant::now();
     let mut spinner_active = true; // Spinner starts active
     let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
+
+    // Initialize keyboard state for interactive controls
+    // Raw mode is enabled when spinner is active, allowing keyboard polling
+    let mut keyboard = KeyboardState::new(is_terminal);
+    if spinner_active {
+        keyboard.enable_raw_mode();
+    }
 
     // Track whether we're in a tool invocation (to determine spinner context)
     let mut pending_tool_count: usize = 0;
@@ -289,6 +396,8 @@ pub fn invoke_subprocess_with_spinner_config(
                             spinner.stop();
                             spinner_active = false;
                         }
+                        // Disable raw mode before writing output to prevent corruption
+                        keyboard.disable_raw_mode();
                         print!("{}", output);
                         let _ = io::stdout().flush();
                         // Update last output time
@@ -322,7 +431,14 @@ pub fn invoke_subprocess_with_spinner_config(
                     };
                     spinner.start_with_context(context);
                     spinner_active = true;
+                    // Re-enable raw mode for keyboard input during spinner
+                    keyboard.enable_raw_mode();
                 }
+
+                // Poll for keyboard input during wait periods
+                // This allows interactive controls (soft stop, hard stop, pause)
+                // to be detected without blocking subprocess I/O
+                keyboard.poll();
 
                 // Continue loop to check process status and timeout
             }

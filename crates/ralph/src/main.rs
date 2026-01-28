@@ -7,6 +7,7 @@
 // Threshold configured in clippy.toml (too-many-arguments-threshold = 5).
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
+pub mod ansi;
 mod ask;
 mod cli;
 pub mod config;
@@ -17,6 +18,7 @@ pub mod highlight;
 mod init;
 pub mod iteration;
 pub mod iterations;
+pub mod keyboard;
 pub mod markdown;
 pub mod paths;
 mod prompt;

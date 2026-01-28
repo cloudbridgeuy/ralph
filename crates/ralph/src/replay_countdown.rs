@@ -25,8 +25,9 @@
 //!    calls) and normal output rendering. This ensures subprocess stdout is
 //!    never affected by terminal mode changes.
 //!
-//! 3. **Panic safety**: The [`RawModeGuard`] struct ensures raw mode is always
-//!    disabled via its `Drop` implementation, even if the countdown loop panics.
+//! 3. **Panic safety**: The [`RawModeGuard`](crate::keyboard::RawModeGuard) struct
+//!    ensures raw mode is always disabled via its `Drop` implementation, even if
+//!    the countdown loop panics.
 //!
 //! 4. **Non-terminal handling**: When stdout is not a terminal (e.g., piped to
 //!    a file), raw mode is never enabled and keyboard input is not processed.
@@ -42,49 +43,14 @@
 //! wait_with_countdown(3.0, true);
 //! ```
 
+use crate::ansi::{CLEAR_EOL, CR, CYAN, DIM, RESET, YELLOW};
+use crate::keyboard::{check_for_countdown_action, CountdownKeyAction, RawModeGuard};
 use crate::spinner::{SPINNER_CHARS, SPINNER_INTERVAL};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use crossterm::terminal;
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
 
-// ANSI escape sequences
-const CR: &str = "\r";
-const CLEAR_EOL: &str = "\x1b[K";
-const CYAN: &str = "\x1b[36m";
-const YELLOW: &str = "\x1b[33m";
-const DIM: &str = "\x1b[2m";
-const RESET: &str = "\x1b[0m";
-
 // Pause indicator character
 const PAUSE_CHAR: char = '⏸';
-
-/// RAII guard for terminal raw mode.
-///
-/// Ensures raw mode is disabled when dropped, providing panic safety.
-/// Raw mode must be disabled before any subprocess execution to prevent
-/// stdout corruption.
-#[must_use = "guard must be held to keep raw mode active; dropping disables raw mode"]
-struct RawModeGuard {
-    enabled: bool,
-}
-
-impl RawModeGuard {
-    /// Enable raw mode and return a guard that disables it on drop.
-    fn new() -> Self {
-        Self {
-            enabled: terminal::enable_raw_mode().is_ok(),
-        }
-    }
-}
-
-impl Drop for RawModeGuard {
-    fn drop(&mut self) {
-        if self.enabled {
-            let _ = terminal::disable_raw_mode();
-        }
-    }
-}
 
 /// The result of waiting with countdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,13 +118,6 @@ fn run_countdown(delay_secs: f64) -> CountdownResult {
     result
 }
 
-/// Key action result from checking input.
-enum KeyAction {
-    None,
-    Skip,
-    TogglePause,
-}
-
 /// State for the countdown loop.
 struct CountdownState {
     remaining: Duration,
@@ -187,11 +146,11 @@ fn run_countdown_loop(delay_secs: f64) -> CountdownResult {
     let mut last_tick = Instant::now();
 
     loop {
-        // Check for key actions
-        match check_for_key_action() {
-            KeyAction::Skip => return CountdownResult::Skipped,
-            KeyAction::TogglePause => state.paused = !state.paused,
-            KeyAction::None => {}
+        // Check for key actions using shared keyboard module
+        match check_for_countdown_action() {
+            CountdownKeyAction::Skip => return CountdownResult::Skipped,
+            CountdownKeyAction::TogglePause => state.paused = !state.paused,
+            CountdownKeyAction::None => {}
         }
 
         // Update remaining time if not paused
@@ -232,57 +191,6 @@ fn render_countdown_line(stdout: &mut std::io::Stdout, state: &CountdownState) {
 
     let _ = write!(stdout, "{}", line);
     let _ = stdout.flush();
-}
-
-/// Check for key actions (skip or pause toggle).
-///
-/// Uses zero-timeout polling for non-blocking input detection. This allows
-/// the countdown animation to continue updating while checking for keys.
-/// Requires raw mode to be active for proper keypress detection.
-fn check_for_key_action() -> KeyAction {
-    // Poll with zero timeout - non-blocking check. Returns immediately if
-    // no key is available, allowing the animation loop to continue.
-    if event::poll(Duration::ZERO).unwrap_or(false) {
-        if let Ok(Event::Key(key_event)) = event::read() {
-            return classify_key(key_event);
-        }
-    }
-    KeyAction::None
-}
-
-/// Classify a key event as a specific action.
-///
-/// Key mappings:
-/// - 'n', 'N', Space, Ctrl+C: Skip to next block
-/// - 'p', 'P': Toggle pause/play
-fn classify_key(key_event: KeyEvent) -> KeyAction {
-    // Only handle key press events, not release or repeat
-    if key_event.kind != crossterm::event::KeyEventKind::Press {
-        return KeyAction::None;
-    }
-
-    match key_event.code {
-        // Skip keys
-        KeyCode::Char('n' | 'N' | ' ') if key_event.modifiers.is_empty() => KeyAction::Skip,
-        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            KeyAction::Skip
-        }
-        // Pause toggle
-        KeyCode::Char('p' | 'P') if key_event.modifiers.is_empty() => KeyAction::TogglePause,
-        _ => KeyAction::None,
-    }
-}
-
-/// Check if a key event is a skip key (for use in tests).
-#[cfg(test)]
-fn is_skip_key(key_event: KeyEvent) -> bool {
-    matches!(classify_key(key_event), KeyAction::Skip)
-}
-
-/// Check if a key event is a pause toggle key (for use in tests).
-#[cfg(test)]
-fn is_pause_key(key_event: KeyEvent) -> bool {
-    matches!(classify_key(key_event), KeyAction::TogglePause)
 }
 
 /// Clear the current line.
@@ -385,80 +293,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_skip_key_n() {
-        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
-        assert!(is_skip_key(key));
-    }
-
-    #[test]
-    fn test_is_skip_key_n_uppercase() {
-        let key = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::empty());
-        assert!(is_skip_key(key));
-    }
-
-    #[test]
-    fn test_is_skip_key_space() {
-        let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
-        assert!(is_skip_key(key));
-    }
-
-    #[test]
-    fn test_is_skip_key_ctrl_c() {
-        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert!(is_skip_key(key));
-    }
-
-    #[test]
-    fn test_is_not_skip_key_other() {
-        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
-        assert!(!is_skip_key(key));
-    }
-
-    #[test]
-    fn test_is_not_skip_key_n_with_modifier() {
-        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
-        assert!(!is_skip_key(key));
-    }
-
-    #[test]
-    fn test_is_pause_key_p() {
-        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty());
-        assert!(is_pause_key(key));
-    }
-
-    #[test]
-    fn test_is_pause_key_p_uppercase() {
-        let key = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::empty());
-        assert!(is_pause_key(key));
-    }
-
-    #[test]
-    fn test_is_not_pause_key_with_modifier() {
-        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
-        assert!(!is_pause_key(key));
-    }
-
-    #[test]
-    fn test_is_not_pause_key_other() {
-        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
-        assert!(!is_pause_key(key));
-    }
-
-    #[test]
-    fn test_p_is_not_skip_key() {
-        // Ensure 'p' doesn't trigger skip (it's pause)
-        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty());
-        assert!(!is_skip_key(key));
-    }
-
-    #[test]
-    fn test_n_is_not_pause_key() {
-        // Ensure 'n' doesn't trigger pause (it's skip)
-        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
-        assert!(!is_pause_key(key));
-    }
-
-    #[test]
     fn test_countdown_state_new() {
         let state = CountdownState::new(5.0);
         assert_eq!(state.remaining.as_secs_f64(), 5.0);
@@ -466,15 +300,6 @@ mod tests {
         assert_eq!(state.frame, 0);
     }
 
-    #[test]
-    fn test_raw_mode_guard_tracks_enabled_state() {
-        // Test that guard tracks the enabled state correctly
-        // Note: We can't test actual raw mode in unit tests (requires terminal)
-        // but we can verify the guard struct behavior
-        let guard = RawModeGuard { enabled: true };
-        assert!(guard.enabled);
-
-        let guard2 = RawModeGuard { enabled: false };
-        assert!(!guard2.enabled);
-    }
+    // Note: Key event tests are now in the keyboard module
+    // RawModeGuard tests are also in the keyboard module
 }
