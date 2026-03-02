@@ -9,7 +9,12 @@
 /archive/
 
 .DS_Store
+__pycache__/
 
 .local/
 !.local/plans/prd.toml
 !.local/plans/progress.txt
+
+# Shaping and planning artifacts (local only)
+docs/shaping/
+.claude/plans/
