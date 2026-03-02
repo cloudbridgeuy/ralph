@@ -16,6 +16,7 @@
 pub mod chunk;
 pub mod completion;
 pub mod context;
+pub mod directive;
 pub mod paused;
 pub mod persona;
 pub mod prd;

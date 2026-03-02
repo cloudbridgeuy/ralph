@@ -17,6 +17,7 @@ path = "src/lib.rs"
 # Core dependencies for pure transformation functions
 chrono = { workspace = true }
 rand = { workspace = true }
+regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
