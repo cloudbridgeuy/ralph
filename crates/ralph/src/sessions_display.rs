@@ -647,6 +647,7 @@ mod tests {
             completed_at: None,
             iterations: 1,
             outcome,
+            persona: None,
         }
     }
 

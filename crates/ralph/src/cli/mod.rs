@@ -64,6 +64,9 @@ pub enum Commands {
     /// A simplified interface for quick LLM interactions. Each invocation
     /// creates a session that can be replayed or continued later.
     Ask(AskArgs),
+
+    /// Converse with a persona-configured Claude using a named agent.
+    Persona(PersonaArgs),
 }
 
 /// Arguments for the `sessions` subcommand.
@@ -256,6 +259,58 @@ pub struct AskArgs {
     pub clone_session: bool,
 }
 
+/// Arguments for the `persona` subcommand.
+#[derive(clap::Args, Debug, Clone)]
+pub struct PersonaArgs {
+    /// Agent name (resolves to .claude/agents/{name}.md)
+    #[arg(value_name = "PERSONA")]
+    pub persona: String,
+
+    /// The prompt to send to the persona.
+    ///
+    /// If not provided, reads from stdin. Supports inline text or "-" for stdin.
+    #[arg(value_name = "PROMPT")]
+    pub prompt: Option<String>,
+
+    /// Session name for the new session, or session to continue with --continue.
+    #[arg(short = 'S', long)]
+    pub session: Option<String>,
+
+    /// Continue an existing session instead of creating a new one.
+    ///
+    /// Finds the most recent session for this persona in the current project.
+    #[arg(short = 'c', long = "continue")]
+    pub continue_session: bool,
+
+    /// Syntax highlighting theme.
+    #[arg(long, value_name = "NAME")]
+    pub theme: Option<String>,
+
+    /// Disable background colors in syntax highlighting.
+    #[arg(long)]
+    pub no_background: bool,
+
+    /// Timeout for LLM subprocess in seconds.
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
+
+    /// Enable verbose output for specific tools.
+    #[arg(long, value_name = "TOOLS", num_args = 0..=1, default_missing_value = "*")]
+    pub verbose_tools: Option<String>,
+
+    /// Suppress prompt display at the start of execution.
+    #[arg(long)]
+    pub no_prompt: bool,
+
+    /// Display conversation history for the session.
+    #[arg(long)]
+    pub history: bool,
+
+    /// Clone an existing session into a new session with its conversation history.
+    #[arg(long)]
+    pub clone_session: bool,
+}
+
 /// Arguments for the `run` subcommand.
 #[derive(clap::Args, Debug)]
 pub struct RunArgs {
@@ -359,4 +414,15 @@ pub struct RunArgs {
     /// Iteration 1 begins. Use this flag to hide the prompt.
     #[arg(long)]
     pub no_prompt: bool,
+
+    /// Resume a previously hard-stopped session.
+    ///
+    /// When a session is hard-stopped (user presses 'S'), its state is saved
+    /// to allow later resumption. Use this flag to continue from where the
+    /// session was interrupted.
+    ///
+    /// If --slug is also provided, resumes that specific session.
+    /// Otherwise, resumes the most recently paused session for the current project.
+    #[arg(long)]
+    pub resume: bool,
 }

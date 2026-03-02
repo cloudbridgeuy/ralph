@@ -132,6 +132,17 @@ pub fn invoke_with_failure_recovery(
                     pending_before: None,
                 });
             }
+            Err(SubprocessError::HardStop { partial_result }) => {
+                // Hard stop requested by user (S key) - propagate immediately
+                // The caller will handle session finalization and write paused state
+                return Err(RunError::HardStop {
+                    session_slug: String::new(),
+                    iterations_completed: 0,
+                    partial_result: Some(partial_result),
+                    pending_before: None,
+                    prd_path: std::path::PathBuf::new(), // Filled in by caller
+                });
+            }
             Err(e) => return Err(e.into()),
         };
 

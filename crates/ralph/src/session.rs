@@ -27,8 +27,8 @@
 
 use crate::paths;
 use ralph_core::session::{
-    generate_unique_slug, is_valid_slug, SessionEntry, SessionMetadata, SessionOutcome,
-    SessionsIndex,
+    generate_unique_slug, is_valid_slug, PausedState, SessionEntry, SessionMetadata,
+    SessionOutcome, SessionsIndex,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -93,6 +93,48 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
+
+    /// Failed to read paused state file
+    #[error("Failed to read paused state at {path}: {source}")]
+    ReadPausedState {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to write paused state file
+    #[error("Failed to write paused state at {path}: {source}")]
+    WritePausedState {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Failed to parse paused state file
+    #[error("Failed to parse paused state: {0}")]
+    ParsePausedState(String),
+
+    /// Failed to delete paused state file
+    #[error("Failed to delete paused state at {path}: {source}")]
+    DeletePausedState {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// No paused session found
+    #[error("No paused session found. Use 'ralph run' to start a new session.")]
+    NoPausedSession,
+
+    /// Paused session not for current project
+    #[error(
+        "Paused session '{slug}' is for project '{paused_project}', not current project '{current_project}'."
+    )]
+    PausedSessionProjectMismatch {
+        slug: String,
+        paused_project: String,
+        current_project: String,
+    },
 }
 
 /// Get the path to the global sessions index file.
@@ -113,6 +155,13 @@ pub fn sessions_index_path() -> PathBuf {
 /// See [`crate::paths::session_dir`] for details.
 pub fn session_dir(slug: &str) -> PathBuf {
     paths::session_dir(slug)
+}
+
+/// Get the path to the paused state file.
+///
+/// Returns `{data_dir}/paused.toml`.
+pub fn paused_state_path() -> PathBuf {
+    paths::data_dir().join("paused.toml")
 }
 
 /// Load the sessions index from disk, or create a new empty one if it doesn't exist.
@@ -206,8 +255,9 @@ pub fn initialize_session_directory(
     slug: &str,
     project_path: &Path,
     prompt: Option<String>,
+    persona: Option<&str>,
 ) -> Result<PathBuf, SessionError> {
-    initialize_session_directory_internal(slug, project_path, prompt, None)
+    initialize_session_directory_internal(slug, project_path, prompt, None, persona)
 }
 
 /// Create a session directory for a cloned session.
@@ -219,8 +269,9 @@ fn initialize_session_directory_with_clone(
     project_path: &Path,
     prompt: Option<String>,
     source_slug: &str,
+    persona: Option<&str>,
 ) -> Result<PathBuf, SessionError> {
-    initialize_session_directory_internal(slug, project_path, prompt, Some(source_slug))
+    initialize_session_directory_internal(slug, project_path, prompt, Some(source_slug), persona)
 }
 
 /// Internal implementation for session directory initialization.
@@ -231,6 +282,7 @@ fn initialize_session_directory_internal(
     project_path: &Path,
     prompt: Option<String>,
     cloned_from: Option<&str>,
+    persona: Option<&str>,
 ) -> Result<PathBuf, SessionError> {
     // Create session directory
     let session_path = session_dir(slug);
@@ -239,16 +291,31 @@ fn initialize_session_directory_internal(
         source: e,
     })?;
 
-    // Create session metadata (with or without clone source)
-    let metadata = if let Some(source_slug) = cloned_from {
-        SessionMetadata::new_cloned(
+    // Create session metadata based on clone and persona options
+    let metadata = match (cloned_from, persona) {
+        (Some(source_slug), Some(p)) => {
+            let mut m = SessionMetadata::new_cloned(
+                slug.to_string(),
+                project_path.to_path_buf(),
+                prompt,
+                source_slug,
+            );
+            m.persona = Some(p.to_string());
+            m
+        }
+        (Some(source_slug), None) => SessionMetadata::new_cloned(
             slug.to_string(),
             project_path.to_path_buf(),
             prompt,
             source_slug,
-        )
-    } else {
-        SessionMetadata::new(slug.to_string(), project_path.to_path_buf(), prompt)
+        ),
+        (None, Some(p)) => SessionMetadata::new_with_persona(
+            slug.to_string(),
+            project_path.to_path_buf(),
+            prompt,
+            p.to_string(),
+        ),
+        (None, None) => SessionMetadata::new(slug.to_string(), project_path.to_path_buf(), prompt),
     };
 
     // Write session.toml in the session directory
@@ -263,7 +330,14 @@ fn initialize_session_directory_internal(
 
     // Add entry to global sessions index
     let mut index = load_sessions_index()?;
-    let entry = SessionEntry::new(slug.to_string(), project_path.to_path_buf());
+    let entry = match persona {
+        Some(p) => SessionEntry::new_with_persona(
+            slug.to_string(),
+            project_path.to_path_buf(),
+            p.to_string(),
+        ),
+        None => SessionEntry::new(slug.to_string(), project_path.to_path_buf()),
+    };
     index.add_session(entry);
     save_sessions_index(&index)?;
 
@@ -291,9 +365,10 @@ pub fn initialize_session(
     user_slug: Option<&str>,
     project_path: &Path,
     prompt: Option<String>,
+    persona: Option<&str>,
 ) -> Result<(String, PathBuf), SessionError> {
     let slug = resolve_session_slug(user_slug)?;
-    let session_path = initialize_session_directory(&slug, project_path, prompt)?;
+    let session_path = initialize_session_directory(&slug, project_path, prompt, persona)?;
     Ok((slug, session_path))
 }
 
@@ -319,10 +394,11 @@ pub fn initialize_session_with_clone(
     project_path: &Path,
     prompt: Option<String>,
     source_slug: &str,
+    persona: Option<&str>,
 ) -> Result<(String, PathBuf), SessionError> {
     let slug = resolve_session_slug(user_slug)?;
     let session_path =
-        initialize_session_directory_with_clone(&slug, project_path, prompt, source_slug)?;
+        initialize_session_directory_with_clone(&slug, project_path, prompt, source_slug, persona)?;
     Ok((slug, session_path))
 }
 
@@ -340,17 +416,14 @@ pub fn initialize_session_with_clone(
 /// * `Ok(Some(SessionEntry))` - The most recent session for the project
 /// * `Ok(None)` - No sessions exist for this project
 /// * `Err(SessionError)` - If loading the sessions index fails
-pub fn find_most_recent_session(project_path: &Path) -> Result<Option<SessionEntry>, SessionError> {
+pub fn find_most_recent_session(
+    project_path: &Path,
+    persona: Option<&str>,
+) -> Result<Option<SessionEntry>, SessionError> {
     let index = load_sessions_index()?;
-
-    // Find sessions for this project and get the most recent by started_at
-    let most_recent = index
-        .sessions
-        .into_iter()
-        .filter(|s| s.project == project_path)
-        .max_by_key(|s| s.started_at);
-
-    Ok(most_recent)
+    Ok(index
+        .find_most_recent_for_persona(project_path, persona)
+        .cloned())
 }
 
 /// Find a session by its slug.
@@ -433,6 +506,125 @@ pub fn finalize_session(
     }
 
     Ok(())
+}
+
+// =============================================================================
+// Paused State Management
+// =============================================================================
+
+/// Save paused state to disk.
+///
+/// Writes the paused state to `{data_dir}/paused.toml` for later resumption.
+///
+/// # Arguments
+///
+/// * `state` - The paused state to save
+///
+/// # Errors
+///
+/// Returns `SessionError::WritePausedState` if writing fails.
+pub fn save_paused_state(state: &PausedState) -> Result<(), SessionError> {
+    let path = paused_state_path();
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| SessionError::WritePausedState {
+            path: parent.display().to_string(),
+            source: e,
+        })?;
+    }
+
+    let content = state
+        .to_toml()
+        .map_err(|e| SessionError::ParsePausedState(e.to_string()))?;
+
+    fs::write(&path, content).map_err(|e| SessionError::WritePausedState {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+
+    Ok(())
+}
+
+/// Load paused state from disk.
+///
+/// Reads the paused state from `{data_dir}/paused.toml`.
+///
+/// # Returns
+///
+/// * `Ok(Some(PausedState))` - If a paused state exists
+/// * `Ok(None)` - If no paused state file exists
+/// * `Err(SessionError)` - If reading or parsing fails
+pub fn load_paused_state() -> Result<Option<PausedState>, SessionError> {
+    let path = paused_state_path();
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| SessionError::ReadPausedState {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+
+    let state = PausedState::from_toml(&content)
+        .map_err(|e| SessionError::ParsePausedState(e.to_string()))?;
+
+    Ok(Some(state))
+}
+
+/// Delete the paused state file.
+///
+/// Called after successfully resuming a paused session.
+///
+/// # Errors
+///
+/// Returns `SessionError::DeletePausedState` if deletion fails.
+/// Silently succeeds if the file doesn't exist.
+pub fn delete_paused_state() -> Result<(), SessionError> {
+    let path = paused_state_path();
+
+    if !path.exists() {
+        return Ok(());
+    }
+
+    fs::remove_file(&path).map_err(|e| SessionError::DeletePausedState {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+
+    Ok(())
+}
+
+/// Load and validate paused state for the current project.
+///
+/// This is the main entry point for resume functionality. It:
+/// 1. Loads the paused state file
+/// 2. Validates it belongs to the current project
+/// 3. Returns the state if valid
+///
+/// # Arguments
+///
+/// * `current_project` - The current project path to validate against
+///
+/// # Returns
+///
+/// * `Ok(PausedState)` - If a valid paused state exists for this project
+/// * `Err(SessionError::NoPausedSession)` - If no paused state exists
+/// * `Err(SessionError::PausedSessionProjectMismatch)` - If paused for different project
+pub fn load_paused_state_for_project(current_project: &Path) -> Result<PausedState, SessionError> {
+    let state = load_paused_state()?.ok_or(SessionError::NoPausedSession)?;
+
+    // Validate project matches
+    if state.project != current_project {
+        return Err(SessionError::PausedSessionProjectMismatch {
+            slug: state.slug,
+            paused_project: state.project.display().to_string(),
+            current_project: current_project.display().to_string(),
+        });
+    }
+
+    Ok(state)
 }
 
 #[cfg(test)]

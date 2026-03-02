@@ -4,7 +4,24 @@
 //! development. It integrates all Layer 1 features: context initialization,
 //! session management, subprocess invocation, PRD parsing, completion detection,
 //! and git diff capture.
+//!
+//! # Keyboard Controls
+//!
+//! The run loop handles keyboard actions detected during subprocess execution:
+//!
+//! - **Soft stop** (`s`): Sets a flag checked at iteration boundaries. The current
+//!   iteration completes normally, then the loop exits without starting the next.
+//!   See [`SingleIterationResult::Continue`] handling in the main loop.
+//!
+//! - **Hard stop** (`S`): Propagates from subprocess as [`RunError::HardStop`].
+//!   The subprocess is killed immediately, and paused state is saved for later
+//!   resumption with `ralph run --resume`.
+//!
+//! - **Pause** (`p`): Handled entirely within the subprocess layer. Output is
+//!   buffered while paused and displayed on resume. The run loop is unaware
+//!   of pause state.
 
+pub mod execute;
 mod recovery;
 
 use crate::git::capture_and_write_diff;
@@ -207,6 +224,21 @@ pub enum RunError {
         /// Number of pending stories at iteration start (for partial iteration log)
         pending_before: Option<usize>,
     },
+
+    /// Run was hard-stopped by user (S key)
+    #[error("Run hard-stopped by user")]
+    HardStop {
+        /// Session slug for paused state
+        session_slug: String,
+        /// Number of iterations completed before hard stop
+        iterations_completed: usize,
+        /// Partial result from hard-stopped subprocess
+        partial_result: Option<Box<crate::subprocess::StreamingSubprocessResult>>,
+        /// Number of pending stories at iteration start (for partial iteration log)
+        pending_before: Option<usize>,
+        /// Path to the PRD file (for paused state)
+        prd_path: PathBuf,
+    },
 }
 
 /// Execute the main iteration loop.
@@ -281,15 +313,15 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
         }
 
         let iteration = iteration_offset + relative_iteration;
-        let result = process_single_iteration(
-            &config,
-            &session_slug,
-            &session_dir,
+        let ctx = IterationContext {
+            config: &config,
+            session_slug: &session_slug,
+            session_dir: &session_dir,
             iteration,
             max_iterations,
             relative_iteration,
-            &mut state,
-        )?;
+        };
+        let result = process_single_iteration(&ctx, &mut state)?;
 
         match result {
             SingleIterationResult::Complete(reason) => {
@@ -303,7 +335,10 @@ pub fn run(config: RunConfig) -> Result<RunResult, RunError> {
             SingleIterationResult::Continue(key_action) => {
                 state.iterations_completed = relative_iteration;
 
-                // Handle soft stop: finish after current iteration
+                // Soft stop check: User pressed 's' during subprocess execution.
+                // The key action is detected in subprocess/spinner.rs and propagated
+                // up through RecoveryOutcome. We check at this iteration boundary
+                // to allow clean exit after the current iteration completes.
                 if matches!(key_action, Some(RunKeyAction::SoftStop)) {
                     eprintln!("\nSoft stop requested. Finishing after this iteration.");
                     state.completion_reason = Some(CompletionReason::SoftStop);
@@ -399,11 +434,7 @@ fn build_iteration_log(
         pending_after: 0, // Updated later after PRD re-read
         prompt: None,     // Run command doesn't track prompt per iteration
         response,
-        metadata: if metadata.is_empty() {
-            None
-        } else {
-            Some(metadata)
-        },
+        metadata: metadata.into_option(),
         tool_calls,
         chunks,
         output_blocks: result.stream_result.output_blocks.clone(),
@@ -427,16 +458,22 @@ fn display_iteration_metrics(
     display_iteration_summary(&summary);
 }
 
+/// Configuration for subprocess invocation error context enrichment.
+struct SubprocessInvocationContext<'a> {
+    config: &'a InvocationConfig<'a>,
+    session_slug: &'a str,
+    iterations_completed: usize,
+    pending_before: usize,
+    prd_path: &'a PathBuf,
+}
+
 /// Handle subprocess invocation with error context enrichment.
 ///
 /// Wraps `invoke_with_failure_recovery` to add session context to errors.
 fn handle_subprocess_invocation(
-    config: &InvocationConfig,
-    session_slug: &str,
-    iterations_completed: usize,
-    pending_before: usize,
+    ctx: &SubprocessInvocationContext,
 ) -> Result<RecoveryOutcome, RunError> {
-    match invoke_with_failure_recovery(config) {
+    match invoke_with_failure_recovery(ctx.config) {
         Ok(outcome) => Ok(outcome),
         Err(RunError::SubprocessFailed {
             exit_code,
@@ -449,8 +486,8 @@ fn handle_subprocess_invocation(
             attempts,
             raw_text,
             stderr,
-            session_slug: session_slug.to_string(),
-            iterations_completed,
+            session_slug: ctx.session_slug.to_string(),
+            iterations_completed: ctx.iterations_completed,
         }),
         Err(RunError::SubprocessTimedOut {
             timeout_secs,
@@ -463,14 +500,21 @@ fn handle_subprocess_invocation(
             attempts,
             raw_text,
             stderr,
-            session_slug: session_slug.to_string(),
-            iterations_completed,
+            session_slug: ctx.session_slug.to_string(),
+            iterations_completed: ctx.iterations_completed,
         }),
         Err(RunError::Interrupted { partial_result, .. }) => Err(RunError::Interrupted {
-            session_slug: session_slug.to_string(),
-            iterations_completed,
+            session_slug: ctx.session_slug.to_string(),
+            iterations_completed: ctx.iterations_completed,
             partial_result,
-            pending_before: Some(pending_before),
+            pending_before: Some(ctx.pending_before),
+        }),
+        Err(RunError::HardStop { partial_result, .. }) => Err(RunError::HardStop {
+            session_slug: ctx.session_slug.to_string(),
+            iterations_completed: ctx.iterations_completed,
+            partial_result,
+            pending_before: Some(ctx.pending_before),
+            prd_path: ctx.prd_path.clone(),
         }),
         Err(e) => Err(e),
     }
@@ -478,7 +522,10 @@ fn handle_subprocess_invocation(
 
 /// Initialize or continue a session based on configuration.
 fn initialize_run_session(config: &RunConfig) -> Result<(String, PathBuf), RunError> {
-    let project_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let project_path = std::env::current_dir().map_err(|e| RunError::ReadPrd {
+        path: ".".to_string(),
+        source: e,
+    })?;
 
     if config.starting_iteration > 0 {
         // Continuing an existing session
@@ -487,7 +534,7 @@ fn initialize_run_session(config: &RunConfig) -> Result<(String, PathBuf), RunEr
             Ok((slug.to_string(), dir))
         } else {
             // Fallback: initialize new session (shouldn't happen if starting_iteration > 0)
-            Ok(initialize_session(None, &project_path, None)?)
+            Ok(initialize_session(None, &project_path, None, None)?)
         }
     } else {
         // First run: initialize new session with prompt
@@ -495,6 +542,7 @@ fn initialize_run_session(config: &RunConfig) -> Result<(String, PathBuf), RunEr
             config.slug.as_deref(),
             &project_path,
             Some(config.prompt.clone()),
+            None,
         )?)
     }
 }
@@ -518,6 +566,19 @@ impl IterationState {
     }
 }
 
+/// Context for a single iteration of the run loop.
+///
+/// Groups read-only parameters passed to `process_single_iteration`
+/// to keep the function signature under 5 arguments.
+struct IterationContext<'a> {
+    config: &'a RunConfig,
+    session_slug: &'a str,
+    session_dir: &'a std::path::Path,
+    iteration: usize,
+    max_iterations: usize,
+    relative_iteration: usize,
+}
+
 /// Result of processing a single iteration.
 enum SingleIterationResult {
     /// Continue to next iteration (includes any detected key action)
@@ -531,18 +592,12 @@ enum SingleIterationResult {
 /// Process a single iteration of the run loop.
 ///
 /// Returns whether to continue, complete, or if stuck.
-#[allow(clippy::too_many_arguments)]
 fn process_single_iteration(
-    config: &RunConfig,
-    session_slug: &str,
-    session_dir: &std::path::Path,
-    iteration: usize,
-    max_iterations: usize,
-    relative_iteration: usize,
+    ctx: &IterationContext,
     state: &mut IterationState,
 ) -> Result<SingleIterationResult, RunError> {
     // Pre-iteration check: re-read PRD and count pending
-    let prd_before = read_prd_file(&config.prd_path)?;
+    let prd_before = read_prd_file(&ctx.config.prd_path)?;
     let pending_before = count_pending_stories(&prd_before)?;
 
     // Early exit if no pending stories
@@ -554,8 +609,8 @@ fn process_single_iteration(
 
     // Display iteration header
     let header = IterationHeader {
-        iteration,
-        max_iterations: Some(max_iterations),
+        iteration: ctx.iteration,
+        max_iterations: Some(ctx.max_iterations),
         pending_stories: pending_before,
     };
     display_iteration_header(&header);
@@ -565,67 +620,72 @@ fn process_single_iteration(
 
     // Invoke LLM subprocess with retry logic
     let invocation_config = InvocationConfig {
-        command: &config.command,
-        max_attempts: config.max_attempts,
-        timeout_secs: config.timeout_secs,
-        iteration,
-        theme_config: config.theme_config.as_ref(),
+        command: &ctx.config.command,
+        max_attempts: ctx.config.max_attempts,
+        timeout_secs: ctx.config.timeout_secs,
+        iteration: ctx.iteration,
+        theme_config: ctx.config.theme_config.as_ref(),
         session_elapsed_ms: state.metrics.elapsed_ms(),
-        verbose_tools_config: &config.verbose_tools_config,
-        session_slug,
-        max_iterations,
+        verbose_tools_config: &ctx.config.verbose_tools_config,
+        session_slug: ctx.session_slug,
+        max_iterations: ctx.max_iterations,
     };
 
-    let recovery_outcome = handle_subprocess_invocation(
-        &invocation_config,
-        session_slug,
-        state.iterations_completed,
+    let invocation_ctx = SubprocessInvocationContext {
+        config: &invocation_config,
+        session_slug: ctx.session_slug,
+        iterations_completed: state.iterations_completed,
         pending_before,
-    )?;
+        prd_path: &ctx.config.prd_path,
+    };
+
+    let recovery_outcome = handle_subprocess_invocation(&invocation_ctx)?;
 
     // Extract subprocess result and key action from recovery outcome
     let result = recovery_outcome.subprocess_result;
     let key_action = recovery_outcome.key_action;
 
     // Write iteration log
-    let mut iteration_log = build_iteration_log(iteration, pending_before, &result);
-    write_iteration_log(session_dir, &iteration_log)?;
+    let mut iteration_log = build_iteration_log(ctx.iteration, pending_before, &result);
+    write_iteration_log(ctx.session_dir, &iteration_log)?;
 
     // Check for interrupt after writing iteration log
     if signal::is_interrupted() {
         return Err(RunError::Interrupted {
-            session_slug: session_slug.to_string(),
-            iterations_completed: relative_iteration,
+            session_slug: ctx.session_slug.to_string(),
+            iterations_completed: ctx.relative_iteration,
             partial_result: None,
             pending_before: None,
         });
     }
 
     // Capture git diff
-    let diff_path = session_dir.join(format!("iteration-{}.diff", iteration));
+    let diff_path = ctx
+        .session_dir
+        .join(format!("iteration-{}.diff", ctx.iteration));
     warn_if_err(
         capture_and_write_diff(&diff_path),
         "Failed to capture git diff",
     );
 
     // Display summary and accumulate metrics
-    display_iteration_metrics(iteration, &result);
+    display_iteration_metrics(ctx.iteration, &result);
     state.metrics.add_from_result(&result);
 
     // Post-iteration: re-read PRD and check completion
-    let prd_after = read_prd_file(&config.prd_path)?;
+    let prd_after = read_prd_file(&ctx.config.prd_path)?;
     let pending_after = count_pending_stories(&prd_after)?;
     state.final_pending_stories = pending_after;
 
     // Update iteration log with pending_after
     iteration_log.pending_after = pending_after;
-    write_iteration_log(session_dir, &iteration_log)?;
+    write_iteration_log(ctx.session_dir, &iteration_log)?;
 
     // Check completion conditions first (marker or all stories complete)
     if let Some(reason) = check_completion(
         pending_after,
         &result.stream_result.raw_text,
-        &config.completion_marker,
+        &ctx.config.completion_marker,
     ) {
         return Ok(SingleIterationResult::Complete(reason));
     }
@@ -633,7 +693,11 @@ fn process_single_iteration(
     // Check for stuck state (PRD unchanged)
     if !has_prd_changed(&prd_snapshot, &prd_after) {
         warn_if_err(
-            finalize_session(session_slug, iteration as u32, SessionOutcome::Failed),
+            finalize_session(
+                ctx.session_slug,
+                ctx.iteration as u32,
+                SessionOutcome::Failed,
+            ),
             "Failed to finalize session",
         );
         return Ok(SingleIterationResult::Stuck);

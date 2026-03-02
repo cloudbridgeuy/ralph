@@ -16,12 +16,15 @@ pub mod formatting;
 mod git;
 pub mod highlight;
 mod init;
+mod invoke;
 pub mod iteration;
 pub mod iterations;
 pub mod keyboard;
 pub mod markdown;
 pub mod paths;
+mod persona;
 mod prompt;
+pub mod prompt_source;
 pub mod render;
 pub mod replay;
 pub mod replay_countdown;
@@ -37,94 +40,14 @@ pub mod subprocess;
 pub mod warn;
 
 use clap::Parser;
-use cli::{AskArgs, Cli, Commands, IterationsArgs, ReplayArgs, RunArgs, SessionsArgs};
+use cli::{AskArgs, Cli, Commands, IterationsArgs, PersonaArgs, ReplayArgs, RunArgs, SessionsArgs};
+use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
-use prompt::{prompt_on_failure, FailureAction};
-use ralph_core::context::{defaults, resolve_prd_path, substitute_template_placeholders};
 use ralph_core::session::SessionOutcome;
-use run::{run, RunConfig, RunError};
 use std::path::Path;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
 use warn::{warn, warn_if_err};
-
-/// Context for handling subprocess failure recovery.
-struct FailureRecoveryContext {
-    /// Summary message to display to user.
-    summary: String,
-    /// Session slug for this run.
-    session_slug: String,
-    /// Iterations completed before failure.
-    iterations_completed: usize,
-    /// Total iterations from previous recovery attempts.
-    total_iterations_completed: usize,
-}
-
-/// Result of failure recovery handling.
-enum FailureRecoveryResult {
-    /// User chose to retry - continue the loop.
-    Retry { updated_total_iterations: usize },
-    /// Recovery was aborted (user chose or non-interactive).
-    Aborted(Box<dyn std::error::Error>),
-}
-
-/// Handle subprocess failure with user prompting and session finalization.
-///
-/// This is a pure-ish function that handles the common failure recovery pattern:
-/// 1. Update current_session_slug tracking
-/// 2. Prompt user (if interactive)
-/// 3. Handle Retry/Abort/None responses
-/// 4. Finalize session appropriately
-///
-/// Returns `FailureRecoveryResult::Retry` if user wants to continue,
-/// or `FailureRecoveryResult::Aborted` with the error to return.
-fn handle_failure_recovery(
-    ctx: &FailureRecoveryContext,
-    current_session_slug: &mut Option<String>,
-) -> FailureRecoveryResult {
-    // Track the session slug for potential recovery
-    if current_session_slug.is_none() {
-        *current_session_slug = Some(ctx.session_slug.clone());
-    }
-
-    match prompt_on_failure(&ctx.summary) {
-        Some(FailureAction::Retry) => {
-            // Continue the same session - don't finalize, just accumulate iterations
-            let updated = ctx.total_iterations_completed + ctx.iterations_completed;
-            eprintln!("\nContinuing run (session '{}')...\n", ctx.session_slug);
-            FailureRecoveryResult::Retry {
-                updated_total_iterations: updated,
-            }
-        }
-        Some(FailureAction::Abort) => {
-            // User chose to abort - finalize session as aborted
-            let final_iterations = ctx.total_iterations_completed + ctx.iterations_completed;
-            warn_if_err(
-                session::finalize_session(
-                    &ctx.session_slug,
-                    final_iterations as u32,
-                    SessionOutcome::Aborted,
-                ),
-                "Failed to finalize session",
-            );
-            FailureRecoveryResult::Aborted("Aborted by user".into())
-        }
-        None => {
-            // Non-interactive mode or EOF - finalize as failed and abort
-            let final_iterations = ctx.total_iterations_completed + ctx.iterations_completed;
-            warn_if_err(
-                session::finalize_session(
-                    &ctx.session_slug,
-                    final_iterations as u32,
-                    SessionOutcome::Failed,
-                ),
-                "Failed to finalize session",
-            );
-            eprintln!("Non-interactive mode - aborting.");
-            FailureRecoveryResult::Aborted(ctx.summary.clone().into())
-        }
-    }
-}
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -136,6 +59,7 @@ fn main() -> ExitCode {
         Commands::Replay(args) => execute_replay(args),
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),
+        Commands::Persona(args) => execute_persona(args),
     };
 
     match result {
@@ -148,256 +72,11 @@ fn main() -> ExitCode {
 }
 
 /// Execute the run command.
+///
+/// Delegates to the `run::execute` module which handles all run execution logic
+/// including failure recovery prompting, resume functionality, and hard stop handling.
 fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize signal handler for graceful shutdown on Ctrl+C/SIGTERM
-    warn_if_err(signal::init(), "Failed to initialize signal handler");
-
-    // Resolve context file paths
-    let project_root = std::env::current_dir()?;
-    let prd_path = resolve_prd_path(&project_root, args.prd.as_deref());
-
-    // Determine command template
-    let command_template = args
-        .command
-        .clone()
-        .unwrap_or_else(|| defaults::COMMAND_TEMPLATE.to_string());
-
-    // Determine completion marker
-    let completion_marker = args
-        .completion_marker
-        .clone()
-        .unwrap_or_else(|| defaults::COMPLETION_MARKER.to_string());
-
-    // Resolve additional prompt (file, stdin, inline, or empty)
-    let additional_prompt = resolve_additional_prompt(args.additional_prompt.as_deref())?;
-
-    // Resolve prompt template and substitute placeholders (including additional_prompt)
-    let prompt = resolve_prompt(
-        args.prompt.as_deref(),
-        &prd_path,
-        &completion_marker,
-        &additional_prompt,
-    )?;
-
-    // Substitute {prompt} in command template
-    let command = substitute_prompt_in_command(&command_template, &prompt);
-
-    // Execute run loop with failure recovery prompting
-    let exec_config = RunExecutionConfig {
-        prd_path,
-        command,
-        prompt,
-        completion_marker,
-    };
-    execute_run_with_prompting(args, exec_config)
-}
-
-/// Config for run command execution.
-struct RunExecutionConfig {
-    prd_path: std::path::PathBuf,
-    command: String,
-    prompt: String,
-    completion_marker: String,
-}
-
-/// Execute run loop with interactive failure recovery prompting.
-///
-/// This function handles the case where the LLM subprocess fails after exhausting
-/// all automatic recovery attempts. If stdin is interactive, it prompts the user
-/// to either continue recovery or abort. Non-interactive sessions abort automatically.
-///
-/// When the user chooses to continue recovery, the same session is continued
-/// rather than creating a new one. The session slug is preserved across recovery
-/// attempts, and iterations are aggregated within the same session.
-fn execute_run_with_prompting(
-    args: RunArgs,
-    exec_config: RunExecutionConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Track the session slug across recovery attempts. Once a session is created, we reuse it.
-    let mut current_session_slug: Option<String> = None;
-    // Track total iterations completed across recovery attempts within the same session.
-    let mut total_iterations_completed: usize = 0;
-
-    // Build theme configuration from config file, env vars, and CLI args
-    // Priority: CLI flag > environment variable > config file > default
-    let theme_config = Some(
-        highlight::ThemeConfig::from_config_and_env()
-            .merge_cli(args.theme.as_deref(), args.no_background),
-    );
-
-    // Track custom config flags for startup display
-    let custom_prd_path = args.prd.clone();
-    let custom_command = args.command.is_some();
-    let custom_prompt = args.prompt.is_some();
-    let custom_completion_marker = args.completion_marker.is_some();
-    let custom_additional_prompt = args.additional_prompt.is_some();
-
-    // Parse verbose tools config from CLI args
-    let verbose_tools_config = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
-    // Print warnings about unknown tool names
-    for warning in verbose_tools_config.warnings() {
-        warn(warning);
-    }
-
-    loop {
-        // Build run config, using the established session slug if we have one
-        let config = RunConfig {
-            max_iterations: args.iterations,
-            slug: current_session_slug.clone().or_else(|| args.slug.clone()),
-            command: exec_config.command.clone(),
-            prompt: exec_config.prompt.clone(),
-            completion_marker: exec_config.completion_marker.clone(),
-            prd_path: exec_config.prd_path.clone(),
-            max_attempts: args.max_attempts,
-            // Pass the starting iteration number for session continuation
-            starting_iteration: total_iterations_completed,
-            timeout_secs: args.timeout,
-            theme_config: theme_config.clone(),
-            custom_prd_path: custom_prd_path.clone(),
-            custom_command,
-            custom_prompt,
-            custom_completion_marker,
-            custom_additional_prompt,
-            verbose_tools_config: verbose_tools_config.clone(),
-            show_prompt: !args.no_prompt,
-        };
-
-        // Execute the run loop
-        match run(config) {
-            Ok(result) => {
-                // Success - display final run summary
-                let total_iterations = total_iterations_completed + result.iterations_completed;
-                let run_summary = startup::RunSummary {
-                    slug: result.slug,
-                    iterations_completed: total_iterations,
-                    completion_reason: result.completion_reason.map(|r| format!("{:?}", r)),
-                    total_cost_usd: result.total_cost_usd,
-                    total_duration_ms: result.total_duration_ms,
-                    total_input_tokens: result.total_input_tokens,
-                    total_output_tokens: result.total_output_tokens,
-                    final_pending_stories: result.final_pending_stories,
-                };
-                startup::display_run_summary(&run_summary);
-                return Ok(());
-            }
-            Err(RunError::SubprocessFailed {
-                exit_code,
-                attempts,
-                raw_text: _,
-                stderr: _,
-                session_slug,
-                iterations_completed,
-            }) => {
-                let ctx = FailureRecoveryContext {
-                    summary: format!(
-                        "LLM subprocess failed with exit code {} after {} attempt(s).",
-                        exit_code, attempts
-                    ),
-                    session_slug,
-                    iterations_completed,
-                    total_iterations_completed,
-                };
-
-                match handle_failure_recovery(&ctx, &mut current_session_slug) {
-                    FailureRecoveryResult::Retry {
-                        updated_total_iterations,
-                    } => {
-                        total_iterations_completed = updated_total_iterations;
-                        continue;
-                    }
-                    FailureRecoveryResult::Aborted(err) => return Err(err),
-                }
-            }
-            Err(RunError::SubprocessTimedOut {
-                timeout_secs,
-                attempts,
-                raw_text: _,
-                stderr: _,
-                session_slug,
-                iterations_completed,
-            }) => {
-                let ctx = FailureRecoveryContext {
-                    summary: format!(
-                        "LLM subprocess timed out after {} seconds ({} attempt(s)).",
-                        timeout_secs, attempts
-                    ),
-                    session_slug,
-                    iterations_completed,
-                    total_iterations_completed,
-                };
-
-                match handle_failure_recovery(&ctx, &mut current_session_slug) {
-                    FailureRecoveryResult::Retry {
-                        updated_total_iterations,
-                    } => {
-                        total_iterations_completed = updated_total_iterations;
-                        continue;
-                    }
-                    FailureRecoveryResult::Aborted(err) => return Err(err),
-                }
-            }
-            Err(RunError::Interrupted {
-                session_slug,
-                iterations_completed,
-                partial_result,
-                pending_before,
-            }) => {
-                // Run was interrupted by signal
-                // If we have a partial result (interrupt during subprocess), write partial iteration log
-                if let (Some(partial), Some(pending)) = (partial_result, pending_before) {
-                    // Calculate iteration number
-                    let iteration = total_iterations_completed + iterations_completed + 1;
-                    let session_dir = session::session_dir(&session_slug);
-
-                    // Write partial iteration log with whatever output blocks were accumulated
-                    let partial_log = iteration::IterationLog {
-                        sequence: iteration as u32,
-                        started_at: chrono::Utc::now(),
-                        completed_at: chrono::Utc::now(),
-                        exit_code: partial.exit_code,
-                        pending_before: pending,
-                        pending_after: pending, // Same as before since iteration was interrupted
-                        prompt: None,           // Run command doesn't track prompt per iteration
-                        response: iteration::extract_response_text(
-                            &partial.stream_result.output_blocks,
-                        ),
-                        metadata: iteration::LogMetadata::from_extracted(
-                            partial.stream_result.metadata.clone(),
-                            partial.stream_result.costs.clone(),
-                        )
-                        .into_option(),
-                        tool_calls: iteration::LogToolCall::from_interactions(
-                            &partial.stream_result.tool_interactions,
-                        ),
-                        chunks: iteration::Chunk::from_parsed_chunks(&partial.stream_result.chunks),
-                        output_blocks: partial.stream_result.output_blocks.clone(),
-                    };
-
-                    match iteration::write_iteration_log(&session_dir, &partial_log) {
-                        Ok(_) => eprintln!("Partial iteration {} saved.", iteration),
-                        Err(e) => warn(format!("Failed to write partial iteration log: {e}")),
-                    }
-                }
-
-                // Finalize session as interrupted
-                let final_iterations = total_iterations_completed + iterations_completed;
-                warn_if_err(
-                    session::finalize_session(
-                        &session_slug,
-                        final_iterations as u32,
-                        SessionOutcome::Interrupted,
-                    ),
-                    "Failed to finalize session",
-                );
-                eprintln!("Interrupted. Session '{}' saved.", session_slug);
-                return Err("Interrupted by signal".into());
-            }
-            Err(e) => {
-                // Other errors - propagate immediately
-                return Err(e.into());
-            }
-        }
-    }
+    run::execute::execute_run(args)
 }
 
 /// Execute the sessions command.
@@ -521,80 +200,104 @@ fn execute_ask_core(args: &AskArgs, project_path: &Path) -> Result<(), Box<dyn s
     }
 
     // Build ask config from args
-    let config = build_ask_config(args, project_path)?;
+    let config = build_invocation_config(args, project_path)?;
 
-    // Display prompt if enabled
     if !args.no_prompt && !config.prompt.is_empty() {
         let prompt_display = startup::PromptDisplay::from_prompt(&config.prompt);
         startup::display_prompt(&prompt_display);
     }
 
-    // Execute the ask command and handle finalization
-    execute_and_finalize_ask(config)
+    execute_and_finalize(config)
 }
 
-/// Build AskConfig from CLI arguments.
+/// Shared parameters for building an `InvocationConfig`.
 ///
-/// Groups prompt, theme config, verbose tools, continuation, and clone info resolution.
-fn build_ask_config(
-    args: &AskArgs,
+/// Captures the common fields between `AskArgs` and `PersonaArgs` so that
+/// `build_shared_invocation_config` can handle the duplicated logic once.
+struct InvocationConfigParams<'a> {
+    session: &'a Option<String>,
+    continue_session: bool,
+    clone_session: bool,
+    theme: Option<&'a str>,
+    no_background: bool,
+    verbose_tools: Option<&'a str>,
+    prompt: Option<&'a str>,
+    timeout: u64,
+    persona: Option<&'a str>,
+    permission_mode: String,
+}
+
+fn build_shared_invocation_config(
+    params: &InvocationConfigParams,
     project_path: &Path,
-) -> Result<ask::AskConfig, Box<dyn std::error::Error>> {
-    // Determine clone info if --clone flag is set
-    let clone_info = if args.clone_session {
-        Some(resolve_clone_source(&args.session, project_path)?)
+) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
+    let clone_info = if params.clone_session {
+        Some(resolve_clone_source(
+            params.session,
+            project_path,
+            params.persona,
+        )?)
     } else {
         None
     };
-
-    // Determine continuation info if --continue flag is set (and not cloning)
-    // Clone mode always creates a new session, so it's mutually exclusive with continuation
-    let continuation = if args.continue_session && !args.clone_session {
-        Some(resolve_continuation(&args.session, project_path)?)
+    let continuation = if params.continue_session && !params.clone_session {
+        Some(resolve_continuation(
+            params.session,
+            project_path,
+            params.persona,
+        )?)
     } else {
         None
     };
-
-    // Build theme configuration from config file, env vars, and CLI args
-    // Priority: CLI flag > environment variable > config file > default
-    let theme_config = highlight::ThemeConfig::from_config_and_env()
-        .merge_cli(args.theme.as_deref(), args.no_background);
-
-    // Parse verbose tools config from CLI args
-    let verbose_tools = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
-    // Print warnings about unknown tool names
+    let theme_config =
+        highlight::ThemeConfig::from_config_and_env().merge_cli(params.theme, params.no_background);
+    let verbose_tools = VerboseToolsConfig::from_arg(params.verbose_tools);
     for warning in verbose_tools.warnings() {
         warn(warning);
     }
-
-    // Resolve prompt from argument or stdin
-    let prompt = resolve_ask_prompt(args.prompt.as_deref())?;
-
-    // Build ask config - validation happens in ask::ask()
-    // When cloning, we don't pass a user slug since the new session gets auto-generated
-    Ok(ask::AskConfig {
+    let prompt = resolve_ask_prompt(params.prompt)?;
+    Ok(InvocationConfig {
         prompt,
-        timeout_secs: args.timeout,
+        timeout_secs: params.timeout,
         theme_config,
         verbose_tools,
         project_path: project_path.to_path_buf(),
-        slug: if args.continue_session || args.clone_session {
-            None // Don't pass slug when continuing or cloning (handled separately)
+        slug: if params.continue_session || params.clone_session {
+            None
         } else {
-            args.session.clone()
+            params.session.clone()
         },
         continuation,
         clone: clone_info,
-        permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
+        permission_mode: params.permission_mode.clone(),
+        persona: params.persona.map(String::from),
     })
 }
 
-/// Execute ask and handle session finalization and summary display.
-fn execute_and_finalize_ask(config: ask::AskConfig) -> Result<(), Box<dyn std::error::Error>> {
-    // Execute the ask command
-    let result = ask::ask(config)?;
+fn build_invocation_config(
+    args: &AskArgs,
+    project_path: &Path,
+) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
+    build_shared_invocation_config(
+        &InvocationConfigParams {
+            session: &args.session,
+            continue_session: args.continue_session,
+            clone_session: args.clone_session,
+            theme: args.theme.as_deref(),
+            no_background: args.no_background,
+            verbose_tools: args.verbose_tools.as_deref(),
+            prompt: args.prompt.as_deref(),
+            timeout: args.timeout,
+            persona: None,
+            permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
+        },
+        project_path,
+    )
+}
 
-    // Finalize session based on exit code
+fn execute_and_finalize(config: InvocationConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let result = invoke::invoke(config)?;
+
     let outcome = match result.exit_code {
         0 => SessionOutcome::Completed,
         _ => SessionOutcome::Failed,
@@ -604,7 +307,6 @@ fn execute_and_finalize_ask(config: ask::AskConfig) -> Result<(), Box<dyn std::e
         "Failed to finalize session",
     );
 
-    // Display summary (always, even on failure)
     let summary = startup::AskSummary {
         slug: result.slug.clone(),
         success: result.exit_code == 0,
@@ -615,7 +317,6 @@ fn execute_and_finalize_ask(config: ask::AskConfig) -> Result<(), Box<dyn std::e
     };
     startup::display_ask_summary(&summary);
 
-    // Return error for non-zero exit
     if result.exit_code != 0 {
         return Err(format!("LLM subprocess exited with code {}", result.exit_code).into());
     }
@@ -636,15 +337,22 @@ fn execute_and_finalize_ask(config: ask::AskConfig) -> Result<(), Box<dyn std::e
 fn find_session_entry(
     session_name: &Option<String>,
     project_path: &Path,
+    persona: Option<&str>,
 ) -> Result<ralph_core::session::SessionEntry, Box<dyn std::error::Error>> {
     if let Some(name) = session_name {
         Ok(session::find_session_by_slug(name)?)
     } else {
-        session::find_most_recent_session(project_path)?.ok_or_else(|| {
-            format!(
-                "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
-                project_path.display()
-            )
+        session::find_most_recent_session(project_path, persona)?.ok_or_else(|| {
+            match persona {
+                Some(p) => format!(
+                    "No sessions found for persona '{}' in project '{}'. Start a conversation first.",
+                    p, project_path.display()
+                ),
+                None => format!(
+                    "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
+                    project_path.display()
+                ),
+            }
             .into()
         })
     }
@@ -658,34 +366,30 @@ fn find_session_entry(
 fn resolve_continuation(
     session_name: &Option<String>,
     project_path: &Path,
-) -> Result<ask::ContinuationInfo, Box<dyn std::error::Error>> {
+    persona: Option<&str>,
+) -> Result<invoke::ContinuationInfo, Box<dyn std::error::Error>> {
     use crate::iteration::count_iterations;
 
-    let entry = find_session_entry(session_name, project_path)?;
+    let entry = find_session_entry(session_name, project_path, persona)?;
     let session_dir = session::session_dir(&entry.slug);
     let existing_count = count_iterations(&session_dir)?;
 
-    Ok(ask::ContinuationInfo {
+    Ok(invoke::ContinuationInfo {
         slug: entry.slug,
         next_sequence: existing_count + 1,
         session_dir,
     })
 }
 
-/// Resolve the source session for cloning.
-///
-/// Unlike continuation, cloning creates a NEW session with history from the source.
-///
-/// # Errors
-/// - Session not found (by name or no sessions for project)
 fn resolve_clone_source(
     session_name: &Option<String>,
     project_path: &Path,
-) -> Result<ask::CloneInfo, Box<dyn std::error::Error>> {
-    let entry = find_session_entry(session_name, project_path)?;
+    persona: Option<&str>,
+) -> Result<invoke::CloneInfo, Box<dyn std::error::Error>> {
+    let entry = find_session_entry(session_name, project_path, persona)?;
     let source_session_dir = session::session_dir(&entry.slug);
 
-    Ok(ask::CloneInfo {
+    Ok(invoke::CloneInfo {
         source_slug: entry.slug,
         source_session_dir,
     })
@@ -707,7 +411,7 @@ fn execute_ask_with_history(
     }
 
     // Resolve the session to display history for
-    let entry = find_session_entry(&args.session, project_path)?;
+    let entry = find_session_entry(&args.session, project_path, None)?;
 
     // Load iteration logs and extract conversation history
     let session_dir = session::session_dir(&entry.slug);
@@ -726,104 +430,8 @@ fn execute_ask_with_history(
     Ok(())
 }
 
-/// Input source for prompt resolution.
-#[derive(Debug, Clone, PartialEq)]
-enum PromptSource<'a> {
-    /// Read from stdin (when arg is "-")
-    Stdin,
-    /// Read from file at path
-    File(&'a Path),
-    /// Use inline string directly
-    Inline(&'a str),
-    /// No input provided
-    None,
-}
-
-/// Classify the input argument into a source type.
-///
-/// This is a pure function that determines how to interpret the argument:
-/// - "-" means stdin
-/// - An existing file path means read from file
-/// - Any other string is treated as inline content
-/// - None means no input
-fn classify_prompt_source(arg: Option<&str>) -> PromptSource<'_> {
-    match arg {
-        Some("-") => PromptSource::Stdin,
-        Some(value) => {
-            let path = Path::new(value);
-            if path.exists() && path.is_file() {
-                PromptSource::File(path)
-            } else {
-                PromptSource::Inline(value)
-            }
-        }
-        None => PromptSource::None,
-    }
-}
-
-/// Read content from a prompt source.
-///
-/// This is the imperative shell that performs actual I/O based on the source type.
-fn read_from_source(
-    source: PromptSource<'_>,
-    default: Option<&str>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    match source {
-        PromptSource::Stdin => {
-            use std::io::Read;
-            let mut content = String::new();
-            std::io::stdin().read_to_string(&mut content)?;
-            Ok(content)
-        }
-        PromptSource::File(path) => Ok(std::fs::read_to_string(path)?),
-        PromptSource::Inline(value) => Ok(value.to_string()),
-        PromptSource::None => Ok(default.unwrap_or("").to_string()),
-    }
-}
-
-/// Resolve the prompt from various sources.
-///
-/// Loads the prompt template from one of three sources:
-/// - A file path (if the argument is a path to an existing file)
-/// - Stdin (if the argument is "-")
-/// - An inline string (if the argument doesn't match a file)
-/// - The default template (if no argument is provided)
-///
-/// After loading the template, placeholders are substituted with actual values:
-/// - `{prd_file}` - Path to the PRD file
-/// - `{completion_marker}` - The completion marker string
-/// - `{additional_prompt}` - Additional instructions appended to the prompt
-fn resolve_prompt(
-    prompt_arg: Option<&str>,
-    prd_path: &Path,
-    completion_marker: &str,
-    additional_prompt: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let source = classify_prompt_source(prompt_arg);
-    let template = read_from_source(source, Some(defaults::PROMPT_TEMPLATE))?;
-
-    // Substitute placeholders in the template
-    Ok(substitute_template_placeholders(
-        &template,
-        prd_path,
-        completion_marker,
-        additional_prompt,
-    ))
-}
-
-/// Resolve additional prompt from various sources.
-///
-/// Loads additional prompt instructions from:
-/// - A file path (if the argument is a path to an existing file)
-/// - Stdin (if the argument is "-")
-/// - An inline string (if the argument doesn't match a file)
-/// - Empty string (if no argument is provided)
-fn resolve_additional_prompt(
-    additional_arg: Option<&str>,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let source = classify_prompt_source(additional_arg);
-    read_from_source(source, None)
-}
+// Re-export for local use and tests
+use prompt_source::{classify_prompt_source, read_from_source, PromptSource};
 
 /// Resolve prompt for the ask command.
 ///
@@ -864,22 +472,90 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
     Ok(prompt)
 }
 
-/// Substitute `{prompt}` placeholder in command template.
-///
-/// # Placeholders
-///
-/// - `{prompt}` - Replaced with the shell-escaped prompt (wrapped in single quotes)
-///
-/// # Arguments
-///
-/// * `template` - The command template containing placeholders
-/// * `prompt` - The prompt text to substitute
-fn substitute_prompt_in_command(template: &str, prompt: &str) -> String {
-    // Shell-escape the prompt for safe inclusion
-    // For now, just wrap in single quotes and escape internal single quotes
-    let escaped = prompt.replace('\'', "'\"'\"'");
-    let quoted_prompt = format!("'{}'", escaped);
-    template.replace("{prompt}", &quoted_prompt)
+// =============================================================================
+// Persona command
+// =============================================================================
+
+fn execute_persona(args: PersonaArgs) -> Result<(), Box<dyn std::error::Error>> {
+    warn_if_err(signal::init(), "Failed to initialize signal handler");
+
+    let project_path = std::env::current_dir()?;
+
+    // Verify agent file exists before doing anything else
+    persona::verify_agent_file(&args.persona, &project_path)?;
+
+    if args.history {
+        return execute_persona_with_history(&args, &project_path);
+    }
+
+    execute_persona_core(&args, &project_path)
+}
+
+fn execute_persona_core(
+    args: &PersonaArgs,
+    project_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.clone_session && args.session.is_none() && !args.continue_session {
+        return Err(
+            "--clone requires --session or --continue to specify which session to clone from"
+                .into(),
+        );
+    }
+
+    let config = build_persona_config(args, project_path)?;
+
+    if !args.no_prompt && !config.prompt.is_empty() {
+        let prompt_display = startup::PromptDisplay::from_prompt(&config.prompt);
+        startup::display_prompt(&prompt_display);
+    }
+
+    execute_and_finalize(config)
+}
+
+fn build_persona_config(
+    args: &PersonaArgs,
+    project_path: &Path,
+) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
+    build_shared_invocation_config(
+        &InvocationConfigParams {
+            session: &args.session,
+            continue_session: args.continue_session,
+            clone_session: args.clone_session,
+            theme: args.theme.as_deref(),
+            no_background: args.no_background,
+            verbose_tools: args.verbose_tools.as_deref(),
+            prompt: args.prompt.as_deref(),
+            timeout: args.timeout,
+            persona: Some(&args.persona),
+            permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
+        },
+        project_path,
+    )
+}
+
+fn execute_persona_with_history(
+    args: &PersonaArgs,
+    project_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.session.is_none() && !args.continue_session {
+        return Err(
+            "--history requires --session or --continue to specify which session to display".into(),
+        );
+    }
+
+    let entry = find_session_entry(&args.session, project_path, Some(&args.persona))?;
+    let session_dir = session::session_dir(&entry.slug);
+    let logs = load_session_iterations(&session_dir)?;
+    let messages = extract_conversation_messages(&logs);
+
+    let history = startup::ConversationHistory::from_messages(entry.slug.clone(), messages);
+    startup::display_conversation_history(&history);
+
+    if args.continue_session && args.prompt.is_some() {
+        return execute_persona_core(args, project_path);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -14,6 +14,9 @@ pub const EXIT_CODE_KILLED: i32 = -1;
 /// Exit code indicating subprocess was interrupted by signal (SIGINT/SIGTERM).
 pub const EXIT_CODE_INTERRUPTED: i32 = -2;
 
+/// Exit code indicating subprocess was hard-stopped by user (S key).
+pub const EXIT_CODE_HARD_STOP: i32 = -3;
+
 /// Error type for subprocess operations.
 #[derive(Debug, thiserror::Error)]
 pub enum SubprocessError {
@@ -37,6 +40,12 @@ pub enum SubprocessError {
     #[error("Subprocess interrupted by SIGINT/SIGTERM")]
     Interrupted {
         /// Partial output captured before interrupt
+        partial_result: Box<StreamingSubprocessResult>,
+    },
+
+    #[error("Subprocess hard-stopped by user (S key)")]
+    HardStop {
+        /// Partial output captured before hard stop
         partial_result: Box<StreamingSubprocessResult>,
     },
 
