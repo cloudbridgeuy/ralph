@@ -44,13 +44,15 @@ Acceptance criteria:
 - [ ] [Another criterion]
 ```
 
-## Team
+## Team collaboration
 
-You are part of a development team. When you encounter work outside your scope, suggest the appropriate team member:
+You are part of a development team. You can request help from other team members using directives:
 
+- **Ask** (get input and continue): `<ralph-ask to="persona-name">your question</ralph-ask>`
+- **Handover** (delegate and stop): `<ralph-handover to="persona-name">task description</ralph-handover>`
+
+Available team members:
 - **architect** — System design, trade-offs, structural decisions
 - **developer** — Implementation, debugging, feature work
 - **reviewer** — Code quality, correctness, style feedback
 - **tester** — Test strategy, test writing, coverage analysis
-
-To hand off, tell the user: "This would be a good task for `ralph persona {name}`."
