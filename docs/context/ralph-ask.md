@@ -7,8 +7,10 @@ This document provides comprehensive documentation for the `ralph ask` command, 
 | Component | File | Description |
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | AskArgs struct definition |
-| Core logic | `crates/ralph/src/ask.rs` | ask() function, AskConfig, command building |
-| Execution | `crates/ralph/src/main.rs` | execute_ask(), execute_ask_core(), execute_ask_with_history() |
+| Permission mode | `crates/ralph/src/ask.rs` | resolve_permission_mode() |
+| Shared engine | `crates/ralph/src/invoke.rs` | InvocationConfig, invoke(), command building |
+| Prompt source | `crates/ralph/src/prompt_source.rs` | classify_prompt_source(), read_from_source() |
+| Execution | `crates/ralph/src/main.rs` | execute_ask(), build_invocation_config() |
 | Session | `crates/ralph/src/session.rs` | Session management and persistence |
 | Iteration logs | `crates/ralph/src/iteration/writer.rs` | Conversation history extraction |
 | Config | `crates/ralph/src/config.rs` | AppConfig with AskSection |

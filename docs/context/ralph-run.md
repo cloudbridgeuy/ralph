@@ -232,14 +232,20 @@ In piped/non-terminal mode: plain ASCII.
 ### Spinner During Execution
 
 ```
-⠋ Waiting for response... 5s [brave-panda 1/5]
+⠋ Waiting for response... Session: brave-panda | Iteration: 1/5 | 5s [s: stop | S: halt | p: pause]
 ```
 
 Updates every 80ms with:
 - Animated braille spinner
 - Context message (Waiting, Thinking, Running tool, Buffering code)
-- Elapsed time (current iteration + accumulated session time)
 - Session slug and iteration progress
+- Elapsed time (current iteration + accumulated session time)
+- Key binding hints (dimmed, showing available controls)
+
+The key hints update dynamically based on state:
+- **Running**: `[s: stop | S: halt | p: pause]` - all controls available
+- **Finishing**: `[finishing...]` - soft stop was requested, completing current iteration
+- **Paused**: `[paused - p: resume]` - output buffering, press p to resume
 
 Stops automatically when first output arrives.
 
