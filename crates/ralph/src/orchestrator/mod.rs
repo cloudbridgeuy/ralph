@@ -5,6 +5,7 @@
 //! This is the imperative shell for multi-agent orchestration.
 
 mod ask;
+mod conversation;
 mod display;
 mod parallel;
 
@@ -107,9 +108,6 @@ pub enum OrchestrationError {
     /// The invocation budget has been exhausted.
     #[error("Budget exhausted")]
     BudgetExhausted,
-    /// Conversation loops (target asks originator back) are not yet implemented.
-    #[error("Conversation not yet implemented")]
-    ConversationNotImplemented,
     /// A session lookup or initialization failed.
     #[error("Session error: {0}")]
     Session(#[from] SessionError),

@@ -7,6 +7,7 @@
 
 use ralph_core::directive::{aggregate_responses, Directive, ValidatedDirectiveSet};
 
+use super::conversation::{self, ConversationConfig};
 use super::{
     continue_session, parallel, scan_for_directives, OrchestrationConfig, OrchestrationError,
 };
@@ -35,7 +36,7 @@ pub fn execute_asks(
 
     for (directive, result) in directives.iter().zip(results) {
         let result = result?;
-        let resolved_text = resolve(&result, originator_name, config)?;
+        let resolved_text = resolve(&result, originator_name, &originator.slug, config)?;
         responses.push((directive.target.clone(), resolved_text));
     }
 
@@ -73,11 +74,13 @@ pub fn execute_asks(
 /// 2. **Sub-directives to new personas** (not the originator): execute them,
 ///    continue the target with the sub-results, and return the target's final
 ///    response.
-/// 3. **Sub-directive back to originator**: placeholder error — conversation
-///    loops are not yet implemented (Task 4.2).
+/// 3. **Sub-directive back to originator**: enter a conversation loop where the
+///    two personas exchange messages until one side finishes without a directive
+///    targeting the other.
 fn resolve(
     result: &InvocationResult,
     originator_persona: &str,
+    originator_session_slug: &str,
     config: &OrchestrationConfig,
 ) -> Result<String, OrchestrationError> {
     let response_text = result.response_text.clone().unwrap_or_default();
@@ -88,19 +91,29 @@ fn resolve(
     };
 
     // Check if any sub-directive targets the originator (conversation loop)
-    let targets_originator = match &sub_directives {
-        ValidatedDirectiveSet::Asks(directives) | ValidatedDirectiveSet::Handovers(directives) => {
-            directives.iter().any(|d| d.target == originator_persona)
-        }
+    let originator_directive = match &sub_directives {
+        ValidatedDirectiveSet::Asks(directives) => directives
+            .iter()
+            .find(|d| d.target == originator_persona)
+            .cloned(),
+        ValidatedDirectiveSet::Handovers(_) => None,
     };
 
-    if targets_originator {
-        return Err(OrchestrationError::ConversationNotImplemented);
+    let target_name = result.persona.as_deref().unwrap_or(result.slug.as_str());
+
+    if let Some(directive) = originator_directive {
+        // Target is asking the originator back — enter conversation loop.
+        let conv_config = ConversationConfig {
+            a_session: originator_session_slug,
+            a_persona: originator_persona,
+            b_session: &result.slug,
+            b_persona: target_name,
+            initial_message: &directive.payload,
+        };
+        return conversation::conversation_loop(&conv_config, config);
     }
 
     // Sub-directives to new personas — execute them
-    let target_name = result.persona.as_deref().unwrap_or(result.slug.as_str());
-
     match sub_directives {
         ValidatedDirectiveSet::Asks(ref ask_directives) => {
             // Target emitted asks: invoke those in parallel, resolve sequentially,
@@ -110,7 +123,7 @@ fn resolve(
 
             for (directive, sub_result) in ask_directives.iter().zip(sub_results) {
                 let sub_result = sub_result?;
-                let resolved = resolve(&sub_result, target_name, config)?;
+                let resolved = resolve(&sub_result, target_name, &result.slug, config)?;
                 sub_responses.push((directive.target.clone(), resolved));
             }
 
