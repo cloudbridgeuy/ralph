@@ -4,6 +4,7 @@
 //! validates them, and executes handovers (or asks) to target personas.
 //! This is the imperative shell for multi-agent orchestration.
 
+mod ask;
 mod display;
 
 use std::path::PathBuf;
@@ -15,7 +16,9 @@ use ralph_core::directive::{
 };
 
 use crate::highlight::ThemeConfig;
-use crate::invoke::{self, InvocationConfig, InvocationError, InvocationResult};
+use crate::invoke::{self, ContinuationInfo, InvocationConfig, InvocationError, InvocationResult};
+use crate::iteration::{count_iterations, IterationError};
+use crate::session::{self, SessionError};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::warn::warn;
 
@@ -103,9 +106,15 @@ pub enum OrchestrationError {
     /// The invocation budget has been exhausted.
     #[error("Budget exhausted")]
     BudgetExhausted,
-    /// Ask directives are not yet implemented.
-    #[error("Ask not yet implemented")]
-    AskNotImplemented,
+    /// Conversation loops (target asks originator back) are not yet implemented.
+    #[error("Conversation not yet implemented")]
+    ConversationNotImplemented,
+    /// A session lookup or initialization failed.
+    #[error("Session error: {0}")]
+    Session(#[from] SessionError),
+    /// Failed to count iteration files in a session directory.
+    #[error("Iteration error: {0}")]
+    Iteration(#[from] IterationError),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,24 +150,67 @@ pub fn scan_for_directives(result: &InvocationResult) -> Option<ValidatedDirecti
 ///
 /// Dispatches to the appropriate executor based on the directive type:
 /// - `AllHandovers` — invokes target personas sequentially
-/// - `AllAsks` — not yet implemented (placeholder for Task 3.2)
+/// - `AllAsks` — invokes targets, aggregates responses, continues originator
 pub fn orchestrate(
     originator: &InvocationResult,
     directives: ValidatedDirectiveSet,
     config: &OrchestrationConfig,
 ) -> Result<(), OrchestrationError> {
+    let originator_name = originator
+        .persona
+        .as_deref()
+        .unwrap_or(originator.slug.as_str());
+
     match directives {
         ValidatedDirectiveSet::Handovers(ref handover_directives) => {
-            let originator_name = originator
-                .persona
-                .as_deref()
-                .unwrap_or(originator.slug.as_str());
             execute_handovers(originator_name, handover_directives, config)?;
-            display::print_orchestration_summary(&config.budget);
-            Ok(())
         }
-        ValidatedDirectiveSet::Asks(_) => Err(OrchestrationError::AskNotImplemented),
+        ValidatedDirectiveSet::Asks(ref ask_directives) => {
+            ask::execute_asks(ask_directives, originator, config)?;
+        }
     }
+
+    display::print_orchestration_summary(&config.budget);
+    Ok(())
+}
+
+/// Continue an existing session by invoking a persona with conversation history.
+///
+/// Looks up the session directory for the given slug, counts existing iteration
+/// files to determine the next sequence number, builds a `ContinuationInfo`,
+/// and delegates to `invoke()`.
+///
+/// This is a convenience wrapper used by the ask executor to continue the
+/// originator's session after receiving responses from target personas.
+pub fn continue_session(
+    session_slug: &str,
+    persona: &str,
+    prompt: &str,
+    config: &OrchestrationConfig,
+) -> Result<InvocationResult, OrchestrationError> {
+    let session_dir = session::session_dir(session_slug);
+    let existing_count = count_iterations(&session_dir)?;
+
+    let continuation = ContinuationInfo {
+        slug: session_slug.to_string(),
+        next_sequence: existing_count + 1,
+        session_dir,
+    };
+
+    let invocation_config = InvocationConfig {
+        prompt: prompt.to_string(),
+        timeout_secs: config.timeout_secs,
+        theme_config: config.theme_config.clone(),
+        verbose_tools: config.verbose_tools.clone(),
+        project_path: config.project_path.clone(),
+        slug: None,
+        continuation: Some(continuation),
+        clone: None,
+        permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
+        persona: Some(persona.to_string()),
+    };
+
+    Ok(invoke::invoke(invocation_config)?)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,7 +258,7 @@ fn execute_handovers(
         // Scan for sub-directives and recurse
         if let Some(sub_directives) = scan_for_directives(&result) {
             let target_name = directive.target.as_str();
-            orchestrate_inner(target_name, sub_directives, config)?;
+            orchestrate_inner(target_name, &result, sub_directives, config)?;
         }
     }
 
@@ -219,6 +271,7 @@ fn execute_handovers(
 /// at each recursion level — the summary is only printed once at the top.
 fn orchestrate_inner(
     originator_name: &str,
+    originator: &InvocationResult,
     directives: ValidatedDirectiveSet,
     config: &OrchestrationConfig,
 ) -> Result<(), OrchestrationError> {
@@ -227,7 +280,10 @@ fn orchestrate_inner(
             execute_handovers(originator_name, handover_directives, config)?;
             Ok(())
         }
-        ValidatedDirectiveSet::Asks(_) => Err(OrchestrationError::AskNotImplemented),
+        ValidatedDirectiveSet::Asks(ref ask_directives) => {
+            ask::execute_asks(ask_directives, originator, config)?;
+            Ok(())
+        }
     }
 }
 
