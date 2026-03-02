@@ -75,8 +75,9 @@ pub struct InvocationResult {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     /// Extracted text response from output blocks. Consumed by the orchestrator to scan for directives.
-    #[allow(dead_code)]
     pub response_text: Option<String>,
+    /// Persona name that produced this result. None for plain ask invocations.
+    pub persona: Option<String>,
 }
 
 /// Errors that can occur during invocation.
@@ -191,6 +192,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
     }
 
     let started_at = Utc::now();
+    let result_persona = config.persona.clone();
     let persona = config.persona.as_deref();
 
     // Determine session info: clone, continue existing, or create new
@@ -273,6 +275,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
         input_tokens,
         output_tokens,
         response_text,
+        persona: result_persona,
     })
 }
 
