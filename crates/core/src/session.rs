@@ -445,6 +445,9 @@ pub struct SessionEntry {
     /// Current status of the session
     #[serde(default)]
     pub outcome: SessionOutcome,
+    /// Persona name for this session. None = default (ralph ask), Some = named persona.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
 }
 
 impl SessionEntry {
@@ -459,6 +462,15 @@ impl SessionEntry {
             completed_at: None,
             iterations: 0,
             outcome: SessionOutcome::InProgress,
+            persona: None,
+        }
+    }
+
+    /// Create a new session entry with a persona name.
+    pub fn new_with_persona(slug: String, project: PathBuf, persona: String) -> Self {
+        Self {
+            persona: Some(persona),
+            ..Self::new(slug, project)
         }
     }
 }
@@ -504,6 +516,22 @@ impl SessionsIndex {
         self.sessions.iter_mut().find(|s| s.slug == slug)
     }
 
+    /// Find the most recent session matching project path and persona.
+    ///
+    /// Filters by exact match on both `project` and `persona`.
+    /// When `persona` is None, matches sessions where persona is also None.
+    pub fn find_most_recent_for_persona(
+        &self,
+        project_path: &std::path::Path,
+        persona: Option<&str>,
+    ) -> Option<&SessionEntry> {
+        self.sessions
+            .iter()
+            .filter(|s| s.project == project_path)
+            .filter(|s| s.persona.as_deref() == persona)
+            .max_by_key(|s| s.started_at)
+    }
+
     /// Serialize the index to TOML string.
     pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
         toml::to_string_pretty(self)
@@ -544,6 +572,9 @@ pub struct SessionMetadata {
     /// Set when a session is created via --clone to branch from an existing session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloned_from: Option<String>,
+    /// Persona name for this session. None = default (ralph ask), Some = named persona.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
 }
 
 impl SessionMetadata {
@@ -558,6 +589,7 @@ impl SessionMetadata {
             outcome: SessionOutcome::InProgress,
             prompt,
             cloned_from: None,
+            persona: None,
         }
     }
 
@@ -579,6 +611,20 @@ impl SessionMetadata {
             outcome: SessionOutcome::InProgress,
             prompt,
             cloned_from: Some(source_slug.to_string()),
+            persona: None,
+        }
+    }
+
+    /// Create new session metadata with a persona name.
+    pub fn new_with_persona(
+        slug: String,
+        project: PathBuf,
+        prompt: Option<String>,
+        persona: String,
+    ) -> Self {
+        Self {
+            persona: Some(persona),
+            ..Self::new(slug, project, prompt)
         }
     }
 
@@ -605,9 +651,17 @@ impl From<&SessionEntry> for SessionMetadata {
             // SessionEntry doesn't store prompt or cloned_from, so default to None
             prompt: None,
             cloned_from: None,
+            persona: entry.persona.clone(),
         }
     }
 }
+
+// Re-export PausedState from the paused module for backwards compatibility
+pub use crate::paused::PausedState;
+
+#[cfg(test)]
+#[path = "session_tests.rs"]
+mod persona_tests;
 
 #[cfg(test)]
 mod tests {
@@ -927,62 +981,5 @@ mod tests {
         );
         assert_eq!(meta.slug, "sunny-day");
         assert_eq!(meta.prompt, Some("Test".to_string()));
-    }
-
-    #[test]
-    fn test_session_metadata_toml_roundtrip() {
-        // Without prompt - verify it's not serialized
-        let meta = SessionMetadata::new("calm-ocean".to_string(), PathBuf::from("/test"), None);
-        let toml_str = meta.to_toml().unwrap();
-        assert!(
-            !toml_str.contains("prompt"),
-            "prompt should not appear when None"
-        );
-        let parsed = SessionMetadata::from_toml(&toml_str).unwrap();
-        assert_eq!(parsed.slug, "calm-ocean");
-        assert_eq!(parsed.prompt, None);
-
-        // With prompt - verify roundtrip preserves it
-        let prompt = "Work on feature".to_string();
-        let meta = SessionMetadata::new(
-            "swift-wind".to_string(),
-            PathBuf::from("/test"),
-            Some(prompt.clone()),
-        );
-        let toml_str = meta.to_toml().unwrap();
-        assert!(toml_str.contains("prompt = "));
-        let parsed = SessionMetadata::from_toml(&toml_str).unwrap();
-        assert_eq!(parsed.prompt, Some(prompt));
-    }
-
-    #[test]
-    fn test_session_metadata_from_entry() {
-        let entry = SessionEntry::new("gentle-breeze".to_string(), PathBuf::from("/project"));
-        let meta = SessionMetadata::from(&entry);
-
-        assert_eq!(meta.slug, entry.slug);
-        assert_eq!(meta.project, entry.project);
-        assert_eq!(meta.iterations, entry.iterations);
-        assert_eq!(meta.outcome, entry.outcome);
-    }
-
-    #[test]
-    fn test_sessions_index_find_by_slug_mut() {
-        let mut index = SessionsIndex::new();
-        index.add_session(SessionEntry::new(
-            "test-slug".to_string(),
-            PathBuf::from("/test"),
-        ));
-
-        // Modify through mutable reference
-        if let Some(entry) = index.find_by_slug_mut("test-slug") {
-            entry.iterations = 5;
-            entry.outcome = SessionOutcome::Completed;
-        }
-
-        // Verify modification
-        let entry = index.find_by_slug("test-slug").unwrap();
-        assert_eq!(entry.iterations, 5);
-        assert_eq!(entry.outcome, SessionOutcome::Completed);
     }
 }

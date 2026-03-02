@@ -12,6 +12,8 @@ pub enum CompletionReason {
     MarkerFound,
     /// User requested soft stop via 's' key - finish current iteration then exit
     SoftStop,
+    /// User requested hard stop via 'S' key - immediately halt and save paused state
+    HardStop,
 }
 
 /// Checks if the iteration loop should complete based on pending story count
