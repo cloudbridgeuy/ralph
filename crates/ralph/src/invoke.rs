@@ -74,6 +74,9 @@ pub struct InvocationResult {
     pub duration_ms: Option<u64>,
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    /// Extracted text response from output blocks. Consumed by the orchestrator to scan for directives.
+    #[allow(dead_code)]
+    pub response_text: Option<String>,
 }
 
 /// Errors that can occur during invocation.
@@ -239,6 +242,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
         session_elapsed_ms: 0,
         verbose_tools: config.verbose_tools,
         session_info: SpinnerSessionInfo {
+            persona: config.persona.clone(),
             slug: Some(slug.clone()),
             current_iteration: Some(sequence as usize),
             max_iterations: None,
@@ -258,6 +262,8 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
     let (cost_usd, duration_ms, input_tokens, output_tokens) =
         extract_metrics_from_log(&iteration_log);
 
+    let response_text = iteration_log.response.clone();
+
     Ok(InvocationResult {
         slug,
         iteration_count: sequence,
@@ -266,6 +272,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
         duration_ms,
         input_tokens,
         output_tokens,
+        response_text,
     })
 }
 
