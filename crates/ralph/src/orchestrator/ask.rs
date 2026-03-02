@@ -1,24 +1,24 @@
 //! Ask executor for multi-agent directive routing.
 //!
 //! Implements the ask round-trip: originator emits ask directives, targets are
-//! invoked sequentially, responses are aggregated, and the originator is
+//! invoked in parallel, responses are aggregated, and the originator is
 //! continued with the aggregated prompt. Sub-directives from targets are
-//! resolved recursively before returning.
+//! resolved sequentially after all parallel invocations complete.
 
 use ralph_core::directive::{aggregate_responses, Directive, ValidatedDirectiveSet};
 
 use super::{
-    continue_session, display, scan_for_directives, OrchestrationConfig, OrchestrationError,
+    continue_session, parallel, scan_for_directives, OrchestrationConfig, OrchestrationError,
 };
-use crate::invoke::{self, InvocationConfig, InvocationResult};
+use crate::invoke::InvocationResult;
 
-/// Execute ask directives sequentially and continue the originator.
+/// Execute ask directives in parallel and continue the originator.
 ///
-/// For each directive, invokes the target persona and calls [`resolve`] on the
-/// result. After all targets have responded, aggregates the responses into a
-/// single prompt and continues the originator's session via [`continue_session`].
-/// If the continuation produces further directives, recurses through
-/// [`super::orchestrate_inner`].
+/// Invokes all target personas concurrently via [`parallel::parallel_invoke`],
+/// then resolves sub-directives sequentially. After all targets have responded,
+/// aggregates the responses into a single prompt and continues the originator's
+/// session via [`continue_session`]. If the continuation produces further
+/// directives, recurses through [`super::orchestrate_inner`].
 pub fn execute_asks(
     directives: &[Directive],
     originator: &InvocationResult,
@@ -29,36 +29,12 @@ pub fn execute_asks(
         .as_deref()
         .unwrap_or(originator.slug.as_str());
 
-    // Phase 1: invoke each target and resolve sub-directives
+    // Phase 1: invoke all targets in parallel, then resolve sub-directives sequentially
+    let results = parallel::parallel_invoke(directives, originator_name, config);
     let mut responses: Vec<(String, String)> = Vec::new();
 
-    for directive in directives {
-        if !config.budget.try_consume() {
-            return Err(OrchestrationError::BudgetExhausted);
-        }
-
-        display::print_routing_status(
-            originator_name,
-            &directive.verb,
-            &directive.target,
-            &directive.payload,
-            &config.budget,
-        );
-
-        let invocation_config = InvocationConfig {
-            prompt: directive.payload.clone(),
-            timeout_secs: config.timeout_secs,
-            theme_config: config.theme_config.clone(),
-            verbose_tools: config.verbose_tools.clone(),
-            project_path: config.project_path.clone(),
-            slug: None,
-            continuation: None,
-            clone: None,
-            permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
-            persona: Some(directive.target.clone()),
-        };
-
-        let result = invoke::invoke(invocation_config)?;
+    for (directive, result) in directives.iter().zip(results) {
+        let result = result?;
         let resolved_text = resolve(&result, originator_name, config)?;
         responses.push((directive.target.clone(), resolved_text));
     }
@@ -127,36 +103,13 @@ fn resolve(
 
     match sub_directives {
         ValidatedDirectiveSet::Asks(ref ask_directives) => {
-            // Target emitted asks: invoke those, aggregate, continue target, return final
+            // Target emitted asks: invoke those in parallel, resolve sequentially,
+            // aggregate, continue target, return final
+            let sub_results = parallel::parallel_invoke(ask_directives, target_name, config);
             let mut sub_responses: Vec<(String, String)> = Vec::new();
 
-            for directive in ask_directives {
-                if !config.budget.try_consume() {
-                    return Err(OrchestrationError::BudgetExhausted);
-                }
-
-                display::print_routing_status(
-                    target_name,
-                    &directive.verb,
-                    &directive.target,
-                    &directive.payload,
-                    &config.budget,
-                );
-
-                let invocation_config = InvocationConfig {
-                    prompt: directive.payload.clone(),
-                    timeout_secs: config.timeout_secs,
-                    theme_config: config.theme_config.clone(),
-                    verbose_tools: config.verbose_tools.clone(),
-                    project_path: config.project_path.clone(),
-                    slug: None,
-                    continuation: None,
-                    clone: None,
-                    permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
-                    persona: Some(directive.target.clone()),
-                };
-
-                let sub_result = invoke::invoke(invocation_config)?;
+            for (directive, sub_result) in ask_directives.iter().zip(sub_results) {
+                let sub_result = sub_result?;
                 let resolved = resolve(&sub_result, target_name, config)?;
                 sub_responses.push((directive.target.clone(), resolved));
             }

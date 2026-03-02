@@ -6,6 +6,7 @@
 
 mod ask;
 mod display;
+mod parallel;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -149,8 +150,8 @@ pub fn scan_for_directives(result: &InvocationResult) -> Option<ValidatedDirecti
 /// Orchestrate execution of validated directives.
 ///
 /// Dispatches to the appropriate executor based on the directive type:
-/// - `AllHandovers` — invokes target personas sequentially
-/// - `AllAsks` — invokes targets, aggregates responses, continues originator
+/// - `Handovers` — invokes target personas in parallel, scans for sub-directives sequentially
+/// - `Asks` — invokes targets in parallel, aggregates responses, continues originator
 pub fn orchestrate(
     originator: &InvocationResult,
     directives: ValidatedDirectiveSet,
@@ -217,43 +218,20 @@ pub fn continue_session(
 // Internal
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Execute handover directives sequentially.
+/// Execute handover directives in parallel.
 ///
-/// For each directive, builds an `InvocationConfig` for the target persona,
-/// invokes it, then scans the result for sub-directives and recurses.
-/// Checks the budget before each invocation.
+/// Invokes all targets concurrently via [`parallel::parallel_invoke`], then
+/// scans each result sequentially for sub-directives and recurses.
+/// Budget checks happen inside each parallel thread.
 fn execute_handovers(
     originator_name: &str,
     directives: &[Directive],
     config: &OrchestrationConfig,
 ) -> Result<(), OrchestrationError> {
-    for directive in directives {
-        if !config.budget.try_consume() {
-            return Err(OrchestrationError::BudgetExhausted);
-        }
+    let results = parallel::parallel_invoke(directives, originator_name, config);
 
-        display::print_routing_status(
-            originator_name,
-            &directive.verb,
-            &directive.target,
-            &directive.payload,
-            &config.budget,
-        );
-
-        let invocation_config = InvocationConfig {
-            prompt: directive.payload.clone(),
-            timeout_secs: config.timeout_secs,
-            theme_config: config.theme_config.clone(),
-            verbose_tools: config.verbose_tools.clone(),
-            project_path: config.project_path.clone(),
-            slug: None,
-            continuation: None,
-            clone: None,
-            permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
-            persona: Some(directive.target.clone()),
-        };
-
-        let result = invoke::invoke(invocation_config)?;
+    for (directive, result) in directives.iter().zip(results) {
+        let result = result?;
 
         // Scan for sub-directives and recurse
         if let Some(sub_directives) = scan_for_directives(&result) {
