@@ -40,7 +40,10 @@ pub mod subprocess;
 pub mod warn;
 
 use clap::Parser;
-use cli::{AskArgs, Cli, Commands, IterationsArgs, PersonaArgs, ReplayArgs, RunArgs, SessionsArgs};
+use cli::{
+    AskArgs, Cli, Commands, IterationsArgs, PersonaAction, PersonaArgs, PersonaInvokeArgs,
+    ReplayArgs, RunArgs, SessionsArgs,
+};
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
 use ralph_core::session::SessionOutcome;
@@ -477,22 +480,39 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 // =============================================================================
 
 fn execute_persona(args: PersonaArgs) -> Result<(), Box<dyn std::error::Error>> {
-    warn_if_err(signal::init(), "Failed to initialize signal handler");
+    let action = args
+        .into_action()
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
-    let project_path = std::env::current_dir()?;
+    match action {
+        PersonaAction::List => execute_persona_list(),
+        PersonaAction::Invoke(invoke_args) => {
+            warn_if_err(signal::init(), "Failed to initialize signal handler");
 
-    // Verify agent file exists before doing anything else
-    persona::verify_agent_file(&args.persona, &project_path)?;
+            let project_path = std::env::current_dir()?;
 
-    if args.history {
-        return execute_persona_with_history(&args, &project_path);
+            // Verify agent file exists before doing anything else
+            persona::verify_agent_file(&invoke_args.persona, &project_path)?;
+
+            if invoke_args.history {
+                return execute_persona_with_history(&invoke_args, &project_path);
+            }
+
+            execute_persona_core(&invoke_args, &project_path)
+        }
     }
+}
 
-    execute_persona_core(&args, &project_path)
+fn execute_persona_list() -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = std::env::current_dir()?;
+    let personas = persona::discover_personas(&project_path);
+    let output = persona::format_persona_list(&personas);
+    print!("{output}");
+    Ok(())
 }
 
 fn execute_persona_core(
-    args: &PersonaArgs,
+    args: &PersonaInvokeArgs,
     project_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.clone_session && args.session.is_none() && !args.continue_session {
@@ -513,7 +533,7 @@ fn execute_persona_core(
 }
 
 fn build_persona_config(
-    args: &PersonaArgs,
+    args: &PersonaInvokeArgs,
     project_path: &Path,
 ) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
     build_shared_invocation_config(
@@ -534,7 +554,7 @@ fn build_persona_config(
 }
 
 fn execute_persona_with_history(
-    args: &PersonaArgs,
+    args: &PersonaInvokeArgs,
     project_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.session.is_none() && !args.continue_session {

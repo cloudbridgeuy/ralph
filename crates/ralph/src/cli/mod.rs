@@ -263,8 +263,16 @@ pub struct AskArgs {
 #[derive(clap::Args, Debug, Clone)]
 pub struct PersonaArgs {
     /// Agent name (resolves to .claude/agents/{name}.md)
-    #[arg(value_name = "PERSONA")]
-    pub persona: String,
+    #[arg(value_name = "PERSONA", conflicts_with = "list")]
+    pub persona: Option<String>,
+
+    /// List all available personas.
+    ///
+    /// Scans both project-local (.claude/agents/) and user-level (~/.claude/agents/)
+    /// directories for agent files. Project personas shadow user personas with the
+    /// same name.
+    #[arg(long)]
+    pub list: bool,
 
     /// The prompt to send to the persona.
     ///
@@ -309,6 +317,60 @@ pub struct PersonaArgs {
     /// Clone an existing session into a new session with its conversation history.
     #[arg(long)]
     pub clone_session: bool,
+}
+
+/// Resolved action for the persona command.
+pub enum PersonaAction {
+    /// List available personas from discovery directories.
+    List,
+    /// Invoke a specific persona.
+    Invoke(PersonaInvokeArgs),
+}
+
+/// Validated arguments for invoking a persona.
+pub struct PersonaInvokeArgs {
+    pub persona: String,
+    pub prompt: Option<String>,
+    pub session: Option<String>,
+    pub continue_session: bool,
+    pub theme: Option<String>,
+    pub no_background: bool,
+    pub timeout: u64,
+    pub verbose_tools: Option<String>,
+    pub no_prompt: bool,
+    pub history: bool,
+    pub clone_session: bool,
+}
+
+impl PersonaArgs {
+    /// Convert parsed CLI args into a typed action.
+    ///
+    /// Returns `Err` if neither `--list` nor a persona name was provided.
+    pub fn into_action(self) -> Result<PersonaAction, String> {
+        if self.list {
+            return Ok(PersonaAction::List);
+        }
+
+        match self.persona {
+            Some(persona) => Ok(PersonaAction::Invoke(PersonaInvokeArgs {
+                persona,
+                prompt: self.prompt,
+                session: self.session,
+                continue_session: self.continue_session,
+                theme: self.theme,
+                no_background: self.no_background,
+                timeout: self.timeout,
+                verbose_tools: self.verbose_tools,
+                no_prompt: self.no_prompt,
+                history: self.history,
+                clone_session: self.clone_session,
+            })),
+            None => Err(
+                "A persona name is required. Use 'ralph persona <name>' or 'ralph persona --list'."
+                    .to_string(),
+            ),
+        }
+    }
 }
 
 /// Arguments for the `run` subcommand.
