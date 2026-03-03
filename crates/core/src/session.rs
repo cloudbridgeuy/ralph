@@ -965,6 +965,13 @@ mod tests {
     }
 
     #[test]
+    fn from_toml_rejects_corrupt_input() {
+        assert!(SessionsIndex::from_toml("[[sessions]]\nslug = \n\"").is_err());
+        assert!(SessionsIndex::from_toml("{{{").is_err());
+        assert!(SessionsIndex::from_toml("sessions = []\n\"").is_err());
+    }
+
+    #[test]
     fn test_session_metadata_new() {
         // Without prompt
         let meta = SessionMetadata::new("bright-river".to_string(), PathBuf::from("/test"), None);
