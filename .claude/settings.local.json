@@ -64,7 +64,8 @@
       "Bash(claude agents:*)",
       "Bash(git status:*)",
       "Bash(git checkout:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(cargo rail:*)"
     ],
     "deny": [],
     "ask": []

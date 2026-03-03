@@ -9,7 +9,7 @@
 //! uniqueness checks against disk) happen at the shell layer.
 
 use chrono::{DateTime, Utc};
-use rand::seq::SliceRandom;
+use rand::prelude::IndexedRandom;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -276,9 +276,9 @@ const NOUNS: &[&str] = &[
 ///
 /// ```
 /// use ralph_core::session::generate_slug;
-/// use rand::thread_rng;
+/// use rand::rng;
 ///
-/// let slug = generate_slug(&mut thread_rng());
+/// let slug = generate_slug(&mut rng());
 /// assert!(slug.contains('-'));
 /// assert_eq!(slug, slug.to_lowercase());
 /// ```
@@ -317,11 +317,11 @@ pub fn generate_slug<R: Rng + ?Sized>(rng: &mut R) -> String {
 ///
 /// ```
 /// use ralph_core::session::generate_unique_slug;
-/// use rand::thread_rng;
+/// use rand::rng;
 /// use std::collections::HashSet;
 ///
 /// let existing: HashSet<String> = HashSet::new();
-/// let slug = generate_unique_slug(&mut thread_rng(), &existing, 100);
+/// let slug = generate_unique_slug(&mut rng(), &existing, 100);
 /// assert!(slug.is_some());
 /// ```
 pub fn generate_unique_slug<R: Rng + ?Sized>(
@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn test_generate_slug_variety() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut slugs = HashSet::new();
 
         // Generate 100 slugs and check we get variety
@@ -850,7 +850,7 @@ mod tests {
 
     #[test]
     fn test_generated_slugs_are_valid() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         for _ in 0..100 {
             let slug = generate_slug(&mut rng);

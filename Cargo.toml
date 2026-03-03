@@ -11,7 +11,7 @@ resolver = "2"
 edition = "2021"
 license = "MIT"
 authors = ["Guzmán Monné"]
-rust-version = "1.82.0"
+rust-version = "1.87.0"
 
 [profile.dev]
 # Disabling debug info speeds up builds.
@@ -24,23 +24,26 @@ debug = 0
 
 [workspace.dependencies]
 
-# Ctrl+C / SIGINT handling
-ctrlc = "3.4"
-
 # Output formatting
-anstream = "0.6"
+anstream = "1.0.0"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
-
-# Configuration directories
-dirs = "5.0"
 
 # CLI
 clap = { version = "4.5", features = ["derive", "env"] }
 
 # Error handling
 color-eyre = "0.6"
+
+# Cross-platform terminal manipulation
+crossterm = "0.29"
+
+# Ctrl+C / SIGINT handling
+ctrlc = "3.4"
+
+# Configuration directories
+dirs = "6.0.0"
 
 # Logging
 env_logger = "0.11"
@@ -49,39 +52,38 @@ prettytable = "0.10"
 ralph_core = { version = "0.0.0", path = "crates/core" }
 
 # Random number generation
-rand = "0.8"
+rand = "0.10.0"
 
 # Regex
 regex = "1.0"
 
 # HTTP client (for existing features)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13.2", features = ["json"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
+
+# JSON
+serde_json = "1.0"
 
 # Diff generation
 similar = "2.6"
 
 # Syntax highlighting
-syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
-
-# Markdown terminal rendering
-termimad = "0.30"
-
-# Cross-platform terminal manipulation
-crossterm = "0.29"
-
-# JSON
-serde_json = "1.0"
+syntect = { version = "5.2", default-features = false, features = [
+  "default-fancy",
+] }
 
 # Testing
 tempfile = "3.10"
-thiserror = "1.0"
+
+# Markdown terminal rendering
+termimad = "0.34.1"
+thiserror = "2.0.18"
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
-toml = "0.8"
+toml = "1.0.3+spec-1.1.0"
 
 # UUID generation
 uuid = { version = "1.11", features = ["v4"] }

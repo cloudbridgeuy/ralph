@@ -283,7 +283,7 @@ pub fn resolve_session_slug(user_slug: Option<&str>) -> Result<String, SessionEr
     } else {
         // Generate unique slug
         let existing = index.existing_slugs();
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         generate_unique_slug(&mut rng, &existing, 100).ok_or(SessionError::SlugGenerationFailed)
     }
