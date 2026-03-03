@@ -74,6 +74,23 @@ Each round of the conversation consumes one budget unit. The loop terminates whe
 
 Only ask directives trigger conversation loops. If a target emits a handover instead of an ask-back, the handover is executed normally (no loop).
 
+#### Third-Party Directives in Conversations
+
+When a conversation participant emits ask directives targeting personas **outside** the conversation (third parties), the orchestrator resolves them before continuing:
+
+1. Third-party targets are invoked in parallel via `parallel_invoke()`.
+2. Each target's response is resolved through `ask::resolve()` (handling any sub-directives recursively).
+3. Responses are aggregated and fed back to the same responder (no role swap).
+4. The loop continues — the responder processes the third-party answers and may then emit a directive to the other conversant (swap), another third-party ask, or finish.
+
+Handover directives within a conversation end the conversation immediately — the categorization function maps them to `Done` since handovers are fire-and-forget.
+
+The categorization logic (`categorize_conversation_directives`) is a pure function that classifies each loop iteration into one of three actions:
+
+- `AskOther` — directive targets the other conversant; swap roles and continue.
+- `ThirdParty` — directives target personas outside the conversation; resolve and feed back.
+- `Done` — no directives or handovers; conversation is over.
+
 ## Choosing Ask vs. Handover
 
 The two directive types serve different purposes:
