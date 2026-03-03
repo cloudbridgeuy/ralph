@@ -23,6 +23,17 @@ use std::path::PathBuf;
 /// Default permission mode (allows tool execution).
 pub const DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
 
+/// System prompt suffix appended to persona invocations.
+///
+/// Reminds the persona that the Agent tool is unavailable and that
+/// delegation must go through ralph directives exclusively.
+const PERSONA_SYSTEM_PROMPT_SUFFIX: &str = "\
+CRITICAL: The Agent tool is not available to you. \
+Delegate to team members ONLY through ralph directives \
+(<ralph-ask> and <ralph-handover>). \
+After emitting directives, stop immediately — \
+do not continue generating output or invoking tools.";
+
 /// Configuration for a shared invocation.
 #[derive(Debug, Clone)]
 pub struct InvocationConfig {
@@ -103,19 +114,30 @@ pub enum InvocationError {
     Iteration(#[from] IterationError),
 }
 
+/// Shell-quote a string for embedding in a single-quoted argument.
+///
+/// Pure function — no I/O.
+fn shell_quote(value: &str) -> String {
+    let escaped = value.replace('\'', "'\"'\"'");
+    format!("'{}'", escaped)
+}
+
 /// Build the claude CLI command string.
 ///
 /// Pure function — no I/O.
 pub fn build_command(prompt: &str, permission_mode: &str, agent: Option<&str>) -> String {
-    let escaped = prompt.replace('\'', "'\"'\"'");
+    let quoted_prompt = shell_quote(prompt);
     match agent {
         Some(name) => format!(
-            "claude --verbose --agent {} --output-format stream-json -p '{}'",
-            name, escaped
+            "claude --verbose --agent {} \
+             --disallowed-tools Agent \
+             --append-system-prompt '{}' \
+             --output-format stream-json -p {}",
+            name, PERSONA_SYSTEM_PROMPT_SUFFIX, quoted_prompt
         ),
         None => format!(
-            "claude --verbose --permission-mode {} --output-format stream-json -p '{}'",
-            permission_mode, escaped
+            "claude --verbose --permission-mode {} --output-format stream-json -p {}",
+            permission_mode, quoted_prompt
         ),
     }
 }
@@ -300,6 +322,8 @@ mod tests {
         assert!(cmd.contains("--permission-mode bypassPermissions"));
         assert!(cmd.contains("-p 'hello'"));
         assert!(!cmd.contains("--agent"));
+        assert!(!cmd.contains("--disallowed-tools"));
+        assert!(!cmd.contains("--append-system-prompt"));
     }
 
     #[test]
@@ -307,6 +331,12 @@ mod tests {
         let cmd = build_command("hello", "bypassPermissions", Some("coach"));
         assert!(cmd.contains("--agent coach"));
         assert!(cmd.contains("-p 'hello'"));
+        assert!(cmd.contains("--disallowed-tools Agent"));
+        assert!(cmd.contains("--append-system-prompt"));
+        assert!(
+            cmd.contains("Agent tool is not available"),
+            "system prompt suffix should contain delegation constraint"
+        );
         // When agent is set, permission mode is NOT included (agent file controls it)
         assert!(!cmd.contains("--permission-mode"));
     }
