@@ -68,43 +68,61 @@ pub fn normalize_verb(raw: &str) -> Option<DirectiveVerb> {
 
 /// Parse directives from persona output text.
 ///
-/// Scans for XML-style tags matching `<ralph-{verb} to="{target}">{payload}</ralph-{verb}>`.
+/// Scans left-to-right for top-level XML-style tags matching
+/// `<ralph-{verb} to="{target}">{payload}</ralph-{verb}>`.
+/// Payload content is treated as opaque plaintext — nested directive-like
+/// tags inside a payload are NOT parsed as separate directives.
+///
 /// Each verb is normalized via [`normalize_verb`]; directives with unknown verbs are skipped.
 pub fn parse_directives(text: &str) -> Vec<Directive> {
-    // Rust's regex crate does not support backreferences, so we match opening tags
-    // first, then locate the matching closing tag for each verb.
     let mut directives = Vec::new();
+    let mut search_start = 0;
 
-    for cap in OPEN_TAG_RE.captures_iter(text) {
+    while search_start < text.len() {
+        let haystack = &text[search_start..];
+
+        let cap = match OPEN_TAG_RE.captures(haystack) {
+            Some(c) => c,
+            None => break,
+        };
+
         let full_match = match cap.get(0) {
             Some(m) => m,
-            None => continue,
+            None => break,
         };
         let raw_verb = match cap.get(1) {
             Some(m) => m.as_str(),
-            None => continue,
+            None => break,
         };
         let target = match cap.get(2) {
             Some(m) => m.as_str().to_string(),
-            None => continue,
+            None => break,
         };
 
-        // Build the expected closing tag and search for it after the opening tag.
         let closing_tag = format!("</ralph-{raw_verb}>");
-        let payload_start = full_match.end();
-        let remaining = &text[payload_start..];
+        let payload_start_in_haystack = full_match.end();
+        let after_open = &haystack[payload_start_in_haystack..];
 
-        let payload = match remaining.find(&closing_tag) {
-            Some(end) => remaining[..end].to_string(),
-            None => continue, // No matching closing tag found; skip.
-        };
+        match after_open.find(&closing_tag) {
+            Some(end) => {
+                let payload = after_open[..end].to_string();
 
-        if let Some(verb) = normalize_verb(raw_verb) {
-            directives.push(Directive {
-                verb,
-                target,
-                payload,
-            });
+                if let Some(verb) = normalize_verb(raw_verb) {
+                    directives.push(Directive {
+                        verb,
+                        target,
+                        payload,
+                    });
+                }
+
+                // Resume scanning AFTER the closing tag
+                let close_end_in_haystack = payload_start_in_haystack + end + closing_tag.len();
+                search_start += close_end_in_haystack;
+            }
+            None => {
+                // No closing tag — skip past this opening tag
+                search_start += full_match.end();
+            }
         }
     }
 
@@ -144,18 +162,9 @@ pub fn validate_directive_set(
 pub fn aggregate_responses(responses: &[(&str, &str)]) -> String {
     responses
         .iter()
-        .enumerate()
-        .fold(String::new(), |mut acc, (i, (name, text))| {
-            if i > 0 {
-                acc.push_str("\n---\n\n");
-            }
-            acc.push_str("Response from ");
-            acc.push_str(name);
-            acc.push_str(":\n\n");
-            acc.push_str(text);
-            acc.push('\n');
-            acc
-        })
+        .map(|(name, text)| format!("Response from {name}:\n\n{text}\n"))
+        .collect::<Vec<_>>()
+        .join("\n---\n\n")
 }
 
 #[cfg(test)]
@@ -321,6 +330,68 @@ Thanks!</ralph-ask>"#;
         let directives = parse_directives(text);
         assert_eq!(directives.len(), 1);
         assert_eq!(directives[0].payload, "");
+    }
+
+    #[test]
+    fn parse_nested_directive_in_payload_treated_as_text() {
+        // PM tells architect to use a directive — the inner tag is payload, not a real directive.
+        let text = r#"<ralph-ask to="architect">Please ask the developer a question. Use a <ralph-ask to="developer"> directive to pose your question.</ralph-ask>"#;
+        let directives = parse_directives(text);
+        assert_eq!(
+            directives.len(),
+            1,
+            "should find exactly one top-level directive"
+        );
+        assert_eq!(directives[0].target, "architect");
+        assert!(
+            directives[0]
+                .payload
+                .contains(r#"<ralph-ask to="developer">"#),
+            "inner directive tag should be preserved as payload text"
+        );
+    }
+
+    #[test]
+    fn parse_nested_directive_with_own_closing_tag() {
+        // Outer ask wraps an inner ask that has its own closing tag.
+        let text = r#"<ralph-ask to="architect">Tell dev: <ralph-ask to="developer">What is X?</ralph-ask> and report back.</ralph-ask>"#;
+        let directives = parse_directives(text);
+        assert_eq!(
+            directives.len(),
+            1,
+            "should find exactly one top-level directive"
+        );
+        assert_eq!(directives[0].target, "architect");
+        // Payload runs from after outer open tag to the FIRST </ralph-ask> — which is the inner one.
+        // This is acceptable: the outer directive's payload is truncated at the first matching close tag.
+        // The key property is: we do NOT produce a second directive for "developer".
+    }
+
+    #[test]
+    fn parse_sequential_directives_still_work() {
+        // Two top-level directives side by side (not nested).
+        let text = r#"<ralph-ask to="alpha">Question 1</ralph-ask> some text <ralph-ask to="beta">Question 2</ralph-ask>"#;
+        let directives = parse_directives(text);
+        assert_eq!(directives.len(), 2);
+        assert_eq!(directives[0].target, "alpha");
+        assert_eq!(directives[0].payload, "Question 1");
+        assert_eq!(directives[1].target, "beta");
+        assert_eq!(directives[1].payload, "Question 2");
+    }
+
+    #[test]
+    fn parse_directive_after_nested_is_found() {
+        // An outer directive with a nested tag, followed by a separate top-level directive.
+        let text = r#"<ralph-ask to="architect">Use <ralph-ask to="developer">Q</ralph-ask> please.</ralph-ask>
+<ralph-handover to="deployer">Ship it.</ralph-handover>"#;
+        // The outer ask's payload ends at the first </ralph-ask> (the inner close).
+        // Then the parser resumes and finds the handover.
+        let directives = parse_directives(text);
+        assert_eq!(directives.len(), 2);
+        assert_eq!(directives[0].verb, DirectiveVerb::Ask);
+        assert_eq!(directives[0].target, "architect");
+        assert_eq!(directives[1].verb, DirectiveVerb::Handover);
+        assert_eq!(directives[1].target, "deployer");
     }
 
     // =========================================================================
