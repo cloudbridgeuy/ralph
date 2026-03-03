@@ -105,6 +105,25 @@ A single persona output can contain multiple directives, but they must all be th
 
 Malformed directives (missing closing tag, mismatched tags, missing `to` attribute, unknown verb) are silently skipped during parsing.
 
+## Nested Directive Handling
+
+The parser scans left-to-right for top-level directives only. Directive-like tags inside a payload are treated as opaque text, not parsed as separate directives.
+
+This matters when a persona embeds directive syntax as an example or instruction inside a payload:
+
+```
+<ralph-ask to="architect">Please ask the developer a question.
+Use a <ralph-ask to="developer"> directive to pose your question.</ralph-ask>
+```
+
+The parser produces **one** directive targeting `architect`. The inner `<ralph-ask to="developer">` is part of the payload text, not a second directive.
+
+**How it works:** After finding an opening tag, the parser locates the first matching closing tag (`</ralph-{verb}>`), takes everything between as the payload, then resumes scanning **after** the closing tag. This means:
+
+- Sequential top-level directives are parsed correctly
+- Nested tags with their own closing tags cause the outer payload to end at the first `</ralph-{verb}>` match (acceptable truncation)
+- The parser never produces spurious directives from payload content
+
 ## Budget System
 
 The budget prevents runaway orchestration loops by capping the total number of sub-invocations per orchestration session.
