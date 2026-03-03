@@ -13,6 +13,29 @@ use super::{
 };
 use crate::invoke::InvocationResult;
 
+/// Invoke ask directives in parallel, resolve sub-directives, and aggregate responses.
+///
+/// Returns a list of `(target_name, resolved_text)` pairs in directive order.
+/// This is the shared invoke-resolve-aggregate pattern used by [`execute_asks`],
+/// [`resolve`], and the conversation loop's third-party branch.
+pub(super) fn resolve_parallel_asks(
+    directives: &[Directive],
+    originator_persona: &str,
+    originator_session_slug: &str,
+    config: &OrchestrationConfig,
+) -> Result<Vec<(String, String)>, OrchestrationError> {
+    let results = parallel::parallel_invoke(directives, originator_persona, config);
+    let mut responses: Vec<(String, String)> = Vec::new();
+
+    for (directive, result) in directives.iter().zip(results) {
+        let result = result?;
+        let resolved = resolve(&result, originator_persona, originator_session_slug, config)?;
+        responses.push((directive.target.clone(), resolved));
+    }
+
+    Ok(responses)
+}
+
 /// Execute ask directives in parallel and continue the originator.
 ///
 /// Invokes all target personas concurrently via [`parallel::parallel_invoke`],
@@ -28,14 +51,7 @@ pub fn execute_asks(
     let originator_name = originator.display_name();
 
     // Phase 1: invoke all targets in parallel, then resolve sub-directives sequentially
-    let results = parallel::parallel_invoke(directives, originator_name, config);
-    let mut responses: Vec<(String, String)> = Vec::new();
-
-    for (directive, result) in directives.iter().zip(results) {
-        let result = result?;
-        let resolved_text = resolve(&result, originator_name, &originator.slug, config)?;
-        responses.push((directive.target.clone(), resolved_text));
-    }
+    let responses = resolve_parallel_asks(directives, originator_name, &originator.slug, config)?;
 
     // Phase 2: aggregate responses and continue the originator
     let response_refs: Vec<(&str, &str)> = responses
@@ -74,7 +90,7 @@ pub fn execute_asks(
 /// 3. **Sub-directive back to originator**: enter a conversation loop where the
 ///    two personas exchange messages until one side finishes without a directive
 ///    targeting the other.
-fn resolve(
+pub(super) fn resolve(
     result: &InvocationResult,
     originator_persona: &str,
     originator_session_slug: &str,
@@ -115,15 +131,8 @@ fn resolve(
         ValidatedDirectiveSet::Asks(ref ask_directives) => {
             // Target emitted asks: invoke those in parallel, resolve sequentially,
             // aggregate, continue target, return final
-            let sub_results = parallel::parallel_invoke(ask_directives, target_name, config);
-            let mut sub_responses: Vec<(String, String)> = Vec::new();
-
-            for (directive, sub_result) in ask_directives.iter().zip(sub_results) {
-                let sub_result = sub_result?;
-                let resolved = resolve(&sub_result, target_name, &result.slug, config)?;
-                sub_responses.push((directive.target.clone(), resolved));
-            }
-
+            let sub_responses =
+                resolve_parallel_asks(ask_directives, target_name, &result.slug, config)?;
             let refs: Vec<(&str, &str)> = sub_responses
                 .iter()
                 .map(|(n, t)| (n.as_str(), t.as_str()))
@@ -141,7 +150,12 @@ fn resolve(
                 Some(originator_persona),
                 config,
             )?;
-            Ok(final_result.response_text.unwrap_or_default())
+            resolve(
+                &final_result,
+                originator_persona,
+                originator_session_slug,
+                config,
+            )
         }
         ValidatedDirectiveSet::Handovers(ref handover_directives) => {
             // Target emitted handovers — execute them, then return target's original response
