@@ -61,7 +61,10 @@
       "Edit(.claude/**)",
       "Bash(cargo xtask lint:*)",
       "Bash(git reset:*)",
-      "Bash(claude agents:*)"
+      "Bash(claude agents:*)",
+      "Bash(git status:*)",
+      "Bash(git checkout:*)",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []
