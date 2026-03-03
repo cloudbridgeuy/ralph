@@ -157,7 +157,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [I/O Patterns](docs/context/rust-cli-io.md) - stdin/stdout handling, terminal detection, async I/O
 - [Environment Configuration](docs/context/rust-cli-env-config.md) - Env vars, secrets, config precedence
 - [Project Structure](docs/context/rust-cli-project-structure.md) - Workspace setup, xtask, module organization
-- [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks
+- [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks, block-buffered prose, table enhancement
 - [Prompt Template System](docs/context/prompt-template.md) - Placeholders, customization, and two-phase workflow
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [Runtime Control](docs/context/runtime-control.md) - Keyboard controls, signal handling, and session finalization

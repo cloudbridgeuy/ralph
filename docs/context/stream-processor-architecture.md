@@ -158,3 +158,34 @@ pub enum OutputBlock {
 ```
 
 Each block captures **data**, not rendered strings, allowing re-rendering with different highlighting settings during replay.
+
+## Block-Buffered Prose Rendering
+
+Prose text uses **block buffering** (`prose_threshold = usize::MAX`) so that `term_text()` receives complete multi-line content. This enables proper markdown block rendering (tables, lists, paragraphs) rather than line-by-line rendering.
+
+### Flush points
+
+Buffered prose is flushed (rendered and emitted) at these points:
+
+1. **New assistant message** — when a different `message_id` arrives, the previous message's prose is flushed before processing the new one
+2. **Tool invocation** — prose is flushed before tool invocation display, so text appears in the correct order
+3. **Code fence** — the `StreamingChunkBuffer` flushes accumulated prose when a code fence opens
+4. **`finish()`** — any remaining prose is flushed via `final_output` in `StreamProcessorResult`
+
+### final_output
+
+`StreamProcessorResult.final_output` contains the last rendered prose from `finish()`. Callers (spinner, timeout) must `print!` this value before returning the result.
+
+## Shared Markdown Skin
+
+`create_markdown_skin()` in `markdown.rs` is the single source of truth for terminal markdown styling. Both `StreamProcessor` and `ReplayRenderer` use it, ensuring identical rendering between live streaming and replay.
+
+## Table Enhancement
+
+`enhance_tables()` in `render/text.rs` post-processes termimad table output to add:
+
+- **Cell padding** — 1 space on each side of cell content
+- **Widened separators** — `─` expanded to match padded cells
+- **Top/bottom borders** — `┌┬┐` / `└┴┘` derived from the separator line
+
+This runs after `skin.term_text()` inside `render_text_block()`. Box-drawing characters are multi-byte UTF-8 (bytes > 0x7F), so they cannot appear inside ANSI escape sequences — making string splitting on `│`/`├` safe even in ANSI-coded output.
