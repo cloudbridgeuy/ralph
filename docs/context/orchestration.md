@@ -11,7 +11,7 @@ This document describes the multi-agent orchestration system that allows persona
 | Ask executor | `crates/ralph/src/orchestrator/ask.rs` | `execute_asks()`, `resolve()` — ask round-trip and sub-directive resolution |
 | Conversation loop | `crates/ralph/src/orchestrator/conversation.rs` | `conversation_loop()`, `ConversationConfig` — back-and-forth between two personas |
 | Parallel invocation | `crates/ralph/src/orchestrator/parallel.rs` | `parallel_invoke()` — concurrent target invocation via `std::thread::scope` |
-| Display | `crates/ralph/src/orchestrator/display.rs` | Routing status lines and orchestration summary |
+| Display | `crates/ralph/src/orchestrator/display.rs` | ANSI-styled routing status and orchestration summary (FC-IS: `format_*` pure, `print_*` I/O) |
 | Persona instructions | `personas/*.md` | Team collaboration section with directive syntax |
 
 ## Directive Format
@@ -121,6 +121,61 @@ Example budget consumption for an ask with two targets:
 2. Target B invocation (-1)
 3. Originator continuation (-1)
 4. Total: 3 of 10 used
+
+## Display
+
+Orchestration events are styled with ANSI escape codes to stand out from LLM output. The display module follows FC-IS: pure `format_*` functions return styled strings, `print_*` wrappers handle I/O.
+
+### Routing Status
+
+Printed before each directive invocation (parallel, conversation, ask continuation):
+
+```
+▶ pm → ask → architect                                    [9/10]
+  "What are the technical responsibilities?"
+```
+
+- `▶` glyph in cyan signals an orchestration action
+- Persona names in cyan, verb in plain text
+- Budget fraction in dim brackets
+- Payload preview on second line (truncated to 80 chars, dim)
+
+### Orchestration Summary
+
+Printed once at the end of the top-level `orchestrate()` call:
+
+```
+✓ Orchestration complete                                   [7/10]
+```
+
+- Green `✓` for success
+- Budget fraction in dim brackets
+
+### Spinner Context
+
+When a persona is invoked via orchestration, the spinner shows who requested it:
+
+```
+⠋ Waiting for response... architect (for pm) (new-slug 1/?) | 3s
+```
+
+The `on_behalf_of` field on `InvocationConfig` is threaded through `invoke()` to `SpinnerSessionInfo`. Only shown when a persona is set (orchestration always sets persona).
+
+### Conversation Loop Turns
+
+The conversation loop prints a routing status line before each `continue_session()` call, making the back-and-forth structure visible:
+
+```
+▶ architect → ask → pm                                     [7/10]
+  "What's the current command structure?"
+
+[PM output...]
+
+▶ pm → ask → architect                                     [6/10]
+  "Here's the CLI structure: ..."
+
+[Architect output...]
+```
 
 ## Parallel Invocation
 
