@@ -5,7 +5,7 @@
 //! is in the event_handler module.
 
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
-use crate::markdown::MarkdownRenderer;
+use crate::markdown::create_markdown_skin;
 use ralph_core::chunk::{ParsedChunk, StreamingChunkBuffer};
 use ralph_core::stream::{
     correlate_tool_interactions, extract_costs_from_events_or_default,
@@ -13,6 +13,7 @@ use ralph_core::stream::{
 };
 use std::collections::HashMap;
 use std::io::IsTerminal;
+use termimad::MadSkin;
 
 use super::output_block::OutputBlock;
 use super::types::{
@@ -39,8 +40,8 @@ pub struct StreamProcessor {
     pub(super) chunk_buffer: StreamingChunkBuffer,
     /// Syntax highlighter for code blocks.
     pub(super) code_highlighter: Highlighter,
-    /// Markdown renderer for prose output.
-    pub(super) markdown_renderer: MarkdownRenderer,
+    /// Markdown skin for prose rendering via termimad.
+    pub(super) markdown_skin: MadSkin,
     /// Whether highlighting is enabled (terminal detection).
     pub(super) highlighting_enabled: bool,
     /// Whether to display tool invocations.
@@ -173,9 +174,9 @@ impl StreamProcessorBuilder {
         Ok(StreamProcessor {
             events: Vec::new(),
             text_buffer: String::new(),
-            chunk_buffer: StreamingChunkBuffer::new(),
+            chunk_buffer: StreamingChunkBuffer::with_prose_threshold(usize::MAX),
             code_highlighter,
-            markdown_renderer: MarkdownRenderer::new(),
+            markdown_skin: create_markdown_skin(),
             highlighting_enabled,
             show_tool_invocations,
             current_message_id: None,
@@ -363,9 +364,8 @@ impl StreamProcessor {
     ///
     /// A `StreamProcessorResult` containing all extracted data.
     pub fn finish(mut self) -> StreamProcessorResult {
-        // Flush remaining chunks
-        let final_chunks = self.chunk_buffer.finish();
-        self.collected_chunks.extend(final_chunks);
+        // Flush remaining buffered content (renders + outputs prose/code blocks)
+        let final_output = self.flush_pending_chunks();
 
         // Extract metadata and costs from events
         let metadata = extract_metadata_from_events_or_default(&self.events);
@@ -381,6 +381,7 @@ impl StreamProcessor {
             tool_interactions,
             raw_text: self.text_buffer,
             output_blocks: self.output_blocks,
+            final_output,
         }
     }
 

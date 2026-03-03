@@ -133,6 +133,9 @@ pub struct StreamProcessorResult {
     /// Each block captures the data needed to re-render a piece of output.
     /// Blocks are ordered as they appeared during live execution.
     pub output_blocks: Vec<OutputBlock>,
+    /// Final rendered output from flushing remaining buffered content.
+    /// Callers should print this after the stream processing loop ends.
+    pub final_output: Option<String>,
 }
 
 /// Result of extracting a key argument from a tool invocation.

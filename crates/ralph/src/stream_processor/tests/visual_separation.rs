@@ -2,6 +2,10 @@
 //!
 //! Tests that distinct assistant responses are properly separated
 //! with visual indicators.
+//!
+//! With block buffering (prose_threshold = usize::MAX), prose is buffered and
+//! only flushed when a new message arrives or at finish() time. The separator
+//! logic triggers when flushed content exists or has_emitted_output is true.
 
 use crate::stream_processor::StreamProcessor;
 
@@ -9,72 +13,82 @@ use crate::stream_processor::StreamProcessor;
 fn test_visual_separation_between_responses() {
     let mut processor = StreamProcessor::with_highlighting(false);
 
-    // First response
+    // First response — prose is buffered, returns None
     let output1 = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First response"}]}}"#,
     );
-    assert!(output1.is_some());
-    assert!(processor.has_emitted_output());
+    assert!(output1.is_none(), "prose should be buffered");
     assert_eq!(processor.response_count(), 1);
 
-    // Second response (different message ID)
+    // Second response (different message ID) — flushes first response's prose + separator
     let output2 = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Second response"}]}}"#,
     );
 
-    // Should have separator before second response
+    // Should contain the flushed first response and separator
     assert!(output2.is_some());
     let out2 = output2.unwrap();
     assert!(
-        out2.starts_with('\n'),
-        "Should have separator before second response: {:?}",
+        out2.contains("First response"),
+        "Should contain flushed first response: {:?}",
+        out2
+    );
+    // Separator follows the flushed content
+    assert!(
+        out2.ends_with('\n'),
+        "Should end with separator: {:?}",
         out2
     );
     assert_eq!(processor.response_count(), 2);
+
+    // Second response's text comes via finish()
+    let result = processor.finish();
+    assert!(result.final_output.is_some());
+    let final_out = result.final_output.unwrap();
+    assert!(final_out.contains("Second response"));
 }
 
 #[test]
 fn test_no_separator_for_first_response() {
     let mut processor = StreamProcessor::with_highlighting(false);
 
-    // First response should have no leading separator
+    // First response — prose is buffered
     let output = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First response"}]}}"#,
     );
 
-    assert!(output.is_some());
-    let out = output.unwrap();
-    // First response should not start with extra separator
+    // With block buffering, first prose-only response returns None
+    assert!(output.is_none(), "prose should be buffered");
+    assert_eq!(processor.response_count(), 1);
+
+    // Content appears in finish()
+    let result = processor.finish();
+    assert!(result.final_output.is_some());
+    let final_out = result.final_output.unwrap();
     assert!(
-        !out.starts_with("\n\n"),
+        !final_out.starts_with('\n'),
         "First response should not have leading separator"
     );
-    assert_eq!(processor.response_count(), 1);
+    assert!(final_out.contains("First response"));
 }
 
 #[test]
 fn test_no_separator_for_same_message_id() {
     let mut processor = StreamProcessor::with_highlighting(false);
 
-    // First event
+    // First event — buffered
     let output1 = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First "}]}}"#,
     );
-    assert!(output1.is_some());
+    assert!(output1.is_none(), "prose should be buffered");
 
-    // Second event with same message ID (continuation)
+    // Second event with same message ID (continuation) — also buffered
     let output2 = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Second"}]}}"#,
     );
+    // Same message ID — no flush, no separator
+    assert!(output2.is_none(), "continuation should be buffered");
 
-    // Should NOT have separator (same message)
-    assert!(output2.is_some());
-    let out2 = output2.unwrap();
-    assert!(
-        !out2.starts_with('\n'),
-        "Continuation should not have separator: {:?}",
-        out2
-    );
     // Still only one response
     assert_eq!(processor.response_count(), 1);
 }
@@ -83,15 +97,19 @@ fn test_no_separator_for_same_message_id() {
 fn test_separator_after_tool_use_cycle() {
     let mut processor = StreamProcessor::with_options(false, false); // No tool display
 
-    // First response with text
+    // First response with text — buffered
     processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"Let me check"}]}}"#,
     );
 
-    // Tool invocation (same message)
-    processor.process_line(
+    // Tool invocation (same message) — triggers flush of buffered prose
+    let tool_output = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"tool_use","id":"toolu_01","name":"Read","input":{}}]}}"#,
     );
+    // Prose was flushed before tool invocation processing
+    assert!(tool_output.is_some());
+    assert!(tool_output.unwrap().contains("Let me check"));
+    assert!(processor.has_emitted_output());
 
     // Tool result
     processor.process_line(
@@ -103,7 +121,7 @@ fn test_separator_after_tool_use_cycle() {
         r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Based on the file"}]}}"#,
     );
 
-    // Should have separator
+    // Should have separator (has_emitted_output is true from the flushed prose)
     assert!(output.is_some());
     let out = output.unwrap();
     assert!(
@@ -129,11 +147,25 @@ fn test_multiple_responses_with_separators() {
         r#"{"type":"assistant","message":{"id":"msg-3","content":[{"type":"text","text":"Three"}]}}"#,
     );
 
-    // First has no separator, second and third have separators
-    assert!(!out1.unwrap().starts_with('\n'));
-    assert!(out2.unwrap().starts_with('\n'));
-    assert!(out3.unwrap().starts_with('\n'));
+    // First response is buffered (None)
+    assert!(out1.is_none());
+
+    // Second response flushes "One" + separator
+    let o2 = out2.unwrap();
+    assert!(o2.contains("One"));
+    assert!(o2.ends_with('\n'), "Should have separator: {:?}", o2);
+
+    // Third response flushes "Two" + separator
+    let o3 = out3.unwrap();
+    assert!(o3.contains("Two"));
+    assert!(o3.ends_with('\n'), "Should have separator: {:?}", o3);
+
     assert_eq!(processor.response_count(), 3);
+
+    // "Three" comes via finish()
+    let result = processor.finish();
+    assert!(result.final_output.is_some());
+    assert!(result.final_output.unwrap().contains("Three"));
 }
 
 #[test]
@@ -143,24 +175,28 @@ fn test_response_count_increments_correctly() {
     assert_eq!(processor.response_count(), 0);
     assert!(!processor.has_emitted_output());
 
-    // First message
+    // First message — prose buffered
     processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":"First"}]}}"#,
     );
     assert_eq!(processor.response_count(), 1);
-    assert!(processor.has_emitted_output());
+    // With block buffering, has_emitted_output is false (prose still buffered)
+    assert!(!processor.has_emitted_output());
 
-    // Same message (continuation)
+    // Same message (continuation) — still buffered
     processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-1","content":[{"type":"text","text":" more"}]}}"#,
     );
     assert_eq!(processor.response_count(), 1); // Still 1
 
-    // New message
-    processor.process_line(
+    // New message — flushes first message's prose
+    let output = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Second"}]}}"#,
     );
     assert_eq!(processor.response_count(), 2);
+    // Now has_emitted_output is true (flushed prose was output)
+    assert!(output.is_some());
+    assert!(processor.has_emitted_output());
 }
 
 #[test]
@@ -180,17 +216,22 @@ fn test_no_separator_if_no_output_yet() {
     );
     assert!(!processor.has_emitted_output());
 
-    // New message with text - should NOT have separator since nothing was shown
+    // New message with text — nothing to flush, text is buffered
     let output = processor.process_line(
         r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Now with text"}]}}"#,
     );
 
-    assert!(output.is_some());
-    let out = output.unwrap();
-    // Should NOT start with separator since there was no visible output before
+    // With block buffering, prose is buffered — no immediate output
+    assert!(output.is_none(), "prose should be buffered");
+
+    // Content appears in finish() without separator
+    let result = processor.finish();
+    assert!(result.final_output.is_some());
+    let final_out = result.final_output.unwrap();
     assert!(
-        !out.starts_with('\n'),
+        !final_out.starts_with('\n'),
         "Should not have separator if no prior visible output: {:?}",
-        out
+        final_out
     );
+    assert!(final_out.contains("Now with text"));
 }

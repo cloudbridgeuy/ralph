@@ -5,7 +5,7 @@
 
 use std::fs;
 
-use crate::render::{render_code_block, render_diff_block, RenderContext};
+use crate::render::{render_text_block, RenderContext};
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
@@ -72,8 +72,9 @@ impl StreamProcessor {
                         output_parts.push(flushed);
                     }
                     // Insert visual separator between distinct assistant responses
-                    // (but only if we've already emitted some output)
-                    if self.has_emitted_output {
+                    // (but only if we've already emitted some output, including
+                    // content just flushed from the buffer above)
+                    if self.has_emitted_output || !output_parts.is_empty() {
                         output_parts.push("\n".to_string());
                         // Accumulate separator block for replay
                         self.output_blocks.push(OutputBlock::separator());
@@ -87,6 +88,14 @@ impl StreamProcessor {
 
                 // Display tool invocations if enabled, and track them for result formatting
                 let tool_invocations = assistant_event.extract_tool_invocations();
+
+                // Before processing tool invocations, flush any buffered prose
+                if !tool_invocations.is_empty() {
+                    if let Some(flushed) = self.flush_pending_chunks() {
+                        output_parts.push(flushed);
+                    }
+                }
+
                 for invocation in &tool_invocations {
                     // Track pending invocations for special result formatting
                     self.pending_invocations
@@ -223,7 +232,13 @@ impl StreamProcessor {
                 // Generate highlighted output
                 let highlighted = self.highlight_chunk(&chunk);
                 output.push_str(&highlighted);
-                output.push('\n');
+
+                // Code/diff blocks need explicit trailing newline;
+                // prose rendered by term_text() manages its own newlines
+                match &chunk.chunk_type {
+                    ChunkType::Code { .. } | ChunkType::Diff => output.push('\n'),
+                    ChunkType::Prose => {}
+                }
             }
         }
 
@@ -236,37 +251,16 @@ impl StreamProcessor {
 
     /// Apply syntax highlighting to a chunk.
     ///
-    /// For code blocks, this wraps the highlighted content with visible fences
-    /// to make the block boundaries clear in the terminal output.
-    ///
-    /// For prose, markdown formatting is applied using termimad when terminal
-    /// output is enabled. This renders headers, bold, italic, inline code,
-    /// and lists with appropriate ANSI styling.
-    ///
-    /// Code and diff block rendering is delegated to shared functions in
-    /// the render module to ensure consistency with replay rendering.
+    /// Delegates to the shared `render_text_block()` function for all chunk types,
+    /// ensuring consistency between streaming and replay rendering paths.
     pub(super) fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
-        match &chunk.chunk_type {
-            ChunkType::Prose => {
-                if self.highlighting_enabled {
-                    // Render markdown formatting with termimad (line-based for streaming)
-                    self.markdown_renderer.render_line(&chunk.content)
-                } else {
-                    // Plain text for non-terminal output
-                    chunk.content.clone()
-                }
-            }
-            ChunkType::Code { language } => {
-                // Delegate to shared render function
-                let ctx = self.create_render_context();
-                render_code_block(&ctx, &chunk.content, language.as_deref())
-            }
-            ChunkType::Diff => {
-                // Delegate to shared render function
-                let ctx = self.create_render_context();
-                render_diff_block(&ctx, &chunk.content)
-            }
-        }
+        let ctx = self.create_render_context();
+        let markdown_skin = if self.highlighting_enabled {
+            Some(&self.markdown_skin)
+        } else {
+            None
+        };
+        render_text_block(&ctx, chunk, markdown_skin)
     }
 
     /// Create a render context for use with shared rendering functions.
@@ -285,7 +279,14 @@ impl StreamProcessor {
         for chunk in chunks {
             let highlighted = self.highlight_chunk(&chunk);
             output.push_str(&highlighted);
-            output.push('\n');
+
+            // Code/diff blocks need explicit trailing newline;
+            // prose rendered by term_text() manages its own newlines
+            match &chunk.chunk_type {
+                ChunkType::Code { .. } | ChunkType::Diff => output.push('\n'),
+                ChunkType::Prose => {}
+            }
+
             // Accumulate text block for replay
             self.output_blocks.push(OutputBlock::text(chunk.clone()));
             self.collected_chunks.push(chunk);

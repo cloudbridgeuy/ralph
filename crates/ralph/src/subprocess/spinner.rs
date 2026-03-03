@@ -461,10 +461,15 @@ fn run_subprocess_with_spinner(
             // Extract exit code
             let exit_code = status.code().ok_or(SubprocessError::Signaled)?;
 
+            let stream_result = processor.finish();
+            if let Some(ref output) = stream_result.final_output {
+                print!("{}", output);
+                let _ = io::stdout().flush();
+            }
             return Ok(StreamingSubprocessResult {
                 exit_code,
                 stderr: stderr_captured,
-                stream_result: processor.finish(),
+                stream_result,
             });
         }
 
@@ -488,12 +493,17 @@ fn run_subprocess_with_spinner(
             drain_stdout(&line_rx, &mut processor);
             let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
 
+            let stream_result = processor.finish();
+            if let Some(ref output) = stream_result.final_output {
+                print!("{}", output);
+                let _ = io::stdout().flush();
+            }
             return Err(SubprocessError::Timeout {
                 timeout_secs: config.timeout_secs,
                 partial_result: Box::new(StreamingSubprocessResult {
                     exit_code: EXIT_CODE_KILLED,
                     stderr: stderr_captured,
-                    stream_result: processor.finish(),
+                    stream_result,
                 }),
             });
         }
@@ -518,11 +528,16 @@ fn run_subprocess_with_spinner(
             drain_stdout(&line_rx, &mut processor);
             let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
 
+            let stream_result = processor.finish();
+            if let Some(ref output) = stream_result.final_output {
+                print!("{}", output);
+                let _ = io::stdout().flush();
+            }
             return Err(SubprocessError::Interrupted {
                 partial_result: Box::new(StreamingSubprocessResult {
                     exit_code: EXIT_CODE_INTERRUPTED,
                     stderr: stderr_captured,
-                    stream_result: processor.finish(),
+                    stream_result,
                 }),
             });
         }
@@ -636,11 +651,16 @@ fn run_subprocess_with_spinner(
                 drain_stdout(&line_rx, &mut processor);
                 let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
 
+                let stream_result = processor.finish();
+                if let Some(ref output) = stream_result.final_output {
+                    print!("{}", output);
+                    let _ = io::stdout().flush();
+                }
                 return Err(SubprocessError::HardStop {
                     partial_result: Box::new(StreamingSubprocessResult {
                         exit_code: EXIT_CODE_HARD_STOP,
                         stderr: stderr_captured,
-                        stream_result: processor.finish(),
+                        stream_result,
                     }),
                 });
             }

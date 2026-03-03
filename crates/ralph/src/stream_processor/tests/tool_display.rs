@@ -114,11 +114,18 @@ fn test_tool_text_mixed_content() {
         r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Let me read the file."},{"type":"tool_use","id":"toolu_01","name":"Read","input":{"file_path":"/src/main.rs"}}]}}"#,
     );
 
-    // Should return both text and tool invocation
+    // Tool invocation should be displayed; prose text is buffered
     assert!(output.is_some());
     let out = output.unwrap();
-    assert!(out.contains("Let me read the file"));
     assert!(out.contains("Read"));
+
+    // Buffered prose appears in finish()
+    let result = processor.finish();
+    assert!(result.final_output.is_some());
+    assert!(result
+        .final_output
+        .unwrap()
+        .contains("Let me read the file"));
 }
 
 #[test]

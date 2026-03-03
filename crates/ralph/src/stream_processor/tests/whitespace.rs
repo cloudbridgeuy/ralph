@@ -2,6 +2,10 @@
 //!
 //! Tests that blank lines, indentation, and whitespace are correctly
 //! preserved in the output.
+//!
+//! With block buffering (prose_threshold = usize::MAX), all prose accumulates
+//! into single multi-line chunks. Prose is only flushed when a code fence opens
+//! or at finish() time.
 
 use crate::stream_processor::*;
 use ralph_core::chunk::ChunkType;
@@ -11,26 +15,27 @@ fn test_whitespace_blank_lines_preserved_between_paragraphs() {
     let mut processor = StreamProcessor::with_highlighting(false);
 
     // Simulate: "Paragraph 1.\n\nParagraph 2."
-    let output1 = processor.process_line(
+    // With block buffering, prose accumulates — process_line returns None
+    let output = processor.process_line(
         r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Paragraph 1.\n\nParagraph 2."}]}}"#,
     );
+    assert!(output.is_none(), "prose should be buffered, not emitted");
 
     let result = processor.finish();
 
-    // Should have three chunks: Paragraph 1, blank line, Paragraph 2
-    assert_eq!(result.chunks.len(), 3);
-    assert_eq!(result.chunks[0].content, "Paragraph 1.");
-    assert_eq!(result.chunks[1].content, ""); // blank line preserved
-    assert_eq!(result.chunks[2].content, "Paragraph 2.");
+    // Block buffering: all prose in a single chunk
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].content, "Paragraph 1.\n\nParagraph 2.");
+    assert!(matches!(result.chunks[0].chunk_type, ChunkType::Prose));
 
     // raw_text should preserve the original
     assert_eq!(result.raw_text, "Paragraph 1.\n\nParagraph 2.");
 
-    // Output should have correct newlines
-    if let Some(out) = output1 {
-        // Each chunk gets a newline, so: "Paragraph 1.\n" + "\n" + "Paragraph 2.\n"
-        assert_eq!(out, "Paragraph 1.\n\nParagraph 2.\n");
-    }
+    // Final output should contain the rendered prose
+    assert!(result.final_output.is_some());
+    let final_out = result.final_output.as_ref().unwrap();
+    assert!(final_out.contains("Paragraph 1."));
+    assert!(final_out.contains("Paragraph 2."));
 }
 
 #[test]
@@ -43,12 +48,9 @@ fn test_whitespace_multiple_blank_lines_preserved() {
 
     let result = processor.finish();
 
-    // Should have: Text, blank, blank, More text
-    assert_eq!(result.chunks.len(), 4);
-    assert_eq!(result.chunks[0].content, "Text");
-    assert_eq!(result.chunks[1].content, "");
-    assert_eq!(result.chunks[2].content, "");
-    assert_eq!(result.chunks[3].content, "More text");
+    // Block buffering: single prose chunk preserving all blank lines
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].content, "Text\n\n\nMore text");
 }
 
 #[test]
@@ -100,18 +102,16 @@ fn test_whitespace_indentation_preserved_in_code() {
 fn test_whitespace_trailing_newline_in_text() {
     let mut processor = StreamProcessor::with_highlighting(false);
 
-    // Text with trailing newline
+    // Text with trailing newline: "Line 1\nLine 2\n"
     processor.process_line(
         r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Line 1\nLine 2\n"}]}}"#,
     );
 
     let result = processor.finish();
 
-    // Should preserve trailing newline as empty chunk
-    assert_eq!(result.chunks.len(), 3);
-    assert_eq!(result.chunks[0].content, "Line 1");
-    assert_eq!(result.chunks[1].content, "Line 2");
-    assert_eq!(result.chunks[2].content, ""); // trailing newline
+    // Block buffering: single prose chunk preserving the trailing newline
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(result.chunks[0].content, "Line 1\nLine 2\n");
 }
 
 #[test]
@@ -138,10 +138,12 @@ fn test_whitespace_list_indentation_preserved() {
 
     let result = processor.finish();
 
-    assert_eq!(result.chunks.len(), 3);
-    assert_eq!(result.chunks[0].content, "- Item 1");
-    assert_eq!(result.chunks[1].content, "  - Nested item");
-    assert_eq!(result.chunks[2].content, "    - Deeply nested");
+    // Block buffering: single prose chunk with all list items
+    assert_eq!(result.chunks.len(), 1);
+    assert_eq!(
+        result.chunks[0].content,
+        "- Item 1\n  - Nested item\n    - Deeply nested"
+    );
 }
 
 #[test]
@@ -154,14 +156,15 @@ fn test_whitespace_blank_line_before_code_block() {
 
     let result = processor.finish();
 
-    // Should have: prose ("Here's code:"), blank line, code block
-    assert_eq!(result.chunks.len(), 3);
-    assert_eq!(result.chunks[0].content, "Here's code:");
-    assert_eq!(result.chunks[1].content, ""); // blank line before code
+    // Should have 2 chunks: prose flushed when code fence opens, then code block
+    assert_eq!(result.chunks.len(), 2);
+    assert_eq!(result.chunks[0].content, "Here's code:\n");
+    assert!(matches!(result.chunks[0].chunk_type, ChunkType::Prose));
     assert!(matches!(
-        result.chunks[2].chunk_type,
+        result.chunks[1].chunk_type,
         ChunkType::Code { .. }
     ));
+    assert_eq!(result.chunks[1].content, "fn main() {}");
 }
 
 #[test]
@@ -174,14 +177,17 @@ fn test_whitespace_blank_line_after_code_block() {
 
     let result = processor.finish();
 
-    // Should have: code block, blank line, prose ("Done.")
-    assert_eq!(result.chunks.len(), 3);
+    // Should have 2 chunks: code block (immediate), then prose from final flush
+    assert_eq!(result.chunks.len(), 2);
     assert!(matches!(
         result.chunks[0].chunk_type,
         ChunkType::Code { .. }
     ));
-    assert_eq!(result.chunks[1].content, ""); // blank line after code
-    assert_eq!(result.chunks[2].content, "Done.");
+    // The blank line after ``` produces an empty prose line, which joins with "Done."
+    // Since accumulate_prose_line("") leaves the buffer empty (len 0), the next line
+    // doesn't get a \n prefix, resulting in just "Done."
+    assert_eq!(result.chunks[1].content, "Done.");
+    assert!(matches!(result.chunks[1].chunk_type, ChunkType::Prose));
 }
 
 #[test]

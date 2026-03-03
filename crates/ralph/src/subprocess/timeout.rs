@@ -142,6 +142,10 @@ pub fn invoke_subprocess_with_timeout(
 
             // Finish stream processing
             let stream_result = processor.finish();
+            if let Some(ref output) = stream_result.final_output {
+                print!("{}", output);
+                let _ = io::stdout().flush();
+            }
 
             return Ok(StreamingSubprocessResult {
                 exit_code,
@@ -172,6 +176,10 @@ pub fn invoke_subprocess_with_timeout(
 
             // Finish stream processing to get partial result
             let stream_result = processor.finish();
+            if let Some(ref output) = stream_result.final_output {
+                print!("{}", output);
+                let _ = io::stdout().flush();
+            }
 
             return Err(SubprocessError::Timeout {
                 timeout_secs,

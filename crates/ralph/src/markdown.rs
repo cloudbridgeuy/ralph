@@ -15,17 +15,44 @@
 //!
 //! # Example
 //!
-//! ```no_run
-//! use ralph::markdown::{render_markdown, is_markdown_rendering_supported};
+//! ```
+//! use ralph::markdown::MarkdownRenderer;
 //!
-//! if is_markdown_rendering_supported() {
-//!     let rendered = render_markdown("# Hello\n\nThis is **bold** text.");
-//!     print!("{}", rendered);
-//! }
+//! let renderer = MarkdownRenderer::new();
+//! let rendered = renderer.render("# Hello\n\nThis is **bold** text.");
 //! ```
 
-use std::io::IsTerminal;
 use termimad::{MadSkin, StyledChar};
+
+/// Create a configured `MadSkin` for terminal markdown rendering (Functional Core).
+///
+/// This is a pure function that produces the shared skin used across all
+/// rendering paths: streaming, replay, and batch. Customize colors here
+/// and every renderer picks them up automatically.
+pub fn create_markdown_skin() -> MadSkin {
+    use termimad::crossterm::style::{Attribute, Color};
+
+    let mut skin = MadSkin::default();
+
+    skin.headers[0].set_fg(Color::Cyan);
+    skin.headers[0].add_attr(Attribute::Bold);
+
+    skin.headers[1].set_fg(Color::Blue);
+    skin.headers[1].add_attr(Attribute::Bold);
+
+    skin.headers[2].set_fg(Color::Magenta);
+    skin.headers[2].add_attr(Attribute::Bold);
+
+    skin.bold.add_attr(Attribute::Bold);
+    skin.italic.add_attr(Attribute::Italic);
+
+    // Yellow on dark background for visual distinction from prose
+    skin.inline_code.set_fgbg(Color::Yellow, termimad::gray(3));
+
+    skin.bullet = StyledChar::from_fg_char(Color::DarkGrey, '•');
+
+    skin
+}
 
 /// A markdown renderer for terminal output using termimad.
 ///
@@ -63,37 +90,9 @@ impl MarkdownRenderer {
     /// let renderer = MarkdownRenderer::new();
     /// ```
     pub fn new() -> Self {
-        let mut skin = MadSkin::default();
-
-        // Customize header styles - use bold and different colors
-        // H1: Bold cyan
-        skin.headers[0].set_fg(termimad::crossterm::style::Color::Cyan);
-        skin.headers[0].add_attr(termimad::crossterm::style::Attribute::Bold);
-
-        // H2: Bold blue
-        skin.headers[1].set_fg(termimad::crossterm::style::Color::Blue);
-        skin.headers[1].add_attr(termimad::crossterm::style::Attribute::Bold);
-
-        // H3: Bold magenta
-        skin.headers[2].set_fg(termimad::crossterm::style::Color::Magenta);
-        skin.headers[2].add_attr(termimad::crossterm::style::Attribute::Bold);
-
-        // Bold text
-        skin.bold
-            .add_attr(termimad::crossterm::style::Attribute::Bold);
-
-        // Italic text
-        skin.italic
-            .add_attr(termimad::crossterm::style::Attribute::Italic);
-
-        // Inline code - use a subtle background
-        skin.inline_code
-            .set_fg(termimad::crossterm::style::Color::Yellow);
-
-        // Bullet points - use a nice bullet character
-        skin.bullet = StyledChar::from_fg_char(termimad::crossterm::style::Color::DarkGrey, '•');
-
-        Self { skin }
+        Self {
+            skin: create_markdown_skin(),
+        }
     }
 
     /// Render markdown text to a string with ANSI formatting.
@@ -122,112 +121,6 @@ impl MarkdownRenderer {
     pub fn render(&self, text: &str) -> String {
         // termimad's text method renders markdown to a string with ANSI codes
         self.skin.text(text, None).to_string()
-    }
-
-    /// Render a single line of markdown.
-    ///
-    /// This is optimized for streaming line-by-line output. Unlike `render`,
-    /// this treats the input as a single paragraph fragment.
-    ///
-    /// # Arguments
-    ///
-    /// * `line` - A single line of markdown text
-    ///
-    /// # Returns
-    ///
-    /// A string containing the rendered line with ANSI escape sequences.
-    pub fn render_line(&self, line: &str) -> String {
-        // For single lines, use inline rendering to avoid block-level formatting
-        // This is better for streaming output
-        self.skin.inline(line).to_string()
-    }
-}
-
-/// Check if markdown rendering is supported in the current environment.
-///
-/// Returns `true` if stdout is connected to a terminal that supports
-/// ANSI escape codes. Returns `false` if output is piped or redirected.
-///
-/// # Example
-///
-/// ```no_run
-/// use ralph::markdown::is_markdown_rendering_supported;
-///
-/// if is_markdown_rendering_supported() {
-///     // Render with markdown formatting
-/// } else {
-///     // Plain text output
-/// }
-/// ```
-pub fn is_markdown_rendering_supported() -> bool {
-    std::io::stdout().is_terminal()
-}
-
-/// Render markdown with the default renderer.
-///
-/// This is a convenience function that creates a renderer and renders
-/// the given text. For multiple rendering operations, prefer creating
-/// a [`MarkdownRenderer`] instance and reusing it.
-///
-/// # Arguments
-///
-/// * `text` - The markdown text to render
-///
-/// # Returns
-///
-/// A string containing the rendered text with ANSI escape sequences.
-///
-/// # Example
-///
-/// ```
-/// use ralph::markdown::render_markdown;
-///
-/// let rendered = render_markdown("# Hello\n\nThis is **bold** text.");
-/// ```
-pub fn render_markdown(text: &str) -> String {
-    let renderer = MarkdownRenderer::new();
-    renderer.render(text)
-}
-
-/// Render markdown line with the default renderer.
-///
-/// This is a convenience function for rendering single lines, optimized
-/// for streaming output.
-///
-/// # Arguments
-///
-/// * `line` - A single line of markdown text
-///
-/// # Returns
-///
-/// A string containing the rendered line with ANSI escape sequences.
-pub fn render_markdown_line(line: &str) -> String {
-    let renderer = MarkdownRenderer::new();
-    renderer.render_line(line)
-}
-
-/// Format prose for terminal output.
-///
-/// If terminal markdown rendering is supported, renders the prose with
-/// markdown formatting. Otherwise returns the text as-is.
-///
-/// # Arguments
-///
-/// * `text` - The prose text to format
-///
-/// # Example
-///
-/// ```no_run
-/// use ralph::markdown::format_prose_for_terminal;
-///
-/// let formatted = format_prose_for_terminal("This is **bold** text.");
-/// print!("{}", formatted);
-/// ```
-pub fn format_prose_for_terminal(text: &str) -> String {
-    if is_markdown_rendering_supported() {
-        render_markdown(text)
-    } else {
-        text.to_string()
     }
 }
 
@@ -332,24 +225,6 @@ mod tests {
     }
 
     #[test]
-    fn test_render_line_simple() {
-        let renderer = MarkdownRenderer::new();
-        let rendered = renderer.render_line("simple line");
-
-        assert!(rendered.contains("simple line"));
-    }
-
-    #[test]
-    fn test_render_line_with_inline_formatting() {
-        let renderer = MarkdownRenderer::new();
-        let rendered = renderer.render_line("**bold** word");
-
-        // Should contain ANSI escape codes
-        assert!(rendered.contains("\x1b["));
-        assert!(rendered.contains("bold"));
-    }
-
-    #[test]
     fn test_render_empty_string() {
         let renderer = MarkdownRenderer::new();
         let rendered = renderer.render("");
@@ -367,18 +242,6 @@ mod tests {
         // Should contain both paragraphs
         assert!(rendered.contains("First"));
         assert!(rendered.contains("Second"));
-    }
-
-    #[test]
-    fn test_render_markdown_convenience() {
-        let rendered = render_markdown("**test**");
-        assert!(rendered.contains("test"));
-    }
-
-    #[test]
-    fn test_render_markdown_line_convenience() {
-        let rendered = render_markdown_line("**test**");
-        assert!(rendered.contains("test"));
     }
 
     #[test]
@@ -415,5 +278,17 @@ mod tests {
         assert!(rendered.contains("你好"));
         assert!(rendered.contains("世界"));
         assert!(rendered.contains("🎉"));
+    }
+
+    #[test]
+    fn test_create_markdown_skin_returns_configured_skin() {
+        let skin = create_markdown_skin();
+        // Inline code should produce ANSI escape codes (fg + bg set)
+        let rendered = skin.inline("`code`").to_string();
+        assert!(
+            rendered.contains("\x1b["),
+            "inline code should have ANSI styling"
+        );
+        assert!(rendered.contains("code"));
     }
 }

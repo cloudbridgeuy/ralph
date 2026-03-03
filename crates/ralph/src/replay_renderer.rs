@@ -13,6 +13,7 @@
 //! - Separators emit a single newline
 
 use crate::highlight::Highlighter;
+use crate::markdown::create_markdown_skin;
 use crate::render::{
     // Shared invocation renderers
     render_bash_invocation,
@@ -61,7 +62,7 @@ impl ReplayRenderer {
     pub fn new(highlighter: Highlighter, is_terminal: bool) -> Self {
         Self {
             code_highlighter: highlighter,
-            markdown_skin: MadSkin::default(),
+            markdown_skin: create_markdown_skin(),
             highlighting_enabled: is_terminal,
         }
     }
