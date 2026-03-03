@@ -65,7 +65,10 @@
       "Bash(git status:*)",
       "Bash(git checkout:*)",
       "Bash(git restore:*)",
-      "Bash(cargo rail:*)"
+      "Bash(cargo rail:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(git stash:*)"
     ],
     "deny": [],
     "ask": []
