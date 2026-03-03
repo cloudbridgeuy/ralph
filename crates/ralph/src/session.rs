@@ -31,6 +31,7 @@ use ralph_core::session::{
     SessionOutcome, SessionsIndex,
 };
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Error type for session operations.
@@ -78,13 +79,13 @@ pub enum SessionError {
         source: std::io::Error,
     },
 
-    /// Failed to parse sessions index
-    #[error("Failed to parse sessions index: {0}")]
-    ParseSessionsIndex(#[from] toml::de::Error),
-
     /// Failed to serialize sessions index
     #[error("Failed to serialize sessions index: {0}")]
     SerializeSessionsIndex(#[from] toml::ser::Error),
+
+    /// Round-trip verification failed during save
+    #[error("Sessions index round-trip verification failed: {0}")]
+    RoundTripVerificationFailed(String),
 
     /// Failed to write session metadata
     #[error("Failed to write session metadata at {path}: {source}")]
@@ -165,39 +166,93 @@ pub fn paused_state_path() -> PathBuf {
 }
 
 /// Load the sessions index from disk, or create a new empty one if it doesn't exist.
+///
+/// If the index file exists but contains corrupt TOML, warns the user and returns
+/// an empty index rather than failing. The sessions index is a convenience cache —
+/// each session also has its own `session.toml` in its directory. The next
+/// `save_sessions_index()` call will write a clean index, self-healing the corruption.
+///
+/// I/O read errors still propagate as hard errors since those indicate real system problems.
 pub fn load_sessions_index() -> Result<SessionsIndex, SessionError> {
     let path = sessions_index_path();
 
-    if !path.exists() {
-        return Ok(SessionsIndex::new());
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SessionsIndex::new()),
+        Err(e) => {
+            return Err(SessionError::ReadSessionsIndex {
+                path: path.display().to_string(),
+                source: e,
+            })
+        }
+    };
+
+    match SessionsIndex::from_toml(&content) {
+        Ok(index) => Ok(index),
+        Err(e) => {
+            crate::warn::warn(format!(
+                "Sessions index at {} is corrupt ({}). \
+                 Starting with empty index. Session data is preserved in individual session directories. \
+                 The index will self-heal when a new session is created.",
+                path.display(),
+                e
+            ));
+            Ok(SessionsIndex::new())
+        }
     }
-
-    let content = fs::read_to_string(&path).map_err(|e| SessionError::ReadSessionsIndex {
-        path: path.display().to_string(),
-        source: e,
-    })?;
-
-    SessionsIndex::from_toml(&content).map_err(SessionError::ParseSessionsIndex)
 }
 
-/// Save the sessions index to disk.
+/// Save the sessions index to disk using atomic write.
+///
+/// Uses a temp file + rename strategy to prevent corruption from interrupted writes.
+/// Also round-trip verifies the serialized content before touching disk.
 pub fn save_sessions_index(index: &SessionsIndex) -> Result<(), SessionError> {
     let path = sessions_index_path();
 
     // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| SessionError::WriteSessionsIndex {
-            path: parent.display().to_string(),
-            source: e,
+    let parent = path
+        .parent()
+        .ok_or_else(|| SessionError::WriteSessionsIndex {
+            path: path.display().to_string(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "no parent directory"),
         })?;
-    }
+
+    fs::create_dir_all(parent).map_err(|e| SessionError::WriteSessionsIndex {
+        path: parent.display().to_string(),
+        source: e,
+    })?;
 
     let content = index.to_toml()?;
 
-    fs::write(&path, content).map_err(|e| SessionError::WriteSessionsIndex {
-        path: path.display().to_string(),
-        source: e,
+    // Round-trip verify: parse the serialized string back to catch serialization bugs
+    // before writing anything to disk
+    SessionsIndex::from_toml(&content).map_err(|e| {
+        SessionError::RoundTripVerificationFailed(format!(
+            "serialized TOML failed to parse back: {}",
+            e
+        ))
     })?;
+
+    // Atomic write: temp file in same directory (same filesystem) then rename
+    let mut temp_file =
+        tempfile::NamedTempFile::new_in(parent).map_err(|e| SessionError::WriteSessionsIndex {
+            path: parent.display().to_string(),
+            source: e,
+        })?;
+
+    temp_file
+        .write_all(content.as_bytes())
+        .map_err(|e| SessionError::WriteSessionsIndex {
+            path: path.display().to_string(),
+            source: e,
+        })?;
+
+    temp_file
+        .persist(&path)
+        .map_err(|e| SessionError::WriteSessionsIndex {
+            path: path.display().to_string(),
+            source: e.error,
+        })?;
 
     Ok(())
 }
