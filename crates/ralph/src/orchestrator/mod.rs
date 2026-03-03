@@ -155,10 +155,7 @@ pub fn orchestrate(
     directives: ValidatedDirectiveSet,
     config: &OrchestrationConfig,
 ) -> Result<(), OrchestrationError> {
-    let originator_name = originator
-        .persona
-        .as_deref()
-        .unwrap_or(originator.slug.as_str());
+    let originator_name = originator.display_name();
 
     match directives {
         ValidatedDirectiveSet::Handovers(ref handover_directives) => {
@@ -185,6 +182,7 @@ pub fn continue_session(
     session_slug: &str,
     persona: &str,
     prompt: &str,
+    on_behalf_of: Option<&str>,
     config: &OrchestrationConfig,
 ) -> Result<InvocationResult, OrchestrationError> {
     let session_dir = session::session_dir(session_slug);
@@ -207,7 +205,7 @@ pub fn continue_session(
         clone: None,
         permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
         persona: Some(persona.to_string()),
-        on_behalf_of: None,
+        on_behalf_of: on_behalf_of.map(|s| s.to_string()),
     };
 
     Ok(invoke::invoke(invocation_config)?)
@@ -255,13 +253,12 @@ fn orchestrate_inner(
     match directives {
         ValidatedDirectiveSet::Handovers(ref handover_directives) => {
             execute_handovers(originator_name, handover_directives, config)?;
-            Ok(())
         }
         ValidatedDirectiveSet::Asks(ref ask_directives) => {
             ask::execute_asks(ask_directives, originator, config)?;
-            Ok(())
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

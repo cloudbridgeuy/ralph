@@ -83,6 +83,13 @@ pub struct InvocationResult {
     pub persona: Option<String>,
 }
 
+impl InvocationResult {
+    /// Return the persona display name, falling back to the session slug.
+    pub fn display_name(&self) -> &str {
+        self.persona.as_deref().unwrap_or(self.slug.as_str())
+    }
+}
+
 /// Errors that can occur during invocation.
 #[derive(Debug, thiserror::Error)]
 pub enum InvocationError {

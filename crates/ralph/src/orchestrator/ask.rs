@@ -25,10 +25,7 @@ pub fn execute_asks(
     originator: &InvocationResult,
     config: &OrchestrationConfig,
 ) -> Result<(), OrchestrationError> {
-    let originator_name = originator
-        .persona
-        .as_deref()
-        .unwrap_or(originator.slug.as_str());
+    let originator_name = originator.display_name();
 
     // Phase 1: invoke all targets in parallel, then resolve sub-directives sequentially
     let results = parallel::parallel_invoke(directives, originator_name, config);
@@ -52,7 +49,7 @@ pub fn execute_asks(
     }
 
     let continuation_result =
-        continue_session(&originator.slug, originator_name, &aggregated, config)?;
+        continue_session(&originator.slug, originator_name, &aggregated, None, config)?;
 
     // Phase 3: scan continuation for more directives and recurse
     if let Some(sub_directives) = scan_for_directives(&continuation_result) {
@@ -99,7 +96,7 @@ fn resolve(
         ValidatedDirectiveSet::Handovers(_) => None,
     };
 
-    let target_name = result.persona.as_deref().unwrap_or(result.slug.as_str());
+    let target_name = result.display_name();
 
     if let Some(directive) = originator_directive {
         // Target is asking the originator back — enter conversation loop.
@@ -137,7 +134,13 @@ fn resolve(
                 return Err(OrchestrationError::BudgetExhausted);
             }
 
-            let final_result = continue_session(&result.slug, target_name, &aggregated, config)?;
+            let final_result = continue_session(
+                &result.slug,
+                target_name,
+                &aggregated,
+                Some(originator_persona),
+                config,
+            )?;
             Ok(final_result.response_text.unwrap_or_default())
         }
         ValidatedDirectiveSet::Handovers(ref handover_directives) => {

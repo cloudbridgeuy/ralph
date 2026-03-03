@@ -69,7 +69,13 @@ pub fn conversation_loop(
             &config.budget,
         );
 
-        let result = continue_session(responder_session, responder_persona, &message, config)?;
+        let result = continue_session(
+            responder_session,
+            responder_persona,
+            &message,
+            Some(other_persona),
+            config,
+        )?;
         let response_text = result.response_text.clone().unwrap_or_default();
 
         // Check if the responder emitted a directive back to the other persona.
