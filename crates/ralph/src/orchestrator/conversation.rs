@@ -7,9 +7,11 @@
 //! when one side finishes without a directive targeting the other, or when the
 //! invocation budget is exhausted.
 
-use ralph_core::directive::ValidatedDirectiveSet;
+use ralph_core::directive::{DirectiveVerb, ValidatedDirectiveSet};
 
-use super::{continue_session, scan_for_directives, OrchestrationConfig, OrchestrationError};
+use super::{
+    continue_session, display, scan_for_directives, OrchestrationConfig, OrchestrationError,
+};
 
 /// Configuration for a two-persona conversation loop.
 ///
@@ -58,6 +60,14 @@ pub fn conversation_loop(
         if !config.budget.try_consume() {
             return Err(OrchestrationError::BudgetExhausted);
         }
+
+        display::print_routing_status(
+            other_persona,
+            &DirectiveVerb::Ask,
+            responder_persona,
+            &message,
+            &config.budget,
+        );
 
         let result = continue_session(responder_session, responder_persona, &message, config)?;
         let response_text = result.response_text.clone().unwrap_or_default();
