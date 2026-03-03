@@ -284,3 +284,16 @@ Before using Read, Grep, or Glob to investigate something, ask:
 ### Adding New Personas
 
 When creating a new persona, follow the same structure. The delegation hardening sections ("Before you act", "Directive triggers", prescriptive "What you don't do") are required — without them, the persona will default to doing everything itself.
+
+## Agent Tool Restriction
+
+Personas are blocked from using Claude Code's built-in `Agent` tool at the command level. This prevents personas from spawning sub-agents instead of delegating through ralph directives.
+
+Two CLI flags enforce the restriction in `build_command()` (in `crates/ralph/src/invoke.rs`):
+
+- `--disallowed-tools Agent` — Hard block. Claude never sees the Agent tool in its tool list.
+- `--append-system-prompt "..."` — Soft guard. A system prompt suffix reminds the persona that Agent is unavailable and delegation must go through `<ralph-ask>` / `<ralph-handover>` directives exclusively.
+
+Both flags are added only when `agent` is `Some(name)` — non-persona invocations (`ralph ask`) retain full tool access.
+
+All persona invocation paths flow through `build_command()`, so one change covers fresh sessions, session continuations (ask round-trips), and parallel orchestration.
