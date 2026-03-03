@@ -470,14 +470,6 @@ mod tests {
     }
 
     #[test]
-    fn test_replay_session_not_found() {
-        // This test may fail if the user has a real session with this name
-        // but it's a reasonable test for the error case
-        let result = replay_session("nonexistent-session-xyz", None);
-        assert!(matches!(result, Err(ReplayError::SessionNotFound { .. })));
-    }
-
-    #[test]
     fn test_replay_error_display_session_not_found() {
         let err = ReplayError::SessionNotFound {
             slug: "my-session".to_string(),

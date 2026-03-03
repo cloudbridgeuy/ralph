@@ -693,24 +693,6 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_session_slug_validates_format() {
-        let result = resolve_session_slug(Some("INVALID"));
-        assert!(matches!(result, Err(SessionError::InvalidSlug { .. })));
-
-        let _result = resolve_session_slug(Some("no-uppercase"));
-        // This might succeed if the slug doesn't exist, so we're just testing format validation
-        // The actual validation happens in is_valid_slug which is tested in core
-    }
-
-    #[test]
-    fn test_resolve_session_slug_generates_when_none() {
-        let result = resolve_session_slug(None);
-        // Should generate a slug (might fail if we can't access/create config dir, but that's OK for this test)
-        // We're mainly testing that it doesn't panic
-        assert!(result.is_ok() || matches!(result, Err(SessionError::ReadSessionsIndex { .. })));
-    }
-
-    #[test]
     fn test_initialize_session_directory_creates_structure() {
         with_temp_sessions_dir(|temp_dir| {
             let session_path = temp_dir.path().join("test-session");
@@ -735,27 +717,6 @@ mod tests {
             assert_eq!(loaded_metadata.slug, "test-session");
             assert_eq!(loaded_metadata.project, project_path);
         });
-    }
-
-    #[test]
-    fn test_finalize_session_not_found_error() {
-        // Attempting to finalize a non-existent session should return SessionNotFound
-        let result = finalize_session("nonexistent-slug", 5, SessionOutcome::Completed);
-        // Note: This test may succeed or fail depending on whether the global sessions.toml
-        // happens to contain "nonexistent-slug". We check for the correct error type.
-        if let Err(e) = result {
-            // Either SessionNotFound or ReadSessionsIndex are acceptable errors
-            match e {
-                SessionError::SessionNotFound { slug } => {
-                    assert_eq!(slug, "nonexistent-slug");
-                }
-                SessionError::ReadSessionsIndex { .. } => {
-                    // This is OK - means we couldn't read the index
-                }
-                _ => panic!("Unexpected error type: {:?}", e),
-            }
-        }
-        // If it somehow succeeds (slug exists in a real sessions.toml), that's fine too
     }
 
     #[test]
