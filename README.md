@@ -41,6 +41,7 @@
 - **Replay Sessions** - Review past sessions with full syntax highlighting
 - **Customizable Prompts** - Use custom prompt templates or add additional instructions
 - **Theme Support** - Multiple built-in themes or use custom `.tmTheme` files
+- **Multi-Agent Orchestration** - Personas can delegate work to each other via ask and handover directives, with automatic routing and budget control
 
 ## Installation
 

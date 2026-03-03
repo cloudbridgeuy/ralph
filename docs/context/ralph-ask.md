@@ -404,6 +404,10 @@ ralph ask --no-prompt 'prompt'
 ralph ask --verbose-tools=bash 'Run the tests'
 ```
 
+## Orchestration
+
+When used within the orchestration system (as a session continuation), `ask` output is scanned for directives the same way persona output is. This enables multi-hop chains where an originator asks a target, the target asks another persona, and responses flow back up the chain. See [Orchestration](orchestration.md) for details.
+
 ## Related Documentation
 
 - [ralph run Command](ralph-run.md) - PRD-driven iteration loop

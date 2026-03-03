@@ -69,3 +69,11 @@ Both `ralph ask` and `ralph persona` delegate to the shared invocation engine in
 - `persona`: `persona: Some(name)` — uses `--agent` flag
 
 The `build_shared_invocation_config()` function in `main.rs` handles the shared logic (clone resolution, continuation, theme, verbose tools, prompt resolution) for both commands through `InvocationConfigParams`.
+
+## Orchestration
+
+After a persona invocation completes, ralph scans the output for orchestration directives (`<ralph-ask>`, `<ralph-handover>`). If directives are found, ralph automatically invokes the target personas, manages the response flow, and may continue the originator's session with aggregated results.
+
+This happens transparently — the user sees routing status lines and a budget summary when orchestration occurs. The persona does not need to be configured for orchestration; any persona can emit directives if its agent file includes the directive syntax in its instructions.
+
+Budget, directive format, and orchestration modes are documented in [Orchestration](orchestration.md).

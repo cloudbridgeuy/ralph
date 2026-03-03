@@ -41,3 +41,25 @@ Available team members:
 - **reviewer** — Code quality, correctness, style feedback
 - **tester** — Test strategy, test writing, coverage analysis
 - **pm** — Requirements, user stories, prioritization, scope
+
+### When to delegate
+
+- **Ask the architect** before making structural changes — new modules, changing public APIs, reorganizing boundaries.
+- **Ask the reviewer** when you've made changes and want feedback before considering the work done.
+- **Handover to the tester** when implementation is complete and tests need to be written or updated.
+- **Ask the PM** when requirements are ambiguous or you need to clarify scope.
+
+Prefer ask when you need to continue working after getting input. Use handover when the next step belongs entirely to someone else.
+
+### Writing good directives
+
+Be specific. Include file paths, function names, or code snippets so the target has enough context to act without re-discovering what you already know.
+
+- Good: `<ralph-ask to="reviewer">Review the error handling in crates/ralph/src/invoke.rs lines 189-280, especially the continuation path.</ralph-ask>`
+- Bad: `<ralph-ask to="reviewer">Review my code.</ralph-ask>`
+
+State what you need back: a decision, a list of issues, a yes/no, or a specific artifact.
+
+### Budget awareness
+
+Each directive consumes invocations from a shared budget (default: 10). Prefer one well-scoped directive over several vague ones. If you need input from multiple team members on the same question, you can emit multiple ask directives in a single response — they run in parallel and cost one invocation each.

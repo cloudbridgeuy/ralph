@@ -9,6 +9,8 @@ This document describes the multi-agent orchestration system that allows persona
 | Directive types & parser | `crates/core/src/directive.rs` | `Directive`, `DirectiveVerb`, `ValidatedDirectiveSet`, parsing, validation |
 | Orchestrator entry point | `crates/ralph/src/orchestrator/mod.rs` | `scan_for_directives()`, `orchestrate()`, `Budget`, `OrchestrationConfig` |
 | Ask executor | `crates/ralph/src/orchestrator/ask.rs` | `execute_asks()`, `resolve()` — ask round-trip and sub-directive resolution |
+| Conversation loop | `crates/ralph/src/orchestrator/conversation.rs` | `conversation_loop()`, `ConversationConfig` — back-and-forth between two personas |
+| Parallel invocation | `crates/ralph/src/orchestrator/parallel.rs` | `parallel_invoke()` — concurrent target invocation via `std::thread::scope` |
 | Display | `crates/ralph/src/orchestrator/display.rs` | Routing status lines and orchestration summary |
 | Persona instructions | `personas/*.md` | Team collaboration section with directive syntax |
 
@@ -59,9 +61,39 @@ The originator requests input from one or more target personas and **continues**
 
 Flow: `originator emits asks` -> `targets run sequentially` -> `responses aggregated` -> `originator continues with aggregated prompt` -> `(originator may emit more directives)`
 
-### Conversation (not yet implemented)
+### Conversation
 
-When a target emits an ask directive back to the originator, this creates a conversation loop. This mode is not yet implemented and will return an error.
+When a target responds to an ask directive by emitting an ask back to the originator, the orchestrator enters a conversation loop. The two personas exchange messages back and forth until one side finishes without directing the other, or the budget runs out.
+
+Flow: `originator asks target` -> `target asks originator back` -> `originator responds` -> `(continues until one side finishes without a directive)` -> `done`
+
+Each round of the conversation consumes one budget unit. The loop terminates when:
+
+- One side produces output with no directive targeting the other — the final response text is returned.
+- The invocation budget is exhausted — returns `BudgetExhausted` error.
+
+Only ask directives trigger conversation loops. If a target emits a handover instead of an ask-back, the handover is executed normally (no loop).
+
+## Choosing Ask vs. Handover
+
+The two directive types serve different purposes:
+
+| | Ask | Handover |
+|---|---|---|
+| **Intent** | "I need input to continue my work" | "This task belongs to someone else" |
+| **Originator** | Continues after getting responses | Stops — work is done from their perspective |
+| **Response** | Aggregated and fed back to originator | Not returned — target works independently |
+| **Budget cost** | Targets + 1 continuation | Targets only |
+
+**Use ask when:**
+- You need a review or opinion before proceeding
+- You want to gather information from multiple personas and synthesize it
+- The originator should make the final decision
+
+**Use handover when:**
+- The work is complete from the originator's perspective
+- A different persona should own the next step
+- The task is self-contained and doesn't need a response back
 
 ## Validation Rules
 
@@ -89,6 +121,15 @@ Example budget consumption for an ask with two targets:
 2. Target B invocation (-1)
 3. Originator continuation (-1)
 4. Total: 3 of 10 used
+
+## Parallel Invocation
+
+When a persona emits multiple directives of the same type, all targets are invoked concurrently using `std::thread::scope`. This applies to both ask and handover directives.
+
+- Routing status lines are printed before threads spawn (to avoid interleaved output)
+- Each thread consumes one budget unit independently
+- Results are collected in directive order after all threads complete
+- Sub-directives from each target are resolved sequentially after the parallel phase
 
 ## Session Continuation (Ask Round-Trip)
 
@@ -121,6 +162,6 @@ When a target persona itself emits directives (sub-directives), the orchestrator
 
 - **No sub-directives**: the target's response text is returned directly
 - **Sub-directives to other personas**: they are executed, and the target is continued with the sub-results
-- **Sub-directive back to originator**: returns an error (conversation loops not yet implemented)
+- **Sub-directive back to originator**: enters a conversation loop where the two personas exchange messages until one side finishes without directing the other (see Conversation mode above)
 
 This allows multi-hop collaboration chains while preventing infinite loops between two personas.

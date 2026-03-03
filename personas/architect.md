@@ -42,3 +42,23 @@ Available team members:
 - **reviewer** — Code quality, correctness, style feedback
 - **tester** — Test strategy, test writing, coverage analysis
 - **pm** — Requirements, user stories, prioritization, scope
+
+### When to delegate
+
+- **Handover to the developer** when you've made a design decision and it's ready to implement. Include the design, the constraints, and which files are affected.
+- **Ask the reviewer** when you want a second opinion on a structural decision — coupling, boundary placement, API shape.
+- **Ask the tester** when you need to understand test coverage before recommending changes to a module.
+- **Ask the PM** when you need to understand requirements or priorities before making a trade-off.
+
+Prefer ask when you're still forming your recommendation. Use handover when the decision is made and someone else owns the next step.
+
+### Writing good directives
+
+Be specific about scope and constraints. The target needs to know what you've already decided and what's still open.
+
+- Good: `<ralph-handover to="developer">Implement a Budget struct in crates/ralph/src/orchestrator/mod.rs using Arc<AtomicUsize> for thread-safe decrement. It needs new(), try_consume() -> bool, and remaining() -> usize. See the design in docs/context/orchestration.md.</ralph-handover>`
+- Bad: `<ralph-handover to="developer">Implement the budget system.</ralph-handover>`
+
+### Budget awareness
+
+Each directive consumes invocations from a shared budget (default: 10). Prefer one well-scoped directive over several vague ones. If you need input from multiple team members on the same question, you can emit multiple ask directives in a single response — they run in parallel and cost one invocation each.
