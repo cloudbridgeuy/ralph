@@ -15,6 +15,9 @@ pub const CYAN: &str = "\x1b[36m";
 /// Set foreground color to yellow.
 pub const YELLOW: &str = "\x1b[33m";
 
+/// Set foreground color to green.
+pub const GREEN: &str = "\x1b[32m";
+
 /// Set text to dim.
 pub const DIM: &str = "\x1b[2m";
 
