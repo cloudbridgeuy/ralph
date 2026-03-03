@@ -125,6 +125,9 @@ pub struct SpinnerSessionInfo {
     pub current_iteration: Option<usize>,
     /// Total number of iterations for the session.
     pub max_iterations: Option<usize>,
+    /// Originator persona name when invoked via orchestration.
+    /// When set, the spinner shows "architect (for pm)" instead of just "architect".
+    pub on_behalf_of: Option<String>,
 }
 
 impl SpinnerSessionInfo {
@@ -135,6 +138,7 @@ impl SpinnerSessionInfo {
             slug: Some(slug),
             current_iteration: Some(current_iteration),
             max_iterations: Some(max_iterations),
+            on_behalf_of: None,
         }
     }
 
@@ -519,6 +523,7 @@ fn format_session_info(info: &SpinnerSessionInfo) -> String {
 /// Format session info with a persona prefix.
 ///
 /// Uses compact format: `developer (brave-panda 2/5)`.
+/// When `on_behalf_of` is set: `architect (for pm) (brave-panda 1/?)`.
 /// Session details are placed in parentheses after the persona name.
 fn format_session_info_with_persona(persona: &str, info: &SpinnerSessionInfo) -> String {
     let mut detail_parts = Vec::new();
@@ -533,10 +538,16 @@ fn format_session_info_with_persona(persona: &str, info: &SpinnerSessionInfo) ->
         _ => {}
     }
 
-    if detail_parts.is_empty() {
-        persona.to_string()
+    let behalf = if let Some(ref name) = info.on_behalf_of {
+        format!(" (for {name})")
     } else {
-        format!("{} ({})", persona, detail_parts.join(" "))
+        String::new()
+    };
+
+    if detail_parts.is_empty() {
+        format!("{persona}{behalf}")
+    } else {
+        format!("{persona}{behalf} ({})", detail_parts.join(" "))
     }
 }
 

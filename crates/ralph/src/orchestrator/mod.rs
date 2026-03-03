@@ -207,6 +207,7 @@ pub fn continue_session(
         clone: None,
         permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
         persona: Some(persona.to_string()),
+        on_behalf_of: None,
     };
 
     Ok(invoke::invoke(invocation_config)?)

@@ -47,6 +47,9 @@ pub struct InvocationConfig {
     /// Persona name. None = ask (no agent), Some = persona (uses --agent flag).
     /// Controls both the CLI --agent flag and session metadata persona scoping.
     pub persona: Option<String>,
+    /// Originator persona name when invoked via orchestration.
+    /// Passed through to the spinner to show "architect (for pm)".
+    pub on_behalf_of: Option<String>,
 }
 
 /// Info for continuing an existing session.
@@ -248,6 +251,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
             slug: Some(slug.clone()),
             current_iteration: Some(sequence as usize),
             max_iterations: None,
+            on_behalf_of: config.on_behalf_of.clone(),
         },
     };
 

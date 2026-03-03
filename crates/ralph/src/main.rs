@@ -275,6 +275,7 @@ fn build_shared_invocation_config(
         clone: clone_info,
         permission_mode: params.permission_mode.clone(),
         persona: params.persona.map(String::from),
+        on_behalf_of: None,
     })
 }
 

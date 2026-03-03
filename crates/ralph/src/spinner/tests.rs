@@ -411,6 +411,7 @@ fn test_format_session_info_persona_with_full_session() {
         slug: Some("brave-panda".to_string()),
         current_iteration: Some(2),
         max_iterations: Some(5),
+        ..Default::default()
     };
     let display = format_session_info(&info);
     assert_eq!(display, "developer (brave-panda 2/5)");
@@ -423,6 +424,7 @@ fn test_format_session_info_persona_with_unknown_max() {
         slug: Some("brave-panda".to_string()),
         current_iteration: Some(2),
         max_iterations: None,
+        ..Default::default()
     };
     let display = format_session_info(&info);
     assert_eq!(display, "developer (brave-panda 2/?)");
@@ -471,4 +473,43 @@ fn test_format_session_info_persona_with_iteration_no_max() {
     };
     let display = format_session_info(&info);
     assert_eq!(display, "reviewer (1/?)");
+}
+
+// on_behalf_of tests
+
+#[test]
+fn test_format_session_info_persona_on_behalf_of() {
+    let info = SpinnerSessionInfo {
+        persona: Some("architect".to_string()),
+        slug: Some("new-slug".to_string()),
+        current_iteration: Some(1),
+        max_iterations: None,
+        on_behalf_of: Some("pm".to_string()),
+    };
+    let display = format_session_info(&info);
+    assert_eq!(display, "architect (for pm) (new-slug 1/?)");
+}
+
+#[test]
+fn test_format_session_info_persona_on_behalf_of_no_slug() {
+    let info = SpinnerSessionInfo {
+        persona: Some("architect".to_string()),
+        on_behalf_of: Some("pm".to_string()),
+        ..Default::default()
+    };
+    let display = format_session_info(&info);
+    assert_eq!(display, "architect (for pm)");
+}
+
+#[test]
+fn test_format_session_info_on_behalf_of_without_persona() {
+    // on_behalf_of is only shown when persona is set (orchestration always has persona)
+    let info = SpinnerSessionInfo {
+        slug: Some("test-session".to_string()),
+        on_behalf_of: Some("pm".to_string()),
+        ..Default::default()
+    };
+    let display = format_session_info(&info);
+    // Without persona, falls back to verbose format — on_behalf_of ignored
+    assert_eq!(display, "Session: test-session");
 }

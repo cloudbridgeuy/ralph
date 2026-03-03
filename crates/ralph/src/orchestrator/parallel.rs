@@ -34,7 +34,7 @@ pub fn parallel_invoke(
     std::thread::scope(|s| {
         let handles: Vec<_> = directives
             .iter()
-            .map(|directive| s.spawn(|| invoke_directive(directive, config)))
+            .map(|directive| s.spawn(|| invoke_directive(directive, originator_name, config)))
             .collect();
 
         handles
@@ -57,6 +57,7 @@ pub fn parallel_invoke(
 /// Returns `Err(BudgetExhausted)` if no budget remains.
 fn invoke_directive(
     directive: &Directive,
+    originator_name: &str,
     config: &OrchestrationConfig,
 ) -> Result<InvocationResult, OrchestrationError> {
     if !config.budget.try_consume() {
@@ -74,6 +75,7 @@ fn invoke_directive(
         clone: None,
         permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
         persona: Some(directive.target.clone()),
+        on_behalf_of: Some(originator_name.to_string()),
     };
 
     Ok(invoke::invoke(invocation_config)?)
