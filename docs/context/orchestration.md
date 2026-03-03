@@ -12,7 +12,7 @@ This document describes the multi-agent orchestration system that allows persona
 | Conversation loop | `crates/ralph/src/orchestrator/conversation.rs` | `conversation_loop()`, `ConversationConfig` — back-and-forth between two personas |
 | Parallel invocation | `crates/ralph/src/orchestrator/parallel.rs` | `parallel_invoke()` — concurrent target invocation via `std::thread::scope` |
 | Display | `crates/ralph/src/orchestrator/display.rs` | ANSI-styled routing status and orchestration summary (FC-IS: `format_*` pure, `print_*` I/O) |
-| Persona instructions | `personas/*.md` | Team collaboration section with directive syntax |
+| Persona instructions | `personas/*.md` | Delegation hardening, directive triggers, team collaboration |
 
 ## Directive Format
 
@@ -220,3 +220,48 @@ When a target persona itself emits directives (sub-directives), the orchestrator
 - **Sub-directive back to originator**: enters a conversation loop where the two personas exchange messages until one side finishes without directing the other (see Conversation mode above)
 
 This allows multi-hop collaboration chains while preventing infinite loops between two personas.
+
+## Persona Prompt Structure
+
+Persona prompts are structured to make directive emission the path of least resistance. Without this structure, personas tend to use tools (Read, Grep, Glob) to do work outside their domain rather than delegating — even when the user explicitly requests delegation.
+
+Each persona file (`personas/*.md`) follows this structure:
+
+```
+Identity paragraph (includes delegation as core behavior)
+├── How you work (includes delegation behavior)
+├── What you do
+├── What you don't do (prescriptive — each "don't" paired with "Instead: <directive>")
+├── Before you act (stop-and-check before using tools for investigation)
+├── Directive triggers (non-negotiable rules mapping patterns to directive emission)
+├── [persona-specific sections]
+└── Team collaboration (directive syntax, when to delegate, writing good directives, budget)
+```
+
+### Key Sections
+
+**"What you don't do"** — Prescriptive, not descriptive. Each item tells the persona what to do *instead*:
+
+```markdown
+- Analyze code structure, module boundaries, or technical responsibilities.
+  Instead: `<ralph-ask to="architect">your question</ralph-ask>`
+```
+
+**"Before you act"** — Stop-and-check that interrupts the tool-use reflex:
+
+```markdown
+Before using Read, Grep, or Glob to investigate something, ask:
+- Is this within MY domain?
+- Or would another persona do this better?
+```
+
+**"Directive triggers"** — Non-negotiable rules for directive emission:
+
+```markdown
+- User says "ask the [persona]" → emit `<ralph-ask to="persona">`
+- You need to understand code architecture → emit `<ralph-ask to="architect">`
+```
+
+### Adding New Personas
+
+When creating a new persona, follow the same structure. The delegation hardening sections ("Before you act", "Directive triggers", prescriptive "What you don't do") are required — without them, the persona will default to doing everything itself.
