@@ -17,6 +17,13 @@ pub enum ChunkType {
     },
     /// A diff block (unified diff format).
     Diff,
+    /// A directive tag (e.g., `<ralph-ask to="reviewer">...</ralph-ask>`).
+    Directive {
+        /// Canonical verb: "ask" or "handover".
+        verb: String,
+        /// Target persona name.
+        target: String,
+    },
 }
 
 /// A parsed chunk of LLM output.
@@ -50,6 +57,21 @@ impl ParsedChunk {
     pub fn diff(content: impl Into<String>) -> Self {
         Self {
             chunk_type: ChunkType::Diff,
+            content: content.into(),
+        }
+    }
+
+    /// Create a directive chunk.
+    pub fn directive(
+        content: impl Into<String>,
+        verb: impl Into<String>,
+        target: impl Into<String>,
+    ) -> Self {
+        Self {
+            chunk_type: ChunkType::Directive {
+                verb: verb.into(),
+                target: target.into(),
+            },
             content: content.into(),
         }
     }
