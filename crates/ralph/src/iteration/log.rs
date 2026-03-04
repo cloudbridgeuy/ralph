@@ -3,6 +3,7 @@
 use crate::iteration::{Chunk, LogMetadata, LogToolCall};
 use crate::stream_processor::OutputBlock;
 use chrono::{DateTime, Utc};
+use ralph_core::chunk::ChunkType;
 use serde::{Deserialize, Serialize};
 
 /// A single iteration log entry.
@@ -117,10 +118,27 @@ pub fn extract_response_text(output_blocks: &[OutputBlock]) -> Option<String> {
     let text_parts: Vec<_> = output_blocks
         .iter()
         .filter_map(|block| match block {
-            OutputBlock::Text(text_block) => Some(text_block.chunk.content.as_str()),
+            OutputBlock::Text(text_block) => Some(text_block_to_response_text(text_block)),
             _ => None,
         })
         .collect();
 
     (!text_parts.is_empty()).then(|| text_parts.join("\n\n"))
+}
+
+/// Convert a text block's content to response text.
+///
+/// For directive chunks, reconstructs the full XML tag so that downstream
+/// directive parsing (via `parse_directives`) can find them. For all other
+/// chunk types, returns the content as-is.
+fn text_block_to_response_text(text_block: &crate::stream_processor::TextBlock) -> String {
+    match &text_block.chunk.chunk_type {
+        ChunkType::Directive { verb, target } => {
+            format!(
+                "<ralph-{verb} to=\"{target}\">{}</ralph-{verb}>",
+                text_block.chunk.content
+            )
+        }
+        _ => text_block.chunk.content.clone(),
+    }
 }

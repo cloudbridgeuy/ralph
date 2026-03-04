@@ -82,6 +82,7 @@ impl Chunk {
             ChunkType::Prose => Self::prose(parsed.content.clone()),
             ChunkType::Code { language } => Self::code(parsed.content.clone(), language.clone()),
             ChunkType::Diff => Self::diff(parsed.content.clone()),
+            ChunkType::Directive { .. } => Self::prose(parsed.content.clone()),
         }
     }
 
