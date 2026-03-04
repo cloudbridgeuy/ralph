@@ -176,6 +176,18 @@ Printed before each directive invocation (parallel, conversation, ask continuati
 - Budget fraction in dim brackets
 - Payload preview on second line (truncated to 80 chars, dim)
 
+### Persona Banner
+
+Printed before each persona starts streaming output during orchestration:
+
+```
+━━━ architect ━━━
+```
+
+- Box-drawing characters (`━`) in cyan frame the persona name
+- Shown in ask continuations, conversation loop turns, and parallel invocations
+- Helps users identify which persona is currently producing output when multiple personas stream sequentially
+
 ### Orchestration Summary
 
 Printed once at the end of the top-level `orchestrate()` call:
@@ -306,11 +318,12 @@ When creating a new persona, follow the same structure. The delegation hardening
 
 Personas are blocked from using Claude Code's built-in `Agent` tool at the command level. This prevents personas from spawning sub-agents instead of delegating through ralph directives.
 
-Two CLI flags enforce the restriction in `build_command()` (in `crates/ralph/src/invoke.rs`):
+Three CLI flags enforce the restriction in `build_command()` (in `crates/ralph/src/invoke.rs`):
 
+- `--permission-mode {mode}` — Passes through the configured permission mode (e.g., `bypassPermissions`).
 - `--disallowed-tools Agent` — Hard block. Claude never sees the Agent tool in its tool list.
 - `--append-system-prompt "..."` — Soft guard. A system prompt suffix reminds the persona that Agent is unavailable and delegation must go through `<ralph-ask>` / `<ralph-handover>` directives exclusively.
 
-Both flags are added only when `agent` is `Some(name)` — non-persona invocations (`ralph ask`) retain full tool access.
+All three flags are added only when `agent` is `Some(name)` — non-persona invocations (`ralph ask`) retain full tool access.
 
 All persona invocation paths flow through `build_command()`, so one change covers fresh sessions, session continuations (ask round-trips), and parallel orchestration.
