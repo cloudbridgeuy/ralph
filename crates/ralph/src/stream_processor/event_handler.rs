@@ -7,6 +7,7 @@ use std::fs;
 
 use crate::render::{render_text_block, RenderContext};
 use ralph_core::chunk::{split_lines_preserve_trailing, ChunkType, ParsedChunk};
+use ralph_core::directive::split_text_around_directives;
 use ralph_core::stream::{parse_stream_line, ParsedLine, StreamEvent, ToolInvocation};
 
 use super::block_builders::build_tool_invocation_block;
@@ -223,21 +224,32 @@ impl StreamProcessor {
             let chunks = self.chunk_buffer.process_line(line);
 
             for chunk in chunks {
-                // Store chunk
-                self.collected_chunks.push(chunk.clone());
+                // Split prose containing directives into typed segments
+                let sub_chunks = match &chunk.chunk_type {
+                    ChunkType::Prose => split_text_around_directives(&chunk.content),
+                    _ => vec![chunk],
+                };
 
-                // Accumulate text block for replay
-                self.output_blocks.push(OutputBlock::text(chunk.clone()));
+                for sub_chunk in sub_chunks {
+                    // Store chunk
+                    self.collected_chunks.push(sub_chunk.clone());
 
-                // Generate highlighted output
-                let highlighted = self.highlight_chunk(&chunk);
-                output.push_str(&highlighted);
+                    // Accumulate text block for replay
+                    self.output_blocks
+                        .push(OutputBlock::text(sub_chunk.clone()));
 
-                // Code/diff blocks need explicit trailing newline;
-                // prose rendered by term_text() manages its own newlines
-                match &chunk.chunk_type {
-                    ChunkType::Code { .. } | ChunkType::Diff => output.push('\n'),
-                    ChunkType::Prose => {}
+                    // Generate highlighted output
+                    let highlighted = self.highlight_chunk(&sub_chunk);
+                    output.push_str(&highlighted);
+
+                    // Code/diff/directive blocks need explicit trailing newline;
+                    // prose rendered by term_text() manages its own newlines
+                    match &sub_chunk.chunk_type {
+                        ChunkType::Code { .. } | ChunkType::Diff | ChunkType::Directive { .. } => {
+                            output.push('\n')
+                        }
+                        ChunkType::Prose => {}
+                    }
                 }
             }
         }
@@ -277,19 +289,30 @@ impl StreamProcessor {
 
         let mut output = String::new();
         for chunk in chunks {
-            let highlighted = self.highlight_chunk(&chunk);
-            output.push_str(&highlighted);
+            // Split prose containing directives into typed segments
+            let sub_chunks = match &chunk.chunk_type {
+                ChunkType::Prose => split_text_around_directives(&chunk.content),
+                _ => vec![chunk],
+            };
 
-            // Code/diff blocks need explicit trailing newline;
-            // prose rendered by term_text() manages its own newlines
-            match &chunk.chunk_type {
-                ChunkType::Code { .. } | ChunkType::Diff => output.push('\n'),
-                ChunkType::Prose => {}
+            for sub_chunk in sub_chunks {
+                let highlighted = self.highlight_chunk(&sub_chunk);
+                output.push_str(&highlighted);
+
+                // Code/diff/directive blocks need explicit trailing newline;
+                // prose rendered by term_text() manages its own newlines
+                match &sub_chunk.chunk_type {
+                    ChunkType::Code { .. } | ChunkType::Diff | ChunkType::Directive { .. } => {
+                        output.push('\n')
+                    }
+                    ChunkType::Prose => {}
+                }
+
+                // Accumulate text block for replay
+                self.output_blocks
+                    .push(OutputBlock::text(sub_chunk.clone()));
+                self.collected_chunks.push(sub_chunk);
             }
-
-            // Accumulate text block for replay
-            self.output_blocks.push(OutputBlock::text(chunk.clone()));
-            self.collected_chunks.push(chunk);
         }
 
         if output.is_empty() {
