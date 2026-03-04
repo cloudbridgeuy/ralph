@@ -77,6 +77,26 @@ pub fn print_orchestration_summary(budget: &Budget) {
     println!("{}", format_orchestration_summary(budget));
 }
 
+/// Format a persona banner showing which persona is about to stream.
+///
+/// Pure function — returns a styled string with ANSI codes.
+///
+/// # Format
+///
+/// ```text
+/// ━━━ architect ━━━
+/// ```
+fn format_persona_banner(name: &str) -> String {
+    format!("\n{CYAN}━━━{RESET} {CYAN}{name}{RESET} {CYAN}━━━{RESET}\n")
+}
+
+/// Print a persona banner to stdout.
+///
+/// Imperative shell wrapper around [`format_persona_banner`].
+pub fn print_persona_banner(name: &str) {
+    println!("{}", format_persona_banner(name));
+}
+
 /// Truncate a string to a maximum number of characters, appending "..." if truncated.
 ///
 /// Uses `char_indices` to avoid panicking on multi-byte UTF-8 boundaries.
@@ -204,5 +224,27 @@ mod tests {
         let budget = Budget::new(10);
         let result = format_orchestration_summary(&budget);
         assert!(result.contains("[10/10]"));
+    }
+
+    // =========================================================================
+    // format_persona_banner tests
+    // =========================================================================
+
+    #[test]
+    fn format_persona_banner_contains_name() {
+        let result = format_persona_banner("architect");
+        assert!(result.contains("architect"));
+    }
+
+    #[test]
+    fn format_persona_banner_contains_box_drawing() {
+        let result = format_persona_banner("pm");
+        assert!(result.contains('━'));
+    }
+
+    #[test]
+    fn format_persona_banner_contains_ansi_codes() {
+        let result = format_persona_banner("reviewer");
+        assert!(result.contains("\x1b["));
     }
 }

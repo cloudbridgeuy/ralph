@@ -116,6 +116,7 @@ pub fn conversation_loop(
             &message,
             &config.budget,
         );
+        display::print_persona_banner(responder_persona);
 
         let result = continue_session(
             responder_session,

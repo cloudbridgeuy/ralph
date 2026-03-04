@@ -9,7 +9,8 @@ use ralph_core::directive::{aggregate_responses, Directive, ValidatedDirectiveSe
 
 use super::conversation::{self, ConversationConfig};
 use super::{
-    continue_session, parallel, scan_for_directives, OrchestrationConfig, OrchestrationError,
+    continue_session, display, parallel, scan_for_directives, OrchestrationConfig,
+    OrchestrationError,
 };
 use crate::invoke::InvocationResult;
 
@@ -64,6 +65,7 @@ pub fn execute_asks(
         return Err(OrchestrationError::BudgetExhausted);
     }
 
+    display::print_persona_banner(originator_name);
     let continuation_result =
         continue_session(&originator.slug, originator_name, &aggregated, None, config)?;
 

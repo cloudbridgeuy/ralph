@@ -29,6 +29,7 @@ pub fn parallel_invoke(
             &directive.payload,
             &config.budget,
         );
+        display::print_persona_banner(&directive.target);
     }
 
     std::thread::scope(|s| {
