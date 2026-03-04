@@ -130,10 +130,11 @@ pub fn build_command(prompt: &str, permission_mode: &str, agent: Option<&str>) -
     match agent {
         Some(name) => format!(
             "claude --verbose --agent {} \
+             --permission-mode {} \
              --disallowed-tools Agent \
              --append-system-prompt '{}' \
              --output-format stream-json -p {}",
-            name, PERSONA_SYSTEM_PROMPT_SUFFIX, quoted_prompt
+            name, permission_mode, PERSONA_SYSTEM_PROMPT_SUFFIX, quoted_prompt
         ),
         None => format!(
             "claude --verbose --permission-mode {} --output-format stream-json -p {}",
@@ -337,8 +338,7 @@ mod tests {
             cmd.contains("Agent tool is not available"),
             "system prompt suffix should contain delegation constraint"
         );
-        // When agent is set, permission mode is NOT included (agent file controls it)
-        assert!(!cmd.contains("--permission-mode"));
+        assert!(cmd.contains("--permission-mode bypassPermissions"));
     }
 
     #[test]
