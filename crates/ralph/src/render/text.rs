@@ -9,6 +9,7 @@
 //! live streaming and replay. Both paths produce identical output for the
 //! same input data.
 
+use crate::ansi::{BOLD, CYAN, DIM, RESET};
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{ChunkType, ParsedChunk};
 use termimad::MadSkin;
@@ -52,6 +53,9 @@ pub fn render_text_block(
         }
         ChunkType::Code { language } => render_code_block(ctx, &chunk.content, language.as_deref()),
         ChunkType::Diff => render_diff_block(ctx, &chunk.content),
+        ChunkType::Directive { verb, target } => {
+            render_directive_block(ctx, &chunk.content, verb, target)
+        }
     }
 }
 
@@ -221,6 +225,32 @@ pub fn render_diff_block(ctx: &RenderContext<'_>, content: &str) -> String {
     };
 
     format!("```diff\n{}\n```", highlighted_content)
+}
+
+/// Render a directive block as a styled one-liner.
+///
+/// **Terminal output:**
+/// ```text
+///   → reviewer (ask): "Please review the error handling"
+/// ```
+///
+/// **Plain output (piped):**
+/// ```text
+/// -> reviewer (ask): Please review the error handling
+/// ```
+fn render_directive_block(
+    ctx: &RenderContext<'_>,
+    payload: &str,
+    verb: &str,
+    target: &str,
+) -> String {
+    let content = payload.replace('\n', " ");
+
+    if ctx.terminal {
+        format!("  {CYAN}→{RESET} {CYAN}{BOLD}{target}{RESET} {DIM}({verb}){RESET}: {DIM}\"{content}\"{RESET}")
+    } else {
+        format!("  -> {target} ({verb}): {content}")
+    }
 }
 
 #[cfg(test)]
@@ -476,5 +506,59 @@ mod tests {
         let bottom_count = result.matches('└').count();
         assert_eq!(top_count, 2);
         assert_eq!(bottom_count, 2);
+    }
+
+    // --- Directive rendering tests ---
+
+    #[test]
+    fn test_render_directive_terminal() {
+        let (highlighter, _skin) = create_test_context();
+        let ctx = RenderContext::terminal(&highlighter);
+        let result = render_directive_block(&ctx, "Please review this", "ask", "reviewer");
+        assert!(result.contains("→"));
+        assert!(result.contains("reviewer"));
+        assert!(result.contains("(ask)"));
+        assert!(result.contains("Please review this"));
+        assert!(result.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_render_directive_plain() {
+        let (highlighter, _skin) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let result = render_directive_block(&ctx, "Please review this", "ask", "reviewer");
+        assert!(result.contains("->"));
+        assert!(result.contains("reviewer"));
+        assert!(result.contains("(ask)"));
+        assert!(result.contains("Please review this"));
+        assert!(!result.contains("\x1b["));
+    }
+
+    #[test]
+    fn test_render_directive_long_payload_shown_in_full() {
+        let (highlighter, _skin) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let long_payload = "a".repeat(200);
+        let result = render_directive_block(&ctx, &long_payload, "ask", "target");
+        assert!(result.contains(&"a".repeat(200)));
+    }
+
+    #[test]
+    fn test_render_directive_empty_payload() {
+        let (highlighter, _skin) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let result = render_directive_block(&ctx, "", "handover", "deployer");
+        assert!(result.contains("deployer"));
+        assert!(result.contains("(handover)"));
+    }
+
+    #[test]
+    fn test_render_directive_via_render_text_block() {
+        let (highlighter, skin) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let chunk = ParsedChunk::directive("Review please", "ask", "reviewer");
+        let result = render_text_block(&ctx, &chunk, Some(&skin));
+        assert!(result.contains("reviewer"));
+        assert!(result.contains("(ask)"));
     }
 }

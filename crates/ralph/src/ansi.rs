@@ -18,6 +18,9 @@ pub const YELLOW: &str = "\x1b[33m";
 /// Set foreground color to green.
 pub const GREEN: &str = "\x1b[32m";
 
+/// Set text to bold.
+pub const BOLD: &str = "\x1b[1m";
+
 /// Set text to dim.
 pub const DIM: &str = "\x1b[2m";
 

@@ -94,7 +94,9 @@ impl ReplayRenderer {
 
         // Add trailing newline for code and diff blocks to match original behavior
         match &block.chunk.chunk_type {
-            ralph_core::chunk::ChunkType::Code { .. } | ralph_core::chunk::ChunkType::Diff => {
+            ralph_core::chunk::ChunkType::Code { .. }
+            | ralph_core::chunk::ChunkType::Diff
+            | ralph_core::chunk::ChunkType::Directive { .. } => {
                 format!("{}\n", rendered)
             }
             ralph_core::chunk::ChunkType::Prose => rendered,
