@@ -169,13 +169,26 @@ Printed before each directive invocation (parallel, conversation, ask continuati
 
 ```
 ▶ pm → ask → architect                                    [9/10]
-  "What are the technical responsibilities?"
 ```
 
 - `▶` glyph in cyan signals an orchestration action
 - Persona names in cyan, verb in plain text
 - Budget fraction in dim brackets
-- Payload preview on second line (truncated to 80 chars, dim)
+
+### Directive Banner
+
+Printed immediately after the routing status line, before the persona banner. Renders the directive payload as a full markdown banner with dynamic-width separator lines:
+
+```
+────────────────────────────────────────
+Please review the error handling in src/main.rs for edge cases.
+────────────────────────────────────────
+```
+
+- Separator width adapts to content: `max(text_width, 40)` capped at terminal width
+- Payload is rendered with full markdown formatting via `MarkdownRenderer`
+- This is the **single rendering point** for directive payloads — inline rendering during streaming is suppressed (`render_directive_block()` returns empty string)
+- The `separator_width()` pure function in `startup/formatters.rs` is shared with prompt banners
 
 ### Persona Banner
 
@@ -212,16 +225,24 @@ The `on_behalf_of` field on `InvocationConfig` is threaded through `invoke()` to
 
 ### Conversation Loop Turns
 
-The conversation loop prints a routing status line before each `continue_session()` call, making the back-and-forth structure visible:
+The conversation loop prints a routing status line, directive banner, and persona banner before each `continue_session()` call, making the back-and-forth structure visible:
 
 ```
 ▶ architect → ask → pm                                     [7/10]
-  "What's the current command structure?"
+────────────────────────────────────────
+What's the current command structure?
+────────────────────────────────────────
+
+━━━ pm ━━━
 
 [PM output...]
 
 ▶ pm → ask → architect                                     [6/10]
-  "Here's the CLI structure: ..."
+────────────────────────────────────────
+Here's the CLI structure: ...
+────────────────────────────────────────
+
+━━━ architect ━━━
 
 [Architect output...]
 ```
