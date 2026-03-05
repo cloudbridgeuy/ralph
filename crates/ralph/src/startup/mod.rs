@@ -9,7 +9,7 @@
 //! - Piped: Uses plain ASCII with no ANSI codes
 
 mod display;
-mod formatters;
+pub(crate) mod formatters;
 mod plain;
 mod terminal;
 mod types;
