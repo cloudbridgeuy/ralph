@@ -74,6 +74,6 @@ The `build_shared_invocation_config()` function in `main.rs` handles the shared 
 
 After a persona invocation completes, ralph scans the output for orchestration directives (`<ralph-ask>`, `<ralph-handover>`). If directives are found, ralph automatically invokes the target personas, manages the response flow, and may continue the originator's session with aggregated results.
 
-This happens transparently — the user sees routing status lines and a budget summary when orchestration occurs. The persona does not need to be configured for orchestration; any persona can emit directives if its agent file includes the directive syntax in its instructions.
+This happens transparently — the user sees routing status lines and a budget summary when orchestration occurs. The persona does not need to be configured for orchestration; ralph injects directive syntax automatically via `--append-system-prompt`, so all personas can emit directives without explicit configuration.
 
 Budget, directive format, and orchestration modes are documented in [Orchestration](orchestration.md).
