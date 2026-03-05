@@ -37,6 +37,7 @@ pub mod sessions_display;
 pub mod signal;
 pub mod spinner;
 pub mod startup;
+mod strategy;
 pub mod stream_processor;
 pub mod subprocess;
 pub mod warn;
@@ -44,7 +45,7 @@ pub mod warn;
 use clap::Parser;
 use cli::{
     AskArgs, Cli, Commands, IterationsArgs, PersonaAction, PersonaArgs, PersonaInvokeArgs,
-    ReplayArgs, RunArgs, SessionsArgs,
+    ReplayArgs, RunArgs, SessionsArgs, StrategyAction, StrategyArgs, StrategyExecuteArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -66,6 +67,7 @@ fn main() -> ExitCode {
         Commands::Ask(args) => execute_ask(args),
         Commands::Persona(args) => execute_persona(args),
         Commands::Edit(args) => edit::execute_edit(args),
+        Commands::Strategy(args) => execute_strategy(args),
     };
 
     match result {
@@ -493,6 +495,40 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
     }
 
     Ok(prompt)
+}
+
+// =============================================================================
+// Strategy command
+// =============================================================================
+
+fn execute_strategy(args: StrategyArgs) -> Result<(), Box<dyn std::error::Error>> {
+    match args.action {
+        StrategyAction::List => execute_strategy_list(),
+        StrategyAction::Execute(args) => execute_strategy_execute(args),
+    }
+}
+
+fn execute_strategy_list() -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = std::env::current_dir()?;
+    let strategies = strategy::load_all_strategies(&project_path)?;
+    let output = strategy::format_strategy_list(&strategies);
+    print!("{output}");
+    Ok(())
+}
+
+fn execute_strategy_execute(args: StrategyExecuteArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = std::env::current_dir()?;
+    let strategies = strategy::load_all_strategies(&project_path)?;
+    let _matched = strategy::find_strategy_by_name(&strategies, &args.name)?;
+
+    // Strategy execution will be wired up in Story 3 (Strategy trait + registry).
+    // For now, confirm the strategy was found and report that execution is pending.
+    Err(format!(
+        "Strategy '{}' found (kind: '{}'), but execution is not yet implemented.\n\
+         The Strategy trait and registry will be added in a subsequent story.",
+        _matched.config.name, _matched.config.kind
+    )
+    .into())
 }
 
 // =============================================================================

@@ -21,4 +21,5 @@ pub mod paused;
 pub mod persona;
 pub mod prd;
 pub mod session;
+pub mod strategy;
 pub mod stream;

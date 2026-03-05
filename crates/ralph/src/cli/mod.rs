@@ -72,6 +72,12 @@ pub enum Commands {
     ///
     /// Opens a projected view of the conversation as a TOML messages array.
     Edit(EditArgs),
+
+    /// Manage and execute collaboration strategies.
+    ///
+    /// Strategies are predefined collaboration patterns between personas,
+    /// defined in `.claude/strategies/*.toml` files.
+    Strategy(StrategyArgs),
 }
 
 /// Arguments for the `edit` subcommand.
@@ -80,6 +86,57 @@ pub struct EditArgs {
     /// Session slug to edit. If omitted, edits the most recent session.
     #[arg(value_name = "SLUG")]
     pub slug: Option<String>,
+}
+
+/// Arguments for the `strategy` subcommand.
+#[derive(clap::Args, Debug)]
+pub struct StrategyArgs {
+    /// Strategy action to perform.
+    #[command(subcommand)]
+    pub action: StrategyAction,
+}
+
+/// Strategy subcommand actions.
+#[derive(Subcommand, Debug)]
+pub enum StrategyAction {
+    /// List all available strategies.
+    ///
+    /// Discovers strategy files from `.claude/strategies/*.toml` in the
+    /// current project and displays their configuration.
+    List,
+
+    /// Execute a named strategy.
+    ///
+    /// Looks up the strategy by name from `.claude/strategies/*.toml`,
+    /// resolves its kind to a Rust implementation, and runs it.
+    Execute(StrategyExecuteArgs),
+}
+
+/// Arguments for `ralph strategy execute`.
+#[derive(clap::Args, Debug)]
+pub struct StrategyExecuteArgs {
+    /// Strategy name to execute.
+    ///
+    /// Must match the `name` field of a strategy TOML file in
+    /// `.claude/strategies/`.
+    #[arg(value_name = "NAME")]
+    pub name: String,
+
+    /// Maximum number of iterations to run.
+    ///
+    /// Defaults to the number of pending stories in the PRD (for prd-loop).
+    /// The loop exits early if all stories are completed or the completion
+    /// marker is found in output.
+    #[arg(long)]
+    pub max_iterations: Option<usize>,
+
+    /// Resume a previously stopped session.
+    ///
+    /// When a strategy session is stopped, its state is saved to allow
+    /// later resumption. Use this flag to continue from where the
+    /// session was interrupted.
+    #[arg(long)]
+    pub resume: bool,
 }
 
 /// Arguments for the `sessions` subcommand.

@@ -6,6 +6,9 @@ mod ask;
 #[path = "tests/persona.rs"]
 mod persona;
 
+#[path = "tests/strategy.rs"]
+mod strategy;
+
 use super::*;
 use std::path::PathBuf;
 
