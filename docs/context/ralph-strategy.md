@@ -8,9 +8,11 @@ This document describes the `ralph strategy` command, which manages and executes
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | StrategyArgs, StrategyAction, StrategyExecuteArgs |
 | Core types | `crates/core/src/strategy.rs` | StrategyConfig, StrategyError, parsing, validation |
-| Discovery & display | `crates/ralph/src/strategy.rs` | File discovery, loading, validation, formatting |
+| Discovery & display | `crates/ralph/src/strategy/mod.rs` | File discovery, loading, validation, formatting |
+| Execution dispatcher | `crates/ralph/src/strategy/execute.rs` | Strategy kind dispatch, run orchestration |
+| PrdLoop builder | `crates/ralph/src/strategy/prd_loop.rs` | Builds RunConfig for prd-loop strategies |
 | CLI tests | `crates/ralph/src/cli/tests/strategy.rs` | CLI argument parsing tests |
-| Execution | `crates/ralph/src/main.rs` | execute_strategy(), execute_strategy_list(), execute_strategy_execute() |
+| Main wiring | `crates/ralph/src/main.rs` | execute_strategy(), execute_strategy_list(), execute_strategy_execute() |
 
 ## Purpose
 
@@ -65,20 +67,34 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 - `validate_personas()` — check persona references against discovered agents
 - `validate_prompt_aggregates()` — reject empty string entries
 
-**Imperative Shell** (`crates/ralph/src/strategy.rs`):
-- `discover_strategies()` — scan `.claude/strategies/` directory for TOML files
-- `load_and_validate_strategy()` — read file, parse, and run all validations
-- `load_all_strategies()` — discover + load all strategies in project
-- `find_strategy_by_name()` — lookup by name with actionable error for unknown names
-- `format_strategy_list()` — columnar table output (pure, but lives in shell for display coupling)
+**Imperative Shell** (`crates/ralph/src/strategy/`):
+- `mod.rs` — `discover_strategies()`, `load_and_validate_strategy()`, `load_all_strategies()`, `find_strategy_by_name()`, `format_strategy_list()`
+- `execute.rs` — `execute_strategy_execute()` dispatcher, matches on `StrategyKind` enum
+- `prd_loop.rs` — `build_run_config()` builds a `RunConfig` from strategy config and delegates to `run::run()`
+
+## Strategy Kind Dispatch
+
+Strategies use enum dispatch via `StrategyKind` (defined in core). The `kind` string from TOML is resolved to a typed enum variant at load time using `resolve_kind()` (Parse Don't Validate pattern). The dispatcher in `execute.rs` uses exhaustive `match` so missing implementations are caught at compile time.
+
+```
+main.rs::execute_strategy_execute(args)
+  -> strategy::execute::execute_strategy_execute(args)
+       -> load_all_strategies()
+       -> find_strategy_by_name()
+       -> match StrategyKind::PrdLoop
+            -> prd_loop::build_run_config(params) -> RunConfig
+            -> run::run(config)
+```
 
 ## Known Kinds
 
 Currently registered: `prd-loop`
 
 New strategies require:
-1. A Rust module implementing the Strategy trait (Story 3)
-2. Registering its kind string in `KNOWN_KINDS`
+1. Adding a variant to `StrategyKind` in `crates/core/src/strategy.rs`
+2. Adding a case in `resolve_kind()` in the same file
+3. An implementation module in `crates/ralph/src/strategy/`
+4. A dispatch arm in `execute.rs`
 
 ## Error Handling
 
