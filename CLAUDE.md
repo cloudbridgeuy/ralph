@@ -166,6 +166,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [ralph persona Command](docs/context/ralph-persona.md) - Named agent conversations, persona-scoped sessions
 - [Orchestration](docs/context/orchestration.md) - Multi-agent directives, handover/ask, conversation routing
 - [ralph edit Command](docs/context/ralph-edit.md) - Session history editing, TOML projection, FC-IS module split
+- [ralph strategy Command](docs/context/ralph-strategy.md) - Strategy TOML schema, discovery, CLI surface, FC-IS architecture
 
 ## Glossary
 

@@ -43,7 +43,7 @@ steps = [
   "Verify that a strategy referencing a nonexistent persona produces a clear error",
   "Verify that an empty or omitted prompt_aggregates is valid",
 ]
-passes = false
+passes = true
 acceptance = [
   "Strategy files are discovered from .claude/strategies/*.toml",
   "Required fields: name (string), description (string), kind (string mapping to a Rust implementation)",
@@ -63,7 +63,7 @@ steps = [
   "Run ralph strategy execute nonexistent and verify a clear error is shown",
   "Run ralph strategy with no subcommand and verify help text is shown",
 ]
-passes = false
+passes = true
 acceptance_unit_tested = [
   "CLI argument parsing accepts ralph strategy list and ralph strategy execute <name>",
   "Unknown strategy name produces an error listing available strategies",
