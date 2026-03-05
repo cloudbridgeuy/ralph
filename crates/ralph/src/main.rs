@@ -525,18 +525,7 @@ fn execute_strategy_list() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn execute_strategy_execute(args: StrategyExecuteArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let project_path = std::env::current_dir()?;
-    let strategies = strategy::load_all_strategies(&project_path)?;
-    let _matched = strategy::find_strategy_by_name(&strategies, &args.name)?;
-
-    // Strategy execution will be wired up in Story 3 (Strategy trait + registry).
-    // For now, confirm the strategy was found and report that execution is pending.
-    Err(format!(
-        "Strategy '{}' found (kind: '{}'), but execution is not yet implemented.\n\
-         The Strategy trait and registry will be added in a subsequent story.",
-        _matched.config.name, _matched.config.kind
-    )
-    .into())
+    strategy::execute::execute_strategy_execute(args)
 }
 
 // =============================================================================

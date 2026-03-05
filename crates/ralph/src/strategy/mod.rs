@@ -4,9 +4,12 @@
 //! project's `.claude/strategies/` directory, reads and validates them
 //! using the pure core functions, and formats results for display.
 
+pub mod execute;
+mod prd_loop;
+
 use ralph_core::strategy::{
-    parse_strategy, validate_kind, validate_personas, validate_prompt_aggregates, StrategyConfig,
-    StrategyError,
+    parse_strategy, validate_personas, validate_prompt_aggregates, StrategyConfig, StrategyError,
+    StrategyKind,
 };
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -40,6 +43,8 @@ pub struct StrategyDiscovery {
 #[derive(Debug)]
 pub struct LoadedStrategy {
     pub config: StrategyConfig,
+    /// Resolved strategy kind (typed from config.kind string).
+    pub kind: StrategyKind,
 }
 
 /// Discover strategy TOML files in `.claude/strategies/` under the project directory.
@@ -75,12 +80,12 @@ pub fn discover_strategies(project_path: &Path) -> Vec<StrategyDiscovery> {
 
 /// Read, parse, and fully validate a single strategy file.
 ///
-/// Validates kind, prompt aggregates, and persona references against the
-/// provided list of available persona names.
+/// Validates prompt aggregates and persona references against the provided
+/// list of available persona names, and resolves the strategy kind.
 pub fn load_and_validate_strategy(
     path: &Path,
     available_persona_names: &[&str],
-) -> Result<StrategyConfig, StrategyLoadError> {
+) -> Result<(StrategyConfig, StrategyKind), StrategyLoadError> {
     let content = std::fs::read_to_string(path).map_err(|source| StrategyLoadError::ReadFile {
         path: path.display().to_string(),
         source,
@@ -88,11 +93,18 @@ pub fn load_and_validate_strategy(
 
     let path_str = path.display().to_string();
     let config = parse_strategy(&content, &path_str)?;
-    validate_kind(&config, KNOWN_KINDS, &path_str)?;
     validate_prompt_aggregates(&config, &path_str)?;
     validate_personas(&config, available_persona_names, &path_str)?;
 
-    Ok(config)
+    let kind = ralph_core::strategy::resolve_kind(&config.kind).ok_or_else(|| {
+        StrategyError::UnknownKind {
+            path: path_str.clone(),
+            kind: config.kind.clone(),
+            known: KNOWN_KINDS.iter().map(|s| s.to_string()).collect(),
+        }
+    })?;
+
+    Ok((config, kind))
 }
 
 /// Discover, load, and validate all strategies in the project.
@@ -108,8 +120,8 @@ pub fn load_all_strategies(project_path: &Path) -> Result<Vec<LoadedStrategy>, S
     let mut loaded = Vec::new();
 
     for discovery in discoveries {
-        let config = load_and_validate_strategy(&discovery.path, &persona_names)?;
-        loaded.push(LoadedStrategy { config });
+        let (config, kind) = load_and_validate_strategy(&discovery.path, &persona_names)?;
+        loaded.push(LoadedStrategy { config, kind });
     }
 
     Ok(loaded)
@@ -213,9 +225,11 @@ mod tests {
         }
     }
 
-    fn make_loaded(name: &str, kind: &str, persona: &str, desc: &str) -> LoadedStrategy {
+    fn make_loaded(name: &str, kind_str: &str, persona: &str, desc: &str) -> LoadedStrategy {
         LoadedStrategy {
-            config: make_config(name, kind, persona, desc),
+            config: make_config(name, kind_str, persona, desc),
+            kind: ralph_core::strategy::resolve_kind(kind_str)
+                .expect("tests must use a known strategy kind"),
         }
     }
 

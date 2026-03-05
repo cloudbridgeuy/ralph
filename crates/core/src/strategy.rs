@@ -53,6 +53,36 @@ pub struct StrategyConfig {
     pub prompt_aggregates: Vec<String>,
 }
 
+/// Typed strategy kind, resolved from the `kind` string field.
+///
+/// Each variant maps 1:1 to a Rust implementation module in the shell crate.
+/// New kinds require: (1) adding a variant here, (2) a case in `resolve_kind`,
+/// (3) an implementation module in `crates/ralph/src/strategy/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StrategyKind {
+    /// PRD-driven iteration loop using a persona.
+    PrdLoop,
+}
+
+/// Resolve a `kind` string from TOML into a typed `StrategyKind`.
+///
+/// Pure function — no I/O. Returns `None` for unknown kinds.
+///
+/// # Examples
+///
+/// ```
+/// use ralph_core::strategy::resolve_kind;
+///
+/// assert_eq!(resolve_kind("prd-loop"), Some(ralph_core::strategy::StrategyKind::PrdLoop));
+/// assert_eq!(resolve_kind("unknown"), None);
+/// ```
+pub fn resolve_kind(kind: &str) -> Option<StrategyKind> {
+    match kind {
+        "prd-loop" => Some(StrategyKind::PrdLoop),
+        _ => None,
+    }
+}
+
 /// Parse TOML content into a `StrategyConfig`.
 ///
 /// This is a pure function - it takes TOML content as a string and returns
@@ -407,5 +437,30 @@ prompt_aggregates = [""]
             }
             other => panic!("Expected EmptyPromptAggregate, got: {other:?}"),
         }
+    }
+
+    // =========================================================================
+    // StrategyKind resolution tests
+    // =========================================================================
+
+    #[test]
+    fn test_resolve_kind_prd_loop() {
+        assert_eq!(resolve_kind("prd-loop"), Some(StrategyKind::PrdLoop));
+    }
+
+    #[test]
+    fn test_resolve_kind_unknown() {
+        assert_eq!(resolve_kind("unknown"), None);
+    }
+
+    #[test]
+    fn test_resolve_kind_empty() {
+        assert_eq!(resolve_kind(""), None);
+    }
+
+    #[test]
+    fn test_resolve_kind_case_sensitive() {
+        assert_eq!(resolve_kind("PRD-LOOP"), None);
+        assert_eq!(resolve_kind("Prd-Loop"), None);
     }
 }
