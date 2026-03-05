@@ -113,9 +113,9 @@ pub fn conversation_loop(
             other_persona,
             &DirectiveVerb::Ask,
             responder_persona,
-            &message,
             &config.budget,
         );
+        display::print_directive_banner(&message);
         display::print_persona_banner(responder_persona);
 
         let result = continue_session(

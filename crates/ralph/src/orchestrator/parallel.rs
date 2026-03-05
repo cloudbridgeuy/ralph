@@ -26,9 +26,9 @@ pub fn parallel_invoke(
             originator_name,
             &directive.verb,
             &directive.target,
-            &directive.payload,
             &config.budget,
         );
+        display::print_directive_banner(&directive.payload);
         display::print_persona_banner(&directive.target);
     }
 
