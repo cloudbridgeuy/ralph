@@ -127,7 +127,7 @@ pub fn conversation_loop(
         )?;
         let response_text = result.response_text.clone().unwrap_or_default();
 
-        let directives = scan_for_directives(&result);
+        let directives = scan_for_directives(&result, &config.known_personas);
         let action = categorize_conversation_directives(directives, other_persona);
 
         match action {

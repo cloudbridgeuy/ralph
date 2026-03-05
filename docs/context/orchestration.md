@@ -121,7 +121,15 @@ A single persona output can contain multiple directives, but they must all be th
 - All handovers — valid (`ValidatedDirectiveSet::Handovers`)
 - Mixed asks and handovers — invalid, directives are ignored with a warning
 
-Malformed directives (missing closing tag, mismatched tags, missing `to` attribute, unknown verb) are silently skipped during parsing.
+Malformed directives are handled with resilient recovery rather than silent skipping:
+
+**Case 1 — Opening tag without closing tag**: The parser treats all remaining text after the opening tag as the payload. This handles truncated LLM output where the closing tag was cut off.
+
+**Case 2 — Orphan closing tag without opening tag**: When `parse_directives` finds nothing but the text contains a `</ralph-{verb}>` closing tag, `scan_for_directives` falls back to `recover_orphan_closing_tag`. This function scans text before the closing tag for the first known persona name and produces an **Ask** directive targeting that persona. Ask is always used regardless of the verb in the closing tag — it is the safest default since the originator continues with the response rather than stopping.
+
+Recovery requires that the persona name appears in the text before the closing tag. If no known persona is found, no directive is recovered.
+
+Directives with missing `to` attribute or unknown verbs are still silently skipped.
 
 ## Nested Directive Handling
 

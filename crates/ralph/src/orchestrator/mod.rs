@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use ralph_core::directive::{
-    parse_directives, validate_directive_set, Directive, ValidatedDirectiveSet,
+    parse_directives, recover_orphan_closing_tag, validate_directive_set, Directive,
+    ValidatedDirectiveSet,
 };
 
 use crate::highlight::ThemeConfig;
@@ -93,6 +94,8 @@ pub struct OrchestrationConfig {
     pub verbose_tools: VerboseToolsConfig,
     /// Invocation budget for the orchestration session.
     pub budget: Budget,
+    /// Known persona names for orphan closing tag recovery.
+    pub known_personas: Vec<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,24 +128,29 @@ pub enum OrchestrationError {
 /// Extracts the response text from the result, parses directives, and validates
 /// them. Returns `None` if no directives are found or if validation fails
 /// (e.g., mixed ask/handover verbs).
-pub fn scan_for_directives(result: &InvocationResult) -> Option<ValidatedDirectiveSet> {
+pub fn scan_for_directives(
+    result: &InvocationResult,
+    known_personas: &[String],
+) -> Option<ValidatedDirectiveSet> {
     let response_text = result.response_text.as_deref()?;
 
     let directives = parse_directives(response_text);
-    if directives.is_empty() {
-        return None;
+    if !directives.is_empty() {
+        return match validate_directive_set(directives) {
+            Ok(validated) => Some(validated),
+            Err(e) => {
+                warn(format!(
+                    "Directive validation failed ({e}), ignoring directives"
+                ));
+                None
+            }
+        };
     }
 
-    match validate_directive_set(directives) {
-        Ok(validated) => Some(validated),
-        Err(e) => {
-            warn(format!(
-                "Directive validation failed ({}), ignoring directives",
-                e
-            ));
-            None
-        }
-    }
+    // Fallback: try to recover from orphan closing tag
+    let persona_refs: Vec<&str> = known_personas.iter().map(|s| s.as_str()).collect();
+    let recovered = recover_orphan_closing_tag(response_text, &persona_refs)?;
+    Some(ValidatedDirectiveSet::Asks(vec![recovered]))
 }
 
 /// Orchestrate execution of validated directives.
@@ -231,7 +239,7 @@ fn execute_handovers(
         let result = result?;
 
         // Scan for sub-directives and recurse
-        if let Some(sub_directives) = scan_for_directives(&result) {
+        if let Some(sub_directives) = scan_for_directives(&result, &config.known_personas) {
             let target_name = directive.target.as_str();
             orchestrate_inner(target_name, &result, sub_directives, config)?;
         }
@@ -315,9 +323,8 @@ mod tests {
     // scan_for_directives tests
     // =========================================================================
 
-    #[test]
-    fn scan_no_response_text_returns_none() {
-        let result = InvocationResult {
+    fn make_result(response_text: Option<String>) -> InvocationResult {
+        InvocationResult {
             slug: "test".to_string(),
             iteration_count: 1,
             exit_code: 0,
@@ -325,44 +332,29 @@ mod tests {
             duration_ms: None,
             input_tokens: None,
             output_tokens: None,
-            response_text: None,
+            response_text,
             persona: None,
-        };
-        assert!(scan_for_directives(&result).is_none());
+        }
+    }
+
+    #[test]
+    fn scan_no_response_text_returns_none() {
+        let result = make_result(None);
+        assert!(scan_for_directives(&result, &[]).is_none());
     }
 
     #[test]
     fn scan_empty_response_returns_none() {
-        let result = InvocationResult {
-            slug: "test".to_string(),
-            iteration_count: 1,
-            exit_code: 0,
-            cost_usd: None,
-            duration_ms: None,
-            input_tokens: None,
-            output_tokens: None,
-            response_text: Some("No directives here.".to_string()),
-            persona: None,
-        };
-        assert!(scan_for_directives(&result).is_none());
+        let result = make_result(Some("No directives here.".to_string()));
+        assert!(scan_for_directives(&result, &[]).is_none());
     }
 
     #[test]
     fn scan_finds_handover_directive() {
-        let result = InvocationResult {
-            slug: "test".to_string(),
-            iteration_count: 1,
-            exit_code: 0,
-            cost_usd: None,
-            duration_ms: None,
-            input_tokens: None,
-            output_tokens: None,
-            response_text: Some(
-                r#"<ralph-handover to="deployer">Deploy to prod.</ralph-handover>"#.to_string(),
-            ),
-            persona: None,
-        };
-        let directives = scan_for_directives(&result);
+        let result = make_result(Some(
+            r#"<ralph-handover to="deployer">Deploy to prod.</ralph-handover>"#.to_string(),
+        ));
+        let directives = scan_for_directives(&result, &[]);
         assert!(directives.is_some());
         assert!(matches!(
             directives,
@@ -372,20 +364,51 @@ mod tests {
 
     #[test]
     fn scan_mixed_verbs_returns_none() {
-        let result = InvocationResult {
-            slug: "test".to_string(),
-            iteration_count: 1,
-            exit_code: 0,
-            cost_usd: None,
-            duration_ms: None,
-            input_tokens: None,
-            output_tokens: None,
-            response_text: Some(
-                r#"<ralph-ask to="a">question</ralph-ask><ralph-handover to="b">task</ralph-handover>"#
-                    .to_string(),
-            ),
-            persona: None,
-        };
-        assert!(scan_for_directives(&result).is_none());
+        let result = make_result(Some(
+            r#"<ralph-ask to="a">question</ralph-ask><ralph-handover to="b">task</ralph-handover>"#
+                .to_string(),
+        ));
+        assert!(scan_for_directives(&result, &[]).is_none());
+    }
+
+    #[test]
+    fn scan_recovers_orphan_closing_tag_with_matching_persona() {
+        let result = make_result(Some(
+            "The architect should review this design.</ralph-ask>".to_string(),
+        ));
+        let personas = vec!["architect".to_string(), "developer".to_string()];
+        let directives = scan_for_directives(&result, &personas);
+        assert!(directives.is_some());
+        match directives {
+            Some(ValidatedDirectiveSet::Asks(asks)) => {
+                assert_eq!(asks.len(), 1);
+                assert_eq!(asks[0].target, "architect");
+                assert_eq!(asks[0].payload, "The architect should review this design.");
+            }
+            other => panic!("expected Asks, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scan_orphan_closing_tag_no_matching_persona_returns_none() {
+        let result = make_result(Some(
+            "Some text without persona names.</ralph-ask>".to_string(),
+        ));
+        let personas = vec!["architect".to_string()];
+        assert!(scan_for_directives(&result, &personas).is_none());
+    }
+
+    #[test]
+    fn scan_well_formed_directive_skips_recovery() {
+        let result = make_result(Some(
+            r#"<ralph-handover to="deployer">Deploy.</ralph-handover>"#.to_string(),
+        ));
+        let personas = vec!["architect".to_string(), "deployer".to_string()];
+        let directives = scan_for_directives(&result, &personas);
+        // Well-formed directive found — recovery not attempted, returns Handovers not Asks
+        assert!(matches!(
+            directives,
+            Some(ValidatedDirectiveSet::Handovers(_))
+        ));
     }
 }

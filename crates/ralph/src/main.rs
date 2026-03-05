@@ -306,18 +306,26 @@ fn build_invocation_config(
 
 fn execute_and_finalize(config: InvocationConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Extract fields needed for orchestration before invoke() takes ownership.
+    let known_personas: Vec<String> = persona::discover_personas(&config.project_path)
+        .into_iter()
+        .map(|p| p.name)
+        .collect();
+
     let orch_config = orchestrator::OrchestrationConfig {
         project_path: config.project_path.clone(),
         timeout_secs: config.timeout_secs,
         theme_config: config.theme_config.clone(),
         verbose_tools: config.verbose_tools.clone(),
         budget: orchestrator::Budget::new(orchestrator::DEFAULT_BUDGET),
+        known_personas,
     };
 
     let result = invoke::invoke(config)?;
 
     // Scan for directives and orchestrate if found
-    if let Some(directives) = orchestrator::scan_for_directives(&result) {
+    if let Some(directives) =
+        orchestrator::scan_for_directives(&result, &orch_config.known_personas)
+    {
         if let Err(e) = orchestrator::orchestrate(&result, directives, &orch_config) {
             warn(format!("Orchestration failed: {e}"));
         }

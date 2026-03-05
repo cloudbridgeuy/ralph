@@ -70,7 +70,8 @@ pub fn execute_asks(
         continue_session(&originator.slug, originator_name, &aggregated, None, config)?;
 
     // Phase 3: scan continuation for more directives and recurse
-    if let Some(sub_directives) = scan_for_directives(&continuation_result) {
+    if let Some(sub_directives) = scan_for_directives(&continuation_result, &config.known_personas)
+    {
         super::orchestrate_inner(
             originator_name,
             &continuation_result,
@@ -100,7 +101,7 @@ pub(super) fn resolve(
 ) -> Result<String, OrchestrationError> {
     let response_text = result.response_text.clone().unwrap_or_default();
 
-    let sub_directives = match scan_for_directives(result) {
+    let sub_directives = match scan_for_directives(result, &config.known_personas) {
         Some(d) => d,
         None => return Ok(response_text),
     };
