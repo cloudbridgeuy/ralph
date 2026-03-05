@@ -18,6 +18,13 @@ static OPEN_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("compile-time invariant: directive regex is valid")
 });
 
+/// Regex for matching directive closing tags: `</ralph-{verb}>`.
+/// Compiled once at first use since this is a compile-time constant pattern.
+#[allow(clippy::expect_used)]
+static CLOSING_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"</ralph-(\w+)>").expect("compile-time invariant: closing tag regex is valid")
+});
+
 /// Error type for directive validation operations.
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)]
 pub enum DirectiveError {
@@ -122,13 +129,61 @@ pub fn parse_directives(text: &str) -> Vec<Directive> {
                 search_start += close_end_in_haystack;
             }
             None => {
-                // No closing tag — skip past this opening tag
-                search_start += full_match.end();
+                // No closing tag — consume all remaining text as payload
+                let payload = after_open.to_string();
+                if let Some(verb) = normalize_verb(raw_verb) {
+                    directives.push(Directive {
+                        verb,
+                        target,
+                        payload,
+                    });
+                }
+                break; // consumed everything remaining
             }
         }
     }
 
     directives
+}
+
+/// Recover a directive from an orphan closing tag (no matching opening tag).
+///
+/// When `parse_directives` finds nothing but the text contains a closing tag,
+/// this function attempts recovery:
+/// 1. Finds the first `</ralph-{verb}>` closing tag
+/// 2. Takes all text before it as the candidate payload
+/// 3. Scans that text left-to-right for the first occurrence of any name in `known_personas`
+/// 4. Returns an Ask directive targeting that persona with the text before the closing tag as payload
+///
+/// Always produces `DirectiveVerb::Ask` regardless of the verb in the closing tag —
+/// Ask is the safest default (originator continues with response rather than stopping).
+///
+/// Returns `None` if no closing tag is found, the verb is unknown, or no persona name appears
+/// in the preceding text.
+pub fn recover_orphan_closing_tag(text: &str, known_personas: &[&str]) -> Option<Directive> {
+    let caps = CLOSING_TAG_RE.captures(text)?;
+    let full_match = caps.get(0)?;
+    let raw_verb = caps.get(1)?.as_str();
+
+    // Verify the verb is known (even though we always emit Ask)
+    normalize_verb(raw_verb)?;
+
+    let candidate_text = &text[..full_match.start()];
+    if candidate_text.is_empty() {
+        return None;
+    }
+
+    // Find the persona with the earliest position in candidate_text
+    let (target, _) = known_personas
+        .iter()
+        .filter_map(|&name| candidate_text.find(name).map(|pos| (name, pos)))
+        .min_by_key(|&(_, pos)| pos)?;
+
+    Some(Directive {
+        verb: DirectiveVerb::Ask,
+        target: target.to_string(),
+        payload: candidate_text.to_string(),
+    })
 }
 
 /// Validate that all directives in a set share the same verb family.
@@ -228,8 +283,23 @@ pub fn split_text_around_directives(text: &str) -> Vec<ParsedChunk> {
                 let close_end = payload_start_in_haystack + end + closing_tag.len();
                 search_start += close_end;
             }
-            (None, _) => {
-                // No closing tag — skip past the opening tag
+            (None, Some(verb)) => {
+                // Opening tag with no closing — consume all remaining text as directive
+                let before = &haystack[..full_match.start()];
+                if !before.is_empty() {
+                    chunks.push(ParsedChunk::prose(before));
+                }
+                let payload = after_open;
+                let canonical_verb = match verb {
+                    DirectiveVerb::Ask => "ask",
+                    DirectiveVerb::Handover => "handover",
+                };
+                chunks.push(ParsedChunk::directive(payload, canonical_verb, target));
+                search_start = text.len(); // consumed everything
+                break;
+            }
+            (None, None) => {
+                // Unknown verb — skip past opening tag
                 search_start += full_match.end();
             }
         }
@@ -367,15 +437,19 @@ Trailing text.
 
     #[test]
     fn parse_malformed_xml_skipped() {
-        // Missing closing tag
+        // Missing closing tag — now produces a directive with remaining text as payload
         let text = r#"<ralph-ask to="target">No closing tag"#;
         let directives = parse_directives(text);
-        assert!(directives.is_empty());
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].verb, DirectiveVerb::Ask);
+        assert_eq!(directives[0].target, "target");
+        assert_eq!(directives[0].payload, "No closing tag");
 
-        // Mismatched tags
+        // Mismatched tags — ask looks for </ralph-ask> which is absent, consumes remaining
         let text = r#"<ralph-ask to="target">Mismatch</ralph-handover>"#;
         let directives = parse_directives(text);
-        assert!(directives.is_empty());
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].payload, "Mismatch</ralph-handover>");
 
         // Missing to attribute
         let text = r#"<ralph-ask>No target</ralph-ask>"#;
@@ -698,5 +772,164 @@ Second response.
         assert_eq!(chunks[0], ParsedChunk::directive("Hi", "ask", "a"));
         assert_eq!(chunks[1], ParsedChunk::prose(" "));
         assert_eq!(chunks[2], ParsedChunk::directive("Go", "handover", "b"));
+    }
+
+    // =========================================================================
+    // parse_directives — opening tag without closing tag
+    // =========================================================================
+
+    #[test]
+    fn parse_opening_without_closing_consumes_remaining() {
+        let text = r#"<ralph-ask to="reviewer">Please review this code."#;
+        let directives = parse_directives(text);
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].verb, DirectiveVerb::Ask);
+        assert_eq!(directives[0].target, "reviewer");
+        assert_eq!(directives[0].payload, "Please review this code.");
+    }
+
+    #[test]
+    fn parse_opening_without_closing_unknown_verb() {
+        let text = r#"<ralph-explode to="target">Boom"#;
+        let directives = parse_directives(text);
+        assert!(directives.is_empty());
+    }
+
+    #[test]
+    fn parse_complete_then_opening_without_closing() {
+        let text = r#"<ralph-ask to="a">Q1</ralph-ask> then <ralph-handover to="b">remaining text"#;
+        let directives = parse_directives(text);
+        assert_eq!(directives.len(), 2);
+        assert_eq!(directives[0].verb, DirectiveVerb::Ask);
+        assert_eq!(directives[0].target, "a");
+        assert_eq!(directives[0].payload, "Q1");
+        assert_eq!(directives[1].verb, DirectiveVerb::Handover);
+        assert_eq!(directives[1].target, "b");
+        assert_eq!(directives[1].payload, "remaining text");
+    }
+
+    #[test]
+    fn parse_opening_at_end_empty_payload() {
+        let text = r#"<ralph-ask to="target">"#;
+        let directives = parse_directives(text);
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].verb, DirectiveVerb::Ask);
+        assert_eq!(directives[0].target, "target");
+        assert_eq!(directives[0].payload, "");
+    }
+
+    // =========================================================================
+    // recover_orphan_closing_tag tests
+    // =========================================================================
+
+    #[test]
+    fn recover_orphan_closing_with_persona() {
+        let text = "The architect should handle this design decision.</ralph-ask>";
+        let result = recover_orphan_closing_tag(text, &["architect", "developer"]);
+        assert!(result.is_some());
+        let d = result.unwrap();
+        assert_eq!(d.verb, DirectiveVerb::Ask);
+        assert_eq!(d.target, "architect");
+        assert_eq!(
+            d.payload,
+            "The architect should handle this design decision."
+        );
+    }
+
+    #[test]
+    fn recover_orphan_closing_handover_becomes_ask() {
+        let text = "Let the developer handle this.</ralph-handover>";
+        let result = recover_orphan_closing_tag(text, &["developer"]);
+        assert!(result.is_some());
+        let d = result.unwrap();
+        assert_eq!(d.verb, DirectiveVerb::Ask);
+        assert_eq!(d.target, "developer");
+    }
+
+    #[test]
+    fn recover_orphan_closing_earliest_persona_wins() {
+        let text = "Ask developer first, then architect later.</ralph-ask>";
+        let result = recover_orphan_closing_tag(text, &["architect", "developer"]);
+        assert!(result.is_some());
+        let d = result.unwrap();
+        assert_eq!(d.target, "developer");
+    }
+
+    #[test]
+    fn recover_orphan_closing_no_persona_in_text() {
+        let text = "Some text without persona names.</ralph-ask>";
+        let result = recover_orphan_closing_tag(text, &["architect", "developer"]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn recover_orphan_closing_no_closing_tag() {
+        let text = "Just some plain text with no tags.";
+        let result = recover_orphan_closing_tag(text, &["architect"]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn recover_orphan_closing_unknown_verb() {
+        let text = "Some text.</ralph-explode>";
+        let result = recover_orphan_closing_tag(text, &["architect"]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn recover_orphan_closing_empty_known_personas() {
+        let text = "The architect said something.</ralph-ask>";
+        let result = recover_orphan_closing_tag(text, &[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn recover_orphan_closing_tag_at_start() {
+        let text = "</ralph-ask>some text after";
+        let result = recover_orphan_closing_tag(text, &["architect"]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn recover_orphan_closing_persona_only_after_tag() {
+        let text = "no names here</ralph-ask> the architect is mentioned after";
+        let result = recover_orphan_closing_tag(text, &["architect"]);
+        assert!(result.is_none());
+    }
+
+    // =========================================================================
+    // split_text_around_directives — opening tag without closing tag
+    // =========================================================================
+
+    #[test]
+    fn split_opening_without_closing_becomes_directive() {
+        let text = r#"<ralph-ask to="reviewer">Please review this code."#;
+        let chunks = split_text_around_directives(text);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(
+            chunks[0],
+            ParsedChunk::directive("Please review this code.", "ask", "reviewer")
+        );
+    }
+
+    #[test]
+    fn split_prose_before_opening_without_closing() {
+        let text = r#"Some preamble. <ralph-handover to="deployer">Deploy this now"#;
+        let chunks = split_text_around_directives(text);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0], ParsedChunk::prose("Some preamble. "));
+        assert_eq!(
+            chunks[1],
+            ParsedChunk::directive("Deploy this now", "handover", "deployer")
+        );
+    }
+
+    #[test]
+    fn split_unknown_verb_without_closing_stays_prose() {
+        let text = r#"Before <ralph-explode to="target">Boom and more text"#;
+        let chunks = split_text_around_directives(text);
+        assert_eq!(chunks.len(), 1);
+        // Unknown verb is skipped; trailing text emitted as prose
+        assert!(matches!(&chunks[0].chunk_type, ChunkType::Prose));
     }
 }
