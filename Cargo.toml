@@ -83,7 +83,7 @@ thiserror = "2.0.18"
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
-toml = "1.0.3+spec-1.1.0"
+toml = "1.0.3"
 
 # UUID generation
 uuid = { version = "1.11", features = ["v4"] }
