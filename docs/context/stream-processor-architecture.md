@@ -195,8 +195,8 @@ The splitting happens in `event_handler.rs` at both streaming sites (line proces
 
 `enhance_tables()` in `render/text.rs` post-processes termimad table output to add:
 
-- **Cell padding** — 1 space on each side of cell content
-- **Widened separators** — `─` expanded to match padded cells
 - **Top/bottom borders** — `┌┬┐` / `└┴┘` derived from the separator line
+
+termimad already constrains tables to terminal width and provides cell spacing via column alignment. `enhance_tables()` only adds top/bottom borders by character-substituting the separator (`├→┌`, `┼→┬`, `┤→┐`). No characters are added or removed — only substituted — so the table stays within terminal width.
 
 This runs after `skin.term_text()` inside `render_text_block()`. Box-drawing characters are multi-byte UTF-8 (bytes > 0x7F), so they cannot appear inside ANSI escape sequences — making string splitting on `│`/`├` safe even in ANSI-coded output.

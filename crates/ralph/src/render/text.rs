@@ -68,44 +68,6 @@ fn is_separator_line(line: &str) -> bool {
     line.contains('├')
 }
 
-fn pad_table_content_line(line: &str) -> String {
-    let parts: Vec<&str> = line.split('│').collect();
-    if parts.len() < 3 {
-        return line.to_string();
-    }
-    let leading = parts[0];
-    let interior = &parts[1..parts.len() - 1];
-    let trailing = parts[parts.len() - 1];
-
-    let padded_cells: Vec<String> = interior.iter().map(|p| format!(" {p} ")).collect();
-    format!("{leading}│{}│{trailing}", padded_cells.join("│"))
-}
-
-fn widen_separator_line(line: &str) -> String {
-    let mut result = String::new();
-    let mut in_dash_run = false;
-    for ch in line.chars() {
-        match ch {
-            '─' => {
-                in_dash_run = true;
-                result.push(ch);
-            }
-            '├' | '┼' | '┤' => {
-                if in_dash_run {
-                    result.push('─');
-                    result.push('─');
-                    in_dash_run = false;
-                }
-                result.push(ch);
-            }
-            _ => {
-                result.push(ch);
-            }
-        }
-    }
-    result
-}
-
 fn map_border_chars(separator: &str, left: char, cross: char, right: char) -> String {
     separator
         .chars()
@@ -149,14 +111,6 @@ fn enhance_tables(rendered: &str) -> String {
 
     for &(start, end) in regions.iter().rev() {
         let separator_idx = (start..end).find(|&idx| is_separator_line(&result_lines[idx]));
-
-        for line in result_lines.iter_mut().take(end).skip(start) {
-            if is_separator_line(line) {
-                *line = widen_separator_line(line);
-            } else {
-                *line = pad_table_content_line(line);
-            }
-        }
 
         if let Some(sep_idx) = separator_idx {
             let bottom = derive_bottom_border(&result_lines[sep_idx]);
@@ -391,51 +345,13 @@ mod tests {
     }
 
     #[test]
-    fn test_pad_table_content_line() {
-        assert_eq!(
-            pad_table_content_line("│Feature│Status│"),
-            "│ Feature │ Status │"
-        );
-    }
-
-    #[test]
-    fn test_pad_table_content_line_preserves_leading() {
-        assert_eq!(pad_table_content_line("  │A│B│"), "  │ A │ B │");
-    }
-
-    #[test]
-    fn test_pad_not_a_table_line() {
-        assert_eq!(pad_table_content_line("no pipes"), "no pipes");
-        assert_eq!(pad_table_content_line("one│pipe"), "one│pipe");
-    }
-
-    #[test]
-    fn test_widen_separator_line() {
-        assert_eq!(
-            widen_separator_line("├───────┼──────┤"),
-            "├─────────┼────────┤"
-        );
-    }
-
-    #[test]
-    fn test_widen_separator_single_column() {
-        assert_eq!(widen_separator_line("├───┤"), "├─────┤");
-    }
-
-    #[test]
     fn test_derive_top_border() {
-        assert_eq!(
-            derive_top_border("├─────────┼────────┤"),
-            "┌─────────┬────────┐"
-        );
+        assert_eq!(derive_top_border("├───────┼──────┤"), "┌───────┬──────┐");
     }
 
     #[test]
     fn test_derive_bottom_border() {
-        assert_eq!(
-            derive_bottom_border("├─────────┼────────┤"),
-            "└─────────┴────────┘"
-        );
+        assert_eq!(derive_bottom_border("├───────┼──────┤"), "└───────┴──────┘");
     }
 
     #[test]
@@ -450,11 +366,11 @@ mod tests {
         let result = enhance_tables(input);
         let lines: Vec<&str> = result.lines().collect();
         assert_eq!(lines.len(), 5);
-        assert_eq!(lines[0], "┌─────────┬────────┐");
-        assert_eq!(lines[1], "│ Feature │ Status │");
-        assert_eq!(lines[2], "├─────────┼────────┤");
-        assert_eq!(lines[3], "│ Auth    │ Done   │");
-        assert_eq!(lines[4], "└─────────┴────────┘");
+        assert_eq!(lines[0], "┌───────┬──────┐");
+        assert_eq!(lines[1], "│Feature│Status│");
+        assert_eq!(lines[2], "├───────┼──────┤");
+        assert_eq!(lines[3], "│Auth   │Done  │");
+        assert_eq!(lines[4], "└───────┴──────┘");
     }
 
     #[test]
@@ -471,8 +387,8 @@ mod tests {
     fn test_enhance_tables_no_separator() {
         let input = "│A│B│\n│C│D│";
         let result = enhance_tables(input);
-        // Without a separator, no borders are added, but cells are padded
-        assert!(result.contains("│ A │ B │"));
+        // Without a separator, no borders are added, cells are unchanged
+        assert!(result.contains("│A│B│"));
         assert!(!result.contains("┌"));
     }
 
