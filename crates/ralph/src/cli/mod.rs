@@ -67,6 +67,19 @@ pub enum Commands {
 
     /// Converse with a persona-configured Claude using a named agent.
     Persona(PersonaArgs),
+
+    /// Edit a session's conversation history in $EDITOR.
+    ///
+    /// Opens a projected view of the conversation as a TOML messages array.
+    Edit(EditArgs),
+}
+
+/// Arguments for the `edit` subcommand.
+#[derive(clap::Args, Debug)]
+pub struct EditArgs {
+    /// Session slug to edit. If omitted, edits the most recent session.
+    #[arg(value_name = "SLUG")]
+    pub slug: Option<String>,
 }
 
 /// Arguments for the `sessions` subcommand.

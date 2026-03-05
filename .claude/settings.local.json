@@ -68,7 +68,8 @@
       "Bash(cargo rail:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:docs.rs)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": []

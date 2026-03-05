@@ -312,3 +312,158 @@ acceptance = [
   "Pause/resume logic is explained with buffer handling notes",
   "Comments are concise and follow existing code style",
 ]
+
+# ============================================================================
+# Strategies - Structured Persona Collaboration
+# ============================================================================
+# Strategies are predefined collaboration patterns between personas. They live
+# in .claude/strategies/*.toml and map to hardcoded Rust implementations via
+# the 'kind' field. Each strategy defines which personas participate and how
+# they interact through a structured workflow.
+#
+# Dependency order:
+#   Story 1 (TOML schema) -> Story 2 (CLI surface) -> Story 3 (Trait + registry)
+#                                                          |
+#                                                          v
+#                                                    Story 4 (PRD loop strategy)
+#                                                          |
+#                                                          v
+#                                                    Story 5 (Remove ralph run)
+#
+# Example strategy TOML (.claude/strategies/prd-loop.toml):
+#
+#   name = "prd-loop"
+#   description = "Iterates through PRD stories using a developer persona with team support"
+#   kind = "prd-loop"
+#
+#   primary_persona = "developer"
+#   available_personas = ["architect", "reviewer", "tester"]
+#
+#   prompt_aggregates = [
+#     "Focus on one story at a time. Mark the story as passes = true when complete.",
+#     "Run cargo xtask lint before claiming any story is done.",
+#     "Do not modify files outside the crates/ directory without explicit approval.",
+#   ]
+# ============================================================================
+
+[[stories]]
+category = "strategy"
+description = "Load strategy definitions from .claude/strategies/*.toml with persona configuration and prompt aggregates"
+steps = [
+  "Create .claude/strategies/prd-loop.toml with fields: name, description, kind, primary_persona, available_personas, and prompt_aggregates",
+  "Run ralph strategy list",
+  "Verify the strategy appears with its name and description",
+  "Create a malformed TOML file and verify a clear error is shown",
+  "Verify that a strategy with an unknown kind produces a clear error",
+  "Verify that a strategy referencing a nonexistent persona produces a clear error",
+  "Verify that an empty or omitted prompt_aggregates is valid",
+]
+passes = false
+acceptance = [
+  "Strategy files are discovered from .claude/strategies/*.toml",
+  "Required fields: name (string), description (string), kind (string mapping to a Rust implementation)",
+  "Required field: primary_persona (string) — the persona that executes each iteration, must have a corresponding .claude/agents/{name}.md file",
+  "Optional field: available_personas (array of strings) — personas reachable via orchestration directives, each must have a corresponding agent file",
+  "Optional field: prompt_aggregates (array of strings) — additional instructions appended to the persona's prompt in array order. Empty array or omitted is valid. Each entry must be a non-empty string",
+  "Loading validates that kind maps to a known registered strategy implementation",
+  "Malformed TOML or missing required fields produce actionable error messages with file path and field name",
+]
+
+[[stories]]
+category = "strategy"
+description = "Add ralph strategy subcommand with list and execute actions"
+steps = [
+  "Run ralph strategy list and verify available strategies are displayed",
+  "Run ralph strategy execute prd-loop and verify the strategy begins execution",
+  "Run ralph strategy execute nonexistent and verify a clear error is shown",
+  "Run ralph strategy with no subcommand and verify help text is shown",
+]
+passes = false
+acceptance_unit_tested = [
+  "CLI argument parsing accepts ralph strategy list and ralph strategy execute <name>",
+  "Unknown strategy name produces an error listing available strategies",
+  "CLI flags from ralph run that apply (--max-iterations, --resume) are available on ralph strategy execute",
+]
+acceptance_manual_verified = [
+  "ralph strategy list shows all loaded strategies with name, description, kind, and primary_persona",
+  "ralph strategy execute <name> looks up the strategy by name and invokes the corresponding Rust implementation",
+  "ralph strategy execute passes strategy config (primary_persona, available_personas, prompt_aggregates) to the Rust implementation",
+]
+
+[[stories]]
+category = "strategy"
+description = "Define a Strategy trait in Rust with a registry mapping kind strings to implementations"
+steps = [
+  "Verify that a new strategy implementation can be registered by adding a Rust module and a kind string",
+  "Verify that ralph strategy execute prd-loop routes to the PrdLoop strategy implementation",
+  "Verify that the strategy implementation receives the parsed TOML config including personas and prompt_aggregates",
+  "Verify that the trait's return type includes a KeyAction for keyboard control propagation",
+]
+passes = false
+acceptance = [
+  "A Strategy trait exists with an execute method that receives strategy config and CLI args",
+  "The trait's execute method returns an iteration result that includes an optional KeyAction enum (SoftStop, HardStop, Pause, Continue)",
+  "The trait includes a between_iterations hook that receives the iteration result and returns an IterationDecision (Continue, Orchestrate(directives), Stop)",
+  "A registry maps kind strings (e.g., 'prd-loop') to trait implementations",
+  "Strategy implementations receive: primary_persona, available_personas, prompt_aggregates, and CLI flags",
+  "Adding a new strategy requires only: a new Rust module implementing the trait, and registering its kind string",
+  "No dynamic dispatch or plugin loading — all strategies are compiled into the binary",
+]
+
+[[stories]]
+category = "strategy"
+description = "Reimplement the ralph run PRD iteration loop as a prd-loop strategy that invokes personas with orchestration support"
+steps = [
+  "Create .claude/strategies/prd-loop.toml with kind = 'prd-loop', primary_persona = 'developer', available_personas = ['architect', 'reviewer', 'tester'], and prompt_aggregates with PRD-specific instructions",
+  "Run ralph strategy execute prd-loop",
+  "Verify iterations pick up pending stories from the PRD file",
+  "Verify each iteration invokes the primary_persona using its agent file (not raw claude CLI)",
+  "Verify prompt_aggregates are appended to the iteration prompt in array order after PRD content",
+  "Verify orchestration directives in output are scanned and resolved between iterations",
+  "Verify directives targeting personas not in available_personas produce a warning and are skipped",
+  "Verify keyboard controls (s, S, p) work during execution",
+  "Verify post-iteration checks (completion detection, PRD diff, stuck detection) still function",
+  "Verify session management (logging, finalization) works — strategy owns session, orchestrator spawns sub-sessions",
+]
+passes = false
+acceptance_unit_tested = [
+  "Prompt construction appends prompt_aggregates in array order after PRD-specific content (story details, completion marker)",
+  "Only primary_persona and available_personas are accepted — directives targeting unlisted personas produce a warning",
+  "invoke::build_command() is called with the primary_persona's agent file",
+  "Pending stories are correctly identified from the PRD TOML",
+  "Completion marker is detected in iteration output",
+  "Session log entries include strategy name and persona used per iteration",
+  "A unified StrategyInvocationConfig subsumes run::InvocationConfig — the old type becomes internal to the prd-loop implementation",
+]
+acceptance_manual_verified = [
+  "Loop terminates when PRD file is unchanged between iterations",
+  "Loop respects --max-iterations with starting_iteration offset",
+  "Keyboard controls (s, S, p) function identically to current ralph run via KeyAction propagation",
+  "between_iterations hook scans for orchestration directives and resolves them via existing orchestrator with independent sub-sessions",
+  "--resume picks up from the last completed iteration",
+  "Git diff is captured after each iteration",
+  "Strategy owns the session lifecycle — one session for the entire loop, orchestrator spawns independent sub-sessions for directive resolution",
+]
+
+[[stories]]
+category = "strategy"
+description = "Remove the ralph run command now that its functionality lives in ralph strategy execute prd-loop"
+steps = [
+  "First make ralph run delegate to ralph strategy execute prd-loop and verify identical behavior",
+  "Then remove ralph run entirely from the CLI",
+  "Verify ralph --help no longer lists run as a subcommand",
+  "Verify no dead code remains from the old run module",
+  "Verify docs/context/ralph-run.md is updated or removed to reflect the new strategy-based approach",
+]
+passes = false
+acceptance_unit_tested = [
+  "The run module code (crates/ralph/src/run/) is deleted entirely",
+  "No dead code remains — no unused imports, no orphaned functions",
+  "Shared utilities extracted during Story 4 live in appropriate shared modules",
+]
+acceptance_manual_verified = [
+  "ralph run produces an unknown command error",
+  "ralph --help does not list run",
+  "Documentation references to ralph run are updated to ralph strategy execute prd-loop",
+  "CLAUDE.md progressive disclosure links are updated (ralph-run.md renamed or replaced with strategy docs)",
+]
