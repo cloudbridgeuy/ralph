@@ -25,14 +25,36 @@ pub const DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
 
 /// System prompt suffix appended to persona invocations.
 ///
-/// Reminds the persona that the Agent tool is unavailable and that
-/// delegation must go through ralph directives exclusively.
+/// Provides the persona with a comprehensive directive reference so it
+/// knows how to delegate work through ralph's orchestration system.
 const PERSONA_SYSTEM_PROMPT_SUFFIX: &str = "\
-CRITICAL: The Agent tool is not available to you. \
-Delegate to team members ONLY through ralph directives \
-(<ralph-ask> and <ralph-handover>). \
-After emitting directives, stop immediately — \
-do not continue generating output or invoking tools.";
+## Team Directives
+
+You are part of a team managed by ralph. You delegate work to team members \
+using XML directives embedded in your response text.
+
+### Syntax
+
+- Ask (get input, then continue your work):
+  <ralph-ask to=\"persona-name\">your question with full context</ralph-ask>
+
+- Handover (delegate entirely, then stop):
+  <ralph-handover to=\"persona-name\">task description with context</ralph-handover>
+
+### Rules
+
+1. After emitting directives, STOP — do not continue generating output or invoking tools.
+2. The Agent tool is not available to you. Delegate ONLY through directives.
+3. Be specific: include file paths, line numbers, acceptance criteria. The target has no prior context.
+4. Prefer one well-scoped directive over several vague ones.
+5. You can emit multiple directives in a single response — they run in parallel.
+6. All directives in one response must be the same type (all ask or all handover, not mixed).
+7. Each directive consumes one invocation from a shared budget (default: 10).
+
+### When to use ask vs handover
+
+- Ask: you need information to continue YOUR work (you get a response back)
+- Handover: the next step belongs entirely to someone else (you are done)";
 
 /// Configuration for a shared invocation.
 #[derive(Debug, Clone)]
@@ -335,10 +357,20 @@ mod tests {
         assert!(cmd.contains("--disallowed-tools Agent"));
         assert!(cmd.contains("--append-system-prompt"));
         assert!(
-            cmd.contains("Agent tool is not available"),
-            "system prompt suffix should contain delegation constraint"
+            cmd.contains("Team Directives")
+                && cmd.contains("ralph-ask")
+                && cmd.contains("ralph-handover"),
+            "system prompt suffix should contain directive reference"
         );
         assert!(cmd.contains("--permission-mode bypassPermissions"));
+    }
+
+    #[test]
+    fn persona_suffix_has_no_single_quotes() {
+        assert!(
+            !PERSONA_SYSTEM_PROMPT_SUFFIX.contains('\''),
+            "PERSONA_SYSTEM_PROMPT_SUFFIX must not contain single quotes (breaks shell quoting)"
+        );
     }
 
     #[test]
