@@ -222,10 +222,13 @@ pub(super) fn display_run_summary_terminal(summary: &RunSummary) {
 
 /// Display prompt with terminal formatting.
 pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
+    let term_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
+    let width = super::formatters::separator_width(&prompt.stripped_prompt(), term_width);
+
     // Header with visual indicator
     println!();
     println!("\x1b[1m\x1b[35m▶ Prompt\x1b[0m");
-    println!("\x1b[35m{}\x1b[0m", "─".repeat(60));
+    println!("\x1b[35m{}\x1b[0m", "─".repeat(width));
 
     // Display attached files as a table (if any)
     if !prompt.attached_files.is_empty() {
@@ -249,7 +252,7 @@ pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
     println!("{}", rendered);
 
     // Closing separator
-    println!("\x1b[35m{}\x1b[0m", "─".repeat(60));
+    println!("\x1b[35m{}\x1b[0m", "─".repeat(width));
 }
 
 /// Display ask summary with terminal formatting.

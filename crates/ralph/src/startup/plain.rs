@@ -203,10 +203,13 @@ pub(super) fn display_run_summary_plain(summary: &RunSummary) {
 
 /// Display prompt without terminal formatting.
 pub(super) fn display_prompt_plain(prompt: &PromptDisplay) {
+    let term_width: u16 = 80;
+    let width = super::formatters::separator_width(&prompt.stripped_prompt(), term_width);
+
     // Header
     println!();
     println!("> Prompt");
-    println!("{}", "-".repeat(60));
+    println!("{}", "-".repeat(width));
 
     // Display attached files (if any)
     if !prompt.attached_files.is_empty() {
@@ -223,7 +226,7 @@ pub(super) fn display_prompt_plain(prompt: &PromptDisplay) {
     println!("{}", prompt.stripped_prompt());
 
     // Closing separator
-    println!("{}", "-".repeat(60));
+    println!("{}", "-".repeat(width));
 }
 
 /// Display ask summary without terminal formatting.
