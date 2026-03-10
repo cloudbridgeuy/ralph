@@ -34,6 +34,7 @@
 //! detection. This is called on every loop iteration (not just during output
 //! gaps), allowing responsive key handling regardless of output frequency.
 
+use super::kill_process_group;
 use super::timeout::try_wait_child;
 use super::types::{
     StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_HARD_STOP,
@@ -46,6 +47,7 @@ use crate::spinner::{KeyHintState, Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -334,6 +336,7 @@ fn join_output_threads(
 ///     match action {
 ///         RunKeyAction::SoftStop => println!("User requested soft stop"),
 ///         RunKeyAction::HardStop => println!("User requested hard stop"),
+///         RunKeyAction::Interrupt => println!("User requested interrupt"),
 ///         RunKeyAction::Pause => println!("User requested pause"),
 ///         RunKeyAction::None => {}
 ///     }
@@ -364,6 +367,7 @@ fn run_subprocess_with_spinner(
         .stdin(Stdio::null()) // Null stdin so parent can capture keypresses for controls
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0) // Create new process group so we can kill grandchildren
         .spawn()?;
 
     // Get handles to stdout and stderr
@@ -482,9 +486,8 @@ fn run_subprocess_with_spinner(
             // Disable raw mode before draining output to prevent corruption
             keyboard.disable_raw_mode();
 
-            // Kill the subprocess
-            let _ = child.kill();
-            let _ = child.wait(); // Clean up zombie
+            // Kill the subprocess and its process group
+            kill_process_group(&mut child);
 
             // Drain any output buffered while paused
             drain_pause_buffer(keyboard);
@@ -517,9 +520,8 @@ fn run_subprocess_with_spinner(
             // Disable raw mode before draining output to prevent corruption
             keyboard.disable_raw_mode();
 
-            // Kill the subprocess gracefully
-            let _ = child.kill();
-            let _ = child.wait(); // Clean up zombie
+            // Kill the subprocess and its process group
+            kill_process_group(&mut child);
 
             // Drain any output buffered while paused
             drain_pause_buffer(keyboard);
@@ -633,6 +635,33 @@ fn run_subprocess_with_spinner(
         // This allows interactive controls (soft stop, hard stop, pause)
         // to be detected even while output is streaming rapidly.
         if keyboard.poll() {
+            // Check if interrupt was requested (Ctrl+C) - kill subprocess immediately
+            if keyboard.matches_action(RunKeyAction::Interrupt) {
+                if spinner_active {
+                    spinner.stop();
+                }
+                keyboard.disable_raw_mode();
+
+                kill_process_group(&mut child);
+
+                drain_pause_buffer(keyboard);
+                drain_stdout(&line_rx, &mut processor);
+                let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
+
+                let stream_result = processor.finish();
+                if let Some(ref output) = stream_result.final_output {
+                    print!("{}", output);
+                    let _ = io::stdout().flush();
+                }
+                return Err(SubprocessError::Interrupted {
+                    partial_result: Box::new(StreamingSubprocessResult {
+                        exit_code: EXIT_CODE_INTERRUPTED,
+                        stderr: stderr_captured,
+                        stream_result,
+                    }),
+                });
+            }
+
             // Check if hard stop was requested - kill subprocess immediately
             if keyboard.matches_action(RunKeyAction::HardStop) {
                 if spinner_active {
@@ -640,9 +669,8 @@ fn run_subprocess_with_spinner(
                 }
                 keyboard.disable_raw_mode();
 
-                // Kill the subprocess
-                let _ = child.kill();
-                let _ = child.wait();
+                // Kill the subprocess and its process group
+                kill_process_group(&mut child);
 
                 // Drain any output buffered while paused
                 drain_pause_buffer(keyboard);

@@ -29,6 +29,7 @@
 //!     RunKeyAction::SoftStop => println!("Finishing after this iteration..."),
 //!     RunKeyAction::HardStop => println!("Stopping immediately..."),
 //!     RunKeyAction::Pause => println!("Paused"),
+//!     RunKeyAction::Interrupt => println!("Interrupted!"),
 //!     RunKeyAction::None => {} // No key pressed
 //! }
 //! // Raw mode automatically disabled when guard is dropped
@@ -105,6 +106,8 @@ pub enum RunKeyAction {
     HardStop,
     /// Toggle pause/resume (p key).
     Pause,
+    /// Interrupt: immediately halt (Ctrl+C).
+    Interrupt,
 }
 
 /// Check for keyboard actions during the run loop (non-blocking).
@@ -122,6 +125,7 @@ pub enum RunKeyAction {
 /// - [`RunKeyAction::SoftStop`] if 's' is pressed
 /// - [`RunKeyAction::HardStop`] if 'S' (shift+s) is pressed
 /// - [`RunKeyAction::Pause`] if 'p' or 'P' is pressed
+/// - [`RunKeyAction::Interrupt`] if Ctrl+C is pressed
 /// - [`RunKeyAction::None`] if no key was pressed or on error
 ///
 /// # Key Bindings
@@ -131,6 +135,7 @@ pub enum RunKeyAction {
 /// | `s` | SoftStop | Finish current iteration, then exit |
 /// | `S` | HardStop | Immediately halt and save paused state |
 /// | `p`, `P` | Pause | Toggle pause/resume |
+/// | `Ctrl+C` | Interrupt | Immediately halt subprocess |
 pub fn check_for_run_action() -> RunKeyAction {
     // Poll with zero timeout - non-blocking check
     if event::poll(Duration::ZERO).unwrap_or(false) {
@@ -157,6 +162,10 @@ fn classify_run_key(key_event: KeyEvent) -> RunKeyAction {
         KeyCode::Char('S') if key_event.modifiers.is_empty() => RunKeyAction::HardStop,
         // Pause toggle: 'p' or 'P' without other modifiers
         KeyCode::Char('p' | 'P') if key_event.modifiers.is_empty() => RunKeyAction::Pause,
+        // Interrupt: Ctrl+C
+        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            RunKeyAction::Interrupt
+        }
         _ => RunKeyAction::None,
     }
 }
@@ -273,6 +282,18 @@ mod tests {
     fn test_classify_run_key_pause_uppercase() {
         let key = KeyEvent::new(KeyCode::Char('P'), KeyModifiers::empty());
         assert_eq!(classify_run_key(key), RunKeyAction::Pause);
+    }
+
+    #[test]
+    fn test_classify_run_key_ctrl_c_interrupt() {
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert_eq!(classify_run_key(key), RunKeyAction::Interrupt);
+    }
+
+    #[test]
+    fn test_classify_run_key_c_without_modifier() {
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::empty());
+        assert_eq!(classify_run_key(key), RunKeyAction::None);
     }
 
     #[test]

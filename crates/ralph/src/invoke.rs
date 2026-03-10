@@ -220,6 +220,8 @@ fn build_iteration_log(
         tool_calls,
         chunks,
         output_blocks: result.stream_result.output_blocks.clone(),
+        strategy_name: None,
+        persona: None,
     }
 }
 

@@ -146,6 +146,8 @@ fn execute_updates(
                     tool_calls: vec![],
                     chunks: vec![],
                     output_blocks: vec![],
+                    strategy_name: None,
+                    persona: None,
                 };
                 write_iteration_log(session_dir, &new_log)
                     .map_err(|e| EditError::WriteIterationFile(std::io::Error::other(e)))?;

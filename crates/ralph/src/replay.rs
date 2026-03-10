@@ -414,6 +414,8 @@ mod tests {
                 Chunk::code("fn main() {}".to_string(), Some("rust".to_string())),
             ],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         }
     }
 

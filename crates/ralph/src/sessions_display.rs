@@ -710,6 +710,8 @@ mod tests {
             tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         }
     }
 }

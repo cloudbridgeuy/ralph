@@ -1,9 +1,11 @@
 //! Subprocess invocation with timeout enforcement.
 
+use super::kill_process_group;
 use super::types::{StreamingSubprocessResult, SubprocessError};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -60,6 +62,7 @@ pub fn invoke_subprocess_with_timeout(
         .stdin(Stdio::null()) // Subprocess does not need stdin; prevents blocking on input
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .process_group(0) // Create new process group so we can kill grandchildren
         .spawn()?;
 
     // Get handles to stdout and stderr
@@ -156,9 +159,8 @@ pub fn invoke_subprocess_with_timeout(
 
         // Check timeout
         if start.elapsed() >= timeout {
-            // Kill the subprocess
-            let _ = child.kill();
-            let _ = child.wait(); // Clean up zombie
+            // Kill the subprocess and its process group
+            kill_process_group(&mut child);
 
             // Drain any remaining output that was received
             while let Ok(line_result) = line_rx.try_recv() {

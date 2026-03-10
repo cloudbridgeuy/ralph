@@ -6,6 +6,7 @@
 
 pub mod execute;
 mod prd_loop;
+pub mod traits;
 
 use ralph_core::strategy::{
     parse_strategy, validate_personas, validate_prompt_aggregates, StrategyConfig, StrategyError,

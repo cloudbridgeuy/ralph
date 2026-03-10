@@ -405,6 +405,8 @@ mod tests {
             tool_calls: vec![],
             chunks: vec![Chunk::prose(format!("Iteration {}", sequence))],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         }
     }
 

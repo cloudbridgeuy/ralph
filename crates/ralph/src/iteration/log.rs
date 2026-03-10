@@ -88,6 +88,14 @@ pub struct IterationLog {
     /// Contains all visual output in display order for faithful replay.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub output_blocks: Vec<OutputBlock>,
+    /// Strategy name that produced this iteration (e.g., "prd-loop").
+    /// Present when the iteration was executed via `ralph strategy execute`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strategy_name: Option<String>,
+    /// Persona used for this iteration (e.g., "developer").
+    /// Present when the iteration was executed via a strategy with a primary persona.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
 }
 
 /// Extract the assistant's response text from output blocks.

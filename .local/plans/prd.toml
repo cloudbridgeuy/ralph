@@ -84,7 +84,7 @@ steps = [
   "Verify that the strategy implementation receives the parsed TOML config including personas and prompt_aggregates",
   "Verify that the trait's return type includes a KeyAction for keyboard control propagation",
 ]
-passes = false
+passes = true
 acceptance = [
   "A Strategy trait exists with an execute method that receives strategy config and CLI args",
   "The trait's execute method returns an iteration result that includes an optional KeyAction enum (SoftStop, HardStop, Pause, Continue)",
@@ -110,7 +110,7 @@ steps = [
   "Verify post-iteration checks (completion detection, PRD diff, stuck detection) still function",
   "Verify session management (logging, finalization) works — strategy owns session, orchestrator spawns sub-sessions",
 ]
-passes = false
+passes = true
 acceptance_unit_tested = [
   "Prompt construction appends prompt_aggregates in array order after PRD-specific content (story details, completion marker)",
   "Only primary_persona and available_personas are accepted — directives targeting unlisted personas produce a warning",

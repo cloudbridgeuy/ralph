@@ -234,6 +234,8 @@ fn test_iteration_log_with_tool_calls() {
         ],
         chunks: vec![Chunk::prose("Found and read files".to_string())],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -320,6 +322,8 @@ fn test_write_iteration_log_with_tool_calls() {
         }],
         chunks: vec![Chunk::prose("Found files".to_string())],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let log_path = write_iteration_log(session_dir, &log).unwrap();

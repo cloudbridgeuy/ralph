@@ -18,6 +18,8 @@ fn make_log(sequence: u32, prompt: Option<&str>, response: Option<&str>) -> Iter
         tool_calls: vec![],
         chunks: vec![],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     }
 }
 

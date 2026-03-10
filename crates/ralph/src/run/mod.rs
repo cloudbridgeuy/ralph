@@ -22,7 +22,8 @@
 //!   of pause state.
 
 pub mod execute;
-mod recovery;
+
+pub use crate::recovery::InvocationConfig;
 
 use crate::git::capture_and_write_diff;
 use crate::highlight::ThemeConfig;
@@ -32,6 +33,7 @@ use crate::iteration::{
     LogToolCall,
 };
 use crate::keyboard::RunKeyAction;
+use crate::recovery::{invoke_with_failure_recovery, RecoveryError, RecoveryOutcome};
 use crate::session::{finalize_session, initialize_session, SessionError};
 use crate::signal;
 use crate::startup::{
@@ -44,7 +46,6 @@ use crate::warn::warn_if_err;
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd, PrdError};
 use ralph_core::session::SessionOutcome;
-use recovery::{invoke_with_failure_recovery, RecoveryOutcome};
 use std::fs;
 use std::path::PathBuf;
 
@@ -116,31 +117,6 @@ pub struct RunResult {
     pub total_input_tokens: Option<u64>,
     /// Total output tokens across all iterations.
     pub total_output_tokens: Option<u64>,
-}
-
-/// Configuration for a single subprocess invocation with failure recovery.
-///
-/// Groups parameters needed by `invoke_with_failure_recovery` to keep
-/// the function signature under 5 arguments.
-pub(crate) struct InvocationConfig<'a> {
-    /// Full command to invoke the LLM.
-    pub command: &'a str,
-    /// Maximum number of recovery attempts after initial failure.
-    pub max_attempts: usize,
-    /// Timeout in seconds for each subprocess invocation.
-    pub timeout_secs: u64,
-    /// Current iteration number (for logging context).
-    pub iteration: usize,
-    /// Theme configuration for syntax highlighting.
-    pub theme_config: Option<&'a ThemeConfig>,
-    /// Accumulated time from previous iterations (for spinner display).
-    pub session_elapsed_ms: u64,
-    /// Configuration for verbose tool output.
-    pub verbose_tools_config: &'a VerboseToolsConfig,
-    /// Session slug for spinner display.
-    pub session_slug: &'a str,
-    /// Maximum iterations for spinner display.
-    pub max_iterations: usize,
 }
 
 /// Error type for run operations.
@@ -438,6 +414,8 @@ fn build_iteration_log(
         tool_calls,
         chunks,
         output_blocks: result.stream_result.output_blocks.clone(),
+        strategy_name: None,
+        persona: None,
     }
 }
 
@@ -470,17 +448,17 @@ struct SubprocessInvocationContext<'a> {
 /// Handle subprocess invocation with error context enrichment.
 ///
 /// Wraps `invoke_with_failure_recovery` to add session context to errors.
+/// Maps `RecoveryError` variants into `RunError` with session-specific fields.
 fn handle_subprocess_invocation(
     ctx: &SubprocessInvocationContext,
 ) -> Result<RecoveryOutcome, RunError> {
     match invoke_with_failure_recovery(ctx.config) {
         Ok(outcome) => Ok(outcome),
-        Err(RunError::SubprocessFailed {
+        Err(RecoveryError::SubprocessFailed {
             exit_code,
             attempts,
             raw_text,
             stderr,
-            ..
         }) => Err(RunError::SubprocessFailed {
             exit_code,
             attempts,
@@ -489,12 +467,11 @@ fn handle_subprocess_invocation(
             session_slug: ctx.session_slug.to_string(),
             iterations_completed: ctx.iterations_completed,
         }),
-        Err(RunError::SubprocessTimedOut {
+        Err(RecoveryError::SubprocessTimedOut {
             timeout_secs,
             attempts,
             raw_text,
             stderr,
-            ..
         }) => Err(RunError::SubprocessTimedOut {
             timeout_secs,
             attempts,
@@ -503,20 +480,20 @@ fn handle_subprocess_invocation(
             session_slug: ctx.session_slug.to_string(),
             iterations_completed: ctx.iterations_completed,
         }),
-        Err(RunError::Interrupted { partial_result, .. }) => Err(RunError::Interrupted {
+        Err(RecoveryError::Interrupted { partial_result }) => Err(RunError::Interrupted {
             session_slug: ctx.session_slug.to_string(),
             iterations_completed: ctx.iterations_completed,
             partial_result,
             pending_before: Some(ctx.pending_before),
         }),
-        Err(RunError::HardStop { partial_result, .. }) => Err(RunError::HardStop {
+        Err(RecoveryError::HardStop { partial_result }) => Err(RunError::HardStop {
             session_slug: ctx.session_slug.to_string(),
             iterations_completed: ctx.iterations_completed,
             partial_result,
             pending_before: Some(ctx.pending_before),
             prd_path: ctx.prd_path.clone(),
         }),
-        Err(e) => Err(e),
+        Err(RecoveryError::Subprocess(e)) => Err(RunError::Subprocess(e)),
     }
 }
 

@@ -48,6 +48,9 @@ dirs = "6.0.0"
 # Logging
 env_logger = "0.11"
 log = "0.4"
+
+# Unix process control
+libc = "0.2"
 prettytable = "0.10"
 ralph_core = { version = "0.0.0", path = "crates/core" }
 

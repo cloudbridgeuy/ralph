@@ -27,6 +27,7 @@ pub mod paths;
 mod persona;
 mod prompt;
 pub mod prompt_source;
+pub mod recovery;
 pub mod render;
 pub mod replay;
 pub mod replay_countdown;

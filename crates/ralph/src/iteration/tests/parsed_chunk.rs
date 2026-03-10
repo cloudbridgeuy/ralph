@@ -98,6 +98,8 @@ fn test_chunk_from_parsed_chunks_serializes_to_toml() {
         tool_calls: vec![],
         chunks,
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -162,6 +164,8 @@ fn test_iteration_log_with_typed_chunks_from_parsed() {
         tool_calls: vec![],
         chunks,
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     // Write to disk

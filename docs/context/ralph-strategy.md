@@ -10,7 +10,9 @@ This document describes the `ralph strategy` command, which manages and executes
 | Core types | `crates/core/src/strategy.rs` | StrategyConfig, StrategyError, parsing, validation |
 | Discovery & display | `crates/ralph/src/strategy/mod.rs` | File discovery, loading, validation, formatting |
 | Execution dispatcher | `crates/ralph/src/strategy/execute.rs` | Strategy kind dispatch, run orchestration |
-| PrdLoop builder | `crates/ralph/src/strategy/prd_loop.rs` | Builds RunConfig for prd-loop strategies |
+| Strategy trait | `crates/ralph/src/strategy/traits.rs` | Strategy trait, StrategyExecutionContext, run_strategy() |
+| PrdLoop strategy | `crates/ralph/src/strategy/prd_loop.rs` | Self-contained PRD iteration loop with orchestration |
+| Recovery | `crates/ralph/src/recovery.rs` | Subprocess failure recovery, InvocationConfig, retry logic |
 | CLI tests | `crates/ralph/src/cli/tests/strategy.rs` | CLI argument parsing tests |
 | Main wiring | `crates/ralph/src/main.rs` | execute_strategy(), execute_strategy_list(), execute_strategy_execute() |
 
@@ -70,7 +72,17 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 **Imperative Shell** (`crates/ralph/src/strategy/`):
 - `mod.rs` — `discover_strategies()`, `load_and_validate_strategy()`, `load_all_strategies()`, `find_strategy_by_name()`, `format_strategy_list()`
 - `execute.rs` — `execute_strategy_execute()` dispatcher, matches on `StrategyKind` enum
-- `prd_loop.rs` — `build_run_config()` builds a `RunConfig` from strategy config and delegates to `run::run()`
+- `traits.rs` — `Strategy` trait with `execute()` and `between_iterations()` hooks, `StrategyExecutionContext`, `run_strategy()` generic dispatcher
+- `prd_loop.rs` — `PrdLoopStrategy` implements `Strategy` trait with self-contained iteration loop: session management, subprocess invocation via `recovery::invoke_with_failure_recovery`, completion detection, orchestration directive scanning, and keyboard control propagation
+
+### PrdLoop Internal Types
+
+| Type | Purpose |
+|------|---------|
+| `StrategyInvocationConfig` | Groups read-only loop parameters (subsumes old `run::InvocationConfig` pattern) |
+| `StrategyIdentity` | Groups strategy name + persona for log entries |
+| `AccumulatedMetrics` | Tracks cost, duration, and token usage across iterations |
+| `IterationState` | Mutable state during the iteration loop |
 
 ## Strategy Kind Dispatch
 
@@ -81,9 +93,11 @@ main.rs::execute_strategy_execute(args)
   -> strategy::execute::execute_strategy_execute(args)
        -> load_all_strategies()
        -> find_strategy_by_name()
+       -> build_execution_context() -> StrategyExecutionContext
        -> match StrategyKind::PrdLoop
-            -> prd_loop::build_run_config(params) -> RunConfig
-            -> run::run(config)
+            -> run_strategy(&PrdLoopStrategy, ctx)
+                 -> PrdLoopStrategy::execute()
+                      -> execute_prd_loop() [owns session lifecycle, iteration loop, orchestration]
 ```
 
 ## Known Kinds

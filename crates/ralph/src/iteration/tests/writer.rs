@@ -27,6 +27,8 @@ fn test_write_iteration_log() {
             Chunk::prose("Finished!".to_string()),
         ],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let log_path = write_iteration_log(session_dir, &log).unwrap();
@@ -78,6 +80,8 @@ fn test_write_iteration_log_with_metadata() {
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let log_path = write_iteration_log(session_dir, &log).unwrap();
@@ -116,6 +120,8 @@ fn test_write_multiple_iteration_logs() {
         tool_calls: vec![],
         chunks: vec![Chunk::prose("First iteration".to_string())],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
     write_iteration_log(session_dir, &log1).unwrap();
 
@@ -133,6 +139,8 @@ fn test_write_multiple_iteration_logs() {
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Second iteration".to_string())],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
     write_iteration_log(session_dir, &log2).unwrap();
 
@@ -170,6 +178,8 @@ fn test_count_iterations_with_iterations() {
             tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         };
         write_iteration_log(session_dir, &log).unwrap();
     }
@@ -224,6 +234,8 @@ fn test_load_session_iterations_sorted_by_sequence() {
             tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         };
         write_iteration_log(session_dir, &log).unwrap();
     }
@@ -257,6 +269,8 @@ fn test_load_session_iterations_ignores_non_iteration_files() {
         tool_calls: vec![],
         chunks: vec![],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
     write_iteration_log(session_dir, &log).unwrap();
 
@@ -291,6 +305,8 @@ fn test_extract_conversation_messages_skips_logs_without_prompt() {
             tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         },
         IterationLog {
             sequence: 2,
@@ -305,6 +321,8 @@ fn test_extract_conversation_messages_skips_logs_without_prompt() {
             tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         },
     ];
 
@@ -332,6 +350,8 @@ fn test_extract_conversation_messages_preserves_order() {
             tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         },
         IterationLog {
             sequence: 2,
@@ -346,6 +366,8 @@ fn test_extract_conversation_messages_preserves_order() {
             tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
+            strategy_name: None,
+            persona: None,
         },
     ];
 
@@ -372,6 +394,8 @@ fn test_extract_conversation_messages_handles_missing_response() {
         tool_calls: vec![],
         chunks: vec![],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     }];
 
     let messages = extract_conversation_messages(&logs);

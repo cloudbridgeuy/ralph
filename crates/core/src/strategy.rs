@@ -35,7 +35,7 @@ pub enum StrategyError {
 }
 
 /// Parsed strategy configuration from a TOML file.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct StrategyConfig {
     /// Human-readable name for this strategy.
     pub name: String,
@@ -62,6 +62,64 @@ pub struct StrategyConfig {
 pub enum StrategyKind {
     /// PRD-driven iteration loop using a persona.
     PrdLoop,
+}
+
+/// Keyboard actions propagated from strategy execution.
+///
+/// Strategies report these to the caller so that keyboard controls
+/// (soft stop, hard stop, pause) are preserved across the trait boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyAction {
+    /// Finish current iteration then exit.
+    SoftStop,
+    /// Immediately halt and save paused state.
+    HardStop,
+    /// Toggle pause/resume.
+    Pause,
+    /// Continue to next iteration.
+    Continue,
+}
+
+/// Result of executing a strategy.
+///
+/// Returned by `Strategy::execute` to communicate the outcome of running
+/// the strategy, including metrics, completion state, and any keyboard
+/// action detected during execution.
+#[derive(Debug)]
+pub struct StrategyResult {
+    /// Keyboard action detected during execution (if any).
+    pub key_action: Option<KeyAction>,
+    /// Session slug.
+    pub slug: String,
+    /// Number of iterations completed.
+    pub iterations_completed: usize,
+    /// Reason for completion (human-readable).
+    pub completion_reason: Option<String>,
+    /// Final count of pending stories.
+    pub final_pending_stories: usize,
+    /// Total cost in USD across all iterations.
+    pub total_cost_usd: Option<f64>,
+    /// Total duration in milliseconds across all iterations.
+    pub total_duration_ms: Option<u64>,
+    /// Total input tokens across all iterations.
+    pub total_input_tokens: Option<u64>,
+    /// Total output tokens across all iterations.
+    pub total_output_tokens: Option<u64>,
+}
+
+/// Decision for what to do between strategy iterations.
+///
+/// Returned by `Strategy::between_iterations` to control the loop driver.
+/// The `Orchestrate` variant carries directive strings that should be
+/// resolved before continuing (e.g., invoking other personas).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IterationDecision {
+    /// Continue to the next iteration.
+    Continue,
+    /// Resolve orchestration directives before continuing.
+    Orchestrate(Vec<String>),
+    /// Stop the strategy.
+    Stop,
 }
 
 /// Resolve a `kind` string from TOML into a typed `StrategyKind`.
@@ -462,5 +520,56 @@ prompt_aggregates = [""]
     fn test_resolve_kind_case_sensitive() {
         assert_eq!(resolve_kind("PRD-LOOP"), None);
         assert_eq!(resolve_kind("Prd-Loop"), None);
+    }
+
+    // =========================================================================
+    // KeyAction tests
+    // =========================================================================
+
+    #[test]
+    fn test_key_action_variants_distinct() {
+        assert_ne!(KeyAction::SoftStop, KeyAction::HardStop);
+        assert_ne!(KeyAction::HardStop, KeyAction::Pause);
+        assert_ne!(KeyAction::Pause, KeyAction::Continue);
+        assert_ne!(KeyAction::Continue, KeyAction::SoftStop);
+    }
+
+    #[test]
+    fn test_key_action_clone() {
+        let action = KeyAction::SoftStop;
+        let cloned = action;
+        assert_eq!(action, cloned);
+    }
+
+    // =========================================================================
+    // IterationDecision tests
+    // =========================================================================
+
+    #[test]
+    fn test_iteration_decision_continue() {
+        let decision = IterationDecision::Continue;
+        assert_eq!(decision, IterationDecision::Continue);
+    }
+
+    #[test]
+    fn test_iteration_decision_orchestrate() {
+        let directives = vec!["ask architect".to_string()];
+        let decision = IterationDecision::Orchestrate(directives.clone());
+        assert_eq!(decision, IterationDecision::Orchestrate(directives));
+    }
+
+    #[test]
+    fn test_iteration_decision_stop() {
+        let decision = IterationDecision::Stop;
+        assert_eq!(decision, IterationDecision::Stop);
+    }
+
+    #[test]
+    fn test_iteration_decision_variants_distinct() {
+        assert_ne!(IterationDecision::Continue, IterationDecision::Stop);
+        assert_ne!(
+            IterationDecision::Continue,
+            IterationDecision::Orchestrate(vec![])
+        );
     }
 }

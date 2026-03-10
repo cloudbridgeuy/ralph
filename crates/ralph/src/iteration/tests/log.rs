@@ -23,6 +23,8 @@ fn test_iteration_log_serialization() {
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -87,6 +89,8 @@ fn test_iteration_log_empty_chunks() {
         tool_calls: vec![],
         chunks: vec![],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -118,6 +122,8 @@ fn test_iteration_log_with_code_chunk() {
             ),
         ],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -161,6 +167,8 @@ fn test_iteration_log_with_metadata() {
         tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();
@@ -332,6 +340,8 @@ fn test_iteration_log_with_prompt_and_response() {
         tool_calls: vec![],
         chunks: vec![],
         output_blocks: vec![],
+        strategy_name: None,
+        persona: None,
     };
 
     let toml_str = toml::to_string_pretty(&log).unwrap();

@@ -61,6 +61,8 @@ fn write_partial_iteration_log(
         ),
         chunks: iteration::Chunk::from_parsed_chunks(&partial.stream_result.chunks),
         output_blocks: partial.stream_result.output_blocks.clone(),
+        strategy_name: None,
+        persona: None,
     };
 
     match iteration::write_iteration_log(&session_dir, &partial_log) {
