@@ -161,7 +161,6 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Prompt Template System](docs/context/prompt-template.md) - Placeholders, customization, and two-phase workflow
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [Runtime Control](docs/context/runtime-control.md) - Keyboard controls, signal handling, and session finalization
-- [ralph run Command](docs/context/ralph-run.md) - PRD-driven iteration loop, CLI flags, session management
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, session continuation, conversation history
 - [ralph persona Command](docs/context/ralph-persona.md) - Named agent conversations, persona-scoped sessions
 - [Orchestration](docs/context/orchestration.md) - Multi-agent directives, handover/ask, conversation routing

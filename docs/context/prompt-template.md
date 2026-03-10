@@ -57,13 +57,13 @@ The `--prompt` flag accepts three input types:
 
 ```bash
 # Inline prompt (literal string)
-ralph run --prompt "Custom instructions here"
+ralph strategy execute prd-loop --prompt "Custom instructions here"
 
 # File path (reads content from file)
-ralph run --prompt /path/to/custom-prompt.txt
+ralph strategy execute prd-loop --prompt /path/to/custom-prompt.txt
 
 # Stdin (use "-" to read from stdin)
-cat custom-prompt.txt | ralph run --prompt -
+cat custom-prompt.txt | ralph strategy execute prd-loop --prompt -
 ```
 
 ### Input Classification Logic
@@ -78,13 +78,13 @@ Append extra instructions to the default template without replacing it:
 
 ```bash
 # Inline additional instructions
-ralph run --additional-prompt "Focus on error handling"
+ralph strategy execute prd-loop --additional-prompt "Focus on error handling"
 
 # From file
-ralph run --additional-prompt /path/to/extra-instructions.txt
+ralph strategy execute prd-loop --additional-prompt /path/to/extra-instructions.txt
 
 # From stdin
-echo "Focus on tests" | ralph run --additional-prompt -
+echo "Focus on tests" | ralph strategy execute prd-loop --additional-prompt -
 ```
 
 The additional prompt is substituted into `{additional_prompt}` in the template.
@@ -93,10 +93,10 @@ The additional prompt is substituted into `{additional_prompt}` in the template.
 
 ```bash
 # Custom PRD path
-ralph run --prd /path/to/custom/prd.toml
+ralph strategy execute prd-loop --prd /path/to/custom/prd.toml
 
 # Custom completion marker
-ralph run --completion-marker "<done/>"
+ralph strategy execute prd-loop --completion-marker "<done/>"
 ```
 
 ## Custom Prompt Templates
@@ -104,7 +104,7 @@ ralph run --completion-marker "<done/>"
 To use a completely custom prompt template, create a file with your template and pass it via `--prompt`:
 
 ```bash
-ralph run --prompt /path/to/my-templates/custom-prompt.txt
+ralph strategy execute prd-loop --prompt /path/to/my-templates/custom-prompt.txt
 ```
 
 ### Template File Example

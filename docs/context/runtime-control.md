@@ -34,7 +34,7 @@ Pressing `S` immediately halts execution and saves state for later resumption:
 
 1. The subprocess receives SIGINT and terminates
 2. Paused state is written to `{data_dir}/paused.toml`
-3. The session can be resumed later with `ralph run --resume`
+3. The session can be resumed later with `ralph strategy execute prd-loop --resume`
 4. Partial iteration output is discarded (not written to progress file)
 
 Use hard stop when you need to stop immediately but want to resume from where you left off.

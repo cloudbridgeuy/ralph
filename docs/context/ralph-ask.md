@@ -17,7 +17,7 @@ This document provides comprehensive documentation for the `ralph ask` command, 
 
 ## Purpose
 
-The `ralph ask` command provides a streamlined interface for quick LLM interactions. Unlike `ralph run` which processes PRD stories iteratively, `ask` sends a single prompt and displays the response. Key features:
+The `ralph ask` command provides a streamlined interface for quick LLM interactions. Unlike `ralph strategy execute prd-loop` which processes PRD stories iteratively, `ask` sends a single prompt and displays the response. Key features:
 
 - **Session persistence**: Each invocation creates or continues a session for replay
 - **Conversation history**: Continue previous sessions with context preserved
@@ -70,7 +70,7 @@ The prompt can be provided from multiple sources:
 
 ### Session Storage
 
-Sessions use the same storage as `ralph run`. See [ralph-run.md](ralph-run.md) for storage locations.
+Sessions use the same storage as `ralph strategy execute`. See [ralph-strategy.md](ralph-strategy.md) for storage locations.
 
 ### Creating New Sessions
 
@@ -249,7 +249,7 @@ permission_mode = "acceptEdits"
 
 ## Theme Configuration
 
-Theme settings follow the same precedence as `ralph run`:
+Theme settings follow the same precedence as `ralph strategy execute`:
 
 1. CLI flag (`--theme`, `--no-background`)
 2. Environment variable (`RALPH_THEME`, `RALPH_NO_BACKGROUND`)
@@ -410,6 +410,6 @@ When used within the orchestration system (as a session continuation), `ask` out
 
 ## Related Documentation
 
-- [ralph run Command](ralph-run.md) - PRD-driven iteration loop
+- [ralph strategy Command](ralph-strategy.md) - PRD-driven iteration loop
 - [Runtime Control](runtime-control.md) - Signal-based interruption (applies to ask)
 - [Prompt Template System](prompt-template.md) - For understanding prompt formats

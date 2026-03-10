@@ -11,7 +11,7 @@ PRD files are TOML documents that define work items (stories) for ralph to track
 PRD files are stored in `.local/plans/prd.toml` by default. You can specify a custom path using the `--prd` flag:
 
 ```bash
-ralph run --prd ./my-project/requirements.toml
+ralph strategy execute prd-loop --prd ./my-project/requirements.toml
 ```
 
 ## Story Schema
@@ -106,7 +106,7 @@ Ralph uses PRD files in its iteration loop as follows:
 
 ### 1. Initial Analysis
 
-When `ralph run` starts, it:
+When `ralph strategy execute prd-loop` starts, it:
 - Reads the PRD file
 - Counts total stories, completed stories, and pending stories
 - Exits early if no pending stories exist (`passes = false`)

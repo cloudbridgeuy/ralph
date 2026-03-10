@@ -80,7 +80,7 @@ acceptance = [
 2. **Run ralph**:
 
 ```bash
-ralph run
+ralph strategy execute prd-loop
 ```
 
 Ralph will iterate through your stories, invoking the LLM to implement each one until all stories pass or you interrupt the session.
@@ -102,7 +102,7 @@ ralph replay quiet-mountain -i 3
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  ralph run                                                     │
+│  ralph strategy execute prd-loop                               │
 ├────────────────────────────────────────────────────────────────┤
 │  Session: quiet-mountain                                       │
 │  Stories: 3 pending                                            │

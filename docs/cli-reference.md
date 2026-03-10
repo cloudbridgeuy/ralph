@@ -17,101 +17,10 @@ ralph [OPTIONS] <COMMAND>
 
 | Command | Description |
 |---------|-------------|
-| `run` | Run the iteration loop to process user stories |
 | `sessions` | List all sessions across all projects |
 | `iterations` | List all iterations across all sessions |
 | `replay` | Replay a session's output with syntax highlighting |
 | `themes` | List available syntax highlighting themes |
-
----
-
-## ralph run
-
-Run the iteration loop to process user stories from a PRD.
-
-### Usage
-
-```
-ralph run [OPTIONS] [ITERATIONS]
-```
-
-### Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `[ITERATIONS]` | Maximum number of iterations to run. Defaults to the number of pending stories in the PRD. The loop exits early if all stories are completed or the completion marker is found in output. |
-
-### Options
-
-#### Session Options
-
-| Option | Short | Default | Description |
-|--------|-------|---------|-------------|
-| `--slug <SLUG>` | `-s` | Auto-generated | Session identifier. Used to name the session directory for logs. Auto-generated as adjective-noun (e.g., "quiet-mountain") if omitted. |
-
-#### Prompt Options
-
-| Option | Short | Default | Description |
-|--------|-------|---------|-------------|
-| `--prompt <PROMPT>` | `-p` | Built-in template | Custom prompt template. Supports file path, `-` for stdin, or inline string. Placeholders: `{prd_file}` |
-| `--additional-prompt <TEXT>` | `-a` | None | Additional instructions to append to the prompt. Supports file path, `-` for stdin, or inline string. |
-| `--command <TEMPLATE>` | `-c` | `claude --permission-mode acceptEdits --output-format stream-json -p {prompt}` | Custom LLM invocation command template with `{prompt}` placeholder. |
-
-#### File Paths
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--prd <PATH>` | `.local/plans/prd.toml` | PRD (Product Requirements Document) file path |
-
-#### Execution Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--max-attempts <N>` | `3` | Maximum failure recovery attempts. Number of times to automatically re-attempt if the LLM subprocess fails. After exhausting all attempts, prompts user for action. |
-| `--timeout <SECONDS>` | `600` | Timeout for LLM subprocess in seconds. If exceeded, the subprocess is killed and treated as a failure (retry logic applies). |
-| `--completion-marker <STRING>` | `<promise>COMPLETE</promise>` | Custom completion marker. When found in LLM output, exits the loop immediately. |
-
-#### Display Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--theme <NAME>` | `base16-ocean.dark` | Syntax highlighting theme. Use a built-in theme name or path to a custom `.tmTheme` file. Run `ralph themes` to list available themes. Can also be set via `RALPH_THEME` environment variable. |
-| `--no-background` | `false` | Disable background colors in syntax highlighting. Allows terminal's default background to show through. Can also be set via `RALPH_NO_BACKGROUND` environment variable. |
-| `--verbose-tools [TOOLS]` | Disabled | Enable verbose output for specific tools. Without value, enables for all tools. Accepts comma-separated list of tool names (case-insensitive). |
-
-### Examples
-
-```bash
-# Run with default settings (iterations = pending story count)
-ralph run
-
-# Run exactly 5 iterations
-ralph run 5
-
-# Run with custom session name
-ralph run --slug my-feature
-
-# Run with custom prompt file
-ralph run --prompt ./custom-prompt.txt
-
-# Run with additional instructions
-ralph run -a "Focus on error handling"
-
-# Run with verbose output for Read and Grep tools
-ralph run --verbose-tools=read,grep
-
-# Run with all verbose tools enabled
-ralph run --verbose-tools
-
-# Run with custom theme and no background
-ralph run --theme "Solarized (dark)" --no-background
-
-# Run with longer timeout (20 minutes)
-ralph run --timeout 1200
-
-# Run with custom completion marker
-ralph run --completion-marker "DONE"
-```
 
 ---
 
@@ -291,14 +200,14 @@ Environment variables can be used instead of CLI flags. CLI flags take precedenc
 ```bash
 # Set theme via environment variable
 export RALPH_THEME="Solarized (dark)"
-ralph run
+ralph strategy execute prd-loop
 
 # Use custom config directory
 export RALPH_CONFIG_DIR=/custom/config
-ralph run
+ralph strategy execute prd-loop
 
 # One-off theme override
-RALPH_THEME="Monokai Extended" ralph run
+RALPH_THEME="Monokai Extended" ralph strategy execute prd-loop
 ```
 
 ---
