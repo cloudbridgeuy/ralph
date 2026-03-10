@@ -124,7 +124,9 @@ pub enum SessionError {
     },
 
     /// No paused session found
-    #[error("No paused session found. Use 'ralph run' to start a new session.")]
+    #[error(
+        "No paused session found. Use 'ralph strategy execute <name>' to start a new session."
+    )]
     NoPausedSession,
 
     /// Paused session not for current project

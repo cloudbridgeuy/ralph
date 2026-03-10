@@ -128,7 +128,9 @@ pub fn list_iterations(filter: IterationsFilter) -> Result<IterationsResult, Ite
         if filter.session.is_some() || filter.project.is_some() || filter.outcome.is_some() {
             println!("No iterations found matching the specified filters.");
         } else {
-            println!("No iterations found. Run 'ralph run' to start a session.");
+            println!(
+                "No iterations found. Run 'ralph strategy execute <name>' to start a session."
+            );
         }
         return Ok(IterationsResult {
             count: 0,

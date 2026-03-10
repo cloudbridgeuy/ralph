@@ -25,14 +25,12 @@ pub mod markdown;
 mod orchestrator;
 pub mod paths;
 mod persona;
-mod prompt;
 pub mod prompt_source;
 pub mod recovery;
 pub mod render;
 pub mod replay;
 pub mod replay_countdown;
 pub mod replay_renderer;
-mod run;
 mod session;
 pub mod sessions_display;
 pub mod signal;
@@ -46,7 +44,7 @@ pub mod warn;
 use clap::Parser;
 use cli::{
     AskArgs, Cli, Commands, IterationsArgs, PersonaAction, PersonaArgs, PersonaInvokeArgs,
-    ReplayArgs, RunArgs, SessionsArgs, StrategyAction, StrategyArgs, StrategyExecuteArgs,
+    ReplayArgs, SessionsArgs, StrategyAction, StrategyArgs, StrategyExecuteArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -60,7 +58,6 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Run(args) => execute_run(args),
         Commands::Sessions(args) => execute_sessions(args),
         Commands::Iterations(args) => execute_iterations(args),
         Commands::Replay(args) => execute_replay(args),
@@ -78,14 +75,6 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-/// Execute the run command.
-///
-/// Delegates to the `run::execute` module which handles all run execution logic
-/// including failure recovery prompting, resume functionality, and hard stop handling.
-fn execute_run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
-    run::execute::execute_run(args)
 }
 
 /// Execute the sessions command.
@@ -165,7 +154,7 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!();
-    println!("Use --theme <NAME> to select a theme for 'ralph run'.");
+    println!("Use --theme <NAME> to select a theme for 'ralph strategy execute'.");
     println!("Or set the RALPH_THEME environment variable.");
     println!();
     println!("You can also load custom .tmTheme files by specifying a file path.");

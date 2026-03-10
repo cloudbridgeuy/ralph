@@ -1,7 +1,7 @@
 //! Paused state for hard-stopped sessions.
 //!
-//! When a user presses 'S' (hard stop) during a run, the session state is
-//! saved to allow later resumption with `ralph run --resume`.
+//! When a user presses 'S' (hard stop) during strategy execution, the session
+//! state is saved to allow later resumption with `ralph strategy execute <name> --resume`.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 /// Paused state written when a session is hard-stopped.
 ///
-/// This allows resuming the session later with `ralph run --resume`.
+/// This allows resuming the session later with `ralph strategy execute <name> --resume`.
 /// Stored at `{data_dir}/paused.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PausedState {

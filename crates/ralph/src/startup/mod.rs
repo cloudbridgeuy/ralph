@@ -1,7 +1,7 @@
-//! Startup information display for the run command.
+//! Startup information display for strategy execution.
 //!
 //! This module provides functions to display startup information when
-//! `ralph run` begins, giving users immediate feedback about the session
+//! a strategy begins execution, giving users immediate feedback about the session
 //! being created and the work to be done.
 //!
 //! The display adapts based on terminal detection:

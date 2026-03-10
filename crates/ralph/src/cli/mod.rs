@@ -4,7 +4,6 @@
 //! It provides the main CLI struct and all subcommand definitions.
 
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
 
 #[cfg(test)]
 mod tests;
@@ -25,15 +24,7 @@ pub struct Cli {
 
 /// Available subcommands.
 #[derive(Subcommand, Debug)]
-#[allow(clippy::large_enum_variant)] // RunArgs is large but this is CLI parsing, not hot path
 pub enum Commands {
-    /// Run the iteration loop to process user stories.
-    ///
-    /// Spawns LLM sessions iteratively to implement pending user stories from
-    /// the PRD. Each iteration picks up one story, implements it, updates the
-    /// PRD to mark it complete, and commits the changes.
-    Run(RunArgs),
-
     /// List all sessions across all projects.
     ///
     /// Displays a table of sessions with their slug, project path,
@@ -441,120 +432,4 @@ impl PersonaArgs {
             ),
         }
     }
-}
-
-/// Arguments for the `run` subcommand.
-#[derive(clap::Args, Debug)]
-pub struct RunArgs {
-    /// Maximum number of iterations to run.
-    ///
-    /// Defaults to the number of pending stories in the PRD.
-    /// The loop exits early if all stories are completed or
-    /// the completion marker is found in output.
-    #[arg(value_name = "ITERATIONS")]
-    pub iterations: Option<usize>,
-
-    /// Session identifier.
-    ///
-    /// Used to name the session directory for logs.
-    /// Auto-generated as adjective-noun (e.g., "quiet-mountain") if omitted.
-    #[arg(short, long)]
-    pub slug: Option<String>,
-
-    /// Custom prompt template.
-    ///
-    /// Supports file path, `-` for stdin, or inline string.
-    /// Placeholders: {prd_file}, {completion_marker}, {additional_prompt}
-    #[arg(short, long)]
-    pub prompt: Option<String>,
-
-    /// Custom LLM invocation pattern.
-    ///
-    /// Command template to execute with {prompt} placeholder.
-    /// Default: claude --permission-mode acceptEdits --output-format stream-json -p {prompt}
-    #[arg(short, long, value_name = "TEMPLATE")]
-    pub command: Option<String>,
-
-    /// PRD file path.
-    ///
-    /// Default: .local/plans/prd.toml
-    #[arg(long, value_name = "PATH")]
-    pub prd: Option<PathBuf>,
-
-    /// Maximum failure recovery attempts.
-    ///
-    /// Number of times to automatically re-attempt if the LLM subprocess fails.
-    /// After exhausting all attempts, prompts user for action.
-    #[arg(long, default_value_t = 3)]
-    pub max_attempts: usize,
-
-    /// Custom completion marker.
-    ///
-    /// When found in LLM output, exits the loop immediately.
-    /// Default: <promise>COMPLETE</promise>
-    #[arg(long, value_name = "STRING")]
-    pub completion_marker: Option<String>,
-
-    /// Timeout for LLM subprocess in seconds.
-    ///
-    /// If the subprocess exceeds this duration, it is killed and treated
-    /// as a failure (retry logic applies). Prevents runaway processes.
-    /// Default: 600 seconds (10 minutes)
-    #[arg(long, default_value_t = 600)]
-    pub timeout: u64,
-
-    /// Syntax highlighting theme.
-    ///
-    /// Use a built-in theme name (e.g., "Monokai Extended", "Solarized (dark)")
-    /// or a path to a custom .tmTheme file. Run 'ralph themes' to list available themes.
-    /// Can also be set via RALPH_THEME environment variable.
-    #[arg(long, value_name = "NAME")]
-    pub theme: Option<String>,
-
-    /// Disable background colors in syntax highlighting.
-    ///
-    /// When set, theme background colors are not applied, allowing the
-    /// terminal's default background to show through.
-    /// Can also be set via RALPH_NO_BACKGROUND environment variable.
-    #[arg(long)]
-    pub no_background: bool,
-
-    /// Additional instructions to append to the prompt.
-    ///
-    /// Appends custom instructions to the main prompt template.
-    /// Supports file path, `-` for stdin, or inline string.
-    /// Useful for adding project-specific or one-off instructions.
-    #[arg(short = 'a', long)]
-    pub additional_prompt: Option<String>,
-
-    /// Enable verbose output for specific tools.
-    ///
-    /// Accepts a comma-separated list of tool names (case-insensitive).
-    /// When verbose is enabled for a tool, full input/output is shown
-    /// instead of truncated summaries.
-    ///
-    /// Examples:
-    ///   --verbose-tools              Enable verbose for all tools
-    ///   --verbose-tools=grep,bash    Enable for Grep and Bash only
-    ///   --verbose-tools=read         Enable for Read only
-    #[arg(long, value_name = "TOOLS", num_args = 0..=1, default_missing_value = "*")]
-    pub verbose_tools: Option<String>,
-
-    /// Suppress prompt display at the start of each run.
-    ///
-    /// By default, the prompt passed to the LLM is displayed before
-    /// Iteration 1 begins. Use this flag to hide the prompt.
-    #[arg(long)]
-    pub no_prompt: bool,
-
-    /// Resume a previously hard-stopped session.
-    ///
-    /// When a session is hard-stopped (user presses 'S'), its state is saved
-    /// to allow later resumption. Use this flag to continue from where the
-    /// session was interrupted.
-    ///
-    /// If --slug is also provided, resumes that specific session.
-    /// Otherwise, resumes the most recently paused session for the current project.
-    #[arg(long)]
-    pub resume: bool,
 }

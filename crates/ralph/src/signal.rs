@@ -1,6 +1,6 @@
 //! Signal handling for graceful shutdown.
 //!
-//! This module provides SIGINT/SIGTERM handling for the ralph run command,
+//! This module provides SIGINT/SIGTERM handling for strategy execution,
 //! allowing sessions to be properly finalized as "interrupted" when the user
 //! presses Ctrl+C or the process receives a termination signal.
 //!

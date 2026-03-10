@@ -257,7 +257,7 @@ pub fn list_sessions(filter: SessionsFilter) -> Result<(), SessionsDisplayError>
         if filter.project.is_some() || filter.outcome.is_some() {
             println!("No sessions found matching the specified filters.");
         } else {
-            println!("No sessions found. Run 'ralph run' to start a session.");
+            println!("No sessions found. Run 'ralph strategy execute <name>' to start a session.");
         }
         return Ok(());
     }
