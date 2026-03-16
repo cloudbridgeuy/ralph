@@ -16,6 +16,7 @@ mod edit;
 pub mod formatting;
 mod git;
 pub mod highlight;
+mod human;
 mod init;
 mod invoke;
 pub mod iteration;
@@ -296,10 +297,18 @@ fn build_invocation_config(
 
 fn execute_and_finalize(config: InvocationConfig) -> Result<(), Box<dyn std::error::Error>> {
     // Extract fields needed for orchestration before invoke() takes ownership.
-    let known_personas: Vec<String> = persona::discover_personas(&config.project_path)
-        .into_iter()
-        .map(|p| p.name)
-        .collect();
+    let team_strategy = match crate::strategy::load_team_strategy(&config.project_path) {
+        Ok(strategy) => strategy,
+        Err(e) => {
+            warn(format!("Failed to load team strategy: {e}"));
+            None
+        }
+    };
+    let known_personas: Vec<String> =
+        persona::discover_personas_with_strategy(&config.project_path, team_strategy.as_ref())
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
 
     let orch_config = orchestrator::OrchestrationConfig {
         project_path: config.project_path.clone(),
@@ -502,8 +511,14 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 fn execute_strategy(args: StrategyArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.action {
         StrategyAction::List => execute_strategy_list(),
+        StrategyAction::Init => execute_strategy_init(),
         StrategyAction::Execute(args) => execute_strategy_execute(args),
     }
+}
+
+fn execute_strategy_init() -> Result<(), Box<dyn std::error::Error>> {
+    let project_path = std::env::current_dir()?;
+    strategy::init::execute_init(&project_path)
 }
 
 fn execute_strategy_list() -> Result<(), Box<dyn std::error::Error>> {
@@ -534,8 +549,15 @@ fn execute_persona(args: PersonaArgs) -> Result<(), Box<dyn std::error::Error>> 
 
             let project_path = std::env::current_dir()?;
 
-            // Verify agent file exists before doing anything else
-            persona::verify_agent_file(&invoke_args.persona, &project_path)?;
+            // Load team strategy if it exists
+            let team_strategy = strategy::load_team_strategy(&project_path)?;
+
+            // Verify agent file exists (strategy-aware)
+            persona::verify_agent_file_with_strategy(
+                &invoke_args.persona,
+                &project_path,
+                team_strategy.as_ref(),
+            )?;
 
             if invoke_args.history {
                 return execute_persona_with_history(&invoke_args, &project_path);
@@ -548,7 +570,8 @@ fn execute_persona(args: PersonaArgs) -> Result<(), Box<dyn std::error::Error>> 
 
 fn execute_persona_list() -> Result<(), Box<dyn std::error::Error>> {
     let project_path = std::env::current_dir()?;
-    let personas = persona::discover_personas(&project_path);
+    let team_strategy = strategy::load_team_strategy(&project_path)?;
+    let personas = persona::discover_personas_with_strategy(&project_path, team_strategy.as_ref());
     let output = persona::format_persona_list(&personas);
     print!("{output}");
     Ok(())

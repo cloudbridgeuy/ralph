@@ -4,7 +4,10 @@
 //! project's `.claude/strategies/` directory, reads and validates them
 //! using the pure core functions, and formats results for display.
 
+pub mod assets;
+mod conversation_loop;
 pub mod execute;
+pub mod init;
 mod prd_loop;
 pub mod traits;
 
@@ -18,7 +21,7 @@ use std::path::{Path, PathBuf};
 use crate::persona;
 
 /// Known strategy kinds supported by the runtime.
-const KNOWN_KINDS: &[&str] = &["prd-loop"];
+const KNOWN_KINDS: &[&str] = &["prd-loop", "conversation-loop"];
 
 /// Errors from strategy I/O and validation in the shell layer.
 #[derive(Debug, thiserror::Error)]
@@ -126,6 +129,30 @@ pub fn load_all_strategies(project_path: &Path) -> Result<Vec<LoadedStrategy>, S
     }
 
     Ok(loaded)
+}
+
+/// Load the project team strategy file (`.claude/strategy.toml`), if it exists.
+///
+/// Returns `None` if the file doesn't exist. Returns `Err` on parse failure.
+pub fn load_team_strategy(
+    project_path: &Path,
+) -> Result<Option<ralph_core::strategy::TeamStrategy>, StrategyLoadError> {
+    let strategy_path = project_path.join(".claude").join("strategy.toml");
+
+    let content = match std::fs::read_to_string(&strategy_path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(StrategyLoadError::ReadFile {
+                path: strategy_path.display().to_string(),
+                source,
+            })
+        }
+    };
+
+    let path_str = strategy_path.display().to_string();
+    let team_strategy = ralph_core::strategy::parse_team_strategy(&content, &path_str)?;
+    Ok(Some(team_strategy))
 }
 
 /// Find a loaded strategy by name, returning an error listing available strategies if not found.

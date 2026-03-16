@@ -11,6 +11,7 @@ use crate::startup;
 use crate::warn::warn_if_err;
 use ralph_core::strategy::{StrategyKind, StrategyResult};
 
+use super::conversation_loop::ConversationLoopStrategy;
 use super::prd_loop::PrdLoopStrategy;
 use super::traits::{run_strategy, StrategyExecutionContext};
 use super::{find_strategy_by_name, load_all_strategies, LoadedStrategy};
@@ -33,6 +34,7 @@ pub fn execute_strategy_execute(
 
     let result = match matched.kind {
         StrategyKind::PrdLoop => run_strategy(&PrdLoopStrategy, ctx)?,
+        StrategyKind::ConversationLoop => run_strategy(&ConversationLoopStrategy, ctx)?,
     };
 
     display_strategy_result(&result);
