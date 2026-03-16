@@ -27,6 +27,7 @@ fn format_routing_status(
     let verb_str = match verb {
         DirectiveVerb::Ask => "ask",
         DirectiveVerb::Handover => "handover",
+        DirectiveVerb::Comment => "comment",
     };
 
     let header =
