@@ -1,0 +1,11 @@
+name = "fiction-loop"
+description = "Collaborative fiction writing with human-in-the-loop"
+kind = "conversation-loop"
+primary_persona = "storyteller"
+available_personas = ["editor-agent", "worldbuilder", "critic"]
+prompt_aggregates = [
+  "You are collaborating with a human author on fiction.",
+  "The human drives the creative direction. You propose, they decide.",
+  "Ask the human when you need creative direction.",
+  "Ask your team (editor-agent, worldbuilder, critic) for specialized feedback.",
+]

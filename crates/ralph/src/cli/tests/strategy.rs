@@ -15,6 +15,17 @@ fn test_strategy_list_parses() {
 }
 
 #[test]
+fn test_strategy_init_parses() {
+    let cli = Cli::try_parse_from(["ralph", "strategy", "init"]).unwrap();
+    match cli.command {
+        Commands::Strategy(args) => {
+            assert!(matches!(args.action, StrategyAction::Init));
+        }
+        _ => panic!("Expected Strategy command"),
+    }
+}
+
+#[test]
 fn test_strategy_execute_parses_name() {
     let cli = Cli::try_parse_from(["ralph", "strategy", "execute", "prd-loop"]).unwrap();
     match cli.command {

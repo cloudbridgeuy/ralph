@@ -1,0 +1,9 @@
+name = "prd-loop"
+description = "Iterates through PRD stories using a developer persona"
+kind = "prd-loop"
+primary_persona = "developer"
+available_personas = ["architect", "reviewer", "tester"]
+prompt_aggregates = [
+  "Focus on one story at a time.",
+  "Run cargo xtask lint before claiming any story is done.",
+]

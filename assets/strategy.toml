@@ -1,0 +1,18 @@
+# Ralph Strategy Configuration
+#
+# This file defines the team structure and agent definitions for this project.
+# Created by `ralph strategy init`.
+#
+# Agents are resolved by name when using `ralph persona <name>`.
+# Paths are relative to the project root.
+
+[agents]
+architect = ".claude/agents/architect.md"
+developer = ".claude/agents/developer.md"
+reviewer = ".claude/agents/reviewer.md"
+tester = ".claude/agents/tester.md"
+product-manager = ".claude/agents/product-manager.md"
+storyteller = ".claude/agents/storyteller.md"
+editor-agent = ".claude/agents/editor-agent.md"
+worldbuilder = ".claude/agents/worldbuilder.md"
+critic = ".claude/agents/critic.md"

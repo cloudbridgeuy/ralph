@@ -96,6 +96,13 @@ pub enum StrategyAction {
     /// current project and displays their configuration.
     List,
 
+    /// Initialize a project strategy with default agent definitions.
+    ///
+    /// Creates `.claude/agents/` with default agent files and
+    /// `.claude/strategy.toml` with the team structure. Existing agent
+    /// files are not overwritten. Fails if strategy.toml already exists.
+    Init,
+
     /// Execute a named strategy.
     ///
     /// Looks up the strategy by name from `.claude/strategies/*.toml`,
