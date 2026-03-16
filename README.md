@@ -41,6 +41,7 @@
 - **Replay Sessions** - Review past sessions with full syntax highlighting
 - **Customizable Prompts** - Use custom prompt templates or add additional instructions
 - **Theme Support** - Multiple built-in themes or use custom `.tmTheme` files
+- **Team Strategy** - Scaffold a project with default agent definitions and a strategy file via `ralph strategy init`
 - **Multi-Agent Orchestration** - Personas can delegate work to each other via ask and handover directives, with automatic routing and budget control
 
 ## Installation
@@ -59,7 +60,15 @@ cargo xtask install --path /usr/local/bin  # Custom path
 
 ## Quick Start
 
-1. **Create a PRD file** at `.local/plans/prd.toml`:
+1. **Initialize the project strategy**:
+
+```bash
+ralph strategy init
+```
+
+This creates `.claude/agents/` with default agent definitions (architect, developer, reviewer, tester, product-manager) and a `.claude/strategy.toml` that ties them together.
+
+2. **Create a PRD file** at `.local/plans/prd.toml`:
 
 ```toml
 [[stories]]
@@ -77,7 +86,7 @@ acceptance = [
 ]
 ```
 
-2. **Run ralph**:
+3. **Run ralph**:
 
 ```bash
 ralph strategy execute prd-loop
@@ -85,7 +94,7 @@ ralph strategy execute prd-loop
 
 Ralph will iterate through your stories, invoking the LLM to implement each one until all stories pass or you interrupt the session.
 
-3. **Monitor progress**:
+4. **Monitor progress**:
 
 ```bash
 # List all sessions
