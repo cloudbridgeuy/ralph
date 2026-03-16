@@ -140,7 +140,7 @@ steps = [
   "Verify no dead code remains from the old run module",
   "Verify docs/context/ralph-run.md is updated or removed to reflect the new strategy-based approach",
 ]
-passes = false
+passes = true
 acceptance_unit_tested = [
   "The run module code (crates/ralph/src/run/) is deleted entirely",
   "No dead code remains — no unused imports, no orphaned functions",
