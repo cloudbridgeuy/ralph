@@ -37,11 +37,13 @@ pub enum DirectiveError {
     MixedVerbs,
 }
 
-/// The two canonical directive verbs.
+/// The canonical directive verbs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectiveVerb {
     Ask,
     Handover,
+    /// Non-blocking comment shown to the human.
+    Comment,
 }
 
 /// A parsed directive from persona output.
@@ -71,6 +73,7 @@ pub fn normalize_verb(raw: &str) -> Option<DirectiveVerb> {
     match raw {
         "ask" | "tell" | "say" | "respond" | "reply" => Some(DirectiveVerb::Ask),
         "handover" | "delegate" | "pass" | "transfer" => Some(DirectiveVerb::Handover),
+        "comment" | "note" | "inform" => Some(DirectiveVerb::Comment),
         _ => None,
     }
 }
@@ -212,6 +215,16 @@ pub fn validate_directive_set(
     }
 }
 
+/// Separate comment directives from ask/handover directives.
+///
+/// Comments are always human-targeted and non-blocking. They should be
+/// extracted and handled separately before validating the remaining directives.
+pub fn extract_comments(directives: Vec<Directive>) -> (Vec<Directive>, Vec<Directive>) {
+    directives
+        .into_iter()
+        .partition(|d| d.verb == DirectiveVerb::Comment)
+}
+
 /// Format persona responses into a single aggregated prompt string.
 ///
 /// Each entry in `responses` is a `(persona_name, response_text)` pair.
@@ -272,6 +285,7 @@ pub fn split_text_around_directives(text: &str) -> Vec<ParsedChunk> {
                 let canonical_verb = match verb {
                     DirectiveVerb::Ask => "ask",
                     DirectiveVerb::Handover => "handover",
+                    DirectiveVerb::Comment => "comment",
                 };
                 chunks.push(ParsedChunk::directive(payload, canonical_verb, target));
 
@@ -293,6 +307,7 @@ pub fn split_text_around_directives(text: &str) -> Vec<ParsedChunk> {
                 let canonical_verb = match verb {
                     DirectiveVerb::Ask => "ask",
                     DirectiveVerb::Handover => "handover",
+                    DirectiveVerb::Comment => "comment",
                 };
                 chunks.push(ParsedChunk::directive(payload, canonical_verb, target));
                 search_start = text.len(); // consumed everything
@@ -931,5 +946,48 @@ Second response.
         assert_eq!(chunks.len(), 1);
         // Unknown verb is skipped; trailing text emitted as prose
         assert!(matches!(&chunks[0].chunk_type, ChunkType::Prose));
+    }
+
+    #[test]
+    fn comment_verb_normalize_parse_split() {
+        // normalize_verb
+        assert_eq!(normalize_verb("comment"), Some(DirectiveVerb::Comment));
+        assert_eq!(normalize_verb("note"), Some(DirectiveVerb::Comment));
+        assert_eq!(normalize_verb("inform"), Some(DirectiveVerb::Comment));
+
+        // parse_directives
+        let d = parse_directives(r#"<ralph-comment to="human">Hi</ralph-comment>"#);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].verb, DirectiveVerb::Comment);
+        assert_eq!(
+            parse_directives(r#"<ralph-note to="h">N</ralph-note>"#)[0].verb,
+            DirectiveVerb::Comment
+        );
+
+        // split_text_around_directives
+        let c = split_text_around_directives(r#"A <ralph-comment to="h">B</ralph-comment> C"#);
+        assert_eq!(c.len(), 3);
+        assert_eq!(c[1], ParsedChunk::directive("B", "comment", "h"));
+    }
+
+    fn make_d(verb: DirectiveVerb) -> Directive {
+        Directive {
+            verb,
+            target: "t".into(),
+            payload: "p".into(),
+        }
+    }
+
+    #[test]
+    fn extract_comments_partitions() {
+        let (c, r) = extract_comments(vec![
+            make_d(DirectiveVerb::Comment),
+            make_d(DirectiveVerb::Ask),
+        ]);
+        assert_eq!((c.len(), r.len()), (1, 1));
+        let (c2, r2) = extract_comments(vec![make_d(DirectiveVerb::Ask)]);
+        assert!(c2.is_empty() && r2.len() == 1);
+        let (c3, r3) = extract_comments(vec![make_d(DirectiveVerb::Comment)]);
+        assert!(c3.len() == 1 && r3.is_empty());
     }
 }

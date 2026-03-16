@@ -8,6 +8,8 @@ use std::collections::HashMap;
 /// Where a persona was discovered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PersonaSource {
+    /// Resolved from `.claude/strategy.toml` [agents] table.
+    Strategy,
     /// Project-local `.claude/agents/` directory.
     Project,
     /// User-level `~/.claude/agents/` directory.
@@ -18,6 +20,7 @@ impl PersonaSource {
     /// Human-readable label for display.
     pub fn as_str(&self) -> &'static str {
         match self {
+            PersonaSource::Strategy => "strategy",
             PersonaSource::Project => "project",
             PersonaSource::User => "user",
         }

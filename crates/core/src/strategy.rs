@@ -5,6 +5,8 @@
 //! Functional Core pattern, all functions operate on data provided as
 //! arguments - no file I/O.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 /// Error type for strategy parsing and validation operations.
@@ -53,6 +55,26 @@ pub struct StrategyConfig {
     pub prompt_aggregates: Vec<String>,
 }
 
+/// Team strategy configuration from `.claude/strategy.toml`.
+///
+/// Defines the project's agent roster. Separate from per-strategy execution
+/// configs in `.claude/strategies/*.toml`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TeamStrategy {
+    /// Maps agent names to their markdown file paths (relative to project root).
+    pub agents: HashMap<String, String>,
+}
+
+/// Parse `.claude/strategy.toml` content into a `TeamStrategy`.
+///
+/// Pure function — no I/O. Takes TOML content as a string.
+pub fn parse_team_strategy(content: &str, path: &str) -> Result<TeamStrategy, StrategyError> {
+    toml::from_str(content).map_err(|source| StrategyError::Parse {
+        path: path.to_string(),
+        source,
+    })
+}
+
 /// Typed strategy kind, resolved from the `kind` string field.
 ///
 /// Each variant maps 1:1 to a Rust implementation module in the shell crate.
@@ -62,6 +84,8 @@ pub struct StrategyConfig {
 pub enum StrategyKind {
     /// PRD-driven iteration loop using a persona.
     PrdLoop,
+    /// Human-driven conversation loop with agent collaboration.
+    ConversationLoop,
 }
 
 /// Keyboard actions propagated from strategy execution.
@@ -137,6 +161,7 @@ pub enum IterationDecision {
 pub fn resolve_kind(kind: &str) -> Option<StrategyKind> {
     match kind {
         "prd-loop" => Some(StrategyKind::PrdLoop),
+        "conversation-loop" => Some(StrategyKind::ConversationLoop),
         _ => None,
     }
 }
@@ -155,23 +180,6 @@ pub fn parse_strategy(content: &str, path: &str) -> Result<StrategyConfig, Strat
         path: path.to_string(),
         source,
     })
-}
-
-/// Validate that the strategy's `kind` is in the list of known kinds.
-pub fn validate_kind(
-    config: &StrategyConfig,
-    known_kinds: &[&str],
-    path: &str,
-) -> Result<(), StrategyError> {
-    if known_kinds.contains(&config.kind.as_str()) {
-        Ok(())
-    } else {
-        Err(StrategyError::UnknownKind {
-            path: path.to_string(),
-            kind: config.kind.clone(),
-            known: known_kinds.iter().map(|s| s.to_string()).collect(),
-        })
-    }
 }
 
 /// Validate that `primary_persona` and all `available_personas` exist.
@@ -340,41 +348,6 @@ primary_persona = "dev"
     }
 
     // =========================================================================
-    // Kind validation tests
-    // =========================================================================
-
-    #[test]
-    fn test_validate_known_kind() {
-        let config = parse_strategy(full_toml(), PATH).unwrap();
-        let known = &["prd-loop", "simple"];
-        assert!(validate_kind(&config, known, PATH).is_ok());
-    }
-
-    #[test]
-    fn test_validate_unknown_kind() {
-        let config = parse_strategy(full_toml(), PATH).unwrap();
-        let known = &["simple", "one-shot"];
-        let err = validate_kind(&config, known, PATH).unwrap_err();
-        match err {
-            StrategyError::UnknownKind { kind, known: k, .. } => {
-                assert_eq!(kind, "prd-loop");
-                assert_eq!(k, vec!["simple", "one-shot"]);
-            }
-            other => panic!("Expected UnknownKind, got: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn test_validate_kind_empty_known_list() {
-        let config = parse_strategy(full_toml(), PATH).unwrap();
-        let known: &[&str] = &[];
-        assert!(matches!(
-            validate_kind(&config, known, PATH),
-            Err(StrategyError::UnknownKind { .. })
-        ));
-    }
-
-    // =========================================================================
     // Persona validation tests
     // =========================================================================
 
@@ -507,6 +480,14 @@ prompt_aggregates = [""]
     }
 
     #[test]
+    fn test_resolve_kind_conversation_loop() {
+        assert_eq!(
+            resolve_kind("conversation-loop"),
+            Some(StrategyKind::ConversationLoop)
+        );
+    }
+
+    #[test]
     fn test_resolve_kind_unknown() {
         assert_eq!(resolve_kind("unknown"), None);
     }
@@ -571,5 +552,63 @@ prompt_aggregates = [""]
             IterationDecision::Continue,
             IterationDecision::Orchestrate(vec![])
         );
+    }
+
+    // =========================================================================
+    // TeamStrategy parsing tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_team_strategy_valid() {
+        let content = r#"
+[agents]
+architect = ".claude/agents/architect.md"
+developer = ".claude/agents/developer.md"
+"#;
+        let strategy = parse_team_strategy(content, "test.toml").unwrap();
+        assert_eq!(strategy.agents.len(), 2);
+        assert_eq!(
+            strategy.agents.get("architect"),
+            Some(&".claude/agents/architect.md".to_string())
+        );
+        assert_eq!(
+            strategy.agents.get("developer"),
+            Some(&".claude/agents/developer.md".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_team_strategy_empty_agents() {
+        let content = r#"
+[agents]
+"#;
+        let strategy = parse_team_strategy(content, "test.toml").unwrap();
+        assert!(strategy.agents.is_empty());
+    }
+
+    #[test]
+    fn test_parse_team_strategy_missing_agents_table() {
+        let content = r#"
+something_else = "value"
+"#;
+        let result = parse_team_strategy(content, "test.toml");
+        assert!(matches!(result, Err(StrategyError::Parse { .. })));
+    }
+
+    #[test]
+    fn test_parse_team_strategy_malformed_toml() {
+        let content = "not valid [[[toml";
+        let result = parse_team_strategy(content, "test.toml");
+        assert!(matches!(result, Err(StrategyError::Parse { .. })));
+    }
+
+    #[test]
+    fn test_parse_team_strategy_error_includes_path() {
+        let content = "invalid [[[";
+        let err = parse_team_strategy(content, "my/path.toml").unwrap_err();
+        match err {
+            StrategyError::Parse { path, .. } => assert_eq!(path, "my/path.toml"),
+            other => panic!("Expected Parse error, got: {other:?}"),
+        }
     }
 }
