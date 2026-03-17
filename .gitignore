@@ -17,4 +17,6 @@ __pycache__/
 
 # Shaping and planning artifacts (local only)
 docs/shaping/
+docs/plans/
 .claude/plans/
+.claude/settings.local.json
