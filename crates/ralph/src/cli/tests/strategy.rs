@@ -15,11 +15,11 @@ fn test_strategy_list_parses() {
 }
 
 #[test]
-fn test_strategy_init_parses() {
-    let cli = Cli::try_parse_from(["ralph", "strategy", "init"]).unwrap();
+fn test_strategy_sync_parses() {
+    let cli = Cli::try_parse_from(["ralph", "strategy", "sync"]).unwrap();
     match cli.command {
         Commands::Strategy(args) => {
-            assert!(matches!(args.action, StrategyAction::Init));
+            assert!(matches!(args.action, StrategyAction::Sync));
         }
         _ => panic!("Expected Strategy command"),
     }

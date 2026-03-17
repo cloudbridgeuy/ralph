@@ -96,12 +96,13 @@ pub enum StrategyAction {
     /// current project and displays their configuration.
     List,
 
-    /// Initialize a project strategy with default agent definitions.
+    /// Sync bundled agents and strategies into the project.
     ///
-    /// Creates `.claude/agents/` with default agent files and
-    /// `.claude/strategy.toml` with the team structure. Existing agent
-    /// files are not overwritten. Fails if strategy.toml already exists.
-    Init,
+    /// Creates `.claude/agents/` with default agent files,
+    /// `.claude/strategies/` with strategy files, and overwrites
+    /// `.claude/strategy.toml` with the latest team structure.
+    /// Existing agent and strategy files are not overwritten.
+    Sync,
 
     /// Execute a named strategy.
     ///

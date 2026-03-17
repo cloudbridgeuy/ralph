@@ -1,13 +1,13 @@
-//! Bundled asset files for `ralph strategy init`.
+//! Bundled asset files for `ralph strategy sync`.
 //!
 //! These are compiled into the binary via `include_str!` and written
-//! to disk during strategy initialization.
+//! to disk during strategy sync.
 
 pub const STRATEGY_TOML: &str = include_str!("../../../../assets/strategy.toml");
 
 /// All agent assets as (filename, content) pairs.
 ///
-/// Used by the init planner to determine which files to write.
+/// Used by the sync planner to determine which files to write.
 pub const AGENT_ASSETS: &[(&str, &str)] = &[
     (
         "architect.md",
@@ -49,7 +49,7 @@ pub const AGENT_ASSETS: &[(&str, &str)] = &[
 
 /// All strategy assets as (filename, content) pairs.
 ///
-/// Used by the init planner to determine which strategy files to write.
+/// Used by the sync planner to determine which strategy files to write.
 pub const STRATEGY_ASSETS: &[(&str, &str)] = &[
     (
         "prd-loop.toml",

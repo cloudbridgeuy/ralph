@@ -1,32 +1,28 @@
-//! Strategy initialization — scaffolds default agent files, strategy files,
+//! Strategy sync — scaffolds default agent files, strategy files,
 //! and `strategy.toml`.
 //!
 //! Follows FC-IS: `plan_file_actions()` is a pure function that decides what
-//! actions to take based on file existence. `execute_init()` is the imperative
+//! actions to take based on file existence. `execute_sync()` is the imperative
 //! shell that performs file I/O and prints output.
 
 use std::path::{Path, PathBuf};
 
 use super::assets;
 
-/// Describes the action taken for a single file during init.
+/// Describes the action taken for a single file during sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InitAction {
     /// File was created successfully.
     Created { path: PathBuf },
     /// File already existed and was skipped.
     Skipped { path: PathBuf },
+    /// File existed and was overwritten with the latest version.
+    Overwritten { path: PathBuf },
 }
 
-/// An error during strategy initialization.
+/// An error during strategy sync.
 #[derive(Debug, thiserror::Error)]
 pub enum InitError {
-    /// `.claude/strategy.toml` already exists.
-    #[error(
-        "Strategy file already exists: {path}\n\nRemove it first if you want to reinitialize."
-    )]
-    StrategyFileExists { path: String },
-
     /// I/O error during file creation.
     #[error("Failed to write {path}: {source}")]
     WriteFile {
@@ -66,6 +62,18 @@ fn plan_file_actions(
         .collect()
 }
 
+/// Decide whether strategy.toml should be created or overwritten.
+///
+/// Pure function — no I/O.
+fn plan_strategy_toml_action(path: &Path, exists: bool) -> InitAction {
+    let path = path.to_path_buf();
+    if exists {
+        InitAction::Overwritten { path }
+    } else {
+        InitAction::Created { path }
+    }
+}
+
 /// Format a single `InitAction` as a summary line.
 ///
 /// Pure function — no I/O.
@@ -75,22 +83,25 @@ fn format_action(action: &InitAction) -> String {
         InitAction::Skipped { path } => {
             format!("  Skipped: {} (already exists)", path.display())
         }
+        InitAction::Overwritten { path } => {
+            format!("  Overwritten: {} (updated to latest)", path.display())
+        }
     }
 }
 
-/// Format the init summary for display.
+/// Format the sync summary for display.
 ///
 /// Pure function — no I/O.
-fn format_init_summary(
+fn format_sync_summary(
     agent_actions: &[InitAction],
     strategy_actions: &[InitAction],
-    strategy_path: &Path,
+    strategy_toml_action: &InitAction,
 ) -> String {
     use std::fmt::Write;
 
     let mut out = String::new();
-    let _ = writeln!(out, "Strategy initialized:\n");
-    let _ = writeln!(out, "  Created: {}", strategy_path.display());
+    let _ = writeln!(out, "Strategy synced:\n");
+    let _ = writeln!(out, "{}", format_action(strategy_toml_action));
 
     for action in agent_actions.iter().chain(strategy_actions) {
         let _ = writeln!(out, "{}", format_action(action));
@@ -109,9 +120,10 @@ fn check_existing(target_dir: &Path, asset_files: &[(&str, &str)]) -> Vec<bool> 
         .collect()
 }
 
-/// Write files for all `Created` actions from planned actions zipped with assets.
+/// Write files for `Created` actions from planned actions zipped with assets.
 ///
-/// Skips `Skipped` actions. Performs I/O.
+/// Only writes when the action is `Created`; all other variants are skipped.
+/// Performs I/O.
 fn write_planned_files(
     actions: &[InitAction],
     asset_files: &[(&str, &str)],
@@ -136,34 +148,25 @@ fn create_dir(dir: &Path) -> Result<(), InitError> {
     })
 }
 
-/// Execute strategy initialization.
+/// Execute strategy sync.
 ///
 /// Imperative shell — performs file I/O.
 ///
-/// 1. Check if `.claude/strategy.toml` already exists -> fail
-/// 2. Create `.claude/agents/` and `.claude/strategies/` directories
-/// 3. Gather file-existence flags and plan actions (pure)
-/// 4. Write agent files, strategy files, and `strategy.toml`
-/// 5. Print summary
-pub fn execute_init(project_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+/// 1. Create `.claude/agents/` and `.claude/strategies/` directories
+/// 2. Gather file-existence flags and plan actions (pure)
+/// 3. Write agent files, strategy files, and `strategy.toml`
+/// 4. Print summary
+pub fn execute_sync(project_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let claude_dir = project_path.join(".claude");
     let agents_dir = claude_dir.join("agents");
     let strategies_dir = claude_dir.join("strategies");
     let strategy_path = claude_dir.join("strategy.toml");
 
-    // 1. Fail if strategy.toml already exists
-    if strategy_path.exists() {
-        return Err(InitError::StrategyFileExists {
-            path: strategy_path.display().to_string(),
-        }
-        .into());
-    }
-
-    // 2. Create directories
+    // 1. Create directories
     create_dir(&agents_dir)?;
     create_dir(&strategies_dir)?;
 
-    // 3. Plan actions (pure)
+    // 2. Plan actions (pure)
     let agent_actions = plan_file_actions(
         &agents_dir,
         assets::AGENT_ASSETS,
@@ -174,11 +177,14 @@ pub fn execute_init(project_path: &Path) -> Result<(), Box<dyn std::error::Error
         assets::STRATEGY_ASSETS,
         &check_existing(&strategies_dir, assets::STRATEGY_ASSETS),
     );
+    let strategy_toml_action = plan_strategy_toml_action(&strategy_path, strategy_path.exists());
 
-    // 4. Write files
+    // 3. Write files
     write_planned_files(&agent_actions, assets::AGENT_ASSETS)?;
     write_planned_files(&strategy_actions, assets::STRATEGY_ASSETS)?;
 
+    // Always overwrite strategy.toml to keep it in sync with the bundled
+    // version, unlike agent/strategy files which are user-owned.
     std::fs::write(&strategy_path, assets::STRATEGY_TOML).map_err(|source| {
         InitError::WriteFile {
             path: strategy_path.display().to_string(),
@@ -186,8 +192,8 @@ pub fn execute_init(project_path: &Path) -> Result<(), Box<dyn std::error::Error
         }
     })?;
 
-    // 5. Print summary
-    let summary = format_init_summary(&agent_actions, &strategy_actions, &strategy_path);
+    // 4. Print summary
+    let summary = format_sync_summary(&agent_actions, &strategy_actions, &strategy_toml_action);
     print!("{summary}");
 
     Ok(())
@@ -293,7 +299,51 @@ mod tests {
     }
 
     // =========================================================================
-    // format_init_summary tests (pure)
+    // format_action tests (pure)
+    // =========================================================================
+
+    #[test]
+    fn test_format_overwritten_action() {
+        let action = InitAction::Overwritten {
+            path: PathBuf::from(".claude/strategy.toml"),
+        };
+        let output = format_action(&action);
+        assert_eq!(
+            output,
+            "  Overwritten: .claude/strategy.toml (updated to latest)"
+        );
+    }
+
+    // =========================================================================
+    // plan_strategy_toml_action tests (pure)
+    // =========================================================================
+
+    #[test]
+    fn test_plan_strategy_toml_new() {
+        let path = Path::new(".claude/strategy.toml");
+        let action = plan_strategy_toml_action(path, false);
+        assert_eq!(
+            action,
+            InitAction::Created {
+                path: path.to_path_buf()
+            }
+        );
+    }
+
+    #[test]
+    fn test_plan_strategy_toml_existing() {
+        let path = Path::new(".claude/strategy.toml");
+        let action = plan_strategy_toml_action(path, true);
+        assert_eq!(
+            action,
+            InitAction::Overwritten {
+                path: path.to_path_buf()
+            }
+        );
+    }
+
+    // =========================================================================
+    // format_sync_summary tests (pure)
     // =========================================================================
 
     #[test]
@@ -306,7 +356,10 @@ mod tests {
                 path: PathBuf::from(".claude/agents/developer.md"),
             },
         ];
-        let output = format_init_summary(&agent_actions, &[], Path::new(".claude/strategy.toml"));
+        let strategy_toml_action = InitAction::Created {
+            path: PathBuf::from(".claude/strategy.toml"),
+        };
+        let output = format_sync_summary(&agent_actions, &[], &strategy_toml_action);
         assert!(output.contains("Created: .claude/strategy.toml"));
         assert!(output.contains("Created: .claude/agents/architect.md"));
         assert!(output.contains("Created: .claude/agents/developer.md"));
@@ -323,7 +376,10 @@ mod tests {
                 path: PathBuf::from(".claude/agents/developer.md"),
             },
         ];
-        let output = format_init_summary(&agent_actions, &[], Path::new(".claude/strategy.toml"));
+        let strategy_toml_action = InitAction::Created {
+            path: PathBuf::from(".claude/strategy.toml"),
+        };
+        let output = format_sync_summary(&agent_actions, &[], &strategy_toml_action);
         assert!(output.contains("Skipped: .claude/agents/architect.md (already exists)"));
         assert!(output.contains("Created: .claude/agents/developer.md"));
     }
@@ -336,11 +392,10 @@ mod tests {
         let strategy_actions = vec![InitAction::Created {
             path: PathBuf::from(".claude/strategies/prd-loop.toml"),
         }];
-        let output = format_init_summary(
-            &agent_actions,
-            &strategy_actions,
-            Path::new(".claude/strategy.toml"),
-        );
+        let strategy_toml_action = InitAction::Created {
+            path: PathBuf::from(".claude/strategy.toml"),
+        };
+        let output = format_sync_summary(&agent_actions, &strategy_actions, &strategy_toml_action);
         assert!(output.contains("Created: .claude/agents/developer.md"));
         assert!(output.contains("Created: .claude/strategies/prd-loop.toml"));
     }
@@ -350,9 +405,24 @@ mod tests {
         let strategy_actions = vec![InitAction::Skipped {
             path: PathBuf::from(".claude/strategies/prd-loop.toml"),
         }];
-        let output =
-            format_init_summary(&[], &strategy_actions, Path::new(".claude/strategy.toml"));
+        let strategy_toml_action = InitAction::Created {
+            path: PathBuf::from(".claude/strategy.toml"),
+        };
+        let output = format_sync_summary(&[], &strategy_actions, &strategy_toml_action);
         assert!(output.contains("Skipped: .claude/strategies/prd-loop.toml (already exists)"));
+    }
+
+    #[test]
+    fn test_format_summary_with_overwritten_strategy_toml() {
+        let agent_actions = vec![InitAction::Created {
+            path: PathBuf::from(".claude/agents/storyteller.md"),
+        }];
+        let strategy_toml_action = InitAction::Overwritten {
+            path: PathBuf::from(".claude/strategy.toml"),
+        };
+        let output = format_sync_summary(&agent_actions, &[], &strategy_toml_action);
+        assert!(output.contains("Overwritten: .claude/strategy.toml (updated to latest)"));
+        assert!(output.contains("Created: .claude/agents/storyteller.md"));
     }
 
     // =========================================================================

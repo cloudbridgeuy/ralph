@@ -511,14 +511,14 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 fn execute_strategy(args: StrategyArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.action {
         StrategyAction::List => execute_strategy_list(),
-        StrategyAction::Init => execute_strategy_init(),
+        StrategyAction::Sync => execute_strategy_sync(),
         StrategyAction::Execute(args) => execute_strategy_execute(args),
     }
 }
 
-fn execute_strategy_init() -> Result<(), Box<dyn std::error::Error>> {
+fn execute_strategy_sync() -> Result<(), Box<dyn std::error::Error>> {
     let project_path = std::env::current_dir()?;
-    strategy::init::execute_init(&project_path)
+    strategy::init::execute_sync(&project_path)
 }
 
 fn execute_strategy_list() -> Result<(), Box<dyn std::error::Error>> {
