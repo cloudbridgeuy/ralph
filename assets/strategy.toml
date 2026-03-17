@@ -1,7 +1,7 @@
 # Ralph Strategy Configuration
 #
 # This file defines the team structure and agent definitions for this project.
-# Created by `ralph strategy init`.
+# Created by `ralph strategy sync`.
 #
 # Agents are resolved by name when using `ralph persona <name>`.
 # Paths are relative to the project root.

@@ -41,7 +41,7 @@
 - **Replay Sessions** - Review past sessions with full syntax highlighting
 - **Customizable Prompts** - Use custom prompt templates or add additional instructions
 - **Theme Support** - Multiple built-in themes or use custom `.tmTheme` files
-- **Team Strategy** - Scaffold a project with default agent definitions and a strategy file via `ralph strategy init`
+- **Team Strategy** - Scaffold a project with default agent definitions and a strategy file via `ralph strategy sync`
 - **Multi-Agent Orchestration** - Personas can delegate work to each other via ask and handover directives, with automatic routing and budget control
 
 ## Installation
@@ -60,13 +60,13 @@ cargo xtask install --path /usr/local/bin  # Custom path
 
 ## Quick Start
 
-1. **Initialize the project strategy**:
+1. **Sync the project strategy**:
 
 ```bash
-ralph strategy init
+ralph strategy sync
 ```
 
-This creates `.claude/agents/` with default agent definitions (architect, developer, reviewer, tester, product-manager) and a `.claude/strategy.toml` that ties them together.
+This creates `.claude/agents/` with default agent definitions (architect, developer, reviewer, tester, product-manager) and a `.claude/strategy.toml` that ties them together. Safe to re-run — new bundled assets are added, existing agent files are preserved, and `strategy.toml` is updated to the latest version.
 
 2. **Create a PRD file** at `.local/plans/prd.toml`:
 

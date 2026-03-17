@@ -10,7 +10,7 @@ This document describes the `ralph strategy` command, which manages and executes
 | Core types | `crates/core/src/strategy.rs` | StrategyConfig, TeamStrategy, StrategyError, parsing, validation |
 | Discovery & display | `crates/ralph/src/strategy/mod.rs` | File discovery, loading, validation, formatting, `load_team_strategy()` |
 | Bundled assets | `crates/ralph/src/strategy/assets.rs` | Compile-time embedded agent files and strategy template via `include_str!` |
-| Init command | `crates/ralph/src/strategy/init.rs` | FC-IS init: `plan_file_actions()` (pure), `format_init_summary()` (pure), `execute_init()` (shell) |
+| Sync command | `crates/ralph/src/strategy/init.rs` | FC-IS sync: `plan_file_actions()` (pure), `format_sync_summary()` (pure), `execute_sync()` (shell) |
 | Execution dispatcher | `crates/ralph/src/strategy/execute.rs` | Strategy kind dispatch, run orchestration |
 | Strategy trait | `crates/ralph/src/strategy/traits.rs` | Strategy trait, StrategyExecutionContext, run_strategy() |
 | PrdLoop strategy | `crates/ralph/src/strategy/prd_loop.rs` | Self-contained PRD iteration loop with orchestration |
@@ -20,9 +20,9 @@ This document describes the `ralph strategy` command, which manages and executes
 | Human classification | `crates/core/src/human.rs` | DirectiveTarget, classify_target, partition_directives |
 | Recovery | `crates/ralph/src/recovery.rs` | Subprocess failure recovery, InvocationConfig, retry logic |
 | CLI tests | `crates/ralph/src/cli/tests/strategy.rs` | CLI argument parsing tests |
-| Main wiring | `crates/ralph/src/main.rs` | execute_strategy(), execute_strategy_init(), execute_strategy_list(), execute_strategy_execute() |
-| Bundled agents | `assets/agents/*.md` | Default agent markdown files scaffolded by `ralph strategy init` |
-| Bundled strategies | `assets/strategies/*.toml` | Default strategy TOML files scaffolded by `ralph strategy init` |
+| Main wiring | `crates/ralph/src/main.rs` | execute_strategy(), execute_strategy_sync(), execute_strategy_list(), execute_strategy_execute() |
+| Bundled agents | `assets/agents/*.md` | Default agent markdown files scaffolded by `ralph strategy sync` |
+| Bundled strategies | `assets/strategies/*.toml` | Default strategy TOML files scaffolded by `ralph strategy sync` |
 | Default strategy | `assets/strategy.toml` | Default `.claude/strategy.toml` template |
 
 ## Purpose
@@ -56,7 +56,7 @@ prompt_aggregates = [
 
 ## Project Strategy File (`.claude/strategy.toml`)
 
-Separate from the per-strategy execution configs in `.claude/strategies/*.toml`, the project-level strategy file `.claude/strategy.toml` defines the team structure and agent definitions for a project. It is created by `ralph strategy init` and consumed by `ralph persona <name>` for agent resolution.
+Separate from the per-strategy execution configs in `.claude/strategies/*.toml`, the project-level strategy file `.claude/strategy.toml` defines the team structure and agent definitions for a project. It is created by `ralph strategy sync` and consumed by `ralph persona <name>` for agent resolution.
 
 ### Schema
 
@@ -84,9 +84,9 @@ When `ralph persona <name>` is invoked:
 
 ## CLI Subcommands
 
-### `ralph strategy init`
+### `ralph strategy sync`
 
-Scaffolds a default project strategy with agent definitions and bundled strategy files. Creates `.claude/agents/` and `.claude/strategies/` directories with default files, plus a `.claude/strategy.toml` defining the team structure.
+Scaffolds a default project strategy with agent definitions and bundled strategy files. Creates `.claude/agents/` and `.claude/strategies/` directories with default files, plus a `.claude/strategy.toml` defining the team structure. Idempotent — safe to re-run at any time.
 
 **What it creates:**
 
@@ -104,10 +104,10 @@ Scaffolds a default project strategy with agent definitions and bundled strategy
 
 - Creates `.claude/agents/` and `.claude/strategies/` directories if they don't exist
 - Only creates missing files — existing agent and strategy files are not overwritten
-- Fails with a clear error if `.claude/strategy.toml` already exists (no silent overwrite)
-- Prints confirmation summarizing what was created vs skipped
+- Overwrites `.claude/strategy.toml` with the latest bundled template
+- Prints confirmation summarizing what was created, skipped, or overwritten
 
-**Bundled assets** are stored in `assets/agents/` and `assets/strategies/` in the ralph source tree and compiled into the binary via `include_str!`. The init command writes file copies to disk — users own these files and can customize them freely.
+**Bundled assets** are stored in `assets/agents/` and `assets/strategies/` in the ralph source tree and compiled into the binary via `include_str!`. The sync command writes file copies to disk — users own these files and can customize them freely.
 
 ### `ralph strategy list`
 
@@ -133,12 +133,13 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 
 **Functional Core** (`crates/ralph/src/strategy/init.rs`):
 - `plan_file_actions()` — decide create/skip actions for any asset set based on file existence flags
-- `format_action()` — format a single init action as a summary line
-- `format_init_summary()` — format init results for display (agents + strategies)
+- `plan_strategy_toml_action()` — decide create/overwrite action for `strategy.toml` based on file existence
+- `format_action()` — format a single sync action as a summary line
+- `format_sync_summary()` — format sync results for display (agents + strategies)
 
 **Imperative Shell** (`crates/ralph/src/strategy/`):
 - `mod.rs` — `discover_strategies()`, `load_and_validate_strategy()`, `load_all_strategies()`, `load_team_strategy()`, `find_strategy_by_name()`, `format_strategy_list()`
-- `init.rs` — `execute_init()` orchestrates directory creation, file writes, and summary display; `check_existing()`, `write_planned_files()`, `create_dir()` as I/O helpers
+- `init.rs` — `execute_sync()` orchestrates directory creation, file writes, and summary display; `check_existing()`, `write_planned_files()`, `create_dir()` as I/O helpers
 - `assets.rs` — compile-time embedded agent files, strategy files, and strategy template
 - `execute.rs` — `execute_strategy_execute()` dispatcher, matches on `StrategyKind` enum
 - `traits.rs` — `Strategy` trait with `execute()` and `between_iterations()` hooks, `StrategyExecutionContext`, `run_strategy()` generic dispatcher
