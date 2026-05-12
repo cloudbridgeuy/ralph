@@ -43,7 +43,7 @@ use super::types::{
 use crate::highlight::ThemeConfig;
 use crate::keyboard::{check_for_run_action, RawModeGuard, RunKeyAction};
 use crate::signal;
-use crate::spinner::{KeyHintState, Spinner, SpinnerContext, SpinnerSessionInfo};
+use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
@@ -693,12 +693,7 @@ fn run_subprocess_with_spinner(
                 });
             }
 
-            // Check if soft stop was requested - update hints but let subprocess continue
-            // The action is NOT cleared (unlike Pause) so it propagates to caller
-            // for iteration boundary checking
-            if keyboard.matches_action(RunKeyAction::SoftStop) {
-                spinner.set_key_hint_state(KeyHintState::Finishing);
-            }
+            // SoftStop: action left set so caller handles it at iteration boundary.
 
             // Check if pause was requested - toggle pause state
             if keyboard.matches_action(RunKeyAction::Pause) {
@@ -709,27 +704,21 @@ fn run_subprocess_with_spinner(
                 // Toggle pause and get any buffered output to display
                 let buffered = keyboard.toggle_pause();
 
-                // Update spinner hint to show pause state
-                if keyboard.is_paused() {
-                    spinner.set_key_hint_state(KeyHintState::Paused);
-                } else {
-                    spinner.set_key_hint_state(KeyHintState::Running);
-                    // Flush buffered output on resume
-                    if !buffered.is_empty() {
-                        // Stop spinner before displaying output
-                        if spinner_active {
-                            spinner.stop();
-                            spinner_active = false;
-                        }
-                        // Disable raw mode for print, then re-enable
-                        keyboard.disable_raw_mode();
-                        for output in buffered {
-                            print!("{}", output);
-                        }
-                        let _ = io::stdout().flush();
-                        keyboard.enable_raw_mode();
-                        last_output_time = Instant::now();
+                // Flush buffered output on resume if unpaused
+                if !keyboard.is_paused() && !buffered.is_empty() {
+                    // Stop spinner before displaying output
+                    if spinner_active {
+                        spinner.stop();
+                        spinner_active = false;
                     }
+                    // Disable raw mode for print, then re-enable
+                    keyboard.disable_raw_mode();
+                    for output in buffered {
+                        print!("{}", output);
+                    }
+                    let _ = io::stdout().flush();
+                    keyboard.enable_raw_mode();
+                    last_output_time = Instant::now();
                 }
             }
         }

@@ -11,16 +11,6 @@
 //! - Iteration-level and session-level time tracking
 //! - Terminal detection (no spinner when piped)
 //! - Thread-safe start/stop control
-//! - Key binding hints showing available controls (when in interactive terminal)
-//!
-//! # Key Binding Hints
-//!
-//! When running in an interactive terminal, the spinner displays key hints
-//! that update based on the current state:
-//!
-//! - **Running**: `[s: stop | S: halt | p: pause]`
-//! - **Finishing** (soft stop requested): `[finishing...]`
-//! - **Paused**: `[paused - p: resume]`
 //!
 //! # Example
 //!
@@ -28,14 +18,14 @@
 //! use ralph::spinner::Spinner;
 //!
 //! let spinner = Spinner::new();
-//! spinner.start(); // Shows: ⠋ Waiting for response... 0s [s: stop | S: halt | p: pause]
+//! spinner.start(); // Shows: ⠋ Waiting for response... 0s
 //!
 //! // ... wait for output ...
 //!
 //! spinner.stop(); // Clears the spinner line
 //! ```
 
-use crate::ansi::{CLEAR_EOL, CR, CYAN, DIM, RESET, YELLOW};
+use crate::ansi::{CLEAR_EOL, CR, CYAN, RESET};
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -77,36 +67,6 @@ impl SpinnerContext {
             Self::WaitingForTool => "Running tool...",
             Self::Buffering => "Buffering code...",
             Self::Summarizing => "Summarizing progress file...",
-        }
-    }
-}
-
-/// State for key binding hints displayed in the spinner.
-///
-/// The hints update dynamically based on user actions:
-/// - Running: Shows all available key bindings
-/// - Finishing: Shows that soft stop was requested and current iteration will complete
-/// - Paused: Shows pause indicator and resume key
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum KeyHintState {
-    /// Normal running state - show all available key bindings.
-    #[default]
-    Running,
-    /// Soft stop requested - finishing current iteration.
-    Finishing,
-    /// Execution is paused.
-    Paused,
-}
-
-impl KeyHintState {
-    /// Get the key hints display string for this state.
-    ///
-    /// Returns the formatted hint text including ANSI colors.
-    pub fn hint_text(&self) -> &'static str {
-        match self {
-            Self::Running => "[s: stop | S: halt | p: pause]",
-            Self::Finishing => "[finishing...]",
-            Self::Paused => "[paused - p: resume]",
         }
     }
 }
@@ -155,10 +115,6 @@ impl SpinnerSessionInfo {
 /// - A contextual message (e.g., "Waiting for response...", "Thinking...")
 /// - Session name and iteration progress (if provided)
 /// - Elapsed time in seconds or minutes:seconds format
-/// - Key binding hints (dimmed) showing available controls
-///
-/// When a soft stop is requested, the key hints change to show "[finishing...]"
-/// to indicate that the current iteration will complete before pausing.
 ///
 /// Call [`start`](Spinner::start) to begin spinning and [`stop`](Spinner::stop)
 /// to clear the spinner when output arrives.
@@ -177,8 +133,6 @@ pub struct Spinner {
     context: Arc<Mutex<SpinnerContext>>,
     /// Session metadata for display.
     session_info: Arc<SpinnerSessionInfo>,
-    /// Current state for key hint display.
-    key_hint_state: Arc<Mutex<KeyHintState>>,
 }
 
 impl Default for Spinner {
@@ -198,7 +152,6 @@ impl Spinner {
             session_elapsed_ms,
             context: Arc::new(Mutex::new(SpinnerContext::default())),
             session_info: Arc::new(session_info),
-            key_hint_state: Arc::new(Mutex::new(KeyHintState::default())),
         }
     }
 
@@ -302,7 +255,6 @@ impl Spinner {
             session_elapsed_ms: self.session_elapsed_ms,
             context: Arc::clone(&self.context),
             session_info: Arc::clone(&self.session_info),
-            key_hint_state: Arc::clone(&self.key_hint_state),
         };
 
         // Spawn spinner thread
@@ -330,25 +282,6 @@ impl Spinner {
     /// Get the current spinner context.
     pub fn get_context(&self) -> SpinnerContext {
         self.context.lock().map(|ctx| *ctx).unwrap_or_default()
-    }
-
-    /// Set the key hint state.
-    ///
-    /// This changes the key binding hints displayed by the spinner.
-    /// Used to indicate soft stop requested (Finishing) or paused state.
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - The new key hint state to display
-    pub fn set_key_hint_state(&self, state: KeyHintState) {
-        if let Ok(mut hint) = self.key_hint_state.lock() {
-            *hint = state;
-        }
-    }
-
-    /// Get the current key hint state.
-    pub fn get_key_hint_state(&self) -> KeyHintState {
-        self.key_hint_state.lock().map(|s| *s).unwrap_or_default()
     }
 
     /// Stop the spinner and clear the display.
@@ -417,8 +350,6 @@ struct SpinnerThreadConfig {
     context: Arc<Mutex<SpinnerContext>>,
     /// Session metadata for display.
     session_info: Arc<SpinnerSessionInfo>,
-    /// Current key hint state for display.
-    key_hint_state: Arc<Mutex<KeyHintState>>,
 }
 
 /// Run the spinner animation loop.
@@ -432,7 +363,6 @@ fn run_spinner(config: SpinnerThreadConfig) {
         session_elapsed_ms,
         context,
         session_info,
-        key_hint_state,
     } = config;
     let mut frame = 0;
     let mut stdout = std::io::stdout();
@@ -458,26 +388,19 @@ fn run_spinner(config: SpinnerThreadConfig) {
         // Format session info if available
         let session_display = format_session_info(&session_info);
 
-        // Get key hints based on current state
-        let key_hints = key_hint_state
-            .lock()
-            .map(|state| format_key_hints(*state))
-            .unwrap_or_default();
-
         // Build the spinner line
         // Use CR to return to start, then CLEAR_EOL to clear to end of line
         // This prevents residual characters when text length changes
         // (e.g., "59s" → "1m 0s" or context message changes)
-        // Format: "⠋ Thinking... Session: brave-panda | Iteration: 2/5 | 12s [s: stop | S: halt | p: pause]"
         let spinner_line = if session_display.is_empty() {
             format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} {}",
-                spinner_char, message, time_display, key_hints
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {}",
+                spinner_char, message, time_display
             )
         } else {
             format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {} {}",
-                spinner_char, message, session_display, time_display, key_hints
+                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {}",
+                spinner_char, message, session_display, time_display
             )
         };
 
@@ -491,19 +414,6 @@ fn run_spinner(config: SpinnerThreadConfig) {
         // Sleep for the interval
         thread::sleep(SPINNER_INTERVAL);
     }
-}
-
-/// Format key hints with ANSI styling based on state.
-///
-/// Returns the key hints string with appropriate styling:
-/// - Running: dimmed hints showing all controls
-/// - Finishing/Paused: yellow indicator for active states
-fn format_key_hints(state: KeyHintState) -> String {
-    let color = match state {
-        KeyHintState::Running => DIM,
-        KeyHintState::Finishing | KeyHintState::Paused => YELLOW,
-    };
-    format!("{color}{}{RESET}", state.hint_text())
 }
 
 /// Format session info for spinner display.
