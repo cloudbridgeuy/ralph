@@ -47,10 +47,10 @@ pub struct SpinnerSubprocessConfig {
     pub session_info: SpinnerSessionInfo,
 }
 
-/// Result of subprocess invocation including any detected keyboard action.
+/// Result of subprocess invocation.
 ///
-/// This struct bundles the subprocess result with any keyboard action that
-/// was detected during execution, enabling the caller to react to user input.
+/// Bundles the subprocess result with the vestigial `key_action` field
+/// (always `None` after S3; will be removed in S4b).
 #[derive(Debug)]
 pub struct SpinnerSubprocessOutcome {
     /// The subprocess execution result (success or error).
@@ -128,7 +128,7 @@ fn join_output_threads(
 ///     session_info: SpinnerSessionInfo::new("brave-panda".to_string(), 1, 5),
 /// };
 /// let outcome = invoke_subprocess_with_spinner_config(&config);
-/// let _ = outcome.subprocess_result;
+/// println!("{:?}", outcome.subprocess_result);
 /// ```
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
@@ -148,7 +148,7 @@ fn run_subprocess_with_spinner(
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(&config.command)
-        .stdin(Stdio::null()) // Null stdin so parent can capture keypresses for controls
+        .stdin(Stdio::null()) // Null stdin to prevent child from racing parent for stdin
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0) // Create new process group so we can kill grandchildren
