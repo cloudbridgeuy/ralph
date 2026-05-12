@@ -20,11 +20,10 @@ When running in an interactive terminal, ralph provides keyboard controls during
 
 Pressing `s` requests a graceful exit after the current iteration completes:
 
-1. The spinner hints change to `[finishing...]`
-2. The current subprocess runs to completion
-3. The iteration log and git diff are captured normally
-4. The session finalizes with "Completed" outcome
-5. The run loop exits without starting the next iteration
+1. The current subprocess runs to completion
+2. The iteration log and git diff are captured normally
+3. The session finalizes with "Completed" outcome
+4. The run loop exits without starting the next iteration
 
 Use soft stop when you want to review progress or take a break without interrupting work in progress.
 
@@ -44,9 +43,8 @@ Use hard stop when you need to stop immediately but want to resume from where yo
 Pressing `p` toggles pause/resume for output display:
 
 1. **When pausing**: Subprocess continues running, but output is buffered internally
-2. The spinner shows `[paused - p: resume]` to indicate pause state
-3. **When resuming**: Buffered output is immediately displayed
-4. Pause state does not affect iteration timing or final results
+2. **When resuming**: Buffered output is immediately displayed
+3. Pause state does not affect iteration timing or final results
 
 Use pause when you need to examine output without the stream continuing to scroll.
 
@@ -122,5 +120,5 @@ When ralph runs in non-interactive contexts (piped output, CI environments):
 | Keyboard handling | `crates/ralph/src/keyboard.rs` | RawModeGuard, key action detection |
 | Signal handler | `crates/ralph/src/signal.rs` | SIGINT/SIGTERM handling |
 | Subprocess spinner | `crates/ralph/src/subprocess/spinner.rs` | Raw mode lifecycle, keyboard polling |
-| Spinner display | `crates/ralph/src/spinner.rs` | Key hints, pause state display |
+| Spinner display | `crates/ralph/src/spinner/mod.rs` | Slug, iteration, elapsed-time display |
 | Run loop | `crates/ralph/src/run/mod.rs` | Soft stop handling at iteration boundaries |
