@@ -160,7 +160,7 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 |------|---------|
 | `ConversationLoopConfig` | Groups read-only loop parameters (persona, timeouts, available personas) |
 | `AccumulatedMetrics` | Tracks cost, duration, and token usage across iterations |
-| `LoopState` | Mutable state: transcript, iterations, metrics, key action |
+| `LoopState` | Mutable state: transcript, iterations, metrics |
 
 ### ConversationLoop Flow
 
