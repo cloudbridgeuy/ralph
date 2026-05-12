@@ -170,67 +170,6 @@ fn classify_run_key(key_event: KeyEvent) -> RunKeyAction {
     }
 }
 
-/// Keyboard actions available during replay countdown.
-///
-/// These actions are specific to the replay countdown display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CountdownKeyAction {
-    /// No key was pressed.
-    None,
-    /// Skip to next block (n, N, Space, Ctrl+C).
-    Skip,
-    /// Toggle pause/resume (p, P).
-    TogglePause,
-}
-
-/// Check for keyboard actions during replay countdown (non-blocking).
-///
-/// Uses zero-timeout polling for non-blocking input detection.
-///
-/// # Requirements
-///
-/// Raw mode must be active for proper keypress detection.
-///
-/// # Key Bindings
-///
-/// | Key | Action | Description |
-/// |-----|--------|-------------|
-/// | `n`, `N`, `Space` | Skip | Skip to next block |
-/// | `Ctrl+C` | Skip | Skip to next block |
-/// | `p`, `P` | TogglePause | Toggle pause/resume |
-pub fn check_for_countdown_action() -> CountdownKeyAction {
-    // Poll with zero timeout - non-blocking check
-    if event::poll(Duration::ZERO).unwrap_or(false) {
-        if let Ok(Event::Key(key_event)) = event::read() {
-            return classify_countdown_key(key_event);
-        }
-    }
-    CountdownKeyAction::None
-}
-
-/// Classify a key event as a countdown action.
-fn classify_countdown_key(key_event: KeyEvent) -> CountdownKeyAction {
-    // Only handle key press events, not release or repeat
-    if key_event.kind != KeyEventKind::Press {
-        return CountdownKeyAction::None;
-    }
-
-    match key_event.code {
-        // Skip keys
-        KeyCode::Char('n' | 'N' | ' ') if key_event.modifiers.is_empty() => {
-            CountdownKeyAction::Skip
-        }
-        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-            CountdownKeyAction::Skip
-        }
-        // Pause toggle
-        KeyCode::Char('p' | 'P') if key_event.modifiers.is_empty() => {
-            CountdownKeyAction::TogglePause
-        }
-        _ => CountdownKeyAction::None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,50 +256,6 @@ mod tests {
         assert_eq!(classify_run_key(key), RunKeyAction::None);
     }
 
-    // Countdown key action tests
-
-    #[test]
-    fn test_classify_countdown_key_skip_n() {
-        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::empty());
-        assert_eq!(classify_countdown_key(key), CountdownKeyAction::Skip);
-    }
-
-    #[test]
-    fn test_classify_countdown_key_skip_n_uppercase() {
-        let key = KeyEvent::new(KeyCode::Char('N'), KeyModifiers::empty());
-        assert_eq!(classify_countdown_key(key), CountdownKeyAction::Skip);
-    }
-
-    #[test]
-    fn test_classify_countdown_key_skip_space() {
-        let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::empty());
-        assert_eq!(classify_countdown_key(key), CountdownKeyAction::Skip);
-    }
-
-    #[test]
-    fn test_classify_countdown_key_skip_ctrl_c() {
-        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        assert_eq!(classify_countdown_key(key), CountdownKeyAction::Skip);
-    }
-
-    #[test]
-    fn test_classify_countdown_key_pause() {
-        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::empty());
-        assert_eq!(classify_countdown_key(key), CountdownKeyAction::TogglePause);
-    }
-
-    #[test]
-    fn test_classify_countdown_key_unknown() {
-        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::empty());
-        assert_eq!(classify_countdown_key(key), CountdownKeyAction::None);
-    }
-
-    #[test]
-    fn test_classify_countdown_key_n_with_modifier_ignored() {
-        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL);
-        assert_eq!(classify_countdown_key(key), CountdownKeyAction::None);
-    }
-
     // Enum equality tests
 
     #[test]
@@ -368,11 +263,5 @@ mod tests {
         assert_ne!(RunKeyAction::None, RunKeyAction::SoftStop);
         assert_ne!(RunKeyAction::SoftStop, RunKeyAction::HardStop);
         assert_ne!(RunKeyAction::HardStop, RunKeyAction::Pause);
-    }
-
-    #[test]
-    fn test_countdown_key_action_enum_variants() {
-        assert_ne!(CountdownKeyAction::None, CountdownKeyAction::Skip);
-        assert_ne!(CountdownKeyAction::Skip, CountdownKeyAction::TogglePause);
     }
 }

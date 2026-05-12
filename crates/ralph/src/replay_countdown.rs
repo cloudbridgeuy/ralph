@@ -1,36 +1,15 @@
 //! Countdown display for replay delays.
 //!
-//! This module provides an animated countdown spinner that displays between
-//! output blocks during replay when the `--delay` flag is used.
+//! Provides an animated countdown spinner displayed between output blocks
+//! during replay when the `--delay` flag is used. The countdown is
+//! non-interactive: it ticks to zero and clears.
 //!
 //! # Features
 //!
 //! - Animated spinner with countdown timer
-//! - Updates every second with remaining time
-//! - Skip key support (press 'n' or Space to skip to next block)
-//! - Pause/resume support (press 'p' to toggle)
+//! - Updates each tick with remaining time
 //! - Clears automatically before the next block
-//! - No display when delay is 0 or stdout is not a terminal
-//!
-//! # Raw Mode Lifecycle
-//!
-//! This module carefully manages terminal raw mode to enable keypress detection
-//! while ensuring subprocess output is never corrupted:
-//!
-//! 1. **When raw mode is enabled**: Only during the countdown display between
-//!    output blocks. Raw mode allows reading individual keypresses without
-//!    requiring Enter.
-//!
-//! 2. **When raw mode is disabled**: During all subprocess execution (claude CLI
-//!    calls) and normal output rendering. This ensures subprocess stdout is
-//!    never affected by terminal mode changes.
-//!
-//! 3. **Panic safety**: The [`RawModeGuard`](crate::keyboard::RawModeGuard) struct
-//!    ensures raw mode is always disabled via its `Drop` implementation, even if
-//!    the countdown loop panics.
-//!
-//! 4. **Non-terminal handling**: When stdout is not a terminal (e.g., piped to
-//!    a file), raw mode is never enabled and keyboard input is not processed.
+//! - No display when delay is `<= 0.0` or stdout is not a terminal
 //!
 //! # Example
 //!
@@ -38,90 +17,49 @@
 //! use ralph::replay_countdown::wait_with_countdown;
 //!
 //! // Wait 3 seconds with countdown display
-//! // - Press 'n' or Space to skip to next block
-//! // - Press 'p' to pause/resume
 //! wait_with_countdown(3.0, true);
 //! ```
 
-use crate::ansi::{CLEAR_EOL, CR, CYAN, DIM, RESET, YELLOW};
-use crate::keyboard::{check_for_countdown_action, CountdownKeyAction, RawModeGuard};
+use crate::ansi::{CLEAR_EOL, CR, CYAN, DIM, RESET};
 use crate::spinner::{SPINNER_CHARS, SPINNER_INTERVAL};
 use std::io::{IsTerminal, Write};
 use std::time::{Duration, Instant};
 
-// Pause indicator character
-const PAUSE_CHAR: char = '⏸';
-
-/// The result of waiting with countdown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[must_use]
-pub enum CountdownResult {
-    /// The countdown completed naturally.
-    Completed,
-    /// The user pressed a skip key.
-    Skipped,
-}
-
 /// Wait for the specified duration with an animated countdown display.
 ///
-/// Shows a spinner with countdown like: "⠋ Next block in 3s... [n: next | p: pause]"
+/// Shows a spinner with countdown like: "⠋ Next block in 3s...".
 ///
 /// # Arguments
 ///
 /// * `delay_secs` - Duration to wait in seconds (supports fractional values)
 /// * `is_terminal` - Whether stdout is a terminal (no display if false)
 ///
-/// # Returns
-///
-/// Returns `CountdownResult::Skipped` if the user pressed a skip key,
-/// or `CountdownResult::Completed` if the countdown finished naturally.
-///
 /// # Behavior
 ///
-/// - If `delay_secs <= 0.0`, returns immediately with `Completed`
-/// - If not a terminal, waits without displaying anything
+/// - If `delay_secs <= 0.0`, returns immediately
+/// - If not a terminal, sleeps without displaying anything
 /// - Otherwise, shows animated countdown and clears when done
-/// - User can press 'n' or Space to skip to the next block
-/// - User can press 'p' to pause/resume the countdown
-pub fn wait_with_countdown(delay_secs: f64, is_terminal: bool) -> CountdownResult {
+pub fn wait_with_countdown(delay_secs: f64, is_terminal: bool) {
     if delay_secs <= 0.0 {
-        return CountdownResult::Completed;
+        return;
     }
 
     if !is_terminal {
-        // Non-terminal: just sleep without display or input handling
         std::thread::sleep(Duration::from_secs_f64(delay_secs));
-        return CountdownResult::Completed;
+        return;
     }
 
-    run_countdown(delay_secs)
+    run_countdown(delay_secs);
 }
 
-/// Run the countdown animation with skip key support.
-///
-/// Raw mode is enabled only for the duration of the countdown loop. The
-/// `RawModeGuard` ensures raw mode is disabled even if the loop panics,
-/// preventing terminal corruption.
-fn run_countdown(delay_secs: f64) -> CountdownResult {
-    // Flush any pending output before starting countdown
+fn run_countdown(delay_secs: f64) {
     let _ = std::io::stdout().flush();
-
-    // Enable raw mode for keypress detection. The guard ensures raw mode is
-    // disabled when it goes out of scope (normal return or panic).
-    let _guard = RawModeGuard::new();
-
-    let result = run_countdown_loop(delay_secs);
-
-    // Clear the countdown line (guard drops after this, disabling raw mode)
+    run_countdown_loop(delay_secs);
     clear_line();
-
-    result
 }
 
-/// State for the countdown loop.
 struct CountdownState {
     remaining: Duration,
-    paused: bool,
     frame: usize,
 }
 
@@ -129,46 +67,26 @@ impl CountdownState {
     fn new(delay_secs: f64) -> Self {
         Self {
             remaining: Duration::from_secs_f64(delay_secs),
-            paused: false,
             frame: 0,
         }
     }
 }
 
-/// The main countdown loop that handles animation and key events.
-///
-/// This function runs while raw mode is active (managed by the caller).
-/// It uses non-blocking key polling to check for user input without
-/// blocking the animation updates.
-fn run_countdown_loop(delay_secs: f64) -> CountdownResult {
+fn run_countdown_loop(delay_secs: f64) {
     let mut state = CountdownState::new(delay_secs);
     let mut stdout = std::io::stdout();
     let mut last_tick = Instant::now();
 
     loop {
-        // Check for key actions using shared keyboard module
-        match check_for_countdown_action() {
-            CountdownKeyAction::Skip => return CountdownResult::Skipped,
-            CountdownKeyAction::TogglePause => state.paused = !state.paused,
-            CountdownKeyAction::None => {}
+        let now = Instant::now();
+        let elapsed = now.duration_since(last_tick);
+        last_tick = now;
+
+        if elapsed >= state.remaining {
+            return;
         }
+        state.remaining -= elapsed;
 
-        // Update remaining time if not paused
-        if !state.paused {
-            let now = Instant::now();
-            let elapsed = now.duration_since(last_tick);
-            last_tick = now;
-
-            if elapsed >= state.remaining {
-                return CountdownResult::Completed;
-            }
-            state.remaining -= elapsed;
-        } else {
-            // Reset last_tick when paused so we don't count paused time
-            last_tick = Instant::now();
-        }
-
-        // Render the display
         render_countdown_line(&mut stdout, &state);
 
         state.frame += 1;
@@ -176,24 +94,18 @@ fn run_countdown_loop(delay_secs: f64) -> CountdownResult {
     }
 }
 
-/// Render the countdown line (running or paused state).
 fn render_countdown_line(stdout: &mut std::io::Stdout, state: &CountdownState) {
-    let line = if state.paused {
-        format!("{CR}{CLEAR_EOL}{YELLOW}{PAUSE_CHAR}{RESET} {DIM}Paused [p: play | n: next]{RESET}")
-    } else {
-        let remaining_secs = state.remaining.as_secs_f64().ceil() as u64;
-        let spinner_char = SPINNER_CHARS[state.frame % SPINNER_CHARS.len()];
-        format!(
-            "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {DIM}Next block in {}s... [n: next | p: pause]{RESET}",
-            spinner_char, remaining_secs
-        )
-    };
+    let remaining_secs = state.remaining.as_secs_f64().ceil() as u64;
+    let spinner_char = SPINNER_CHARS[state.frame % SPINNER_CHARS.len()];
+    let line = format!(
+        "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {DIM}Next block in {}s...{RESET}",
+        spinner_char, remaining_secs
+    );
 
     let _ = write!(stdout, "{}", line);
     let _ = stdout.flush();
 }
 
-/// Clear the current line.
 fn clear_line() {
     let mut stdout = std::io::stdout();
     let _ = write!(stdout, "{CR}{CLEAR_EOL}");
@@ -202,24 +114,14 @@ fn clear_line() {
 
 /// Apply delay between output elements with optional countdown.
 ///
-/// This is a convenience wrapper that handles the terminal detection
-/// and delay application in one call.
-///
-/// # Arguments
-///
-/// * `delay_secs` - Optional delay duration in seconds
-///
-/// # Returns
-///
-/// `CountdownResult::Skipped` if the user pressed a skip key,
-/// `CountdownResult::Completed` if the delay completed or was `None`/`<= 0.0`.
-pub fn apply_delay_with_countdown(delay_secs: Option<f64>) -> CountdownResult {
-    match delay_secs {
-        Some(secs) if secs > 0.0 => {
+/// Convenience wrapper that handles terminal detection and delay
+/// application in one call. No-op when `delay_secs` is `None` or `<= 0.0`.
+pub fn apply_delay_with_countdown(delay_secs: Option<f64>) {
+    if let Some(secs) = delay_secs {
+        if secs > 0.0 {
             let is_terminal = std::io::stdout().is_terminal();
-            wait_with_countdown(secs, is_terminal)
+            wait_with_countdown(secs, is_terminal);
         }
-        _ => CountdownResult::Completed,
     }
 }
 
@@ -229,77 +131,54 @@ mod tests {
 
     #[test]
     fn test_wait_with_countdown_zero_delay() {
-        // Should return immediately
         let start = Instant::now();
-        let result = wait_with_countdown(0.0, false);
+        wait_with_countdown(0.0, false);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(50));
-        assert_eq!(result, CountdownResult::Completed);
     }
 
     #[test]
     fn test_wait_with_countdown_negative_delay() {
-        // Should return immediately
         let start = Instant::now();
-        let result = wait_with_countdown(-1.0, false);
+        wait_with_countdown(-1.0, false);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(50));
-        assert_eq!(result, CountdownResult::Completed);
     }
 
     #[test]
     fn test_wait_with_countdown_non_terminal() {
-        // Should wait without display
         let start = Instant::now();
-        let result = wait_with_countdown(0.1, false);
+        wait_with_countdown(0.1, false);
         let elapsed = start.elapsed();
-        // Should have waited at least 100ms
         assert!(elapsed >= Duration::from_millis(90));
-        // But not too long
         assert!(elapsed < Duration::from_millis(200));
-        assert_eq!(result, CountdownResult::Completed);
     }
 
     #[test]
     fn test_apply_delay_with_countdown_none() {
-        // Should return immediately
         let start = Instant::now();
-        let result = apply_delay_with_countdown(None);
+        apply_delay_with_countdown(None);
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(50));
-        assert_eq!(result, CountdownResult::Completed);
     }
 
     #[test]
     fn test_apply_delay_with_countdown_zero() {
-        // Should return immediately
         let start = Instant::now();
-        let result = apply_delay_with_countdown(Some(0.0));
+        apply_delay_with_countdown(Some(0.0));
         let elapsed = start.elapsed();
         assert!(elapsed < Duration::from_millis(50));
-        assert_eq!(result, CountdownResult::Completed);
     }
 
     #[test]
     fn test_spinner_chars_available() {
-        // Verify spinner chars are available
         assert_eq!(SPINNER_CHARS.len(), 10);
-    }
-
-    #[test]
-    fn test_countdown_result_enum() {
-        // Verify enum variants exist and are distinct
-        assert_ne!(CountdownResult::Completed, CountdownResult::Skipped);
     }
 
     #[test]
     fn test_countdown_state_new() {
         let state = CountdownState::new(5.0);
         assert_eq!(state.remaining.as_secs_f64(), 5.0);
-        assert!(!state.paused);
         assert_eq!(state.frame, 0);
     }
-
-    // Note: Key event tests are now in the keyboard module
-    // RawModeGuard tests are also in the keyboard module
 }

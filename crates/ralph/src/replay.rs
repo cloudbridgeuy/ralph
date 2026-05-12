@@ -383,7 +383,7 @@ fn replay_iteration(
     for block in &log.output_blocks {
         let rendered = renderer.render(block);
         print!("{}", rendered);
-        let _ = apply_delay_with_countdown(delay_secs);
+        apply_delay_with_countdown(delay_secs);
     }
 
     Ok(())
