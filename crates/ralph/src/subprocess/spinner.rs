@@ -4,10 +4,7 @@
 //! - Animated spinner during wait periods
 //! - Gap detection to show spinner when LLM is thinking
 //!
-//! The subprocess loop does not poll for keyboard input. `Ctrl+C` kills the
-//! child process via the signal path (`signal::is_interrupted()`). Mid-iteration
-//! key presses (`s`, `S`, `p`) type into the shell and have no effect on the
-//! subprocess loop.
+//! `Ctrl+C` kills the child process via the signal path (`signal::is_interrupted()`).
 
 use super::kill_process_group;
 use super::timeout::try_wait_child;
@@ -16,7 +13,6 @@ use super::types::{
     EXIT_CODE_KILLED,
 };
 use crate::highlight::ThemeConfig;
-use crate::keyboard::RunKeyAction;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
@@ -48,18 +44,10 @@ pub struct SpinnerSubprocessConfig {
 }
 
 /// Result of subprocess invocation.
-///
-/// Bundles the subprocess result with the vestigial `key_action` field
-/// (always `None` after S3; will be removed in S4b).
 #[derive(Debug)]
 pub struct SpinnerSubprocessOutcome {
     /// The subprocess execution result (success or error).
     pub subprocess_result: Result<StreamingSubprocessResult, SubprocessError>,
-    /// Keyboard action detected during execution (if any).
-    ///
-    /// Always `None` after S3 — keyboard polling has been removed from the
-    /// subprocess loop. This field will be removed in S4b.
-    pub key_action: Option<RunKeyAction>,
 }
 
 /// Drains remaining stdout lines from the channel and processes them.
@@ -109,7 +97,6 @@ fn join_output_threads(
 /// # Returns
 ///
 /// Returns a [`SpinnerSubprocessOutcome`] containing the subprocess result.
-/// `key_action` is always `None` (keyboard polling removed in S3; field removed in S4b).
 ///
 /// # Example
 ///
@@ -134,10 +121,7 @@ pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> SpinnerSubprocessOutcome {
     let subprocess_result = run_subprocess_with_spinner(config);
-    SpinnerSubprocessOutcome {
-        subprocess_result,
-        key_action: None,
-    }
+    SpinnerSubprocessOutcome { subprocess_result }
 }
 
 /// Internal helper that runs the subprocess with spinner and gap detection.

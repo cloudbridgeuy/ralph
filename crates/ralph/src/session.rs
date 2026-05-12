@@ -16,19 +16,11 @@
 //! - **Windows**: `%APPDATA%\ralph\sessions\`
 //!
 //! Override with `RALPH_DATA_DIR` environment variable.
-//!
-//! # Paused State
-//!
-//! When a session is hard-stopped (user presses 'S'), a paused state file
-//! is written to track the session for later resume. This file is stored at:
-//! `{data_dir}/paused.toml`
-//!
-//! The paused state allows resuming a session even after Ralph restarts.
 
 use crate::paths;
 use ralph_core::session::{
-    generate_unique_slug, is_valid_slug, PausedState, SessionEntry, SessionMetadata,
-    SessionOutcome, SessionsIndex,
+    generate_unique_slug, is_valid_slug, SessionEntry, SessionMetadata, SessionOutcome,
+    SessionsIndex,
 };
 use std::fs;
 use std::io::Write;
@@ -94,18 +86,6 @@ pub enum SessionError {
         #[source]
         source: std::io::Error,
     },
-
-    /// Failed to write paused state file
-    #[error("Failed to write paused state at {path}: {source}")]
-    WritePausedState {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    /// Failed to parse paused state file
-    #[error("Failed to parse paused state: {0}")]
-    ParsePausedState(String),
 }
 
 /// Get the path to the global sessions index file.
@@ -126,13 +106,6 @@ pub fn sessions_index_path() -> PathBuf {
 /// See [`crate::paths::session_dir`] for details.
 pub fn session_dir(slug: &str) -> PathBuf {
     paths::session_dir(slug)
-}
-
-/// Get the path to the paused state file.
-///
-/// Returns `{data_dir}/paused.toml`.
-pub fn paused_state_path() -> PathBuf {
-    paths::data_dir().join("paused.toml")
 }
 
 /// Load the sessions index from disk, or create a new empty one if it doesn't exist.
@@ -529,44 +502,6 @@ pub fn finalize_session(
             })?;
         }
     }
-
-    Ok(())
-}
-
-// =============================================================================
-// Paused State Management
-// =============================================================================
-
-/// Save paused state to disk.
-///
-/// Writes the paused state to `{data_dir}/paused.toml` for later resumption.
-///
-/// # Arguments
-///
-/// * `state` - The paused state to save
-///
-/// # Errors
-///
-/// Returns `SessionError::WritePausedState` if writing fails.
-pub fn save_paused_state(state: &PausedState) -> Result<(), SessionError> {
-    let path = paused_state_path();
-
-    // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| SessionError::WritePausedState {
-            path: parent.display().to_string(),
-            source: e,
-        })?;
-    }
-
-    let content = state
-        .to_toml()
-        .map_err(|e| SessionError::ParsePausedState(e.to_string()))?;
-
-    fs::write(&path, content).map_err(|e| SessionError::WritePausedState {
-        path: path.display().to_string(),
-        source: e,
-    })?;
 
     Ok(())
 }

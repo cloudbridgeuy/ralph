@@ -40,12 +40,6 @@ pub enum SubprocessError {
         partial_result: Box<StreamingSubprocessResult>,
     },
 
-    #[error("Subprocess hard-stopped by user (S key)")]
-    HardStop {
-        /// Partial output captured before hard stop
-        partial_result: Box<StreamingSubprocessResult>,
-    },
-
     #[error("Invalid theme configuration: {0}")]
     ThemeError(#[from] ThemeError),
 }

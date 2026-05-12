@@ -16,7 +16,7 @@ use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::StreamingSubprocessResult;
 use crate::warn::warn_if_err;
 use ralph_core::directive::{aggregate_responses, Directive};
-use ralph_core::strategy::{KeyAction, StrategyConfig, StrategyResult};
+use ralph_core::strategy::{StrategyConfig, StrategyResult};
 use ralph_core::transcript::{
     build_persona_prompt, check_exit, HumanResponse, LoopAction, Speaker, TranscriptEntry,
 };
@@ -107,7 +107,6 @@ struct LoopState {
     iterations_completed: usize,
     completion_reason: Option<String>,
     metrics: AccumulatedMetrics,
-    key_action: Option<KeyAction>,
     transcript: Vec<TranscriptEntry>,
 }
 
@@ -117,7 +116,6 @@ impl LoopState {
             iterations_completed: 0,
             completion_reason: None,
             metrics: AccumulatedMetrics::default(),
-            key_action: None,
             transcript: Vec::new(),
         }
     }
@@ -152,7 +150,6 @@ fn execute_conversation_loop(
 
     loop {
         if signal::is_interrupted() {
-            state.key_action = Some(KeyAction::SoftStop);
             state.completion_reason = Some("Interrupted".to_string());
             break;
         }
@@ -206,11 +203,6 @@ fn execute_conversation_loop(
 
         let recovery_outcome = match invoke_with_failure_recovery(&invocation_config) {
             Ok(outcome) => outcome,
-            Err(RecoveryError::HardStop { .. }) => {
-                state.completion_reason = Some("Hard stop".to_string());
-                state.key_action = Some(KeyAction::HardStop);
-                break;
-            }
             Err(RecoveryError::Interrupted { .. }) => {
                 state.completion_reason = Some("Interrupted".to_string());
                 break;
@@ -241,16 +233,6 @@ fn execute_conversation_loop(
         });
 
         state.iterations_completed += 1;
-
-        // Check keyboard controls
-        if matches!(
-            recovery_outcome.key_action,
-            Some(crate::keyboard::RunKeyAction::SoftStop)
-        ) {
-            state.completion_reason = Some("Soft stop".to_string());
-            state.key_action = Some(KeyAction::SoftStop);
-            break;
-        }
     }
 
     // Finalize session
@@ -264,7 +246,6 @@ fn execute_conversation_loop(
     );
 
     Ok(StrategyResult {
-        key_action: state.key_action,
         slug: session_slug,
         iterations_completed: state.iterations_completed,
         completion_reason: state.completion_reason,

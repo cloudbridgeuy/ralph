@@ -46,8 +46,7 @@ pub trait Strategy {
     /// loop, completion detection, and session finalization. Returns a
     /// `StrategyResult` with metrics and completion state.
     ///
-    /// The `key_action` field in the result communicates any keyboard
-    /// control detected during execution (e.g., soft stop, hard stop).
+    /// Returns a `StrategyResult` with metrics and completion state.
     fn execute(
         &self,
         ctx: &StrategyExecutionContext,
@@ -81,7 +80,6 @@ pub fn run_strategy<S: Strategy>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::strategy::KeyAction;
 
     /// A minimal test strategy that returns a fixed result.
     struct TestStrategy {
@@ -94,7 +92,6 @@ mod tests {
             _ctx: &StrategyExecutionContext,
         ) -> Result<StrategyResult, Box<dyn std::error::Error>> {
             Ok(StrategyResult {
-                key_action: self.result.key_action,
                 slug: self.result.slug.clone(),
                 iterations_completed: self.result.iterations_completed,
                 completion_reason: self.result.completion_reason.clone(),
@@ -124,7 +121,6 @@ mod tests {
 
     fn make_result() -> StrategyResult {
         StrategyResult {
-            key_action: None,
             slug: "test-slug".to_string(),
             iterations_completed: 3,
             completion_reason: Some("AllStoriesComplete".to_string()),
@@ -157,16 +153,6 @@ mod tests {
             strategy.between_iterations(&result),
             IterationDecision::Continue
         );
-    }
-
-    #[test]
-    fn test_strategy_key_action_propagated() {
-        let mut result = make_result();
-        result.key_action = Some(KeyAction::SoftStop);
-        let strategy = TestStrategy { result };
-        let ctx = make_ctx();
-        let output = strategy.execute(&ctx).unwrap();
-        assert_eq!(output.key_action, Some(KeyAction::SoftStop));
     }
 
     #[test]

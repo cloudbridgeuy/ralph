@@ -4,7 +4,6 @@
 //! Used by both the run command and strategy implementations.
 
 use crate::highlight::ThemeConfig;
-use crate::keyboard::RunKeyAction;
 use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
@@ -38,13 +37,9 @@ pub struct InvocationConfig<'a> {
 }
 
 /// Result of subprocess invocation with failure recovery.
-///
-/// Bundles the subprocess result with any keyboard action detected during execution.
 pub struct RecoveryOutcome {
     /// The subprocess execution result.
     pub subprocess_result: StreamingSubprocessResult,
-    /// Keyboard action detected during execution (if any).
-    pub key_action: Option<RunKeyAction>,
 }
 
 /// Error type for recovery operations.
@@ -78,42 +73,9 @@ pub enum RecoveryError {
         partial_result: Option<Box<StreamingSubprocessResult>>,
     },
 
-    /// Run was hard-stopped by user (S key)
-    #[error("Subprocess hard-stopped by user")]
-    HardStop {
-        partial_result: Option<Box<StreamingSubprocessResult>>,
-    },
-
     /// Subprocess invocation failed (spawn error, signal, etc.)
     #[error("Failed to invoke subprocess: {0}")]
     Subprocess(#[from] SubprocessError),
-}
-
-impl RecoveryError {
-    /// Extract partial result from interrupt/hard-stop errors.
-    pub fn partial_result(&self) -> Option<&StreamingSubprocessResult> {
-        match self {
-            Self::Interrupted { partial_result } | Self::HardStop { partial_result } => {
-                partial_result.as_deref()
-            }
-            _ => None,
-        }
-    }
-
-    /// Take the partial result, leaving None in its place.
-    pub fn take_partial_result(&mut self) -> Option<Box<StreamingSubprocessResult>> {
-        match self {
-            Self::Interrupted { partial_result } | Self::HardStop { partial_result } => {
-                partial_result.take()
-            }
-            _ => None,
-        }
-    }
-
-    /// Whether this is a hard stop that should save paused state.
-    pub fn is_hard_stop(&self) -> bool {
-        matches!(self, Self::HardStop { .. })
-    }
 }
 
 /// Print captured output with a header, ensuring trailing newline.
@@ -139,10 +101,8 @@ pub fn invoke_with_failure_recovery(
 ) -> Result<RecoveryOutcome, RecoveryError> {
     let total_attempts = config.max_attempts + 1;
 
-    let mut detected_key_action: Option<RunKeyAction> = None;
-
     for attempt in 1..=total_attempts {
-        let (subprocess_result, key_action) = match config.theme_config {
+        let subprocess_result = match config.theme_config {
             Some(theme) => {
                 let spinner_config = SpinnerSubprocessConfig {
                     command: config.command.to_string(),
@@ -156,22 +116,14 @@ pub fn invoke_with_failure_recovery(
                         config.max_iterations,
                     ),
                 };
-                let outcome = invoke_subprocess_with_spinner_config(&spinner_config);
-                (outcome.subprocess_result, outcome.key_action)
+                invoke_subprocess_with_spinner_config(&spinner_config).subprocess_result
             }
-            None => (
-                invoke_subprocess_with_timeout(
-                    config.command,
-                    config.timeout_secs,
-                    config.verbose_tools_config.clone(),
-                ),
-                None,
+            None => invoke_subprocess_with_timeout(
+                config.command,
+                config.timeout_secs,
+                config.verbose_tools_config.clone(),
             ),
         };
-
-        if key_action.is_some() {
-            detected_key_action = key_action;
-        }
 
         let result = match subprocess_result {
             Ok(r) => r,
@@ -203,18 +155,12 @@ pub fn invoke_with_failure_recovery(
                     partial_result: Some(partial_result),
                 });
             }
-            Err(SubprocessError::HardStop { partial_result }) => {
-                return Err(RecoveryError::HardStop {
-                    partial_result: Some(partial_result),
-                });
-            }
             Err(e) => return Err(e.into()),
         };
 
         if result.exit_code == 0 {
             return Ok(RecoveryOutcome {
                 subprocess_result: result,
-                key_action: detected_key_action,
             });
         }
 

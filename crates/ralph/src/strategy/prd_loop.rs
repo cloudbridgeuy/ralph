@@ -15,10 +15,9 @@ use crate::invoke::{self, InvocationResult};
 use crate::iteration::{
     extract_response_text, write_iteration_log, Chunk, IterationLog, LogMetadata, LogToolCall,
 };
-use crate::keyboard::RunKeyAction;
 use crate::orchestrator::{self, Budget, OrchestrationConfig};
 use crate::recovery::{invoke_with_failure_recovery, InvocationConfig, RecoveryError};
-use crate::session::{finalize_session, initialize_session, save_paused_state};
+use crate::session::{finalize_session, initialize_session};
 use crate::signal;
 use crate::startup::{
     display_iteration_header, display_iteration_summary, display_prompt, display_startup_info,
@@ -30,8 +29,8 @@ use crate::warn::warn_if_err;
 use ralph_core::completion::{check_completion, CompletionReason};
 use ralph_core::directive::ValidatedDirectiveSet;
 use ralph_core::prd::{count_pending_stories, has_prd_changed, parse_prd};
-use ralph_core::session::{PausedState, SessionOutcome};
-use ralph_core::strategy::{KeyAction, StrategyConfig, StrategyResult};
+use ralph_core::session::SessionOutcome;
+use ralph_core::strategy::{StrategyConfig, StrategyResult};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -148,7 +147,6 @@ struct IterationState {
     completion_reason: Option<String>,
     final_pending_stories: usize,
     metrics: AccumulatedMetrics,
-    key_action: Option<KeyAction>,
 }
 
 impl IterationState {
@@ -158,7 +156,6 @@ impl IterationState {
             completion_reason: None,
             final_pending_stories: initial_pending,
             metrics: AccumulatedMetrics::default(),
-            key_action: None,
         }
     }
 }
@@ -206,7 +203,6 @@ fn execute_prd_loop(
 
     for relative_iteration in 1..=max_iterations {
         if signal::is_interrupted() {
-            state.key_action = Some(KeyAction::SoftStop);
             state.completion_reason = Some("Interrupted".to_string());
             break;
         }
@@ -245,36 +241,6 @@ fn execute_prd_loop(
 
         let recovery_outcome = match invoke_with_failure_recovery(&invocation_config) {
             Ok(outcome) => outcome,
-            Err(RecoveryError::HardStop { partial_result }) => {
-                // Save paused state for later resume
-                let final_iterations = state.iterations_completed;
-                let paused = PausedState::new(
-                    session_slug.clone(),
-                    loop_config.project_path.clone(),
-                    final_iterations as u32,
-                    loop_config.prd_path.clone(),
-                );
-                warn_if_err(save_paused_state(&paused), "Failed to save paused state");
-                warn_if_err(
-                    finalize_session(
-                        &session_slug,
-                        final_iterations as u32,
-                        SessionOutcome::Interrupted,
-                    ),
-                    "Failed to finalize session",
-                );
-
-                // Write partial iteration log if we have data
-                if let Some(partial) = partial_result {
-                    write_partial_log(&sess_dir, iteration, &partial, pending_before, &identity);
-                }
-
-                eprintln!(
-                    "Hard stop. Session '{}' paused after {} iteration(s).",
-                    session_slug, final_iterations
-                );
-                return Err("Hard-stopped by user".into());
-            }
             Err(RecoveryError::Interrupted { partial_result }) => {
                 let final_iterations = state.iterations_completed;
                 if let Some(partial) = partial_result {
@@ -295,7 +261,6 @@ fn execute_prd_loop(
         };
 
         let subprocess_result = recovery_outcome.subprocess_result;
-        let key_action = recovery_outcome.key_action;
 
         // Write iteration log
         let mut iteration_log =
@@ -355,14 +320,6 @@ fn execute_prd_loop(
 
         state.iterations_completed = relative_iteration;
 
-        // Handle keyboard controls
-        if matches!(key_action, Some(RunKeyAction::SoftStop)) {
-            eprintln!("\nSoft stop requested. Finishing after this iteration.");
-            state.completion_reason = Some(format!("{:?}", CompletionReason::SoftStop));
-            state.key_action = Some(KeyAction::SoftStop);
-            break;
-        }
-
         // Orchestration between iterations: scan for directives
         let response_text = extract_response_text(&subprocess_result.stream_result.output_blocks);
         if let Some(text) = response_text {
@@ -418,7 +375,6 @@ fn execute_prd_loop(
     );
 
     Ok(StrategyResult {
-        key_action: state.key_action,
         slug: session_slug,
         iterations_completed: state.iterations_completed,
         completion_reason: state.completion_reason,

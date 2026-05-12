@@ -656,9 +656,6 @@ impl From<&SessionEntry> for SessionMetadata {
     }
 }
 
-// Re-export PausedState from the paused module for backwards compatibility
-pub use crate::paused::PausedState;
-
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod persona_tests;
