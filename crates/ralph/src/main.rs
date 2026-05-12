@@ -21,7 +21,6 @@ mod init;
 mod invoke;
 pub mod iteration;
 pub mod iterations;
-pub mod keyboard;
 pub mod markdown;
 mod orchestrator;
 pub mod paths;
