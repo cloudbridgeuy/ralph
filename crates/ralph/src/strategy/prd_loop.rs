@@ -18,10 +18,7 @@ use crate::iteration::{
 use crate::keyboard::RunKeyAction;
 use crate::orchestrator::{self, Budget, OrchestrationConfig};
 use crate::recovery::{invoke_with_failure_recovery, InvocationConfig, RecoveryError};
-use crate::session::{
-    delete_paused_state, finalize_session, initialize_session, load_paused_state_for_project,
-    save_paused_state,
-};
+use crate::session::{finalize_session, initialize_session, save_paused_state};
 use crate::signal;
 use crate::startup::{
     display_iteration_header, display_iteration_summary, display_prompt, display_startup_info,
@@ -176,21 +173,8 @@ fn execute_prd_loop(
         persona: &loop_config.primary_persona,
     };
 
-    // Handle --resume
-    let (starting_iteration, slug_override) = if ctx.resume {
-        let paused = load_paused_state_for_project(&ctx.project_path)?;
-        let slug = paused.slug.clone();
-        let iterations = paused.iterations_completed as usize;
-        eprintln!(
-            "Resuming session '{}' from iteration {}...\n",
-            slug,
-            iterations + 1
-        );
-        warn_if_err(delete_paused_state(), "Failed to delete paused state file");
-        (iterations, Some(slug))
-    } else {
-        (0, None)
-    };
+    let starting_iteration: usize = 0;
+    let slug_override: Option<String> = None;
 
     // Pre-loop: verify PRD and parse stories
     verify_prd_exists(&loop_config.prd_path)?;

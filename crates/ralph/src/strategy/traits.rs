@@ -18,8 +18,6 @@ pub struct StrategyExecutionContext {
     pub project_path: PathBuf,
     /// Maximum iterations (from `--max-iterations` CLI flag).
     pub max_iterations: Option<usize>,
-    /// Whether to resume a previously stopped session.
-    pub resume: bool,
 }
 
 /// Trait for strategy implementations.
@@ -121,7 +119,6 @@ mod tests {
             },
             project_path: PathBuf::from("/tmp/test"),
             max_iterations: None,
-            resume: false,
         }
     }
 

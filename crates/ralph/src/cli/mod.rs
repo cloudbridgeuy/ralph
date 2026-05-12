@@ -128,14 +128,6 @@ pub struct StrategyExecuteArgs {
     /// marker is found in output.
     #[arg(long)]
     pub max_iterations: Option<usize>,
-
-    /// Resume a previously stopped session.
-    ///
-    /// When a strategy session is stopped, its state is saved to allow
-    /// later resumption. Use this flag to continue from where the
-    /// session was interrupted.
-    #[arg(long)]
-    pub resume: bool,
 }
 
 /// Arguments for the `sessions` subcommand.

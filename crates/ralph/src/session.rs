@@ -95,14 +95,6 @@ pub enum SessionError {
         source: std::io::Error,
     },
 
-    /// Failed to read paused state file
-    #[error("Failed to read paused state at {path}: {source}")]
-    ReadPausedState {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
     /// Failed to write paused state file
     #[error("Failed to write paused state at {path}: {source}")]
     WritePausedState {
@@ -114,30 +106,6 @@ pub enum SessionError {
     /// Failed to parse paused state file
     #[error("Failed to parse paused state: {0}")]
     ParsePausedState(String),
-
-    /// Failed to delete paused state file
-    #[error("Failed to delete paused state at {path}: {source}")]
-    DeletePausedState {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    /// No paused session found
-    #[error(
-        "No paused session found. Use 'ralph strategy execute <name>' to start a new session."
-    )]
-    NoPausedSession,
-
-    /// Paused session not for current project
-    #[error(
-        "Paused session '{slug}' is for project '{paused_project}', not current project '{current_project}'."
-    )]
-    PausedSessionProjectMismatch {
-        slug: String,
-        paused_project: String,
-        current_project: String,
-    },
 }
 
 /// Get the path to the global sessions index file.
@@ -601,87 +569,6 @@ pub fn save_paused_state(state: &PausedState) -> Result<(), SessionError> {
     })?;
 
     Ok(())
-}
-
-/// Load paused state from disk.
-///
-/// Reads the paused state from `{data_dir}/paused.toml`.
-///
-/// # Returns
-///
-/// * `Ok(Some(PausedState))` - If a paused state exists
-/// * `Ok(None)` - If no paused state file exists
-/// * `Err(SessionError)` - If reading or parsing fails
-pub fn load_paused_state() -> Result<Option<PausedState>, SessionError> {
-    let path = paused_state_path();
-
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let content = fs::read_to_string(&path).map_err(|e| SessionError::ReadPausedState {
-        path: path.display().to_string(),
-        source: e,
-    })?;
-
-    let state = PausedState::from_toml(&content)
-        .map_err(|e| SessionError::ParsePausedState(e.to_string()))?;
-
-    Ok(Some(state))
-}
-
-/// Delete the paused state file.
-///
-/// Called after successfully resuming a paused session.
-///
-/// # Errors
-///
-/// Returns `SessionError::DeletePausedState` if deletion fails.
-/// Silently succeeds if the file doesn't exist.
-pub fn delete_paused_state() -> Result<(), SessionError> {
-    let path = paused_state_path();
-
-    if !path.exists() {
-        return Ok(());
-    }
-
-    fs::remove_file(&path).map_err(|e| SessionError::DeletePausedState {
-        path: path.display().to_string(),
-        source: e,
-    })?;
-
-    Ok(())
-}
-
-/// Load and validate paused state for the current project.
-///
-/// This is the main entry point for resume functionality. It:
-/// 1. Loads the paused state file
-/// 2. Validates it belongs to the current project
-/// 3. Returns the state if valid
-///
-/// # Arguments
-///
-/// * `current_project` - The current project path to validate against
-///
-/// # Returns
-///
-/// * `Ok(PausedState)` - If a valid paused state exists for this project
-/// * `Err(SessionError::NoPausedSession)` - If no paused state exists
-/// * `Err(SessionError::PausedSessionProjectMismatch)` - If paused for different project
-pub fn load_paused_state_for_project(current_project: &Path) -> Result<PausedState, SessionError> {
-    let state = load_paused_state()?.ok_or(SessionError::NoPausedSession)?;
-
-    // Validate project matches
-    if state.project != current_project {
-        return Err(SessionError::PausedSessionProjectMismatch {
-            slug: state.slug,
-            paused_project: state.project.display().to_string(),
-            current_project: current_project.display().to_string(),
-        });
-    }
-
-    Ok(state)
 }
 
 #[cfg(test)]

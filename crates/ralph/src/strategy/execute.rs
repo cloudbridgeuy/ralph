@@ -51,7 +51,6 @@ fn build_execution_context(
         config: strategy.config.clone(),
         project_path: project_path.to_path_buf(),
         max_iterations: args.max_iterations,
-        resume: args.resume,
     }
 }
 
