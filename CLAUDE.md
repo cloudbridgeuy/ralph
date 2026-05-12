@@ -160,7 +160,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks, block-buffered prose, table enhancement
 - [Prompt Template System](docs/context/prompt-template.md) - Placeholders, customization, and two-phase workflow
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
-- [Runtime Control](docs/context/runtime-control.md) - Keyboard controls, signal handling, and session finalization
+- [Runtime Control](docs/context/runtime-control.md) - Signal handling, timeout termination, and session finalization
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, session continuation, conversation history
 - [ralph persona Command](docs/context/ralph-persona.md) - Named agent conversations, persona-scoped sessions
 - [Orchestration](docs/context/orchestration.md) - Multi-agent directives, handover/ask, conversation routing
