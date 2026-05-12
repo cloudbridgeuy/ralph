@@ -411,5 +411,4 @@ When used within the orchestration system (as a session continuation), `ask` out
 ## Related Documentation
 
 - [ralph strategy Command](ralph-strategy.md) - PRD-driven iteration loop
-- [Runtime Control](runtime-control.md) - Signal-based interruption (applies to ask)
 - [Prompt Template System](prompt-template.md) - For understanding prompt formats
