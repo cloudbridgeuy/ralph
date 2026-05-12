@@ -173,8 +173,7 @@ fn execute_prd_loop(
         persona: &loop_config.primary_persona,
     };
 
-    let starting_iteration: usize = 0;
-    let slug_override: Option<String> = None;
+    let starting_iteration = 0usize;
 
     // Pre-loop: verify PRD and parse stories
     verify_prd_exists(&loop_config.prd_path)?;
@@ -189,7 +188,7 @@ fn execute_prd_loop(
 
     // Initialize session
     let (session_slug, sess_dir) = initialize_session(
-        slug_override.as_deref(),
+        None,
         &ctx.project_path,
         Some(loop_config.prompt.clone()),
         None,
@@ -279,7 +278,6 @@ fn execute_prd_loop(
                     "Hard stop. Session '{}' paused after {} iteration(s).",
                     session_slug, final_iterations
                 );
-                eprintln!("Resume with: ralph strategy execute <name> --resume");
                 return Err("Hard-stopped by user".into());
             }
             Err(RecoveryError::Interrupted { partial_result }) => {
