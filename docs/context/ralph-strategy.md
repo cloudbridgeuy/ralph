@@ -143,7 +143,7 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 - `assets.rs` — compile-time embedded agent files, strategy files, and strategy template
 - `execute.rs` — `execute_strategy_execute()` dispatcher, matches on `StrategyKind` enum
 - `traits.rs` — `Strategy` trait with `execute()` and `between_iterations()` hooks, `StrategyExecutionContext`, `run_strategy()` generic dispatcher
-- `prd_loop.rs` — `PrdLoopStrategy` implements `Strategy` trait with self-contained iteration loop: session management, subprocess invocation via `recovery::invoke_with_failure_recovery`, completion detection, orchestration directive scanning, and keyboard control propagation
+- `prd_loop.rs` — `PrdLoopStrategy` implements `Strategy` trait with self-contained iteration loop: session management, subprocess invocation via `recovery::invoke_with_failure_recovery`, completion detection, and orchestration directive scanning
 
 ### PrdLoop Internal Types
 
