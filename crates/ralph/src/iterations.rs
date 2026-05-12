@@ -192,7 +192,7 @@ fn load_all_iterations(filter: &IterationsFilter) -> Result<Vec<IterationEntry>,
     }
 
     // Sort by started_at descending (most recent first)
-    all_iterations.sort_by(|a, b| b.log.started_at.cmp(&a.log.started_at));
+    all_iterations.sort_by_key(|i| std::cmp::Reverse(i.log.started_at));
 
     Ok(all_iterations)
 }

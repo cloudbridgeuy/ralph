@@ -241,7 +241,7 @@ fn load_sessions_with_stats(
         .collect();
 
     // Sort by date (most recent first)
-    sessions.sort_by(|a, b| b.entry.started_at.cmp(&a.entry.started_at));
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.entry.started_at));
 
     Ok(sessions)
 }
