@@ -239,8 +239,8 @@ fn execute_prd_loop(
             state.metrics.elapsed_ms(),
         );
 
-        let recovery_outcome = match invoke_with_failure_recovery(&invocation_config) {
-            Ok(outcome) => outcome,
+        let subprocess_result = match invoke_with_failure_recovery(&invocation_config) {
+            Ok(result) => result,
             Err(RecoveryError::Interrupted { partial_result }) => {
                 let final_iterations = state.iterations_completed;
                 if let Some(partial) = partial_result {
@@ -259,8 +259,6 @@ fn execute_prd_loop(
             }
             Err(e) => return Err(e.into()),
         };
-
-        let subprocess_result = recovery_outcome.subprocess_result;
 
         // Write iteration log
         let mut iteration_log =

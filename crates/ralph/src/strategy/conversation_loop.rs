@@ -201,16 +201,14 @@ fn execute_conversation_loop(
             max_iterations,
         };
 
-        let recovery_outcome = match invoke_with_failure_recovery(&invocation_config) {
-            Ok(outcome) => outcome,
+        let subprocess_result = match invoke_with_failure_recovery(&invocation_config) {
+            Ok(result) => result,
             Err(RecoveryError::Interrupted { .. }) => {
                 state.completion_reason = Some("Interrupted".to_string());
                 break;
             }
             Err(e) => return Err(e.into()),
         };
-
-        let subprocess_result = recovery_outcome.subprocess_result;
         state.metrics.add_from_result(&subprocess_result);
 
         // Extract response text

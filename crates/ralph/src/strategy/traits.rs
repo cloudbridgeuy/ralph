@@ -45,8 +45,6 @@ pub trait Strategy {
     /// Runs the full strategy lifecycle: session initialization, iteration
     /// loop, completion detection, and session finalization. Returns a
     /// `StrategyResult` with metrics and completion state.
-    ///
-    /// Returns a `StrategyResult` with metrics and completion state.
     fn execute(
         &self,
         ctx: &StrategyExecutionContext,

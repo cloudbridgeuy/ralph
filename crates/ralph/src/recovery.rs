@@ -36,12 +36,6 @@ pub struct InvocationConfig<'a> {
     pub max_iterations: usize,
 }
 
-/// Result of subprocess invocation with failure recovery.
-pub struct RecoveryOutcome {
-    /// The subprocess execution result.
-    pub subprocess_result: StreamingSubprocessResult,
-}
-
 /// Error type for recovery operations.
 ///
 /// Contains only the error variants that can originate from subprocess
@@ -98,7 +92,7 @@ fn print_captured_output(header: &str, content: &str) {
 /// - Returns error with captured output if all attempts exhausted
 pub fn invoke_with_failure_recovery(
     config: &InvocationConfig,
-) -> Result<RecoveryOutcome, RecoveryError> {
+) -> Result<StreamingSubprocessResult, RecoveryError> {
     let total_attempts = config.max_attempts + 1;
 
     for attempt in 1..=total_attempts {
@@ -116,7 +110,7 @@ pub fn invoke_with_failure_recovery(
                         config.max_iterations,
                     ),
                 };
-                invoke_subprocess_with_spinner_config(&spinner_config).subprocess_result
+                invoke_subprocess_with_spinner_config(&spinner_config)
             }
             None => invoke_subprocess_with_timeout(
                 config.command,
@@ -159,9 +153,7 @@ pub fn invoke_with_failure_recovery(
         };
 
         if result.exit_code == 0 {
-            return Ok(RecoveryOutcome {
-                subprocess_result: result,
-            });
+            return Ok(result);
         }
 
         eprintln!(

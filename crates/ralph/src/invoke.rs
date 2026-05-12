@@ -322,8 +322,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
         },
     };
 
-    let outcome = invoke_subprocess_with_spinner_config(&subprocess_config);
-    let result = outcome.subprocess_result?;
+    let result = invoke_subprocess_with_spinner_config(&subprocess_config)?;
 
     let completed_at = Utc::now();
 

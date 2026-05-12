@@ -43,13 +43,6 @@ pub struct SpinnerSubprocessConfig {
     pub session_info: SpinnerSessionInfo,
 }
 
-/// Result of subprocess invocation.
-#[derive(Debug)]
-pub struct SpinnerSubprocessOutcome {
-    /// The subprocess execution result (success or error).
-    pub subprocess_result: Result<StreamingSubprocessResult, SubprocessError>,
-}
-
 /// Drains remaining stdout lines from the channel and processes them.
 ///
 /// Called during exit handling to ensure all buffered output is displayed
@@ -96,7 +89,7 @@ fn join_output_threads(
 ///
 /// # Returns
 ///
-/// Returns a [`SpinnerSubprocessOutcome`] containing the subprocess result.
+/// Returns the subprocess result directly.
 ///
 /// # Example
 ///
@@ -114,14 +107,13 @@ fn join_output_threads(
 ///     verbose_tools: VerboseToolsConfig::new(),
 ///     session_info: SpinnerSessionInfo::new("brave-panda".to_string(), 1, 5),
 /// };
-/// let outcome = invoke_subprocess_with_spinner_config(&config);
-/// println!("{:?}", outcome.subprocess_result);
+/// let result = invoke_subprocess_with_spinner_config(&config);
+/// println!("{result:?}");
 /// ```
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
-) -> SpinnerSubprocessOutcome {
-    let subprocess_result = run_subprocess_with_spinner(config);
-    SpinnerSubprocessOutcome { subprocess_result }
+) -> Result<StreamingSubprocessResult, SubprocessError> {
+    run_subprocess_with_spinner(config)
 }
 
 /// Internal helper that runs the subprocess with spinner and gap detection.

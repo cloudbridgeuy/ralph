@@ -68,18 +68,6 @@ When ralph runs in non-interactive contexts (piped output, CI environments):
 - Signal handling remains active — `Ctrl+C` and `SIGTERM` still kill the child cleanly
 - Sessions finalize correctly on interruption
 
-## Vestigial Surface (scheduled for removal)
-
-The following items are still present in the codebase but are no longer reachable from any input path after the keyboard-polling excision. They are kept until the S4b slice of `dismantle-keybindings` removes them in a single sweep:
-
-- `RunKeyAction` enum (`crates/ralph/src/keyboard.rs`)
-- `SpinnerSubprocessOutcome.key_action` field (always `None`)
-- `SubprocessError::HardStop` and `RecoveryError::HardStop` variants
-- `RecoveryOutcome.key_action` field
-- Match arms in `prd_loop` / `conversation_loop` that branch on `RunKeyAction::SoftStop` / `KeyAction::HardStop`
-
-Treat these as dead data flow when reading the strategy loops.
-
 ## Code Locations
 
 | Component | File | Description |
