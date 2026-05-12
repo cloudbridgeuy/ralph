@@ -121,7 +121,6 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 |------|------|---------|-------------|
 | `<NAME>` | positional | required | Strategy name to execute |
 | `--max-iterations` | usize | auto | Maximum iterations (strategy-dependent) |
-| `--resume` | flag | false | Resume a previously stopped session |
 
 ## Architecture (FC-IS)
 
