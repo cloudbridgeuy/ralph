@@ -3,45 +3,20 @@
 //! This module handles subprocess invocation with interactive features:
 //! - Animated spinner during wait periods
 //! - Gap detection to show spinner when LLM is thinking
-//! - Keyboard input polling for interactive controls
 //!
-//! # Keyboard Controls
-//!
-//! When running in an interactive terminal, the subprocess loop polls for
-//! keyboard input on every iteration. This enables interactive controls
-//! like soft stop, hard stop, and pause to be captured even while output
-//! is streaming rapidly.
-//!
-//! # Raw Mode Lifecycle
-//!
-//! Raw terminal mode is enabled for the entire subprocess execution duration
-//! to ensure keyboard input is always captured:
-//!
-//! 1. **When enabled**: At subprocess start, stays on until subprocess exits
-//! 2. **Momentary disable**: Only disabled during print!/eprintln! calls to
-//!    prevent terminal output corruption, then immediately re-enabled
-//! 3. **Panic safety**: [`KeyboardState`] uses [`RawModeGuard`] (RAII pattern)
-//!    from the [`crate::keyboard`] module, ensuring cleanup on all exit paths
-//! 4. **Non-terminal**: Raw mode is never enabled when stdin is not a TTY
-//!
-//! This differs from [`crate::replay_countdown`] which only enables raw mode
-//! during countdown display, since the subprocess loop needs to capture keys
-//! even during rapid output streaming.
-//!
-//! # Keyboard Polling
-//!
-//! Keyboard polling uses `event::poll(Duration::ZERO)` for non-blocking input
-//! detection. This is called on every loop iteration (not just during output
-//! gaps), allowing responsive key handling regardless of output frequency.
+//! The subprocess loop does not poll for keyboard input. `Ctrl+C` kills the
+//! child process via the signal path (`signal::is_interrupted()`). Mid-iteration
+//! key presses (`s`, `S`, `p`) type into the shell and have no effect on the
+//! subprocess loop.
 
 use super::kill_process_group;
 use super::timeout::try_wait_child;
 use super::types::{
-    StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_HARD_STOP,
-    EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
+    StreamingSubprocessResult, SubprocessError, DEFAULT_GAP_THRESHOLD_MS, EXIT_CODE_INTERRUPTED,
+    EXIT_CODE_KILLED,
 };
 use crate::highlight::ThemeConfig;
-use crate::keyboard::{check_for_run_action, RawModeGuard, RunKeyAction};
+use crate::keyboard::RunKeyAction;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
@@ -82,169 +57,9 @@ pub struct SpinnerSubprocessOutcome {
     pub subprocess_result: Result<StreamingSubprocessResult, SubprocessError>,
     /// Keyboard action detected during execution (if any).
     ///
-    /// This is set when the user presses a control key (s, S, p) during
-    /// subprocess execution. The caller should check this field to handle
-    /// soft stop, hard stop, or pause actions.
+    /// Always `None` after S3 — keyboard polling has been removed from the
+    /// subprocess loop. This field will be removed in S4b.
     pub key_action: Option<RunKeyAction>,
-}
-
-/// Manages raw mode state for keyboard input during subprocess execution.
-///
-/// This struct tracks whether **stdin** is a terminal to enable keyboard controls.
-/// Note: Output formatting (highlighting, tool display) depends on stdout being
-/// a terminal and is handled separately in the subprocess runner.
-///
-/// This is kept separate from `SpinnerSubprocessConfig` because it tracks
-/// mutable runtime state (raw mode guard, detected actions) rather than
-/// configuration. This separation follows the Functional Core / Imperative
-/// Shell pattern.
-///
-/// Raw mode is enabled for the entire subprocess execution duration to allow
-/// keyboard polling on every loop iteration. It is disabled momentarily
-/// before print!/eprintln! calls to avoid corrupting terminal output, then
-/// immediately re-enabled.
-struct KeyboardState {
-    /// Whether stdin is a terminal (enables keyboard controls).
-    stdin_is_terminal: bool,
-    /// Current raw mode guard (Some when raw mode is active).
-    raw_mode_guard: Option<RawModeGuard>,
-    /// Last detected keyboard action (for returning to caller).
-    detected_action: Option<RunKeyAction>,
-    /// Whether output is currently paused.
-    is_paused: bool,
-    /// Buffer for output while paused.
-    pause_buffer: Vec<String>,
-}
-
-impl KeyboardState {
-    /// Create new keyboard state.
-    fn new(stdin_is_terminal: bool) -> Self {
-        Self {
-            stdin_is_terminal,
-            raw_mode_guard: None,
-            detected_action: None,
-            is_paused: false,
-            pause_buffer: Vec::new(),
-        }
-    }
-
-    /// Enable raw mode for keyboard input.
-    ///
-    /// This is a no-op if already enabled or if not in a terminal.
-    /// Raw mode should be enabled for the entire subprocess execution,
-    /// only disabled momentarily for print calls.
-    fn enable_raw_mode(&mut self) {
-        if !self.stdin_is_terminal || self.raw_mode_guard.is_some() {
-            return;
-        }
-        self.raw_mode_guard = Some(RawModeGuard::new());
-    }
-
-    /// Disable raw mode momentarily before print calls.
-    ///
-    /// Raw mode must be disabled before writing output to prevent terminal
-    /// corruption. Caller should call `enable_raw_mode()` immediately after
-    /// the print call to resume keyboard polling.
-    ///
-    /// Prefer using `with_raw_mode_disabled()` which handles the re-enable
-    /// automatically.
-    fn disable_raw_mode(&mut self) {
-        // Dropping the guard disables raw mode
-        self.raw_mode_guard = None;
-    }
-
-    /// Execute a closure with raw mode temporarily disabled.
-    ///
-    /// Disables raw mode before the closure runs, then re-enables it after.
-    /// Use this for print operations to prevent terminal corruption while
-    /// ensuring keyboard polling resumes afterward.
-    fn with_raw_mode_disabled<F>(&mut self, f: F)
-    where
-        F: FnOnce(),
-    {
-        self.disable_raw_mode();
-        f();
-        self.enable_raw_mode();
-    }
-
-    /// Poll for keyboard input (non-blocking).
-    ///
-    /// Returns true if a significant action was detected that the caller
-    /// should handle. Raw mode must be enabled for this to work.
-    fn poll(&mut self) -> bool {
-        if self.raw_mode_guard.is_none() {
-            return false;
-        }
-
-        let action = check_for_run_action();
-        if action != RunKeyAction::None {
-            self.detected_action = Some(action);
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Get and clear the detected action (if any).
-    ///
-    /// Returns the keyboard action that was detected during polling,
-    /// clearing it so subsequent calls return None.
-    fn take_action(&mut self) -> Option<RunKeyAction> {
-        self.detected_action.take()
-    }
-
-    /// Check if the detected action matches a specific action.
-    fn matches_action(&self, action: RunKeyAction) -> bool {
-        self.detected_action == Some(action)
-    }
-
-    /// Clear the detected action without returning it.
-    fn clear_action(&mut self) {
-        self.detected_action = None;
-    }
-
-    /// Toggle the pause state.
-    ///
-    /// When pausing, returns an empty Vec.
-    /// When resuming, returns buffered output for immediate display.
-    fn toggle_pause(&mut self) -> Vec<String> {
-        self.is_paused = !self.is_paused;
-        if self.is_paused {
-            Vec::new()
-        } else {
-            std::mem::take(&mut self.pause_buffer)
-        }
-    }
-
-    /// Check if currently paused.
-    fn is_paused(&self) -> bool {
-        self.is_paused
-    }
-
-    /// Buffer output for later display when paused.
-    fn buffer_output(&mut self, output: String) {
-        self.pause_buffer.push(output);
-    }
-
-    /// Drain any remaining buffered output (called on exit).
-    fn drain_buffer(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.pause_buffer)
-    }
-}
-
-/// Drains the pause buffer, printing any buffered output.
-///
-/// Called during exit handling to ensure output buffered while paused
-/// is displayed before the subprocess result is returned.
-/// Expects raw mode to already be disabled by the caller.
-fn drain_pause_buffer(keyboard: &mut KeyboardState) {
-    let buffered = keyboard.drain_buffer();
-    if !buffered.is_empty() {
-        for output in buffered {
-            print!("{}", output);
-        }
-        let _ = io::stdout().flush();
-    }
 }
 
 /// Drains remaining stdout lines from the channel and processes them.
@@ -287,30 +102,14 @@ fn join_output_threads(
 /// - Automatically stops spinner when first output arrives
 /// - Only shows spinner when stdout is a terminal
 ///
-/// # Terminal Raw Mode
-///
-/// Raw mode is automatically managed during execution to enable keyboard input
-/// polling without corrupting subprocess output:
-/// - Enabled during spinner display to allow non-blocking keyboard polling
-/// - Disabled before any subprocess output is written to prevent corruption
-/// - Disabled on all exit paths (completion, timeout, interrupt, error)
-/// - Skipped entirely when stdin is not a terminal (non-interactive mode)
-///
-/// # Keyboard Polling
-///
-/// During spinner display periods, the function polls for keyboard input using
-/// non-blocking `event::poll(Duration::ZERO)`. Any detected key action (soft stop,
-/// hard stop, pause) is captured and returned in the outcome, allowing callers
-/// to react to user input.
-///
 /// # Arguments
 ///
 /// * `config` - Configuration for the subprocess invocation
 ///
 /// # Returns
 ///
-/// Returns a [`SpinnerSubprocessOutcome`] containing both the subprocess result
-/// and any keyboard action detected during execution.
+/// Returns a [`SpinnerSubprocessOutcome`] containing the subprocess result.
+/// `key_action` is always `None` (keyboard polling removed in S3; field removed in S4b).
 ///
 /// # Example
 ///
@@ -319,7 +118,6 @@ fn join_output_threads(
 /// use ralph::highlight::ThemeConfig;
 /// use ralph::stream_processor::VerboseToolsConfig;
 /// use ralph::spinner::SpinnerSessionInfo;
-/// use ralph::keyboard::RunKeyAction;
 ///
 /// let config = SpinnerSubprocessConfig {
 ///     command: "claude --output-format stream-json -p 'hello'".to_string(),
@@ -330,35 +128,21 @@ fn join_output_threads(
 ///     session_info: SpinnerSessionInfo::new("brave-panda".to_string(), 1, 5),
 /// };
 /// let outcome = invoke_subprocess_with_spinner_config(&config);
-///
-/// // Check for keyboard action
-/// if let Some(action) = outcome.key_action {
-///     match action {
-///         RunKeyAction::SoftStop => println!("User requested soft stop"),
-///         RunKeyAction::HardStop => println!("User requested hard stop"),
-///         RunKeyAction::Interrupt => println!("User requested interrupt"),
-///         RunKeyAction::Pause => println!("User requested pause"),
-///         RunKeyAction::None => {}
-///     }
-/// }
+/// let _ = outcome.subprocess_result;
 /// ```
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> SpinnerSubprocessOutcome {
-    // Check stdin for terminal (not stdout) because keyboard input comes from stdin.
-    // This allows keyboard controls when stdout is redirected but stdin is interactive.
-    let mut keyboard = KeyboardState::new(std::io::stdin().is_terminal());
-    let subprocess_result = run_subprocess_with_spinner(config, &mut keyboard);
+    let subprocess_result = run_subprocess_with_spinner(config);
     SpinnerSubprocessOutcome {
         subprocess_result,
-        key_action: keyboard.take_action(),
+        key_action: None,
     }
 }
 
-/// Internal helper that runs the subprocess and tracks keyboard state.
+/// Internal helper that runs the subprocess with spinner and gap detection.
 fn run_subprocess_with_spinner(
     config: &SpinnerSubprocessConfig,
-    keyboard: &mut KeyboardState,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     // Spawn subprocess with stdout/stderr captured and stdin inherited
     let mut child = Command::new("sh")
@@ -405,11 +189,6 @@ fn run_subprocess_with_spinner(
     let mut spinner_active = true; // Spinner starts active
     let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
 
-    // Enable raw mode to allow keyboard polling throughout subprocess execution.
-    // Raw mode stays enabled for the entire duration, only disabled momentarily
-    // during print calls to prevent terminal output corruption.
-    keyboard.enable_raw_mode();
-
     // Track whether we're in a tool invocation (to determine spinner context)
     let mut pending_tool_count: usize = 0;
 
@@ -451,11 +230,6 @@ fn run_subprocess_with_spinner(
             if spinner_active {
                 spinner.stop();
             }
-            // Disable raw mode before draining output to prevent corruption
-            keyboard.disable_raw_mode();
-
-            // Drain any output buffered while paused
-            drain_pause_buffer(keyboard);
 
             // Drain remaining output and wait for threads
             drain_stdout(&line_rx, &mut processor);
@@ -483,14 +257,9 @@ fn run_subprocess_with_spinner(
             if spinner_active {
                 spinner.stop();
             }
-            // Disable raw mode before draining output to prevent corruption
-            keyboard.disable_raw_mode();
 
             // Kill the subprocess and its process group
             kill_process_group(&mut child);
-
-            // Drain any output buffered while paused
-            drain_pause_buffer(keyboard);
 
             // Drain remaining output and wait for threads
             drain_stdout(&line_rx, &mut processor);
@@ -517,14 +286,9 @@ fn run_subprocess_with_spinner(
             if spinner_active {
                 spinner.stop();
             }
-            // Disable raw mode before draining output to prevent corruption
-            keyboard.disable_raw_mode();
 
             // Kill the subprocess and its process group
             kill_process_group(&mut child);
-
-            // Drain any output buffered while paused
-            drain_pause_buffer(keyboard);
 
             // Drain remaining output and wait for threads
             drain_stdout(&line_rx, &mut processor);
@@ -561,26 +325,15 @@ fn run_subprocess_with_spinner(
                     }
 
                     if let Some(output) = processor.process_line(&line) {
-                        // Check pause state first to avoid unnecessary clone
-                        if keyboard.is_paused() {
-                            // Buffer output while paused - don't print or stop spinner
-                            keyboard.buffer_output(output);
-                            // Still update last_output_time so we know output is arriving
-                            last_output_time = Instant::now();
-                        } else {
-                            // Stop spinner on visible output
-                            if spinner_active {
-                                spinner.stop();
-                                spinner_active = false;
-                            }
-                            // Print output with raw mode temporarily disabled
-                            keyboard.with_raw_mode_disabled(|| {
-                                print!("{}", output);
-                                let _ = io::stdout().flush();
-                            });
-                            // Update last output time
-                            last_output_time = Instant::now();
+                        // Stop spinner on visible output
+                        if spinner_active {
+                            spinner.stop();
+                            spinner_active = false;
                         }
+                        print!("{}", output);
+                        let _ = io::stdout().flush();
+                        // Update last output time
+                        last_output_time = Instant::now();
                     }
                 }
                 Err(e) => {
@@ -588,10 +341,6 @@ fn run_subprocess_with_spinner(
                     if spinner_active {
                         spinner.stop();
                     }
-                    // Disable raw mode before returning error
-                    keyboard.disable_raw_mode();
-                    // Drain any output buffered while paused
-                    drain_pause_buffer(keyboard);
                     return Err(SubprocessError::OutputCaptureFailed(format!(
                         "Failed to read stdout: {}",
                         e
@@ -599,15 +348,12 @@ fn run_subprocess_with_spinner(
                 }
             },
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Check for stderr output (disable raw mode temporarily for clean output)
+                // Check for stderr output
                 if let Ok(line) = stderr_rx.try_recv() {
-                    keyboard.disable_raw_mode();
                     eprintln!("{}", line);
                     while let Ok(line) = stderr_rx.try_recv() {
                         eprintln!("{}", line);
                     }
-                    // Re-enable raw mode unconditionally to continue keyboard polling
-                    keyboard.enable_raw_mode();
                 }
 
                 // Gap detection: if no output for threshold duration, show spinner
@@ -620,7 +366,6 @@ fn run_subprocess_with_spinner(
                     };
                     spinner.start_with_context(context);
                     spinner_active = true;
-                    // Raw mode is already enabled (stays on for entire subprocess)
                 }
 
                 // Continue loop to check process status and timeout
@@ -628,98 +373,6 @@ fn run_subprocess_with_spinner(
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 // stdout closed, wait for process to exit
                 // Continue loop to check process status
-            }
-        }
-
-        // Poll for keyboard input on every loop iteration (not just during gaps).
-        // This allows interactive controls (soft stop, hard stop, pause)
-        // to be detected even while output is streaming rapidly.
-        if keyboard.poll() {
-            // Check if interrupt was requested (Ctrl+C) - kill subprocess immediately
-            if keyboard.matches_action(RunKeyAction::Interrupt) {
-                if spinner_active {
-                    spinner.stop();
-                }
-                keyboard.disable_raw_mode();
-
-                kill_process_group(&mut child);
-
-                drain_pause_buffer(keyboard);
-                drain_stdout(&line_rx, &mut processor);
-                let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
-
-                let stream_result = processor.finish();
-                if let Some(ref output) = stream_result.final_output {
-                    print!("{}", output);
-                    let _ = io::stdout().flush();
-                }
-                return Err(SubprocessError::Interrupted {
-                    partial_result: Box::new(StreamingSubprocessResult {
-                        exit_code: EXIT_CODE_INTERRUPTED,
-                        stderr: stderr_captured,
-                        stream_result,
-                    }),
-                });
-            }
-
-            // Check if hard stop was requested - kill subprocess immediately
-            if keyboard.matches_action(RunKeyAction::HardStop) {
-                if spinner_active {
-                    spinner.stop();
-                }
-                keyboard.disable_raw_mode();
-
-                // Kill the subprocess and its process group
-                kill_process_group(&mut child);
-
-                // Drain any output buffered while paused
-                drain_pause_buffer(keyboard);
-
-                // Drain remaining output and wait for threads
-                drain_stdout(&line_rx, &mut processor);
-                let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
-
-                let stream_result = processor.finish();
-                if let Some(ref output) = stream_result.final_output {
-                    print!("{}", output);
-                    let _ = io::stdout().flush();
-                }
-                return Err(SubprocessError::HardStop {
-                    partial_result: Box::new(StreamingSubprocessResult {
-                        exit_code: EXIT_CODE_HARD_STOP,
-                        stderr: stderr_captured,
-                        stream_result,
-                    }),
-                });
-            }
-
-            // SoftStop: action left set so caller handles it at iteration boundary.
-
-            // Check if pause was requested - toggle pause state
-            if keyboard.matches_action(RunKeyAction::Pause) {
-                // Clear the detected action so it's not returned to caller
-                // (pause is handled locally, not propagated up)
-                keyboard.clear_action();
-
-                // Toggle pause and get any buffered output to display
-                let buffered = keyboard.toggle_pause();
-
-                // Flush buffered output on resume if unpaused
-                if !keyboard.is_paused() && !buffered.is_empty() {
-                    // Stop spinner before displaying output
-                    if spinner_active {
-                        spinner.stop();
-                        spinner_active = false;
-                    }
-                    // Disable raw mode for print, then re-enable
-                    keyboard.disable_raw_mode();
-                    for output in buffered {
-                        print!("{}", output);
-                    }
-                    let _ = io::stdout().flush();
-                    keyboard.enable_raw_mode();
-                    last_output_time = Instant::now();
-                }
             }
         }
     }
