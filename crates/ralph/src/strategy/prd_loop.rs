@@ -173,8 +173,6 @@ fn execute_prd_loop(
         persona: &loop_config.primary_persona,
     };
 
-    let starting_iteration = 0usize;
-
     // Pre-loop: verify PRD and parse stories
     verify_prd_exists(&loop_config.prd_path)?;
     let prd_content = read_prd_file(&loop_config.prd_path)?;
@@ -194,29 +192,26 @@ fn execute_prd_loop(
         None,
     )?;
 
-    // Display startup info (only on fresh start)
-    if starting_iteration == 0 {
-        display_strategy_startup(
-            &loop_config,
-            &session_slug,
-            &sess_dir,
-            &prd_analysis,
-            max_iterations,
-        );
-    }
+    // Display startup info
+    display_strategy_startup(
+        &loop_config,
+        &session_slug,
+        &sess_dir,
+        &prd_analysis,
+        max_iterations,
+    );
 
     // Iteration loop
     let mut state = IterationState::new(prd_analysis.pending_count);
-    let remaining_iterations = max_iterations.saturating_sub(starting_iteration);
 
-    for relative_iteration in 1..=remaining_iterations {
+    for relative_iteration in 1..=max_iterations {
         if signal::is_interrupted() {
             state.key_action = Some(KeyAction::SoftStop);
             state.completion_reason = Some("Interrupted".to_string());
             break;
         }
 
-        let iteration = starting_iteration + relative_iteration;
+        let iteration = relative_iteration;
 
         // Re-read PRD and count pending
         let prd_before = read_prd_file(&loop_config.prd_path)?;
@@ -252,7 +247,7 @@ fn execute_prd_loop(
             Ok(outcome) => outcome,
             Err(RecoveryError::HardStop { partial_result }) => {
                 // Save paused state for later resume
-                let final_iterations = starting_iteration + state.iterations_completed;
+                let final_iterations = state.iterations_completed;
                 let paused = PausedState::new(
                     session_slug.clone(),
                     loop_config.project_path.clone(),
@@ -281,7 +276,7 @@ fn execute_prd_loop(
                 return Err("Hard-stopped by user".into());
             }
             Err(RecoveryError::Interrupted { partial_result }) => {
-                let final_iterations = starting_iteration + state.iterations_completed;
+                let final_iterations = state.iterations_completed;
                 if let Some(partial) = partial_result {
                     write_partial_log(&sess_dir, iteration, &partial, pending_before, &identity);
                 }
@@ -350,7 +345,7 @@ fn execute_prd_loop(
             warn_if_err(
                 finalize_session(
                     &session_slug,
-                    (starting_iteration + relative_iteration) as u32,
+                    relative_iteration as u32,
                     SessionOutcome::Failed,
                 ),
                 "Failed to finalize session",
@@ -412,7 +407,7 @@ fn execute_prd_loop(
     }
 
     // Finalize session
-    let total_iterations = starting_iteration + state.iterations_completed;
+    let total_iterations = state.iterations_completed;
     warn_if_err(
         finalize_session(
             &session_slug,
