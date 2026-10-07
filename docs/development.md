@@ -122,10 +122,10 @@ Install ralph to your local bin directory:
 
 ```bash
 # Install to ~/.local/bin (default)
-cargo xtask install
+cargo install --path crates/ralph --root ~/.local --force
 
-# Install to custom path
-cargo xtask install --path /usr/local/bin
+# Install to custom prefix (binary in <prefix>/bin)
+cargo install --path crates/ralph --root /usr/local --force
 ```
 
 Ensure the installation directory is in your `PATH`.

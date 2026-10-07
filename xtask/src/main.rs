@@ -11,10 +11,10 @@ use clap::Parser;
 mod lint;
 mod prelude;
 
-/// Development tasks for the calendsync repository
+/// Development tasks for the ralph repository
 #[derive(Debug, Parser)]
 #[command(name = "xtask")]
-#[command(about = "Development tasks for calendsync", long_about = None)]
+#[command(about = "Development tasks for ralph", long_about = None)]
 struct Cli {
     #[command(flatten)]
     global: Global,

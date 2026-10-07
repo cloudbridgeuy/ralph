@@ -49,8 +49,8 @@
 ```bash
 git clone https://github.com/yourusername/ralph.git
 cd ralph
-cargo xtask install              # Install to ~/.local/bin
-cargo xtask install --path /usr/local/bin  # Custom path
+cargo install --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
+cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
 ```
 
 ### Requirements
@@ -184,7 +184,7 @@ cargo test
 cargo xtask lint
 
 # Install locally for testing
-cargo xtask install
+cargo install --path crates/ralph --root ~/.local --force
 ```
 
 ## License
