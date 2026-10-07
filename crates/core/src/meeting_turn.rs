@@ -1,4 +1,5 @@
 use crate::meeting::{MeetingEvent, MeetingReply};
+use crate::transcript::{build_editor_content, Speaker, TranscriptEntry};
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -133,6 +134,55 @@ pub enum Reaction {
     AskHuman(String),
 }
 
+pub const NO_ANSWER: &str = "The human gave no answer.";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HumanAnswer {
+    pub text: String,
+    pub extra: Vec<String>,
+    pub unknown: Vec<String>,
+}
+
+pub fn ask_editor_content(asker: &str, question: &str) -> String {
+    let entry = TranscriptEntry {
+        speaker: Speaker::Persona(asker.to_string()),
+        content: question.to_string(),
+    };
+    format!("{}to: {asker}\n", build_editor_content(&[entry]))
+}
+
+pub fn parse_human_answer(asker: &str, roster: &[String], content: &str) -> HumanAnswer {
+    let content = content.trim();
+    let (names, text) = match content.split_once('\n').unwrap_or((content, "")) {
+        (first, rest) if first.trim_start().starts_with("to:") => {
+            (first.trim_start().trim_start_matches("to:"), rest.trim())
+        }
+        _ => ("", content),
+    };
+    if text.is_empty() {
+        return HumanAnswer {
+            text: NO_ANSWER.to_string(),
+            ..HumanAnswer::default()
+        };
+    }
+    let mut answer = HumanAnswer {
+        text: text.to_string(),
+        ..HumanAnswer::default()
+    };
+    for name in names.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        let known = roster.iter().any(|p| p == name);
+        let list = if known {
+            &mut answer.extra
+        } else {
+            &mut answer.unknown
+        };
+        if name != asker && !list.iter().any(|n| n == name) {
+            list.push(name.to_string());
+        }
+    }
+    answer
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Handoff {
     to: String,
@@ -146,6 +196,7 @@ pub struct TurnState {
     max_turns: usize,
     handoff: Option<Handoff>,
     ended: Option<String>,
+    notes: BTreeMap<String, Vec<String>>,
 }
 
 fn reply(text: &str) -> Reaction {
@@ -162,6 +213,7 @@ impl TurnState {
             max_turns,
             handoff: None,
             ended: None,
+            notes: BTreeMap::new(),
         }
     }
 
@@ -171,6 +223,19 @@ impl TurnState {
 
     pub fn turn(&self) -> usize {
         self.turn
+    }
+
+    pub fn route_answer(&mut self, extra: &[String], question: &str, answer: &str) {
+        let note = format!(
+            "The human answered {}'s question.\n\nQuestion: {question}\n\nAnswer: {answer}",
+            self.speaker
+        );
+        for persona in extra {
+            self.notes
+                .entry(persona.clone())
+                .or_default()
+                .push(note.clone());
+        }
     }
 
     pub fn on_event(&mut self, event: &MeetingEvent) -> Reaction {
@@ -219,7 +284,12 @@ impl TurnState {
         if self.turn >= self.max_turns {
             return Step::Stop(StopReason::TurnCap);
         }
-        let message = format!("Message from {}:\n\n{}", self.speaker, handoff.text);
+        let mut parts = self.notes.remove(&handoff.to).unwrap_or_default();
+        parts.push(format!(
+            "Message from {}:\n\n{}",
+            self.speaker, handoff.text
+        ));
+        let message = parts.join("\n\n");
         self.speaker = handoff.to.clone();
         self.turn += 1;
         Step::Resume {
@@ -341,5 +411,69 @@ mod tests {
         for tool in ["send_message", "ask_human", "end_meeting"] {
             assert!(prompt.contains(&format!("mcp__ralph-meeting__{tool}")));
         }
+    }
+
+    #[test]
+    fn editor_content_labels_asker_and_prefills_to_line() {
+        let content = ask_editor_content("a", "why");
+        assert!(content.starts_with("[a]\nwhy\n\n"));
+        assert!(content.ends_with(&format!("{}\nto: a\n", crate::transcript::EDITOR_SEPARATOR)));
+    }
+
+    #[test]
+    fn answer_without_to_line_goes_to_asker_only() {
+        let parsed = parse_human_answer("a", &names(&["a", "b"]), "because");
+        assert_eq!(parsed.text, "because");
+        assert!(parsed.extra.is_empty() && parsed.unknown.is_empty());
+    }
+
+    #[test]
+    fn to_line_adds_known_extras_and_reports_unknown() {
+        let roster = names(&["a", "b", "c"]);
+        let parsed = parse_human_answer("a", &roster, "to: b, , zed ,c, b\n\nline1\nline2");
+        assert_eq!(parsed.text, "line1\nline2");
+        assert_eq!(parsed.extra, names(&["b", "c"]));
+        assert_eq!(parsed.unknown, names(&["zed"]));
+    }
+
+    #[test]
+    fn asker_removed_from_to_line_is_not_an_extra() {
+        let parsed = parse_human_answer("a", &names(&["a", "b"]), "to: b\nyes");
+        assert_eq!(parsed.extra, names(&["b"]));
+        assert_eq!(parsed.text, "yes");
+    }
+
+    #[test]
+    fn empty_answer_is_no_answer_and_drops_recipients() {
+        for content in ["", "to: a, b", "to: b\n  "] {
+            let parsed = parse_human_answer("a", &names(&["a", "b"]), content);
+            assert_eq!(parsed.text, NO_ANSWER);
+            assert!(parsed.extra.is_empty());
+        }
+    }
+
+    #[test]
+    fn pending_note_reaches_extra_persona_once() {
+        let mut state = TurnState::new("a", 9);
+        state.route_answer(&names(&["c"]), "why", "because");
+        state.on_event(&send("a", "b"));
+        let Step::Resume { message, .. } = state.finish_turn(0) else {
+            panic!("expected resume");
+        };
+        assert!(!message.contains("answered"));
+        state.on_event(&send("b", "c"));
+        let Step::Resume { message, .. } = state.finish_turn(0) else {
+            panic!("expected resume");
+        };
+        assert!(message.starts_with("The human answered a's question."));
+        assert!(message.contains("Question: why") && message.contains("Answer: because"));
+        assert!(message.ends_with("Message from b:\n\nhi"));
+        state.on_event(&send("c", "b"));
+        state.finish_turn(0);
+        state.on_event(&send("b", "c"));
+        let Step::Resume { message, .. } = state.finish_turn(0) else {
+            panic!("expected resume");
+        };
+        assert!(!message.contains("answered"));
     }
 }

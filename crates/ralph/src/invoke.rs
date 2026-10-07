@@ -388,6 +388,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
             max_iterations: None,
             on_behalf_of: config.on_behalf_of.clone(),
         },
+        pause: None,
     };
 
     let result = invoke_subprocess_with_spinner_config(&subprocess_config)?;

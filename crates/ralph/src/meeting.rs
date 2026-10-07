@@ -15,20 +15,25 @@ use ralph_core::meeting::{build_mcp_args, MeetingEvent, MeetingReply};
 use ralph_core::meeting_transcript::{
     answer_line, end_line, kickoff_line, message_line, question_line, to_jsonl, TranscriptLine,
 };
-use ralph_core::meeting_turn::{scene_prompt, MeetingPlan, Reaction, Step, StopReason, TurnState};
+use ralph_core::meeting_turn::{
+    parse_human_answer, scene_prompt, HumanAnswer, MeetingPlan, Reaction, Step, StopReason,
+    TurnState,
+};
 use ralph_core::transcript::HumanResponse;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
 type PendingEvent = (MeetingEvent, mpsc::Sender<MeetingReply>);
 
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const SPINNER_SETTLE: Duration = Duration::from_millis(300);
 
 pub struct MeetingConfig {
     pub plan: MeetingPlan,
@@ -43,6 +48,7 @@ struct Moderator<'a> {
     socket: PathBuf,
     home: Option<PathBuf>,
     sessions: HashMap<String, String>,
+    pause: Arc<AtomicBool>,
 }
 
 impl Moderator<'_> {
@@ -76,6 +82,7 @@ impl Moderator<'_> {
                 max_iterations: Some(plan.max_turns),
                 on_behalf_of: None,
             },
+            pause: Some(Arc::clone(&self.pause)),
         }
     }
 }
@@ -133,28 +140,54 @@ impl Transcript {
     }
 }
 
-fn ask_human(question: &str) -> MeetingReply {
-    let text = match human::open_editor_for_ask(question) {
-        Ok(HumanResponse::Content(answer)) => answer,
-        Ok(HumanResponse::Abort) => "The human gave no answer.".to_string(),
-        Err(e) => format!("Could not reach the human: {e}"),
-    };
-    MeetingReply { text }
+struct TurnIo<'a> {
+    events: &'a mpsc::Receiver<PendingEvent>,
+    transcript: &'a Transcript,
+    roster: &'a [String],
+    pause: &'a AtomicBool,
 }
 
-fn answer(state: &mut TurnState, event: &MeetingEvent, transcript: &Transcript) -> MeetingReply {
+fn ask_human(asker: &str, question: &str, io: &TurnIo) -> HumanAnswer {
+    io.pause.store(true, Ordering::SeqCst);
+    thread::sleep(SPINNER_SETTLE);
+    let response = human::open_editor_for_meeting_ask(asker, question);
+    io.pause.store(false, Ordering::SeqCst);
+    match response {
+        Ok(HumanResponse::Content(content)) => parse_human_answer(asker, io.roster, &content),
+        Ok(HumanResponse::Abort) => parse_human_answer(asker, io.roster, ""),
+        Err(e) => HumanAnswer {
+            text: format!("Could not reach the human: {e}"),
+            ..HumanAnswer::default()
+        },
+    }
+}
+
+fn answer(state: &mut TurnState, event: &MeetingEvent, io: &TurnIo) -> MeetingReply {
     let speaker = state.speaker().to_string();
     match state.on_event(event) {
         Reaction::Reply(reply) => reply,
         Reaction::Sent { reply, to, text } => {
-            transcript.append(&message_line(&speaker, &to, &text, Utc::now()));
+            io.transcript
+                .append(&message_line(&speaker, &to, &text, Utc::now()));
             reply
         }
         Reaction::AskHuman(question) => {
-            transcript.append(&question_line(&speaker, &question, Utc::now()));
-            let reply = ask_human(&question);
-            transcript.append(&answer_line(&speaker, &reply.text, Utc::now()));
-            reply
+            io.transcript
+                .append(&question_line(&speaker, &question, Utc::now()));
+            let human_answer = ask_human(&speaker, &question, io);
+            for name in &human_answer.unknown {
+                warn(format!("unknown persona '{name}' in the to: line; skipped"));
+            }
+            state.route_answer(&human_answer.extra, &question, &human_answer.text);
+            let recipients = std::iter::once(speaker.as_str())
+                .chain(human_answer.extra.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            io.transcript
+                .append(&answer_line(&recipients, &human_answer.text, Utc::now()));
+            MeetingReply {
+                text: human_answer.text,
+            }
         }
     }
 }
@@ -162,8 +195,7 @@ fn answer(state: &mut TurnState, event: &MeetingEvent, transcript: &Transcript) 
 fn run_turn(
     config: SpinnerSubprocessConfig,
     state: &mut TurnState,
-    events: &mpsc::Receiver<PendingEvent>,
-    transcript: &Transcript,
+    io: &TurnIo,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     thread::scope(|scope| {
         let (done_tx, done_rx) = mpsc::channel();
@@ -180,8 +212,8 @@ fn run_turn(
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
-            if let Ok((event, reply_tx)) = events.recv_timeout(POLL_INTERVAL) {
-                let _ = reply_tx.send(answer(state, &event, transcript));
+            if let Ok((event, reply_tx)) = io.events.recv_timeout(POLL_INTERVAL) {
+                let _ = reply_tx.send(answer(state, &event, io));
             }
         }
     })
@@ -197,6 +229,7 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
     let dir = tempfile::tempdir()?;
     let socket = dir.path().join("meeting.sock");
     let (events_tx, events_rx) = mpsc::channel();
+    let pause = Arc::new(AtomicBool::new(false));
     spawn_listener(UnixListener::bind(&socket)?, events_tx);
 
     let mut moderator = Moderator {
@@ -205,15 +238,22 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
         socket,
         home: dirs::home_dir(),
         sessions: HashMap::new(),
+        pause: Arc::clone(&pause),
     };
     let mut state = TurnState::new(&config.plan.first, config.plan.max_turns);
     let mut message = config.kickoff.clone();
+    let io = TurnIo {
+        events: &events_rx,
+        transcript: &transcript,
+        roster: &config.plan.roster,
+        pause: &pause,
+    };
 
     loop {
         let speaker = state.speaker().to_string();
         print_persona_banner(&speaker);
         let turn_config = moderator.turn_config(&state, &message);
-        let result = run_turn(turn_config, &mut state, &events_rx, &transcript)?;
+        let result = run_turn(turn_config, &mut state, &io)?;
         if let Some(session_id) = result.stream_result.metadata.session_id {
             moderator.sessions.insert(speaker.clone(), session_id);
         }

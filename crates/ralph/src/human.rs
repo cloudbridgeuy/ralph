@@ -8,6 +8,7 @@
 use std::io::Write;
 use std::path::Path;
 
+use ralph_core::meeting_turn::ask_editor_content;
 use ralph_core::transcript::{
     build_editor_content, parse_editor_response, CommentResponse, HumanResponse, TranscriptEntry,
 };
@@ -89,8 +90,10 @@ fn spawn_editor(editor: &str, temp_path: &Path) -> Result<(), HumanError> {
 /// 3. Opens the editor
 /// 4. Reads back and parses the response (pure, from core)
 pub fn open_editor_for_human(transcript: &[TranscriptEntry]) -> Result<HumanResponse, HumanError> {
-    let content = build_editor_content(transcript);
+    edit_content(&build_editor_content(transcript))
+}
 
+fn edit_content(content: &str) -> Result<HumanResponse, HumanError> {
     let mut temp_file = tempfile::Builder::new()
         .prefix("ralph-conversation-")
         .suffix(".md")
@@ -101,7 +104,6 @@ pub fn open_editor_for_human(transcript: &[TranscriptEntry]) -> Result<HumanResp
         .write_all(content.as_bytes())
         .map_err(HumanError::WriteTempFile)?;
 
-    // Flush stdout/stderr so banners are visible before the editor takes over
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
 
@@ -112,6 +114,13 @@ pub fn open_editor_for_human(transcript: &[TranscriptEntry]) -> Result<HumanResp
         std::fs::read_to_string(temp_file.path()).map_err(HumanError::ReadTempFile)?;
 
     Ok(parse_editor_response(&edited_content))
+}
+
+pub fn open_editor_for_meeting_ask(
+    asker: &str,
+    question: &str,
+) -> Result<HumanResponse, HumanError> {
+    edit_content(&ask_editor_content(asker, question))
 }
 
 /// Open the editor with a question/context for the human to respond to.

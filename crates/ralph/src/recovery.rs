@@ -109,6 +109,7 @@ pub fn invoke_with_failure_recovery(
                         config.iteration,
                         config.max_iterations,
                     ),
+                    pause: None,
                 };
                 invoke_subprocess_with_spinner_config(&spinner_config)
             }

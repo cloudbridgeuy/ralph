@@ -20,7 +20,9 @@ use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -41,6 +43,7 @@ pub struct SpinnerSubprocessConfig {
     pub verbose_tools: VerboseToolsConfig,
     /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
+    pub pause: Option<Arc<AtomicBool>>,
 }
 
 /// Drains remaining stdout lines from the channel and processes them.
@@ -106,6 +109,7 @@ fn join_output_threads(
 ///     session_elapsed_ms: 0,
 ///     verbose_tools: VerboseToolsConfig::new(),
 ///     session_info: SpinnerSessionInfo::new("brave-panda".to_string(), 1, 5),
+///     pause: None,
 /// };
 /// let result = invoke_subprocess_with_spinner_config(&config);
 /// println!("{result:?}");
@@ -227,6 +231,15 @@ fn run_subprocess_with_spinner(
             });
         }
 
+        let paused = config
+            .pause
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst));
+        if paused && spinner_active {
+            spinner.stop();
+            spinner_active = false;
+        }
+
         // Check timeout
         if start.elapsed() >= timeout {
             // Stop spinner if active
@@ -333,7 +346,7 @@ fn run_subprocess_with_spinner(
                 }
 
                 // Gap detection: if no output for threshold duration, show spinner
-                if !spinner_active && last_output_time.elapsed() >= gap_threshold {
+                if !paused && !spinner_active && last_output_time.elapsed() >= gap_threshold {
                     // Determine spinner context based on state
                     let context = if pending_tool_count > 0 {
                         SpinnerContext::WaitingForTool
