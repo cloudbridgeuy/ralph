@@ -14,10 +14,11 @@ use chrono::Utc;
 use ralph_core::meeting::{build_mcp_args, MeetingEvent, MeetingReply};
 use ralph_core::meeting_transcript::{
     answer_line, end_line, kickoff_line, message_line, question_line, to_jsonl, TranscriptLine,
+    HUMAN,
 };
 use ralph_core::meeting_turn::{
     parse_human_answer, scene_prompt, HumanAnswer, MeetingPlan, Reaction, Step, StopReason,
-    TurnState,
+    TurnState, HUMAN_ENDED_REPLY, HUMAN_ENDED_SUMMARY,
 };
 use ralph_core::transcript::HumanResponse;
 use std::collections::HashMap;
@@ -147,18 +148,18 @@ struct TurnIo<'a> {
     pause: &'a AtomicBool,
 }
 
-fn ask_human(asker: &str, question: &str, io: &TurnIo) -> HumanAnswer {
+fn ask_human(asker: &str, question: &str, io: &TurnIo) -> Option<HumanAnswer> {
     io.pause.store(true, Ordering::SeqCst);
     thread::sleep(SPINNER_SETTLE);
     let response = human::open_editor_for_meeting_ask(asker, question);
     io.pause.store(false, Ordering::SeqCst);
     match response {
         Ok(HumanResponse::Content(content)) => parse_human_answer(asker, io.roster, &content),
-        Ok(HumanResponse::Abort) => parse_human_answer(asker, io.roster, ""),
-        Err(e) => HumanAnswer {
+        Ok(HumanResponse::Abort) => None,
+        Err(e) => Some(HumanAnswer {
             text: format!("Could not reach the human: {e}"),
             ..HumanAnswer::default()
-        },
+        }),
     }
 }
 
@@ -174,7 +175,14 @@ fn answer(state: &mut TurnState, event: &MeetingEvent, io: &TurnIo) -> MeetingRe
         Reaction::AskHuman(question) => {
             io.transcript
                 .append(&question_line(&speaker, &question, Utc::now()));
-            let human_answer = ask_human(&speaker, &question, io);
+            let Some(human_answer) = ask_human(&speaker, &question, io) else {
+                state.end_by_human();
+                io.transcript
+                    .append(&end_line(HUMAN, HUMAN_ENDED_SUMMARY, Utc::now()));
+                return MeetingReply {
+                    text: HUMAN_ENDED_REPLY.to_string(),
+                };
+            };
             for name in &human_answer.unknown {
                 warn(format!("unknown persona '{name}' in the to: line; skipped"));
             }

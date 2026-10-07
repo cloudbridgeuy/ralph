@@ -97,6 +97,7 @@ pub fn scene_prompt(roster: &[String], speaker: &str, first: &str, kickoff: &str
 pub enum StopReason {
     EndMeeting(String),
     TurnCap,
+    HumanEnded,
     NoHandoff(String),
     Error(String),
 }
@@ -106,6 +107,7 @@ impl fmt::Display for StopReason {
         match self {
             Self::EndMeeting(summary) => write!(f, "meeting ended: {summary}"),
             Self::TurnCap => write!(f, "turn cap reached"),
+            Self::HumanEnded => write!(f, "the human ended the meeting"),
             Self::NoHandoff(persona) => {
                 write!(
                     f,
@@ -134,7 +136,8 @@ pub enum Reaction {
     AskHuman(String),
 }
 
-pub const NO_ANSWER: &str = "The human gave no answer.";
+pub const HUMAN_ENDED_REPLY: &str = "The human ended the meeting. Stop now.";
+pub const HUMAN_ENDED_SUMMARY: &str = "The human ended the meeting.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HumanAnswer {
@@ -151,7 +154,7 @@ pub fn ask_editor_content(asker: &str, question: &str) -> String {
     format!("{}to: {asker}\n", build_editor_content(&[entry]))
 }
 
-pub fn parse_human_answer(asker: &str, roster: &[String], content: &str) -> HumanAnswer {
+pub fn parse_human_answer(asker: &str, roster: &[String], content: &str) -> Option<HumanAnswer> {
     let content = content.trim();
     let (names, text) = match content.split_once('\n').unwrap_or((content, "")) {
         (first, rest) if first.trim_start().starts_with("to:") => {
@@ -160,10 +163,7 @@ pub fn parse_human_answer(asker: &str, roster: &[String], content: &str) -> Huma
         _ => ("", content),
     };
     if text.is_empty() {
-        return HumanAnswer {
-            text: NO_ANSWER.to_string(),
-            ..HumanAnswer::default()
-        };
+        return None;
     }
     let mut answer = HumanAnswer {
         text: text.to_string(),
@@ -180,7 +180,7 @@ pub fn parse_human_answer(asker: &str, roster: &[String], content: &str) -> Huma
             list.push(name.to_string());
         }
     }
-    answer
+    Some(answer)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +196,7 @@ pub struct TurnState {
     max_turns: usize,
     handoff: Option<Handoff>,
     ended: Option<String>,
+    human_ended: bool,
     notes: BTreeMap<String, Vec<String>>,
 }
 
@@ -213,6 +214,7 @@ impl TurnState {
             max_turns,
             handoff: None,
             ended: None,
+            human_ended: false,
             notes: BTreeMap::new(),
         }
     }
@@ -223,6 +225,10 @@ impl TurnState {
 
     pub fn turn(&self) -> usize {
         self.turn
+    }
+
+    pub fn end_by_human(&mut self) {
+        self.human_ended = true;
     }
 
     pub fn route_answer(&mut self, extra: &[String], question: &str, answer: &str) {
@@ -244,6 +250,9 @@ impl TurnState {
         | MeetingEvent::EndMeeting { from, .. }) = event;
         if *from != self.speaker {
             return reply("It is not your turn. Stop now.");
+        }
+        if self.human_ended {
+            return reply(HUMAN_ENDED_REPLY);
         }
         match event {
             MeetingEvent::SendMessage { to, text, .. } => {
@@ -271,6 +280,9 @@ impl TurnState {
     }
 
     pub fn finish_turn(&mut self, exit_code: i32) -> Step {
+        if self.human_ended {
+            return Step::Stop(StopReason::HumanEnded);
+        }
         if let Some(summary) = self.ended.take() {
             return Step::Stop(StopReason::EndMeeting(summary));
         }
@@ -422,7 +434,7 @@ mod tests {
 
     #[test]
     fn answer_without_to_line_goes_to_asker_only() {
-        let parsed = parse_human_answer("a", &names(&["a", "b"]), "because");
+        let parsed = parse_human_answer("a", &names(&["a", "b"]), "because").unwrap();
         assert_eq!(parsed.text, "because");
         assert!(parsed.extra.is_empty() && parsed.unknown.is_empty());
     }
@@ -430,7 +442,8 @@ mod tests {
     #[test]
     fn to_line_adds_known_extras_and_reports_unknown() {
         let roster = names(&["a", "b", "c"]);
-        let parsed = parse_human_answer("a", &roster, "to: b, , zed ,c, b\n\nline1\nline2");
+        let parsed =
+            parse_human_answer("a", &roster, "to: b, , zed ,c, b\n\nline1\nline2").unwrap();
         assert_eq!(parsed.text, "line1\nline2");
         assert_eq!(parsed.extra, names(&["b", "c"]));
         assert_eq!(parsed.unknown, names(&["zed"]));
@@ -438,18 +451,28 @@ mod tests {
 
     #[test]
     fn asker_removed_from_to_line_is_not_an_extra() {
-        let parsed = parse_human_answer("a", &names(&["a", "b"]), "to: b\nyes");
+        let parsed = parse_human_answer("a", &names(&["a", "b"]), "to: b\nyes").unwrap();
         assert_eq!(parsed.extra, names(&["b"]));
         assert_eq!(parsed.text, "yes");
     }
 
     #[test]
-    fn empty_answer_is_no_answer_and_drops_recipients() {
+    fn empty_answer_is_none() {
         for content in ["", "to: a, b", "to: b\n  "] {
-            let parsed = parse_human_answer("a", &names(&["a", "b"]), content);
-            assert_eq!(parsed.text, NO_ANSWER);
-            assert!(parsed.extra.is_empty());
+            assert_eq!(parse_human_answer("a", &names(&["a", "b"]), content), None);
         }
+    }
+
+    #[test]
+    fn human_end_stops_even_after_a_send() {
+        let mut state = TurnState::new("a", 1);
+        state.on_event(&send("a", "b"));
+        state.end_by_human();
+        assert_eq!(
+            reply_text(state.on_event(&send("a", "c"))),
+            HUMAN_ENDED_REPLY
+        );
+        assert_eq!(state.finish_turn(0), Step::Stop(StopReason::HumanEnded));
     }
 
     #[test]
