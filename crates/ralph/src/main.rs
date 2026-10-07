@@ -24,6 +24,7 @@ pub mod iterations;
 pub mod markdown;
 mod meeting;
 mod meeting_mcp;
+mod meeting_memory;
 mod orchestrator;
 pub mod paths;
 mod persona;

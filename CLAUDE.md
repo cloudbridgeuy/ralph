@@ -156,7 +156,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, session continuation, conversation history
 - [ralph persona Command](docs/context/ralph-persona.md) - Named agent conversations, persona-scoped sessions
 - [Orchestration](docs/context/orchestration.md) - Multi-agent directives, handover/ask, conversation routing
-- [ralph meeting Command](docs/context/meeting.md) - CLI, turn loop, MCP tools, transcript, and persona isolation
+- [ralph meeting Command](docs/context/meeting.md) - CLI, turn loop, MCP tools, transcript, office memory, and persona isolation
 - [ralph edit Command](docs/context/ralph-edit.md) - Session history editing, TOML projection, FC-IS module split
 - [ralph strategy Command](docs/context/ralph-strategy.md) - Strategy TOML schema, discovery, CLI surface, FC-IS architecture
 - [ralph strategy sync](docs/context/ralph-strategy-sync.md) - Project scaffolding, bundled assets, idempotent sync behavior

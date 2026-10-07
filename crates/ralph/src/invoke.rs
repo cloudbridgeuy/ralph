@@ -170,6 +170,14 @@ fn persona_isolation_args(home: Option<&Path>) -> String {
     )
 }
 
+pub fn build_memory_command(prompt: &str, home: Option<&Path>) -> String {
+    format!(
+        "claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p {}",
+        persona_isolation_args(home),
+        shell_quote(prompt)
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandSpec<'a> {
     pub prompt: &'a str,
@@ -450,6 +458,20 @@ mod tests {
         ));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains(r#"--settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]}'"#));
+    }
+
+    #[test]
+    fn memory_curator_is_haiku_and_isolated_without_tools_or_persona() {
+        let cmd = build_memory_command("merge it's notes", Some(Path::new("/home/u")));
+        assert!(cmd.contains("--model haiku"));
+        assert!(cmd.contains("--setting-sources project,local"));
+        assert!(cmd.contains("claudeMdExcludes"));
+        assert!(cmd.contains("/home/u/.claude/CLAUDE.md"));
+        assert!(cmd.contains("--tools ''"));
+        assert!(cmd.contains("--strict-mcp-config"));
+        assert!(cmd.contains("--output-format stream-json -p 'merge it'\"'\"'s notes'"));
+        assert!(!cmd.contains("--agent"));
+        assert!(!cmd.contains("--resume"));
     }
 
     #[test]

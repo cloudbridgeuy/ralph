@@ -24,11 +24,17 @@ pub enum MeetingEvent {
         from: String,
         summary: String,
     },
+    Remember {
+        from: String,
+        text: String,
+    },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct MeetingReply {
     pub text: String,
+    #[serde(default)]
+    pub is_error: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +85,15 @@ pub fn tool_definitions() -> Value {
                 },
                 "required": ["summary"]
             }
+        },
+        {
+            "name": "remember",
+            "description": "Save a durable note to the shared project office memory for future meetings. This does not end your turn; continue and finish with send_message or end_meeting.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"text": {"type": "string", "description": "Durable project knowledge to retain."}},
+                "required": ["text"]
+            }
         }
     ])
 }
@@ -124,6 +139,10 @@ pub fn parse_tool_call(
             from,
             summary: string_arg(args, "summary")?,
         }),
+        "remember" => Ok(MeetingEvent::Remember {
+            from,
+            text: crate::meeting_memory::normalize_note(&string_arg(args, "text")?)?,
+        }),
         other => Err(format!("Unknown tool '{other}'.")),
     }
 }
@@ -146,6 +165,7 @@ fn tool_result(id: Value, text: &str, is_error: bool) -> Value {
 pub fn finish_relay(id: Value, event: &MeetingEvent, reply: Result<MeetingReply, String>) -> Value {
     match (event, reply) {
         (_, Err(message)) => tool_result(id, &format!("Relay failed: {message}"), true),
+        (_, Ok(reply)) if reply.is_error => tool_result(id, &reply.text, true),
         (MeetingEvent::SendMessage { to, .. }, Ok(_)) => tool_result(
             id,
             &format!(
@@ -263,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_has_three_tools() {
+    fn tools_list_has_four_tools() {
         let v = respond(handle_request(
             &ctx(),
             &json!({"id": 1, "method": "tools/list"}),
@@ -274,7 +294,10 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["send_message", "ask_human", "end_meeting"]);
+        assert_eq!(
+            names,
+            ["send_message", "ask_human", "end_meeting", "remember"]
+        );
     }
 
     #[test]
@@ -320,13 +343,59 @@ mod tests {
     }
 
     #[test]
+    fn remember_uses_caller_normalizes_and_returns_append_errors() {
+        let outcome = call("remember", json!({"from": "bob", "text": " first\n note "}));
+        let Outcome::Relay { id, event } = outcome else {
+            panic!("expected relay")
+        };
+        assert_eq!(
+            event,
+            MeetingEvent::Remember {
+                from: "alice".into(),
+                text: "first note".into()
+            }
+        );
+        let ok = finish_relay(
+            id.clone(),
+            &event,
+            Ok(MeetingReply {
+                text: "Continue your turn".into(),
+                ..MeetingReply::default()
+            }),
+        );
+        assert_eq!(ok["result"]["content"][0]["text"], "Continue your turn");
+        let err = finish_relay(
+            id,
+            &event,
+            Ok(MeetingReply {
+                text: "disk full".into(),
+                is_error: true,
+            }),
+        );
+        assert_eq!(err["result"]["isError"], true);
+        assert_eq!(
+            respond(call("remember", json!({"text": " \n"})))["result"]["isError"],
+            true
+        );
+        let definition = tool_definitions();
+        assert_eq!(definition[3]["inputSchema"]["required"], json!(["text"]));
+    }
+
+    #[test]
     fn finish_relay_send_message_tells_model_to_stop() {
         let event = MeetingEvent::SendMessage {
             from: "alice".into(),
             to: "bob".into(),
             text: "hi".into(),
         };
-        let v = finish_relay(json!(1), &event, Ok(MeetingReply { text: "ok".into() }));
+        let v = finish_relay(
+            json!(1),
+            &event,
+            Ok(MeetingReply {
+                text: "ok".into(),
+                ..MeetingReply::default()
+            }),
+        );
         assert!(v["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
@@ -340,7 +409,14 @@ mod tests {
             from: "alice".into(),
             question: "q".into(),
         };
-        let ok = finish_relay(json!(1), &event, Ok(MeetingReply { text: "42".into() }));
+        let ok = finish_relay(
+            json!(1),
+            &event,
+            Ok(MeetingReply {
+                text: "42".into(),
+                ..MeetingReply::default()
+            }),
+        );
         assert_eq!(ok["result"]["content"][0]["text"], "42");
         let err = finish_relay(json!(1), &event, Err("boom".into()));
         assert_eq!(err["result"]["isError"], true);

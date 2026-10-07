@@ -75,6 +75,7 @@ mod tests {
             };
             let reply = MeetingReply {
                 text: format!("answer to {question}"),
+                ..MeetingReply::default()
             };
             writeln!(stream, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
         });

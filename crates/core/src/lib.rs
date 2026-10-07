@@ -19,6 +19,7 @@ pub mod context;
 pub mod directive;
 pub mod human;
 pub mod meeting;
+pub mod meeting_memory;
 pub mod meeting_transcript;
 pub mod meeting_turn;
 pub mod persona;

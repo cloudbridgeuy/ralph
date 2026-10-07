@@ -1,6 +1,6 @@
 # ralph meeting Command
 
-`ralph meeting` moderates a turn-based conversation between personas in separate `claude -p` sessions. A private MCP server lets each persona send messages, ask the human, or end the meeting.
+`ralph meeting` moderates a turn-based conversation between personas in separate `claude -p` sessions. A private MCP server lets each persona send messages, ask the human, save shared office memory, or end the meeting.
 
 ## Flow
 
@@ -15,6 +15,7 @@
 | `send_message` | `to`, `text` | `SendMessage`; `to` must be a roster persona other than the caller |
 | `ask_human` | `question` | `AskHuman`; reply text is the human answer (see ask_human routing) |
 | `end_meeting` | `summary` | `EndMeeting` |
+| `remember` | `text` | `Remember`; append durable knowledge to shared project office memory without ending the turn |
 
 Tool arguments must be non-empty strings. Invalid tool arguments return a tool result with `isError: true`; a missing tool name returns JSON-RPC `-32602`. Unknown methods return JSON-RPC `-32601`. `send_message` success tells the model to end its turn.
 
@@ -25,6 +26,8 @@ Tool arguments must be non-empty strings. Invalid tool arguments return a tool r
 - `crates/core/src/meeting_transcript.rs`: transcript line types, endpoint mapping, JSONL serialization.
 - `crates/ralph/src/meeting_mcp.rs`: stdio loop, socket client `relay`.
 - `crates/ralph/src/meeting.rs`: moderator shell (listener, turn loop, human routing, transcript writes).
+- `crates/core/src/meeting_memory.rs`: pure note normalization, wake/cursor recovery, wake context, nap prompt and output decisions.
+- `crates/ralph/src/meeting_memory.rs`: project-local append, atomic wake persistence, Haiku curator invocation.
 - `crates/ralph/src/cli/mod.rs` and `crates/ralph/src/main.rs`: CLI arguments, agent-file checks, command dispatch.
 - `crates/ralph/src/invoke.rs`: command construction and persona isolation flags.
 
@@ -48,3 +51,13 @@ ralph meeting --first pm --personas pm,dev,qa [--model dev=sonnet] [--max-turns 
 - Each persona has its own session ID, held in memory by the moderator and resumed only for that persona within this meeting. Plain-text output is shown to the human, not routed to other personas; only tool messages and routed human answers are delivered. Every persona sees the roster and original kickoff in the scene prompt.
 - `build_command` uses `--setting-sources project,local`, excludes `~/.claude/CLAUDE.md` through `claudeMdExcludes` when the home directory is available, and blocks the `Agent` tool with `--disallowed-tools Agent`. Project and local settings remain active; this is context isolation, not a filesystem sandbox.
 - `--strict-mcp-config` limits configured MCP servers to this meeting's server. The meeting scene prompt replaces the normal persona directive suffix; the meeting loop does not scan output for `<ralph-*>` orchestration directives.
+
+## Shared office memory
+
+- One office memory serves all personas and future meetings. The project root follows existing CLI semantics: the directory where `ralph meeting` starts, not an automatically discovered Git root. Start meetings from the same project directory. Storage is `.ralph/memory/`, ignored by the repository's root `/.ralph/` rule. There is no memory CLI and no automatic transcript extraction.
+- `remember(text)` is explicit capture. Whitespace becomes single spaces; empty notes are rejected. Each accepted note appends one line to `LOG.txt`, which is never rewritten. Capture checks caller identity and active turn. Rejected capture and append failures return MCP `isError: true`. Success does not hand off the turn; the persona must still call `send_message` or `end_meeting`.
+- At startup, every persona receives the same wake snapshot in its scene prompt: prior compact summary plus pending raw notes. Memory is JSON-encoded and labeled as knowledge, not instructions. New notes become wake context at the next meeting.
+- `WAKE.json` contains both `summary` and `cursor` (the number of log lines already compressed). They are persisted together by atomic replacement, so the cursor cannot advance independently of its summary. Missing wake means an empty prior summary; all log notes remain pending. Invalid wake/cursor, a cursor ahead of the log, or a missing matching summary warns and replays all available raw notes. Read failures warn and continue, retaining readable raw notes where possible. Invalid UTF-8 is shown with replacement characters but is not compressed.
+- After the turn loop stops, including subprocess failure, pending notes trigger a fresh `claude -p` curator with fixed `--model haiku`. It merges the prior summary and pending notes; successful non-empty output replaces `WAKE.json`. The curator uses the meeting timeout, disables tools and configured MCP servers, and uses the same global-instruction/settings isolation as personas while retaining project/local settings. It has no persona or resumed session.
+- Nap failure warns, does not fail the meeting, and leaves LOG and prior wake/cursor unchanged. Short file locks serialize reads/appends/commits across meetings. If another nap changes WAKE during curation, this nap does not overwrite it; pending notes remain available for the next meeting. Notes appended during curation remain pending beyond the committed cursor. This is local context isolation, not a filesystem sandbox; project/local hooks and instructions remain active.
+- Storage rejects symlinks in `.ralph`, its memory directory, and memory files, and rejects projects inside `~/.optmem`. On Unix, storage also rejects multiply linked memory files. These checks do not protect against hostile concurrent filesystem changes.

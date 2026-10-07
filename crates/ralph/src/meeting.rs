@@ -1,6 +1,7 @@
 use crate::highlight::ThemeConfig;
 use crate::human;
 use crate::invoke::{build_command, CommandSpec, DEFAULT_PERMISSION_MODE};
+use crate::meeting_memory::Memory;
 use crate::orchestrator::display::{print_meeting_route, print_persona_banner};
 use crate::paths;
 use crate::spinner::SpinnerSessionInfo;
@@ -51,13 +52,20 @@ struct Moderator<'a> {
     sessions: HashMap<String, String>,
     pause: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    wake: &'a str,
 }
 
 impl Moderator<'_> {
     fn turn_config(&self, state: &TurnState, message: &str) -> SpinnerSubprocessConfig {
         let plan = &self.config.plan;
         let speaker = state.speaker();
-        let system_prompt = scene_prompt(&plan.roster, speaker, &plan.first, &self.config.kickoff);
+        let system_prompt = scene_prompt(
+            &plan.roster,
+            speaker,
+            &plan.first,
+            &self.config.kickoff,
+            self.wake,
+        );
         let mcp_args = build_mcp_args(&self.exe, &self.socket, speaker, &plan.roster);
         let command = build_command(&CommandSpec {
             resume: self.sessions.get(speaker).map(String::as_str),
@@ -149,6 +157,7 @@ struct TurnIo<'a> {
     roster: &'a [String],
     pause: &'a AtomicBool,
     cancel: &'a AtomicBool,
+    memory: &'a Memory,
 }
 
 fn ask_human(asker: &str, question: &str, io: &TurnIo) -> Option<HumanAnswer> {
@@ -170,6 +179,16 @@ fn answer(state: &mut TurnState, event: &MeetingEvent, io: &TurnIo) -> MeetingRe
     let speaker = state.speaker().to_string();
     match state.on_event(event) {
         Reaction::Reply(reply) => reply,
+        Reaction::Remember(text) => match io.memory.append(&text) {
+            Ok(()) => MeetingReply {
+                text: "Saved to shared office memory. Continue your turn; finish with send_message or end_meeting.".into(),
+                ..MeetingReply::default()
+            },
+            Err(e) => MeetingReply {
+                text: format!("Could not save office memory: {e}"),
+                is_error: true,
+            },
+        },
         Reaction::Sent { reply, to, text } => {
             io.transcript
                 .append(&message_line(&speaker, &to, &text, Utc::now()));
@@ -185,6 +204,7 @@ fn answer(state: &mut TurnState, event: &MeetingEvent, io: &TurnIo) -> MeetingRe
                     .append(&end_line(HUMAN, HUMAN_ENDED_SUMMARY, Utc::now()));
                 return MeetingReply {
                     text: HUMAN_ENDED_REPLY.to_string(),
+                    ..MeetingReply::default()
                 };
             };
             for name in &human_answer.unknown {
@@ -199,6 +219,7 @@ fn answer(state: &mut TurnState, event: &MeetingEvent, io: &TurnIo) -> MeetingRe
                 .append(&answer_line(&recipients, &human_answer.text, Utc::now()));
             MeetingReply {
                 text: human_answer.text,
+                ..MeetingReply::default()
             }
         }
     }
@@ -232,6 +253,18 @@ fn run_turn(
 }
 
 pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Error>> {
+    let memory = Memory::new(std::env::current_dir()?);
+    let wake = memory.wake();
+    let result = run_meeting(config, &memory, &wake);
+    memory.nap(config);
+    result
+}
+
+fn run_meeting(
+    config: &MeetingConfig,
+    memory: &Memory,
+    wake: &str,
+) -> Result<StopReason, Box<dyn std::error::Error>> {
     let transcript = Transcript::create()?;
     transcript.append(&kickoff_line(
         &config.plan.first,
@@ -253,6 +286,7 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
         sessions: HashMap::new(),
         pause: Arc::clone(&pause),
         cancel: Arc::clone(&cancel),
+        wake,
     };
     let mut state = TurnState::new(&config.plan.first, config.plan.max_turns);
     let mut message = config.kickoff.clone();
@@ -262,6 +296,7 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
         roster: &config.plan.roster,
         pause: &pause,
         cancel: &cancel,
+        memory,
     };
 
     loop {
@@ -288,5 +323,133 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
                 return Ok(reason);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remember_round_trips_over_mcp_and_preserves_later_handoff() {
+        for finish in ["send_message", "end_meeting"] {
+            let dir = tempfile::tempdir().unwrap();
+            let memory = Memory::new(dir.path().to_path_buf());
+            let transcript = Transcript {
+                path: dir.path().join("transcript.jsonl"),
+            };
+            let socket = dir.path().join("meeting.sock");
+            let listener = UnixListener::bind(&socket).unwrap();
+            let (tx, events) = mpsc::channel();
+            let pause = AtomicBool::new(false);
+            let cancel = AtomicBool::new(false);
+            let roster = vec!["a".into(), "b".into()];
+            let io = TurnIo {
+                events: &events,
+                transcript: &transcript,
+                roster: &roster,
+                pause: &pause,
+                cancel: &cancel,
+                memory: &memory,
+            };
+            let input = [
+                serde_json::json!({"id": 1, "method": "tools/call", "params": {"name": "remember", "arguments": {"from": "b", "text": "durable\n fact"}}}),
+                serde_json::json!({"id": 2, "method": "tools/call", "params": {"name": finish, "arguments": {"to": "b", "text": "next", "summary": "done"}}}),
+                serde_json::json!({"id": 3, "method": "tools/call", "params": {"name": "remember", "arguments": {"text": "too late"}}}),
+            ].iter().map(|value| format!("{value}\n")).collect::<String>();
+            let mut state = TurnState::new("a", 5);
+            let output = thread::scope(|scope| {
+                scope.spawn(|| {
+                    for _ in 0..3 {
+                        serve_connection(listener.accept().unwrap().0, &tx).unwrap();
+                    }
+                });
+                let client = scope.spawn(|| {
+                    let ctx = ralph_core::meeting::MeetingContext {
+                        caller: "a".into(),
+                        roster: roster.clone(),
+                    };
+                    let mut output = Vec::new();
+                    crate::meeting_mcp::run_stdio_server(
+                        &ctx,
+                        &socket,
+                        input.as_bytes(),
+                        &mut output,
+                    )
+                    .unwrap();
+                    output
+                });
+                for _ in 0..3 {
+                    let (event, reply) = events.recv_timeout(Duration::from_secs(5)).unwrap();
+                    reply.send(answer(&mut state, &event, &io)).unwrap();
+                }
+                client.join().unwrap()
+            });
+            let results = String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(results[0]["result"]["isError"], false);
+            assert_eq!(results[1]["result"]["isError"], false);
+            assert_eq!(results[2]["result"]["isError"], true);
+            assert_eq!(
+                fs::read_to_string(dir.path().join(".ralph/memory/LOG.txt")).unwrap(),
+                "durable fact\n"
+            );
+            if finish == "send_message" {
+                assert!(
+                    matches!(state.finish_turn(0), Step::Resume { persona, .. } if persona == "b")
+                );
+            } else {
+                assert_eq!(
+                    state.finish_turn(0),
+                    Step::Stop(StopReason::EndMeeting("done".into()))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn remember_appends_or_returns_tool_error_without_handoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let memory = Memory::new(dir.path().to_path_buf());
+        let transcript = Transcript {
+            path: dir.path().join("transcript.jsonl"),
+        };
+        let (_, events) = mpsc::channel();
+        let pause = AtomicBool::new(false);
+        let cancel = AtomicBool::new(false);
+        let roster = vec!["a".into(), "b".into()];
+        let io = TurnIo {
+            events: &events,
+            transcript: &transcript,
+            roster: &roster,
+            pause: &pause,
+            cancel: &cancel,
+            memory: &memory,
+        };
+        let event = MeetingEvent::Remember {
+            from: "a".into(),
+            text: "fact".into(),
+        };
+        let mut state = TurnState::new("a", 5);
+        let reply = answer(&mut state, &event, &io);
+        assert!(!reply.is_error);
+        assert!(reply.text.contains("Continue your turn"));
+        assert!(memory.wake().contains("fact"));
+        assert!(!transcript.path.exists());
+        assert_eq!(
+            state.finish_turn(0),
+            Step::Stop(StopReason::NoHandoff("a".into()))
+        );
+        fs::remove_file(dir.path().join(".ralph/memory/LOG.txt")).unwrap();
+        fs::create_dir(dir.path().join(".ralph/memory/LOG.txt")).unwrap();
+        let mut state = TurnState::new("a", 5);
+        assert!(answer(&mut state, &event, &io).is_error);
+        assert_eq!(
+            state.finish_turn(0),
+            Step::Stop(StopReason::NoHandoff("a".into()))
+        );
     }
 }
