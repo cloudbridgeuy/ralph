@@ -69,6 +69,21 @@ pub enum Commands {
     /// Strategies are predefined collaboration patterns between personas,
     /// defined in `.claude/strategies/*.toml` files.
     Strategy(StrategyArgs),
+
+    #[command(hide = true)]
+    MeetingMcp(MeetingMcpArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct MeetingMcpArgs {
+    #[arg(long)]
+    pub socket: std::path::PathBuf,
+
+    #[arg(long)]
+    pub caller: String,
+
+    #[arg(long, value_delimiter = ',', required = true)]
+    pub personas: Vec<String>,
 }
 
 /// Arguments for the `edit` subcommand.

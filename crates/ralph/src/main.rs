@@ -22,6 +22,7 @@ mod invoke;
 pub mod iteration;
 pub mod iterations;
 pub mod markdown;
+mod meeting_mcp;
 mod orchestrator;
 pub mod paths;
 mod persona;
@@ -43,8 +44,8 @@ pub mod warn;
 
 use clap::Parser;
 use cli::{
-    AskArgs, Cli, Commands, IterationsArgs, PersonaAction, PersonaArgs, PersonaInvokeArgs,
-    ReplayArgs, SessionsArgs, StrategyAction, StrategyArgs, StrategyExecuteArgs,
+    AskArgs, Cli, Commands, IterationsArgs, MeetingMcpArgs, PersonaAction, PersonaArgs,
+    PersonaInvokeArgs, ReplayArgs, SessionsArgs, StrategyAction, StrategyArgs, StrategyExecuteArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -66,6 +67,7 @@ fn main() -> ExitCode {
         Commands::Persona(args) => execute_persona(args),
         Commands::Edit(args) => edit::execute_edit(args),
         Commands::Strategy(args) => execute_strategy(args),
+        Commands::MeetingMcp(args) => execute_meeting_mcp(args),
     };
 
     match result {
@@ -501,6 +503,17 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
     }
 
     Ok(prompt)
+}
+
+fn execute_meeting_mcp(args: MeetingMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = ralph_core::meeting::MeetingContext {
+        caller: args.caller,
+        roster: args.personas,
+    };
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    meeting_mcp::run_stdio_server(&ctx, &args.socket, stdin.lock(), stdout.lock())?;
+    Ok(())
 }
 
 // =============================================================================
