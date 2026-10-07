@@ -10,6 +10,7 @@ use std::process::Command;
 use thiserror::Error;
 
 /// Errors that can occur during git operations.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Error)]
 pub enum GitError {
     /// Failed to execute git command
@@ -19,11 +20,6 @@ pub enum GitError {
     /// Git command returned non-zero exit code
     #[error("Git command failed with exit code {code}: {stderr}")]
     GitFailed { code: i32, stderr: String },
-
-    /// Not a git repository (reserved for future use)
-    #[allow(dead_code)]
-    #[error("Not a git repository: {0}")]
-    NotGitRepository(String),
 
     /// Failed to write diff file
     #[error("Failed to write diff file: {0}")]

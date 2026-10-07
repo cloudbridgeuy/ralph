@@ -9,13 +9,6 @@ cargo xtask install              # Install to ~/.local/bin
 cargo xtask install --path /usr/local/bin  # Custom path
 ```
 
-### Upgrade
-
-```bash
-ralph upgrade                 # Upgrade to latest version
-ralph upgrade --force         # Force upgrade
-```
-
 ## Unnegotiables
 
 These principles are non-negotiable when working on this codebase:

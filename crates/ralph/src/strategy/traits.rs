@@ -4,7 +4,7 @@
 //! Dispatch is via enum matching on `StrategyKind` — no dynamic dispatch
 //! or plugin loading. All strategies are compiled into the binary.
 
-use ralph_core::strategy::{IterationDecision, StrategyConfig, StrategyResult};
+use ralph_core::strategy::{StrategyConfig, StrategyResult};
 use std::path::PathBuf;
 
 /// Context for strategy execution.
@@ -23,9 +23,7 @@ pub struct StrategyExecutionContext {
 /// Trait for strategy implementations.
 ///
 /// Each strategy kind implements this trait. The `execute` method runs the
-/// entire strategy (which may involve multiple internal iterations), and
-/// `between_iterations` provides a hook for inter-iteration decisions
-/// such as orchestration directive resolution.
+/// entire strategy (which may involve multiple internal iterations).
 ///
 /// # Dispatch
 ///
@@ -49,19 +47,6 @@ pub trait Strategy {
         &self,
         ctx: &StrategyExecutionContext,
     ) -> Result<StrategyResult, Box<dyn std::error::Error>>;
-
-    /// Called between iterations to decide what to do next.
-    ///
-    /// Receives the result of the most recent iteration and returns a
-    /// decision: continue to the next iteration, resolve orchestration
-    /// directives first, or stop.
-    ///
-    /// The default implementation always continues. Strategy implementations
-    /// override this to add orchestration support (Story 4).
-    #[allow(dead_code)] // Part of trait API for external loop drivers; PrdLoop handles orchestration inline
-    fn between_iterations(&self, _result: &StrategyResult) -> IterationDecision {
-        IterationDecision::Continue
-    }
 }
 
 /// Run a strategy with result display.
@@ -142,18 +127,6 @@ mod tests {
     }
 
     #[test]
-    fn test_strategy_between_iterations_default() {
-        let strategy = TestStrategy {
-            result: make_result(),
-        };
-        let result = make_result();
-        assert_eq!(
-            strategy.between_iterations(&result),
-            IterationDecision::Continue
-        );
-    }
-
-    #[test]
     fn test_run_strategy_delegates() {
         let strategy = TestStrategy {
             result: make_result(),
@@ -161,31 +134,5 @@ mod tests {
         let ctx = make_ctx();
         let result = run_strategy(&strategy, ctx).unwrap();
         assert_eq!(result.iterations_completed, 3);
-    }
-
-    /// Test that a custom between_iterations override works.
-    struct StoppingStrategy;
-
-    impl Strategy for StoppingStrategy {
-        fn execute(
-            &self,
-            _ctx: &StrategyExecutionContext,
-        ) -> Result<StrategyResult, Box<dyn std::error::Error>> {
-            Ok(make_result())
-        }
-
-        fn between_iterations(&self, _result: &StrategyResult) -> IterationDecision {
-            IterationDecision::Stop
-        }
-    }
-
-    #[test]
-    fn test_custom_between_iterations() {
-        let strategy = StoppingStrategy;
-        let result = make_result();
-        assert_eq!(
-            strategy.between_iterations(&result),
-            IterationDecision::Stop
-        );
     }
 }

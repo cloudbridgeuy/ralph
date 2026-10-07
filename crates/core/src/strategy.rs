@@ -112,21 +112,6 @@ pub struct StrategyResult {
     pub total_output_tokens: Option<u64>,
 }
 
-/// Decision for what to do between strategy iterations.
-///
-/// Returned by `Strategy::between_iterations` to control the loop driver.
-/// The `Orchestrate` variant carries directive strings that should be
-/// resolved before continuing (e.g., invoking other personas).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum IterationDecision {
-    /// Continue to the next iteration.
-    Continue,
-    /// Resolve orchestration directives before continuing.
-    Orchestrate(Vec<String>),
-    /// Stop the strategy.
-    Stop,
-}
-
 /// Resolve a `kind` string from TOML into a typed `StrategyKind`.
 ///
 /// Pure function — no I/O. Returns `None` for unknown kinds.
@@ -482,38 +467,6 @@ prompt_aggregates = [""]
     fn test_resolve_kind_case_sensitive() {
         assert_eq!(resolve_kind("PRD-LOOP"), None);
         assert_eq!(resolve_kind("Prd-Loop"), None);
-    }
-
-    // =========================================================================
-    // IterationDecision tests
-    // =========================================================================
-
-    #[test]
-    fn test_iteration_decision_continue() {
-        let decision = IterationDecision::Continue;
-        assert_eq!(decision, IterationDecision::Continue);
-    }
-
-    #[test]
-    fn test_iteration_decision_orchestrate() {
-        let directives = vec!["ask architect".to_string()];
-        let decision = IterationDecision::Orchestrate(directives.clone());
-        assert_eq!(decision, IterationDecision::Orchestrate(directives));
-    }
-
-    #[test]
-    fn test_iteration_decision_stop() {
-        let decision = IterationDecision::Stop;
-        assert_eq!(decision, IterationDecision::Stop);
-    }
-
-    #[test]
-    fn test_iteration_decision_variants_distinct() {
-        assert_ne!(IterationDecision::Continue, IterationDecision::Stop);
-        assert_ne!(
-            IterationDecision::Continue,
-            IterationDecision::Orchestrate(vec![])
-        );
     }
 
     // =========================================================================

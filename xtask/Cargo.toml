@@ -15,5 +15,3 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 anstream = { workspace = true }
 chrono = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }

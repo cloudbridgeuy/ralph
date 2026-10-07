@@ -141,7 +141,7 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 - `init.rs` — `execute_sync()` orchestrates directory creation, file writes, and summary display; `check_existing()`, `write_planned_files()`, `create_dir()` as I/O helpers
 - `assets.rs` — compile-time embedded agent files, strategy files, and strategy template
 - `execute.rs` — `execute_strategy_execute()` dispatcher, matches on `StrategyKind` enum
-- `traits.rs` — `Strategy` trait with `execute()` and `between_iterations()` hooks, `StrategyExecutionContext`, `run_strategy()` generic dispatcher
+- `traits.rs` — `Strategy` trait with `execute()`, `StrategyExecutionContext`, `run_strategy()` generic dispatcher
 - `prd_loop.rs` — `PrdLoopStrategy` implements `Strategy` trait with self-contained iteration loop: session management, subprocess invocation via `recovery::invoke_with_failure_recovery`, completion detection, and orchestration directive scanning
 
 ### PrdLoop Internal Types

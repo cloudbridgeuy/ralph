@@ -21,6 +21,10 @@ ralph [OPTIONS] <COMMAND>
 | `iterations` | List all iterations across all sessions |
 | `replay` | Replay a session's output with syntax highlighting |
 | `themes` | List available syntax highlighting themes |
+| `ask` | Send a single-shot prompt to the LLM ([details](context/ralph-ask.md)) |
+| `persona` | Converse with a persona-configured Claude ([details](context/ralph-persona.md)) |
+| `edit` | Edit a session's conversation history in $EDITOR ([details](context/ralph-edit.md)) |
+| `strategy` | Manage and execute collaboration strategies ([details](context/ralph-strategy.md)) |
 
 ---
 
