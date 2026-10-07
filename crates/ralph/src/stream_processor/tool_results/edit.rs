@@ -280,7 +280,7 @@ pub fn generate_diff_from_snapshot(snapshot: &EditSnapshot) -> Option<String> {
 }
 
 /// Generate unified diff format from a TextDiff.
-fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, 'a, str>, file_path: &str) -> String {
+fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, file_path: &str) -> String {
     let mut output = String::new();
 
     // Add header

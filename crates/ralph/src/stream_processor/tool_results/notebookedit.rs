@@ -54,7 +54,7 @@ pub fn generate_diff_from_snapshot(snapshot: &NotebookSnapshot) -> Option<String
 }
 
 /// Generate unified diff format from a TextDiff.
-fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, 'a, str>, cell_display: &str) -> String {
+fn generate_unified_diff<'a>(diff: &TextDiff<'a, 'a, str>, cell_display: &str) -> String {
     let mut output = String::new();
 
     // Add header
