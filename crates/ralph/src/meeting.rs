@@ -1,6 +1,8 @@
 use crate::highlight::ThemeConfig;
 use crate::human;
 use crate::invoke::{build_command, CommandSpec, DEFAULT_PERMISSION_MODE};
+use crate::orchestrator::display::{print_meeting_route, print_persona_banner};
+use crate::paths;
 use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
@@ -8,10 +10,15 @@ use crate::subprocess::{
     SubprocessError,
 };
 use crate::warn::warn;
+use chrono::Utc;
 use ralph_core::meeting::{build_mcp_args, MeetingEvent, MeetingReply};
+use ralph_core::meeting_transcript::{
+    answer_line, end_line, kickoff_line, message_line, question_line, to_jsonl, TranscriptLine,
+};
 use ralph_core::meeting_turn::{scene_prompt, MeetingPlan, Reaction, Step, StopReason, TurnState};
 use ralph_core::transcript::HumanResponse;
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -98,6 +105,34 @@ fn spawn_listener(listener: UnixListener, events: mpsc::Sender<PendingEvent>) {
     });
 }
 
+struct Transcript {
+    path: PathBuf,
+}
+
+impl Transcript {
+    fn create() -> io::Result<Self> {
+        let slug = format!("meeting-{}", Utc::now().format("%Y%m%d-%H%M%S"));
+        let dir = paths::session_dir(&slug);
+        fs::create_dir_all(&dir)?;
+        Ok(Self {
+            path: dir.join("transcript.jsonl"),
+        })
+    }
+
+    fn append(&self, line: &TranscriptLine) {
+        let written = to_jsonl(line).map_err(io::Error::other).and_then(|out| {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)?
+                .write_all(out.as_bytes())
+        });
+        if let Err(e) = written {
+            warn(format!("could not write transcript: {e}"));
+        }
+    }
+}
+
 fn ask_human(question: &str) -> MeetingReply {
     let text = match human::open_editor_for_ask(question) {
         Ok(HumanResponse::Content(answer)) => answer,
@@ -107,10 +142,20 @@ fn ask_human(question: &str) -> MeetingReply {
     MeetingReply { text }
 }
 
-fn answer(state: &mut TurnState, event: &MeetingEvent) -> MeetingReply {
+fn answer(state: &mut TurnState, event: &MeetingEvent, transcript: &Transcript) -> MeetingReply {
+    let speaker = state.speaker().to_string();
     match state.on_event(event) {
         Reaction::Reply(reply) => reply,
-        Reaction::AskHuman(question) => ask_human(&question),
+        Reaction::Sent { reply, to, text } => {
+            transcript.append(&message_line(&speaker, &to, &text, Utc::now()));
+            reply
+        }
+        Reaction::AskHuman(question) => {
+            transcript.append(&question_line(&speaker, &question, Utc::now()));
+            let reply = ask_human(&question);
+            transcript.append(&answer_line(&speaker, &reply.text, Utc::now()));
+            reply
+        }
     }
 }
 
@@ -118,6 +163,7 @@ fn run_turn(
     config: SpinnerSubprocessConfig,
     state: &mut TurnState,
     events: &mpsc::Receiver<PendingEvent>,
+    transcript: &Transcript,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     thread::scope(|scope| {
         let (done_tx, done_rx) = mpsc::channel();
@@ -135,13 +181,19 @@ fn run_turn(
                 Err(mpsc::TryRecvError::Empty) => {}
             }
             if let Ok((event, reply_tx)) = events.recv_timeout(POLL_INTERVAL) {
-                let _ = reply_tx.send(answer(state, &event));
+                let _ = reply_tx.send(answer(state, &event, transcript));
             }
         }
     })
 }
 
 pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Error>> {
+    let transcript = Transcript::create()?;
+    transcript.append(&kickoff_line(
+        &config.plan.first,
+        &config.kickoff,
+        Utc::now(),
+    ));
     let dir = tempfile::tempdir()?;
     let socket = dir.path().join("meeting.sock");
     let (events_tx, events_rx) = mpsc::channel();
@@ -159,8 +211,9 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
 
     loop {
         let speaker = state.speaker().to_string();
+        print_persona_banner(&speaker);
         let turn_config = moderator.turn_config(&state, &message);
-        let result = run_turn(turn_config, &mut state, &events_rx)?;
+        let result = run_turn(turn_config, &mut state, &events_rx, &transcript)?;
         if let Some(session_id) = result.stream_result.metadata.session_id {
             moderator.sessions.insert(speaker.clone(), session_id);
         }
@@ -169,10 +222,16 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
                 persona,
                 message: next,
             } => {
-                println!("\n{speaker} -> {persona}");
+                print_meeting_route(&speaker, &persona, state.turn(), config.plan.max_turns);
                 message = next;
             }
-            Step::Stop(reason) => return Ok(reason),
+            Step::Stop(reason) => {
+                if let StopReason::EndMeeting(summary) = &reason {
+                    transcript.append(&end_line(&speaker, summary, Utc::now()));
+                }
+                println!("\nTranscript: {}", transcript.path.display());
+                return Ok(reason);
+            }
         }
     }
 }

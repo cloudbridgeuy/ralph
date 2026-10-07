@@ -6,7 +6,7 @@
 
 mod ask;
 mod conversation;
-mod display;
+pub(crate) mod display;
 mod parallel;
 
 use std::path::PathBuf;

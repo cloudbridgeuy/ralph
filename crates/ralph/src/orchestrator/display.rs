@@ -110,6 +110,16 @@ pub fn print_persona_banner(name: &str) {
     println!("{}", format_persona_banner(name));
 }
 
+fn format_meeting_route(from: &str, to: &str, turn: usize, max_turns: usize) -> String {
+    format!(
+        "{CYAN}▶{RESET} {CYAN}{from}{RESET} → message → {CYAN}{to}{RESET}  {DIM}[{turn}/{max_turns}]{RESET}"
+    )
+}
+
+pub fn print_meeting_route(from: &str, to: &str, turn: usize, max_turns: usize) {
+    println!("{}", format_meeting_route(from, to, turn, max_turns));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,5 +230,15 @@ mod tests {
     fn format_persona_banner_contains_ansi_codes() {
         let result = format_persona_banner("reviewer");
         assert!(result.contains("\x1b["));
+    }
+
+    #[test]
+    fn format_meeting_route_shows_endpoints_and_turn_budget() {
+        let result = format_meeting_route("alice", "bob", 3, 20);
+        assert!(result.contains("alice"));
+        assert!(result.contains("message"));
+        assert!(result.contains("bob"));
+        assert!(result.contains("[3/20]"));
+        assert!(result.contains('▶'));
     }
 }

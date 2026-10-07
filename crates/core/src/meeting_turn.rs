@@ -125,6 +125,11 @@ pub enum Step {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reaction {
     Reply(MeetingReply),
+    Sent {
+        reply: MeetingReply,
+        to: String,
+        text: String,
+    },
     AskHuman(String),
 }
 
@@ -184,7 +189,13 @@ impl TurnState {
                     to: to.clone(),
                     text: text.clone(),
                 });
-                reply("ok")
+                Reaction::Sent {
+                    reply: MeetingReply {
+                        text: "ok".to_string(),
+                    },
+                    to: to.clone(),
+                    text: text.clone(),
+                }
             }
             MeetingEvent::AskHuman { question, .. } => Reaction::AskHuman(question.clone()),
             MeetingEvent::EndMeeting { summary, .. } => {
@@ -260,7 +271,14 @@ mod tests {
     #[test]
     fn second_send_in_a_turn_is_refused() {
         let mut state = TurnState::new("a", 5);
-        assert_eq!(reply_text(state.on_event(&send("a", "b"))), "ok");
+        assert_eq!(
+            state.on_event(&send("a", "b")),
+            Reaction::Sent {
+                reply: MeetingReply { text: "ok".into() },
+                to: "b".into(),
+                text: "hi".into(),
+            }
+        );
         assert!(reply_text(state.on_event(&send("a", "c"))).contains("already handed off"));
         match state.finish_turn(0) {
             Step::Resume { persona, message } => {
