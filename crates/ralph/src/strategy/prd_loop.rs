@@ -88,12 +88,12 @@ fn build_loop_config(config: &StrategyConfig, project_path: &Path) -> StrategyIn
         &completion_marker,
         &additional_prompt,
     );
-    let command = invoke::build_command(
+    let command = invoke::build_command(&invoke::CommandSpec::new(
         &prompt,
         invoke::DEFAULT_PERMISSION_MODE,
         Some(&config.primary_persona),
         dirs::home_dir().as_deref(),
-    );
+    ));
     let theme_config = Some(ThemeConfig::from_config_and_env());
 
     StrategyInvocationConfig {

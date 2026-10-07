@@ -182,12 +182,12 @@ fn execute_conversation_loop(
         // Build persona prompt with conversation history
         let prompt =
             build_persona_prompt(&state.transcript[..state.transcript.len() - 1], &human_text);
-        let command = invoke::build_command(
+        let command = invoke::build_command(&invoke::CommandSpec::new(
             &prompt,
             invoke::DEFAULT_PERMISSION_MODE,
             Some(&loop_config.primary_persona),
             dirs::home_dir().as_deref(),
-        );
+        ));
 
         // Invoke persona
         let invocation_config = InvocationConfig {

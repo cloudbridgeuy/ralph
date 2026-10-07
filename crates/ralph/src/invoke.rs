@@ -170,30 +170,77 @@ fn persona_isolation_args(home: Option<&Path>) -> String {
     )
 }
 
-pub fn build_command(
-    prompt: &str,
-    permission_mode: &str,
-    agent: Option<&str>,
-    home: Option<&Path>,
-) -> String {
-    let quoted_prompt = shell_quote(prompt);
-    match agent {
+#[derive(Debug, Clone)]
+pub struct CommandSpec<'a> {
+    pub prompt: &'a str,
+    pub permission_mode: &'a str,
+    pub agent: Option<&'a str>,
+    pub home: Option<&'a Path>,
+    pub resume: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub system_prompt: Option<&'a str>,
+    pub extra_args: &'a [String],
+}
+
+impl<'a> CommandSpec<'a> {
+    pub fn new(
+        prompt: &'a str,
+        permission_mode: &'a str,
+        agent: Option<&'a str>,
+        home: Option<&'a Path>,
+    ) -> Self {
+        Self {
+            prompt,
+            permission_mode,
+            agent,
+            home,
+            resume: None,
+            model: None,
+            system_prompt: None,
+            extra_args: &[],
+        }
+    }
+}
+
+fn extra_flags(spec: &CommandSpec) -> String {
+    let resume = spec
+        .resume
+        .map(|id| format!(" --resume {}", shell_quote(id)));
+    let model = spec
+        .model
+        .map(|model| format!(" --model {}", shell_quote(model)));
+    let extra = spec
+        .extra_args
+        .iter()
+        .map(|arg| format!(" {}", shell_quote(arg)));
+    resume
+        .into_iter()
+        .chain(model)
+        .chain(extra)
+        .collect::<String>()
+}
+
+pub fn build_command(spec: &CommandSpec) -> String {
+    let quoted_prompt = shell_quote(spec.prompt);
+    let extras = extra_flags(spec);
+    match spec.agent {
         Some(name) => format!(
             "claude --verbose --agent {} \
              --permission-mode {} \
              {} \
              --disallowed-tools Agent \
-             --append-system-prompt '{}' \
+             --append-system-prompt {}{} \
              --output-format stream-json -p {}",
             name,
-            permission_mode,
-            persona_isolation_args(home),
-            PERSONA_SYSTEM_PROMPT_SUFFIX,
+            spec.permission_mode,
+            persona_isolation_args(spec.home),
+            shell_quote(spec.system_prompt.unwrap_or(PERSONA_SYSTEM_PROMPT_SUFFIX)),
+            extras,
             quoted_prompt
         ),
         None => format!(
-            "claude --verbose --permission-mode {} --output-format stream-json -p {}",
-            permission_mode, quoted_prompt
+            "claude --verbose --permission-mode {}{} --output-format stream-json -p {}",
+            spec.permission_mode, extras, quoted_prompt
         ),
     }
 }
@@ -321,12 +368,12 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
         };
 
     let full_prompt = format_conversation_history(&conversation_history, &config.prompt);
-    let command = build_command(
+    let command = build_command(&CommandSpec::new(
         &full_prompt,
         &config.permission_mode,
         config.persona.as_deref(),
         dirs::home_dir().as_deref(),
-    );
+    ));
 
     let subprocess_config = SpinnerSubprocessConfig {
         command,
@@ -376,12 +423,12 @@ mod tests {
 
     #[test]
     fn build_command_without_agent() {
-        let cmd = build_command(
+        let cmd = build_command(&CommandSpec::new(
             "hello",
             "bypassPermissions",
             None,
             Some(Path::new("/home/u")),
-        );
+        ));
         assert!(cmd.contains("--permission-mode bypassPermissions"));
         assert!(cmd.contains("-p 'hello'"));
         assert!(!cmd.contains("--agent"));
@@ -393,31 +440,36 @@ mod tests {
 
     #[test]
     fn persona_command_isolates_global_config() {
-        let cmd = build_command(
+        let cmd = build_command(&CommandSpec::new(
             "hi",
             "bypassPermissions",
             Some("coach"),
             Some(Path::new("/home/u")),
-        );
+        ));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains(r#"--settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]}'"#));
     }
 
     #[test]
     fn persona_command_without_home_has_no_settings() {
-        let cmd = build_command("hi", "bypassPermissions", Some("coach"), None);
+        let cmd = build_command(&CommandSpec::new(
+            "hi",
+            "bypassPermissions",
+            Some("coach"),
+            None,
+        ));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(!cmd.contains("--settings"));
     }
 
     #[test]
     fn build_command_with_agent() {
-        let cmd = build_command(
+        let cmd = build_command(&CommandSpec::new(
             "hello",
             "bypassPermissions",
             Some("coach"),
             Some(Path::new("/home/u")),
-        );
+        ));
         assert!(cmd.contains("--agent coach"));
         assert!(cmd.contains("-p 'hello'"));
         assert!(cmd.contains("--disallowed-tools Agent"));
@@ -440,8 +492,24 @@ mod tests {
     }
 
     #[test]
+    fn build_command_adds_resume_model_and_overrides_system_prompt() {
+        let extra = vec!["--mcp-config".to_string(), "{}".to_string()];
+        let spec = CommandSpec {
+            resume: Some("sid-1"),
+            model: Some("sonnet"),
+            system_prompt: Some("scene it's"),
+            extra_args: &extra,
+            ..CommandSpec::new("hi", "bypassPermissions", Some("coach"), None)
+        };
+        let cmd = build_command(&spec);
+        assert!(cmd.contains("--resume 'sid-1' --model 'sonnet' '--mcp-config' '{}'"));
+        assert!(cmd.contains("--append-system-prompt 'scene it'\"'\"'s'"));
+        assert!(!cmd.contains("Team Directives"));
+    }
+
+    #[test]
     fn build_command_escapes_single_quotes() {
-        let cmd = build_command("it's a test", "default", None, None);
+        let cmd = build_command(&CommandSpec::new("it's a test", "default", None, None));
         assert!(cmd.contains("'\"'\"'"));
     }
 
