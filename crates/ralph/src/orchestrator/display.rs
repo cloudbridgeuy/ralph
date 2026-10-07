@@ -4,7 +4,7 @@
 //! (return `String`), `print_*` functions handle I/O.
 
 use super::Budget;
-use crate::ansi::{CYAN, DIM, GREEN, RESET};
+use crate::ansi::{BOLD, CYAN, DIM, GREEN, MAGENTA, RESET};
 use crate::markdown::MarkdownRenderer;
 use crate::startup::formatters::separator_width;
 use ralph_core::directive::DirectiveVerb;
@@ -97,17 +97,23 @@ pub fn print_orchestration_summary(budget: &Budget) {
 /// # Format
 ///
 /// ```text
-/// ━━━ architect ━━━
+/// ━━━ architect ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 /// ```
-fn format_persona_banner(name: &str) -> String {
-    format!("\n{CYAN}━━━{RESET} {CYAN}{name}{RESET} {CYAN}━━━{RESET}\n")
+fn format_persona_banner(name: &str, terminal_width: u16) -> String {
+    let lead = format!("━━━ {name} ");
+    let rule = separator_width(&lead, terminal_width).saturating_sub(lead.chars().count());
+    format!(
+        "\n{MAGENTA}━━━{RESET} {BOLD}{MAGENTA}{name}{RESET} {MAGENTA}{}{RESET}\n",
+        "━".repeat(rule)
+    )
 }
 
 /// Print a persona banner to stdout.
 ///
 /// Imperative shell wrapper around [`format_persona_banner`].
 pub fn print_persona_banner(name: &str) {
-    println!("{}", format_persona_banner(name));
+    let term_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
+    println!("{}", format_persona_banner(name, term_width));
 }
 
 fn format_meeting_route(from: &str, to: &str, turn: usize, max_turns: usize) -> String {
@@ -216,20 +222,35 @@ mod tests {
 
     #[test]
     fn format_persona_banner_contains_name() {
-        let result = format_persona_banner("architect");
+        let result = format_persona_banner("architect", 80);
         assert!(result.contains("architect"));
     }
 
     #[test]
     fn format_persona_banner_contains_box_drawing() {
-        let result = format_persona_banner("pm");
+        let result = format_persona_banner("pm", 80);
         assert!(result.contains('━'));
     }
 
     #[test]
     fn format_persona_banner_contains_ansi_codes() {
-        let result = format_persona_banner("reviewer");
+        let result = format_persona_banner("reviewer", 80);
         assert!(result.contains("\x1b["));
+    }
+
+    #[test]
+    fn format_persona_banner_fills_separator_width_in_magenta_not_cyan() {
+        let result = format_persona_banner("architect", 80);
+        let visible = result
+            .split('\x1b')
+            .map(|part| part.split_once('m').map_or(part, |(_, rest)| rest))
+            .collect::<String>();
+        assert_eq!(
+            visible.trim().chars().count(),
+            separator_width("━━━ architect ", 80)
+        );
+        assert!(result.contains(MAGENTA) && result.contains(BOLD));
+        assert!(!result.contains(CYAN));
     }
 
     #[test]

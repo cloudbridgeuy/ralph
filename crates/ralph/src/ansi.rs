@@ -12,6 +12,9 @@ pub const CLEAR_EOL: &str = "\x1b[K";
 /// Set foreground color to cyan.
 pub const CYAN: &str = "\x1b[36m";
 
+/// Set foreground color to magenta.
+pub const MAGENTA: &str = "\x1b[35m";
+
 /// Set foreground color to yellow.
 pub const YELLOW: &str = "\x1b[33m";
 
