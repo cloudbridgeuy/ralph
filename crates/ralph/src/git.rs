@@ -48,16 +48,18 @@ pub struct GitDiff {
 /// # Examples
 ///
 /// ```no_run
+/// use std::path::Path;
 /// use ralph::git::is_git_repository;
 ///
-/// match is_git_repository() {
+/// match is_git_repository(Path::new(".")) {
 ///     Ok(true) => println!("In a git repository"),
 ///     Ok(false) => println!("Not in a git repository"),
 ///     Err(e) => eprintln!("Error checking git: {}", e),
 /// }
 /// ```
-pub fn is_git_repository() -> Result<bool, GitError> {
+pub fn is_git_repository(dir: &Path) -> Result<bool, GitError> {
     let output = Command::new("git")
+        .current_dir(dir)
         .args(["rev-parse", "--git-dir"])
         .output()?;
 
@@ -75,9 +77,10 @@ pub fn is_git_repository() -> Result<bool, GitError> {
 /// # Examples
 ///
 /// ```no_run
+/// use std::path::Path;
 /// use ralph::git::capture_git_diff;
 ///
-/// match capture_git_diff() {
+/// match capture_git_diff(Path::new(".")) {
 ///     Ok(diff) if diff.is_git_repo => {
 ///         if diff.content.is_empty() {
 ///             println!("No changes");
@@ -89,17 +92,18 @@ pub fn is_git_repository() -> Result<bool, GitError> {
 ///     Err(e) => eprintln!("Error: {}", e),
 /// }
 /// ```
-pub fn capture_git_diff() -> Result<GitDiff, GitError> {
-    // First check if we're in a git repository
-    if !is_git_repository()? {
+pub fn capture_git_diff(dir: &Path) -> Result<GitDiff, GitError> {
+    if !is_git_repository(dir)? {
         return Ok(GitDiff {
             content: String::new(),
             is_git_repo: false,
         });
     }
 
-    // Capture both staged and unstaged changes
-    let output = Command::new("git").args(["diff", "HEAD"]).output()?;
+    let output = Command::new("git")
+        .current_dir(dir)
+        .args(["diff", "HEAD"])
+        .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -163,6 +167,7 @@ pub fn write_diff_file(diff_path: &Path, diff_content: &str) -> Result<(), GitEr
 ///
 /// # Arguments
 ///
+/// * `dir` - Directory to run git in
 /// * `diff_path` - Path where the diff file should be written
 ///
 /// # Errors
@@ -174,17 +179,16 @@ pub fn write_diff_file(diff_path: &Path, diff_content: &str) -> Result<(), GitEr
 /// # Examples
 ///
 /// ```no_run
-/// use std::path::PathBuf;
+/// use std::path::{Path, PathBuf};
 /// use ralph::git::capture_and_write_diff;
 ///
 /// let path = PathBuf::from("~/.config/ralph/sessions/my-session/iteration-1.diff");
-/// capture_and_write_diff(&path).expect("Failed to capture diff");
+/// capture_and_write_diff(Path::new("."), &path).expect("Failed to capture diff");
 /// ```
-pub fn capture_and_write_diff(diff_path: &Path) -> Result<(), GitError> {
-    let diff = capture_git_diff()?;
+pub fn capture_and_write_diff(dir: &Path, diff_path: &Path) -> Result<(), GitError> {
+    let diff = capture_git_diff(dir)?;
 
     if !diff.is_git_repo {
-        // Not a git repository - write empty file and warn
         write_diff_file(diff_path, "")?;
         warn("Not a git repository. Skipping diff capture.");
         return Ok(());
@@ -202,15 +206,9 @@ mod tests {
 
     #[test]
     fn test_is_git_repository_in_non_git_dir() {
-        // Create a temporary directory that's not a git repo
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-        let result = is_git_repository();
-        // Restore original dir - ignore errors as temp dirs may be cleaned up
-        // by parallel tests in some environments
-        let _ = std::env::set_current_dir(&original_dir);
+        let result = is_git_repository(temp_dir.path());
 
         assert!(result.is_ok());
         assert!(!result.unwrap());
@@ -218,15 +216,9 @@ mod tests {
 
     #[test]
     fn test_capture_git_diff_in_non_git_dir() {
-        // Create a temporary directory that's not a git repo
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-        let result = capture_git_diff();
-        // Restore original dir - ignore errors as temp dirs may be cleaned up
-        // by parallel tests in some environments
-        let _ = std::env::set_current_dir(&original_dir);
+        let result = capture_git_diff(temp_dir.path());
 
         assert!(result.is_ok());
         let diff = result.unwrap();
@@ -280,20 +272,14 @@ mod tests {
     #[test]
     fn test_capture_and_write_diff_in_non_git_dir() {
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
         let diff_path = temp_dir.path().join("iteration-1.diff");
 
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-        let result = capture_and_write_diff(&diff_path);
-        // Restore original dir - ignore errors as temp dirs may be cleaned up
-        // by parallel tests in some environments
-        let _ = std::env::set_current_dir(&original_dir);
+        let result = capture_and_write_diff(temp_dir.path(), &diff_path);
 
         assert!(result.is_ok());
         assert!(diff_path.exists());
 
-        // Should write empty file when not in git repo
         let written = fs::read_to_string(&diff_path).unwrap();
         assert_eq!(written, "");
     }

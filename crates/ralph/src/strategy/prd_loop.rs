@@ -275,7 +275,7 @@ fn execute_prd_loop(
         // Capture git diff
         let diff_path = sess_dir.join(format!("iteration-{iteration}.diff"));
         warn_if_err(
-            capture_and_write_diff(&diff_path),
+            capture_and_write_diff(Path::new("."), &diff_path),
             "Failed to capture git diff",
         );
 

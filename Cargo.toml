@@ -11,7 +11,7 @@ resolver = "2"
 edition = "2021"
 license = "MIT"
 authors = ["Guzmán Monné"]
-rust-version = "1.87.0"
+rust-version = "1.95.0"
 
 [profile.dev]
 # Disabling debug info speeds up builds.

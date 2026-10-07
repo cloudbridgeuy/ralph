@@ -55,9 +55,8 @@ impl Budget {
     ///
     /// Returns `true` if an invocation was consumed, `false` if exhausted.
     pub fn try_consume(&self) -> bool {
-        // fetch_update returns Err(current) when the closure returns None
         self.remaining
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 if current > 0 {
                     Some(current - 1)
                 } else {

@@ -100,7 +100,8 @@ mod tests {
     #[test]
     fn test_classify_prompt_source_file() {
         // Use Cargo.toml as a file that definitely exists
-        let source = classify_prompt_source(Some("Cargo.toml"));
+        let source =
+            classify_prompt_source(Some(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")));
         assert!(matches!(source, PromptSource::File(_)));
     }
 
@@ -129,7 +130,10 @@ mod tests {
     #[test]
     fn test_read_from_source_file() {
         // Use Cargo.toml as a file that definitely exists
-        let source = PromptSource::File(Path::new("Cargo.toml"));
+        let source = PromptSource::File(Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/Cargo.toml"
+        )));
         let result = read_from_source(source, None);
         assert!(result.is_ok());
         let content = result.unwrap();

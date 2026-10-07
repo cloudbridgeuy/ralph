@@ -41,7 +41,7 @@ fn test_resolve_ask_prompt_whitespace_only_error() {
 #[test]
 fn test_resolve_ask_prompt_from_file() {
     // Read from existing file (Cargo.toml has content)
-    let result = resolve_ask_prompt(Some("Cargo.toml"));
+    let result = resolve_ask_prompt(Some(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")));
     assert!(result.is_ok());
     let content = result.unwrap();
     assert!(content.contains("[package]")); // Cargo.toml starts with [package]
