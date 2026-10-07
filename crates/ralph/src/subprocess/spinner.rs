@@ -44,6 +44,7 @@ pub struct SpinnerSubprocessConfig {
     /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
     pub pause: Option<Arc<AtomicBool>>,
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 /// Drains remaining stdout lines from the channel and processes them.
@@ -110,6 +111,7 @@ fn join_output_threads(
 ///     verbose_tools: VerboseToolsConfig::new(),
 ///     session_info: SpinnerSessionInfo::new("brave-panda".to_string(), 1, 5),
 ///     pause: None,
+///     cancel: None,
 /// };
 /// let result = invoke_subprocess_with_spinner_config(&config);
 /// println!("{result:?}");
@@ -269,8 +271,11 @@ fn run_subprocess_with_spinner(
             });
         }
 
-        // Check for interrupt signal (SIGINT/SIGTERM)
-        if signal::is_interrupted() {
+        let cancelled = config
+            .cancel
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst));
+        if cancelled || signal::is_interrupted() {
             // Stop spinner if active
             if spinner_active {
                 spinner.stop();
@@ -288,12 +293,16 @@ fn run_subprocess_with_spinner(
                 print!("{}", output);
                 let _ = io::stdout().flush();
             }
+            let partial = StreamingSubprocessResult {
+                exit_code: EXIT_CODE_INTERRUPTED,
+                stderr: stderr_captured,
+                stream_result,
+            };
+            if cancelled {
+                return Ok(partial);
+            }
             return Err(SubprocessError::Interrupted {
-                partial_result: Box::new(StreamingSubprocessResult {
-                    exit_code: EXIT_CODE_INTERRUPTED,
-                    stderr: stderr_captured,
-                    stream_result,
-                }),
+                partial_result: Box::new(partial),
             });
         }
 

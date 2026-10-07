@@ -50,6 +50,7 @@ struct Moderator<'a> {
     home: Option<PathBuf>,
     sessions: HashMap<String, String>,
     pause: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
 }
 
 impl Moderator<'_> {
@@ -84,6 +85,7 @@ impl Moderator<'_> {
                 on_behalf_of: None,
             },
             pause: Some(Arc::clone(&self.pause)),
+            cancel: Some(Arc::clone(&self.cancel)),
         }
     }
 }
@@ -146,6 +148,7 @@ struct TurnIo<'a> {
     transcript: &'a Transcript,
     roster: &'a [String],
     pause: &'a AtomicBool,
+    cancel: &'a AtomicBool,
 }
 
 fn ask_human(asker: &str, question: &str, io: &TurnIo) -> Option<HumanAnswer> {
@@ -177,6 +180,7 @@ fn answer(state: &mut TurnState, event: &MeetingEvent, io: &TurnIo) -> MeetingRe
                 .append(&question_line(&speaker, &question, Utc::now()));
             let Some(human_answer) = ask_human(&speaker, &question, io) else {
                 state.end_by_human();
+                io.cancel.store(true, Ordering::SeqCst);
                 io.transcript
                     .append(&end_line(HUMAN, HUMAN_ENDED_SUMMARY, Utc::now()));
                 return MeetingReply {
@@ -238,6 +242,7 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
     let socket = dir.path().join("meeting.sock");
     let (events_tx, events_rx) = mpsc::channel();
     let pause = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
     spawn_listener(UnixListener::bind(&socket)?, events_tx);
 
     let mut moderator = Moderator {
@@ -247,6 +252,7 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
         home: dirs::home_dir(),
         sessions: HashMap::new(),
         pause: Arc::clone(&pause),
+        cancel: Arc::clone(&cancel),
     };
     let mut state = TurnState::new(&config.plan.first, config.plan.max_turns);
     let mut message = config.kickoff.clone();
@@ -255,6 +261,7 @@ pub fn run(config: &MeetingConfig) -> Result<StopReason, Box<dyn std::error::Err
         transcript: &transcript,
         roster: &config.plan.roster,
         pause: &pause,
+        cancel: &cancel,
     };
 
     loop {
