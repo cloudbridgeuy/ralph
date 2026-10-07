@@ -186,6 +186,7 @@ fn execute_conversation_loop(
             &prompt,
             invoke::DEFAULT_PERMISSION_MODE,
             Some(&loop_config.primary_persona),
+            dirs::home_dir().as_deref(),
         );
 
         // Invoke persona

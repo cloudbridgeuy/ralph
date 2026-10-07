@@ -18,7 +18,7 @@ use crate::subprocess::{
     SubprocessError,
 };
 use chrono::{DateTime, Utc};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Default permission mode (allows tool execution).
 pub const DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
@@ -157,19 +157,39 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", escaped)
 }
 
-/// Build the claude CLI command string.
-///
-/// Pure function — no I/O.
-pub fn build_command(prompt: &str, permission_mode: &str, agent: Option<&str>) -> String {
+fn persona_isolation_args(home: Option<&Path>) -> String {
+    let excludes = home.map(|h| {
+        let settings = serde_json::json!({
+            "claudeMdExcludes": [h.join(".claude").join("CLAUDE.md").to_string_lossy()]
+        });
+        format!(" --settings {}", shell_quote(&settings.to_string()))
+    });
+    format!(
+        "--setting-sources project,local{}",
+        excludes.unwrap_or_default()
+    )
+}
+
+pub fn build_command(
+    prompt: &str,
+    permission_mode: &str,
+    agent: Option<&str>,
+    home: Option<&Path>,
+) -> String {
     let quoted_prompt = shell_quote(prompt);
     match agent {
         Some(name) => format!(
             "claude --verbose --agent {} \
              --permission-mode {} \
+             {} \
              --disallowed-tools Agent \
              --append-system-prompt '{}' \
              --output-format stream-json -p {}",
-            name, permission_mode, PERSONA_SYSTEM_PROMPT_SUFFIX, quoted_prompt
+            name,
+            permission_mode,
+            persona_isolation_args(home),
+            PERSONA_SYSTEM_PROMPT_SUFFIX,
+            quoted_prompt
         ),
         None => format!(
             "claude --verbose --permission-mode {} --output-format stream-json -p {}",
@@ -305,6 +325,7 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
         &full_prompt,
         &config.permission_mode,
         config.persona.as_deref(),
+        dirs::home_dir().as_deref(),
     );
 
     let subprocess_config = SpinnerSubprocessConfig {
@@ -355,17 +376,48 @@ mod tests {
 
     #[test]
     fn build_command_without_agent() {
-        let cmd = build_command("hello", "bypassPermissions", None);
+        let cmd = build_command(
+            "hello",
+            "bypassPermissions",
+            None,
+            Some(Path::new("/home/u")),
+        );
         assert!(cmd.contains("--permission-mode bypassPermissions"));
         assert!(cmd.contains("-p 'hello'"));
         assert!(!cmd.contains("--agent"));
         assert!(!cmd.contains("--disallowed-tools"));
         assert!(!cmd.contains("--append-system-prompt"));
+        assert!(!cmd.contains("--setting-sources"));
+        assert!(!cmd.contains("--settings"));
+    }
+
+    #[test]
+    fn persona_command_isolates_global_config() {
+        let cmd = build_command(
+            "hi",
+            "bypassPermissions",
+            Some("coach"),
+            Some(Path::new("/home/u")),
+        );
+        assert!(cmd.contains("--setting-sources project,local"));
+        assert!(cmd.contains(r#"--settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]}'"#));
+    }
+
+    #[test]
+    fn persona_command_without_home_has_no_settings() {
+        let cmd = build_command("hi", "bypassPermissions", Some("coach"), None);
+        assert!(cmd.contains("--setting-sources project,local"));
+        assert!(!cmd.contains("--settings"));
     }
 
     #[test]
     fn build_command_with_agent() {
-        let cmd = build_command("hello", "bypassPermissions", Some("coach"));
+        let cmd = build_command(
+            "hello",
+            "bypassPermissions",
+            Some("coach"),
+            Some(Path::new("/home/u")),
+        );
         assert!(cmd.contains("--agent coach"));
         assert!(cmd.contains("-p 'hello'"));
         assert!(cmd.contains("--disallowed-tools Agent"));
@@ -389,7 +441,7 @@ mod tests {
 
     #[test]
     fn build_command_escapes_single_quotes() {
-        let cmd = build_command("it's a test", "default", None);
+        let cmd = build_command("it's a test", "default", None, None);
         assert!(cmd.contains("'\"'\"'"));
     }
 

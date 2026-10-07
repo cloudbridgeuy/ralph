@@ -82,7 +82,7 @@ The persona name is stored in both `SessionEntry.persona` and `SessionMetadata.p
 Both `ralph ask` and `ralph persona` delegate to the shared invocation engine in `invoke.rs`. The key difference is the `persona` field in `InvocationConfig`:
 
 - `ask`: `persona: None` — uses `--permission-mode` flag
-- `persona`: `persona: Some(name)` — uses `--agent` flag
+- `persona`: `persona: Some(name)` — uses `--agent` flag, plus `--setting-sources project,local` and `--settings` with `claudeMdExcludes` for `~/.claude/CLAUDE.md`, so the global Claude config does not leak into the session
 
 The `build_shared_invocation_config()` function in `main.rs` handles the shared logic (clone resolution, continuation, theme, verbose tools, prompt resolution) for both commands through `InvocationConfigParams`.
 
