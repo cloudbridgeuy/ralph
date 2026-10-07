@@ -43,7 +43,7 @@ Use `hide = true` to hide the entire argument. Use `hide_env_values = true` to s
 Create dedicated config structs with a `from_env()` constructor for clean separation of configuration loading:
 
 ```rust
-use eyre::{eyre, Result};
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub struct Config {
     pub base_url: String,
@@ -54,9 +54,9 @@ impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
             base_url: std::env::var("BASE_URL")
-                .map_err(|_| eyre!("BASE_URL not set"))?,
+                .map_err(|_| "BASE_URL not set")?,
             api_token: std::env::var("API_TOKEN")
-                .map_err(|_| eyre!("API_TOKEN not set"))?,
+                .map_err(|_| "API_TOKEN not set")?,
         })
     }
 }
@@ -71,7 +71,7 @@ When multiple environment variables can provide the same value, use fallback cha
 ```rust
 let url = std::env::var("SERVICE_URL")
     .or_else(|_| std::env::var("SHARED_URL"))
-    .map_err(|_| eyre!("Neither SERVICE_URL nor SHARED_URL set"))?;
+    .map_err(|_| "Neither SERVICE_URL nor SHARED_URL set")?;
 ```
 
 For more complex fallbacks with different types or transformations:
@@ -81,7 +81,7 @@ let url = std::env::var("SERVICE_URL")
     .ok()
     .or_else(|| std::env::var("SHARED_URL").ok())
     .or_else(|| config_file.url.clone())
-    .ok_or_else(|| eyre!("No URL configured"))?;
+    .ok_or_else(|| "No URL configured")?;
 ```
 
 ## Default Values
@@ -96,7 +96,7 @@ let timeout = std::env::var("TIMEOUT")
 let timeout: u64 = std::env::var("TIMEOUT")
     .unwrap_or_else(|_| "30".to_string())
     .parse()
-    .map_err(|_| eyre!("TIMEOUT must be a number"))?;
+    .map_err(|_| "TIMEOUT must be a number")?;
 ```
 
 For boolean flags:
@@ -217,7 +217,7 @@ fn config_dir() -> Result<PathBuf> {
     // Cross-platform: HOME on Unix, USERPROFILE on Windows
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| eyre!("Could not determine home directory"))?;
+        .map_err(|_| "Could not determine home directory")?;
 
     Ok(PathBuf::from(home).join(".config/myapp"))
 }
@@ -237,7 +237,7 @@ fn config_dir() -> Result<PathBuf> {
 
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| eyre!("Could not determine home directory"))?;
+        .map_err(|_| "Could not determine home directory")?;
 
     Ok(PathBuf::from(home).join(".config/myapp"))
 }
@@ -249,7 +249,7 @@ Combining all patterns:
 
 ```rust
 use clap::Parser;
-use eyre::{eyre, Result};
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 use std::path::PathBuf;
 
 mod env_vars {
@@ -282,11 +282,11 @@ impl Config {
             base_url: std::env::var(env_vars::BASE_URL)
                 .unwrap_or_else(|_| "https://api.example.com".to_string()),
             api_token: std::env::var(env_vars::API_TOKEN)
-                .map_err(|_| eyre!("{} not set", env_vars::API_TOKEN))?,
+                .map_err(|_| format!("{} not set", env_vars::API_TOKEN))?,
             timeout: std::env::var(env_vars::TIMEOUT)
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()
-                .map_err(|_| eyre!("{} must be a number", env_vars::TIMEOUT))?,
+                .map_err(|_| format!("{} must be a number", env_vars::TIMEOUT))?,
         })
     }
 

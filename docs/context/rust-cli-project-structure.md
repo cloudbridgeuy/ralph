@@ -20,7 +20,6 @@ repository = "https://github.com/org/project"
 serde = { version = "1.0", features = ["derive"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1.0", features = ["full"] }
-color-eyre = "0.6"
 reqwest = { version = "0.12", features = ["json"] }
 ```
 
@@ -78,7 +77,6 @@ myapp-core = { path = "../core" }
 clap.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
-color-eyre.workspace = true
 ```
 
 The core crate contains pure functions that transform data. The CLI crate handles all I/O and uses core functions for business logic.
@@ -184,7 +182,7 @@ A prelude module re-exports commonly used types to reduce import boilerplate acr
 ```rust
 // src/prelude.rs
 pub use crate::error::Error;
-pub use color_eyre::eyre::{eyre, Context, Result};
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub use anstream::{eprintln, println};
 pub use tracing::{debug, error, info, warn};
 ```
@@ -196,7 +194,7 @@ pub use tracing::{debug, error, info, warn};
 use crate::prelude::*;
 
 pub async fn run(opts: Options) -> Result<()> {
-    let data = fetch().await.context("failed to fetch data")?;
+    let data = fetch().await?;
     println!("{}", data);
     Ok(())
 }
@@ -324,8 +322,7 @@ pub async fn fetch_users(opts: Options, global: &crate::Global) -> Result<Vec<Us
     let raw = global
         .client
         .get_users(opts.status.as_deref())
-        .await
-        .context("failed to fetch users")?;
+        .await?;
 
     // Use pure core function for transformation
     Ok(myapp_core::transform_users(raw))
@@ -388,9 +385,7 @@ pub enum SubCommands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    color_eyre::install()?;
-
+async fn main() -> std::process::ExitCode {
     let app = App::parse();
 
     // Initialize tracing based on verbosity
@@ -400,9 +395,17 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    match app.command {
+    let result = match app.command {
         SubCommands::Auth(sub) => auth::run(sub, app.global).await,
         SubCommands::Config(sub) => config::run(sub, app.global).await,
+    };
+
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::ExitCode::FAILURE
+        }
     }
 }
 ```

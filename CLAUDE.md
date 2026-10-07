@@ -145,7 +145,7 @@ async fn send_user_expiry_emails(db: &Database, email_service: &EmailService) ->
 Detailed documentation is kept in dedicated files. Consult these when working on related features.
 
 - [Clap CLI Patterns](docs/context/rust-cli-clap.md) - Command routing, subcommands, arguments, and derive macros
-- [Error Handling](docs/context/rust-cli-error-handling.md) - color_eyre, thiserror, and error propagation patterns
+- [Error Handling](docs/context/rust-cli-error-handling.md) - thiserror enums, Box<dyn Error> handlers, ExitCode in main
 - [Serde Serialization](docs/context/rust-cli-serde.md) - JSON serialization, field attributes, and API type patterns
 - [I/O Patterns](docs/context/rust-cli-io.md) - stdin/stdout handling, terminal detection, async I/O
 - [Environment Configuration](docs/context/rust-cli-env-config.md) - Env vars, secrets, config precedence
