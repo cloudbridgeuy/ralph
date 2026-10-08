@@ -3,6 +3,7 @@ use crate::cli::ChatArgs;
 use crate::highlight::ThemeConfig;
 use crate::invoke::build_chat_command;
 use crate::iteration::extract_response_text;
+use crate::markdown::create_markdown_skin;
 use crate::signal;
 use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
@@ -12,14 +13,18 @@ use crate::subprocess::{
 use crate::warn::{warn, warn_if_err};
 use ralph_core::chat::{build_mcp_args, turn_prompt, SYSTEM_PROMPT, VIEW_LINES};
 use ralph_core::chat_memory::{view, Role};
-use std::io::{self, BufRead, Write};
+use reedline::{
+    default_emacs_keybindings, DefaultPrompt, DefaultPromptSegment, EditCommand, Emacs,
+    FileBackedHistory, KeyCode, KeyModifiers, Reedline, ReedlineEvent, Signal,
+};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::Duration;
 
-const INPUT_POLL: Duration = Duration::from_millis(100);
 const PROMPT: &str = "> ";
+const HISTORY_FILE: &str = "history.txt";
+const EDITOR_FILE: &str = "editor.md";
+const HISTORY_CAPACITY: usize = 1000;
 
 fn default_store() -> io::Result<PathBuf> {
     dirs::home_dir()
@@ -27,31 +32,36 @@ fn default_store() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other("home directory not found"))
 }
 
-fn spawn_input() -> Receiver<String> {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        while matches!(io::stdin().lock().read_line(&mut line), Ok(n) if n > 0) {
-            if tx.send(line.trim().to_string()).is_err() {
-                return;
-            }
-            line.clear();
-        }
-    });
-    rx
+fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>> {
+    let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
+    let mut keybindings = default_emacs_keybindings();
+    keybindings.add_binding(
+        KeyModifiers::ALT,
+        KeyCode::Enter,
+        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+    );
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+    Ok(Reedline::create()
+        .with_history(Box::new(history))
+        .with_edit_mode(Box::new(Emacs::new(keybindings)))
+        .with_buffer_editor(Command::new(editor), store_dir.join(EDITOR_FILE)))
 }
 
-fn next_message(input: &Receiver<String>) -> Option<String> {
-    print!("{PROMPT}");
-    let _ = io::stdout().flush();
-    loop {
-        match input.recv_timeout(INPUT_POLL) {
-            Ok(line) => return Some(line).filter(|line| !line.is_empty()),
-            Err(RecvTimeoutError::Timeout) if signal::is_interrupted() => return None,
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => return None,
-        }
-    }
+fn next_message(editor: &mut Reedline) -> io::Result<Option<String>> {
+    let prompt = DefaultPrompt::new(
+        DefaultPromptSegment::Basic(PROMPT.to_string()),
+        DefaultPromptSegment::Empty,
+    );
+    Ok(match editor.read_line(&prompt)? {
+        Signal::Success(line) => Some(line.trim().to_string()).filter(|line| !line.is_empty()),
+        _ => None,
+    })
+}
+
+fn print_rule() {
+    print!("{}", create_markdown_skin().term_text("---"));
 }
 
 fn spawn_nap(store: &Path) -> io::Result<()> {
@@ -85,6 +95,7 @@ impl Turn<'_> {
             &build_mcp_args(self.exe, self.store_dir),
             dirs::home_dir().as_deref(),
         );
+        print_rule();
         let result = invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
             command,
             timeout_secs: self.timeout_secs,
@@ -106,7 +117,7 @@ impl Turn<'_> {
             Err(SubprocessError::Interrupted { .. }) => return Ok(false),
             Err(e) => return Err(e.into()),
         };
-        println!();
+        print_rule();
         match extract_response_text(&result.stream_result.output_blocks) {
             Some(reply) if result.exit_code == 0 => {
                 self.store.append(Role::Assistant, &reply)?;
@@ -135,8 +146,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         timeout_secs: args.timeout,
         theme_config: &theme_config,
     };
-    let input = spawn_input();
-    while let Some(message) = next_message(&input) {
+    let mut editor = build_editor(&store_dir)?;
+    while let Some(message) = next_message(&mut editor)? {
         if !turn.run(&message)? {
             break;
         }

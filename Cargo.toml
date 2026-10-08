@@ -76,6 +76,9 @@ syntect = { version = "5.2", default-features = false, features = [
   "default-fancy",
 ] }
 
+# Line editor for chat input
+reedline = "0.52.1"
+
 # Testing
 tempfile = "3.10"
 

@@ -12,13 +12,14 @@ ralph                      # same as ralph chat with defaults
 - `--timeout <secs>` per turn, default 600 (`CHAT_TIMEOUT_SECS`).
 - Hidden `--store <DIR>` overrides the store path. Default is `~/.ralph/chat`; a missing home directory is an error. The directory is created at startup.
 - Hidden subcommands: `ralph chat-mcp --store <DIR>` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
-- Input is plain stdin `read_line` with prompt `> `. An empty line, Ctrl-D, or Ctrl-C at the prompt or during a turn quits.
+- Input is a reedline editor on the main thread with prompt `> `. Enter sends; Alt-Enter inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). An empty message, Ctrl-D, or Ctrl-C at the prompt quits. Ctrl-C during a turn interrupts it and ends the chat.
+- A dark-gray full-width rule (the shared termimad skin's `---`, default gray(6) `―`) prints before the turn and after the reply.
 
 ## Layout
 
 - `crates/core/src/chat_memory.rs`: pure types (`Entry`, `Node`, `Tree`), log/tree parsing and encoding, `cover`, `pending`, `view`, `zoom`, `recall`, tool schemas and `handle_request`/`finish_call`, nap and retry prompts, `check_summary`.
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `SYSTEM_PROMPT`, `turn_prompt`, `build_mcp_args`.
-- `crates/ralph/src/chat.rs`: turn loop shell, input thread, nap spawn.
+- `crates/ralph/src/chat.rs`: turn loop shell, reedline input, nap spawn.
 - `crates/ralph/src/chat_memory.rs`: `Store` (files, LOCK, append, nap loop).
 - `crates/ralph/src/chat_mcp.rs`: MCP stdio loop.
 - `crates/ralph/src/invoke.rs`: `build_chat_command`, `build_memory_command`.
@@ -66,7 +67,7 @@ Invalid ids, ids beyond the log, bad regexes, and store read errors return a too
 
 ## Storage and isolation
 
-- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`. It is not project-scoped.
+- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`, `history.txt`, `editor.md`. It is not project-scoped.
 - `LOCK` is an exclusive file lock held for append, settled load, and the whole nap. Store paths that are symlinks or multiply-linked files are rejected.
 - Isolation matches personas: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Project and local settings stay active; this is context isolation, not a sandbox.
 - Turns run with `bypassPermissions`.

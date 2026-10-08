@@ -30,6 +30,7 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 crossterm = { workspace = true }
 toml = { workspace = true }
+reedline = { workspace = true }
 
 [lints]
 workspace = true
