@@ -19,6 +19,7 @@ pub mod completion;
 pub mod context;
 pub mod directive;
 pub mod human;
+pub mod mcp;
 pub mod meeting;
 pub mod meeting_memory;
 pub mod meeting_transcript;

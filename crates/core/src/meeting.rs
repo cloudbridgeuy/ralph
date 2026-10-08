@@ -1,12 +1,9 @@
+use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
 
 pub const SERVER_NAME: &str = "ralph-meeting";
-const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
-const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_PARAMS: i64 = -32602;
-const INVALID_REQUEST: i64 = -32600;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -98,13 +95,6 @@ pub fn tool_definitions() -> Value {
     ])
 }
 
-fn string_arg(args: &Value, key: &str) -> Result<String, String> {
-    match args.get(key).and_then(Value::as_str) {
-        Some(s) if !s.trim().is_empty() => Ok(s.to_string()),
-        _ => Err(format!("Missing or empty string argument '{key}'.")),
-    }
-}
-
 pub fn parse_tool_call(
     ctx: &MeetingContext,
     name: &str,
@@ -147,21 +137,6 @@ pub fn parse_tool_call(
     }
 }
 
-fn success(id: Value, result: Value) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "result": result})
-}
-
-fn failure(id: Value, code: i64, message: &str) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
-}
-
-fn tool_result(id: Value, text: &str, is_error: bool) -> Value {
-    success(
-        id,
-        json!({"content": [{"type": "text", "text": text}], "isError": is_error}),
-    )
-}
-
 pub fn finish_relay(id: Value, event: &MeetingEvent, reply: Result<MeetingReply, String>) -> Value {
     match (event, reply) {
         (_, Err(message)) => tool_result(id, &format!("Relay failed: {message}"), true),
@@ -178,49 +153,13 @@ pub fn finish_relay(id: Value, event: &MeetingEvent, reply: Result<MeetingReply,
 }
 
 pub fn handle_request(ctx: &MeetingContext, request: &Value) -> Outcome {
-    let Some(method) = request.get("method").and_then(Value::as_str) else {
-        return match request.get("id") {
-            Some(id) => Outcome::Respond(failure(id.clone(), INVALID_REQUEST, "Invalid request")),
-            None => Outcome::Silent,
-        };
-    };
-    let Some(id) = request.get("id").cloned() else {
-        return Outcome::Silent;
-    };
-    let params = request.get("params").cloned().unwrap_or(Value::Null);
-
-    match method {
-        "initialize" => {
-            let version = params
-                .get("protocolVersion")
-                .and_then(Value::as_str)
-                .unwrap_or(DEFAULT_PROTOCOL_VERSION);
-            Outcome::Respond(success(
-                id,
-                json!({
-                    "protocolVersion": version,
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": SERVER_NAME, "version": "0.1.0"}
-                }),
-            ))
-        }
-        "ping" => Outcome::Respond(success(id, json!({}))),
-        "tools/list" => Outcome::Respond(success(id, json!({"tools": tool_definitions()}))),
-        "tools/call" => {
-            let Some(name) = params.get("name").and_then(Value::as_str) else {
-                return Outcome::Respond(failure(id, INVALID_PARAMS, "Missing tool name"));
-            };
-            let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-            match parse_tool_call(ctx, name, &args) {
-                Ok(event) => Outcome::Relay { id, event },
-                Err(message) => Outcome::Respond(tool_result(id, &message, true)),
-            }
-        }
-        other => Outcome::Respond(failure(
-            id,
-            METHOD_NOT_FOUND,
-            &format!("Method not found: {other}"),
-        )),
+    match dispatch(SERVER_NAME, &tool_definitions(), request) {
+        Dispatch::Silent => Outcome::Silent,
+        Dispatch::Respond(v) => Outcome::Respond(v),
+        Dispatch::Call { id, name, args } => match parse_tool_call(ctx, &name, &args) {
+            Ok(event) => Outcome::Relay { id, event },
+            Err(message) => Outcome::Respond(tool_result(id, &message, true)),
+        },
     }
 }
 

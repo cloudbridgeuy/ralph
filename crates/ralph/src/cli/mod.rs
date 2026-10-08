@@ -78,6 +78,9 @@ pub enum Commands {
 
     #[command(hide = true)]
     MeetingMcp(MeetingMcpArgs),
+
+    #[command(hide = true)]
+    ChatMcp(ChatMcpArgs),
 }
 
 /// Arguments for the `meeting` subcommand.
@@ -126,6 +129,12 @@ pub struct MeetingMcpArgs {
 
     #[arg(long, value_delimiter = ',', required = true)]
     pub personas: Vec<String>,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ChatMcpArgs {
+    #[arg(long, value_name = "DIR")]
+    pub store: std::path::PathBuf,
 }
 
 /// Arguments for the `edit` subcommand.

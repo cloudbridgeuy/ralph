@@ -9,6 +9,8 @@
 
 pub mod ansi;
 mod ask;
+mod chat_mcp;
+mod chat_memory;
 mod cli;
 pub mod config;
 pub mod diff_highlight;
@@ -46,9 +48,9 @@ pub mod warn;
 
 use clap::Parser;
 use cli::{
-    AskArgs, Cli, Commands, IterationsArgs, MeetingArgs, MeetingMcpArgs, PersonaAction,
-    PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs, StrategyAction, StrategyArgs,
-    StrategyExecuteArgs,
+    AskArgs, ChatMcpArgs, Cli, Commands, IterationsArgs, MeetingArgs, MeetingMcpArgs,
+    PersonaAction, PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs, StrategyAction,
+    StrategyArgs, StrategyExecuteArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -72,6 +74,7 @@ fn main() -> ExitCode {
         Commands::Strategy(args) => execute_strategy(args),
         Commands::Meeting(args) => execute_meeting(args),
         Commands::MeetingMcp(args) => execute_meeting_mcp(args),
+        Commands::ChatMcp(args) => execute_chat_mcp(args),
     };
 
     match result {
@@ -548,6 +551,14 @@ fn execute_meeting_mcp(args: MeetingMcpArgs) -> Result<(), Box<dyn std::error::E
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     meeting_mcp::run_stdio_server(&ctx, &args.socket, stdin.lock(), stdout.lock())?;
+    Ok(())
+}
+
+fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let store = chat_memory::Store::new(args.store);
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    chat_mcp::run_stdio_server(&store, stdin.lock(), stdout.lock())?;
     Ok(())
 }
 
