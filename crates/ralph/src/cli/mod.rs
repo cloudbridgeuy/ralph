@@ -81,6 +81,9 @@ pub enum Commands {
 
     #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
+
+    #[command(hide = true)]
+    ChatNap(ChatNapArgs),
 }
 
 /// Arguments for the `meeting` subcommand.
@@ -135,6 +138,15 @@ pub struct MeetingMcpArgs {
 pub struct ChatMcpArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ChatNapArgs {
+    #[arg(long, value_name = "DIR")]
+    pub store: std::path::PathBuf,
+
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
 }
 
 /// Arguments for the `edit` subcommand.

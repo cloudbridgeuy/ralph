@@ -48,7 +48,7 @@ pub mod warn;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatMcpArgs, Cli, Commands, IterationsArgs, MeetingArgs, MeetingMcpArgs,
+    AskArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, IterationsArgs, MeetingArgs, MeetingMcpArgs,
     PersonaAction, PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs, StrategyAction,
     StrategyArgs, StrategyExecuteArgs,
 };
@@ -75,6 +75,7 @@ fn main() -> ExitCode {
         Commands::Meeting(args) => execute_meeting(args),
         Commands::MeetingMcp(args) => execute_meeting_mcp(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
+        Commands::ChatNap(args) => execute_chat_nap(args),
     };
 
     match result {
@@ -559,6 +560,36 @@ fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>>
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     chat_mcp::run_stdio_server(&store, stdin.lock(), stdout.lock())?;
+    Ok(())
+}
+
+fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let store = chat_memory::Store::new(args.store);
+    let theme_config = highlight::ThemeConfig::from_config_and_env();
+    store.nap(|prompt| {
+        let command = invoke::build_memory_command(prompt, dirs::home_dir().as_deref());
+        let result = subprocess::invoke_subprocess_with_spinner_config(
+            &subprocess::SpinnerSubprocessConfig {
+                command,
+                timeout_secs: args.timeout,
+                theme_config: theme_config.clone(),
+                session_elapsed_ms: 0,
+                verbose_tools: stream_processor::VerboseToolsConfig::new(),
+                session_info: spinner::SpinnerSessionInfo {
+                    persona: Some("chat memory".into()),
+                    slug: None,
+                    current_iteration: None,
+                    max_iterations: None,
+                    on_behalf_of: None,
+                },
+                pause: None,
+                cancel: None,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        let response = iteration::extract_response_text(&result.stream_result.output_blocks);
+        ralph_core::meeting_memory::nap_summary(result.exit_code, response.as_deref())
+    })?;
     Ok(())
 }
 
