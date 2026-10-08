@@ -6,7 +6,7 @@ use clap::Parser;
 #[test]
 fn test_strategy_list_parses() {
     let cli = Cli::try_parse_from(["ralph", "strategy", "list"]).unwrap();
-    match cli.command {
+    match cli.command.unwrap() {
         Commands::Strategy(args) => {
             assert!(matches!(args.action, StrategyAction::List));
         }
@@ -17,7 +17,7 @@ fn test_strategy_list_parses() {
 #[test]
 fn test_strategy_sync_parses() {
     let cli = Cli::try_parse_from(["ralph", "strategy", "sync"]).unwrap();
-    match cli.command {
+    match cli.command.unwrap() {
         Commands::Strategy(args) => {
             assert!(matches!(args.action, StrategyAction::Sync));
         }
@@ -28,7 +28,7 @@ fn test_strategy_sync_parses() {
 #[test]
 fn test_strategy_execute_parses_name() {
     let cli = Cli::try_parse_from(["ralph", "strategy", "execute", "prd-loop"]).unwrap();
-    match cli.command {
+    match cli.command.unwrap() {
         Commands::Strategy(args) => match args.action {
             StrategyAction::Execute(exec_args) => {
                 assert_eq!(exec_args.name, "prd-loop");
@@ -51,7 +51,7 @@ fn test_strategy_execute_with_max_iterations() {
         "5",
     ])
     .unwrap();
-    match cli.command {
+    match cli.command.unwrap() {
         Commands::Strategy(args) => match args.action {
             StrategyAction::Execute(exec_args) => {
                 assert_eq!(exec_args.name, "prd-loop");

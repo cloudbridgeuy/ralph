@@ -13,6 +13,7 @@
 // Threshold configured in clippy.toml (too-many-arguments-threshold = 5).
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
+pub mod chat;
 pub mod chat_memory;
 pub mod chunk;
 pub mod completion;

@@ -9,6 +9,7 @@
 
 pub mod ansi;
 mod ask;
+mod chat;
 mod chat_mcp;
 mod chat_memory;
 mod cli;
@@ -48,9 +49,9 @@ pub mod warn;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, IterationsArgs, MeetingArgs, MeetingMcpArgs,
-    PersonaAction, PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs, StrategyAction,
-    StrategyArgs, StrategyExecuteArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, IterationsArgs, MeetingArgs,
+    MeetingMcpArgs, PersonaAction, PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs,
+    StrategyAction, StrategyArgs, StrategyExecuteArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -63,7 +64,10 @@ use warn::{warn, warn_if_err};
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    let result = match cli.command {
+    let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {
+        store: None,
+        timeout: cli::CHAT_TIMEOUT_SECS,
+    })) {
         Commands::Sessions(args) => execute_sessions(args),
         Commands::Iterations(args) => execute_iterations(args),
         Commands::Replay(args) => execute_replay(args),
@@ -74,6 +78,7 @@ fn main() -> ExitCode {
         Commands::Strategy(args) => execute_strategy(args),
         Commands::Meeting(args) => execute_meeting(args),
         Commands::MeetingMcp(args) => execute_meeting_mcp(args),
+        Commands::Chat(args) => chat::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
     };

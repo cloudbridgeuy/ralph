@@ -8,6 +8,8 @@ use clap::{Parser, Subcommand};
 #[cfg(test)]
 mod tests;
 
+pub const CHAT_TIMEOUT_SECS: u64 = 600;
+
 /// Ralph - LLM-driven development workflow automation.
 ///
 /// Ralph implements an iterative LLM-driven development workflow. Work is divided
@@ -19,7 +21,7 @@ mod tests;
 pub struct Cli {
     /// Subcommand to execute
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 /// Available subcommands.
@@ -75,6 +77,12 @@ pub enum Commands {
     /// Each persona is a separate Claude session. The kickoff goes to --first;
     /// personas pass the turn with the send_message tool until one ends the meeting.
     Meeting(MeetingArgs),
+
+    /// Chat with a persistent, compressed memory.
+    ///
+    /// Runs when no subcommand is given. Each message is a fresh Claude turn
+    /// over the whole chat so far, stored under ~/.ralph/chat.
+    Chat(ChatArgs),
 
     #[command(hide = true)]
     MeetingMcp(MeetingMcpArgs),
@@ -132,6 +140,15 @@ pub struct MeetingMcpArgs {
 
     #[arg(long, value_delimiter = ',', required = true)]
     pub personas: Vec<String>,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ChatArgs {
+    #[arg(long, value_name = "DIR", hide = true)]
+    pub store: Option<std::path::PathBuf>,
+
+    #[arg(long, default_value_t = CHAT_TIMEOUT_SECS)]
+    pub timeout: u64,
 }
 
 #[derive(clap::Args, Debug)]

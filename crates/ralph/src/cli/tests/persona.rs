@@ -6,7 +6,7 @@ use clap::Parser;
 /// Helper function to parse CLI args and extract PersonaArgs.
 fn parse_persona_args(args: &[&str]) -> PersonaArgs {
     let cli = Cli::try_parse_from(args).expect("Failed to parse CLI args");
-    match cli.command {
+    match cli.command.unwrap() {
         Commands::Persona(args) => args,
         _ => panic!("Expected Persona command"),
     }

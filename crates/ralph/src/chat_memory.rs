@@ -1,7 +1,7 @@
 use crate::warn::warn;
 use ralph_core::chat_memory::{
-    check_summary, encode_record, nap_prompt, parse_log, parse_tree, pending, retry_prompt, Entry,
-    Node, Tree, MAX_NAP_ATTEMPTS,
+    check_summary, encode_entry, encode_record, nap_prompt, parse_log, parse_tree, pending,
+    retry_prompt, Entry, Node, Role, Tree, MAX_NAP_ATTEMPTS,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -67,6 +67,26 @@ impl Store {
         Ok(lock)
     }
 
+    pub fn load_settled(&self) -> io::Result<(Vec<Entry>, Tree)> {
+        let _lock = self.lock()?;
+        self.load()
+    }
+
+    pub fn append(&self, role: Role, text: &str) -> io::Result<()> {
+        let _lock = self.lock()?;
+        let entry = Entry {
+            role,
+            at: chrono::Utc::now().to_rfc3339(),
+            text: text.to_string(),
+        };
+        let line = encode_entry(&entry).map_err(io::Error::other)?;
+        let path = self.dir.join("log.jsonl");
+        check_path(&path)?;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        file.write_all(line.as_bytes())?;
+        file.sync_all()
+    }
+
     fn put(&self, node: Node, text: &str) -> io::Result<()> {
         let line = encode_record(node, text).map_err(io::Error::other)?;
         let path = self.dir.join("tree.jsonl");
@@ -122,6 +142,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (entries, tree) = Store::new(dir.path().join("none")).load().unwrap();
         assert!(entries.is_empty() && tree.is_empty());
+    }
+
+    #[test]
+    fn append_round_trips_through_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("new"));
+        store.append(Role::User, "hi").unwrap();
+        store.append(Role::Assistant, "yo").unwrap();
+        let (entries, _) = store.load_settled().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].role, Role::Assistant);
+        assert_eq!(entries[1].text, "yo");
     }
 
     #[test]

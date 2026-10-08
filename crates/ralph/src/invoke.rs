@@ -178,6 +178,26 @@ pub fn build_memory_command(prompt: &str, home: Option<&Path>) -> String {
     )
 }
 
+pub fn build_chat_command(
+    prompt: &str,
+    system_prompt: &str,
+    mcp_args: &[String],
+    home: Option<&Path>,
+) -> String {
+    let mcp = mcp_args
+        .iter()
+        .map(|arg| format!(" {}", shell_quote(arg)))
+        .collect::<String>();
+    format!(
+        "claude --verbose --permission-mode {} {} --append-system-prompt {}{} --output-format stream-json -p {}",
+        DEFAULT_PERMISSION_MODE,
+        persona_isolation_args(home),
+        shell_quote(system_prompt),
+        mcp,
+        shell_quote(prompt)
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandSpec<'a> {
     pub prompt: &'a str,
@@ -529,6 +549,16 @@ mod tests {
         assert!(cmd.contains("--resume 'sid-1' --model 'sonnet' '--mcp-config' '{}'"));
         assert!(cmd.contains("--append-system-prompt 'scene it'\"'\"'s'"));
         assert!(!cmd.contains("Team Directives"));
+    }
+
+    #[test]
+    fn chat_command_is_fresh_and_isolated() {
+        let mcp = vec!["--strict-mcp-config".to_string()];
+        let cmd = build_chat_command("it's", "sys", &mcp, Some(Path::new("/home/u")));
+        assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
+        assert!(cmd.contains("--setting-sources project,local"));
+        assert!(cmd.contains("--append-system-prompt 'sys' '--strict-mcp-config'"));
+        assert!(cmd.ends_with("-p 'it'\"'\"'s'"));
     }
 
     #[test]
