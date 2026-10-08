@@ -12,7 +12,7 @@ ralph                      # same as ralph chat with defaults
 - `--timeout <secs>` per turn, default 600 (`CHAT_TIMEOUT_SECS`).
 - Hidden `--store <DIR>` overrides the store path. Default is `~/.ralph/chat`; a missing home directory is an error. The directory is created at startup.
 - Hidden subcommands: `ralph chat-mcp --store <DIR>` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
-- Input is a reedline editor on the main thread with prompt `> `. Enter sends; Alt-Enter inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). An empty message, Ctrl-D, or Ctrl-C at the prompt quits. Ctrl-C during a turn interrupts it and ends the chat.
+- Input is a reedline editor on the main thread with prompt `> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). An empty message, Ctrl-D, or Ctrl-C at the prompt quits. Ctrl-C during a turn interrupts it and ends the chat.
 - A dark-gray full-width rule (the shared termimad skin's `---`, default gray(6) `―`) prints before the turn and after the reply.
 
 ## Layout

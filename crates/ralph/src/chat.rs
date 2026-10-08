@@ -35,11 +35,16 @@ fn default_store() -> io::Result<PathBuf> {
 fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>> {
     let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     let mut keybindings = default_emacs_keybindings();
-    keybindings.add_binding(
-        KeyModifiers::ALT,
-        KeyCode::Enter,
-        ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
-    );
+    for (modifier, key_code) in [
+        (KeyModifiers::ALT, KeyCode::Enter),
+        (KeyModifiers::CONTROL, KeyCode::Char('j')),
+    ] {
+        keybindings.add_binding(
+            modifier,
+            key_code,
+            ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
+        );
+    }
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".to_string());
