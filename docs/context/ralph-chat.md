@@ -35,7 +35,7 @@ ralph                      # same as ralph chat with defaults
 6. On exit code 0 with response text, the reply is appended verbatim and a detached `ralph chat-nap` is spawned (stdio null; spawn failure only warns). Otherwise a warning `chat turn failed (exit N)` prints and the loop continues. The user message stays in the log without a reply.
 7. An interrupted turn ends the chat. Other subprocess errors abort with an error.
 
-`SYSTEM_PROMPT` tells the model that the message starts with the compressed chat, that `#<id>` lines are summaries, to use `zoom` and `recall` before guessing or asking, and never to claim manual saving.
+`SYSTEM_PROMPT` tells the model that the message starts with the compressed chat, that `#<id>` lines are summaries, to use `zoom` and `recall` before guessing or asking, how to handle `[worker ...]` messages, and never to claim manual saving. Its delegation rules keep turns short: the model reads inline only to scope (at most 3 tool calls per question), sends multi-file reads, broad searches and test runs to `evidence-collector`, all code edits to `implementer`, and fixes to `reviser`, and every dispatch prompt says "You are a subagent. Don't run mem."
 
 ## Memory
 
