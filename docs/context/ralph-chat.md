@@ -5,11 +5,12 @@
 ## CLI
 
 ```bash
-ralph chat [--timeout 600]
+ralph chat [--timeout 600] [--skill <PATH>]...
 ralph                      # same as ralph chat with defaults
 ```
 
 - `--timeout <secs>` per turn, default 600 (`CHAT_TIMEOUT_SECS`).
+- `--skill <PATH>` (repeatable) adds a skill directory. See Skills.
 - Hidden `--store <DIR>` overrides the store path. Default is `~/.ralph/chat`; a missing home directory is an error. The directory is created at startup.
 - Hidden subcommands: `ralph chat-mcp --store <DIR>` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
 - Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). An empty message, Ctrl-D, or Ctrl-C at the prompt quits. Ctrl-C during a turn interrupts it and ends the chat.
@@ -19,6 +20,7 @@ ralph                      # same as ralph chat with defaults
 
 - `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `view`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts and `check_summary`; `usage.rs` has the per-call usage records.
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `SYSTEM_PROMPT`, `turn_prompt`, `build_mcp_args`.
+- `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `disables_model_invocation`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat.rs`: turn loop shell, reedline input, nap spawn.
 - `crates/ralph/src/chat_memory.rs`: `Store` (files, LOCK, append, nap loop).
 - `crates/ralph/src/chat_mcp.rs`: MCP stdio loop.
@@ -66,6 +68,17 @@ Hidden `ralph chat-mcp --store <DIR>` speaks newline-delimited JSON-RPC 2.0 on s
 | `recall` | `pattern` (string) | Case-insensitive regex over raw messages (`#<i> <role> <at> <text>` lines). Returns matching lines plus `N hits`. Output is capped at 8192 bytes, oldest hits dropped first and counted. |
 
 Invalid ids, ids beyond the log, bad regexes, and store read errors return a tool result with `isError: true`.
+
+## Skills
+
+Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not load. No skills are bundled. The user names skill directories (each holds a `SKILL.md`, for example `~/.claude/skills/show-me`) and chat exposes them through a plugin.
+
+- Sources, highest first: `--skill <PATH>` (repeatable), `RALPH_CHAT_SKILLS` (`:`-separated, empty entries dropped), `[chat] skills = [...]` in the ralph config. The highest non-empty source replaces the lower ones; lists are not merged. With none set, no `--plugin-dir` is passed and nothing is written.
+- A leading `~` or `~/` expands to the home directory. Duplicate paths keep the first. Relative paths are made absolute.
+- At start, a path without a readable `SKILL.md` prints one warning and is skipped. Two skills with the same directory name: the first wins, the other warns and is skipped.
+- A skill whose frontmatter sets `disable-model-invocation: true` warns but is still included. Chat turns wrap the input, so the model must call the Skill tool, which that flag blocks.
+- If at least one skill survives, chat builds a temporary plugin directory (removed when chat exits) with `.claude-plugin/plugin.json` (`{"name": "ralph"}`) and `skills/<name>` as symlinks to the skill directories. Each turn adds `--plugin-dir <dir>`. Skills appear as `ralph:<name>`.
+- Skills are read at start: changes to the list need a restart.
 
 ## Storage and isolation
 

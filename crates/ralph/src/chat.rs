@@ -18,6 +18,10 @@ use ralph_core::chat::{
     VIEW_LINES,
 };
 use ralph_core::chat_memory::{usage_record, view, CallKind, Role, Trigger};
+use ralph_core::chat_skills::{
+    build_plugin_args, disables_model_invocation, plan_links, plugin_manifest, resolve_skills,
+    SkillSources,
+};
 use ralph_core::worker::{chat_message, INBOX_DIR};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
@@ -36,6 +40,7 @@ const PROMPT: &str = ">>> ";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
+const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 const INBOX_POLL: Duration = Duration::from_millis(500);
 
 fn default_store() -> io::Result<PathBuf> {
@@ -150,6 +155,7 @@ struct Turn<'a> {
     store: &'a Store,
     store_dir: &'a Path,
     mcp_config_path: &'a Path,
+    plugin_args: &'a [String],
     timeout_secs: u64,
     theme_config: &'a ThemeConfig,
 }
@@ -162,7 +168,12 @@ impl Turn<'_> {
         let command = build_chat_command(
             &turn_prompt(&lines, message),
             SYSTEM_PROMPT,
-            &[build_mcp_args(self.mcp_config_path), build_agents_args()].concat(),
+            &[
+                build_mcp_args(self.mcp_config_path),
+                build_agents_args(),
+                self.plugin_args.to_vec(),
+            ]
+            .concat(),
             dirs::home_dir().as_deref(),
         );
         print_rule();
@@ -233,6 +244,68 @@ fn write_mcp_config(store: &Store, store_dir: &Path, exe: &Path) -> io::Result<P
     store.write_mcp_config(&mcp_config(exe, store_dir, &imported.servers))
 }
 
+fn env_skills() -> Vec<PathBuf> {
+    std::env::var_os(SKILLS_ENV)
+        .map(|value| {
+            std::env::split_paths(&value)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn usable_skills(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    dirs.into_iter()
+        .filter_map(|dir| {
+            let dir = std::path::absolute(&dir).unwrap_or(dir);
+            match std::fs::read_to_string(dir.join("SKILL.md")) {
+                Ok(skill_md) => {
+                    if disables_model_invocation(&skill_md) {
+                        warn(format!(
+                            "chat: skill {} sets disable-model-invocation; chat turns can only invoke skills through the model, so it will not run",
+                            dir.display()
+                        ));
+                    }
+                    Some(dir)
+                }
+                Err(e) => {
+                    warn(format!(
+                        "chat: skipping skill {}: cannot read SKILL.md ({e})",
+                        dir.display()
+                    ));
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn write_skill_plugin(dirs: &[PathBuf]) -> io::Result<Option<tempfile::TempDir>> {
+    let plan = plan_links(dirs);
+    for dir in &plan.dropped {
+        warn(format!(
+            "chat: skipping skill {}: name already taken by an earlier skill",
+            dir.display()
+        ));
+    }
+    if plan.links.is_empty() {
+        return Ok(None);
+    }
+    let plugin = tempfile::tempdir()?;
+    let manifest_dir = plugin.path().join(".claude-plugin");
+    let skills_dir = plugin.path().join("skills");
+    std::fs::create_dir_all(&manifest_dir)?;
+    std::fs::create_dir_all(&skills_dir)?;
+    std::fs::write(
+        manifest_dir.join("plugin.json"),
+        plugin_manifest().to_string(),
+    )?;
+    for (name, target) in &plan.links {
+        std::os::unix::fs::symlink(target, skills_dir.join(name))?;
+    }
+    Ok(Some(plugin))
+}
+
 fn read_claude_config() -> serde_json::Value {
     let Some(path) = dirs::home_dir().map(|home| home.join(".claude.json")) else {
         return serde_json::json!({});
@@ -260,11 +333,28 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;
     let mcp_config_path = write_mcp_config(&store, &store_dir, &exe)?;
+    let config_skills = AppConfig::load()
+        .map(|config| config.chat.skills)
+        .unwrap_or_default();
+    let skills = usable_skills(resolve_skills(
+        &SkillSources {
+            cli: &args.skills,
+            env: &env_skills(),
+            config: &config_skills,
+        },
+        dirs::home_dir().as_deref(),
+    ));
+    let plugin = write_skill_plugin(&skills)?;
+    let plugin_args = plugin
+        .as_ref()
+        .map(|plugin| build_plugin_args(plugin.path()))
+        .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
         mcp_config_path: &mcp_config_path,
+        plugin_args: &plugin_args,
         timeout_secs: args.timeout,
         theme_config: &theme_config,
     };

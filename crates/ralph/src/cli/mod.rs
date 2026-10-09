@@ -152,6 +152,9 @@ pub struct ChatArgs {
 
     #[arg(long, default_value_t = CHAT_TIMEOUT_SECS)]
     pub timeout: u64,
+
+    #[arg(long = "skill", value_name = "PATH")]
+    pub skills: Vec<std::path::PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
