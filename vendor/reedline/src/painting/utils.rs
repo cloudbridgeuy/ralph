@@ -2,6 +2,10 @@ use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// Cuts `line` to at most `max_width` columns.
+///
+/// ANSI escape sequences are kept and take no width, so a style that opens
+/// before the cut still reaches the terminal.
 pub(crate) fn truncate_to_width(line: &str, max_width: u16) -> String {
     let mut out = String::with_capacity(line.len());
     let mut used = 0;

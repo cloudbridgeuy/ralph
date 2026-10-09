@@ -1112,6 +1112,11 @@ impl Painter {
         Ok(())
     }
 
+    /// The footer of `prompt`, one entry per row, each cut to the screen width.
+    ///
+    /// Empty on a dumb terminal, or when the footer and the `required_lines`
+    /// above it would not leave the last row free: the buffer and the menu
+    /// have priority over the footer.
     fn footer_lines(&self, prompt: &dyn Prompt, required_lines: u16) -> Vec<String> {
         let text = prompt.render_prompt_footer();
         if self.term_is_dumb || text.is_empty() {
@@ -1130,6 +1135,8 @@ impl Painter {
         }
     }
 
+    /// Prints `footer` from `footer_row` down, resetting the style after each
+    /// row so a footer cannot leak its colors into the next paint.
     fn print_footer(&mut self, footer: &[String]) -> Result<()> {
         for (offset, line) in footer.iter().enumerate() {
             self.stdout
@@ -1140,6 +1147,10 @@ impl Painter {
         Ok(())
     }
 
+    /// Erases the footer painted last, before the painter yields the terminal,
+    /// and puts the cursor back where the paint left it.
+    ///
+    /// A no-op when no footer is on screen.
     pub(crate) fn clear_footer(&mut self) -> Result<()> {
         if self.footer.is_empty() {
             return Ok(());
@@ -3343,30 +3354,27 @@ mod tests {
         }
     }
 
+    /// [`TestPrompt`] with a footer.
     struct FooterPrompt(&'static str);
 
     impl Prompt for FooterPrompt {
         fn render_prompt_left(&self) -> Cow<'_, str> {
-            "> ".into()
+            TestPrompt.render_prompt_left()
         }
-
         fn render_prompt_right(&self) -> Cow<'_, str> {
-            "".into()
+            TestPrompt.render_prompt_right()
         }
-
-        fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<'_, str> {
-            "".into()
+        fn render_prompt_indicator(&self, mode: PromptEditMode) -> Cow<'_, str> {
+            TestPrompt.render_prompt_indicator(mode)
         }
-
         fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
-            "".into()
+            TestPrompt.render_prompt_multiline_indicator()
         }
-
         fn render_prompt_history_search_indicator(
             &self,
-            _history_search: PromptHistorySearch,
+            search: PromptHistorySearch,
         ) -> Cow<'_, str> {
-            "".into()
+            TestPrompt.render_prompt_history_search_indicator(search)
         }
 
         fn render_prompt_footer(&self) -> Cow<'_, str> {

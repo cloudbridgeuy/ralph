@@ -302,6 +302,10 @@ pub trait Prompt: Send {
     }
 
     /// Lines painted below the input, separated by `\n`
+    ///
+    /// Each line is cut to the screen width. The footer is dropped on a dumb
+    /// terminal, and whenever it does not fit below the buffer and menu with a
+    /// row to spare, including while the buffer fills the screen.
     fn render_prompt_footer(&self) -> Cow<'_, str> {
         Cow::Borrowed("")
     }

@@ -1066,6 +1066,11 @@ impl Reedline {
         poll
     }
 
+    /// Erases the prompt footer, then returns the state from
+    /// [`Painter::state_before_suspension`] for the host to hand back.
+    ///
+    /// A host command or external break runs on the rows below the prompt, so
+    /// the footer is taken off them first.
     fn suspend_painter(&mut self) -> Result<PainterSuspendedState> {
         self.painter.clear_footer()?;
         Ok(self.painter.state_before_suspension())
