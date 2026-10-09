@@ -92,6 +92,9 @@ pub enum Commands {
 
     #[command(hide = true)]
     ChatNap(ChatNapArgs),
+
+    #[command(hide = true)]
+    WorkerMcp(WorkerMcpArgs),
 }
 
 /// Arguments for the `meeting` subcommand.
@@ -155,6 +158,15 @@ pub struct ChatArgs {
 pub struct ChatMcpArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct WorkerMcpArgs {
+    #[arg(long, value_name = "WORKER")]
+    pub id: String,
+
+    #[arg(long, value_name = "DIR")]
+    pub inbox: std::path::PathBuf,
 }
 
 #[derive(clap::Args, Debug)]

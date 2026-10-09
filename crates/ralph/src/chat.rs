@@ -12,10 +12,12 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, SubprocessError,
 };
 use crate::warn::{warn, warn_if_err};
+use crate::worker_mcp::Inbox;
 use ralph_core::chat::{
     build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT, VIEW_LINES,
 };
 use ralph_core::chat_memory::{usage_record, view, CallKind, Role};
+use ralph_core::worker::chat_message;
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
@@ -25,11 +27,16 @@ use std::borrow::Cow;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 const PROMPT: &str = ">>> ";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
+const INBOX_DIR: &str = "inbox";
+const INBOX_POLL: Duration = Duration::from_millis(500);
 
 fn default_store() -> io::Result<PathBuf> {
     dirs::home_dir()
@@ -37,7 +44,10 @@ fn default_store() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other("home directory not found"))
 }
 
-fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>> {
+fn build_editor(
+    store_dir: &Path,
+    mail: Arc<AtomicBool>,
+) -> Result<Reedline, Box<dyn std::error::Error>> {
     let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     let mut keybindings = default_emacs_keybindings();
     for (modifier, key_code) in [
@@ -56,7 +66,8 @@ fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>
     Ok(Reedline::create()
         .with_history(Box::new(history))
         .with_edit_mode(Box::new(Emacs::new(keybindings)))
-        .with_buffer_editor(Command::new(editor), store_dir.join(EDITOR_FILE)))
+        .with_buffer_editor(Command::new(editor), store_dir.join(EDITOR_FILE))
+        .with_break_signal(mail))
 }
 
 struct ChatPrompt;
@@ -93,11 +104,30 @@ impl Prompt for ChatPrompt {
     }
 }
 
-fn next_message(editor: &mut Reedline) -> io::Result<Option<String>> {
+enum Input {
+    Message(String),
+    Mail,
+    Quit,
+}
+
+fn next_input(editor: &mut Reedline) -> io::Result<Input> {
     Ok(match editor.read_line(&ChatPrompt)? {
-        Signal::Success(line) => Some(line.trim().to_string()).filter(|line| !line.is_empty()),
-        _ => None,
+        Signal::Success(line) if !line.trim().is_empty() => Input::Message(line.trim().to_string()),
+        Signal::ExternalBreak(_) => Input::Mail,
+        _ => Input::Quit,
     })
+}
+
+fn watch_inbox(dir: PathBuf, mail: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let inbox = Inbox::new(dir);
+        loop {
+            if inbox.has_mail() {
+                mail.store(true, Ordering::Relaxed);
+            }
+            std::thread::sleep(INBOX_POLL);
+        }
+    });
 }
 
 fn print_rule() {
@@ -125,10 +155,10 @@ struct Turn<'a> {
 }
 
 impl Turn<'_> {
-    fn run(&self, message: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    fn run(&self, role: Role, message: &str) -> Result<bool, Box<dyn std::error::Error>> {
         let (entries, tree) = self.store.load_settled()?;
         let lines = view(&entries, &tree, VIEW_LINES).lines;
-        self.store.append(Role::User, message)?;
+        self.store.append(role, message)?;
         let command = build_chat_command(
             &turn_prompt(&lines, message),
             SYSTEM_PROMPT,
@@ -231,9 +261,28 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         timeout_secs: args.timeout,
         theme_config: &theme_config,
     };
-    let mut editor = build_editor(&store_dir)?;
-    while let Some(message) = next_message(&mut editor)? {
-        if !turn.run(&message)? {
+    let inbox_dir = store_dir.join(INBOX_DIR);
+    let inbox = Inbox::new(inbox_dir.clone());
+    let mail = Arc::new(AtomicBool::new(false));
+    watch_inbox(inbox_dir, Arc::clone(&mail));
+    let mut editor = build_editor(&store_dir, mail)?;
+    loop {
+        let reports = inbox.drain()?;
+        let (role, message) = if reports.is_empty() {
+            match next_input(&mut editor)? {
+                Input::Message(message) => (Role::User, message),
+                Input::Mail => {
+                    println!();
+                    continue;
+                }
+                Input::Quit => break,
+            }
+        } else {
+            let message = chat_message(&reports);
+            println!("{message}");
+            (Role::Worker, message)
+        };
+        if !turn.run(role, &message)? {
             break;
         }
     }

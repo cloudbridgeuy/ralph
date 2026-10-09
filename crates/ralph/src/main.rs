@@ -46,12 +46,13 @@ mod strategy;
 pub mod stream_processor;
 pub mod subprocess;
 pub mod warn;
+mod worker_mcp;
 
 use clap::Parser;
 use cli::{
     AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, IterationsArgs, MeetingArgs,
     MeetingMcpArgs, PersonaAction, PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs,
-    StrategyAction, StrategyArgs, StrategyExecuteArgs,
+    StrategyAction, StrategyArgs, StrategyExecuteArgs, WorkerMcpArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -81,6 +82,7 @@ fn main() -> ExitCode {
         Commands::Chat(args) => chat::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
+        Commands::WorkerMcp(args) => execute_worker_mcp(args),
     };
 
     match result {
@@ -565,6 +567,14 @@ fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>>
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     chat_mcp::run_stdio_server(&store, stdin.lock(), stdout.lock())?;
+    Ok(())
+}
+
+fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let inbox = worker_mcp::Inbox::new(args.inbox);
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    worker_mcp::run_stdio_server(&args.id, &inbox, stdin.lock(), stdout.lock())?;
     Ok(())
 }
 

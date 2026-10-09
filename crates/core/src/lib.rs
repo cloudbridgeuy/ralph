@@ -31,3 +31,4 @@ pub mod session;
 pub mod strategy;
 pub mod stream;
 pub mod transcript;
+pub mod worker;
