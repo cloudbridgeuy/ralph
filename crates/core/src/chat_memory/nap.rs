@@ -86,7 +86,7 @@ pub fn nap_prompt(entries: &[Entry], tree: &Tree, node: Node) -> Result<String, 
     Ok(format!(
         "You write one line of a chat memory tree.\n\
          Summarize the input below in ONE line of at most {SUMMARY_BYTES} bytes, about 70 words. Use the space up to the limit. Non-ASCII characters cost 2-4 bytes.\n\
-         Keep, in priority order: 1) the user's words (orders, decisions, corrections, preferences, reasons), kept close to verbatim; 2) lasting effects, and what failed and why; 3) findings and open questions; 4) least: steps taken and outcomes.\n\
+         Keep, in priority order: 1) the user's words (orders, decisions, corrections, preferences, reasons), kept close to verbatim; 2) lasting effects, commit SHAs, Linear ids and worker outcomes, copied exactly, and what failed and why; 3) findings and open questions; 4) least: steps taken and outcomes.\n\
          Lines with role worker come from agents working for the user. Never attribute their words to the user.\n\
          Name a minor item in a word or two rather than drop it.\n\
          Copy names, numbers, ids, paths and errors from the content exactly. Do not copy the `#<id> <role> <timestamp>` prefix that starts each input line.\n\
@@ -117,6 +117,7 @@ mod tests {
         let prompt = leaf_prompt();
         for needle in [
             "close to verbatim",
+            "commit SHAs, Linear ids and worker outcomes, copied exactly",
             "Copy names, numbers, ids, paths and errors",
             "rather than drop it",
             "further along than it was",
