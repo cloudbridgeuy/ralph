@@ -80,6 +80,27 @@ pub struct AppConfig {
     /// Ask command configuration section.
     #[serde(default)]
     pub ask: AskSection,
+
+    #[serde(default)]
+    pub chat: ChatSection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSection {
+    #[serde(default = "default_mcp_servers")]
+    pub mcp_servers: Vec<String>,
+}
+
+fn default_mcp_servers() -> Vec<String> {
+    vec!["mcptools".to_string()]
+}
+
+impl Default for ChatSection {
+    fn default() -> Self {
+        Self {
+            mcp_servers: default_mcp_servers(),
+        }
+    }
 }
 
 /// Ask command configuration section.
@@ -218,6 +239,25 @@ mod tests {
     }
 
     #[test]
+    fn chat_section_defaults() {
+        assert_eq!(AppConfig::new().chat.mcp_servers, ["mcptools"]);
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[chat]\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.mcp_servers, ["mcptools"]);
+    }
+
+    #[test]
+    fn chat_section_parses_mcp_servers() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[chat]\nmcp_servers = [\"a\", \"b\"]\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.mcp_servers, ["a", "b"]);
+    }
+
+    #[test]
     fn test_load_nonexistent_returns_default() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("nonexistent.toml");
@@ -327,6 +367,7 @@ mod tests {
                 no_background: true,
             },
             ask: AskSection::default(),
+            chat: ChatSection::default(),
         };
 
         config.save_to(&path).unwrap();
@@ -380,6 +421,7 @@ mod tests {
                 no_background: false,
             },
             ask: AskSection::default(),
+            chat: ChatSection::default(),
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

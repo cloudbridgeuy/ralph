@@ -1,12 +1,14 @@
 use crate::warn::warn;
 use ralph_core::chat_memory::{
-    check_summary, encode_entry, encode_record, nap_prompt, parse_log, parse_tree, pending,
-    retry_prompt, Entry, Node, Role, Tree, MAX_NAP_ATTEMPTS,
+    check_summary, encode_entry, encode_record, encode_usage, nap_prompt, parse_log, parse_tree,
+    pending, retry_prompt, Entry, Node, Role, Tree, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub struct Store {
@@ -94,6 +96,31 @@ impl Store {
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         file.write_all(line.as_bytes())?;
         file.sync_all()
+    }
+
+    pub fn append_usage(&self, record: &UsageRecord) -> io::Result<()> {
+        let line = encode_usage(record).map_err(io::Error::other)?;
+        let path = self.dir.join("usage.jsonl");
+        check_path(&path)?;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        file.write_all(line.as_bytes())
+    }
+
+    pub fn write_mcp_config(&self, config: &serde_json::Value) -> io::Result<PathBuf> {
+        let path = self.dir.join("mcp.json");
+        check_path(&path)?;
+        let mut options = OpenOptions::new();
+        options.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&path)?;
+        file.write_all(config.to_string().as_bytes())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(path)
     }
 
     pub fn nap(&self, mut curate: impl FnMut(&str) -> Result<String, String>) -> io::Result<()> {

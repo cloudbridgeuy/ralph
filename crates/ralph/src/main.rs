@@ -592,6 +592,13 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
             },
         )
         .map_err(|e| e.to_string())?;
+        if let Some(record) = ralph_core::chat_memory::usage_record(
+            ralph_core::chat_memory::CallKind::Nap,
+            chrono::Utc::now().to_rfc3339(),
+            &result.stream_result.costs,
+        ) {
+            warn_if_err(store.append_usage(&record), "Failed to record chat usage");
+        }
         let response = iteration::extract_response_text(&result.stream_result.output_blocks);
         ralph_core::meeting_memory::nap_summary(result.exit_code, response.as_deref())
     })?;

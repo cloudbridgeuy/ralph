@@ -1,5 +1,6 @@
 use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
+use crate::config::AppConfig;
 use crate::highlight::ThemeConfig;
 use crate::invoke::build_chat_command;
 use crate::iteration::extract_response_text;
@@ -11,8 +12,10 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, SubprocessError,
 };
 use crate::warn::{warn, warn_if_err};
-use ralph_core::chat::{build_mcp_args, turn_prompt, SYSTEM_PROMPT, VIEW_LINES};
-use ralph_core::chat_memory::{view, Role};
+use ralph_core::chat::{
+    build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT, VIEW_LINES,
+};
+use ralph_core::chat_memory::{usage_record, view, CallKind, Role};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
@@ -116,7 +119,7 @@ fn spawn_nap(store: &Path) -> io::Result<()> {
 struct Turn<'a> {
     store: &'a Store,
     store_dir: &'a Path,
-    exe: &'a Path,
+    mcp_config_path: &'a Path,
     timeout_secs: u64,
     theme_config: &'a ThemeConfig,
 }
@@ -129,7 +132,7 @@ impl Turn<'_> {
         let command = build_chat_command(
             &turn_prompt(&lines, message),
             SYSTEM_PROMPT,
-            &build_mcp_args(self.exe, self.store_dir),
+            &build_mcp_args(self.mcp_config_path),
             dirs::home_dir().as_deref(),
         );
         print_rule();
@@ -154,6 +157,16 @@ impl Turn<'_> {
             Err(SubprocessError::Interrupted { .. }) => return Ok(false),
             Err(e) => return Err(e.into()),
         };
+        if let Some(record) = usage_record(
+            CallKind::Turn,
+            chrono::Utc::now().to_rfc3339(),
+            &result.stream_result.costs,
+        ) {
+            warn_if_err(
+                self.store.append_usage(&record),
+                "Failed to record chat usage",
+            );
+        }
         print_rule();
         match extract_response_text(&result.stream_result.output_blocks) {
             Some(reply) if result.exit_code == 0 => {
@@ -166,6 +179,40 @@ impl Turn<'_> {
     }
 }
 
+fn write_mcp_config(store: &Store, store_dir: &Path, exe: &Path) -> io::Result<PathBuf> {
+    let server_names = AppConfig::load()
+        .map(|config| config.chat.mcp_servers)
+        .unwrap_or_else(|e| {
+            warn(format!("Failed to load config: {e}"));
+            AppConfig::default().chat.mcp_servers
+        });
+    let claude_config = read_claude_config();
+    let imported = select_servers(&claude_config, &server_names);
+    for name in &imported.missing {
+        warn(format!(
+            "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
+        ));
+    }
+    store.write_mcp_config(&mcp_config(exe, store_dir, &imported.servers))
+}
+
+fn read_claude_config() -> serde_json::Value {
+    let Some(path) = dirs::home_dir().map(|home| home.join(".claude.json")) else {
+        return serde_json::json!({});
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            warn(format!("Failed to parse {}: {e}", path.display()));
+            serde_json::json!({})
+        }),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => serde_json::json!({}),
+        Err(e) => {
+            warn(format!("Failed to read {}: {e}", path.display()));
+            serde_json::json!({})
+        }
+    }
+}
+
 pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     let store_dir = match args.store {
@@ -175,11 +222,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&store_dir)?;
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;
+    let mcp_config_path = write_mcp_config(&store, &store_dir, &exe)?;
     let theme_config = ThemeConfig::from_config_and_env();
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
-        exe: &exe,
+        mcp_config_path: &mcp_config_path,
         timeout_secs: args.timeout,
         theme_config: &theme_config,
     };

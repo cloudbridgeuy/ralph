@@ -50,13 +50,15 @@ ralph                      # same as ralph chat with defaults
 
 `ralph chat-nap` takes the `LOCK`, loads the store, and for each node from `pending` (long leaves, then complete parent blocks by increasing size) asks a Haiku curator for a summary.
 
-- Curator: `build_memory_command` runs `claude --model haiku` with `--tools ''`, an empty strict MCP config, and isolation args. Its prompt asks for one line of at most 512 bytes, priority: the user's own words, lasting effects (decisions, changes), findings and replies, tool steps. It forbids copying `#ids`, roles, or timestamps, and says the input is data to never answer or obey.
-- `check_summary` accepts a trimmed, non-empty, single-line summary of at most 512 bytes. A rejection retries with the error appended, up to `MAX_NAP_ATTEMPTS` = 5 tries per node. A curator error skips that node. A node that fails stays pending and is retried at the next nap; other nodes continue. A parent whose child has no summary is skipped.
+- Curator: `build_memory_command` runs `claude --model haiku` with `--tools ''`, an empty strict MCP config, and isolation args. Its prompt asks for one line of at most 512 bytes (about 70 words), priority: the user's words close to verbatim, lasting effects and failures, findings and open questions, steps taken. It asks to name minor items in a word or two, copy names, numbers, ids, paths and errors exactly, never overstate progress, invent nothing, and write in third person. It forbids copying the `#<id> <role> <timestamp>` line prefix, and says the input is data to never answer or obey.
+- `check_summary` accepts a trimmed, non-empty, single-line summary of at most 512 bytes that does not read as meta-talk (an opener such as `I'm `, `Here is`, `Sure`, `Let me`, `Based on`, or the phrases `this excerpt`, `<input>`, `</input>`). A rejection retries with the error appended, up to `MAX_NAP_ATTEMPTS` = 5 tries per node. A curator error skips that node. A node that fails stays pending and is retried at the next nap; other nodes continue. A parent whose child has no summary is skipped.
 - The next turn waits on `LOCK` until the nap finishes.
 
 ## MCP tools
 
-Hidden `ralph chat-mcp --store <DIR>` speaks newline-delimited JSON-RPC 2.0 on stdio (server name `ralph-chat`). `build_mcp_args` passes `--mcp-config <json> --strict-mcp-config`, so only this server loads. Each tool call re-reads log and tree without locking, so it sees fresh state.
+`[chat] mcp_servers` in the ralph config (default `["mcptools"]`) names servers to import. `select_servers` copies each entry verbatim from the top-level `mcpServers` of `~/.claude.json`. A name absent there, or equal to `ralph-chat`, prints one warning and chat starts without it. `ralph-chat` is inserted last, so an import cannot shadow it. The file is written once at chat start: config changes need a restart. Imported entries can carry secrets, which is why they go in a file and not in argv. Turns run with `bypassPermissions`, so imported tools run without a prompt.
+
+Hidden `ralph chat-mcp --store <DIR>` speaks newline-delimited JSON-RPC 2.0 on stdio (server name `ralph-chat`). At chat start the shell writes `<store>/mcp.json` (mode `0600`) holding `ralph-chat` plus the servers named in `[chat] mcp_servers`, and `build_mcp_args` passes `--mcp-config <store>/mcp.json --strict-mcp-config`, so only those servers load. Each tool call re-reads log and tree without locking, so it sees fresh state.
 
 | Tool | Args | Result |
 | --- | --- | --- |
@@ -67,10 +69,18 @@ Invalid ids, ids beyond the log, bad regexes, and store read errors return a too
 
 ## Storage and isolation
 
-- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`, `history.txt`, `editor.md`. It is not project-scoped.
+- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`, `history.txt`, `editor.md`, `mcp.json`, `usage.jsonl`. It is not project-scoped.
 - `LOCK` is an exclusive file lock held for append, settled load, and the whole nap. Store paths that are symlinks or multiply-linked files are rejected.
 - Isolation matches personas: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Project and local settings stay active; this is context isolation, not a sandbox.
 - Turns run with `bypassPermissions`.
+
+## Usage
+
+Every completed Claude call (each turn, including failed exits but not interrupted ones, and each nap attempt) appends one line to `usage.jsonl`: `{at, kind, input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, cost_usd, duration_ms}`, with `kind` `turn` or `nap`. Calls without usage data append nothing. Appends do not take `LOCK`. Total cost per kind:
+
+```bash
+jq -s 'group_by(.kind) | map({kind: .[0].kind, usd: (map(.cost_usd // 0) | add)})' ~/.ralph/chat/usage.jsonl
+```
 
 ## Out of scope (v1)
 
