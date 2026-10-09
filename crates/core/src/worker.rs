@@ -56,7 +56,7 @@ pub fn command_definitions() -> [Value; 2] {
         }),
         json!({
             "name": "reply",
-            "description": "Send a message to a running worker. Only with what the person decided in their latest message.",
+            "description": "Send a message to a running worker. Only with what the person asked in their latest message, or, when a worker asks, with an answer the person already settled in the chat.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -91,9 +91,10 @@ fn worker_id(args: &Value) -> Result<String, String> {
     }
 }
 
-pub fn person_has_floor(entries: &[Entry]) -> Result<(), String> {
-    match entries.last() {
-        Some(entry) if entry.role == Role::User => Ok(()),
+pub fn command_allowed(command: &Command, entries: &[Entry]) -> Result<(), String> {
+    let last = entries.last().map(|entry| entry.role);
+    match (command, last) {
+        (_, Some(Role::User)) | (Command::Reply { .. }, Some(Role::Worker)) => Ok(()),
         _ => Err(
             "Only the person can direct workers. Relay this to them and wait for their answer."
                 .to_string(),
@@ -284,10 +285,27 @@ mod tests {
     }
 
     #[test]
-    fn person_has_floor_only_after_a_user_message() {
-        assert!(person_has_floor(&[entry(Role::Assistant), entry(Role::User)]).is_ok());
-        assert!(person_has_floor(&[entry(Role::User), entry(Role::Worker)]).is_err());
-        assert!(person_has_floor(&[]).is_err());
+    fn spawn_allowed_only_after_a_user_message() {
+        let spawn = Command::Spawn {
+            id: "A".into(),
+            task: "t".into(),
+        };
+        assert!(command_allowed(&spawn, &[entry(Role::Assistant), entry(Role::User)]).is_ok());
+        assert!(command_allowed(&spawn, &[entry(Role::User), entry(Role::Worker)]).is_err());
+        assert!(command_allowed(&spawn, &[entry(Role::User), entry(Role::Assistant)]).is_err());
+        assert!(command_allowed(&spawn, &[]).is_err());
+    }
+
+    #[test]
+    fn reply_allowed_after_a_user_message_or_a_worker_report() {
+        let reply = Command::Reply {
+            id: "A".into(),
+            text: "t".into(),
+        };
+        assert!(command_allowed(&reply, &[entry(Role::Assistant), entry(Role::User)]).is_ok());
+        assert!(command_allowed(&reply, &[entry(Role::User), entry(Role::Worker)]).is_ok());
+        assert!(command_allowed(&reply, &[entry(Role::User), entry(Role::Assistant)]).is_err());
+        assert!(command_allowed(&reply, &[]).is_err());
     }
 
     #[test]
