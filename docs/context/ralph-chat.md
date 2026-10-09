@@ -77,7 +77,7 @@ Invalid ids, ids beyond the log, bad regexes, and store read errors return a too
 
 ## Usage
 
-Every completed Claude call (each turn, including failed exits but not interrupted ones, and each nap attempt) appends one line to `usage.jsonl`: `{at, kind, input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, cost_usd, duration_ms}`, with `kind` `turn` or `nap`. Calls without usage data append nothing. Appends do not take `LOCK`. Total cost per kind:
+Every completed Claude call (each turn, including failed exits but not interrupted ones, and each nap attempt) appends one line to `usage.jsonl`: `{at, kind, trigger, input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, cost_usd, duration_ms}`, with `kind` `turn` or `nap`, and `trigger` (turn only) `user` or `worker`. Calls without usage data append nothing. Appends do not take `LOCK`. Total cost per kind:
 
 ```bash
 jq -s 'group_by(.kind) | map({kind: .[0].kind, usd: (map(.cost_usd // 0) | add)})' ~/.ralph/chat/usage.jsonl
