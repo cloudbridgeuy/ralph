@@ -19,8 +19,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_memory::{usage_record, view, CallKind, Role, Trigger};
 use ralph_core::chat_skills::{
-    build_plugin_args, disables_model_invocation, expand_slash_command, plan_links,
-    plugin_manifest, resolve_skills, ChatSkill, SkillSources,
+    build_plugin_args, expand_slash_command, plan_links, plugin_manifest, resolve_skills,
+    ChatSkill, SkillSources,
 };
 use ralph_core::worker::{chat_message, INBOX_DIR};
 use reedline::{
@@ -263,16 +263,7 @@ fn usable_skills(dirs: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
         .filter_map(|dir| {
             let dir = std::path::absolute(&dir).unwrap_or(dir);
             match std::fs::read_to_string(dir.join("SKILL.md")) {
-                Ok(skill_md) => {
-                    if disables_model_invocation(&skill_md) {
-                        warn(format!(
-                            "chat: skill {} sets disable-model-invocation; the model will not invoke it on its own, but /{} in chat runs it",
-                            dir.display(),
-                            dir.file_name().unwrap_or_default().to_string_lossy()
-                        ));
-                    }
-                    Some((dir, skill_md))
-                }
+                Ok(skill_md) => Some((dir, skill_md)),
                 Err(e) => {
                     warn(format!(
                         "chat: skipping skill {}: cannot read SKILL.md ({e})",

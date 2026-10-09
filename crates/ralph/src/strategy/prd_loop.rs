@@ -403,10 +403,10 @@ fn filter_directives_by_persona(
                 .filter(|d| {
                     let allowed = available_personas.iter().any(|p| p == &d.target);
                     if !allowed {
-                        eprintln!(
-                            "Warning: directive targets unlisted persona '{}', skipping",
+                        crate::warn::warn(format!(
+                            "directive targets unlisted persona '{}', skipping",
                             d.target
-                        );
+                        ));
                     }
                     allowed
                 })

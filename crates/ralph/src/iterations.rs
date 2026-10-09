@@ -213,11 +213,11 @@ fn load_session_iterations(
         Ok(entries) => entries,
         Err(e) => {
             // Log warning but don't fail - session might have been deleted
-            eprintln!(
-                "Warning: Could not read session directory {}: {}",
+            crate::warn::warn(format!(
+                "Could not read session directory {}: {}",
                 session_dir.display(),
                 e
-            );
+            ));
             return Ok(Vec::new());
         }
     };

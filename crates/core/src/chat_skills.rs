@@ -54,17 +54,6 @@ pub fn plan_links(dirs: &[PathBuf]) -> SkillLinks {
     SkillLinks { links, dropped }
 }
 
-pub fn disables_model_invocation(skill_md: &str) -> bool {
-    let mut lines = skill_md.lines();
-    if lines.next().map(str::trim_end) != Some("---") {
-        return false;
-    }
-    lines
-        .take_while(|line| line.trim_end() != "---")
-        .filter_map(|line| line.split_once(':'))
-        .any(|(key, value)| key.trim() == "disable-model-invocation" && value.trim() == "true")
-}
-
 pub struct ChatSkill {
     pub name: String,
     pub dir: PathBuf,
@@ -179,24 +168,6 @@ mod tests {
             ]
         );
         assert_eq!(plan.dropped, paths(&["/y/show", "/"]));
-    }
-
-    #[test]
-    fn frontmatter_flag_detection() {
-        assert!(disables_model_invocation(
-            "---\nname: a\ndisable-model-invocation: true\n---\nbody"
-        ));
-        assert!(!disables_model_invocation(
-            "---\ndisable-model-invocation: false\n---\n"
-        ));
-        assert!(!disables_model_invocation("---\nname: a\n---\nbody"));
-        assert!(!disables_model_invocation("just text"));
-        assert!(!disables_model_invocation(
-            "---\nname: a\n---\ndisable-model-invocation: true\n"
-        ));
-        assert!(!disables_model_invocation(
-            "disable-model-invocation: true\n---\n"
-        ));
     }
 
     fn skill(skill_md: &str) -> Vec<ChatSkill> {
