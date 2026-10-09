@@ -58,6 +58,51 @@ pub fn build_mcp_args(config_path: &Path) -> Vec<String> {
     ]
 }
 
+pub struct Subagent {
+    name: &'static str,
+    description: &'static str,
+    model: &'static str,
+    prompt: &'static str,
+}
+
+pub const SUBAGENTS: [Subagent; 3] = [
+    Subagent {
+        name: "evidence-collector",
+        description: "Collects bounded, read-only evidence: multi-file reads, broad searches, and test runs.",
+        model: "haiku",
+        prompt: "Collect the requested evidence with read-only inspection. Report relevant files, commands, outputs, and uncertainty. Do not modify files or dispatch other agents.",
+    },
+    Subagent {
+        name: "implementer",
+        description: "Implements scoped code changes and verifies the result.",
+        model: "sonnet",
+        prompt: "Implement the requested scoped change. Read the affected code before editing. Change only the files the dispatch prompt names; preserve unrelated work. Run focused verification and report the evidence and remaining limits.",
+    },
+    Subagent {
+        name: "reviser",
+        description: "Fixes or finishes work that fell short of the plan, then verifies and reports.",
+        model: "opus",
+        prompt: "Repair work that fell short of the plan. Compare the result with the plan, fix missing or broken parts yourself, change only what the plan requires or the defect touches, then verify and report what you changed and the evidence.",
+    },
+];
+
+pub fn build_agents_args() -> Vec<String> {
+    let agents: Map<String, Value> = SUBAGENTS
+        .iter()
+        .map(|agent| {
+            (
+                agent.name.to_string(),
+                json!({
+                    "description": agent.description,
+                    "prompt": agent.prompt,
+                    "model": agent.model,
+                }),
+            )
+        })
+        .collect();
+    vec!["--agents".to_string(), Value::Object(agents).to_string()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +176,17 @@ mod tests {
             build_mcp_args(Path::new("/s/mcp.json")),
             ["--mcp-config", "/s/mcp.json", "--strict-mcp-config"]
         );
+    }
+
+    #[test]
+    fn build_agents_args_lists_three_roles_with_models() {
+        let args = build_agents_args();
+        assert_eq!(args[0], "--agents");
+        let parsed: Value = serde_json::from_str(&args[1]).unwrap();
+        let roles = parsed.as_object().unwrap();
+        assert_eq!(roles.len(), 3);
+        assert_eq!(parsed["evidence-collector"]["model"], "haiku");
+        assert_eq!(parsed["implementer"]["model"], "sonnet");
+        assert_eq!(parsed["reviser"]["model"], "opus");
     }
 }
