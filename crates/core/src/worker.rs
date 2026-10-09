@@ -2,6 +2,7 @@ use crate::chat_memory::{Entry, Role};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub const SERVER_NAME: &str = "ralph-worker";
@@ -134,15 +135,19 @@ pub fn claude_args(mcp_config: &Path, task: &str) -> Vec<String> {
     ]
 }
 
-/// The tmux server keeps the environment it started with, so workers would miss keys
-/// exported later. ANTHROPIC_API_KEY stays out: it would bill workers to the API.
-pub const FORWARDED_ENV: [&str; 1] = ["LINEAR_API_KEY"];
+/// The tmux server keeps the environment it started with, so each worker gets the
+/// parent's variables explicitly. tmux sets its own pane variables.
+const TMUX_OWNED_ENV: [&str; 2] = ["TMUX", "TMUX_PANE"];
 
-pub fn tmux_env_args(lookup: impl Fn(&str) -> Option<String>) -> Vec<String> {
-    FORWARDED_ENV
-        .iter()
-        .filter_map(|name| lookup(name).map(|value| ["-e".to_string(), format!("{name}={value}")]))
-        .flatten()
+pub fn tmux_env_args(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<OsString> {
+    vars.into_iter()
+        .filter(|(name, _)| !TMUX_OWNED_ENV.iter().any(|owned| name == owned))
+        .flat_map(|(name, value)| {
+            let mut pair = name;
+            pair.push("=");
+            pair.push(value);
+            [OsString::from("-e"), pair]
+        })
         .collect()
 }
 
@@ -240,10 +245,13 @@ mod tests {
     }
 
     #[test]
-    fn tmux_env_args_forwards_only_set_keys() {
-        let set = tmux_env_args(|name| (name == "LINEAR_API_KEY").then(|| "k".to_string()));
-        assert_eq!(set, ["-e", "LINEAR_API_KEY=k"]);
-        assert!(tmux_env_args(|_| None).is_empty());
+    fn tmux_env_args_passes_every_variable_but_tmux_own() {
+        let vars = [("LINEAR_API_KEY", "k"), ("TMUX", "/tmp/s"), ("HOME", "/h")]
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+        assert_eq!(
+            tmux_env_args(vars),
+            ["-e", "LINEAR_API_KEY=k", "-e", "HOME=/h"].map(OsString::from)
+        );
     }
 
     fn entry(role: Role) -> Entry {

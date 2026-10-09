@@ -40,7 +40,7 @@ impl Workers {
         let config = self.write_config(id)?;
         run(Command::new("tmux")
             .args(["new-session", "-d", "-s", &session])
-            .args(tmux_env_args(|name| std::env::var(name).ok()))
+            .args(tmux_env_args(std::env::vars_os()))
             .arg("-c")
             .arg(&worktree)
             .args(claude_args(&config, task)))?;
