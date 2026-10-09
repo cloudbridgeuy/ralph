@@ -1,5 +1,6 @@
 [workspace]
 members = ["xtask/", "crates/*"]
+exclude = ["vendor/reedline"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -91,3 +92,6 @@ tokio = { version = "1.0", features = ["full"] }
 toml = "1.0.3"
 
 # UUID generation
+
+[patch.crates-io]
+reedline = { path = "vendor/reedline" }
