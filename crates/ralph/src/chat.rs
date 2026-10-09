@@ -18,6 +18,10 @@ use ralph_core::chat::{
     VIEW_LINES,
 };
 use ralph_core::chat_memory::{usage_record, view, CallKind, Role, Trigger};
+use ralph_core::chat_skills::{
+    build_plugin_args, disables_model_invocation, expand_slash_command, plan_links,
+    plugin_manifest, resolve_skills, ChatSkill, SkillSources,
+};
 use ralph_core::worker::{chat_message, INBOX_DIR};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
@@ -36,6 +40,7 @@ const PROMPT: &str = ">>> ";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
+const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 const INBOX_POLL: Duration = Duration::from_millis(500);
 
 fn default_store() -> io::Result<PathBuf> {
@@ -150,6 +155,8 @@ struct Turn<'a> {
     store: &'a Store,
     store_dir: &'a Path,
     mcp_config_path: &'a Path,
+    plugin_args: &'a [String],
+    skills: &'a [ChatSkill],
     timeout_secs: u64,
     theme_config: &'a ThemeConfig,
 }
@@ -159,10 +166,19 @@ impl Turn<'_> {
         let (entries, tree) = self.store.load_settled()?;
         let lines = view(&entries, &tree, VIEW_LINES).lines;
         self.store.append(trigger.role(), message)?;
+        let sent = match trigger {
+            Trigger::User => expand_slash_command(message, self.skills),
+            Trigger::Worker => Cow::Borrowed(message),
+        };
         let command = build_chat_command(
-            &turn_prompt(&lines, message),
+            &turn_prompt(&lines, &sent),
             SYSTEM_PROMPT,
-            &[build_mcp_args(self.mcp_config_path), build_agents_args()].concat(),
+            &[
+                build_mcp_args(self.mcp_config_path),
+                build_agents_args(),
+                self.plugin_args.to_vec(),
+            ]
+            .concat(),
             dirs::home_dir().as_deref(),
         );
         print_rule();
@@ -216,21 +232,102 @@ impl Turn<'_> {
     }
 }
 
-fn write_mcp_config(store: &Store, store_dir: &Path, exe: &Path) -> io::Result<PathBuf> {
-    let server_names = AppConfig::load()
-        .map(|config| config.chat.mcp_servers)
-        .unwrap_or_else(|e| {
-            warn(format!("Failed to load config: {e}"));
-            AppConfig::default().chat.mcp_servers
-        });
+fn write_mcp_config(
+    store: &Store,
+    store_dir: &Path,
+    exe: &Path,
+    server_names: &[String],
+) -> io::Result<PathBuf> {
     let claude_config = read_claude_config();
-    let imported = select_servers(&claude_config, &server_names);
+    let imported = select_servers(&claude_config, server_names);
     for name in &imported.missing {
         warn(format!(
             "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
         ));
     }
     store.write_mcp_config(&mcp_config(exe, store_dir, &imported.servers))
+}
+
+fn env_skills() -> Vec<PathBuf> {
+    std::env::var_os(SKILLS_ENV)
+        .map(|value| {
+            std::env::split_paths(&value)
+                .filter(|path| !path.as_os_str().is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn usable_skills(dirs: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
+    dirs.into_iter()
+        .filter_map(|dir| {
+            let dir = std::path::absolute(&dir).unwrap_or(dir);
+            match std::fs::read_to_string(dir.join("SKILL.md")) {
+                Ok(skill_md) => {
+                    if disables_model_invocation(&skill_md) {
+                        warn(format!(
+                            "chat: skill {} sets disable-model-invocation; the model will not invoke it on its own, but /{} in chat runs it",
+                            dir.display(),
+                            dir.file_name().unwrap_or_default().to_string_lossy()
+                        ));
+                    }
+                    Some((dir, skill_md))
+                }
+                Err(e) => {
+                    warn(format!(
+                        "chat: skipping skill {}: cannot read SKILL.md ({e})",
+                        dir.display()
+                    ));
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn link_skills(found: Vec<(PathBuf, String)>) -> Vec<ChatSkill> {
+    let dirs: Vec<PathBuf> = found.iter().map(|(dir, _)| dir.clone()).collect();
+    let plan = plan_links(&dirs);
+    for dir in &plan.dropped {
+        warn(format!(
+            "chat: skipping skill {}: name already taken by an earlier skill",
+            dir.display()
+        ));
+    }
+    plan.links
+        .into_iter()
+        .filter_map(|(name, dir)| {
+            let skill_md = found
+                .iter()
+                .find(|(found_dir, _)| *found_dir == dir)?
+                .1
+                .clone();
+            Some(ChatSkill {
+                name,
+                dir,
+                skill_md,
+            })
+        })
+        .collect()
+}
+
+fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<tempfile::TempDir>> {
+    if skills.is_empty() {
+        return Ok(None);
+    }
+    let plugin = tempfile::tempdir()?;
+    let manifest_dir = plugin.path().join(".claude-plugin");
+    let skills_dir = plugin.path().join("skills");
+    std::fs::create_dir_all(&manifest_dir)?;
+    std::fs::create_dir_all(&skills_dir)?;
+    std::fs::write(
+        manifest_dir.join("plugin.json"),
+        plugin_manifest().to_string(),
+    )?;
+    for skill in skills {
+        std::os::unix::fs::symlink(&skill.dir, skills_dir.join(&skill.name))?;
+    }
+    Ok(Some(plugin))
 }
 
 fn read_claude_config() -> serde_json::Value {
@@ -259,12 +356,33 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&store_dir)?;
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;
-    let mcp_config_path = write_mcp_config(&store, &store_dir, &exe)?;
+    let chat_config = AppConfig::load()
+        .map(|config| config.chat)
+        .unwrap_or_else(|e| {
+            warn(format!("Failed to load config: {e}"));
+            AppConfig::default().chat
+        });
+    let mcp_config_path = write_mcp_config(&store, &store_dir, &exe, &chat_config.mcp_servers)?;
+    let skills = link_skills(usable_skills(resolve_skills(
+        &SkillSources {
+            cli: &args.skills,
+            env: &env_skills(),
+            config: &chat_config.skills,
+        },
+        dirs::home_dir().as_deref(),
+    )));
+    let plugin = write_skill_plugin(&skills)?;
+    let plugin_args = plugin
+        .as_ref()
+        .map(|plugin| build_plugin_args(plugin.path()))
+        .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
         mcp_config_path: &mcp_config_path,
+        plugin_args: &plugin_args,
+        skills: &skills,
         timeout_secs: args.timeout,
         theme_config: &theme_config,
     };

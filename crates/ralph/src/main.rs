@@ -69,6 +69,7 @@ fn main() -> ExitCode {
     let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {
         store: None,
         timeout: cli::CHAT_TIMEOUT_SECS,
+        skills: Vec::new(),
     })) {
         Commands::Sessions(args) => execute_sessions(args),
         Commands::Iterations(args) => execute_iterations(args),

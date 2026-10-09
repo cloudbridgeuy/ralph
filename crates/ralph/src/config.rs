@@ -89,6 +89,8 @@ pub struct AppConfig {
 pub struct ChatSection {
     #[serde(default = "default_mcp_servers")]
     pub mcp_servers: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<PathBuf>,
 }
 
 fn default_mcp_servers() -> Vec<String> {
@@ -99,6 +101,7 @@ impl Default for ChatSection {
     fn default() -> Self {
         Self {
             mcp_servers: default_mcp_servers(),
+            skills: Vec::new(),
         }
     }
 }
@@ -255,6 +258,19 @@ mod tests {
         fs::write(&path, "[chat]\nmcp_servers = [\"a\", \"b\"]\n").unwrap();
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.chat.mcp_servers, ["a", "b"]);
+    }
+
+    #[test]
+    fn chat_section_parses_skills() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[chat]\nskills = [\"~/a\", \"/b\"]\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(
+            config.chat.skills,
+            [PathBuf::from("~/a"), PathBuf::from("/b")]
+        );
+        assert_eq!(config.chat.mcp_servers, ["mcptools"]);
     }
 
     #[test]
