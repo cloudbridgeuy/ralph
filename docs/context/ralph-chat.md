@@ -13,13 +13,14 @@ ralph                      # same as ralph chat with defaults
 - `--skill <PATH>` (repeatable) adds a skill directory. See Skills.
 - Hidden `--store <DIR>` overrides the store path. Default is `~/.ralph/chat`; a missing home directory is an error. The directory is created at startup.
 - Hidden subcommands: `ralph chat-mcp --store <DIR>` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
-- Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). An empty message, Ctrl-D, or Ctrl-C at the prompt quits. Ctrl-C during a turn interrupts it and ends the chat.
+- Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). Ctrl-D or Ctrl-C at the prompt quits; an empty message does nothing unless reports are unread (see Worker inbox). Ctrl-C during a turn interrupts it and ends the chat.
 - A dark-gray full-width rule (the shared termimad skin's `---`, default gray(6) `―`) prints before the turn and after the reply.
 
 ## Layout
 
 - `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `view`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts and `check_summary`; `usage.rs` has the per-call usage records.
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `SYSTEM_PROMPT`, `turn_prompt`, `build_mcp_args`.
+- `crates/core/src/chat_status.rs`: status line, footer hints, input routing, worker state parsing, memory size.
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat.rs`: turn loop shell, reedline input, nap spawn.
 - `crates/ralph/src/chat_memory.rs`: `Store` (files, LOCK, append, nap loop).
@@ -31,13 +32,22 @@ ralph                      # same as ralph chat with defaults
 
 1. `Store::load_settled` takes the `LOCK` (blocking until any running nap finishes), then reads log and tree.
 2. `view(entries, tree, VIEW_LINES)` builds the memory view. `VIEW_LINES` is 200.
-3. The user message is appended to the log.
+3. The user message, or one `worker` entry per report for a worker turn, is appended to the log.
 4. `build_chat_command` runs a fresh `claude --verbose --permission-mode bypassPermissions` with isolation args, `--append-system-prompt <SYSTEM_PROMPT>`, the MCP args, `--output-format stream-json`, and `-p <prompt>`. There is no `--resume` and no `--agent`. The prompt is the view lines, a blank line, `New message:`, then the message. Only view lines precede the message; no task text follows it.
 5. Output goes through the spinner subprocess runner and `StreamProcessor`, as in `ralph ask`.
 6. On exit code 0 with response text, the reply is appended verbatim and a detached `ralph chat-nap` is spawned (stdio null; spawn failure only warns). Otherwise a warning `chat turn failed (exit N)` prints and the loop continues. The user message stays in the log without a reply.
 7. An interrupted turn ends the chat. Other subprocess errors abort with an error.
 
 `SYSTEM_PROMPT` tells the model that the message starts with the compressed chat, that `#<id>` lines are summaries, to use `zoom` and `recall` before guessing or asking, how to handle `[worker ...]` messages, and never to claim manual saving. Its delegation rules keep turns short: the model reads inline only to scope (at most 3 tool calls per question), sends multi-file reads, broad searches and test runs to `evidence-collector`, all code edits to `implementer`, and fixes to `reviser`, and every dispatch prompt says "You are a subagent. Don't run mem."
+
+## Worker inbox
+
+Worker reports never interrupt the draft. A watcher thread polls every 500 ms and repaints the prompt in place (reedline `RepaintSignal`), keeping the buffer and cursor.
+
+- Status line: the first prompt line above `>>> `, `✉ <unread> unread · workers <id> <state>, ... · mem <msgs> msgs ~<k> tok`. It sheds detail as the terminal narrows (states, then names to a count, then labels) and never exceeds the width. Dim when stdout is a tty and `NO_COLOR` is unset.
+- Unread is the count of pending inbox files. Workers are tmux sessions named `ralph-<id>` (missing tmux or no server means none); a worker's state is the status of its latest report, else `running`. Memory is the log entry count and the view size at about 4 chars per token, refreshed every 5 s and after each turn or inbox read.
+- `/inbox`, or Enter on an empty prompt while reports are unread, drains the inbox: one `worker` log entry per report, then one turn with all reports in one message. With nothing unread, `/inbox` prints a note and Enter on an empty prompt does nothing.
+- Footer: `footer` in `chat_status.rs` builds a hint line, painted under the input with one empty line after it, so the prompt is never the last terminal line. Stock reedline 0.52.1 erases everything below the cursor on repaint, so `vendor/reedline` carries a patch (`Prompt::render_prompt_footer`) through `[patch.crates-io]`. Bracketed paste is on, so a multi-line paste stays in the draft.
 
 ## Memory
 
