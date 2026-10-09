@@ -1,16 +1,33 @@
 use crate::stream::IterationCosts;
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
+pub enum Trigger {
+    User,
+    Worker,
+}
+
+impl Trigger {
+    pub fn role(self) -> super::Role {
+        match self {
+            Trigger::User => super::Role::User,
+            Trigger::Worker => super::Role::Worker,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
 pub enum CallKind {
-    Turn,
+    Turn { trigger: Trigger },
     Nap,
 }
 
 #[derive(Debug, Serialize)]
 pub struct UsageRecord {
     pub at: String,
+    #[serde(flatten)]
     pub kind: CallKind,
     pub input_tokens: u64,
     pub cache_creation_input_tokens: u64,
@@ -74,8 +91,22 @@ mod tests {
 
     #[test]
     fn usage_record_zero_fills_missing_cache_fields() {
-        assert!(usage_record(CallKind::Turn, "t".into(), &IterationCosts::new()).is_none());
-        let record = usage_record(CallKind::Turn, "t".into(), &costs(None)).unwrap();
+        assert!(usage_record(
+            CallKind::Turn {
+                trigger: Trigger::User
+            },
+            "t".into(),
+            &IterationCosts::new()
+        )
+        .is_none());
+        let record = usage_record(
+            CallKind::Turn {
+                trigger: Trigger::User,
+            },
+            "t".into(),
+            &costs(None),
+        )
+        .unwrap();
         assert_eq!(
             (
                 record.cache_read_input_tokens,
@@ -87,10 +118,45 @@ mod tests {
 
     #[test]
     fn encode_usage_is_one_json_line() {
-        let record = usage_record(CallKind::Turn, "t".into(), &costs(None)).unwrap();
+        let record = usage_record(
+            CallKind::Turn {
+                trigger: Trigger::User,
+            },
+            "t".into(),
+            &costs(None),
+        )
+        .unwrap();
         let line = encode_usage(&record).unwrap();
         assert!(line.ends_with('\n') && line.matches('\n').count() == 1);
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["kind"], "turn");
+        assert_eq!(value["trigger"], "user");
+    }
+
+    #[test]
+    fn worker_turn_record_has_trigger() {
+        let kind = CallKind::Turn {
+            trigger: Trigger::Worker,
+        };
+        let record = usage_record(kind, "t".into(), &costs(None)).unwrap();
+        let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(
+            (&value["kind"], &value["trigger"]),
+            (&"turn".into(), &"worker".into())
+        );
+    }
+
+    #[test]
+    fn nap_record_has_no_trigger() {
+        let record = usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap();
+        let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(value["kind"], "nap");
+        assert!(value.get("trigger").is_none());
+    }
+
+    #[test]
+    fn trigger_maps_to_role() {
+        assert_eq!(Trigger::User.role(), super::super::Role::User);
+        assert_eq!(Trigger::Worker.role(), super::super::Role::Worker);
     }
 }

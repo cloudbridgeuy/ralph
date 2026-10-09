@@ -17,7 +17,7 @@ use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT,
     VIEW_LINES,
 };
-use ralph_core::chat_memory::{usage_record, view, CallKind, Role};
+use ralph_core::chat_memory::{usage_record, view, CallKind, Role, Trigger};
 use ralph_core::worker::{chat_message, INBOX_DIR};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
@@ -155,10 +155,10 @@ struct Turn<'a> {
 }
 
 impl Turn<'_> {
-    fn run(&self, role: Role, message: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    fn run(&self, trigger: Trigger, message: &str) -> Result<bool, Box<dyn std::error::Error>> {
         let (entries, tree) = self.store.load_settled()?;
         let lines = view(&entries, &tree, VIEW_LINES).lines;
-        self.store.append(role, message)?;
+        self.store.append(trigger.role(), message)?;
         let command = build_chat_command(
             &turn_prompt(&lines, message),
             SYSTEM_PROMPT,
@@ -195,7 +195,7 @@ impl Turn<'_> {
             Err(e) => return Err(e.into()),
         };
         if let Some(record) = usage_record(
-            CallKind::Turn,
+            CallKind::Turn { trigger },
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
         ) {
@@ -275,9 +275,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut editor = build_editor(&store_dir, mail)?;
     loop {
         let reports = inbox.drain()?;
-        let (role, message) = if reports.is_empty() {
+        let (trigger, message) = if reports.is_empty() {
             match next_input(&mut editor)? {
-                Input::Message(message) => (Role::User, message),
+                Input::Message(message) => (Trigger::User, message),
                 Input::Mail => {
                     println!();
                     continue;
@@ -287,9 +287,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         } else {
             let message = chat_message(&reports);
             println!("{message}");
-            (Role::Worker, message)
+            (Trigger::Worker, message)
         };
-        if !turn.run(role, &message)? {
+        if !turn.run(trigger, &message)? {
             break;
         }
     }
