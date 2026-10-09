@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::ControlFlow, path::PathBuf};
+use std::{collections::HashMap, ffi::OsStr, ops::ControlFlow, path::PathBuf};
 
 use nu_ansi_term::{Color, Style};
 
@@ -40,7 +40,7 @@ use {
         PromptHistorySearch, ReedlineMenu, Signal, UndoBehavior, ValidationResult, Validator,
     },
     crossterm::{
-        cursor::{SetCursorStyle, Show},
+        cursor::SetCursorStyle,
         event,
         event::{Event, KeyCode, KeyEvent, KeyModifiers},
         terminal, QueueableCommand,
@@ -244,6 +244,88 @@ pub struct Reedline {
 struct BufferEditor {
     command: Command,
     temp_file: PathBuf,
+    is_template: bool,
+}
+
+impl BufferEditor {
+    const FILE: &str = "{file}";
+    const LINE: &str = "{line}";
+    const COL: &str = "{col}";
+
+    fn new(mut command: Command, temp_file: PathBuf) -> BufferEditor {
+        let mut has_file_arg = false;
+        let mut is_template = false;
+
+        for arg in command.get_args() {
+            has_file_arg |= arg == temp_file.as_os_str();
+
+            if let Some(arg) = arg.to_str() {
+                has_file_arg |= arg.contains(BufferEditor::FILE);
+
+                is_template |= arg.contains(BufferEditor::FILE)
+                    || arg.contains(BufferEditor::LINE)
+                    || arg.contains(BufferEditor::COL);
+            }
+        }
+
+        if !has_file_arg {
+            command.arg(&temp_file);
+        }
+
+        BufferEditor {
+            command,
+            temp_file,
+            is_template,
+        }
+    }
+
+    /// renders the editor command template,
+    /// substituting template placeholders where present.
+    pub(crate) fn render_command(&self, line_buffer: &LineBuffer) -> Command {
+        let mut rendered = Command::new(self.command.get_program());
+
+        for (key, value) in self.command.get_envs() {
+            match value {
+                Some(value) => rendered.env(key, value),
+                None => rendered.env_remove(key),
+            };
+        }
+
+        if let Some(dir) = self.command.get_current_dir() {
+            rendered.current_dir(dir);
+        }
+
+        let file = self.temp_file.to_string_lossy();
+        let line = (line_buffer.line() + 1).to_string();
+        let col = (line_buffer.col() + 1).to_string();
+
+        for arg in self.command.get_args().map(OsStr::to_string_lossy) {
+            let arg = arg
+                .replace(Self::FILE, &file)
+                .replace(Self::LINE, &line)
+                .replace(Self::COL, &col);
+
+            rendered.arg(arg);
+        }
+
+        rendered
+    }
+
+    /// writes the buffer to the temp file,
+    /// in preparation for spawning the buffer editor
+    pub(crate) fn write_current_buffer(&self, buffer_contents: &str) -> Result<()> {
+        let mut file = File::create(&self.temp_file)?;
+        write!(file, "{buffer_contents}")
+    }
+
+    /// reads the buffer from the temp file,
+    /// expected to be called after the buffer editor exits
+    pub(crate) fn get_edited_buffer(&self) -> Result<String> {
+        let mut res = std::fs::read_to_string(&self.temp_file)?;
+        let content_len = res.trim_end().len();
+        res.truncate(content_len);
+        Ok(res)
+    }
 }
 
 /// The completions the [`Menu`](ReedlineEvent::Menu) event could not decide, because the
@@ -306,9 +388,9 @@ impl Drop for Reedline {
             let _ignore = terminal::enable_raw_mode();
             let mut stdout = std::io::stdout();
             let _ignore = stdout.queue(SetCursorStyle::DefaultUserShape);
-            let _ignore = stdout.queue(Show);
             let _ignore = stdout.flush();
         }
+        let _ignore = self.painter.show_cursor();
 
         // Ensures that the terminal is in a good state if we panic semigracefully
         // Calling `disable_raw_mode()` twice is fine with Linux
@@ -595,7 +677,10 @@ impl Reedline {
     ///
     /// Auto-pairing applies to edits in the regular line buffer. Reverse-history
     /// search edits a separate search query and are not passed through the
-    /// auto-pairing machinery.
+    /// auto-pairing machinery. Neither is typing while a menu in
+    /// [`InputMode::Diff`](crate::InputMode::Diff) is open, such as a
+    /// [`ListMenu`](crate::ListMenu) used for history, since that text is the
+    /// menu's query.
     #[must_use]
     pub fn with_auto_pairs(mut self, auto_pairs: AutoPairs) -> Self {
         self.auto_pairs = Some(auto_pairs);
@@ -742,24 +827,34 @@ impl Reedline {
     /// use std::env::temp_dir;
     /// use std::process::Command;
     ///
-    /// let temp_file = std::env::temp_dir().join("my-random-unique.file");
+    /// let temp = std::env::temp_dir().join("my-random-unique.file");
     /// let mut command = Command::new("vim");
     /// // you can provide additional flags:
-    /// command.arg("-p"); // open in a vim tab (just for demonstration)
-    /// // you don't have to pass the filename to the command
-    /// let mut line_editor =
-    /// Reedline::create().with_buffer_editor(command, temp_file);
+    /// command.arg("-p"); // open in a new vim tab
+    /// // ...and the filename will be appended at the end of the command
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // optionally, {file}, {line}, and {col} placeholders can be used.
+    /// // they will be replaced with the filename and the current cursor position,
+    /// // both 1-based, with {col} counting graphemes from the line start
+    /// let mut command = Command::new("hx");
+    /// command.arg("{file}:{line}:{col}");
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp.clone());
+    ///
+    /// // if {file} is omitted, the filename is still appended at the end,
+    /// // as in the above example
+    /// let mut command = Command::new("emacs");
+    /// command.arg("+{line}:{col}");
+    /// let mut line_editor = Reedline::create().with_buffer_editor(command, temp);
     /// ```
+    ///
+    /// A command with placeholders is rebuilt on every `OpenEditor` from its
+    /// program, arguments, environment and working directory. Other settings on
+    /// the `Command`, such as stdio redirection or `env_clear`, do not carry over.
+    /// A command without placeholders is spawned as given.
     #[must_use]
     pub fn with_buffer_editor(mut self, editor: Command, temp_file: PathBuf) -> Self {
-        let mut editor = editor;
-        if !editor.get_args().any(|arg| arg == temp_file.as_os_str()) {
-            editor.arg(&temp_file);
-        }
-        self.buffer_editor = Some(BufferEditor {
-            command: editor,
-            temp_file,
-        });
+        self.buffer_editor = Some(BufferEditor::new(editor, temp_file));
         self
     }
 
@@ -995,6 +1090,10 @@ impl Reedline {
         self.kitty_protocol.enter();
 
         let result = self.read_line_helper(prompt);
+        if result.is_err() {
+            // The error is what to report, not a failure to show.
+            let _ignore = self.painter.show_cursor();
+        }
 
         self.bracketed_paste.exit();
         self.kitty_protocol.exit();
@@ -1026,15 +1125,13 @@ impl Reedline {
     /// other output back at the first line of the terminal.
     pub fn clear_screen(&mut self) -> Result<()> {
         self.painter.clear_screen()?;
-
-        Ok(())
+        self.painter.show_cursor()
     }
 
     /// Clear the screen and the scrollback buffer of the terminal
     pub fn clear_scrollback(&mut self) -> Result<()> {
         self.painter.clear_scrollback()?;
-
-        Ok(())
+        self.painter.show_cursor()
     }
 
     /// Consume a pending external repaint request, returning whether one was
@@ -1349,6 +1446,10 @@ impl Reedline {
                         // area, for external commands or new read_line call
                         self.painter.move_cursor_to_end()?;
                     }
+                    // A clear earlier in this batch left it hidden and no
+                    // paint follows. The exit is what to report, so a failed
+                    // show must not turn it into an error.
+                    let _ignore = self.painter.show_cursor();
                     return Ok(ControlFlow::Break(signal));
                 }
                 EventStatus::Handled => {
@@ -1646,14 +1747,8 @@ impl Reedline {
                     None => Ok(EventStatus::Inapplicable),
                 }
             }
-            ReedlineEvent::HistoryHintComplete => {
-                let hint = self.hinter.as_mut().map(|h| h.complete_hint());
-                Ok(self.accept_history_hint(hint))
-            }
-            ReedlineEvent::HistoryHintWordComplete => {
-                let hint = self.hinter.as_mut().map(|h| h.next_hint_token());
-                Ok(self.accept_history_hint(hint))
-            }
+            ReedlineEvent::HistoryHintComplete => Ok(self.accept_history_hint(true)),
+            ReedlineEvent::HistoryHintWordComplete => Ok(self.accept_history_hint(false)),
             ReedlineEvent::Esc => {
                 self.deactivate_menus();
                 self.editor.clear_selection();
@@ -2230,6 +2325,16 @@ impl Reedline {
     fn auto_pair_command(&self, command: &EditCommand) -> Option<EditCommand> {
         let auto_pairs = self.auto_pairs.as_ref()?;
 
+        // A menu in `Diff` mode reads what is typed after it opened as its
+        // query, not as code, so a pair would end up in the search.
+        let query_menu_open = self.menus.iter().any(|menu| {
+            menu.is_active()
+                && menu.settings().effective_input_mode() == crate::menu::InputMode::Diff
+        });
+        if query_menu_open {
+            return None;
+        }
+
         // Resolve which auto-pair action (if any) `command` would trigger, along
         // with the pair it acts on and the `EditCommand` that would replace it.
         // The search order matters: for `InsertChar`, closers are checked before
@@ -2353,26 +2458,63 @@ impl Reedline {
         !self.hide_hints && matches!(self.input_mode, InputMode::Regular)
     }
 
-    /// Accept a trailing history hint (full hint or next word) by appending it at
-    /// the buffer end. `Handled` only when a non-empty hint applies: hints active,
-    /// cursor at the buffer end, no menu open. Appending positions past the last
-    /// grapheme first — a block caret (vi normal) rests *on* it, so a plain insert
-    /// would split it.
-    fn accept_history_hint(&mut self, hint: Option<String>) -> EventStatus {
-        let Some(hint) = hint else {
+    /// Accept the history hint, all of it when `whole`, else its next word.
+    /// `Handled` only when a non-empty hint applies: hints active, no menu
+    /// open, and the cursor either at the buffer end or followed only by
+    /// auto-pair closers the hint accounts for.
+    ///
+    /// At the buffer end the text is appended, positioned past the last
+    /// grapheme first: a block caret (vi normal) rests *on* it, so a plain
+    /// insert would split it. Before trailing closers it goes in the way
+    /// typing it would with auto-pairs on: each closer it contains steps over
+    /// the matching one, and the closers it does not reach stay after the
+    /// cursor.
+    fn accept_history_hint(&mut self, whole: bool) -> EventStatus {
+        let Some(hinter) = self.hinter.as_ref() else {
             return EventStatus::Inapplicable;
         };
-        if self.hints_active()
-            && self.editor.is_cursor_at_buffer_end()
-            && !hint.is_empty()
-            && self.active_menu().is_none()
-        {
+        let full = hinter.complete_hint();
+        let accepted = if whole {
+            full.clone()
+        } else {
+            hinter.next_hint_token()
+        };
+        if !self.hints_active() || accepted.is_empty() || self.active_menu().is_some() {
+            return EventStatus::Inapplicable;
+        }
+
+        // Checked before the buffer end: a block caret resting on the last
+        // closer counts as at the end, but the text belongs before it.
+        if let Some(closers) = self.trailing_auto_pair_closers().map(str::to_owned) {
+            // A selection would be replaced by the edit, as at the buffer end.
+            if self.editor.cursor_is_a_selection()
+                || closers_stepped_over(&full, &closers) != closers.len()
+            {
+                return EventStatus::Inapplicable;
+            }
+            let left_over = &closers[closers_stepped_over(&accepted, &closers)..];
+            self.editor.sync_edit_mode(self.edit_mode.edit_mode());
+            self.editor.replace_to_line_end(&accepted, left_over);
+            return EventStatus::Handled;
+        }
+
+        if self.editor.is_cursor_at_buffer_end() {
             self.editor.prepare_append_at_buffer_end();
-            self.run_edit_commands(&[EditCommand::InsertString(hint)]);
+            self.run_edit_commands(&[EditCommand::InsertString(accepted)]);
             EventStatus::Handled
         } else {
             EventStatus::Inapplicable
         }
+    }
+
+    /// The text after the cursor when it is nothing but closers of the
+    /// configured auto-pairs, like the `)` in `(gs|)`. A history hint for the
+    /// text before the cursor can stand in for them.
+    fn trailing_auto_pair_closers(&self) -> Option<&str> {
+        let auto_pairs = self.auto_pairs.as_ref()?;
+        let after = &self.editor.get_buffer()[self.editor.insertion_point()..];
+        let only_closers = after.chars().all(|c| auto_pairs.closing_pair(c).is_some());
+        (!after.is_empty() && only_closers).then_some(after)
     }
 
     /// Repaint of either the buffer or the parts for reverse history search
@@ -2617,54 +2759,53 @@ impl Reedline {
     }
 
     fn open_editor(&mut self) -> Result<()> {
-        match &mut self.buffer_editor {
-            Some(BufferEditor {
-                ref mut command,
-                ref temp_file,
-            }) => {
-                {
-                    let mut file = File::create(temp_file)?;
-                    write!(file, "{}", self.editor.get_buffer())?;
-                }
-                // Capture the prompt's screen range so that an editor
-                // that leaves the cursor untouched (e.g. an editor that
-                // uses the alternate screen only) re-uses the existing
-                // prompt rows instead of starting a new prompt a row
-                // below the old one. The footer is erased first, so an
-                // editor that draws on the main screen does not start
-                // below it. `suspend_painter` would borrow all of `self`
-                // while `buffer_editor` is borrowed.
-                self.painter.clear_footer()?;
-                let suspended_state = self.painter.state_before_suspension();
-                {
-                    let mut child = command.spawn()?;
-                    // The child owns the tty now; invalidate eagerly so
-                    // any `?` early-return below still leaves the
-                    // painter in a safe state.
-                    self.painter.invalidate_prompt_start_row();
-                    child.wait()?;
-                }
+        let Some(buffer_editor) = &mut self.buffer_editor else {
+            return Ok(());
+        };
 
-                // On the success path, re-initialize position and size
-                // (covers a resize-during-editor with no SIGWINCH). If
-                // the editor moved the cursor out of the prompt's rows
-                // (it printed output), a fresh prompt starts below that
-                // output. On query failure, the eager invalidate above
-                // is our floor — losing the size refresh is acceptable;
-                // losing the user's edited buffer below is not.
-                let _ = self
-                    .painter
-                    .initialize_prompt_position(Some(&suspended_state));
+        buffer_editor.write_current_buffer(self.editor.get_buffer())?;
 
-                let res = std::fs::read_to_string(temp_file)?;
-                let res = res.trim_end().to_string();
+        // Capture the prompt's screen range so that an editor
+        // that leaves the cursor untouched (e.g. an editor that
+        // uses the alternate screen only) re-uses the existing
+        // prompt rows instead of starting a new prompt a row
+        // below the old one. The footer is erased first, so an
+        // editor that draws on the main screen does not start
+        // below it.
+        self.painter.clear_footer()?;
+        let suspended_state = self.painter.state_before_suspension();
+        {
+            let mut child = if buffer_editor.is_template {
+                buffer_editor
+                    .render_command(self.editor.line_buffer())
+                    .spawn()?
+            } else {
+                buffer_editor.command.spawn()?
+            };
 
-                self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
-
-                Ok(())
-            }
-            _ => Ok(()),
+            // The child owns the tty now; invalidate eagerly so
+            // any `?` early-return below still leaves the
+            // painter in a safe state.
+            self.painter.invalidate_prompt_start_row();
+            child.wait()?;
         }
+
+        // On the success path, re-initialize position and size
+        // (covers a resize-during-editor with no SIGWINCH). If
+        // the editor moved the cursor out of the prompt's rows
+        // (it printed output), a fresh prompt starts below that
+        // output. On query failure, the eager invalidate above
+        // is our floor — losing the size refresh is acceptable;
+        // losing the user's edited buffer below is not.
+        let _ = self
+            .painter
+            .initialize_prompt_position(Some(&suspended_state));
+
+        let res = buffer_editor.get_edited_buffer()?;
+
+        self.editor.set_buffer(res, UndoBehavior::CreateUndoPoint);
+
+        Ok(())
     }
 
     /// Repaint logic for the history reverse search
@@ -2756,10 +2897,22 @@ impl Reedline {
             self.painter.semantic_markers(),
         );
 
+        // With only auto-pair closers after the cursor, as in `(gs|)`, hint
+        // from the text before them and draw the hint in their place. A hint
+        // that does not close them would drop them on accept, so none shows.
+        let trailing_closers = self.trailing_auto_pair_closers().map(str::to_owned);
+        let hinted_line = match trailing_closers {
+            Some(_) => &buffer_to_paint[..cursor_position_in_buffer],
+            None => buffer_to_paint,
+        };
+
+        // Decided from the hint this paint looked up, never a stale one: the
+        // paint that submit makes with hints hidden must draw the closers.
+        let mut hint_replaces_closers = false;
         let hint: String = if self.hints_active() {
             self.hinter.as_mut().map_or_else(String::new, |hinter| {
-                hinter.handle(
-                    buffer_to_paint,
+                let hint = hinter.handle(
+                    hinted_line,
                     cursor_position_in_buffer,
                     self.history.as_ref(),
                     use_ansi_coloring,
@@ -2769,7 +2922,18 @@ impl Reedline {
                             .to_string_lossy()
                             .to_string()
                     }),
-                )
+                );
+                let Some(closers) = trailing_closers.as_deref() else {
+                    return hint;
+                };
+                let full = hinter.complete_hint();
+                hint_replaces_closers =
+                    !full.is_empty() && closers_stepped_over(&full, closers) == closers.len();
+                if hint_replaces_closers {
+                    hint
+                } else {
+                    String::new()
+                }
             })
         } else {
             String::new()
@@ -2778,14 +2942,28 @@ impl Reedline {
         // Needs to add return carriage to newlines because when not in raw mode
         // some OS don't fully return the carriage
 
-        let mut lines = PromptLines::new(
-            prompt,
-            self.prompt_edit_mode(),
-            None,
-            &before_cursor,
-            &after_cursor,
-            &hint,
-        );
+        let mut lines = if hint_replaces_closers {
+            // The exit path reprints what follows the cursor, which is still
+            // the closers, not the hint drawn over them.
+            PromptLines::new(
+                prompt,
+                self.prompt_edit_mode(),
+                None,
+                &before_cursor,
+                "",
+                &hint,
+            )
+            .with_exit_after_cursor(&after_cursor)
+        } else {
+            PromptLines::new(
+                prompt,
+                self.prompt_edit_mode(),
+                None,
+                &before_cursor,
+                &after_cursor,
+                &hint,
+            )
+        };
 
         // Updating the working details of the active menu
         for menu in self.menus.iter_mut() {
@@ -3018,6 +3196,18 @@ impl Reedline {
     }
 }
 
+/// How much of `closers` typing `text` before them would step over, in bytes:
+/// the longest prefix of `closers` that `text` contains in order.
+fn closers_stepped_over(text: &str, closers: &str) -> usize {
+    let mut text = text.chars();
+    // Find the first closer the rest of `text` does not contain. `any`
+    // consumes `text`, so each closer must come after the one before it.
+    closers
+        .char_indices()
+        .find(|&(_, closer)| !text.any(|c| c == closer))
+        .map_or(closers.len(), |(index, _)| index)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3027,6 +3217,7 @@ mod tests {
         ListMenu, MenuBuilder, MotionTarget, PromptHelixMode, PromptViMode, Span, Suggestion,
     };
     use rstest::rstest;
+    use std::path::Path;
 
     fn seam_engine(edit_mode: Box<dyn EditMode>) -> Reedline {
         let mut rl = Reedline::create().with_edit_mode(edit_mode);
@@ -3820,6 +4011,73 @@ mod tests {
         );
     }
 
+    /// An auto-pairing engine with a history menu open in `mode`, over the
+    /// buffer `setup` leaves behind.
+    fn auto_pair_engine_with_open_menu(mode: crate::InputMode, setup: &[EditCommand]) -> Reedline {
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_menu(ReedlineMenu::HistoryMenu(Box::new(
+                ListMenu::default()
+                    .with_name("history_menu")
+                    .with_input_mode(mode),
+            )));
+        rl.history
+            .save(HistoryItem::from_command_line("(gstat).branch"))
+            .expect("history ok");
+        rl.run_edit_commands(setup);
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::Menu("history_menu".into()),
+        )
+        .expect("menu opens");
+        assert!(menu_is_active(&rl), "setup: menu is open");
+        rl
+    }
+
+    // A menu in `Diff` mode searches with what is typed after it opened, so a
+    // pair would put the closer in the query (nushell's Ctrl-R history menu).
+    // The other modes complete against the real buffer, where a pair is code.
+    #[rstest]
+    #[case::diff(crate::InputMode::Diff, "(")]
+    #[case::cursor_prefix(crate::InputMode::CursorPrefix, "()")]
+    #[case::full_buffer(crate::InputMode::FullBuffer, "()")]
+    fn auto_pairs_stay_out_of_a_query_menu(#[case] mode: crate::InputMode, #[case] expected: &str) {
+        let mut rl = auto_pair_engine_with_open_menu(mode, &[]);
+
+        drive(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), expected);
+    }
+
+    // Skipping a closer is an auto-pair action too: in the query a typed `)`
+    // is text, not a step over the `)` that was there before the menu opened.
+    #[test]
+    fn auto_pairs_do_not_skip_a_closer_in_a_query_menu() {
+        let mut rl = auto_pair_engine_with_open_menu(
+            crate::InputMode::Diff,
+            &[
+                EditCommand::InsertString("()".into()),
+                EditCommand::MoveLeft { select: false },
+            ],
+        );
+
+        drive(&mut rl, &[ch(')')]);
+
+        assert_eq!(rl.editor.get_buffer(), "())");
+    }
+
+    #[test]
+    fn auto_pairs_resume_after_the_query_menu_closes() {
+        let mut rl = auto_pair_engine_with_open_menu(crate::InputMode::Diff, &[]);
+        drive(&mut rl, &[ch('(')]);
+
+        drive(&mut rl, &[key(KeyCode::Esc)]);
+        assert!(!menu_is_active(&rl), "Esc closes the menu");
+        drive(&mut rl, &[ch('(')]);
+
+        assert_eq!(rl.editor.get_buffer(), "(()");
+    }
+
     // FLIP SAFETY NET (Group C) — visual operability at the engine seam.
     // RED until the cursor-as-truth flip: `v` emits Esc which clears the
     // selection, so visual mode starts anchorless and `d` cuts nothing. The
@@ -4366,6 +4624,26 @@ mod tests {
             }
         }
         None
+    }
+
+    // #1231: Ctrl-C and Ctrl-D exit without a repaint (Enter repaints in
+    // `submit_buffer`), so after a clear in the same batch the exit has to
+    // show the cursor itself. The re-anchor stands in for the clear, whose
+    // `terminal::size()` needs a tty.
+    #[rstest]
+    #[case::ctrl_c('c', "CtrlC")]
+    #[case::ctrl_d('d', "CtrlD")]
+    fn exit_before_the_next_paint_shows_the_cursor(#[case] key: char, #[case] expected: &str) {
+        let mut rl = Reedline::create();
+        rl.painter
+            .initialize_prompt_position_with_size((80, 24), None)
+            .unwrap();
+        assert!(rl.painter.cursor_hidden_for_test());
+
+        let signal = drive_until_signal(&mut rl, &[ctrl(key)]).expect("expected an exit");
+
+        assert_eq!(format!("{signal:?}"), expected);
+        assert!(!rl.painter.cursor_hidden_for_test());
     }
 
     /// `DefaultValidator` reads an unclosed `"` as incomplete, so `Enter` breaks
@@ -7497,6 +7775,26 @@ mod tests {
         assert_eq!(rl.editor.get_buffer(), "abcdef");
     }
 
+    /// Regression test for nushell/reedline#1185: `l` accepts the hint like
+    /// Right does, and only where a hint applies; mid-line it still moves.
+    #[test]
+    fn helix_normal_l_accepts_hint_only_at_buffer_end() {
+        let mut rl = helix_with_hint("def");
+        type_each(&mut rl, &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc)]);
+        type_each(&mut rl, &[ch('l')]);
+        assert_eq!(rl.editor.get_buffer(), "abcdef");
+
+        let mut rl = helix_with_hint("def");
+        type_each(
+            &mut rl,
+            &[ch('a'), ch('b'), ch('c'), key(KeyCode::Esc), ch('h')],
+        );
+        let before = rl.editor.insertion_point();
+        type_each(&mut rl, &[ch('l')]);
+        assert_eq!(rl.editor.get_buffer(), "abc");
+        assert_eq!(rl.editor.insertion_point(), before + 1);
+    }
+
     /// A `v`-started helix selection is still protected, like vi visual.
     #[test]
     fn helix_select_selection_blocks_hint_completion() {
@@ -7511,6 +7809,164 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rl.editor.get_buffer(), "abc");
+    }
+
+    /// Offers `hint` whole and its first word the way `DefaultHinter` does,
+    /// and records the line it was last asked about.
+    struct RecordingHinter {
+        hint: &'static str,
+        asked: Arc<std::sync::Mutex<String>>,
+    }
+    impl Hinter for RecordingHinter {
+        fn handle(&mut self, line: &str, _: usize, _: &dyn History, _: bool, _: &str) -> String {
+            *self.asked.lock().unwrap() = line.to_string();
+            self.hint.to_string()
+        }
+        fn complete_hint(&self) -> String {
+            self.hint.to_string()
+        }
+        fn next_hint_token(&self) -> String {
+            crate::hinter::get_first_token(self.hint)
+        }
+    }
+
+    /// An emacs engine pairing `()` with `hint` on offer, after typing `(gs`,
+    /// which auto-pairs into `(gs|)`.
+    fn paired_line_with_hint(hint: &'static str) -> (Reedline, Arc<std::sync::Mutex<String>>) {
+        let asked = Arc::default();
+        let mut rl = seam_engine(Box::<crate::Emacs>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hinter(Box::new(RecordingHinter {
+                hint,
+                asked: Arc::clone(&asked),
+            }));
+        drive(&mut rl, &[ch('('), ch('g'), ch('s')]);
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gs)", 3),
+            "setup"
+        );
+        (rl, asked)
+    }
+
+    // With only auto-pair closers after the cursor, the hint is looked up for
+    // the text before them: history holds `(gstat).branch`, not `(gs)...`.
+    #[test]
+    fn history_hint_looks_up_the_text_before_trailing_closers() {
+        let (_, asked) = paired_line_with_hint("tat).branch");
+        assert_eq!(*asked.lock().unwrap(), "(gs");
+    }
+
+    // Accepting before trailing closers goes in the way typing it would with
+    // auto-pairs on: a closer in the accepted text steps over the one at the
+    // cursor, the rest stay put. A hint that leaves a pair open is refused,
+    // since taking it would drop the closer.
+    #[rstest]
+    #[case::whole_hint(true, "tat).branch", "(gstat).branch", 14)]
+    #[case::word_before_the_closer(false, "tat).branch", "(gstat)", 6)]
+    #[case::word_is_the_closer(false, ") | lines", "(gs)", 4)]
+    #[case::hint_leaves_the_pair_open(true, "tat", "(gs)", 3)]
+    fn history_hint_accepts_before_trailing_closers(
+        #[case] whole: bool,
+        #[case] hint: &'static str,
+        #[case] buffer: &str,
+        #[case] cursor: usize,
+    ) {
+        let (mut rl, _) = paired_line_with_hint(hint);
+        let event = if whole {
+            ReedlineEvent::HistoryHintComplete
+        } else {
+            ReedlineEvent::HistoryHintWordComplete
+        };
+
+        rl.handle_event(&DefaultPrompt::default(), event).unwrap();
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            (buffer, cursor)
+        );
+    }
+
+    // The exit path reprints what follows the cursor. While the hint is drawn
+    // over the closers that is still the closers, and the paint submit makes
+    // with hints hidden must not act on the hint the hinter still holds.
+    #[test]
+    fn trailing_closers_survive_the_exit_reprint() {
+        // The text carries the highlighter's styling, so look for the closer.
+        let keeps_the_closer = |rl: &Reedline| {
+            rl.painter
+                .exit_after_cursor_for_test()
+                .is_some_and(|text| text.contains(')'))
+        };
+        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        assert!(keeps_the_closer(&rl), "hint showing");
+
+        rl.hide_hints = true;
+        rl.repaint(&DefaultPrompt::default()).unwrap();
+        assert!(keeps_the_closer(&rl), "hints hidden");
+    }
+
+    #[test]
+    fn one_undo_takes_back_a_hint_accepted_before_closers() {
+        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+
+        rl.run_edit_commands(&[EditCommand::Undo]);
+
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gs)", 3)
+        );
+    }
+
+    // Vi normal rests a block caret on the closer itself; the word goes in
+    // before it all the same.
+    #[test]
+    fn vi_normal_accepts_a_hint_word_before_trailing_closers() {
+        let mut rl = seam_engine(Box::<crate::Vi>::default())
+            .with_auto_pairs(AutoPairs::new([('(', ')')]))
+            .with_hinter(Box::new(RecordingHinter {
+                hint: "tat).branch",
+                asked: Arc::default(),
+            }));
+        type_each(
+            &mut rl,
+            &[ch('('), ch('g'), ch('s'), key(KeyCode::Esc), ch('l')],
+        );
+        assert_eq!(
+            (rl.editor.get_buffer(), rl.editor.insertion_point()),
+            ("(gs)", 3),
+            "setup: caret on the closer"
+        );
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintWordComplete,
+        )
+        .unwrap();
+
+        assert_eq!(rl.editor.get_buffer(), "(gstat)");
+    }
+
+    #[test]
+    fn selection_blocks_hint_completion_before_trailing_closers() {
+        let (mut rl, _) = paired_line_with_hint("tat).branch");
+        rl.run_edit_commands(&[
+            EditCommand::MoveLeft { select: false },
+            EditCommand::MoveRight { select: true },
+        ]);
+
+        rl.handle_event(
+            &DefaultPrompt::default(),
+            ReedlineEvent::HistoryHintComplete,
+        )
+        .unwrap();
+
+        assert_eq!(rl.editor.get_buffer(), "(gs)");
     }
 
     /// A retained motion selection in helix *normal* (here `b` sweeping back
@@ -7699,5 +8155,77 @@ mod tests {
         assert_eq!(rl.editor.insertion_point(), 1);
         drive(&mut rl, &[ch('l')]); // crosses down to 'c' (start of line 2)
         assert_eq!(rl.editor.insertion_point(), 3);
+    }
+
+    fn command_from_strs(command: &[&str], current_dir: impl AsRef<Path>) -> Command {
+        let (program, args) = command.split_first().unwrap();
+        let mut command = Command::new(program);
+        command.args(args);
+        command.current_dir(current_dir);
+        command.env("REEDLINE_TEST_KEEP", "kept");
+        command.env_remove("REEDLINE_TEST_DROP");
+        command
+    }
+
+    fn command_into_string(command: Command) -> String {
+        use std::iter::once;
+
+        once(command.get_program())
+            .chain(command.get_args())
+            .map(|os_str| os_str.to_str().unwrap())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[rstest]
+    #[case(&["nano"], "nano foo.rs", false)]
+    #[case(&["nano", "file.rs"], "nano file.rs foo.rs", false)]
+    #[case(&["vim", "foo.rs"], "vim foo.rs", false)]
+    #[case(&["code", "--goto", "{file}:{line}:{col}"], "code --goto foo.rs:2:4", true)]
+    #[case(&["hx", "{file}:{line}:{col}"], "hx foo.rs:2:4", true)]
+    #[case(&["nvim", "{file}", "\"call cursor({line}, {col})\""], "nvim foo.rs \"call cursor(2, 4)\"", true)]
+    #[case(&["vim", "+{line}", "{file}"], "vim +2 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}", "{file}"], "emacs +2:4 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}"], "emacs +2:4 foo.rs", true)]
+    #[case(&["emacs", "+{line}:{col}", "foo.rs"], "emacs +2:4 foo.rs", true)]
+    fn render_editor_command_with_template(
+        #[case] command: &[&str],
+        #[case] expected: &str,
+        #[case] is_template: bool,
+    ) {
+        let current_dir = "test-dir";
+
+        let line_editor = Reedline::create().with_buffer_editor(
+            command_from_strs(command, current_dir),
+            PathBuf::from("foo.rs"),
+        );
+        let buffer_editor = line_editor.buffer_editor.as_ref().unwrap();
+
+        assert_eq!(buffer_editor.is_template, is_template);
+
+        let line_buffer = {
+            let mut line_buffer = LineBuffer::new();
+            line_buffer.insert_str("a mulatto\n");
+            line_buffer.insert_str("an albino\n");
+            line_buffer.insert_str("a mosquito\n");
+            line_buffer.insert_str("my libido\n");
+            line_buffer.move_line_up();
+            line_buffer.move_line_up();
+            line_buffer.move_left_before(' ', false);
+            line_buffer
+        };
+
+        let actual = buffer_editor.render_command(&line_buffer);
+
+        let current_dir = current_dir.as_ref();
+        assert_eq!(actual.get_current_dir(), Some(current_dir));
+
+        // nushell hands its `$env` to the editor through `envs`, so the
+        // rendered command has to keep both overrides and removals.
+        let envs: Vec<_> = actual.get_envs().collect();
+        assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_KEEP"), Some(OsStr::new("kept")))));
+        assert!(envs.contains(&(OsStr::new("REEDLINE_TEST_DROP"), None)));
+
+        assert_eq!(command_into_string(actual), expected);
     }
 }
