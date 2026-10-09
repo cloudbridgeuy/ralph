@@ -14,7 +14,8 @@ use crate::subprocess::{
 use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
 use ralph_core::chat::{
-    build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT, VIEW_LINES,
+    build_agents_args, build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT,
+    VIEW_LINES,
 };
 use ralph_core::chat_memory::{usage_record, view, CallKind, Role};
 use ralph_core::worker::{chat_message, INBOX_DIR};
@@ -161,7 +162,7 @@ impl Turn<'_> {
         let command = build_chat_command(
             &turn_prompt(&lines, message),
             SYSTEM_PROMPT,
-            &build_mcp_args(self.mcp_config_path),
+            &[build_mcp_args(self.mcp_config_path), build_agents_args()].concat(),
             dirs::home_dir().as_deref(),
         );
         print_rule();

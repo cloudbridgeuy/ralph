@@ -181,10 +181,10 @@ pub fn build_memory_command(prompt: &str, home: Option<&Path>) -> String {
 pub fn build_chat_command(
     prompt: &str,
     system_prompt: &str,
-    mcp_args: &[String],
+    extra_args: &[String],
     home: Option<&Path>,
 ) -> String {
-    let mcp = mcp_args
+    let extra = extra_args
         .iter()
         .map(|arg| format!(" {}", shell_quote(arg)))
         .collect::<String>();
@@ -193,7 +193,7 @@ pub fn build_chat_command(
         DEFAULT_PERMISSION_MODE,
         persona_isolation_args(home),
         shell_quote(system_prompt),
-        mcp,
+        extra,
         shell_quote(prompt)
     )
 }
@@ -559,6 +559,18 @@ mod tests {
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains("--append-system-prompt 'sys' '--strict-mcp-config'"));
         assert!(cmd.ends_with("-p 'it'\"'\"'s'"));
+    }
+
+    #[test]
+    fn chat_command_passes_agents_and_keeps_isolation() {
+        let cmd = build_chat_command(
+            "p",
+            "sys",
+            &ralph_core::chat::build_agents_args(),
+            Some(Path::new("/home/u")),
+        );
+        assert!(cmd.contains("'--agents'"));
+        assert!(cmd.contains("--setting-sources project,local"));
     }
 
     #[test]
