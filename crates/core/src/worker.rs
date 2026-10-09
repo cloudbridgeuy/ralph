@@ -2,7 +2,6 @@ use crate::chat_memory::{Entry, Role};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub const SERVER_NAME: &str = "ralph-worker";
@@ -124,31 +123,22 @@ pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path) -> Value {
     })
 }
 
-pub fn claude_args(mcp_config: &Path, task: &str) -> Vec<String> {
-    vec![
-        "claude".to_string(),
-        "--mcp-config".to_string(),
-        mcp_config.to_string_lossy().into_owned(),
-        "--append-system-prompt".to_string(),
-        WORKER_PROMPT.to_string(),
-        task.to_string(),
+/// Runs Claude through a login, interactive zsh so the worker gets the same
+/// environment as a terminal the person opens; `$0 "$@"` keeps the arguments unquoted.
+pub fn worker_command(mcp_config: &Path, task: &str) -> Vec<String> {
+    [
+        "zsh",
+        "-lic",
+        r#"exec "$0" "$@""#,
+        "claude",
+        "--mcp-config",
+        &mcp_config.to_string_lossy(),
+        "--append-system-prompt",
+        WORKER_PROMPT,
+        task,
     ]
-}
-
-/// The tmux server keeps the environment it started with, so each worker gets the
-/// parent's variables explicitly. tmux sets its own pane variables.
-const TMUX_OWNED_ENV: [&str; 2] = ["TMUX", "TMUX_PANE"];
-
-pub fn tmux_env_args(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Vec<OsString> {
-    vars.into_iter()
-        .filter(|(name, _)| !TMUX_OWNED_ENV.iter().any(|owned| name == owned))
-        .flat_map(|(name, value)| {
-            let mut pair = name;
-            pair.push("=");
-            pair.push(value);
-            [OsString::from("-e"), pair]
-        })
-        .collect()
+    .map(str::to_string)
+    .to_vec()
 }
 
 /// Claude asks before working in a folder it has not seen; "No, exit" is preselected,
@@ -244,16 +234,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn tmux_env_args_passes_every_variable_but_tmux_own() {
-        let vars = [("LINEAR_API_KEY", "k"), ("TMUX", "/tmp/s"), ("HOME", "/h")]
-            .map(|(name, value)| (OsString::from(name), OsString::from(value)));
-        assert_eq!(
-            tmux_env_args(vars),
-            ["-e", "LINEAR_API_KEY=k", "-e", "HOME=/h"].map(OsString::from)
-        );
-    }
-
     fn entry(role: Role) -> Entry {
         Entry {
             role,
@@ -299,9 +279,10 @@ mod tests {
     }
 
     #[test]
-    fn claude_args_end_with_the_task() {
-        let args = claude_args(Path::new("/s/workers/A.json"), "do it");
-        assert_eq!(args[..3], ["claude", "--mcp-config", "/s/workers/A.json"]);
+    fn worker_command_runs_claude_through_zsh_and_ends_with_the_task() {
+        let args = worker_command(Path::new("/s/workers/A.json"), "do it");
+        assert_eq!(args[..2], ["zsh", "-lic"]);
+        assert_eq!(args[3..6], ["claude", "--mcp-config", "/s/workers/A.json"]);
         assert_eq!(args.last().unwrap(), "do it");
     }
 
