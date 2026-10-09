@@ -2,6 +2,7 @@ use crate::chat_memory::{Entry, Role};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub const SERVER_NAME: &str = "ralph-worker";
@@ -110,6 +111,17 @@ pub fn branch_name(id: &str) -> String {
 
 pub fn worktree_path(repo: &Path, id: &str) -> PathBuf {
     repo.join(WORKTREE_DIR).join(id)
+}
+
+/// Arguments for `git worktree add`: reuse the worker branch if an earlier spawn created it.
+pub fn worktree_add_args(path: &Path, branch: &str, branch_exists: bool) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["worktree".into(), "add".into()];
+    if branch_exists {
+        args.extend([path.into(), branch.into()]);
+    } else {
+        args.extend(["-b".into(), branch.into(), path.into()]);
+    }
+    args
 }
 
 pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path) -> Value {
@@ -284,6 +296,25 @@ mod tests {
         assert_eq!(args[..2], ["zsh", "-lic"]);
         assert_eq!(args[3..6], ["claude", "--mcp-config", "/s/workers/A.json"]);
         assert_eq!(args.last().unwrap(), "do it");
+    }
+
+    #[test]
+    fn worktree_add_args_reuses_an_existing_branch() {
+        let path = Path::new("/repo/.worktrees/GUZ-1");
+        assert_eq!(
+            worktree_add_args(path, "worker/GUZ-1", false),
+            [
+                "worktree",
+                "add",
+                "-b",
+                "worker/GUZ-1",
+                "/repo/.worktrees/GUZ-1"
+            ]
+        );
+        assert_eq!(
+            worktree_add_args(path, "worker/GUZ-1", true),
+            ["worktree", "add", "/repo/.worktrees/GUZ-1", "worker/GUZ-1"]
+        );
     }
 
     #[test]

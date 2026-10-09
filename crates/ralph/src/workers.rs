@@ -1,6 +1,6 @@
 use ralph_core::worker::{
-    branch_name, session_name, startup_state, worker_command, worker_mcp_config, worktree_path,
-    Startup, INBOX_DIR, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR,
+    branch_name, session_name, startup_state, worker_command, worker_mcp_config, worktree_add_args,
+    worktree_path, Startup, INBOX_DIR, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR,
 };
 use std::fs;
 use std::io::{self, Write};
@@ -32,11 +32,7 @@ impl Workers {
         )?));
         let worktree = worktree_path(&repo, id);
         exclude_worktrees(&repo)?;
-        run(Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(["worktree", "add", "-b", &branch_name(id)])
-            .arg(&worktree))?;
+        ensure_worktree(&repo, &worktree, &branch_name(id))?;
         let config = self.write_config(id)?;
         run(Command::new("tmux")
             .args(["new-session", "-d", "-s", &session])
@@ -112,6 +108,30 @@ fn session_exists(session: &str) -> io::Result<bool> {
         .stderr(Stdio::null())
         .status()?
         .success())
+}
+
+/// Leaves `worktree` checked out on `branch`, reusing whatever an earlier spawn left behind.
+fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<()> {
+    run(Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["worktree", "prune"]))?;
+    if worktree.join(".git").exists() {
+        return Ok(());
+    }
+    let branch_exists = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("refs/heads/{branch}"))
+        .stdout(Stdio::null())
+        .status()?
+        .success();
+    run(Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(worktree_add_args(worktree, branch, branch_exists)))?;
+    Ok(())
 }
 
 fn exclude_worktrees(repo: &Path) -> io::Result<()> {
