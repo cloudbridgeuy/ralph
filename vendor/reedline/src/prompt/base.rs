@@ -300,6 +300,11 @@ pub trait Prompt: Send {
     fn right_prompt_on_last_line(&self) -> bool {
         false
     }
+
+    /// Lines painted below the input, separated by `\n`
+    fn render_prompt_footer(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
 }
 
 #[cfg(test)]

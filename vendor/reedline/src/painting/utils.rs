@@ -2,6 +2,28 @@ use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+pub(crate) fn truncate_to_width(line: &str, max_width: u16) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut used = 0;
+    let mut in_escape = false;
+    for c in line.chars() {
+        if in_escape {
+            out.push(c);
+            in_escape = !c.is_ascii_alphabetic() && c != '~';
+        } else if c == '\x1b' {
+            out.push(c);
+            in_escape = true;
+        } else {
+            used += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+            if used > usize::from(max_width) {
+                break;
+            }
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Ensures input uses CRLF line endings.
 ///
 /// Needed for correct output in raw mode.

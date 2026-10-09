@@ -3,7 +3,8 @@ use crate::{CursorConfig, PromptEditMode};
 
 use {
     super::utils::{
-        advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, resolve_wrap, wrap_position,
+        advance_grapheme, coerce_crlf, deferred_wrap_row, line_width, resolve_wrap,
+        truncate_to_width, wrap_position,
     },
     crate::{
         menu::{Menu, ReedlineMenu},
@@ -365,6 +366,8 @@ pub struct Painter {
     /// right, and `move_cursor_to_end` has no `prompt` to re-derive the color
     /// from, so both have to be captured during the paint.
     exit_right_prompt: Option<(String, RightPromptBounds)>,
+    footer: Vec<String>,
+    footer_row: u16,
     /// Optional semantic prompt markers for terminal integration (OSC 133/633)
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
     /// Layout computed during the last paint cycle.
@@ -385,6 +388,8 @@ impl Painter {
             large_buffer: false,
             after_cursor_lines: None,
             exit_right_prompt: None,
+            footer: Vec::new(),
+            footer_row: 0,
             semantic_markers: None,
             last_layout: None,
         }
@@ -765,7 +770,9 @@ impl Painter {
         // would judge against the old, short one and reset the anchor to row 0.
         let screen_height = self.screen_height();
         let remaining_lines = self.remaining_lines();
-        let required_lines = lines.required_lines(screen_width, false, menu);
+        let base_required_lines = lines.required_lines(screen_width, false, menu);
+        let footer = self.footer_lines(prompt, base_required_lines);
+        let required_lines = base_required_lines + footer.len() as u16;
 
         // Marking the painter state as larger buffer to avoid animations
         self.large_buffer = required_lines >= screen_height;
@@ -796,6 +803,10 @@ impl Painter {
         } else {
             self.print_small_buffer(prompt, lines, menu, use_ansi_coloring, &layout)?
         };
+
+        self.footer_row = anchor_row + base_required_lines;
+        self.print_footer(&footer)?;
+        self.footer = footer;
 
         self.exit_right_prompt = layout.right_prompt.map(|rp| {
             let text = coerce_crlf(&lines.prompt_str_right);
@@ -1101,6 +1112,46 @@ impl Painter {
         Ok(())
     }
 
+    fn footer_lines(&self, prompt: &dyn Prompt, required_lines: u16) -> Vec<String> {
+        let text = prompt.render_prompt_footer();
+        if self.term_is_dumb || text.is_empty() {
+            return Vec::new();
+        }
+        let width = self.screen_width();
+        let lines: Vec<String> = text
+            .split('\n')
+            .map(|line| truncate_to_width(line, width))
+            .collect();
+        let fits = usize::from(required_lines) + lines.len() < usize::from(self.screen_height());
+        if fits {
+            lines
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn print_footer(&mut self, footer: &[String]) -> Result<()> {
+        for (offset, line) in footer.iter().enumerate() {
+            self.stdout
+                .queue(cursor::MoveTo(0, self.footer_row + offset as u16))?
+                .queue(Print(line))?
+                .queue(SetAttribute(Attribute::Reset))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clear_footer(&mut self) -> Result<()> {
+        if self.footer.is_empty() {
+            return Ok(());
+        }
+        self.footer.clear();
+        self.stdout
+            .queue(cursor::MoveTo(0, self.footer_row))?
+            .queue(Clear(ClearType::FromCursorDown))?
+            .queue(RestorePosition)?;
+        self.stdout.flush()
+    }
+
     fn print_menu(
         &mut self,
         menu: &dyn Menu,
@@ -1391,6 +1442,7 @@ impl Painter {
     /// cursor survives, leaving a rejected command on screen as the record of
     /// what was aborted (#1143).
     pub(crate) fn move_cursor_to_end(&mut self) -> Result<()> {
+        self.footer.clear();
         self.stdout.queue(Clear(ClearType::FromCursorDown))?;
         if let Some(after_cursor) = &self.after_cursor_lines {
             self.stdout.queue(Print(after_cursor))?;
@@ -3289,5 +3341,102 @@ mod tests {
                 "emitted {sgr:?} with coloring disabled: {out:?}"
             );
         }
+    }
+
+    struct FooterPrompt(&'static str);
+
+    impl Prompt for FooterPrompt {
+        fn render_prompt_left(&self) -> Cow<'_, str> {
+            "> ".into()
+        }
+
+        fn render_prompt_right(&self) -> Cow<'_, str> {
+            "".into()
+        }
+
+        fn render_prompt_indicator(&self, _prompt_mode: PromptEditMode) -> Cow<'_, str> {
+            "".into()
+        }
+
+        fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+            "".into()
+        }
+
+        fn render_prompt_history_search_indicator(
+            &self,
+            _history_search: PromptHistorySearch,
+        ) -> Cow<'_, str> {
+            "".into()
+        }
+
+        fn render_prompt_footer(&self) -> Cow<'_, str> {
+            self.0.into()
+        }
+    }
+
+    fn footer_painter(prompt: &FooterPrompt, height: u16) -> Painter {
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (10, height);
+        painter.term_is_dumb = false;
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+        let lines = make_lines("> ", "", "", "hi", "");
+        painter
+            .repaint_buffer(prompt, &lines, PromptEditMode::Default, None, false, &None)
+            .expect("repaint_buffer failed");
+        painter
+    }
+
+    #[test]
+    fn test_footer_is_painted_below_the_buffer_and_counted() {
+        let painter = footer_painter(&FooterPrompt("one\ntwo\n"), 10);
+
+        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
+        let buffer_at = out.find("hi").unwrap();
+        assert!(out.find("\x1b[2;1Hone").unwrap() > buffer_at);
+        assert!(out.contains("\x1b[3;1Htwo"));
+        assert!(out.contains("\x1b[4;1H\x1b[0m"));
+        assert_eq!(painter.last_required_lines, 4);
+        assert!(out.ends_with("\x1b8\x1b[?25h"));
+    }
+
+    #[test]
+    fn test_footer_lines_are_truncated_to_the_screen_width() {
+        let painter = footer_painter(&FooterPrompt("0123456789abc\n\x1b[31m0123456789abc"), 10);
+
+        assert_eq!(painter.footer, vec!["0123456789", "\x1b[31m0123456789"]);
+    }
+
+    #[test]
+    fn test_footer_is_dropped_when_the_screen_is_too_short() {
+        let painter = footer_painter(&FooterPrompt("one\ntwo"), 3);
+
+        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
+        assert!(!out.contains("one"));
+        assert!(painter.footer.is_empty());
+        assert_eq!(painter.last_required_lines, 1);
+    }
+
+    #[test]
+    fn test_footer_is_erased_on_the_final_paint() {
+        let mut painter = footer_painter(&FooterPrompt("one"), 10);
+        painter.stdout = W::capture();
+
+        painter.move_cursor_to_end().unwrap();
+
+        let out = String::from_utf8_lossy(painter.stdout.captured()).into_owned();
+        assert!(out.starts_with("\x1b[J"));
+        assert!(!out.contains("one"));
+        assert!(painter.footer.is_empty());
+    }
+
+    #[test]
+    fn test_clear_footer_erases_from_the_footer_row_and_restores_the_cursor() {
+        let mut painter = footer_painter(&FooterPrompt("one"), 10);
+        painter.stdout = W::capture();
+
+        painter.clear_footer().unwrap();
+
+        assert_eq!(painter.stdout.captured(), b"\x1b[2;1H\x1b[J\x1b8");
     }
 }
