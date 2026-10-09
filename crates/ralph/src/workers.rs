@@ -1,11 +1,16 @@
 use ralph_core::worker::{
-    branch_name, claude_args, session_name, worker_mcp_config, worktree_path, INBOX_DIR,
-    WORKERS_DIR, WORKTREE_DIR,
+    branch_name, claude_args, session_name, startup_state, worker_mcp_config, worktree_path,
+    Startup, INBOX_DIR, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR,
 };
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const STARTUP_POLL: Duration = Duration::from_millis(250);
 
 pub struct Workers {
     store_dir: PathBuf,
@@ -37,6 +42,7 @@ impl Workers {
             .args(["new-session", "-d", "-s", &session, "-c"])
             .arg(&worktree)
             .args(claude_args(&config, task)))?;
+        await_startup(&session)?;
         Ok(format!(
             "Worker {id} started in {} on branch {}. Watch it with: tmux attach -t {session}",
             worktree.display(),
@@ -71,6 +77,32 @@ pub fn reply(id: &str, text: &str) -> io::Result<String> {
     run(Command::new("tmux").args(["paste-buffer", "-p", "-d", "-b", &session, "-t", &target]))?;
     run(Command::new("tmux").args(["send-keys", "-t", &target, "Enter"]))?;
     Ok(format!("Sent to worker {id}."))
+}
+
+/// Waits for Claude's UI, accepting the folder-trust prompt if it shows up.
+fn await_startup(session: &str) -> io::Result<()> {
+    let target = format!("={session}:");
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    let mut accepted = false;
+    while Instant::now() < deadline {
+        let pane = run(Command::new("tmux").args(["capture-pane", "-p", "-t", &target]))?;
+        match startup_state(&String::from_utf8_lossy(&pane.stdout)) {
+            Startup::Ready => return Ok(()),
+            // A second Down could wrap the selection back to "No, exit".
+            Startup::TrustPrompt if !accepted => {
+                run(Command::new("tmux")
+                    .args(["send-keys", "-t", &target])
+                    .args(TRUST_KEYS))?;
+                accepted = true;
+            }
+            Startup::TrustPrompt | Startup::Starting => {}
+        }
+        thread::sleep(STARTUP_POLL);
+    }
+    Err(io::Error::other(format!(
+        "worker started but Claude did not come up within {}s; check it with: tmux attach -t {session}",
+        STARTUP_TIMEOUT.as_secs()
+    )))
 }
 
 fn session_exists(session: &str) -> io::Result<bool> {

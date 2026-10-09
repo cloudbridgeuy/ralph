@@ -134,6 +134,27 @@ pub fn claude_args(mcp_config: &Path, task: &str) -> Vec<String> {
     ]
 }
 
+/// Claude asks before working in a folder it has not seen; "No, exit" is preselected,
+/// so accepting takes Down then Enter.
+pub const TRUST_KEYS: [&str; 2] = ["Down", "Enter"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Startup {
+    Starting,
+    TrustPrompt,
+    Ready,
+}
+
+pub fn startup_state(pane: &str) -> Startup {
+    if pane.contains("Yes, I trust this folder") {
+        Startup::TrustPrompt
+    } else if pane.contains("Claude Code v") {
+        Startup::Ready
+    } else {
+        Startup::Starting
+    }
+}
+
 pub fn tool_definitions() -> Value {
     json!([
         {
@@ -255,6 +276,19 @@ mod tests {
         let args = claude_args(Path::new("/s/workers/A.json"), "do it");
         assert_eq!(args[..3], ["claude", "--mcp-config", "/s/workers/A.json"]);
         assert_eq!(args.last().unwrap(), "do it");
+    }
+
+    #[test]
+    fn startup_state_reads_the_pane() {
+        assert_eq!(startup_state(""), Startup::Starting);
+        assert_eq!(
+            startup_state(" Accessing workspace:\n ❯ No, exit\n   Yes, I trust this folder\n"),
+            Startup::TrustPrompt
+        );
+        assert_eq!(
+            startup_state(" ▐▛███▛█   Claude Code v2.1.295\n❯ fix it\n"),
+            Startup::Ready
+        );
     }
 
     #[test]
