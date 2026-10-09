@@ -19,8 +19,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_memory::{usage_record, view, CallKind, Role, Trigger};
 use ralph_core::chat_skills::{
-    build_plugin_args, disables_model_invocation, plan_links, plugin_manifest, resolve_skills,
-    SkillSources,
+    build_plugin_args, disables_model_invocation, expand_slash_command, plan_links,
+    plugin_manifest, resolve_skills, ChatSkill, SkillSources,
 };
 use ralph_core::worker::{chat_message, INBOX_DIR};
 use reedline::{
@@ -156,6 +156,7 @@ struct Turn<'a> {
     store_dir: &'a Path,
     mcp_config_path: &'a Path,
     plugin_args: &'a [String],
+    skills: &'a [ChatSkill],
     timeout_secs: u64,
     theme_config: &'a ThemeConfig,
 }
@@ -165,8 +166,12 @@ impl Turn<'_> {
         let (entries, tree) = self.store.load_settled()?;
         let lines = view(&entries, &tree, VIEW_LINES).lines;
         self.store.append(trigger.role(), message)?;
+        let sent = match trigger {
+            Trigger::User => expand_slash_command(message, self.skills),
+            Trigger::Worker => Cow::Borrowed(message),
+        };
         let command = build_chat_command(
-            &turn_prompt(&lines, message),
+            &turn_prompt(&lines, &sent),
             SYSTEM_PROMPT,
             &[
                 build_mcp_args(self.mcp_config_path),
@@ -227,15 +232,14 @@ impl Turn<'_> {
     }
 }
 
-fn write_mcp_config(store: &Store, store_dir: &Path, exe: &Path) -> io::Result<PathBuf> {
-    let server_names = AppConfig::load()
-        .map(|config| config.chat.mcp_servers)
-        .unwrap_or_else(|e| {
-            warn(format!("Failed to load config: {e}"));
-            AppConfig::default().chat.mcp_servers
-        });
+fn write_mcp_config(
+    store: &Store,
+    store_dir: &Path,
+    exe: &Path,
+    server_names: &[String],
+) -> io::Result<PathBuf> {
     let claude_config = read_claude_config();
-    let imported = select_servers(&claude_config, &server_names);
+    let imported = select_servers(&claude_config, server_names);
     for name in &imported.missing {
         warn(format!(
             "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
@@ -254,7 +258,7 @@ fn env_skills() -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-fn usable_skills(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+fn usable_skills(dirs: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
     dirs.into_iter()
         .filter_map(|dir| {
             let dir = std::path::absolute(&dir).unwrap_or(dir);
@@ -262,11 +266,12 @@ fn usable_skills(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
                 Ok(skill_md) => {
                     if disables_model_invocation(&skill_md) {
                         warn(format!(
-                            "chat: skill {} sets disable-model-invocation; chat turns can only invoke skills through the model, so it will not run",
-                            dir.display()
+                            "chat: skill {} sets disable-model-invocation; the model will not invoke it on its own, but /{} in chat runs it",
+                            dir.display(),
+                            dir.file_name().unwrap_or_default().to_string_lossy()
                         ));
                     }
-                    Some(dir)
+                    Some((dir, skill_md))
                 }
                 Err(e) => {
                     warn(format!(
@@ -280,15 +285,34 @@ fn usable_skills(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
         .collect()
 }
 
-fn write_skill_plugin(dirs: &[PathBuf]) -> io::Result<Option<tempfile::TempDir>> {
-    let plan = plan_links(dirs);
+fn link_skills(found: Vec<(PathBuf, String)>) -> Vec<ChatSkill> {
+    let dirs: Vec<PathBuf> = found.iter().map(|(dir, _)| dir.clone()).collect();
+    let plan = plan_links(&dirs);
     for dir in &plan.dropped {
         warn(format!(
             "chat: skipping skill {}: name already taken by an earlier skill",
             dir.display()
         ));
     }
-    if plan.links.is_empty() {
+    plan.links
+        .into_iter()
+        .filter_map(|(name, dir)| {
+            let skill_md = found
+                .iter()
+                .find(|(found_dir, _)| *found_dir == dir)?
+                .1
+                .clone();
+            Some(ChatSkill {
+                name,
+                dir,
+                skill_md,
+            })
+        })
+        .collect()
+}
+
+fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<tempfile::TempDir>> {
+    if skills.is_empty() {
         return Ok(None);
     }
     let plugin = tempfile::tempdir()?;
@@ -300,8 +324,8 @@ fn write_skill_plugin(dirs: &[PathBuf]) -> io::Result<Option<tempfile::TempDir>>
         manifest_dir.join("plugin.json"),
         plugin_manifest().to_string(),
     )?;
-    for (name, target) in &plan.links {
-        std::os::unix::fs::symlink(target, skills_dir.join(name))?;
+    for skill in skills {
+        std::os::unix::fs::symlink(&skill.dir, skills_dir.join(&skill.name))?;
     }
     Ok(Some(plugin))
 }
@@ -332,18 +356,21 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&store_dir)?;
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;
-    let mcp_config_path = write_mcp_config(&store, &store_dir, &exe)?;
-    let config_skills = AppConfig::load()
-        .map(|config| config.chat.skills)
-        .unwrap_or_default();
-    let skills = usable_skills(resolve_skills(
+    let chat_config = AppConfig::load()
+        .map(|config| config.chat)
+        .unwrap_or_else(|e| {
+            warn(format!("Failed to load config: {e}"));
+            AppConfig::default().chat
+        });
+    let mcp_config_path = write_mcp_config(&store, &store_dir, &exe, &chat_config.mcp_servers)?;
+    let skills = link_skills(usable_skills(resolve_skills(
         &SkillSources {
             cli: &args.skills,
             env: &env_skills(),
-            config: &config_skills,
+            config: &chat_config.skills,
         },
         dirs::home_dir().as_deref(),
-    ));
+    )));
     let plugin = write_skill_plugin(&skills)?;
     let plugin_args = plugin
         .as_ref()
@@ -355,6 +382,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         store_dir: &store_dir,
         mcp_config_path: &mcp_config_path,
         plugin_args: &plugin_args,
+        skills: &skills,
         timeout_secs: args.timeout,
         theme_config: &theme_config,
     };

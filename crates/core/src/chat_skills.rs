@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 pub const PLUGIN_NAME: &str = "ralph";
@@ -62,6 +63,54 @@ pub fn disables_model_invocation(skill_md: &str) -> bool {
         .take_while(|line| line.trim_end() != "---")
         .filter_map(|line| line.split_once(':'))
         .any(|(key, value)| key.trim() == "disable-model-invocation" && value.trim() == "true")
+}
+
+pub struct ChatSkill {
+    pub name: String,
+    pub dir: PathBuf,
+    pub skill_md: String,
+}
+
+fn strip_frontmatter(skill_md: &str) -> &str {
+    let Some(rest) = skill_md
+        .strip_prefix("---\n")
+        .or_else(|| skill_md.strip_prefix("---\r\n"))
+    else {
+        return skill_md;
+    };
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        offset += line.len();
+        if line.trim_end() == "---" {
+            return &rest[offset..];
+        }
+    }
+    skill_md
+}
+
+pub fn expand_slash_command<'a>(message: &'a str, skills: &[ChatSkill]) -> Cow<'a, str> {
+    let Some(command) = message.strip_prefix('/') else {
+        return Cow::Borrowed(message);
+    };
+    let (name, args) = command
+        .split_once(char::is_whitespace)
+        .unwrap_or((command, ""));
+    let Some(skill) = skills.iter().find(|skill| skill.name == name) else {
+        return Cow::Borrowed(message);
+    };
+    let args = args.trim();
+    let body = strip_frontmatter(&skill.skill_md).trim();
+    let mut expanded = format!("Base directory for this skill: {}\n\n", skill.dir.display());
+    if body.contains("$ARGUMENTS") {
+        expanded.push_str(&body.replace("$ARGUMENTS", args));
+    } else {
+        expanded.push_str(body);
+        if !args.is_empty() {
+            expanded.push_str(&format!("\n\nARGUMENTS: {args}"));
+        }
+    }
+    expanded.push_str(&format!("\n\n{message}"));
+    Cow::Owned(expanded)
 }
 
 pub fn plugin_manifest() -> Value {
@@ -148,6 +197,56 @@ mod tests {
         assert!(!disables_model_invocation(
             "disable-model-invocation: true\n---\n"
         ));
+    }
+
+    fn skill(skill_md: &str) -> Vec<ChatSkill> {
+        vec![ChatSkill {
+            name: "show-me".to_string(),
+            dir: PathBuf::from("/s/show-me"),
+            skill_md: skill_md.to_string(),
+        }]
+    }
+
+    #[test]
+    fn args_append_without_placeholder() {
+        let out = expand_slash_command("/show-me  x y ", &skill("---\nname: a\n---\nBody\n"));
+        assert_eq!(
+            out,
+            "Base directory for this skill: /s/show-me\n\nBody\n\nARGUMENTS: x y\n\n/show-me  x y "
+        );
+    }
+
+    #[test]
+    fn args_substitute_placeholder() {
+        let out = expand_slash_command("/show-me x", &skill("Do $ARGUMENTS then $ARGUMENTS"));
+        assert_eq!(
+            out,
+            "Base directory for this skill: /s/show-me\n\nDo x then x\n\n/show-me x"
+        );
+    }
+
+    #[test]
+    fn no_args_no_frontmatter() {
+        let out = expand_slash_command("/show-me", &skill("Body"));
+        assert_eq!(
+            out,
+            "Base directory for this skill: /s/show-me\n\nBody\n\n/show-me"
+        );
+    }
+
+    #[test]
+    fn frontmatter_is_stripped() {
+        let out = expand_slash_command("/show-me", &skill("---\nname: a\n---\nBody"));
+        assert!(!out.contains("name: a"));
+        assert!(out.contains("Body"));
+    }
+
+    #[test]
+    fn non_matching_messages_pass_through() {
+        let skills = skill("Body");
+        for message in ["/other x", "/show-meX", "/", "plain text", " /show-me"] {
+            assert_eq!(expand_slash_command(message, &skills), message);
+        }
     }
 
     #[test]

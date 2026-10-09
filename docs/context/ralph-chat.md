@@ -20,7 +20,7 @@ ralph                      # same as ralph chat with defaults
 
 - `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `view`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts and `check_summary`; `usage.rs` has the per-call usage records.
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `SYSTEM_PROMPT`, `turn_prompt`, `build_mcp_args`.
-- `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `disables_model_invocation`, `plugin_manifest`, `build_plugin_args`.
+- `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `disables_model_invocation`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat.rs`: turn loop shell, reedline input, nap spawn.
 - `crates/ralph/src/chat_memory.rs`: `Store` (files, LOCK, append, nap loop).
 - `crates/ralph/src/chat_mcp.rs`: MCP stdio loop.
@@ -76,7 +76,9 @@ Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not
 - Sources, highest first: `--skill <PATH>` (repeatable), `RALPH_CHAT_SKILLS` (`:`-separated, empty entries dropped), `[chat] skills = [...]` in the ralph config. The highest non-empty source replaces the lower ones; lists are not merged. With none set, no `--plugin-dir` is passed and nothing is written.
 - A leading `~` or `~/` expands to the home directory. Duplicate paths keep the first. Relative paths are made absolute.
 - At start, a path without a readable `SKILL.md` prints one warning and is skipped. Two skills with the same directory name: the first wins, the other warns and is skipped.
-- A skill whose frontmatter sets `disable-model-invocation: true` warns but is still included. Chat turns wrap the input, so the model must call the Skill tool, which that flag blocks.
+- A skill whose frontmatter sets `disable-model-invocation: true` warns that the model will not invoke it on its own, but is still included; `/<name>` in chat runs it.
+- Slash expansion: chat turns wrap the input, so Claude Code never expands a leading `/<name>`. Ralph does it for user turns only (worker messages are never expanded). If the message starts with `/<name>` followed by whitespace or end, and `<name>` is a configured skill, the prompt gets `Base directory for this skill: <dir>`, the `SKILL.md` body without its frontmatter, then the original message. The rest of the message, trimmed, replaces every `$ARGUMENTS` in the body; without that token and with non-empty arguments, an `ARGUMENTS: <args>` line is appended. The store keeps the original message; only the sent prompt is expanded. Unknown names, a bare `/`, and `/name` prefixes that are longer words pass through unchanged. `disable-model-invocation` is ignored here.
+- Config is loaded once at start; it supplies both `mcp_servers` and `skills`. On load error chat warns once and uses defaults.
 - If at least one skill survives, chat builds a temporary plugin directory (removed when chat exits) with `.claude-plugin/plugin.json` (`{"name": "ralph"}`) and `skills/<name>` as symlinks to the skill directories. Each turn adds `--plugin-dir <dir>`. Skills appear as `ralph:<name>`.
 - Skills are read at start: changes to the list need a restart.
 
