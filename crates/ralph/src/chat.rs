@@ -14,14 +14,16 @@ use crate::warn::{warn, warn_if_err};
 use ralph_core::chat::{build_mcp_args, turn_prompt, SYSTEM_PROMPT, VIEW_LINES};
 use ralph_core::chat_memory::{view, Role};
 use reedline::{
-    default_emacs_keybindings, DefaultPrompt, DefaultPromptSegment, EditCommand, Emacs,
-    FileBackedHistory, KeyCode, KeyModifiers, Reedline, ReedlineEvent, Signal,
+    default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
+    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
+    ReedlineEvent, Signal, DEFAULT_MULTILINE_INDICATOR,
 };
+use std::borrow::Cow;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const PROMPT: &str = "> ";
+const PROMPT: &str = ">>> ";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
@@ -54,12 +56,42 @@ fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>
         .with_buffer_editor(Command::new(editor), store_dir.join(EDITOR_FILE)))
 }
 
+struct ChatPrompt;
+
+impl Prompt for ChatPrompt {
+    fn render_prompt_left(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
+
+    fn render_prompt_right(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
+
+    fn render_prompt_indicator(&self, _edit_mode: PromptEditMode) -> Cow<'_, str> {
+        Cow::Borrowed(PROMPT)
+    }
+
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+        Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
+    }
+
+    fn render_prompt_history_search_indicator(
+        &self,
+        history_search: PromptHistorySearch,
+    ) -> Cow<'_, str> {
+        let prefix = match history_search.status {
+            PromptHistorySearchStatus::Passing => "",
+            PromptHistorySearchStatus::Failing => "failing ",
+        };
+        Cow::Owned(format!(
+            "({prefix}reverse-search: {}) ",
+            history_search.term
+        ))
+    }
+}
+
 fn next_message(editor: &mut Reedline) -> io::Result<Option<String>> {
-    let prompt = DefaultPrompt::new(
-        DefaultPromptSegment::Basic(PROMPT.to_string()),
-        DefaultPromptSegment::Empty,
-    );
-    Ok(match editor.read_line(&prompt)? {
+    Ok(match editor.read_line(&ChatPrompt)? {
         Signal::Success(line) => Some(line.trim().to_string()).filter(|line| !line.is_empty()),
         _ => None,
     })
