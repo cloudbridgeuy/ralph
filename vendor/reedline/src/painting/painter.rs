@@ -366,7 +366,11 @@ pub struct Painter {
     /// right, and `move_cursor_to_end` has no `prompt` to re-derive the color
     /// from, so both have to be captured during the paint.
     exit_right_prompt: Option<(String, RightPromptBounds)>,
+    /// The footer rows as last painted, already cut to the screen width.
+    /// Empty when no footer is on screen, so `clear_footer` knows whether
+    /// there is anything to erase.
     footer: Vec<String>,
+    /// The screen row of the first footer line in the last paint.
     footer_row: u16,
     /// Optional semantic prompt markers for terminal integration (OSC 133/633)
     semantic_markers: Option<Box<dyn SemanticPromptMarkers>>,
