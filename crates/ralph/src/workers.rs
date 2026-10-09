@@ -1,6 +1,6 @@
 use ralph_core::worker::{
-    branch_name, claude_args, session_name, startup_state, worker_mcp_config, worktree_path,
-    Startup, INBOX_DIR, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR,
+    branch_name, claude_args, session_name, startup_state, tmux_env_args, worker_mcp_config,
+    worktree_path, Startup, INBOX_DIR, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR,
 };
 use std::fs;
 use std::io::{self, Write};
@@ -39,7 +39,9 @@ impl Workers {
             .arg(&worktree))?;
         let config = self.write_config(id)?;
         run(Command::new("tmux")
-            .args(["new-session", "-d", "-s", &session, "-c"])
+            .args(["new-session", "-d", "-s", &session])
+            .args(tmux_env_args(|name| std::env::var(name).ok()))
+            .arg("-c")
             .arg(&worktree)
             .args(claude_args(&config, task)))?;
         await_startup(&session)?;

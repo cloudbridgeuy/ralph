@@ -134,6 +134,18 @@ pub fn claude_args(mcp_config: &Path, task: &str) -> Vec<String> {
     ]
 }
 
+/// The tmux server keeps the environment it started with, so workers would miss keys
+/// exported later. ANTHROPIC_API_KEY stays out: it would bill workers to the API.
+pub const FORWARDED_ENV: [&str; 1] = ["LINEAR_API_KEY"];
+
+pub fn tmux_env_args(lookup: impl Fn(&str) -> Option<String>) -> Vec<String> {
+    FORWARDED_ENV
+        .iter()
+        .filter_map(|name| lookup(name).map(|value| ["-e".to_string(), format!("{name}={value}")]))
+        .flatten()
+        .collect()
+}
+
 /// Claude asks before working in a folder it has not seen; "No, exit" is preselected,
 /// so accepting takes Down then Enter.
 pub const TRUST_KEYS: [&str; 2] = ["Down", "Enter"];
@@ -225,6 +237,13 @@ mod tests {
             status: status.into(),
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn tmux_env_args_forwards_only_set_keys() {
+        let set = tmux_env_args(|name| (name == "LINEAR_API_KEY").then(|| "k".to_string()));
+        assert_eq!(set, ["-e", "LINEAR_API_KEY=k"]);
+        assert!(tmux_env_args(|_| None).is_empty());
     }
 
     fn entry(role: Role) -> Entry {
