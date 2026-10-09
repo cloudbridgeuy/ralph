@@ -2,7 +2,7 @@ use crate::chat_memory::Store;
 use crate::workers::{reply, Workers};
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::mcp::tool_result;
-use ralph_core::worker::{person_has_floor, Command};
+use ralph_core::worker::{command_allowed, Command};
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 
@@ -10,7 +10,7 @@ fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<St
     let (entries, _) = store
         .load()
         .map_err(|e| format!("Could not read chat memory: {e}"))?;
-    person_has_floor(&entries)?;
+    command_allowed(command, &entries)?;
     match command {
         Command::Spawn { id, task } => workers.spawn(id, task),
         Command::Reply { id, text } => reply(id, text),
@@ -97,7 +97,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_commands_are_refused_on_a_worker_turn() {
+    fn spawn_worker_is_refused_on_a_worker_turn() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
         std::fs::write(
@@ -105,7 +105,7 @@ mod tests {
             "{\"role\":\"worker\",\"at\":\"t\",\"text\":\"merge?\"}\n",
         )
         .unwrap();
-        let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"reply","arguments":{"id":"A","text":"yes"}}}"#;
+        let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"spawn_worker","arguments":{"id":"A","task":"merge"}}}"#;
         let lines = run(&store, &format!("{call}\n"));
         assert_eq!(lines[0]["result"]["isError"], true);
         assert!(lines[0]["result"]["content"][0]["text"]
