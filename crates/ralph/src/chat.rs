@@ -1,3 +1,4 @@
+use crate::ansi::{DIM, RESET};
 use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
@@ -22,18 +23,22 @@ use ralph_core::chat_skills::{
     build_plugin_args, expand_slash_command, plan_links, plugin_manifest, resolve_skills,
     ChatSkill, SkillSources,
 };
-use ralph_core::worker::{chat_message, INBOX_DIR};
+use ralph_core::chat_status::{
+    footer, latest_states, memory_size, route_input, session_worker_ids, status_line,
+    worker_states, Memory, Route, Status,
+};
+use ralph_core::worker::{chat_message, Report, INBOX_DIR};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
     ReedlineEvent, Signal, DEFAULT_MULTILINE_INDICATOR,
 };
 use std::borrow::Cow;
-use std::io;
+use std::collections::HashMap;
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 const PROMPT: &str = ">>> ";
@@ -41,7 +46,9 @@ const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
 const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
-const INBOX_POLL: Duration = Duration::from_millis(500);
+const POLL: Duration = Duration::from_millis(500);
+const MEMORY_EVERY_POLLS: u32 = 10;
+const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
 fn default_store() -> io::Result<PathBuf> {
     dirs::home_dir()
@@ -49,10 +56,7 @@ fn default_store() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other("home directory not found"))
 }
 
-fn build_editor(
-    store_dir: &Path,
-    mail: Arc<AtomicBool>,
-) -> Result<Reedline, Box<dyn std::error::Error>> {
+fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>> {
     let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     let mut keybindings = default_emacs_keybindings();
     for (modifier, key_code) in [
@@ -72,14 +76,115 @@ fn build_editor(
         .with_history(Box::new(history))
         .with_edit_mode(Box::new(Emacs::new(keybindings)))
         .with_buffer_editor(Command::new(editor), store_dir.join(EDITOR_FILE))
-        .with_break_signal(mail))
+        .use_bracketed_paste(true))
 }
 
-struct ChatPrompt;
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn running_worker_ids() -> Vec<String> {
+    Command::new("tmux")
+        .args(["list-sessions", "-F", "#{session_name}"])
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| session_worker_ids(&String::from_utf8_lossy(&output.stdout)))
+        .unwrap_or_default()
+}
+
+struct Monitor {
+    inbox: Inbox,
+    store: Store,
+    status: Mutex<Status>,
+    seen: Mutex<HashMap<String, String>>,
+}
+
+impl Monitor {
+    fn status(&self) -> Status {
+        locked(&self.status).clone()
+    }
+
+    fn drain(&self) -> io::Result<Vec<Report>> {
+        let reports = self.inbox.drain()?;
+        locked(&self.seen).extend(latest_states(&reports));
+        Ok(reports)
+    }
+
+    fn measure_memory(&self) -> Option<Memory> {
+        let (entries, tree) = self.store.load().ok()?;
+        Some(memory_size(
+            entries.len(),
+            &view(&entries, &tree, VIEW_LINES).lines,
+        ))
+    }
+
+    fn refresh(&self, with_memory: bool) -> bool {
+        let pending = self.inbox.peek().unwrap_or_default();
+        let seen = {
+            let mut seen = locked(&self.seen);
+            seen.extend(latest_states(&pending));
+            seen.clone()
+        };
+        let workers = worker_states(&running_worker_ids(), &seen);
+        let memory = if with_memory {
+            self.measure_memory()
+        } else {
+            None
+        };
+        let mut status = locked(&self.status);
+        let next = Status {
+            unread: pending.len(),
+            workers,
+            memory: memory.unwrap_or(status.memory),
+        };
+        let changed = *status != next;
+        *status = next;
+        changed
+    }
+}
+
+fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 'static) {
+    std::thread::spawn(move || {
+        for poll in (1..=MEMORY_EVERY_POLLS).cycle() {
+            std::thread::sleep(POLL);
+            if monitor.refresh(poll == MEMORY_EVERY_POLLS) {
+                repaint();
+            }
+        }
+    });
+}
+
+struct ChatPrompt {
+    monitor: Arc<Monitor>,
+    color: bool,
+}
+
+impl ChatPrompt {
+    fn dim(&self, line: &str) -> String {
+        if self.color {
+            format!("{DIM}{line}{RESET}\n")
+        } else {
+            format!("{line}\n")
+        }
+    }
+}
+
+fn terminal_width() -> usize {
+    crossterm::terminal::size()
+        .map(|(w, _)| usize::from(w))
+        .unwrap_or(DEFAULT_TERMINAL_WIDTH)
+}
 
 impl Prompt for ChatPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Borrowed("")
+        Cow::Owned(self.dim(&status_line(&self.monitor.status(), terminal_width())))
+    }
+
+    fn render_prompt_footer(&self) -> Cow<'_, str> {
+        let hints = footer(self.monitor.status().unread, terminal_width());
+        Cow::Owned(self.dim(hints.trim_end_matches('\n')))
     }
 
     fn render_prompt_right(&self) -> Cow<'_, str> {
@@ -109,30 +214,11 @@ impl Prompt for ChatPrompt {
     }
 }
 
-enum Input {
-    Message(String),
-    Mail,
-    Quit,
-}
-
-fn next_input(editor: &mut Reedline) -> io::Result<Input> {
-    Ok(match editor.read_line(&ChatPrompt)? {
-        Signal::Success(line) if !line.trim().is_empty() => Input::Message(line.trim().to_string()),
-        Signal::ExternalBreak(_) => Input::Mail,
-        _ => Input::Quit,
+fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Result<Option<Route>> {
+    Ok(match editor.read_line(prompt)? {
+        Signal::Success(line) => Some(route_input(&line, prompt.monitor.status().unread)),
+        _ => None,
     })
-}
-
-fn watch_inbox(dir: PathBuf, mail: Arc<AtomicBool>) {
-    std::thread::spawn(move || {
-        let inbox = Inbox::new(dir);
-        loop {
-            if inbox.has_mail() {
-                mail.store(true, Ordering::Relaxed);
-            }
-            std::thread::sleep(INBOX_POLL);
-        }
-    });
 }
 
 fn print_rule() {
@@ -162,10 +248,17 @@ struct Turn<'a> {
 }
 
 impl Turn<'_> {
-    fn run(&self, trigger: Trigger, message: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    fn run(
+        &self,
+        trigger: Trigger,
+        logged: &[String],
+        message: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         let (entries, tree) = self.store.load_settled()?;
         let lines = view(&entries, &tree, VIEW_LINES).lines;
-        self.store.append(trigger.role(), message)?;
+        for text in logged {
+            self.store.append(trigger.role(), text)?;
+        }
         let sent = match trigger {
             Trigger::User => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
@@ -377,28 +470,44 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         timeout_secs: args.timeout,
         theme_config: &theme_config,
     };
-    let inbox_dir = store_dir.join(INBOX_DIR);
-    let inbox = Inbox::new(inbox_dir.clone());
-    let mail = Arc::new(AtomicBool::new(false));
-    watch_inbox(inbox_dir, Arc::clone(&mail));
-    let mut editor = build_editor(&store_dir, mail)?;
-    loop {
-        let reports = inbox.drain()?;
-        let (trigger, message) = if reports.is_empty() {
-            match next_input(&mut editor)? {
-                Input::Message(message) => (Trigger::User, message),
-                Input::Mail => {
-                    println!();
+    let monitor = Arc::new(Monitor {
+        inbox: Inbox::new(store_dir.join(INBOX_DIR)),
+        store: Store::new(store_dir.clone()),
+        status: Mutex::new(Status::default()),
+        seen: Mutex::new(HashMap::new()),
+    });
+    monitor.refresh(true);
+    let mut editor = build_editor(&store_dir)?;
+    let repaint = editor.repaint_signal();
+    watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
+    let prompt = ChatPrompt {
+        monitor: Arc::clone(&monitor),
+        color: std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+    };
+    while let Some(route) = next_route(&mut editor, &prompt)? {
+        let keep_going = match route {
+            Route::Ignore => continue,
+            Route::Send(message) => {
+                turn.run(Trigger::User, std::slice::from_ref(&message), &message)?
+            }
+            Route::ReadInbox => {
+                let reports = monitor.drain()?;
+                monitor.refresh(true);
+                if reports.is_empty() {
+                    println!("No unread reports.");
                     continue;
                 }
-                Input::Quit => break,
+                let logged: Vec<String> = reports
+                    .iter()
+                    .map(|report| chat_message(std::slice::from_ref(report)))
+                    .collect();
+                let message = chat_message(&reports);
+                println!("{message}");
+                turn.run(Trigger::Worker, &logged, &message)?
             }
-        } else {
-            let message = chat_message(&reports);
-            println!("{message}");
-            (Trigger::Worker, message)
         };
-        if !turn.run(trigger, &message)? {
+        monitor.refresh(true);
+        if !keep_going {
             break;
         }
     }

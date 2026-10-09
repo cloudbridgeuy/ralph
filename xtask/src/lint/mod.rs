@@ -403,7 +403,7 @@ async fn run_file_length_check(global: &crate::Global) -> Result<bool> {
 
     // Find all .rs files in the workspace
     let output = tokio::process::Command::new("git")
-        .args(["ls-files", "*.rs", "**/*.rs"])
+        .args(["ls-files", "*.rs", "**/*.rs", ":(exclude)vendor/**"])
         .output()
         .await?;
 

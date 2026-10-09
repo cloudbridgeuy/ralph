@@ -35,8 +35,12 @@ impl Inbox {
         Ok(paths)
     }
 
-    pub fn has_mail(&self) -> bool {
-        self.pending().is_ok_and(|paths| !paths.is_empty())
+    pub fn peek(&self) -> io::Result<Vec<Report>> {
+        Ok(self
+            .pending()?
+            .iter()
+            .filter_map(|path| serde_json::from_slice(&fs::read(path).ok()?).ok())
+            .collect())
     }
 
     pub fn drain(&self) -> io::Result<Vec<Report>> {
@@ -123,11 +127,11 @@ mod tests {
         let reply: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(reply["result"]["isError"], false);
 
-        assert!(inbox.has_mail());
+        assert_eq!(inbox.peek().unwrap().len(), 1);
         let reports = inbox.drain().unwrap();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].worker, "GUZ-1");
         assert_eq!(reports[0].text, "hello");
-        assert!(!inbox.has_mail());
+        assert!(inbox.peek().unwrap().is_empty());
     }
 }

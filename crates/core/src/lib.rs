@@ -16,6 +16,7 @@
 pub mod chat;
 pub mod chat_memory;
 pub mod chat_skills;
+pub mod chat_status;
 pub mod chunk;
 pub mod completion;
 pub mod context;
