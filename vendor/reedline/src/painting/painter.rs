@@ -3439,4 +3439,54 @@ mod tests {
 
         assert_eq!(painter.stdout.captured(), b"\x1b[2;1H\x1b[J\x1b8");
     }
+
+    /// The footer is counted after the menu rows, so it lands below the
+    /// menu, and a menu that reaches the last row leaves it no room.
+    #[rstest]
+    #[case::short_menu(3, Some(4))]
+    #[case::menu_one_row_above_the_last(7, Some(8))]
+    #[case::menu_reaching_the_last_row(8, None)]
+    fn test_footer_is_painted_below_a_menu(
+        #[case] menu_rows: usize,
+        #[case] footer_row: Option<u16>,
+    ) {
+        let items: Vec<String> = (0..menu_rows).map(|i| format!("item{i}")).collect();
+        let menu = ReedlineMenu::EngineCompleter(Box::new(TestMenu::new(&items.join("\n"))));
+        let mut painter = Painter::new(W::capture());
+        painter.terminal_size = (10, 10);
+        painter.term_is_dumb = false;
+        painter.prompt_start_row.mark_verified(0);
+        painter.prompt_height = 1;
+        let lines = make_lines("> ", "", "", "hi", "");
+
+        painter
+            .repaint_buffer(
+                &FooterPrompt("one"),
+                &lines,
+                PromptEditMode::Default,
+                Some(&menu),
+                false,
+                &None,
+            )
+            .unwrap();
+
+        let replayed = replay(
+            &String::from_utf8_lossy(painter.stdout.captured()),
+            10,
+            true,
+        );
+        match footer_row {
+            Some(row) => {
+                assert_eq!(painter.footer_row, row);
+                assert_eq!(replayed.max_written, row);
+                assert!(replayed
+                    .screen
+                    .ends_with(&format!("item{}one", menu_rows - 1)));
+            }
+            None => {
+                assert!(painter.footer.is_empty());
+                assert!(!replayed.screen.contains("one"));
+            }
+        }
+    }
 }

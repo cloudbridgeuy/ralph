@@ -2625,7 +2625,11 @@ impl Reedline {
                 // that leaves the cursor untouched (e.g. an editor that
                 // uses the alternate screen only) re-uses the existing
                 // prompt rows instead of starting a new prompt a row
-                // below the old one.
+                // below the old one. The footer is erased first, so an
+                // editor that draws on the main screen does not start
+                // below it. `suspend_painter` would borrow all of `self`
+                // while `buffer_editor` is borrowed.
+                self.painter.clear_footer()?;
                 let suspended_state = self.painter.state_before_suspension();
                 {
                     let mut child = command.spawn()?;
