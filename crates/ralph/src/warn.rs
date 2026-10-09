@@ -1,26 +1,11 @@
-//! Warning message utilities.
-//!
-//! Centralized helpers for consistent warning output. On a terminal a warning
-//! renders as an amber block with a left border bar and a warning symbol; when
-//! stderr is not a terminal (or `NO_COLOR` is set) it is plain
-//! "Warning: {message}" text.
-
+use crate::ansi::{BOLD, RESET, YELLOW};
 use std::fmt::Display;
 use std::io::IsTerminal;
 
-const AMBER: &str = "\x1b[38;5;214m";
-const BOLD: &str = "\x1b[1m";
-const RESET: &str = "\x1b[0m";
-const BAR: &str = "\u{258c}";
 const SYMBOL: &str = "\u{26a0}";
-/// Visible columns taken by the border and symbol prefix ("▌ ⚠ ").
-const PREFIX_WIDTH: usize = 4;
+const FRAME_WIDTH: usize = 6;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
-/// Split `text` into lines of at most `width` characters (pure function).
-///
-/// Existing newlines are kept, words wrap at spaces, and words longer than
-/// `width` are split.
 fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut lines = Vec::new();
@@ -59,39 +44,32 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-/// Build the warning text (pure function).
-///
-/// With `color`, returns an amber bordered block wrapped to `terminal_width`;
-/// otherwise returns `Warning: {message}`.
 fn format_warning(message: &str, terminal_width: usize, color: bool) -> String {
     if !color {
         return format!("Warning: {message}");
     }
-    let body_width = terminal_width.saturating_sub(PREFIX_WIDTH).max(1);
-    wrap_text(message, body_width)
-        .iter()
-        .enumerate()
-        .map(|(i, line)| {
-            let marker = if i == 0 {
-                format!("{BOLD}{SYMBOL}{RESET}")
-            } else {
-                " ".to_string()
-            };
-            format!("{AMBER}{BAR}{RESET} {AMBER}{marker}{RESET} {line}")
-        })
+    let body_width = terminal_width.saturating_sub(FRAME_WIDTH).max(1);
+    let lines = wrap_text(message, body_width);
+    let text_width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    let rule = "\u{2500}".repeat(text_width + 4);
+    let body = lines.iter().enumerate().map(|(i, line)| {
+        let marker = if i == 0 {
+            format!("{BOLD}{YELLOW}{SYMBOL}{RESET}")
+        } else {
+            " ".to_string()
+        };
+        let pad = " ".repeat(text_width - line.chars().count());
+        format!("{YELLOW}\u{2502}{RESET} {marker} {line}{pad} {YELLOW}\u{2502}{RESET}")
+    });
+    std::iter::once(format!("{YELLOW}\u{256d}{rule}\u{256e}{RESET}"))
+        .chain(body)
+        .chain(std::iter::once(format!(
+            "{YELLOW}\u{2570}{rule}\u{256f}{RESET}"
+        )))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-/// Print a warning message to stderr.
-///
-/// # Examples
-///
-/// ```no_run
-/// use ralph::warn::warn;
-///
-/// warn("Not a git repository. Skipping diff capture.");
-/// ```
 pub fn warn(message: impl Display) {
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let width = crossterm::terminal::size()
@@ -100,28 +78,6 @@ pub fn warn(message: impl Display) {
     eprintln!("{}", format_warning(&message.to_string(), width, color));
 }
 
-/// Log a warning if the result is an error, then discard the result.
-///
-/// Warns with "{context}: {error}".
-///
-/// # Arguments
-///
-/// * `result` - The Result to check
-/// * `context` - A description of what operation failed
-///
-/// # Examples
-///
-/// ```no_run
-/// use ralph::warn::warn_if_err;
-/// use std::io;
-///
-/// fn may_fail() -> Result<(), io::Error> {
-///     Err(io::Error::new(io::ErrorKind::NotFound, "file not found"))
-/// }
-///
-/// warn_if_err(may_fail(), "Failed to finalize session");
-/// // Warns: Failed to finalize session: file not found
-/// ```
 pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
     if let Err(e) = result {
         warn(format!("{context}: {e}"));
@@ -153,27 +109,34 @@ mod tests {
     }
 
     #[test]
-    fn colored_single_line_has_bar_symbol_and_amber() {
+    fn colored_single_line_is_boxed() {
         let out = format_warning("disk full", 80, true);
-        assert!(out.contains(AMBER));
-        assert_eq!(strip_ansi(&out), "\u{258c} \u{26a0} disk full");
-    }
-
-    #[test]
-    fn colored_wraps_under_border() {
-        let out = format_warning("one two three four five six", 14, true);
+        assert!(out.contains(YELLOW));
         assert_eq!(
             strip_ansi(&out),
-            "\u{258c} \u{26a0} one two\n\u{258c}   three four\n\u{258c}   five six"
+            "\u{256d}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256e}\n\u{2502} \u{26a0} disk full \u{2502}\n\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}"
         );
     }
 
     #[test]
+    fn colored_wrap_keeps_borders_aligned_within_width() {
+        let out = strip_ansi(&format_warning("one two three four five six", 16, true));
+        let widths: Vec<usize> = out.lines().map(|l| l.chars().count()).collect();
+        assert!(widths.len() > 3);
+        assert!(widths.iter().all(|w| *w == widths[0] && *w <= 16));
+    }
+
+    #[test]
     fn colored_keeps_newlines_and_splits_long_words() {
-        let out = strip_ansi(&format_warning("ab\nabcdefghij", 9, true));
+        let out = strip_ansi(&format_warning("ab\nabcdefghij", 11, true));
+        let rows: Vec<&str> = out.lines().skip(1).take(3).collect();
         assert_eq!(
-            out,
-            "\u{258c} \u{26a0} ab\n\u{258c}   abcde\n\u{258c}   fghij"
+            rows,
+            [
+                "\u{2502} \u{26a0} ab    \u{2502}",
+                "\u{2502}   abcde \u{2502}",
+                "\u{2502}   fghij \u{2502}"
+            ]
         );
     }
 
@@ -181,7 +144,6 @@ mod tests {
     fn test_warn_if_err_with_ok_does_not_panic() {
         let result: Result<i32, io::Error> = Ok(42);
         warn_if_err(result, "This should not print");
-        // Test passes if no panic occurs
     }
 
     #[test]
@@ -189,6 +151,5 @@ mod tests {
         let result: Result<i32, io::Error> =
             Err(io::Error::new(io::ErrorKind::NotFound, "test error"));
         warn_if_err(result, "Test context");
-        // Test passes if no panic occurs
     }
 }

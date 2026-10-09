@@ -20,7 +20,7 @@ ralph                      # same as ralph chat with defaults
 
 - `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `view`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts and `check_summary`; `usage.rs` has the per-call usage records.
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `SYSTEM_PROMPT`, `turn_prompt`, `build_mcp_args`.
-- `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `disables_model_invocation`, `plugin_manifest`, `build_plugin_args`.
+- `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat.rs`: turn loop shell, reedline input, nap spawn.
 - `crates/ralph/src/chat_memory.rs`: `Store` (files, LOCK, append, nap loop).
 - `crates/ralph/src/chat_mcp.rs`: MCP stdio loop.
