@@ -17,7 +17,7 @@ use ralph_core::chat::{
     build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT, VIEW_LINES,
 };
 use ralph_core::chat_memory::{usage_record, view, CallKind, Role};
-use ralph_core::worker::chat_message;
+use ralph_core::worker::{chat_message, INBOX_DIR};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
@@ -35,7 +35,6 @@ const PROMPT: &str = ">>> ";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
-const INBOX_DIR: &str = "inbox";
 const INBOX_POLL: Duration = Duration::from_millis(500);
 
 fn default_store() -> io::Result<PathBuf> {
@@ -185,6 +184,13 @@ impl Turn<'_> {
         let result = match result {
             Ok(result) => result,
             Err(SubprocessError::Interrupted { .. }) => return Ok(false),
+            Err(SubprocessError::Timeout { timeout_secs, .. }) => {
+                print_rule();
+                warn(format!(
+                    "chat turn timed out after {timeout_secs}s; restart with a larger --timeout for long work"
+                ));
+                return Ok(true);
+            }
             Err(e) => return Err(e.into()),
         };
         if let Some(record) = usage_record(

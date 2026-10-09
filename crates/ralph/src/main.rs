@@ -47,6 +47,7 @@ pub mod stream_processor;
 pub mod subprocess;
 pub mod warn;
 mod worker_mcp;
+mod workers;
 
 use clap::Parser;
 use cli::{
@@ -563,10 +564,11 @@ fn execute_meeting_mcp(args: MeetingMcpArgs) -> Result<(), Box<dyn std::error::E
 }
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let store = chat_memory::Store::new(args.store);
+    let store = chat_memory::Store::new(args.store.clone());
+    let workers = workers::Workers::new(args.store, std::env::current_exe()?);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    chat_mcp::run_stdio_server(&store, stdin.lock(), stdout.lock())?;
+    chat_mcp::run_stdio_server(&store, &workers, stdin.lock(), stdout.lock())?;
     Ok(())
 }
 

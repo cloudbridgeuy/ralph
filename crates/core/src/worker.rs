@@ -1,8 +1,18 @@
+use crate::chat_memory::{Entry, Role};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 
 pub const SERVER_NAME: &str = "ralph-worker";
+pub const INBOX_DIR: &str = "inbox";
+pub const WORKERS_DIR: &str = "workers";
+pub const WORKTREE_DIR: &str = ".worktrees";
+
+pub const WORKER_PROMPT: &str = "\
+You work for one person on the task you were given, in your own git worktree. Act; do not stop to ask for confirmation.
+
+When you finish, get blocked, or need a decision, call the report tool, then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
@@ -23,11 +33,112 @@ pub enum Outcome {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    Spawn { id: String, task: String },
+    Reply { id: String, text: String },
+}
+
+pub fn command_definitions() -> [Value; 2] {
+    [
+        json!({
+            "name": "spawn_worker",
+            "description": "Start a worker agent on a task in its own git worktree and tmux session. Only when the person asked for it in their latest message.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
+                    "task": {"type": "string", "description": "What the worker should do, in the person's terms."}
+                },
+                "required": ["id", "task"]
+            }
+        }),
+        json!({
+            "name": "reply",
+            "description": "Send a message to a running worker. Only with what the person decided in their latest message.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "The worker id."},
+                    "text": {"type": "string", "description": "The message for the worker."}
+                },
+                "required": ["id", "text"]
+            }
+        }),
+    ]
+}
+
+pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>> {
+    let parsed = match name {
+        "spawn_worker" => string_arg(args, "task")
+            .and_then(|task| worker_id(args).map(|id| Command::Spawn { id, task })),
+        "reply" => string_arg(args, "text")
+            .and_then(|text| worker_id(args).map(|id| Command::Reply { id, text })),
+        _ => return None,
+    };
+    Some(parsed)
+}
+
+fn worker_id(args: &Value) -> Result<String, String> {
+    let id = string_arg(args, "id")?;
+    if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        Ok(id)
+    } else {
+        Err(format!(
+            "Worker id '{id}' may only use letters, digits and dashes."
+        ))
+    }
+}
+
+pub fn person_has_floor(entries: &[Entry]) -> Result<(), String> {
+    match entries.last() {
+        Some(entry) if entry.role == Role::User => Ok(()),
+        _ => Err(
+            "Only the person can direct workers. Relay this to them and wait for their answer."
+                .to_string(),
+        ),
+    }
+}
+
+pub fn session_name(id: &str) -> String {
+    format!("ralph-{id}")
+}
+
+pub fn branch_name(id: &str) -> String {
+    format!("worker/{id}")
+}
+
+pub fn worktree_path(repo: &Path, id: &str) -> PathBuf {
+    repo.join(WORKTREE_DIR).join(id)
+}
+
+pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path) -> Value {
+    json!({
+        "mcpServers": {
+            SERVER_NAME: {
+                "command": exe.to_string_lossy(),
+                "args": ["worker-mcp", "--id", id, "--inbox", inbox.to_string_lossy()]
+            }
+        }
+    })
+}
+
+pub fn claude_args(mcp_config: &Path, task: &str) -> Vec<String> {
+    vec![
+        "claude".to_string(),
+        "--mcp-config".to_string(),
+        mcp_config.to_string_lossy().into_owned(),
+        "--append-system-prompt".to_string(),
+        WORKER_PROMPT.to_string(),
+        task.to_string(),
+    ]
+}
+
 pub fn tool_definitions() -> Value {
     json!([
         {
             "name": "report",
-            "description": "Send a message to the chat that dispatched you. Use it only when you finish, get blocked, or need a decision. Each report costs a full chat turn, so never send progress updates.",
+            "description": "Send a message to the person who dispatched you. Use it only when you finish, get blocked, or need a decision, then stop and wait for their answer. Each report costs a full chat turn, so never send progress updates.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -93,6 +204,66 @@ mod tests {
             status: status.into(),
             text: text.into(),
         }
+    }
+
+    fn entry(role: Role) -> Entry {
+        Entry {
+            role,
+            at: "t".into(),
+            text: "x".into(),
+        }
+    }
+
+    #[test]
+    fn parse_command_reads_spawn_and_reply() {
+        assert_eq!(
+            parse_command("spawn_worker", &json!({"id": "GUZ-1", "task": "fix it"})),
+            Some(Ok(Command::Spawn {
+                id: "GUZ-1".into(),
+                task: "fix it".into()
+            }))
+        );
+        assert_eq!(
+            parse_command("reply", &json!({"id": "GUZ-1", "text": "merge"})),
+            Some(Ok(Command::Reply {
+                id: "GUZ-1".into(),
+                text: "merge".into()
+            }))
+        );
+        assert_eq!(parse_command("zoom", &json!({})), None);
+    }
+
+    #[test]
+    fn parse_command_rejects_ids_unsafe_for_paths_and_tmux() {
+        for id in ["../x", "a b", "a:b", "a/b"] {
+            assert!(matches!(
+                parse_command("reply", &json!({"id": id, "text": "t"})),
+                Some(Err(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn person_has_floor_only_after_a_user_message() {
+        assert!(person_has_floor(&[entry(Role::Assistant), entry(Role::User)]).is_ok());
+        assert!(person_has_floor(&[entry(Role::User), entry(Role::Worker)]).is_err());
+        assert!(person_has_floor(&[]).is_err());
+    }
+
+    #[test]
+    fn claude_args_end_with_the_task() {
+        let args = claude_args(Path::new("/s/workers/A.json"), "do it");
+        assert_eq!(args[..3], ["claude", "--mcp-config", "/s/workers/A.json"]);
+        assert_eq!(args.last().unwrap(), "do it");
+    }
+
+    #[test]
+    fn worker_mcp_config_points_at_inbox() {
+        let config = worker_mcp_config(Path::new("/bin/ralph"), "A", Path::new("/s/inbox"));
+        assert_eq!(
+            config["mcpServers"][SERVER_NAME]["args"],
+            json!(["worker-mcp", "--id", "A", "--inbox", "/s/inbox"])
+        );
     }
 
     #[test]

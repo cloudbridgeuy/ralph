@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::stream::IterationCosts;
+use crate::worker::{command_definitions, parse_command, Command};
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -397,9 +398,18 @@ pub enum Outcome {
     Silent,
     Respond(Value),
     Call { id: Value, tool: Tool },
+    Command { id: Value, command: Command },
 }
 
 pub fn tool_definitions() -> Value {
+    let mut tools = memory_tool_definitions();
+    if let Some(list) = tools.as_array_mut() {
+        list.extend(command_definitions());
+    }
+    tools
+}
+
+fn memory_tool_definitions() -> Value {
     json!([
         {
             "name": "zoom",
@@ -438,9 +448,13 @@ pub fn handle_request(request: &Value) -> Outcome {
     match dispatch(SERVER_NAME, &tool_definitions(), request) {
         Dispatch::Silent => Outcome::Silent,
         Dispatch::Respond(v) => Outcome::Respond(v),
-        Dispatch::Call { id, name, args } => match parse_tool_call(&name, &args) {
-            Ok(tool) => Outcome::Call { id, tool },
-            Err(message) => Outcome::Respond(tool_result(id, &message, true)),
+        Dispatch::Call { id, name, args } => match parse_command(&name, &args) {
+            Some(Ok(command)) => Outcome::Command { id, command },
+            Some(Err(message)) => Outcome::Respond(tool_result(id, &message, true)),
+            None => match parse_tool_call(&name, &args) {
+                Ok(tool) => Outcome::Call { id, tool },
+                Err(message) => Outcome::Respond(tool_result(id, &message, true)),
+            },
         },
     }
 }
@@ -611,12 +625,12 @@ mod tests {
         match call(name, args) {
             Outcome::Call { id, tool } => finish_call(id, entries, tree, &tool),
             Outcome::Respond(v) => v,
-            Outcome::Silent => panic!("silent"),
+            Outcome::Silent | Outcome::Command { .. } => panic!("not a memory call"),
         }
     }
 
     #[test]
-    fn tools_list_names_zoom_and_recall() {
+    fn tools_list_names_memory_and_worker_tools() {
         let Outcome::Respond(v) = handle_request(&json!({"id": 1, "method": "tools/list"})) else {
             panic!("expected respond")
         };
@@ -626,7 +640,7 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["zoom", "recall"]);
+        assert_eq!(names, ["zoom", "recall", "spawn_worker", "reply"]);
     }
 
     #[test]

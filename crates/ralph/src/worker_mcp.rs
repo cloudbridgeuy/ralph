@@ -94,7 +94,11 @@ pub fn run_stdio_server(
                     text,
                 };
                 match inbox.post(&report, seq) {
-                    Ok(()) => tool_result(id, "Delivered to the chat.", false),
+                    Ok(()) => tool_result(
+                        id,
+                        "Delivered. Stop and wait for the person's answer.",
+                        false,
+                    ),
                     Err(e) => tool_result(id, &format!("Could not deliver: {e}"), true),
                 }
             }

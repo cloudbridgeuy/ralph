@@ -1,11 +1,26 @@
 use crate::chat_memory::Store;
+use crate::workers::{reply, Workers};
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::mcp::tool_result;
+use ralph_core::worker::{person_has_floor, Command};
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 
+fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<String, String> {
+    let (entries, _) = store
+        .load()
+        .map_err(|e| format!("Could not read chat memory: {e}"))?;
+    person_has_floor(&entries)?;
+    match command {
+        Command::Spawn { id, task } => workers.spawn(id, task),
+        Command::Reply { id, text } => reply(id, text),
+    }
+    .map_err(|e| e.to_string())
+}
+
 pub fn run_stdio_server(
     store: &Store,
+    workers: &Workers,
     input: impl BufRead,
     mut output: impl Write,
 ) -> io::Result<()> {
@@ -28,6 +43,10 @@ pub fn run_stdio_server(
                 Ok((entries, tree)) => finish_call(id, &entries, &tree, &tool),
                 Err(e) => tool_result(id, &format!("Could not read chat memory: {e}"), true),
             },
+            Outcome::Command { id, command } => match run_command(store, workers, &command) {
+                Ok(text) => tool_result(id, &text, false),
+                Err(message) => tool_result(id, &message, true),
+            },
         };
         writeln!(output, "{response}")?;
         output.flush()?;
@@ -41,7 +60,8 @@ mod tests {
 
     fn run(store: &Store, input: &str) -> Vec<Value> {
         let mut out = Vec::new();
-        run_stdio_server(store, input.as_bytes(), &mut out).unwrap();
+        let workers = Workers::new("/s".into(), "/bin/ralph".into());
+        run_stdio_server(store, &workers, input.as_bytes(), &mut out).unwrap();
         String::from_utf8(out)
             .unwrap()
             .lines()
@@ -74,5 +94,23 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("hello raw"));
+    }
+
+    #[test]
+    fn worker_commands_are_refused_on_a_worker_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        std::fs::write(
+            dir.path().join("log.jsonl"),
+            "{\"role\":\"worker\",\"at\":\"t\",\"text\":\"merge?\"}\n",
+        )
+        .unwrap();
+        let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"reply","arguments":{"id":"A","text":"yes"}}}"#;
+        let lines = run(&store, &format!("{call}\n"));
+        assert_eq!(lines[0]["result"]["isError"], true);
+        assert!(lines[0]["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Only the person"));
     }
 }

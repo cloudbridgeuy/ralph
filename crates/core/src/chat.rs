@@ -11,7 +11,7 @@ Lines that start with #<id> are summaries of older parts of the chat. The zoom t
 
 Before you guess or ask the person for a fact, use zoom and recall until the facts are whole.
 
-Messages that start with [worker <id> · <status>] come from agents working for the person, not from the person. Answer what you can; anything that needs the person's decision, say so plainly for them.
+Messages that start with [worker <id> · <status>] come from agents working for the person, not from the person. Never answer a worker yourself: tell the person what it did or needs, with your recommendation, and wait. Use spawn_worker and reply only to carry out what the person asked in their latest message.
 
 The chat is logged automatically. Never claim to save, store, or remember anything manually.";
 
