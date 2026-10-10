@@ -103,6 +103,18 @@ pub fn retry_prompt(prompt: &str, error: &str) -> String {
         "{prompt}\n\nYour previous line was rejected:\n{error}\n\nReturn a corrected single summary line only."
     )
 }
+
+pub fn nap_summary(exit_code: i32, response: Option<&str>) -> Result<String, String> {
+    if exit_code != 0 {
+        return Err(format!("memory curator exited with code {exit_code}"));
+    }
+    response
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "memory curator returned an empty summary".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,6 +205,13 @@ mod tests {
         assert!(parent.contains("m1 xxxxx"));
         assert!(nap_prompt(&entries, &tree, n(2, 4)).is_err());
         assert!(nap_prompt(&entries, &tree, n(1, 2)).is_ok());
+    }
+
+    #[test]
+    fn nap_summary_requires_success_and_text() {
+        assert_eq!(nap_summary(0, Some(" new \n")).unwrap(), "new");
+        assert!(nap_summary(1, Some("new")).is_err());
+        assert!(nap_summary(0, Some(" \n")).is_err());
     }
 
     #[test]

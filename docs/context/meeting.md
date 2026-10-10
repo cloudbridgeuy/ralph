@@ -26,7 +26,7 @@ Tool arguments must be non-empty strings. Invalid tool arguments return a tool r
 - `crates/core/src/meeting_transcript.rs`: transcript line types, endpoint mapping, JSONL serialization.
 - `crates/ralph/src/meeting_mcp.rs`: stdio loop, socket client `relay`.
 - `crates/ralph/src/meeting.rs`: moderator shell (listener, turn loop, human routing, transcript writes).
-- `crates/core/src/meeting_memory.rs`: pure note normalization, wake/cursor recovery, wake context, nap prompt and output decisions.
+- `crates/core/src/meeting_memory.rs`: pure note normalization, wake/cursor recovery, wake context, nap prompt. Curator output check is `chat_memory::nap_summary`.
 - `crates/ralph/src/meeting_memory.rs`: project-local append, atomic wake persistence, Haiku curator invocation.
 - `crates/ralph/src/cli/mod.rs` and `crates/ralph/src/main.rs`: CLI arguments, agent-file checks, command dispatch.
 - `crates/ralph/src/invoke.rs`: command construction and persona isolation flags.

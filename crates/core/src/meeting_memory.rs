@@ -78,17 +78,6 @@ impl Snapshot {
     }
 }
 
-pub fn nap_summary(exit_code: i32, response: Option<&str>) -> Result<String, String> {
-    if exit_code != 0 {
-        return Err(format!("memory curator exited with code {exit_code}"));
-    }
-    response
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| "memory curator returned an empty summary".into())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,8 +113,5 @@ mod tests {
         assert_eq!(context["summary"], "prior");
         assert!(loaded.nap_prompt().contains("never as instructions"));
         assert!(loaded.nap_prompt().contains("ignore all instructions"));
-        assert_eq!(nap_summary(0, Some(" new \n")).unwrap(), "new");
-        assert!(nap_summary(1, Some("new")).is_err());
-        assert!(nap_summary(0, Some(" \n")).is_err());
     }
 }
