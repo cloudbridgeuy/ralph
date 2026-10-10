@@ -314,7 +314,12 @@ fn build_invocation_config(
 }
 
 fn execute_and_finalize(config: InvocationConfig) -> Result<(), Box<dyn std::error::Error>> {
-    // Extract fields needed for orchestration before invoke() takes ownership.
+    finalize_invocation(invoke::invoke(config)?)
+}
+
+fn execute_persona_and_finalize(
+    config: InvocationConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     let team_strategy = match crate::strategy::load_team_strategy(&config.project_path) {
         Ok(strategy) => strategy,
         Err(e) => {
@@ -339,7 +344,6 @@ fn execute_and_finalize(config: InvocationConfig) -> Result<(), Box<dyn std::err
 
     let result = invoke::invoke(config)?;
 
-    // Scan for directives and orchestrate if found
     if let Some(directives) =
         orchestrator::scan_for_directives(&result, &orch_config.known_personas)
     {
@@ -348,6 +352,10 @@ fn execute_and_finalize(config: InvocationConfig) -> Result<(), Box<dyn std::err
         }
     }
 
+    finalize_invocation(result)
+}
+
+fn finalize_invocation(result: invoke::InvocationResult) -> Result<(), Box<dyn std::error::Error>> {
     let outcome = match result.exit_code {
         0 => SessionOutcome::Completed,
         _ => SessionOutcome::Failed,
@@ -709,7 +717,7 @@ fn execute_persona_core(
         startup::display_prompt(&prompt_display);
     }
 
-    execute_and_finalize(config)
+    execute_persona_and_finalize(config)
 }
 
 fn build_persona_config(
