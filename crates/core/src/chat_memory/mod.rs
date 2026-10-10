@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
-pub use nap::{check_summary, nap_prompt, retry_prompt, MAX_NAP_ATTEMPTS};
+pub use nap::{check_summary, nap_prompt, nap_summary, retry_prompt, MAX_NAP_ATTEMPTS};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
 pub use tree::{cover, pending, recall, view, zoom};
 pub use usage::{encode_usage, usage_record, CallKind, Trigger, UsageRecord};

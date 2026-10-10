@@ -5,7 +5,8 @@ use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
 use crate::warn::warn;
-use ralph_core::meeting_memory::{nap_summary, normalize_note, snapshot, Snapshot, Wake};
+use ralph_core::chat_memory::nap_summary;
+use ralph_core::meeting_memory::{normalize_note, snapshot, Snapshot, Wake};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 #[cfg(unix)]
