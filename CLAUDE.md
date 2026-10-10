@@ -158,7 +158,6 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Orchestration](docs/context/orchestration.md) - Multi-agent directives, handover/ask, conversation routing
 - [ralph meeting Command](docs/context/meeting.md) - CLI, turn loop, MCP tools, transcript, office memory, and persona isolation
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
-- [ralph edit Command](docs/context/ralph-edit.md) - Session history editing, TOML projection, FC-IS module split
 - [ralph strategy Command](docs/context/ralph-strategy.md) - Strategy TOML schema, discovery, CLI surface, FC-IS architecture
 - [ralph strategy sync](docs/context/ralph-strategy-sync.md) - Project scaffolding, bundled assets, idempotent sync behavior
 - [Conversation Loop Strategy](docs/context/conversation-loop.md) - Human-driven conversation loop, human-in-the-loop directives, transcript types, fiction team

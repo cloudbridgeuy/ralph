@@ -15,7 +15,6 @@ mod chat_memory;
 mod cli;
 pub mod config;
 pub mod diff_highlight;
-mod edit;
 pub mod formatting;
 mod git;
 pub mod highlight;
@@ -77,7 +76,6 @@ fn main() -> ExitCode {
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),
         Commands::Persona(args) => execute_persona(args),
-        Commands::Edit(args) => edit::execute_edit(args),
         Commands::Strategy(args) => execute_strategy(args),
         Commands::Meeting(args) => execute_meeting(args),
         Commands::MeetingMcp(args) => execute_meeting_mcp(args),
