@@ -67,20 +67,11 @@ pub enum Commands {
     /// defined in `.claude/strategies/*.toml` files.
     Strategy(StrategyArgs),
 
-    /// Run a multi-persona meeting moderated by ralph.
-    ///
-    /// Each persona is a separate Claude session. The kickoff goes to --first;
-    /// personas pass the turn with the send_message tool until one ends the meeting.
-    Meeting(MeetingArgs),
-
     /// Chat with a persistent, compressed memory.
     ///
     /// Runs when no subcommand is given. Each message is a fresh Claude turn
     /// over the whole chat so far, stored under ~/.ralph/chat.
     Chat(ChatArgs),
-
-    #[command(hide = true)]
-    MeetingMcp(MeetingMcpArgs),
 
     #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
@@ -90,54 +81,6 @@ pub enum Commands {
 
     #[command(hide = true)]
     WorkerMcp(WorkerMcpArgs),
-}
-
-/// Arguments for the `meeting` subcommand.
-#[derive(clap::Args, Debug)]
-pub struct MeetingArgs {
-    /// Persona that receives the kickoff and speaks first.
-    #[arg(long, value_name = "PERSONA")]
-    pub first: String,
-
-    /// Comma-separated meeting roster (at least two personas).
-    #[arg(long, value_delimiter = ',', required = true, value_name = "A,B,C")]
-    pub personas: Vec<String>,
-
-    /// Model for one persona, as persona=model. Repeatable.
-    #[arg(long, value_name = "PERSONA=MODEL")]
-    pub model: Vec<String>,
-
-    /// Maximum number of turns before the meeting stops.
-    #[arg(long, default_value_t = ralph_core::meeting_turn::DEFAULT_MAX_TURNS)]
-    pub max_turns: usize,
-
-    /// Timeout per turn in seconds.
-    #[arg(long, default_value_t = 600)]
-    pub timeout: u64,
-
-    /// Syntax highlighting theme.
-    #[arg(long, value_name = "NAME")]
-    pub theme: Option<String>,
-
-    /// Disable background colors in syntax highlighting.
-    #[arg(long)]
-    pub no_background: bool,
-
-    /// Kickoff message delivered to the first persona.
-    #[arg(value_name = "KICKOFF")]
-    pub kickoff: String,
-}
-
-#[derive(clap::Args, Debug)]
-pub struct MeetingMcpArgs {
-    #[arg(long)]
-    pub socket: std::path::PathBuf,
-
-    #[arg(long)]
-    pub caller: String,
-
-    #[arg(long, value_delimiter = ',', required = true)]
-    pub personas: Vec<String>,
 }
 
 #[derive(clap::Args, Debug)]

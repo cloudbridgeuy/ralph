@@ -54,20 +54,7 @@ using XML directives embedded in your response text.
 ### When to use ask vs handover
 
 - Ask: you need information to continue YOUR work (you get a response back)
-- Handover: the next step belongs entirely to someone else (you are done)
-
-### Human-in-the-loop
-
-You can interact with the human operator using to=\"human\":
-
-- Ask (opens their editor for a response):
-  <ralph-ask to=\"human\">your question for the human</ralph-ask>
-
-- Comment (shows a message, soft-blocks until acknowledged):
-  <ralph-comment to=\"human\">status update or observation</ralph-comment>
-
-Use ask when you need creative direction, clarification, or approval.
-Use comment for status updates or observations that do not require a response.";
+- Handover: the next step belongs entirely to someone else (you are done)";
 
 /// Configuration for a shared invocation.
 #[derive(Debug, Clone)]

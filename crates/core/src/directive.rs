@@ -215,16 +215,6 @@ pub fn validate_directive_set(
     }
 }
 
-/// Separate comment directives from ask/handover directives.
-///
-/// Comments are always human-targeted and non-blocking. They should be
-/// extracted and handled separately before validating the remaining directives.
-pub fn extract_comments(directives: Vec<Directive>) -> (Vec<Directive>, Vec<Directive>) {
-    directives
-        .into_iter()
-        .partition(|d| d.verb == DirectiveVerb::Comment)
-}
-
 /// Format persona responses into a single aggregated prompt string.
 ///
 /// Each entry in `responses` is a `(persona_name, response_text)` pair.
@@ -968,26 +958,5 @@ Second response.
         let c = split_text_around_directives(r#"A <ralph-comment to="h">B</ralph-comment> C"#);
         assert_eq!(c.len(), 3);
         assert_eq!(c[1], ParsedChunk::directive("B", "comment", "h"));
-    }
-
-    fn make_d(verb: DirectiveVerb) -> Directive {
-        Directive {
-            verb,
-            target: "t".into(),
-            payload: "p".into(),
-        }
-    }
-
-    #[test]
-    fn extract_comments_partitions() {
-        let (c, r) = extract_comments(vec![
-            make_d(DirectiveVerb::Comment),
-            make_d(DirectiveVerb::Ask),
-        ]);
-        assert_eq!((c.len(), r.len()), (1, 1));
-        let (c2, r2) = extract_comments(vec![make_d(DirectiveVerb::Ask)]);
-        assert!(c2.is_empty() && r2.len() == 1);
-        let (c3, r3) = extract_comments(vec![make_d(DirectiveVerb::Comment)]);
-        assert!(c3.len() == 1 && r3.is_empty());
     }
 }

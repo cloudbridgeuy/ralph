@@ -29,34 +29,12 @@ pub const AGENT_ASSETS: &[(&str, &str)] = &[
         "product-manager.md",
         include_str!("../../../../assets/agents/product-manager.md"),
     ),
-    (
-        "storyteller.md",
-        include_str!("../../../../assets/agents/storyteller.md"),
-    ),
-    (
-        "editor-agent.md",
-        include_str!("../../../../assets/agents/editor-agent.md"),
-    ),
-    (
-        "worldbuilder.md",
-        include_str!("../../../../assets/agents/worldbuilder.md"),
-    ),
-    (
-        "critic.md",
-        include_str!("../../../../assets/agents/critic.md"),
-    ),
 ];
 
 /// All strategy assets as (filename, content) pairs.
 ///
 /// Used by the sync planner to determine which strategy files to write.
-pub const STRATEGY_ASSETS: &[(&str, &str)] = &[
-    (
-        "prd-loop.toml",
-        include_str!("../../../../assets/strategies/prd-loop.toml"),
-    ),
-    (
-        "fiction-loop.toml",
-        include_str!("../../../../assets/strategies/fiction-loop.toml"),
-    ),
-];
+pub const STRATEGY_ASSETS: &[(&str, &str)] = &[(
+    "prd-loop.toml",
+    include_str!("../../../../assets/strategies/prd-loop.toml"),
+)];

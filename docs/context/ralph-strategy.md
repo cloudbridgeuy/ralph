@@ -14,10 +14,6 @@ This document describes the `ralph strategy` command, which manages and executes
 | Execution dispatcher | `crates/ralph/src/strategy/execute.rs` | Strategy kind dispatch, run orchestration |
 | Strategy trait | `crates/ralph/src/strategy/traits.rs` | Strategy trait, StrategyExecutionContext, run_strategy() |
 | PrdLoop strategy | `crates/ralph/src/strategy/prd_loop.rs` | Self-contained PRD iteration loop with orchestration |
-| ConversationLoop strategy | `crates/ralph/src/strategy/conversation_loop.rs` | Human-driven conversation loop with agent collaboration |
-| Transcript types | `crates/core/src/transcript.rs` | Speaker, TranscriptEntry, HumanResponse, editor content building |
-| Human I/O | `crates/ralph/src/human.rs` | Editor interaction, comment display, human-in-the-loop I/O |
-| Human classification | `crates/core/src/human.rs` | DirectiveTarget, classify_target, partition_directives |
 | Recovery | `crates/ralph/src/recovery.rs` | Subprocess failure recovery, InvocationConfig, retry logic |
 | CLI tests | `crates/ralph/src/cli/tests/strategy.rs` | CLI argument parsing tests |
 | Main wiring | `crates/ralph/src/main.rs` | execute_strategy(), execute_strategy_sync(), execute_strategy_list(), execute_strategy_execute() |
@@ -153,26 +149,6 @@ Looks up a strategy by name, validates it, and invokes the corresponding Rust im
 | `AccumulatedMetrics` | Tracks cost, duration, and token usage across iterations |
 | `IterationState` | Mutable state during the iteration loop |
 
-### ConversationLoop Internal Types
-
-| Type | Purpose |
-|------|---------|
-| `ConversationLoopConfig` | Groups read-only loop parameters (persona, timeouts, available personas) |
-| `AccumulatedMetrics` | Tracks cost, duration, and token usage across iterations |
-| `LoopState` | Mutable state: transcript, iterations, metrics |
-
-### ConversationLoop Flow
-
-1. Initialize session
-2. **Outer loop**: open `$EDITOR` with transcript + separator
-3. Parse human response below separator
-4. If empty/abort → exit
-5. Build persona prompt with conversation history
-6. Invoke persona via `invoke_with_failure_recovery`
-7. Extract response text, handle directives (comments, human asks, persona orchestration)
-8. Append both entries to transcript
-9. Repeat from step 2
-
 ## Strategy Kind Dispatch
 
 Strategies use enum dispatch via `StrategyKind` (defined in core). The `kind` string from TOML is resolved to a typed enum variant at load time using `resolve_kind()` (Parse Don't Validate pattern). The dispatcher in `execute.rs` uses exhaustive `match` so missing implementations are caught at compile time.
@@ -186,50 +162,16 @@ main.rs::execute_strategy_execute(args)
        -> match StrategyKind {
             PrdLoop -> run_strategy(&PrdLoopStrategy, ctx)
                          -> execute_prd_loop() [session lifecycle, iteration loop, orchestration]
-            ConversationLoop -> run_strategy(&ConversationLoopStrategy, ctx)
-                                 -> execute_conversation_loop() [editor loop, human I/O, orchestration]
           }
 ```
 
 ## Known Kinds
 
-Currently registered: `prd-loop`, `conversation-loop`
+Currently registered: `prd-loop`
 
 ### `prd-loop`
 
 Automated iteration over PRD stories. The primary persona executes iterations, checks completion against the PRD, and stops when all stories are done or max iterations are reached.
-
-### `conversation-loop`
-
-Human-driven conversation loop. The human writes in `$EDITOR`, the primary persona responds, and the loop repeats. Supports:
-
-- **Human-in-the-loop directives**: Personas can ask the human directly via `<ralph-ask to="human">` (opens editor) or send comments via `<ralph-comment to="human">` (terminal soft-block).
-- **Agent-to-agent orchestration**: The primary persona can delegate to available personas using standard `<ralph-ask>` and `<ralph-handover>` directives.
-- **Transcript accumulation**: The full conversation history is shown in the editor and sent to the persona with each invocation.
-
-**Exit conditions**: Empty editor response, `--max-iterations` limit, keyboard interrupt.
-
-**Example strategy** (`fiction-loop`):
-```toml
-name = "fiction-loop"
-description = "Collaborative fiction writing with human-in-the-loop"
-kind = "conversation-loop"
-primary_persona = "storyteller"
-available_personas = ["editor-agent", "worldbuilder", "critic"]
-```
-
-## Human-in-the-Loop Directives
-
-Personas can interact with the human operator using the reserved target `"human"`:
-
-| Directive | Behavior |
-|-----------|----------|
-| `<ralph-ask to="human">question</ralph-ask>` | Opens `$EDITOR` with the question as context. Human's response is fed back to the persona. |
-| `<ralph-comment to="human">message</ralph-comment>` | Displays the message in the terminal and soft-blocks until the human presses Enter or types a response. |
-
-These directives work in any strategy kind, but are most useful in `conversation-loop` where the human is actively participating.
-
-The `Comment` verb is separated from `Ask`/`Handover` directives before validation via `extract_comments()`, so comments can coexist with other directive types in a single response.
 
 New strategies require:
 1. Adding a variant to `StrategyKind` in `crates/core/src/strategy.rs`
