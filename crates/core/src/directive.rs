@@ -16,7 +16,6 @@ static OPEN_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectiveVerb {
     Ask,
-    Handover,
     /// Non-blocking comment shown to the human.
     Comment,
 }
@@ -25,13 +24,11 @@ pub enum DirectiveVerb {
 ///
 /// Synonym mapping:
 /// - `ask`, `tell`, `say`, `respond`, `reply` -> `Ask`
-/// - `handover`, `delegate`, `pass`, `transfer` -> `Handover`
 ///
 /// Returns `None` for unknown verbs.
 pub fn normalize_verb(raw: &str) -> Option<DirectiveVerb> {
     match raw {
         "ask" | "tell" | "say" | "respond" | "reply" => Some(DirectiveVerb::Ask),
-        "handover" | "delegate" | "pass" | "transfer" => Some(DirectiveVerb::Handover),
         "comment" | "note" | "inform" => Some(DirectiveVerb::Comment),
         _ => None,
     }
@@ -84,7 +81,6 @@ pub fn split_text_around_directives(text: &str) -> Vec<ParsedChunk> {
                 let payload = &after_open[..end];
                 let canonical_verb = match verb {
                     DirectiveVerb::Ask => "ask",
-                    DirectiveVerb::Handover => "handover",
                     DirectiveVerb::Comment => "comment",
                 };
                 chunks.push(ParsedChunk::directive(payload, canonical_verb, target));
@@ -106,7 +102,6 @@ pub fn split_text_around_directives(text: &str) -> Vec<ParsedChunk> {
                 let payload = after_open;
                 let canonical_verb = match verb {
                     DirectiveVerb::Ask => "ask",
-                    DirectiveVerb::Handover => "handover",
                     DirectiveVerb::Comment => "comment",
                 };
                 chunks.push(ParsedChunk::directive(payload, canonical_verb, target));
@@ -148,28 +143,12 @@ mod tests {
     }
 
     #[test]
-    fn normalize_verb_canonical_handover() {
-        assert_eq!(normalize_verb("handover"), Some(DirectiveVerb::Handover));
-    }
-
-    #[test]
     fn normalize_verb_ask_synonyms() {
         for synonym in &["tell", "say", "respond", "reply"] {
             assert_eq!(
                 normalize_verb(synonym),
                 Some(DirectiveVerb::Ask),
                 "Expected Ask for synonym '{synonym}'"
-            );
-        }
-    }
-
-    #[test]
-    fn normalize_verb_handover_synonyms() {
-        for synonym in &["delegate", "pass", "transfer"] {
-            assert_eq!(
-                normalize_verb(synonym),
-                Some(DirectiveVerb::Handover),
-                "Expected Handover for synonym '{synonym}'"
             );
         }
     }
@@ -209,13 +188,13 @@ mod tests {
     #[test]
     fn split_multiple_directives() {
         let text =
-            r#"A <ralph-ask to="a">Q1</ralph-ask> B <ralph-handover to="b">H1</ralph-handover> C"#;
+            r#"A <ralph-ask to="a">Q1</ralph-ask> B <ralph-comment to="b">H1</ralph-comment> C"#;
         let chunks = split_text_around_directives(text);
         assert_eq!(chunks.len(), 5);
         assert_eq!(chunks[0], ParsedChunk::prose("A "));
         assert_eq!(chunks[1], ParsedChunk::directive("Q1", "ask", "a"));
         assert_eq!(chunks[2], ParsedChunk::prose(" B "));
-        assert_eq!(chunks[3], ParsedChunk::directive("H1", "handover", "b"));
+        assert_eq!(chunks[3], ParsedChunk::directive("H1", "comment", "b"));
         assert_eq!(chunks[4], ParsedChunk::prose(" C"));
     }
 
@@ -267,13 +246,12 @@ mod tests {
 
     #[test]
     fn split_synonym_verbs_normalized() {
-        let text =
-            r#"<ralph-tell to="a">Hi</ralph-tell> <ralph-delegate to="b">Go</ralph-delegate>"#;
+        let text = r#"<ralph-tell to="a">Hi</ralph-tell> <ralph-note to="b">Go</ralph-note>"#;
         let chunks = split_text_around_directives(text);
         assert_eq!(chunks.len(), 3);
         assert_eq!(chunks[0], ParsedChunk::directive("Hi", "ask", "a"));
         assert_eq!(chunks[1], ParsedChunk::prose(" "));
-        assert_eq!(chunks[2], ParsedChunk::directive("Go", "handover", "b"));
+        assert_eq!(chunks[2], ParsedChunk::directive("Go", "comment", "b"));
     }
 
     // =========================================================================
@@ -293,13 +271,13 @@ mod tests {
 
     #[test]
     fn split_prose_before_opening_without_closing() {
-        let text = r#"Some preamble. <ralph-handover to="deployer">Deploy this now"#;
+        let text = r#"Some preamble. <ralph-comment to="deployer">Deploy this now"#;
         let chunks = split_text_around_directives(text);
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0], ParsedChunk::prose("Some preamble. "));
         assert_eq!(
             chunks[1],
-            ParsedChunk::directive("Deploy this now", "handover", "deployer")
+            ParsedChunk::directive("Deploy this now", "comment", "deployer")
         );
     }
 

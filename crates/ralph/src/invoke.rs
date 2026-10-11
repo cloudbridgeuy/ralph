@@ -272,7 +272,6 @@ pub fn invoke(config: InvocationConfig) -> Result<InvocationResult, InvocationEr
             slug: Some(slug.clone()),
             current_iteration: Some(sequence as usize),
             max_iterations: None,
-            on_behalf_of: None,
         },
         pause: None,
         cancel: None,
