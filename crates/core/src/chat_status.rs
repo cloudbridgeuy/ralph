@@ -1,4 +1,5 @@
 use crate::worker::{session_name, Report};
+use serde::Deserialize;
 use std::collections::HashMap;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -18,11 +19,70 @@ pub struct Memory {
     pub tokens: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TurnCache {
+    pub input: u64,
+    pub read: u64,
+    pub write: u64,
+    pub cost_usd: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Status {
     pub unread: usize,
     pub workers: Vec<WorkerState>,
     pub memory: Memory,
+    pub turn: Option<TurnCache>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct UsageLine {
+    kind: String,
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    cost_usd: Option<f64>,
+}
+
+pub fn last_turn_cache(usage_jsonl: &str) -> Option<TurnCache> {
+    usage_jsonl
+        .lines()
+        .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
+        .rfind(|usage| usage.kind == "turn")
+        .map(|usage| TurnCache {
+            input: usage.input_tokens,
+            read: usage.cache_read_input_tokens,
+            write: usage.cache_creation_input_tokens,
+            cost_usd: usage.cost_usd,
+        })
+}
+
+impl TurnCache {
+    fn hit_percent(&self) -> u64 {
+        let total = self.input + self.read + self.write;
+        (self.read * 100).checked_div(total).unwrap_or(0)
+    }
+
+    fn cost_label(&self) -> String {
+        self.cost_usd
+            .map(|cost| format!(" ${cost:.2}"))
+            .unwrap_or_default()
+    }
+
+    fn long_label(&self) -> String {
+        format!(
+            "cache {} read {} write {}% hit{}",
+            tokens_label(self.read),
+            tokens_label(self.write),
+            self.hit_percent(),
+            self.cost_label()
+        )
+    }
+
+    fn compact_label(&self) -> String {
+        format!("c{}%{}", self.hit_percent(), self.cost_label())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +140,7 @@ pub fn worker_states(ids: &[String], seen: &HashMap<String, String>) -> Vec<Work
         .collect()
 }
 
-fn tokens_label(tokens: usize) -> String {
+fn tokens_label(tokens: u64) -> String {
     if tokens < 1000 {
         tokens.to_string()
     } else {
@@ -125,10 +185,12 @@ pub fn status_line(status: &Status, width: usize) -> String {
         format!("workers {}", names.join(", "))
     };
     let Memory { msgs, tokens } = status.memory;
-    let tok = tokens_label(tokens);
+    let tok = tokens_label(u64::try_from(tokens).unwrap_or(u64::MAX));
     let unread = status.unread;
-    let build = |mail: String, workers: Option<String>, mem: String| {
-        [Some(mail), workers, Some(mem)]
+    let long_cache = status.turn.map(|turn| turn.long_label());
+    let compact_cache = status.turn.map(|turn| turn.compact_label());
+    let build = |mail: String, workers: Option<String>, mem: String, cache: Option<String>| {
+        [Some(mail), workers, Some(mem), cache]
             .into_iter()
             .flatten()
             .collect::<Vec<_>>()
@@ -138,19 +200,31 @@ pub fn status_line(status: &Status, width: usize) -> String {
     let long_mem = || format!("mem {msgs} msgs ~{tok} tok");
     let compact_mem = || format!("{msgs}m ~{tok}");
     let candidates = vec![
-        build(long_mail(), (count > 0).then(|| named(true)), long_mem()),
-        build(long_mail(), (count > 0).then(|| named(false)), long_mem()),
+        build(
+            long_mail(),
+            (count > 0).then(|| named(true)),
+            long_mem(),
+            long_cache.clone(),
+        ),
+        build(
+            long_mail(),
+            (count > 0).then(|| named(false)),
+            long_mem(),
+            long_cache.clone(),
+        ),
         build(
             long_mail(),
             (count > 0).then(|| format!("{count} workers")),
             long_mem(),
+            long_cache,
         ),
         build(
             format!("📬 {unread}"),
             (count > 0).then(|| format!("{count}w")),
             compact_mem(),
+            compact_cache.clone(),
         ),
-        build(format!("📬 {unread}"), None, compact_mem()),
+        build(format!("📬 {unread}"), None, compact_mem(), compact_cache),
         format!("📬 {unread}"),
     ];
     fit(candidates, width)
@@ -209,7 +283,80 @@ mod tests {
                 msgs: 132,
                 tokens: 4100,
             },
+            turn: None,
         }
+    }
+
+    fn turn() -> TurnCache {
+        TurnCache {
+            input: 100,
+            read: 12_300,
+            write: 400,
+            cost_usd: Some(0.0412),
+        }
+    }
+
+    fn with_turn() -> Status {
+        Status {
+            turn: Some(turn()),
+            ..status()
+        }
+    }
+
+    #[test]
+    fn last_turn_cache_picks_last_turn_and_ignores_the_rest() {
+        let jsonl = concat!(
+            r#"{"kind":"turn","input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"cost_usd":0.5}"#,
+            "\n",
+            r#"{"kind":"turn","input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"cost_usd":null}"#,
+            "\n",
+            r#"{"kind":"nap","input_tokens":99}"#,
+            "\nnot json\n"
+        );
+        assert_eq!(
+            last_turn_cache(jsonl),
+            Some(TurnCache {
+                input: 10,
+                read: 30,
+                write: 20,
+                cost_usd: None
+            })
+        );
+        assert_eq!(last_turn_cache(""), None);
+        assert_eq!(last_turn_cache("garbage\n{\"kind\":\"nap\"}\n"), None);
+    }
+
+    #[test]
+    fn status_line_full_width_with_cache() {
+        assert_eq!(
+            status_line(&with_turn(), 200),
+            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok · cache 12.3k read 400 write 96% hit $0.04"
+        );
+    }
+
+    #[test]
+    fn status_line_with_cache_never_exceeds_width_and_goes_compact() {
+        let status = with_turn();
+        assert!((0..120).all(|w| status_line(&status, w).width() <= w));
+        assert!(status_line(&status, 40).contains("c96% $0.04"));
+        assert_eq!(status_line(&status, 0), "");
+    }
+
+    #[test]
+    fn status_line_cache_omits_missing_cost() {
+        let status = Status {
+            turn: Some(TurnCache {
+                cost_usd: None,
+                ..turn()
+            }),
+            ..status()
+        };
+        assert!(status_line(&status, 200).ends_with("96% hit"));
+    }
+
+    #[test]
+    fn hit_percent_is_zero_without_tokens() {
+        assert_eq!(TurnCache::default().hit_percent(), 0);
     }
 
     #[test]
