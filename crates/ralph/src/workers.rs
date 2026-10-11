@@ -19,7 +19,10 @@ pub struct Workers {
 
 impl Workers {
     pub fn new(store_dir: PathBuf, exe: PathBuf) -> Self {
-        Self { store_dir, exe }
+        Self {
+            store_dir: absolute_or_same(store_dir),
+            exe,
+        }
     }
 
     pub fn spawn(&self, id: &str, task: &str) -> io::Result<String> {
@@ -55,6 +58,11 @@ impl Workers {
         fs::write(&path, config.to_string())?;
         Ok(path)
     }
+}
+
+/// Workers run inside `.worktrees/<id>`, so relative store paths would resolve wrongly there.
+fn absolute_or_same(path: PathBuf) -> PathBuf {
+    std::path::absolute(&path).unwrap_or(path)
 }
 
 pub fn reply(id: &str, text: &str) -> io::Result<String> {
@@ -177,4 +185,22 @@ fn check(output: Output) -> io::Result<Output> {
 
 fn stdout_line(output: Output) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_store_becomes_absolute() {
+        assert!(absolute_or_same(PathBuf::from("./.memory")).is_absolute());
+    }
+
+    #[test]
+    fn absolute_store_is_unchanged() {
+        assert_eq!(
+            absolute_or_same(PathBuf::from("/s/.memory")),
+            PathBuf::from("/s/.memory")
+        );
+    }
 }
