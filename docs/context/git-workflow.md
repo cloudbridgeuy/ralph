@@ -1,12 +1,12 @@
 # Git Workflow and Progressive Disclosure
 
-This document describes ralph's git workflow conventions and the Progressive Disclosure documentation pattern. These practices replace the previous design.md and progress.txt files with a simpler, more maintainable approach.
+This document describes ralph's git workflow conventions and the Progressive Disclosure documentation pattern.
 
 ## Overview
 
 Ralph uses a simplified context model:
-- **Git history** provides historical context (replaces progress.txt)
-- **Progressive Disclosure** provides architectural context (replaces design.md)
+- **Git history** provides historical context
+- **Progressive Disclosure** provides architectural context
 
 ## Semantic Commits
 

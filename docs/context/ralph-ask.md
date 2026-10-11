@@ -33,7 +33,7 @@ The `ralph ask` command provides a streamlined interface for quick LLM interacti
 | `-c, --continue` | flag | false | Continue an existing session instead of creating new |
 | `--clone-session` | flag | false | Clone history from existing session into a new one |
 | `--history` | flag | false | Display conversation history for the session |
-| `--theme` | string | `Monokai Extended` | Syntax highlighting theme |
+| `--theme` | string | `base16-ocean.dark` | Syntax highlighting theme |
 | `--no-background` | flag | false | Disable theme background colors |
 | `--timeout` | u64 | 600 | Subprocess timeout in seconds |
 | `--verbose-tools` | string | none | Verbose output for tools (omit value for all, or specify names) |
@@ -254,7 +254,7 @@ Theme settings follow this precedence:
 1. CLI flag (`--theme`, `--no-background`)
 2. Environment variable (`RALPH_THEME`, `RALPH_NO_BACKGROUND`)
 3. Config file (if present)
-4. Default: `Monokai Extended`
+4. Default: `base16-ocean.dark`
 
 ## Output Patterns
 
@@ -288,14 +288,6 @@ Lists all sessions including those created by `ask`:
 
 ```bash
 ralph sessions
-```
-
-### ralph iterations
-
-Lists iterations, including ask command iterations:
-
-```bash
-ralph iterations --session my-query
 ```
 
 ### ralph replay

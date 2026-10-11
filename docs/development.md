@@ -41,11 +41,11 @@ cargo build --release
 Run ralph directly from cargo:
 
 ```bash
-# Run with default settings
-cargo run -- run
+# Start chat (bare ralph)
+cargo run
 
-# Run with arguments
-cargo run -- run 5
+# Run a subcommand
+cargo run -- ask 'What is Rust?'
 cargo run -- sessions
 cargo run -- replay quiet-mountain
 ```
@@ -53,7 +53,7 @@ cargo run -- replay quiet-mountain
 For release builds:
 
 ```bash
-cargo run --release -- run
+cargo run --release -- ask 'What is Rust?'
 ```
 
 ## Testing
@@ -143,14 +143,21 @@ ralph/
 ├── crates/
 │   ├── core/           # ralph_core - Pure business logic
 │   │   └── src/
+│   │       ├── chat*.rs    # Chat turn, status, skills logic
+│   │       ├── chat_memory/ # Compressed memory tree
 │   │       ├── chunk/      # Content chunking
 │   │       ├── stream/     # LLM stream processing
 │   │       └── session.rs  # Session state
-│   └── ralph/          # ralph CLI - I/O and orchestration
+│   └── ralph/          # ralph CLI - I/O shell
 │       └── src/
-│           ├── main.rs         # Entry point
-│           ├── cli.rs          # CLI definitions (clap)
-│           ├── run/            # Main iteration loop
+│           ├── main.rs         # Entry point and command dispatch
+│           ├── cli/            # CLI definitions (clap)
+│           ├── chat*.rs        # Chat shell, memory store, MCP server
+│           ├── ask.rs          # ask permission mode
+│           ├── invoke.rs       # Shared claude invocation
+│           ├── iteration/      # Session iteration logs
+│           ├── replay*.rs      # Session replay
+│           ├── render/         # Terminal rendering
 │           ├── stream_processor/ # Stream handling
 │           │   ├── tool_display/  # Tool output rendering
 │           │   └── tool_results/  # Tool result processing
