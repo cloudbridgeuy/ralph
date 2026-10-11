@@ -19,7 +19,6 @@ pub enum ChunkType {
     Diff,
     /// A directive tag (e.g., `<ralph-ask to="reviewer">...</ralph-ask>`).
     Directive {
-        /// Canonical verb: "ask" or "handover".
         verb: String,
         /// Target persona name.
         target: String,

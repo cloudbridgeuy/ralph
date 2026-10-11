@@ -434,7 +434,6 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
                     slug: None,
                     current_iteration: None,
                     max_iterations: None,
-                    on_behalf_of: None,
                 },
                 pause: None,
                 cancel: None,
