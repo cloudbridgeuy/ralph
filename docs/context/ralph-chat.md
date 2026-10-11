@@ -95,7 +95,7 @@ Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not
 
 - Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`, `history.txt`, `editor.md`, `mcp.json`, `usage.jsonl`. It is not project-scoped.
 - `LOCK` is an exclusive file lock held for append, settled load, and the whole nap. Store paths that are symlinks or multiply-linked files are rejected.
-- Isolation matches personas: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Project and local settings stay active; this is context isolation, not a sandbox.
+- Isolation: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Project and local settings stay active; this is context isolation, not a sandbox.
 - User agents in `~/.claude/agents` do not load, so `build_agents_args` passes the bundled `SUBAGENTS` (`evidence-collector` haiku, `implementer` sonnet, `reviser` opus) as `--agents <json>`. These copies may drift from `~/.claude/agents`.
 - Turns run with `bypassPermissions`.
 

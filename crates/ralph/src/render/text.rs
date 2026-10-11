@@ -180,10 +180,6 @@ pub fn render_diff_block(ctx: &RenderContext<'_>, content: &str) -> String {
     format!("```diff\n{}\n```", highlighted_content)
 }
 
-/// Render a directive block.
-///
-/// Returns an empty string — directive payloads are rendered as a banner
-/// by the orchestrator display after streaming completes, not inline.
 fn render_directive_block(
     _ctx: &RenderContext<'_>,
     _payload: &str,

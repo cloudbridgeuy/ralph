@@ -7,7 +7,6 @@ This document describes ralph's git workflow conventions and the Progressive Dis
 Ralph uses a simplified context model:
 - **Git history** provides historical context (replaces progress.txt)
 - **Progressive Disclosure** provides architectural context (replaces design.md)
-- **PRD** is the only required context file for iteration-driven work
 
 ## Semantic Commits
 
@@ -123,7 +122,6 @@ project/
         ├── rust-cli-error-handling.md
         ├── rust-cli-serde.md
         ├── stream-processor-architecture.md
-        ├── prompt-template.md
         └── git-workflow.md
 ```
 
@@ -157,11 +155,11 @@ The top-level `docs/` directory (if present) is for human documentation like use
 
 ## Two-Phase Workflow
 
-Ralph's default prompt template enforces a two-phase workflow. For prompt customization details, see [Prompt Template System](prompt-template.md).
+Work follows a two-phase workflow.
 
 ### Phase 1: Work
 
-1. Understand the task from the PRD
+1. Understand the task
 2. Check recent git history for context
 3. Consult CLAUDE.md and relevant docs/context/*.md
 4. Implement the feature
@@ -181,14 +179,6 @@ Separating work from documentation ensures:
 - Documentation reflects what was actually implemented (not the plan)
 - Commits are atomic and well-described
 - Documentation stays up-to-date with the code
-
-## Code Locations
-
-| Component | File | Description |
-|-----------|------|-------------|
-| `PROMPT_TEMPLATE` | `crates/core/src/context.rs` | Default template with two-phase workflow |
-| `defaults::PRD_FILE` | `crates/core/src/context.rs` | Default PRD path |
-| Context retrieval instructions | In PROMPT_TEMPLATE | Git log and Progressive Disclosure usage |
 
 ## Summary
 

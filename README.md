@@ -10,7 +10,7 @@
 │   ██║  ██║██║  ██║███████╗██║     ██║  ██║                  │
 │   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝                  │
 │                                                             │
-│   Orchestrate LLM-powered development from user stories     │
+│   Chat and ask with a rich terminal experience              │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -20,7 +20,7 @@
 
 ---
 
-**ralph** is a CLI tool that orchestrates iterative LLM sessions to implement features from a PRD (Product Requirements Document). It manages the feedback loop between you and your LLM, tracking progress, handling failures with automatic retries, and rendering rich terminal output with syntax highlighting.
+**ralph** is a CLI tool for working with an LLM from the terminal. It offers a persistent chat with compressed memory and single-shot `ask` prompts, records every session, and renders rich terminal output with syntax highlighting.
 
 ## Table of Contents
 
@@ -34,15 +34,11 @@
 
 ## Features
 
-- **Iterative Development Loop** - Automatically runs multiple LLM iterations until all stories are complete
-- **Session Management** - Track progress across sessions with unique slugs and iteration history
+- **Chat** - Persistent chat with compressed memory, run by bare `ralph`
+- **Session Management** - Track `ask` sessions with unique slugs and iteration history
 - **Rich Terminal Output** - Syntax highlighting for code, diffs, and tool results
-- **Failure Recovery** - Automatic retry logic with configurable attempts and timeouts
 - **Replay Sessions** - Review past sessions with full syntax highlighting
-- **Customizable Prompts** - Use custom prompt templates or add additional instructions
 - **Theme Support** - Multiple built-in themes or use custom `.tmTheme` files
-- **Team Strategy** - Scaffold a project with default agent definitions and a strategy file via `ralph strategy sync`
-- **Multi-Agent Orchestration** - Personas can delegate work to each other via ask and handover directives, with automatic routing and budget control
 
 ## Installation
 
@@ -60,41 +56,25 @@ cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (bi
 
 ## Quick Start
 
-1. **Sync the project strategy**:
+1. **Chat**:
 
 ```bash
-ralph strategy sync
+ralph
 ```
 
-This creates `.claude/agents/` with default agent definitions (architect, developer, reviewer, tester, product-manager) and a `.claude/strategy.toml` that ties them together. Safe to re-run — new bundled assets are added, existing agent files are preserved, and `strategy.toml` is updated to the latest version.
-
-2. **Create a PRD file** at `.local/plans/prd.toml`:
-
-```toml
-[[stories]]
-category = "feature"
-description = "Add user authentication"
-steps = [
-  "Create login form component",
-  "Add authentication API endpoint",
-  "Store session tokens securely",
-]
-passes = false
-acceptance = [
-  "Users can log in with email and password",
-  "Session persists across page refreshes",
-]
-```
-
-3. **Run ralph**:
+2. **Ask a single-shot question**:
 
 ```bash
-ralph strategy execute prd-loop
+ralph ask 'Explain this codebase'
 ```
 
-Ralph will iterate through your stories, invoking the LLM to implement each one until all stories pass or you interrupt the session.
+3. **Continue the most recent session in the current project**:
 
-4. **Monitor progress**:
+```bash
+ralph ask --continue 'Now add tests'
+```
+
+4. **Review sessions**:
 
 ```bash
 # List all sessions
@@ -105,34 +85,6 @@ ralph replay quiet-mountain
 
 # Replay a specific iteration
 ralph replay quiet-mountain -i 3
-```
-
-### Example Output
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│  ralph strategy execute prd-loop                               │
-├────────────────────────────────────────────────────────────────┤
-│  Session: quiet-mountain                                       │
-│  Stories: 3 pending                                            │
-└────────────────────────────────────────────────────────────────┘
-
-Iteration 1/3...
-
-[Tool: Edit] src/auth/login.rs
-────────────────────────────────────────
-  Before:
-    1 │ fn login() {
-    2 │     todo!()
-    3 │ }
-────────────────────────────────────────
-  After:
-    1 │ fn login(email: &str, password: &str) -> Result<Session> {
-    2 │     let user = db.find_user_by_email(email)?;
-    3 │     verify_password(password, &user.password_hash)?;
-    4 │     Ok(Session::create(user.id))
-    5 │ }
-────────────────────────────────────────
 ```
 
 ## Configuration
@@ -166,7 +118,6 @@ See [Configuration](docs/configuration.md) for complete documentation.
 
 - [CLI Reference](docs/cli-reference.md) - All commands, flags, and options
 - [Configuration](docs/configuration.md) - Config file format and options
-- [PRD Format](docs/prd-format.md) - How to structure your PRD files
 - [Development Guide](docs/development.md) - Building and contributing
 
 ## Contributing

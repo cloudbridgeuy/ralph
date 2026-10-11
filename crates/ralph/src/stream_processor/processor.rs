@@ -34,8 +34,6 @@ use super::types::{
 pub struct StreamProcessor {
     /// Collected stream events for post-processing.
     pub(super) events: Vec<StreamEvent>,
-    /// Accumulated text from assistant events.
-    pub(super) text_buffer: String,
     /// Chunk buffer for streaming output.
     pub(super) chunk_buffer: StreamingChunkBuffer,
     /// Syntax highlighter for code blocks.
@@ -173,7 +171,6 @@ impl StreamProcessorBuilder {
 
         Ok(StreamProcessor {
             events: Vec::new(),
-            text_buffer: String::new(),
             chunk_buffer: StreamingChunkBuffer::with_prose_threshold(usize::MAX),
             code_highlighter,
             markdown_skin: create_markdown_skin(),
@@ -379,15 +376,9 @@ impl StreamProcessor {
             metadata,
             costs,
             tool_interactions,
-            raw_text: self.text_buffer,
             output_blocks: self.output_blocks,
             final_output,
         }
-    }
-
-    /// Get the raw accumulated text (for completion marker detection).
-    pub fn raw_text(&self) -> &str {
-        &self.text_buffer
     }
 
     /// Get parse errors encountered during processing.

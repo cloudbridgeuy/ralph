@@ -138,7 +138,6 @@ impl StreamProcessor {
                 // Extract text from this event
                 let text = assistant_event.extract_text();
                 if !text.is_empty() {
-                    self.text_buffer.push_str(&text);
                     // Process through chunk buffer and output
                     if let Some(text_output) = self.process_text_for_output(&text) {
                         output_parts.push(text_output);

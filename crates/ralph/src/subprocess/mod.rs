@@ -5,12 +5,8 @@
 //! Imperative Shell pattern, handling I/O operations that the functional core
 //! cannot perform.
 //!
-//! # Available Functions
-//!
-//! The module provides subprocess invocation variants:
-//!
-//! 1. [`invoke_subprocess_with_timeout`] - Stream processing with timeout enforcement
-//! 2. [`invoke_subprocess_with_spinner_config`] - Adds spinner display with session info and theme support
+//! [`invoke_subprocess_with_spinner_config`] runs a command with spinner display,
+//! session info, timeout enforcement, and theme support.
 
 use std::process::Child;
 
@@ -20,7 +16,6 @@ mod types;
 
 // Re-export public API
 pub use spinner::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
-pub use timeout::invoke_subprocess_with_timeout;
 pub use types::{StreamingSubprocessResult, SubprocessError};
 
 /// Kill a subprocess and its entire process group.

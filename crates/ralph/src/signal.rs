@@ -1,6 +1,6 @@
 //! Signal handling for graceful shutdown.
 //!
-//! This module provides SIGINT/SIGTERM handling for strategy execution,
+//! This module provides SIGINT/SIGTERM handling for ask sessions,
 //! allowing sessions to be properly finalized as "interrupted" when the user
 //! presses Ctrl+C or the process receives a termination signal.
 //!

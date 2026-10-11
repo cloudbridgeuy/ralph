@@ -28,9 +28,6 @@ fn test_whitespace_blank_lines_preserved_between_paragraphs() {
     assert_eq!(result.chunks[0].content, "Paragraph 1.\n\nParagraph 2.");
     assert!(matches!(result.chunks[0].chunk_type, ChunkType::Prose));
 
-    // raw_text should preserve the original
-    assert_eq!(result.raw_text, "Paragraph 1.\n\nParagraph 2.");
-
     // Final output should contain the rendered prose
     assert!(result.final_output.is_some());
     let final_out = result.final_output.as_ref().unwrap();
@@ -191,22 +188,6 @@ fn test_whitespace_blank_line_after_code_block() {
 }
 
 #[test]
-fn test_whitespace_raw_text_matches_original() {
-    let mut processor = StreamProcessor::with_highlighting(false);
-
-    let original = "Hello\n\nWorld\n\n```rust\ncode\n```\n\nDone";
-    processor.process_line(&format!(
-        r#"{{"type":"assistant","message":{{"id":"1","content":[{{"type":"text","text":"{}"}}]}}}}"#,
-        original.replace('\n', "\\n")
-    ));
-
-    let result = processor.finish();
-
-    // raw_text should match original exactly
-    assert_eq!(result.raw_text, original);
-}
-
-#[test]
 fn test_whitespace_across_multiple_events() {
     let mut processor = StreamProcessor::with_highlighting(false);
 
@@ -222,6 +203,5 @@ fn test_whitespace_across_multiple_events() {
 
     let result = processor.finish();
 
-    // raw_text should be "Hello World\n\nNext paragraph"
-    assert_eq!(result.raw_text, "Hello World\n\nNext paragraph");
+    assert_eq!(result.chunks.len(), 1);
 }

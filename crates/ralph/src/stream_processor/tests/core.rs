@@ -9,7 +9,6 @@ use ralph_core::chunk::ChunkType;
 #[test]
 fn test_stream_processor_new() {
     let processor = StreamProcessor::new();
-    assert!(processor.raw_text().is_empty());
     assert!(processor.parse_errors().is_empty());
 }
 
@@ -55,7 +54,6 @@ fn test_process_assistant_text_event() {
     let _output = processor.process_line(line);
 
     // Text should be captured
-    assert!(processor.raw_text().contains("Hello, world!"));
 }
 
 #[test]
@@ -81,21 +79,6 @@ fn test_finish_extracts_metadata() {
     assert_eq!(result.metadata.model.as_deref(), Some("claude-3"));
     assert_eq!(result.costs.cost_usd, Some(0.10));
     assert_eq!(result.costs.duration_ms, Some(5000));
-}
-
-#[test]
-fn test_finish_returns_accumulated_text() {
-    let mut processor = StreamProcessor::with_highlighting(false);
-    processor.process_line(
-        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"First "}]}}"#,
-    );
-    processor.process_line(
-        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"text","text":"Second"}]}}"#,
-    );
-
-    let result = processor.finish();
-    assert!(result.raw_text.contains("First"));
-    assert!(result.raw_text.contains("Second"));
 }
 
 #[test]
@@ -170,9 +153,7 @@ fn test_multiple_messages() {
         r#"{"type":"assistant","message":{"id":"msg-2","content":[{"type":"text","text":"Second message"}]}}"#,
     );
 
-    let result = processor.finish();
-    assert!(result.raw_text.contains("First message"));
-    assert!(result.raw_text.contains("Second message"));
+    assert!(!processor.finish().chunks.is_empty());
 }
 
 #[test]
@@ -180,6 +161,5 @@ fn test_empty_finish() {
     let processor = StreamProcessor::new();
     let result = processor.finish();
     assert!(result.chunks.is_empty());
-    assert!(result.raw_text.is_empty());
     assert!(result.tool_interactions.is_empty());
 }

@@ -445,9 +445,6 @@ pub struct SessionEntry {
     /// Current status of the session
     #[serde(default)]
     pub outcome: SessionOutcome,
-    /// Persona name for this session. None = default (ralph ask), Some = named persona.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persona: Option<String>,
 }
 
 impl SessionEntry {
@@ -462,15 +459,6 @@ impl SessionEntry {
             completed_at: None,
             iterations: 0,
             outcome: SessionOutcome::InProgress,
-            persona: None,
-        }
-    }
-
-    /// Create a new session entry with a persona name.
-    pub fn new_with_persona(slug: String, project: PathBuf, persona: String) -> Self {
-        Self {
-            persona: Some(persona),
-            ..Self::new(slug, project)
         }
     }
 }
@@ -516,19 +504,13 @@ impl SessionsIndex {
         self.sessions.iter_mut().find(|s| s.slug == slug)
     }
 
-    /// Find the most recent session matching project path and persona.
-    ///
-    /// Filters by exact match on both `project` and `persona`.
-    /// When `persona` is None, matches sessions where persona is also None.
-    pub fn find_most_recent_for_persona(
+    pub fn find_most_recent_for_project(
         &self,
         project_path: &std::path::Path,
-        persona: Option<&str>,
     ) -> Option<&SessionEntry> {
         self.sessions
             .iter()
             .filter(|s| s.project == project_path)
-            .filter(|s| s.persona.as_deref() == persona)
             .max_by_key(|s| s.started_at)
     }
 
@@ -572,9 +554,6 @@ pub struct SessionMetadata {
     /// Set when a session is created via --clone to branch from an existing session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cloned_from: Option<String>,
-    /// Persona name for this session. None = default (ralph ask), Some = named persona.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub persona: Option<String>,
 }
 
 impl SessionMetadata {
@@ -589,7 +568,6 @@ impl SessionMetadata {
             outcome: SessionOutcome::InProgress,
             prompt,
             cloned_from: None,
-            persona: None,
         }
     }
 
@@ -611,20 +589,6 @@ impl SessionMetadata {
             outcome: SessionOutcome::InProgress,
             prompt,
             cloned_from: Some(source_slug.to_string()),
-            persona: None,
-        }
-    }
-
-    /// Create new session metadata with a persona name.
-    pub fn new_with_persona(
-        slug: String,
-        project: PathBuf,
-        prompt: Option<String>,
-        persona: String,
-    ) -> Self {
-        Self {
-            persona: Some(persona),
-            ..Self::new(slug, project, prompt)
         }
     }
 
@@ -651,14 +615,13 @@ impl From<&SessionEntry> for SessionMetadata {
             // SessionEntry doesn't store prompt or cloned_from, so default to None
             prompt: None,
             cloned_from: None,
-            persona: entry.persona.clone(),
         }
     }
 }
 
 #[cfg(test)]
 #[path = "session_tests.rs"]
-mod persona_tests;
+mod session_tests;
 
 #[cfg(test)]
 mod tests {
