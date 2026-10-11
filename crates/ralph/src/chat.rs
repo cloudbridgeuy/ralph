@@ -24,8 +24,8 @@ use ralph_core::chat_skills::{
     ChatSkill, SkillSources,
 };
 use ralph_core::chat_status::{
-    footer, latest_states, memory_size, route_input, session_worker_ids, status_line,
-    worker_states, Memory, Route, Status,
+    footer, last_turn_cache, latest_states, memory_size, route_input, session_worker_ids,
+    status_line, worker_states, Memory, Route, Status,
 };
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
 use reedline::{
@@ -133,11 +133,20 @@ impl Monitor {
         } else {
             None
         };
+        let turn = if with_memory {
+            self.store
+                .load_usage()
+                .ok()
+                .map(|text| last_turn_cache(&text))
+        } else {
+            None
+        };
         let mut status = locked(&self.status);
         let next = Status {
             unread: pending.len(),
             workers,
             memory: memory.unwrap_or(status.memory),
+            turn: turn.unwrap_or(status.turn),
         };
         let changed = *status != next;
         *status = next;

@@ -56,6 +56,11 @@ impl Store {
         Ok((entries, tree))
     }
 
+    pub fn load_usage(&self) -> io::Result<String> {
+        let bytes = read_optional(&self.dir.join("usage.jsonl"))?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+
     fn lock(&self) -> io::Result<File> {
         fs::create_dir_all(&self.dir)?;
         let path = self.dir.join("LOCK");
