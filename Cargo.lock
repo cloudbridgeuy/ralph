@@ -1021,6 +1021,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "toml",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

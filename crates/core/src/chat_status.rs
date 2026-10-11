@@ -1,5 +1,6 @@
 use crate::worker::{session_name, Report};
 use std::collections::HashMap;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const DEFAULT_STATE: &str = "running";
 const INBOX_COMMAND: &str = "/inbox";
@@ -90,11 +91,21 @@ fn tokens_label(tokens: usize) -> String {
 fn fit(candidates: Vec<String>, width: usize) -> String {
     let chosen = candidates
         .iter()
-        .find(|line| line.chars().count() <= width)
+        .find(|line| line.width() <= width)
         .or(candidates.last());
     chosen
-        .map(|line| line.chars().take(width).collect())
+        .map(|line| truncate_to_width(line, width))
         .unwrap_or_default()
+}
+
+fn truncate_to_width(line: &str, width: usize) -> String {
+    let mut used = 0;
+    line.chars()
+        .take_while(|c| {
+            used += c.width().unwrap_or(0);
+            used <= width
+        })
+        .collect()
 }
 
 pub fn status_line(status: &Status, width: usize) -> String {
@@ -123,7 +134,7 @@ pub fn status_line(status: &Status, width: usize) -> String {
             .collect::<Vec<_>>()
             .join(SEPARATOR)
     };
-    let long_mail = || format!("✉ {unread} unread");
+    let long_mail = || format!("📬 {unread} unread");
     let long_mem = || format!("mem {msgs} msgs ~{tok} tok");
     let compact_mem = || format!("{msgs}m ~{tok}");
     let candidates = vec![
@@ -135,12 +146,12 @@ pub fn status_line(status: &Status, width: usize) -> String {
             long_mem(),
         ),
         build(
-            format!("✉ {unread}"),
+            format!("📬 {unread}"),
             (count > 0).then(|| format!("{count}w")),
             compact_mem(),
         ),
-        build(format!("✉ {unread}"), None, compact_mem()),
-        format!("✉ {unread}"),
+        build(format!("📬 {unread}"), None, compact_mem()),
+        format!("📬 {unread}"),
     ];
     fit(candidates, width)
 }
@@ -205,7 +216,7 @@ mod tests {
     fn status_line_full_width() {
         assert_eq!(
             status_line(&status(), 200),
-            "✉ 2 unread · workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok"
+            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok"
         );
     }
 
@@ -213,14 +224,21 @@ mod tests {
     fn status_line_degrades_and_never_exceeds_width() {
         let status = status();
         let lines: Vec<String> = (0..120).map(|w| status_line(&status, w)).collect();
-        assert!(lines
-            .iter()
-            .enumerate()
-            .all(|(w, l)| l.chars().count() <= w));
+        assert!(lines.iter().enumerate().all(|(w, l)| l.width() <= w));
         assert!(status_line(&status, 70).contains("workers GUZ-416, GUZ-417"));
         assert!(status_line(&status, 50).contains("2 workers"));
         assert!(status_line(&status, 30).contains("2w"));
         assert_eq!(status_line(&status, 0), "");
+    }
+
+    #[test]
+    fn fit_truncates_wide_chars_by_display_width() {
+        let line = "📬 2 unread".to_string();
+        for width in 0..=12 {
+            let fitted = fit(vec![line.clone()], width);
+            assert!(fitted.width() <= width, "width {width}: {fitted:?}");
+        }
+        assert_eq!(fit(vec![line], 1), "");
     }
 
     #[test]
@@ -231,7 +249,7 @@ mod tests {
         };
         assert_eq!(
             status_line(&status, 200),
-            "✉ 2 unread · mem 132 msgs ~4.1k tok"
+            "📬 2 unread · mem 132 msgs ~4.1k tok"
         );
     }
 
@@ -243,7 +261,7 @@ mod tests {
             "Enter send · Ctrl+J newline · /inbox or Enter on empty prompt reads 2 reports · Ctrl+O editor · Ctrl+D quit\n"
         );
         assert!(footer(2, 90).contains("/inbox read 2 reports"));
-        assert!((0..120).all(|w| footer(2, w).trim_end().chars().count() <= w));
+        assert!((0..120).all(|w| footer(2, w).trim_end().width() <= w));
     }
 
     #[test]
