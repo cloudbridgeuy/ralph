@@ -22,3 +22,4 @@ docs/plans/
 .claude
 .claude/plans/
 .claude/settings.local.json
+.memory
