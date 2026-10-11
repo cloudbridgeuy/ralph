@@ -142,6 +142,23 @@ Or via CLI flag:
 ralph ask --no-background 'your prompt'
 ```
 
+### `[ask]` - Single-Shot Prompts
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `permission_mode` | string | `"bypassPermissions"` | Tool permission mode for `ralph ask` |
+
+`--permission-mode` and `RALPH_PERMISSION_MODE` override it. See [ralph ask](context/ralph-ask.md#permission-modes).
+
+### `[chat]` - Persistent Chat
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mcp_servers` | list of strings | `["mcptools"]` | Servers from `~/.claude.json` to load in chat turns |
+| `skills` | list of paths | `[]` | Skill directories exposed to chat |
+
+`--skill` and `RALPH_CHAT_SKILLS` replace `skills`. See [ralph chat](context/ralph-chat.md).
+
 ## Data Directory Structure
 
 Ralph stores session data separately from configuration:
@@ -165,6 +182,8 @@ Contents:
     └── bright-river/
         └── ...
 ```
+
+`ralph chat` keeps its own store at `~/.ralph/chat`, outside the data directory. See [ralph chat](context/ralph-chat.md).
 
 ## Verbose Tools Configuration
 
@@ -211,6 +230,8 @@ Without `--verbose-tools`, tool output is shown in a compact format:
 | `RALPH_DATA_DIR` | Override data directory | `/mnt/data/ralph` |
 | `RALPH_THEME` | Set syntax highlighting theme | `Solarized (dark)` |
 | `RALPH_NO_BACKGROUND` | Disable theme backgrounds | `1` |
+| `RALPH_PERMISSION_MODE` | Permission mode for `ralph ask` | `acceptEdits` |
+| `RALPH_CHAT_SKILLS` | `:`-separated skill directories for chat | `~/skills/a:~/skills/b` |
 
 ## Troubleshooting
 

@@ -9,6 +9,15 @@ cargo install --path crates/ralph --root ~/.local --force  # Install to ~/.local
 cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
 ```
 
+## What ralph Is
+
+ralph wraps `claude -p` with rich terminal rendering. Commands:
+
+- `ralph` / `ralph chat` - persistent chat with a compressed memory tree ([details](docs/context/ralph-chat.md))
+- `ralph ask` - single-shot prompt in a session; `--continue`, `--history`, `--clone-session` ([details](docs/context/ralph-ask.md))
+- `ralph replay <slug> [-i N]` - re-render a stored session ([output blocks](docs/output-blocks.md))
+- `ralph sessions`, `ralph themes` - list sessions and themes ([CLI reference](docs/cli-reference.md))
+
 ## Unnegotiables
 
 These principles are non-negotiable when working on this codebase:
@@ -162,3 +171,6 @@ Terms that only make sense in the context of the project should be defined in th
 | Term      | Definition                                   |
 | --------- | -------------------------------------------- |
 | **ralph** | Main binary crate - the main cli application |
+| **session** | One `ask` conversation under the data dir, named by a slug like `quiet-mountain` |
+| **iteration** | One `ask` call in a session, stored as `iteration-N.toml`; `replay -i N` selects it |
+| **nap** | Background summary pass that compresses the chat memory tree |

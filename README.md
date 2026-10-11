@@ -117,6 +117,8 @@ See [Configuration](docs/configuration.md) for complete documentation.
 ## Documentation
 
 - [CLI Reference](docs/cli-reference.md) - All commands, flags, and options
+- [ralph chat](docs/context/ralph-chat.md) - Persistent chat with compressed memory
+- [ralph ask](docs/context/ralph-ask.md) - Single-shot prompts, `--continue`, `--history`
 - [Configuration](docs/configuration.md) - Config file format and options
 - [Development Guide](docs/development.md) - Building and contributing
 
