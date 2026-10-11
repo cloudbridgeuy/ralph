@@ -27,13 +27,8 @@ Scaffolds a project with bundled agent definitions, strategy files, and a team s
     reviewer.md
     tester.md
     product-manager.md
-    storyteller.md
-    editor-agent.md
-    worldbuilder.md
-    critic.md
   strategies/
     prd-loop.toml          ← created if missing
-    fiction-loop.toml
 ```
 
 ## Idempotent Behavior

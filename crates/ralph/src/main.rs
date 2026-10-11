@@ -18,15 +18,11 @@ pub mod diff_highlight;
 pub mod formatting;
 mod git;
 pub mod highlight;
-mod human;
 mod init;
 mod invoke;
 pub mod iteration;
 pub mod iterations;
 pub mod markdown;
-mod meeting;
-mod meeting_mcp;
-mod meeting_memory;
 mod orchestrator;
 pub mod paths;
 mod persona;
@@ -50,9 +46,9 @@ mod workers;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, IterationsArgs, MeetingArgs,
-    MeetingMcpArgs, PersonaAction, PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs,
-    StrategyAction, StrategyArgs, StrategyExecuteArgs, WorkerMcpArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, IterationsArgs, PersonaAction,
+    PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs, StrategyAction, StrategyArgs,
+    StrategyExecuteArgs, WorkerMcpArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -77,8 +73,6 @@ fn main() -> ExitCode {
         Commands::Ask(args) => execute_ask(args),
         Commands::Persona(args) => execute_persona(args),
         Commands::Strategy(args) => execute_strategy(args),
-        Commands::Meeting(args) => execute_meeting(args),
-        Commands::MeetingMcp(args) => execute_meeting_mcp(args),
         Commands::Chat(args) => chat::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
@@ -526,48 +520,6 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
     }
 
     Ok(prompt)
-}
-
-fn execute_meeting(args: MeetingArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let plan = ralph_core::meeting_turn::MeetingPlan::new(
-        args.personas,
-        args.first,
-        &args.model,
-        args.max_turns,
-    )?;
-    warn_if_err(signal::init(), "Failed to initialize signal handler");
-    let project_path = std::env::current_dir()?;
-    let team_strategy = strategy::load_team_strategy(&project_path)?;
-    for persona in &plan.roster {
-        persona::verify_agent_file_with_strategy(persona, &project_path, team_strategy.as_ref())?;
-    }
-    let config = meeting::MeetingConfig {
-        plan,
-        kickoff: args.kickoff,
-        timeout_secs: args.timeout,
-        theme_config: highlight::ThemeConfig::from_config_and_env()
-            .merge_cli(args.theme.as_deref(), args.no_background),
-    };
-    let reason = meeting::run(&config)?;
-    println!(
-        "
-Meeting stopped: {reason}"
-    );
-    match reason {
-        ralph_core::meeting_turn::StopReason::Error(message) => Err(message.into()),
-        _ => Ok(()),
-    }
-}
-
-fn execute_meeting_mcp(args: MeetingMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let ctx = ralph_core::meeting::MeetingContext {
-        caller: args.caller,
-        roster: args.personas,
-    };
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    meeting_mcp::run_stdio_server(&ctx, &args.socket, stdin.lock(), stdout.lock())?;
-    Ok(())
 }
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {

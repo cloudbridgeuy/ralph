@@ -5,7 +5,6 @@
 //! using the pure core functions, and formats results for display.
 
 pub mod assets;
-mod conversation_loop;
 pub mod execute;
 pub mod init;
 mod prd_loop;
@@ -21,7 +20,7 @@ use std::path::{Path, PathBuf};
 use crate::persona;
 
 /// Known strategy kinds supported by the runtime.
-const KNOWN_KINDS: &[&str] = &["prd-loop", "conversation-loop"];
+const KNOWN_KINDS: &[&str] = &["prd-loop"];
 
 /// Errors from strategy I/O and validation in the shell layer.
 #[derive(Debug, thiserror::Error)]

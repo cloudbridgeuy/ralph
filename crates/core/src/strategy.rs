@@ -84,8 +84,6 @@ pub fn parse_team_strategy(content: &str, path: &str) -> Result<TeamStrategy, St
 pub enum StrategyKind {
     /// PRD-driven iteration loop using a persona.
     PrdLoop,
-    /// Human-driven conversation loop with agent collaboration.
-    ConversationLoop,
 }
 
 /// Result of executing a strategy.
@@ -127,7 +125,6 @@ pub struct StrategyResult {
 pub fn resolve_kind(kind: &str) -> Option<StrategyKind> {
     match kind {
         "prd-loop" => Some(StrategyKind::PrdLoop),
-        "conversation-loop" => Some(StrategyKind::ConversationLoop),
         _ => None,
     }
 }
@@ -443,14 +440,6 @@ prompt_aggregates = [""]
     #[test]
     fn test_resolve_kind_prd_loop() {
         assert_eq!(resolve_kind("prd-loop"), Some(StrategyKind::PrdLoop));
-    }
-
-    #[test]
-    fn test_resolve_kind_conversation_loop() {
-        assert_eq!(
-            resolve_kind("conversation-loop"),
-            Some(StrategyKind::ConversationLoop)
-        );
     }
 
     #[test]

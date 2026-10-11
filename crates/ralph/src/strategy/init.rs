@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_agent_assets_count() {
-        assert_eq!(assets::AGENT_ASSETS.len(), 9);
+        assert_eq!(assets::AGENT_ASSETS.len(), 5);
     }
 
     // =========================================================================
@@ -492,6 +492,6 @@ mod tests {
 
     #[test]
     fn test_strategy_assets_count() {
-        assert_eq!(assets::STRATEGY_ASSETS.len(), 2);
+        assert_eq!(assets::STRATEGY_ASSETS.len(), 1);
     }
 }
