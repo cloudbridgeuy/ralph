@@ -18,7 +18,7 @@ use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT,
     VIEW_LINES,
 };
-use ralph_core::chat_memory::{usage_record, view, CallKind, Role, Trigger};
+use ralph_core::chat_memory::{usage_record, view, view_stats, CallKind, Role, Trigger};
 use ralph_core::chat_skills::{
     build_plugin_args, expand_slash_command, plan_links, plugin_manifest, resolve_skills,
     ChatSkill, SkillSources,
@@ -307,7 +307,9 @@ impl Turn<'_> {
             CallKind::Turn { trigger },
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
-        ) {
+        )
+        .map(|record| record.with_view(view_stats(&lines)))
+        {
             warn_if_err(
                 self.store.append_usage(&record),
                 "Failed to record chat usage",

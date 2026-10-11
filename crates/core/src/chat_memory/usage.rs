@@ -24,6 +24,34 @@ pub enum CallKind {
     Nap,
 }
 
+pub const VIEW_HEAD_BYTES: usize = 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ViewStats {
+    pub view_bytes: usize,
+    pub view_lines: usize,
+    pub view_head_hash: String,
+    pub view_hash: String,
+}
+
+fn fnv1a(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+pub fn view_stats(lines: &[String]) -> ViewStats {
+    let text = lines.join("\n");
+    let bytes = text.as_bytes();
+    ViewStats {
+        view_bytes: bytes.len(),
+        view_lines: lines.len(),
+        view_head_hash: fnv1a(&bytes[..bytes.len().min(VIEW_HEAD_BYTES)]),
+        view_hash: fnv1a(bytes),
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct UsageRecord {
     pub at: String,
@@ -35,6 +63,17 @@ pub struct UsageRecord {
     pub output_tokens: u64,
     pub cost_usd: Option<f64>,
     pub duration_ms: Option<u64>,
+    #[serde(flatten)]
+    pub view: Option<ViewStats>,
+}
+
+impl UsageRecord {
+    pub fn with_view(self, view: ViewStats) -> UsageRecord {
+        UsageRecord {
+            view: Some(view),
+            ..self
+        }
+    }
 }
 
 pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Option<UsageRecord> {
@@ -48,6 +87,7 @@ pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Optio
         output_tokens: usage.output_tokens,
         cost_usd: costs.cost_usd,
         duration_ms: costs.duration_ms,
+        view: None,
     })
 }
 
@@ -152,6 +192,37 @@ mod tests {
         let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert_eq!(value["kind"], "nap");
         assert!(value.get("trigger").is_none());
+    }
+
+    #[test]
+    fn turn_record_carries_view_stats_and_nap_does_not() {
+        let lines = vec!["#0-1 a".to_string(), "#2 b".to_string()];
+        let stats = view_stats(&lines);
+        assert_eq!((stats.view_bytes, stats.view_lines), (11, 2));
+        let kind = CallKind::Turn {
+            trigger: Trigger::User,
+        };
+        let record = usage_record(kind, "t".into(), &costs(None))
+            .unwrap()
+            .with_view(stats.clone());
+        let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(value["view_bytes"], 11);
+        assert_eq!(value["view_lines"], 2);
+        assert_eq!(value["view_head_hash"], stats.view_head_hash.as_str());
+        assert_eq!(value["view_hash"].as_str().map(str::len), Some(16));
+        let nap = usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap();
+        let value: Value = serde_json::from_str(&encode_usage(&nap).unwrap()).unwrap();
+        assert!(value.get("view_bytes").is_none());
+    }
+
+    #[test]
+    fn view_hash_is_stable_and_head_ignores_the_tail() {
+        let short = vec!["a".repeat(VIEW_HEAD_BYTES)];
+        let long = vec!["a".repeat(VIEW_HEAD_BYTES), "tail".to_string()];
+        let (s, l) = (view_stats(&short), view_stats(&long));
+        assert_eq!(s.view_head_hash, l.view_head_hash);
+        assert_ne!(s.view_hash, l.view_hash);
+        assert_eq!(view_stats(&[]).view_hash, "cbf29ce484222325");
     }
 
     #[test]

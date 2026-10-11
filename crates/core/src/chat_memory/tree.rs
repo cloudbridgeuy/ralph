@@ -324,4 +324,67 @@ mod tests {
         assert_eq!(next, entries.len());
         assert_eq!(after.lines.len(), cov.len());
     }
+
+    fn shared_prefix(a: &[Node], b: &[Node]) -> usize {
+        a.iter().zip(b).take_while(|(x, y)| x == y).count()
+    }
+
+    const VIEW_BUDGET: usize = 200;
+
+    fn first_change(t: usize) -> usize {
+        shared_prefix(&cover(t, VIEW_BUDGET), &cover(t + 1, VIEW_BUDGET))
+    }
+
+    #[test]
+    fn cover_below_budget_only_appends() {
+        for t in 1..VIEW_BUDGET {
+            assert_eq!(first_change(t), t, "t={t}");
+        }
+    }
+
+    #[test]
+    fn cover_past_budget_rewrites_opening_nodes() {
+        // The 201st entry merges leaves 0 and 1: the very first node changes.
+        assert_eq!(cover(200, VIEW_BUDGET)[0], n(0, 1));
+        assert_eq!(cover(201, VIEW_BUDGET)[0], n(0, 2));
+        assert_eq!(first_change(200), 0);
+        // Afterwards each append rewrites one node further in: node k = t - 200.
+        for t in 201..268 {
+            assert_eq!(first_change(t), t - 200, "t={t}");
+        }
+        // The first node changes again at 268 and 403, and nowhere else in 200..420.
+        let moved: Vec<usize> = (200..420)
+            .filter(|&t| cover(t, VIEW_BUDGET)[0] != cover(t + 1, VIEW_BUDGET)[0])
+            .collect();
+        assert_eq!(moved, [200, 268, 403]);
+        // Later the stable prefix is longer but still not the whole view.
+        assert_eq!(first_change(250), 50);
+        assert_eq!(first_change(400), 100);
+        assert_eq!(first_change(1000), 62);
+    }
+
+    #[test]
+    fn view_opening_after_one_append() {
+        // (entries before the append, first line unchanged, first 10 lines unchanged)
+        let cases = [
+            (150, true, true),
+            (199, true, true),
+            (200, false, false),
+            (201, true, false),
+            (250, true, true),
+            (400, true, true),
+        ];
+        for (count, first_same, ten_same) in cases {
+            let entries: Vec<Entry> = (0..=count).map(|i| entry(i, 5)).collect();
+            let mut tree = Tree::new();
+            for node in pending(&entries, &tree) {
+                tree.insert(node, format!("sum {}", node.id()));
+            }
+            let before = view(&entries[..count], &tree, VIEW_BUDGET).lines;
+            let after = view(&entries, &tree, VIEW_BUDGET).lines;
+            let same = |k: usize| before.iter().take(k).eq(after.iter().take(k));
+            assert_eq!(same(1), first_same, "first line at {count}");
+            assert_eq!(same(10), ten_same, "first 10 lines at {count}");
+        }
+    }
 }

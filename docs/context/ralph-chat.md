@@ -101,7 +101,7 @@ Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not
 
 ## Usage
 
-Every completed Claude call (each turn, including failed exits but not interrupted ones, and each nap attempt) appends one line to `usage.jsonl`: `{at, kind, trigger, input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, cost_usd, duration_ms}`, with `kind` `turn` or `nap`, and `trigger` (turn only) `user` or `worker`. Calls without usage data append nothing. Appends do not take `LOCK`. Total cost per kind:
+Every completed Claude call (each turn, including failed exits but not interrupted ones, and each nap attempt) appends one line to `usage.jsonl`: `{at, kind, trigger, input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens, cost_usd, duration_ms}`, with `kind` `turn` or `nap`, and `trigger` (turn only) `user` or `worker`. Turn lines also carry `view_bytes`, `view_lines`, `view_head_hash` (FNV-1a 64 of the first 1024 bytes of the rendered view) and `view_hash` (of the whole view), to trace prompt-cache misses. Calls without usage data append nothing. Appends do not take `LOCK`. Total cost per kind:
 
 ```bash
 jq -s 'group_by(.kind) | map({kind: .[0].kind, usd: (map(.cost_usd // 0) | add)})' ~/.ralph/chat/usage.jsonl
