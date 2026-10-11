@@ -183,7 +183,7 @@ Prose chunks are scanned for directive tags (`<ralph-{verb} to="...">...</ralph-
 - `Directive` chunks carry `verb` and `target` metadata alongside the payload content
 - The stream processor renders them as styled one-liners: `→ target (verb): "payload"`
 - Directive blocks receive trailing newlines matching code/diff block behavior
-- In `extract_response_text()`, directive chunks are reconstructed back to XML tags so downstream `parse_directives()` can find them for orchestration
+- In `extract_response_text()`, directive chunks are reconstructed back to XML tags
 
 The splitting happens in `event_handler.rs` at both streaming sites (line processing and flush). The reconstruction happens in `iteration/log.rs::text_block_to_response_text()`.
 

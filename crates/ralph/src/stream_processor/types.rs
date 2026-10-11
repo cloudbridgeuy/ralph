@@ -126,8 +126,6 @@ pub struct StreamProcessorResult {
     pub costs: IterationCosts,
     /// Tool interactions (calls correlated with results).
     pub tool_interactions: Vec<ToolInteraction>,
-    /// Raw accumulated text (for completion marker detection).
-    pub raw_text: String,
     /// Accumulated output blocks for replay serialization.
     ///
     /// Each block captures the data needed to re-render a piece of output.

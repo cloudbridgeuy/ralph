@@ -39,18 +39,17 @@ fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>
 Each module defines its own enum. `#[from]` enables `?` conversion.
 
 ```rust
-// crates/ralph/src/git.rs
-#[derive(Debug, Error)]
-pub enum GitError {
-    #[error("Failed to execute git command: {0}")]
-    CommandFailed(#[from] io::Error),
-
-    #[error("Git command failed with exit code {code}: {stderr}")]
-    GitFailed { code: i32, stderr: String },
+// crates/ralph/src/invoke.rs
+#[derive(Debug, thiserror::Error)]
+pub enum InvocationError {
+    #[error("No prompt provided. Use: ralph ask 'your prompt here'")]
+    NoPrompt,
+    #[error("Subprocess failed: {0}")]
+    Subprocess(#[from] SubprocessError),
+    #[error("Session initialization failed: {0}")]
+    Session(#[from] SessionError),
 }
 ```
-
-The core crate (`crates/core`) uses the same style, for example `StrategyError` in `crates/core/src/strategy.rs`, `DirectiveError` in `directive.rs`, and `PrdError` in `prd.rs`.
 
 ## No unwrap or expect
 

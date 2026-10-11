@@ -18,12 +18,10 @@ ralph [OPTIONS] <COMMAND>
 | Command | Description |
 |---------|-------------|
 | `sessions` | List all sessions across all projects |
-| `iterations` | List all iterations across all sessions |
 | `replay` | Replay a session's output with syntax highlighting |
 | `themes` | List available syntax highlighting themes |
 | `ask` | Send a single-shot prompt to the LLM ([details](context/ralph-ask.md)) |
-| `persona` | Converse with a persona-configured Claude ([details](context/ralph-persona.md)) |
-| `strategy` | Manage and execute collaboration strategies ([details](context/ralph-strategy.md)) |
+| `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
 
 ---
 
@@ -49,9 +47,9 @@ ralph sessions [OPTIONS]
 | Value | Description |
 |-------|-------------|
 | `in_progress` | Session is currently running or crashed without cleanup |
-| `completed` | All stories completed successfully |
-| `aborted` | User chose to abort at failure prompt |
-| `failed` | Session failed after exhausting retries |
+| `completed` | Session completed successfully |
+| `aborted` | Session was aborted |
+| `failed` | Session failed |
 | `interrupted` | Session was interrupted by signal (Ctrl+C) |
 
 ### Examples
@@ -68,52 +66,6 @@ ralph sessions --outcome completed
 
 # Combine filters
 ralph sessions --project myproject --outcome in_progress
-```
-
----
-
-## ralph iterations
-
-List all iterations across all sessions.
-
-### Usage
-
-```
-ralph iterations [OPTIONS]
-```
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `--session <SLUG>` | Filter iterations by session slug |
-| `--project <PATH>` | Filter iterations by project path (substring match) |
-| `--outcome <STATUS>` | Filter iterations by outcome |
-
-### Outcome Values
-
-| Value | Description |
-|-------|-------------|
-| `completed` | Iteration completed with exit code 0 |
-| `failed` | Iteration failed with non-zero exit code |
-
-### Examples
-
-```bash
-# List all iterations
-ralph iterations
-
-# Filter by session
-ralph iterations --session quiet-mountain
-
-# Filter by project
-ralph iterations --project /path/to/project
-
-# Filter by outcome
-ralph iterations --outcome failed
-
-# Combine filters
-ralph iterations --session my-session --outcome completed
 ```
 
 ---
@@ -203,14 +155,14 @@ Environment variables can be used instead of CLI flags. CLI flags take precedenc
 ```bash
 # Set theme via environment variable
 export RALPH_THEME="Solarized (dark)"
-ralph strategy execute prd-loop
+ralph ask 'your prompt'
 
 # Use custom config directory
 export RALPH_CONFIG_DIR=/custom/config
-ralph strategy execute prd-loop
+ralph ask 'your prompt'
 
 # One-off theme override
-RALPH_THEME="Monokai Extended" ralph strategy execute prd-loop
+RALPH_THEME="Monokai Extended" ralph ask 'your prompt'
 ```
 
 ---

@@ -18,7 +18,6 @@ COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 COPY crates/ crates/
 COPY xtask/ xtask/
-COPY assets/ assets/
 
 RUN cargo build --release --bin ralph
 # We do not need the Rust toolchain to run the binary!

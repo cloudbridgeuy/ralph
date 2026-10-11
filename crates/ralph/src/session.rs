@@ -253,9 +253,8 @@ pub fn initialize_session_directory(
     slug: &str,
     project_path: &Path,
     prompt: Option<String>,
-    persona: Option<&str>,
 ) -> Result<PathBuf, SessionError> {
-    initialize_session_directory_internal(slug, project_path, prompt, None, persona)
+    initialize_session_directory_internal(slug, project_path, prompt, None)
 }
 
 /// Create a session directory for a cloned session.
@@ -267,9 +266,8 @@ fn initialize_session_directory_with_clone(
     project_path: &Path,
     prompt: Option<String>,
     source_slug: &str,
-    persona: Option<&str>,
 ) -> Result<PathBuf, SessionError> {
-    initialize_session_directory_internal(slug, project_path, prompt, Some(source_slug), persona)
+    initialize_session_directory_internal(slug, project_path, prompt, Some(source_slug))
 }
 
 /// Internal implementation for session directory initialization.
@@ -280,7 +278,6 @@ fn initialize_session_directory_internal(
     project_path: &Path,
     prompt: Option<String>,
     cloned_from: Option<&str>,
-    persona: Option<&str>,
 ) -> Result<PathBuf, SessionError> {
     // Create session directory
     let session_path = session_dir(slug);
@@ -289,31 +286,14 @@ fn initialize_session_directory_internal(
         source: e,
     })?;
 
-    // Create session metadata based on clone and persona options
-    let metadata = match (cloned_from, persona) {
-        (Some(source_slug), Some(p)) => {
-            let mut m = SessionMetadata::new_cloned(
-                slug.to_string(),
-                project_path.to_path_buf(),
-                prompt,
-                source_slug,
-            );
-            m.persona = Some(p.to_string());
-            m
-        }
-        (Some(source_slug), None) => SessionMetadata::new_cloned(
+    let metadata = match cloned_from {
+        Some(source_slug) => SessionMetadata::new_cloned(
             slug.to_string(),
             project_path.to_path_buf(),
             prompt,
             source_slug,
         ),
-        (None, Some(p)) => SessionMetadata::new_with_persona(
-            slug.to_string(),
-            project_path.to_path_buf(),
-            prompt,
-            p.to_string(),
-        ),
-        (None, None) => SessionMetadata::new(slug.to_string(), project_path.to_path_buf(), prompt),
+        None => SessionMetadata::new(slug.to_string(), project_path.to_path_buf(), prompt),
     };
 
     // Write session.toml in the session directory
@@ -328,14 +308,7 @@ fn initialize_session_directory_internal(
 
     // Add entry to global sessions index
     let mut index = load_sessions_index()?;
-    let entry = match persona {
-        Some(p) => SessionEntry::new_with_persona(
-            slug.to_string(),
-            project_path.to_path_buf(),
-            p.to_string(),
-        ),
-        None => SessionEntry::new(slug.to_string(), project_path.to_path_buf()),
-    };
+    let entry = SessionEntry::new(slug.to_string(), project_path.to_path_buf());
     index.add_session(entry);
     save_sessions_index(&index)?;
 
@@ -363,10 +336,9 @@ pub fn initialize_session(
     user_slug: Option<&str>,
     project_path: &Path,
     prompt: Option<String>,
-    persona: Option<&str>,
 ) -> Result<(String, PathBuf), SessionError> {
     let slug = resolve_session_slug(user_slug)?;
-    let session_path = initialize_session_directory(&slug, project_path, prompt, persona)?;
+    let session_path = initialize_session_directory(&slug, project_path, prompt)?;
     Ok((slug, session_path))
 }
 
@@ -392,11 +364,10 @@ pub fn initialize_session_with_clone(
     project_path: &Path,
     prompt: Option<String>,
     source_slug: &str,
-    persona: Option<&str>,
 ) -> Result<(String, PathBuf), SessionError> {
     let slug = resolve_session_slug(user_slug)?;
     let session_path =
-        initialize_session_directory_with_clone(&slug, project_path, prompt, source_slug, persona)?;
+        initialize_session_directory_with_clone(&slug, project_path, prompt, source_slug)?;
     Ok((slug, session_path))
 }
 
@@ -414,14 +385,9 @@ pub fn initialize_session_with_clone(
 /// * `Ok(Some(SessionEntry))` - The most recent session for the project
 /// * `Ok(None)` - No sessions exist for this project
 /// * `Err(SessionError)` - If loading the sessions index fails
-pub fn find_most_recent_session(
-    project_path: &Path,
-    persona: Option<&str>,
-) -> Result<Option<SessionEntry>, SessionError> {
+pub fn find_most_recent_session(project_path: &Path) -> Result<Option<SessionEntry>, SessionError> {
     let index = load_sessions_index()?;
-    Ok(index
-        .find_most_recent_for_persona(project_path, persona)
-        .cloned())
+    Ok(index.find_most_recent_for_project(project_path).cloned())
 }
 
 /// Find a session by its slug.

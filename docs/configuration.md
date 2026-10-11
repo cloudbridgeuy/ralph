@@ -25,11 +25,11 @@ Example:
 ```bash
 # Use a custom config directory
 export RALPH_CONFIG_DIR=/path/to/custom/config
-ralph strategy execute prd-loop
+ralph ask 'your prompt'
 
 # Use a different data directory for sessions
 export RALPH_DATA_DIR=/mnt/large-disk/ralph-sessions
-ralph strategy execute prd-loop
+ralph ask 'your prompt'
 ```
 
 ## Configuration Precedence
@@ -116,10 +116,10 @@ The `RALPH_THEME` environment variable can be used instead of the config file:
 ```bash
 # Set theme via environment variable
 export RALPH_THEME="Solarized (dark)"
-ralph strategy execute prd-loop
+ralph ask 'your prompt'
 
 # Or for a single command
-RALPH_THEME="Monokai Extended" ralph strategy execute prd-loop
+RALPH_THEME="Monokai Extended" ralph ask 'your prompt'
 ```
 
 #### Disabling Background Colors
@@ -139,7 +139,7 @@ export RALPH_NO_BACKGROUND=1
 
 Or via CLI flag:
 ```bash
-ralph strategy execute prd-loop --no-background
+ralph ask --no-background 'your prompt'
 ```
 
 ## Data Directory Structure
@@ -168,19 +168,19 @@ Contents:
 
 ## Verbose Tools Configuration
 
-The `--verbose-tools` flag controls how much detail is shown for LLM tool invocations during `ralph strategy execute`.
+The `--verbose-tools` flag controls how much detail is shown for LLM tool invocations during `ralph ask`.
 
 ### Usage
 
 ```bash
 # Enable verbose output for all tools
-ralph strategy execute prd-loop --verbose-tools
+ralph ask --verbose-tools 'your prompt'
 
 # Enable verbose for specific tools (comma-separated, case-insensitive)
-ralph strategy execute prd-loop --verbose-tools=read,grep,bash
+ralph ask --verbose-tools=read,grep,bash 'your prompt'
 
 # Single tool
-ralph strategy execute prd-loop --verbose-tools=glob
+ralph ask --verbose-tools=glob 'your prompt'
 ```
 
 ### Supported Tools

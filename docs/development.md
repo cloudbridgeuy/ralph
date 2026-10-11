@@ -145,8 +145,6 @@ ralph/
 │   │   └── src/
 │   │       ├── chunk/      # Content chunking
 │   │       ├── stream/     # LLM stream processing
-│   │       ├── context.rs  # Context/template handling
-│   │       ├── prd.rs      # PRD file parsing
 │   │       └── session.rs  # Session state
 │   └── ralph/          # ralph CLI - I/O and orchestration
 │       └── src/

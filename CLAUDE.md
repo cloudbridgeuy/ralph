@@ -151,14 +151,9 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [Environment Configuration](docs/context/rust-cli-env-config.md) - Env vars, secrets, config precedence
 - [Project Structure](docs/context/rust-cli-project-structure.md) - Workspace setup, xtask, module organization
 - [Stream Processor Architecture](docs/context/stream-processor-architecture.md) - StreamProcessor builder, result handlers, output blocks, block-buffered prose, table enhancement
-- [Prompt Template System](docs/context/prompt-template.md) - Placeholders, customization, and two-phase workflow
 - [Git Workflow](docs/context/git-workflow.md) - Semantic commits, git history usage, Progressive Disclosure pattern
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, session continuation, conversation history
-- [ralph persona Command](docs/context/ralph-persona.md) - Named agent conversations, persona-scoped sessions
-- [Orchestration](docs/context/orchestration.md) - Multi-agent directives, handover/ask, conversation routing
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
-- [ralph strategy Command](docs/context/ralph-strategy.md) - Strategy TOML schema, discovery, CLI surface, FC-IS architecture
-- [ralph strategy sync](docs/context/ralph-strategy-sync.md) - Project scaffolding, bundled assets, idempotent sync behavior
 
 ## Glossary
 

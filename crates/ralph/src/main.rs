@@ -16,18 +16,12 @@ mod cli;
 pub mod config;
 pub mod diff_highlight;
 pub mod formatting;
-mod git;
 pub mod highlight;
-mod init;
 mod invoke;
 pub mod iteration;
-pub mod iterations;
 pub mod markdown;
-mod orchestrator;
 pub mod paths;
-mod persona;
 pub mod prompt_source;
-pub mod recovery;
 pub mod render;
 pub mod replay;
 pub mod replay_countdown;
@@ -37,7 +31,6 @@ pub mod sessions_display;
 pub mod signal;
 pub mod spinner;
 pub mod startup;
-mod strategy;
 pub mod stream_processor;
 pub mod subprocess;
 pub mod warn;
@@ -46,9 +39,8 @@ mod workers;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, IterationsArgs, PersonaAction,
-    PersonaArgs, PersonaInvokeArgs, ReplayArgs, SessionsArgs, StrategyAction, StrategyArgs,
-    StrategyExecuteArgs, WorkerMcpArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, ReplayArgs, SessionsArgs,
+    WorkerMcpArgs,
 };
 use invoke::InvocationConfig;
 use iteration::{extract_conversation_messages, load_session_iterations};
@@ -67,12 +59,9 @@ fn main() -> ExitCode {
         skills: Vec::new(),
     })) {
         Commands::Sessions(args) => execute_sessions(args),
-        Commands::Iterations(args) => execute_iterations(args),
         Commands::Replay(args) => execute_replay(args),
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),
-        Commands::Persona(args) => execute_persona(args),
-        Commands::Strategy(args) => execute_strategy(args),
         Commands::Chat(args) => chat::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
@@ -99,22 +88,6 @@ fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>
     };
 
     sessions_display::list_sessions(filter)?;
-
-    Ok(())
-}
-
-/// Execute the iterations command.
-///
-/// Lists all iterations across all sessions, optionally filtered by
-/// session, project, or outcome.
-fn execute_iterations(args: IterationsArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let filter = iterations::IterationsFilter {
-        session: args.session,
-        project: args.project,
-        outcome: args.outcome,
-    };
-
-    iterations::list_iterations(filter)?;
 
     Ok(())
 }
@@ -165,7 +138,7 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!();
-    println!("Use --theme <NAME> to select a theme for 'ralph strategy execute'.");
+    println!("Use --theme <NAME> to select a theme for 'ralph ask'.");
     println!("Or set the RALPH_THEME environment variable.");
     println!();
     println!("You can also load custom .tmTheme files by specifying a file path.");
@@ -219,132 +192,46 @@ fn execute_ask_core(args: &AskArgs, project_path: &Path) -> Result<(), Box<dyn s
     execute_and_finalize(config)
 }
 
-/// Shared parameters for building an `InvocationConfig`.
-///
-/// Captures the common fields between `AskArgs` and `PersonaArgs` so that
-/// `build_shared_invocation_config` can handle the duplicated logic once.
-struct InvocationConfigParams<'a> {
-    session: &'a Option<String>,
-    continue_session: bool,
-    clone_session: bool,
-    theme: Option<&'a str>,
-    no_background: bool,
-    verbose_tools: Option<&'a str>,
-    prompt: Option<&'a str>,
-    timeout: u64,
-    persona: Option<&'a str>,
-    permission_mode: String,
-}
-
-fn build_shared_invocation_config(
-    params: &InvocationConfigParams,
-    project_path: &Path,
-) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
-    let clone_info = if params.clone_session {
-        Some(resolve_clone_source(
-            params.session,
-            project_path,
-            params.persona,
-        )?)
-    } else {
-        None
-    };
-    let continuation = if params.continue_session && !params.clone_session {
-        Some(resolve_continuation(
-            params.session,
-            project_path,
-            params.persona,
-        )?)
-    } else {
-        None
-    };
-    let theme_config =
-        highlight::ThemeConfig::from_config_and_env().merge_cli(params.theme, params.no_background);
-    let verbose_tools = VerboseToolsConfig::from_arg(params.verbose_tools);
-    for warning in verbose_tools.warnings() {
-        warn(warning);
-    }
-    let prompt = resolve_ask_prompt(params.prompt)?;
-    Ok(InvocationConfig {
-        prompt,
-        timeout_secs: params.timeout,
-        theme_config,
-        verbose_tools,
-        project_path: project_path.to_path_buf(),
-        slug: if params.continue_session || params.clone_session {
-            None
-        } else {
-            params.session.clone()
-        },
-        continuation,
-        clone: clone_info,
-        permission_mode: params.permission_mode.clone(),
-        persona: params.persona.map(String::from),
-        on_behalf_of: None,
-    })
-}
-
 fn build_invocation_config(
     args: &AskArgs,
     project_path: &Path,
 ) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
-    build_shared_invocation_config(
-        &InvocationConfigParams {
-            session: &args.session,
-            continue_session: args.continue_session,
-            clone_session: args.clone_session,
-            theme: args.theme.as_deref(),
-            no_background: args.no_background,
-            verbose_tools: args.verbose_tools.as_deref(),
-            prompt: args.prompt.as_deref(),
-            timeout: args.timeout,
-            persona: None,
-            permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
+    let clone_info = if args.clone_session {
+        Some(resolve_clone_source(&args.session, project_path)?)
+    } else {
+        None
+    };
+    let continuation = if args.continue_session && !args.clone_session {
+        Some(resolve_continuation(&args.session, project_path)?)
+    } else {
+        None
+    };
+    let theme_config = highlight::ThemeConfig::from_config_and_env()
+        .merge_cli(args.theme.as_deref(), args.no_background);
+    let verbose_tools = VerboseToolsConfig::from_arg(args.verbose_tools.as_deref());
+    for warning in verbose_tools.warnings() {
+        warn(warning);
+    }
+    let prompt = resolve_ask_prompt(args.prompt.as_deref())?;
+    Ok(InvocationConfig {
+        prompt,
+        timeout_secs: args.timeout,
+        theme_config,
+        verbose_tools,
+        project_path: project_path.to_path_buf(),
+        slug: if args.continue_session || args.clone_session {
+            None
+        } else {
+            args.session.clone()
         },
-        project_path,
-    )
+        continuation,
+        clone: clone_info,
+        permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
+    })
 }
 
 fn execute_and_finalize(config: InvocationConfig) -> Result<(), Box<dyn std::error::Error>> {
     finalize_invocation(invoke::invoke(config)?)
-}
-
-fn execute_persona_and_finalize(
-    config: InvocationConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let team_strategy = match crate::strategy::load_team_strategy(&config.project_path) {
-        Ok(strategy) => strategy,
-        Err(e) => {
-            warn(format!("Failed to load team strategy: {e}"));
-            None
-        }
-    };
-    let known_personas: Vec<String> =
-        persona::discover_personas_with_strategy(&config.project_path, team_strategy.as_ref())
-            .into_iter()
-            .map(|p| p.name)
-            .collect();
-
-    let orch_config = orchestrator::OrchestrationConfig {
-        project_path: config.project_path.clone(),
-        timeout_secs: config.timeout_secs,
-        theme_config: config.theme_config.clone(),
-        verbose_tools: config.verbose_tools.clone(),
-        budget: orchestrator::Budget::new(orchestrator::DEFAULT_BUDGET),
-        known_personas,
-    };
-
-    let result = invoke::invoke(config)?;
-
-    if let Some(directives) =
-        orchestrator::scan_for_directives(&result, &orch_config.known_personas)
-    {
-        if let Err(e) = orchestrator::orchestrate(&result, directives, &orch_config) {
-            warn(format!("Orchestration failed: {e}"));
-        }
-    }
-
-    finalize_invocation(result)
 }
 
 fn finalize_invocation(result: invoke::InvocationResult) -> Result<(), Box<dyn std::error::Error>> {
@@ -387,22 +274,15 @@ fn finalize_invocation(result: invoke::InvocationResult) -> Result<(), Box<dyn s
 fn find_session_entry(
     session_name: &Option<String>,
     project_path: &Path,
-    persona: Option<&str>,
 ) -> Result<ralph_core::session::SessionEntry, Box<dyn std::error::Error>> {
     if let Some(name) = session_name {
         Ok(session::find_session_by_slug(name)?)
     } else {
-        session::find_most_recent_session(project_path, persona)?.ok_or_else(|| {
-            match persona {
-                Some(p) => format!(
-                    "No sessions found for persona '{}' in project '{}'. Start a conversation first.",
-                    p, project_path.display()
-                ),
-                None => format!(
-                    "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
-                    project_path.display()
-                ),
-            }
+        session::find_most_recent_session(project_path)?.ok_or_else(|| {
+            format!(
+                "No sessions found for project '{}'. Create a session first with 'ralph ask'.",
+                project_path.display()
+            )
             .into()
         })
     }
@@ -416,11 +296,10 @@ fn find_session_entry(
 fn resolve_continuation(
     session_name: &Option<String>,
     project_path: &Path,
-    persona: Option<&str>,
 ) -> Result<invoke::ContinuationInfo, Box<dyn std::error::Error>> {
     use crate::iteration::count_iterations;
 
-    let entry = find_session_entry(session_name, project_path, persona)?;
+    let entry = find_session_entry(session_name, project_path)?;
     let session_dir = session::session_dir(&entry.slug);
     let existing_count = count_iterations(&session_dir)?;
 
@@ -434,9 +313,8 @@ fn resolve_continuation(
 fn resolve_clone_source(
     session_name: &Option<String>,
     project_path: &Path,
-    persona: Option<&str>,
 ) -> Result<invoke::CloneInfo, Box<dyn std::error::Error>> {
-    let entry = find_session_entry(session_name, project_path, persona)?;
+    let entry = find_session_entry(session_name, project_path)?;
     let source_session_dir = session::session_dir(&entry.slug);
 
     Ok(invoke::CloneInfo {
@@ -461,7 +339,7 @@ fn execute_ask_with_history(
     }
 
     // Resolve the session to display history for
-    let entry = find_session_entry(&args.session, project_path, None)?;
+    let entry = find_session_entry(&args.session, project_path)?;
 
     // Load iteration logs and extract conversation history
     let session_dir = session::session_dir(&entry.slug);
@@ -573,146 +451,6 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
         let response = iteration::extract_response_text(&result.stream_result.output_blocks);
         ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
     })?;
-    Ok(())
-}
-
-// =============================================================================
-// Strategy command
-// =============================================================================
-
-fn execute_strategy(args: StrategyArgs) -> Result<(), Box<dyn std::error::Error>> {
-    match args.action {
-        StrategyAction::List => execute_strategy_list(),
-        StrategyAction::Sync => execute_strategy_sync(),
-        StrategyAction::Execute(args) => execute_strategy_execute(args),
-    }
-}
-
-fn execute_strategy_sync() -> Result<(), Box<dyn std::error::Error>> {
-    let project_path = std::env::current_dir()?;
-    strategy::init::execute_sync(&project_path)
-}
-
-fn execute_strategy_list() -> Result<(), Box<dyn std::error::Error>> {
-    let project_path = std::env::current_dir()?;
-    let strategies = strategy::load_all_strategies(&project_path)?;
-    let output = strategy::format_strategy_list(&strategies);
-    print!("{output}");
-    Ok(())
-}
-
-fn execute_strategy_execute(args: StrategyExecuteArgs) -> Result<(), Box<dyn std::error::Error>> {
-    strategy::execute::execute_strategy_execute(args)
-}
-
-// =============================================================================
-// Persona command
-// =============================================================================
-
-fn execute_persona(args: PersonaArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let action = args
-        .into_action()
-        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-
-    match action {
-        PersonaAction::List => execute_persona_list(),
-        PersonaAction::Invoke(invoke_args) => {
-            warn_if_err(signal::init(), "Failed to initialize signal handler");
-
-            let project_path = std::env::current_dir()?;
-
-            // Load team strategy if it exists
-            let team_strategy = strategy::load_team_strategy(&project_path)?;
-
-            // Verify agent file exists (strategy-aware)
-            persona::verify_agent_file_with_strategy(
-                &invoke_args.persona,
-                &project_path,
-                team_strategy.as_ref(),
-            )?;
-
-            if invoke_args.history {
-                return execute_persona_with_history(&invoke_args, &project_path);
-            }
-
-            execute_persona_core(&invoke_args, &project_path)
-        }
-    }
-}
-
-fn execute_persona_list() -> Result<(), Box<dyn std::error::Error>> {
-    let project_path = std::env::current_dir()?;
-    let team_strategy = strategy::load_team_strategy(&project_path)?;
-    let personas = persona::discover_personas_with_strategy(&project_path, team_strategy.as_ref());
-    let output = persona::format_persona_list(&personas);
-    print!("{output}");
-    Ok(())
-}
-
-fn execute_persona_core(
-    args: &PersonaInvokeArgs,
-    project_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if args.clone_session && args.session.is_none() && !args.continue_session {
-        return Err(
-            "--clone requires --session or --continue to specify which session to clone from"
-                .into(),
-        );
-    }
-
-    let config = build_persona_config(args, project_path)?;
-
-    if !args.no_prompt && !config.prompt.is_empty() {
-        let prompt_display = startup::PromptDisplay::from_prompt(&config.prompt);
-        startup::display_prompt(&prompt_display);
-    }
-
-    execute_persona_and_finalize(config)
-}
-
-fn build_persona_config(
-    args: &PersonaInvokeArgs,
-    project_path: &Path,
-) -> Result<InvocationConfig, Box<dyn std::error::Error>> {
-    build_shared_invocation_config(
-        &InvocationConfigParams {
-            session: &args.session,
-            continue_session: args.continue_session,
-            clone_session: args.clone_session,
-            theme: args.theme.as_deref(),
-            no_background: args.no_background,
-            verbose_tools: args.verbose_tools.as_deref(),
-            prompt: args.prompt.as_deref(),
-            timeout: args.timeout,
-            persona: Some(&args.persona),
-            permission_mode: invoke::DEFAULT_PERMISSION_MODE.to_string(),
-        },
-        project_path,
-    )
-}
-
-fn execute_persona_with_history(
-    args: &PersonaInvokeArgs,
-    project_path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if args.session.is_none() && !args.continue_session {
-        return Err(
-            "--history requires --session or --continue to specify which session to display".into(),
-        );
-    }
-
-    let entry = find_session_entry(&args.session, project_path, Some(&args.persona))?;
-    let session_dir = session::session_dir(&entry.slug);
-    let logs = load_session_iterations(&session_dir)?;
-    let messages = extract_conversation_messages(&logs);
-
-    let history = startup::ConversationHistory::from_messages(entry.slug.clone(), messages);
-    startup::display_conversation_history(&history);
-
-    if args.continue_session && args.prompt.is_some() {
-        return execute_persona_core(args, project_path);
-    }
-
     Ok(())
 }
 
