@@ -1,5 +1,10 @@
-use crate::worker::{startup_state, Startup};
-use std::collections::BTreeMap;
+use crate::worker::{startup_state, Report, ReportStatus, Startup};
+use std::collections::{BTreeMap, HashMap};
+use std::time::Duration;
+
+pub const CHECK_STATUS: &str = "check";
+pub const NUDGE_TEXT: &str =
+    "You stopped without calling report. Call the report tool now: done, blocked or question.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerObservation {
@@ -38,6 +43,30 @@ pub struct CheckMemory {
 pub struct WorkerMemory {
     pub state: WorkerState,
     pub nudged: bool,
+}
+
+pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
+    reports
+        .iter()
+        .filter(|report| {
+            ReportStatus::ALL
+                .iter()
+                .any(|status| status.as_str() == report.status)
+        })
+        .map(|report| (report.worker.clone(), report.at.clone()))
+        .collect()
+}
+
+pub fn reported_since_nudge(last_report: Option<&String>, nudge: Option<&Option<String>>) -> bool {
+    match nudge {
+        None => last_report.is_some(),
+        Some(before) => last_report.is_some() && last_report != before.as_ref(),
+    }
+}
+
+pub fn check_every_polls(secs: u64, poll: Duration) -> u64 {
+    let poll_ms = u64::try_from(poll.as_millis()).unwrap_or(u64::MAX).max(1);
+    secs.saturating_mul(1000).div_ceil(poll_ms).max(1)
 }
 
 pub fn classify(obs: &WorkerObservation) -> WorkerState {
@@ -349,5 +378,47 @@ mod tests {
         assert_eq!(memory.workers.len(), 2);
         let (_, memory) = plan(&memory, &[other]);
         assert_eq!(memory.workers.keys().collect::<Vec<_>>(), vec!["w2"]);
+    }
+
+    fn report(worker: &str, at: &str, status: &str) -> Report {
+        Report {
+            worker: worker.to_string(),
+            at: at.to_string(),
+            status: status.to_string(),
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn last_reports_ignore_check_posts() {
+        let reports = [
+            report("w1", "t1", "done"),
+            report("w1", "t2", CHECK_STATUS),
+            report("w2", "t3", CHECK_STATUS),
+            report("w1", "t4", "question"),
+        ];
+        let last = last_reports(&reports);
+        assert_eq!(last.len(), 1);
+        assert_eq!(last["w1"], "t4");
+    }
+
+    #[test]
+    fn reported_since_nudge_needs_a_newer_report() {
+        let t1 = "t1".to_string();
+        let t2 = "t2".to_string();
+        assert!(!reported_since_nudge(None, None));
+        assert!(reported_since_nudge(Some(&t1), None));
+        assert!(!reported_since_nudge(None, Some(&None)));
+        assert!(reported_since_nudge(Some(&t1), Some(&None)));
+        assert!(!reported_since_nudge(Some(&t1), Some(&Some(t1.clone()))));
+        assert!(reported_since_nudge(Some(&t2), Some(&Some(t1))));
+    }
+
+    #[test]
+    fn check_every_polls_rounds_up_to_at_least_one() {
+        let poll = Duration::from_millis(500);
+        assert_eq!(check_every_polls(60, poll), 120);
+        assert_eq!(check_every_polls(1, Duration::from_millis(700)), 2);
+        assert_eq!(check_every_polls(0, poll), 1);
     }
 }

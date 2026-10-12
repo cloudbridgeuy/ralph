@@ -19,6 +19,7 @@ pub struct WorkerState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunningWorker {
     pub id: String,
+    pub session: String,
     pub opencode: bool,
 }
 
@@ -124,6 +125,7 @@ pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
         .filter(|session| same_store(&session.store, store) && !session.id.is_empty())
         .map(|session| RunningWorker {
             id: session.id,
+            session: session.name,
             opencode: session.opencode,
         })
         .collect();
@@ -522,6 +524,7 @@ mod tests {
             workers,
             vec![RunningWorker {
                 id: "GUZ-1".into(),
+                session: "ralph-my-proj-GUZ-1".into(),
                 opencode: true
             }]
         );
@@ -534,6 +537,7 @@ mod tests {
     fn orphan_hint_lists_ready_ids_without_a_session() {
         let running = [RunningWorker {
             id: "A".into(),
+            session: "ralph-p-A".into(),
             opencode: false,
         }];
         let ready = ["C".to_string(), "A".to_string(), "B".to_string()];
@@ -566,6 +570,7 @@ mod tests {
     fn opencode_workers_are_busy_while_their_session_is_active() {
         let worker = |id: &str, opencode| RunningWorker {
             id: id.into(),
+            session: format!("ralph-p-{id}"),
             opencode,
         };
         let workers = [
