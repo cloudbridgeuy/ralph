@@ -9,7 +9,7 @@ use crate::markdown::create_markdown_skin;
 use ralph_core::chunk::{ParsedChunk, StreamingChunkBuffer};
 use ralph_core::stream::{
     extract_costs_from_events_or_default, extract_metadata_from_events_or_default, StreamEvent,
-    ToolCorrelator, ToolInvocation,
+    ToolInvocation,
 };
 use std::collections::HashMap;
 use std::io::IsTerminal;
@@ -50,8 +50,6 @@ pub struct StreamProcessor {
     pub(super) collected_chunks: Vec<ParsedChunk>,
     /// Parse errors encountered.
     pub(super) parse_errors: Vec<(String, String)>,
-    /// Tool correlator for tracking tool calls and results.
-    pub(super) tool_correlator: ToolCorrelator,
     /// Whether we've emitted any output (for visual separation).
     pub(super) has_emitted_output: bool,
     /// Count of distinct assistant responses processed.
@@ -179,7 +177,6 @@ impl StreamProcessorBuilder {
             current_message_id: None,
             collected_chunks: Vec::new(),
             parse_errors: Vec::new(),
-            tool_correlator: ToolCorrelator::new(),
             has_emitted_output: false,
             response_count: 0,
             pending_invocations: HashMap::new(),
