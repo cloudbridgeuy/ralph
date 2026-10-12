@@ -14,7 +14,7 @@ use crate::subprocess::{
 };
 use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
-use crate::workers::{absolute_or_same, opencode_active};
+use crate::workers::{absolute_or_same, opencode_active, tmux_listing};
 use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
     turn_prompt, turn_system_prompt, VIEW_LINES,
@@ -27,10 +27,10 @@ use ralph_core::chat_skills::{
     ChatSkill, SkillSources,
 };
 use ralph_core::chat_status::{
-    footer, last_turn_cache, latest_states, memory_size, route_input, status_line, store_workers,
-    worker_states, Memory, Route, RunningWorker, Status,
+    footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
+    store_workers, worker_states, Memory, Route, RunningWorker, Status,
 };
-use ralph_core::worker::{chat_message, Report, INBOX_DIR};
+use ralph_core::worker::{chat_message, Report, INBOX_DIR, READY_DIR};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
@@ -87,18 +87,17 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
-    let store = store_dir.to_string_lossy();
-    Command::new("tmux")
-        .args([
-            "list-sessions",
-            "-F",
-            "#{session_name}\t#{@ralph_store}\t#{@ralph_harness}",
-        ])
-        .stdin(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| store_workers(&String::from_utf8_lossy(&output.stdout), &store))
+    store_workers(&tmux_listing(), &store_dir.to_string_lossy())
+}
+
+fn ready_ids(store_dir: &Path) -> Vec<String> {
+    std::fs::read_dir(store_dir.join(READY_DIR))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -520,6 +519,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         frozen_window,
     });
     monitor.refresh(true);
+    if let Some(hint) = orphan_hint(
+        &ready_ids(&monitor.store_dir),
+        &running_workers(&monitor.store_dir),
+    ) {
+        println!("{hint}");
+    }
     let mut editor = build_editor(&store_dir)?;
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());

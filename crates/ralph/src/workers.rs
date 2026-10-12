@@ -1,9 +1,13 @@
+use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
-    branch_name, claude_ready_settings, exclude_lines, opencode_command, opencode_config,
-    opencode_ready_plugin, ready_path, session_name, startup_state, worker_command,
-    worker_mcp_config, worktree_add_args, worktree_path, Harness, Startup, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, TRUST_KEYS, WORKERS_DIR,
+    base_branch, base_config_key, branch_name, claude_ready_settings, close_plan, exclude_lines,
+    opencode_command, opencode_config, opencode_ready_plugin, opencode_session_gone,
+    opencode_session_id, project_slug, ready_path, session_name, session_owner, startup_state,
+    tagged_sessions, worker_command, worker_mcp_config, worktree_add_args, worktree_path,
+    CloseState, CloseStep, Harness, Owner, Startup, HARNESS_OPTION, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION,
+    TRUST_KEYS, WORKERS_DIR,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -14,8 +18,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
-const STORE_OPTION: &str = "@ralph_store";
-const HARNESS_OPTION: &str = "@ralph_harness";
 const STARTUP_POLL: Duration = Duration::from_millis(250);
 
 pub struct Workers {
@@ -32,16 +34,24 @@ impl Workers {
     }
 
     pub fn spawn(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
-        let session = session_name(id);
-        if session_exists(&session)? {
-            return Err(io::Error::other(format!("worker {id} is already running")));
+        let repo = repo_root()?;
+        let project = project_slug(&repo);
+        match self.owner(&project, id) {
+            Owner::Missing => {}
+            Owner::Mine(_) => {
+                return Err(io::Error::other(format!("worker {id} is already running")))
+            }
+            Owner::Foreign(store) => {
+                return Err(io::Error::other(format!(
+                    "worker {id} is running for another chat (store {store})"
+                )))
+            }
         }
-        let repo = PathBuf::from(stdout_line(run(
-            Command::new("git").args(["rev-parse", "--show-toplevel"])
-        )?));
+        let session = session_name(&project, id);
         let worktree = worktree_path(&repo, id);
         exclude(&repo, &exclude_lines(harness))?;
         ensure_worktree(&repo, &worktree, &branch_name(id))?;
+        record_base(&repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
         let ready = ready_path(&self.store_dir, id);
         clear_ready(&ready)?;
@@ -66,14 +76,16 @@ impl Workers {
             .arg("-c")
             .arg(&worktree)
             .args(command))?;
+        let target = format!("={session}:");
         run(Command::new("tmux")
-            .args(["set-option", "-t", &format!("={session}:"), STORE_OPTION])
+            .args(["set-option", "-t", &target, STORE_OPTION])
             .arg(&self.store_dir))?;
+        run(Command::new("tmux").args(["set-option", "-t", &target, ID_OPTION, id]))?;
         if let Harness::Opencode { .. } = harness {
             run(Command::new("tmux").args([
                 "set-option",
                 "-t",
-                &format!("={session}:"),
+                &target,
                 HARNESS_OPTION,
                 OPENCODE_HARNESS,
             ]))?;
@@ -92,6 +104,166 @@ impl Workers {
                 STARTUP_TIMEOUT.as_secs()
             )
         })
+    }
+
+    pub fn reply(&self, id: &str, text: &str) -> io::Result<String> {
+        let session = match self.owner(&project_slug(&repo_root()?), id) {
+            Owner::Mine(session) => session.name,
+            Owner::Missing => return Err(io::Error::other(format!("worker {id} is not running"))),
+            Owner::Foreign(store) => {
+                return Err(io::Error::other(format!(
+                    "worker {id} belongs to another chat (store {store})"
+                )))
+            }
+        };
+        let target = format!("={session}:");
+        let mut load = Command::new("tmux")
+            .args(["load-buffer", "-b", &session, "-"])
+            .stdin(Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = load.stdin.take() {
+            stdin.write_all(text.as_bytes())?;
+        }
+        check(load.wait_with_output()?)?;
+        run(Command::new("tmux").args([
+            "paste-buffer",
+            "-p",
+            "-d",
+            "-b",
+            &session,
+            "-t",
+            &target,
+        ]))?;
+        run(Command::new("tmux").args(["send-keys", "-t", &target, "Enter"]))?;
+        Ok(format!("Sent to worker {id}."))
+    }
+
+    pub fn close(&self, id: &str, abandon: bool) -> io::Result<String> {
+        let repo = repo_root()?;
+        let owner = self.owner(&project_slug(&repo), id);
+        let worktree = worktree_path(&repo, id);
+        let branch = branch_name(id);
+        let dirty_worktree = if worktree.join(".git").exists() {
+            Some(
+                !run(Command::new("git")
+                    .arg("-C")
+                    .arg(&worktree)
+                    .args(["status", "--porcelain"]))?
+                .stdout
+                .is_empty(),
+            )
+        } else {
+            None
+        };
+        let configured = AppConfig::load()
+            .map(|config| config.chat.worker_base)
+            .map_err(|e| e.to_string());
+        let base = base_branch(
+            configured
+                .as_ref()
+                .map(Option::as_deref)
+                .map_err(String::as_str),
+            git_value(&repo, &["config", "--get", &base_config_key(id)])?.as_deref(),
+            git_value(&repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
+        );
+        let unmerged_commits = if branch_exists(&repo, &branch)? {
+            let count = stdout_line(run(Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["rev-list", "--count"])
+                .arg(format!("{}..{branch}", base.branch)))?);
+            Some(count.parse().map_err(io::Error::other)?)
+        } else {
+            None
+        };
+        let opencode = matches!(&owner, Owner::Mine(session) if session.opencode)
+            || worktree.join(OPENCODE_CONFIG_FILE).exists();
+        let state = CloseState {
+            id: id.to_string(),
+            owner,
+            dirty_worktree,
+            base: base.branch.clone(),
+            unmerged_commits,
+            opencode,
+        };
+        let with_warning = |text: String| match &base.warning {
+            Some(warning) => format!("{text} {warning}"),
+            None => text,
+        };
+        let steps = close_plan(&state, abandon)
+            .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
+        for step in &steps {
+            self.close_step(step, &repo, id).map_err(|e| {
+                io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
+            })?;
+        }
+        let note = if opencode {
+            " Its opencode plugin keeps running in the opencode service until that restarts."
+        } else {
+            ""
+        };
+        Ok(with_warning(format!(
+            "Closed worker {id}: removed its sessions, worktree and branch {branch}.{note}"
+        )))
+    }
+
+    fn close_step(&self, step: &CloseStep, repo: &Path, id: &str) -> io::Result<()> {
+        let git = || {
+            let mut git = Command::new("git");
+            git.arg("-C").arg(repo);
+            git
+        };
+        match step {
+            CloseStep::RemoveOpencodeSession => {
+                let output = Command::new("opencode")
+                    .args(["api", "session.remove", "--param"])
+                    .arg(format!("sessionID={}", opencode_session_id(id)))
+                    .stdin(Stdio::null())
+                    .output()?;
+                if output.status.success()
+                    || opencode_session_gone(&String::from_utf8_lossy(&output.stderr))
+                {
+                    return Ok(());
+                }
+                check(output)?;
+            }
+            CloseStep::KillSession(session) => {
+                run(Command::new("tmux").args(["kill-session", "-t", &format!("={session}")]))?;
+            }
+            CloseStep::RemoveWorktree { force } => {
+                let mut remove = git();
+                remove.args(["worktree", "remove"]);
+                if *force {
+                    remove.arg("--force");
+                }
+                run(remove.arg(worktree_path(repo, id)))?;
+            }
+            CloseStep::DeleteBranch => {
+                run(git().args(["branch", "-D", &branch_name(id)]))?;
+            }
+            CloseStep::PruneWorktrees => {
+                run(git().args(["worktree", "prune"]))?;
+            }
+            CloseStep::EvictOpencodeLocation => {
+                run(Command::new("opencode")
+                    .args(["api", "debug.location.evict", "--param"])
+                    .arg(format!(
+                        "location[directory]={}",
+                        worktree_path(repo, id).display()
+                    )))?;
+            }
+            CloseStep::ClearReady => clear_ready(&ready_path(&self.store_dir, id))?,
+        }
+        Ok(())
+    }
+
+    fn owner(&self, project: &str, id: &str) -> Owner {
+        session_owner(
+            &tagged_sessions(&tmux_listing()),
+            &self.store_dir.to_string_lossy(),
+            project,
+            id,
+        )
     }
 
     fn write_settings(&self, id: &str, ready: &Path) -> io::Result<PathBuf> {
@@ -128,23 +300,22 @@ pub fn opencode_active() -> Option<HashSet<String>> {
         .and_then(|output| active_sessions(&String::from_utf8_lossy(&output.stdout)))
 }
 
-pub fn reply(id: &str, text: &str) -> io::Result<String> {
-    let session = session_name(id);
-    if !session_exists(&session)? {
-        return Err(io::Error::other(format!("worker {id} is not running")));
-    }
-    let target = format!("={session}:");
-    let mut load = Command::new("tmux")
-        .args(["load-buffer", "-b", &session, "-"])
-        .stdin(Stdio::piped())
-        .spawn()?;
-    if let Some(mut stdin) = load.stdin.take() {
-        stdin.write_all(text.as_bytes())?;
-    }
-    check(load.wait_with_output()?)?;
-    run(Command::new("tmux").args(["paste-buffer", "-p", "-d", "-b", &session, "-t", &target]))?;
-    run(Command::new("tmux").args(["send-keys", "-t", &target, "Enter"]))?;
-    Ok(format!("Sent to worker {id}."))
+pub fn tmux_listing() -> String {
+    Command::new("tmux")
+        .args(["list-sessions", "-F", SESSION_FORMAT])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+fn repo_root() -> io::Result<PathBuf> {
+    Ok(PathBuf::from(stdout_line(run(
+        Command::new("git").args(["rev-parse", "--show-toplevel"])
+    )?)))
 }
 
 fn clear_ready(ready: &Path) -> io::Result<()> {
@@ -198,7 +369,6 @@ fn session_exists(session: &str) -> io::Result<bool> {
         .success())
 }
 
-/// Leaves `worktree` checked out on `branch`, reusing whatever an earlier spawn left behind.
 fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<()> {
     run(Command::new("git")
         .arg("-C")
@@ -207,19 +377,56 @@ fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<()>
     if worktree.join(".git").exists() {
         return Ok(());
     }
-    let branch_exists = Command::new("git")
+    run(Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(worktree_add_args(
+            worktree,
+            branch,
+            branch_exists(repo, branch)?,
+        )))?;
+    Ok(())
+}
+
+fn record_base(repo: &Path, id: &str) -> io::Result<()> {
+    let key = base_config_key(id);
+    if git_value(repo, &["config", "--get", &key])?.is_some() {
+        return Ok(());
+    }
+    if let Some(base) = git_value(repo, &["symbolic-ref", "-q", "--short", "HEAD"])? {
+        run(Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", &key, &base]))?;
+    }
+    Ok(())
+}
+
+fn git_value(repo: &Path, args: &[&str]) -> io::Result<Option<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value = stdout_line(output);
+    Ok((!value.is_empty()).then_some(value))
+}
+
+fn branch_exists(repo: &Path, branch: &str) -> io::Result<bool> {
+    Ok(Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "--quiet"])
         .arg(format!("refs/heads/{branch}"))
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .status()?
-        .success();
-    run(Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(worktree_add_args(worktree, branch, branch_exists)))?;
-    Ok(())
+        .success())
 }
 
 fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {

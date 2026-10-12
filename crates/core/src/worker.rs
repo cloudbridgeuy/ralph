@@ -5,6 +5,9 @@ use serde_json::{json, Value};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+mod ownership;
+pub use ownership::*;
+
 pub const SERVER_NAME: &str = "ralph-worker";
 pub const INBOX_DIR: &str = "inbox";
 pub const WORKERS_DIR: &str = "workers";
@@ -14,6 +17,11 @@ pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-ready.ts";
 pub const READY_DIR: &str = "ready";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
+pub const STORE_OPTION: &str = "@ralph_store";
+pub const HARNESS_OPTION: &str = "@ralph_harness";
+pub const ID_OPTION: &str = "@ralph_id";
+pub const SESSION_FORMAT: &str =
+    "#{session_name}\t#{@ralph_store}\t#{@ralph_harness}\t#{@ralph_id}";
 
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
@@ -56,9 +64,13 @@ pub enum Command {
         id: String,
         text: String,
     },
+    Close {
+        id: String,
+        abandon: bool,
+    },
 }
 
-pub fn command_definitions() -> [Value; 2] {
+pub fn command_definitions() -> [Value; 3] {
     [
         json!({
             "name": "spawn_worker",
@@ -86,6 +98,18 @@ pub fn command_definitions() -> [Value; 2] {
                 "required": ["id", "text"]
             }
         }),
+        json!({
+            "name": "close_worker",
+            "description": "Close a worker of this chat: stop its tmux session and opencode session, remove its worktree and delete its worker/<id> branch. Refuses while the branch has commits not in main or the worktree has uncommitted changes, unless abandon is true. Only when the person asked for it in their latest message.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "The worker id."},
+                    "abandon": {"type": "boolean", "description": "Drop unmerged commits and uncommitted changes. Only when the person said so. Default false."}
+                },
+                "required": ["id"]
+            }
+        }),
     ]
 }
 
@@ -98,6 +122,14 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
         }),
         "reply" => string_arg(args, "text")
             .and_then(|text| worker_id(args).map(|id| Command::Reply { id, text })),
+        "close_worker" => worker_id(args).and_then(|id| {
+            let abandon = match args.get("abandon") {
+                None | Some(Value::Null) => false,
+                Some(Value::Bool(abandon)) => *abandon,
+                Some(_) => return Err("abandon must be true or false.".to_string()),
+            };
+            Ok(Command::Close { id, abandon })
+        }),
         _ => return None,
     };
     Some(parsed)
@@ -147,10 +179,6 @@ pub fn command_allowed(command: &Command, entries: &[Entry]) -> Result<(), Strin
                 .to_string(),
         ),
     }
-}
-
-pub fn session_name(id: &str) -> String {
-    format!("ralph-{id}")
 }
 
 pub fn branch_name(id: &str) -> String {
@@ -412,6 +440,42 @@ mod tests {
             }))
         );
         assert_eq!(parse_command("zoom", &json!({})), None);
+    }
+
+    #[test]
+    fn parse_command_reads_close_with_optional_abandon() {
+        assert_eq!(
+            parse_command("close_worker", &json!({"id": "GUZ-1"})),
+            Some(Ok(Command::Close {
+                id: "GUZ-1".into(),
+                abandon: false
+            }))
+        );
+        assert_eq!(
+            parse_command("close_worker", &json!({"id": "GUZ-1", "abandon": true})),
+            Some(Ok(Command::Close {
+                id: "GUZ-1".into(),
+                abandon: true
+            }))
+        );
+        assert!(matches!(
+            parse_command("close_worker", &json!({"id": "GUZ-1", "abandon": "yes"})),
+            Some(Err(_))
+        ));
+        assert!(matches!(
+            parse_command("close_worker", &json!({"id": "../x"})),
+            Some(Err(_))
+        ));
+    }
+
+    #[test]
+    fn close_allowed_only_after_a_user_message() {
+        let close = Command::Close {
+            id: "A".into(),
+            abandon: false,
+        };
+        assert!(command_allowed(&close, &[entry(Role::User)]).is_ok());
+        assert!(command_allowed(&close, &[entry(Role::User), entry(Role::Worker)]).is_err());
     }
 
     fn spawn_harness(args: Value) -> Result<Harness, String> {

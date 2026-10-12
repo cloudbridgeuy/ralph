@@ -1,5 +1,5 @@
 use crate::chat_memory::Store;
-use crate::workers::{reply, Workers};
+use crate::workers::Workers;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{command_allowed, Command};
@@ -13,7 +13,8 @@ fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<St
     command_allowed(command, &entries)?;
     match command {
         Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
-        Command::Reply { id, text } => reply(id, text),
+        Command::Reply { id, text } => workers.reply(id, text),
+        Command::Close { id, abandon } => workers.close(id, *abandon),
     }
     .map_err(|e| e.to_string())
 }

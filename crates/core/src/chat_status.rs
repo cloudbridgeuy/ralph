@@ -1,4 +1,4 @@
-use crate::worker::{opencode_session_id, session_name, Report, OPENCODE_HARNESS};
+use crate::worker::{opencode_session_id, tagged_sessions, Report};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -118,24 +118,32 @@ pub fn route_input(line: &str, unread: usize) -> Route {
     }
 }
 
-/// Workers from `tmux list-sessions -F` lines of `<session>\t<@ralph_store>\t<@ralph_harness>`,
-/// keeping only `ralph-*` sessions tagged with `store`.
 pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
-    let prefix = session_name("");
-    let mut workers: Vec<RunningWorker> = tmux_sessions
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split('\t').map(str::trim);
-            let id = fields.next()?.strip_prefix(&prefix)?;
-            let tagged = fields.next()? == store && !id.is_empty();
-            tagged.then(|| RunningWorker {
-                id: id.to_string(),
-                opencode: fields.next() == Some(OPENCODE_HARNESS),
-            })
+    let mut workers: Vec<RunningWorker> = tagged_sessions(tmux_sessions)
+        .into_iter()
+        .filter(|session| session.store == store && !session.id.is_empty())
+        .map(|session| RunningWorker {
+            id: session.id,
+            opencode: session.opencode,
         })
         .collect();
     workers.sort_by(|a, b| a.id.cmp(&b.id));
     workers
+}
+
+pub fn orphan_hint(ready_ids: &[String], running: &[RunningWorker]) -> Option<String> {
+    let mut orphans: Vec<&str> = ready_ids
+        .iter()
+        .filter(|id| !running.iter().any(|worker| &worker.id == *id))
+        .map(String::as_str)
+        .collect();
+    orphans.sort_unstable();
+    (!orphans.is_empty()).then(|| {
+        format!(
+            "Leftover workers with no tmux session: {}. Ask the chat to close_worker them; nothing was removed.",
+            orphans.join(", ")
+        )
+    })
 }
 
 #[derive(Deserialize)]
@@ -469,7 +477,7 @@ mod tests {
 
     #[test]
     fn store_workers_keep_only_this_stores_sessions() {
-        let listing = "ralph-A\t/s\nralph-B\t/other\topencode\nralph-C\t\nralph-D\nmain\t/s\n";
+        let listing = "ralph-p-A\t/s\t\tA\nralph-p-B\t/other\topencode\tB\nralph-p-C\t\t\tC\nralph-D\t/s\nmain\t/s\n";
         let ids = |store| -> Vec<String> {
             store_workers(listing, store)
                 .into_iter()
@@ -483,7 +491,8 @@ mod tests {
 
     #[test]
     fn workers_come_from_prefixed_sessions_with_last_known_state() {
-        let listing = "main\t/s\nralph-GUZ-2\t/s\nralph-GUZ-1\t/s\nralph-\t/s\n";
+        let listing =
+            "main\t/s\nralph-p-GUZ-2\t/s\t\tGUZ-2\nralph-p-GUZ-1\t/s\t\tGUZ-1\nralph-\t/s\t\t\n";
         let workers = store_workers(listing, "/s");
         let ids: Vec<&str> = workers.iter().map(|worker| worker.id.as_str()).collect();
         assert_eq!(ids, vec!["GUZ-1", "GUZ-2"]);
@@ -507,8 +516,37 @@ mod tests {
     }
 
     #[test]
+    fn store_workers_take_the_bare_id_from_the_id_tag() {
+        let workers = store_workers("ralph-my-proj-GUZ-1\t/s\topencode\tGUZ-1\n", "/s");
+        assert_eq!(
+            workers,
+            vec![RunningWorker {
+                id: "GUZ-1".into(),
+                opencode: true
+            }]
+        );
+        let active = HashSet::from([opencode_session_id("GUZ-1")]);
+        let states = worker_states(&workers, &HashMap::new(), Some(&active));
+        assert_eq!(states[0].state, BUSY_STATE);
+    }
+
+    #[test]
+    fn orphan_hint_lists_ready_ids_without_a_session() {
+        let running = [RunningWorker {
+            id: "A".into(),
+            opencode: false,
+        }];
+        let ready = ["C".to_string(), "A".to_string(), "B".to_string()];
+        let hint = orphan_hint(&ready, &running).unwrap();
+        assert!(hint.contains(": B, C."), "{hint}");
+        assert!(hint.contains("nothing was removed"));
+        assert_eq!(orphan_hint(&ready[1..2], &running), None);
+        assert_eq!(orphan_hint(&[], &running), None);
+    }
+
+    #[test]
     fn store_workers_read_the_harness_tag() {
-        let listing = "ralph-A\t/s\topencode\nralph-B\t/s\t\nralph-C\t/s\n";
+        let listing = "ralph-p-A\t/s\topencode\tA\nralph-p-B\t/s\t\tB\nralph-p-C\t/s\t\tC\n";
         let opencode: Vec<bool> = store_workers(listing, "/s")
             .iter()
             .map(|worker| worker.opencode)

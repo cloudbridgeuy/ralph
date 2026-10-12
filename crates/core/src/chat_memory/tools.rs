@@ -138,7 +138,10 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["zoom", "recall", "spawn_worker", "reply"]);
+        assert_eq!(
+            names,
+            ["zoom", "recall", "spawn_worker", "reply", "close_worker"]
+        );
     }
 
     #[test]
