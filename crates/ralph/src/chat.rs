@@ -15,7 +15,7 @@ use crate::subprocess::{
 };
 use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
-use crate::workers::{absolute_or_same, opencode_active, tmux_listing};
+use crate::workers::{canonical_store, opencode_active, tmux_listing};
 use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
     turn_prompt, turn_system_prompt, VIEW_LINES,
@@ -553,7 +553,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let monitor = Arc::new(Monitor {
         inbox,
         store: Store::new(store_dir.clone()),
-        store_dir: absolute_or_same(store_dir.clone()),
+        store_dir: canonical_store(store_dir.clone()),
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
