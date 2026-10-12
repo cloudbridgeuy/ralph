@@ -3,19 +3,6 @@
 use crate::chunk::{ChunkType, StreamingChunkBuffer};
 
 #[test]
-fn test_prose_buffer_threshold_default_is_zero() {
-    let buffer = StreamingChunkBuffer::new();
-    assert_eq!(buffer.prose_buffer_threshold(), 0);
-    assert_eq!(buffer.buffered_prose_lines(), 0);
-}
-
-#[test]
-fn test_prose_buffer_threshold_with_value() {
-    let buffer = StreamingChunkBuffer::with_prose_threshold(3);
-    assert_eq!(buffer.prose_buffer_threshold(), 3);
-}
-
-#[test]
 fn test_prose_buffer_eager_mode_emits_immediately() {
     // Default buffer (threshold=0) emits each line immediately
     let mut buffer = StreamingChunkBuffer::new();
@@ -37,18 +24,15 @@ fn test_prose_buffer_buffered_mode_accumulates() {
     // First line - no emission, buffered
     let chunks = buffer.process_line("Line 1");
     assert!(chunks.is_empty());
-    assert_eq!(buffer.buffered_prose_lines(), 1);
 
     // Second line - no emission, buffered
     let chunks = buffer.process_line("Line 2");
     assert!(chunks.is_empty());
-    assert_eq!(buffer.buffered_prose_lines(), 2);
 
     // Third line - threshold reached, emit combined chunk
     let chunks = buffer.process_line("Line 3");
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0].content, "Line 1\nLine 2\nLine 3");
-    assert_eq!(buffer.buffered_prose_lines(), 0);
 }
 
 #[test]
@@ -58,14 +42,12 @@ fn test_prose_buffer_flushes_on_code_block_start() {
     // Buffer 2 lines (below threshold)
     buffer.process_line("Line 1");
     buffer.process_line("Line 2");
-    assert_eq!(buffer.buffered_prose_lines(), 2);
 
     // Opening fence should flush buffered prose first
     let chunks = buffer.process_line("```rust");
     assert_eq!(chunks.len(), 1);
     assert_eq!(chunks[0].content, "Line 1\nLine 2");
     assert!(matches!(chunks[0].chunk_type, ChunkType::Prose));
-    assert!(buffer.is_in_code_block());
 }
 
 #[test]
@@ -75,7 +57,6 @@ fn test_prose_buffer_flushes_on_finish() {
     // Buffer 2 lines (below threshold)
     buffer.process_line("Line 1");
     buffer.process_line("Line 2");
-    assert_eq!(buffer.buffered_prose_lines(), 2);
 
     // finish() should flush remaining prose
     let final_chunks = buffer.finish();
@@ -128,29 +109,6 @@ fn test_prose_buffer_code_block_unchanged() {
     assert_eq!(chunks.len(), 1);
     assert!(matches!(chunks[0].chunk_type, ChunkType::Code { .. }));
     assert_eq!(chunks[0].content, "line 1\nline 2\nline 3");
-}
-
-#[test]
-fn test_prose_buffer_set_threshold() {
-    let mut buffer = StreamingChunkBuffer::new();
-    assert_eq!(buffer.prose_buffer_threshold(), 0);
-
-    buffer.set_prose_threshold(5);
-    assert_eq!(buffer.prose_buffer_threshold(), 5);
-}
-
-#[test]
-fn test_prose_buffer_reset_clears_buffered_lines() {
-    let mut buffer = StreamingChunkBuffer::with_prose_threshold(5);
-
-    buffer.process_line("Line 1");
-    buffer.process_line("Line 2");
-    assert_eq!(buffer.buffered_prose_lines(), 2);
-
-    buffer.reset();
-    assert_eq!(buffer.buffered_prose_lines(), 0);
-    // Threshold is preserved
-    assert_eq!(buffer.prose_buffer_threshold(), 5);
 }
 
 #[test]

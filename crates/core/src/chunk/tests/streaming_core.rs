@@ -3,20 +3,6 @@
 use crate::chunk::{ChunkType, StreamingChunkBuffer};
 
 #[test]
-fn test_streaming_buffer_new() {
-    let buffer = StreamingChunkBuffer::new();
-    assert!(buffer.is_empty());
-    assert!(!buffer.is_in_code_block());
-    assert_eq!(buffer.emitted_count(), 0);
-}
-
-#[test]
-fn test_streaming_buffer_default() {
-    let buffer = StreamingChunkBuffer::default();
-    assert!(buffer.is_empty());
-}
-
-#[test]
 fn test_streaming_prose_emits_immediately() {
     let mut buffer = StreamingChunkBuffer::new();
 
@@ -24,10 +10,6 @@ fn test_streaming_prose_emits_immediately() {
     assert_eq!(chunks.len(), 1);
     assert!(matches!(chunks[0].chunk_type, ChunkType::Prose));
     assert_eq!(chunks[0].content, "Hello, world!");
-
-    // Buffer should be empty after prose emission
-    assert!(buffer.is_empty());
-    assert_eq!(buffer.emitted_count(), 1);
 }
 
 #[test]
@@ -37,12 +19,10 @@ fn test_streaming_code_block_buffers() {
     // Opening fence - no emission, starts buffering
     let chunks = buffer.process_line("```rust");
     assert!(chunks.is_empty());
-    assert!(buffer.is_in_code_block());
 
     // Code content - no emission
     let chunks = buffer.process_line("fn main() {}");
     assert!(chunks.is_empty());
-    assert!(!buffer.is_empty()); // Has buffered content
 
     // Closing fence - emits complete block
     let chunks = buffer.process_line("```");
@@ -54,10 +34,6 @@ fn test_streaming_code_block_buffers() {
         _ => panic!("Expected code chunk"),
     }
     assert_eq!(chunks[0].content, "fn main() {}");
-
-    // Back to prose mode
-    assert!(!buffer.is_in_code_block());
-    assert!(buffer.is_empty());
 }
 
 #[test]
@@ -66,7 +42,6 @@ fn test_streaming_diff_block_buffers() {
 
     let chunks = buffer.process_line("```diff");
     assert!(chunks.is_empty());
-    assert!(buffer.is_in_code_block());
 
     let chunks = buffer.process_line("-old");
     assert!(chunks.is_empty());
@@ -117,9 +92,7 @@ fn test_streaming_finish_unterminated_code_block() {
     }
     assert_eq!(final_chunks[0].content, "fn main() {}\n// more code");
 
-    // Buffer should be reset after finish
-    assert!(buffer.is_empty());
-    assert!(!buffer.is_in_code_block());
+    assert!(buffer.finish().is_empty());
 }
 
 #[test]
@@ -193,58 +166,6 @@ fn test_streaming_mixed_content() {
 }
 
 #[test]
-fn test_streaming_process_text() {
-    let mut buffer = StreamingChunkBuffer::new();
-
-    let text = "line1\nline2\nline3";
-    let chunks = buffer.process_text(text);
-
-    assert_eq!(chunks.len(), 3);
-    assert!(chunks
-        .iter()
-        .all(|c| matches!(c.chunk_type, ChunkType::Prose)));
-}
-
-#[test]
-fn test_streaming_process_text_with_code_block() {
-    let mut buffer = StreamingChunkBuffer::new();
-
-    let text = "intro\n```rust\ncode\n```\noutro";
-    let chunks = buffer.process_text(text);
-
-    assert_eq!(chunks.len(), 3);
-    assert!(matches!(chunks[0].chunk_type, ChunkType::Prose));
-    assert!(matches!(chunks[1].chunk_type, ChunkType::Code { .. }));
-    assert!(matches!(chunks[2].chunk_type, ChunkType::Prose));
-}
-
-#[test]
-fn test_streaming_reset() {
-    let mut buffer = StreamingChunkBuffer::new();
-
-    buffer.process_line("```rust");
-    buffer.process_line("some code");
-    assert!(!buffer.is_empty());
-    assert!(buffer.is_in_code_block());
-
-    buffer.reset();
-    assert!(buffer.is_empty());
-    assert!(!buffer.is_in_code_block());
-    assert_eq!(buffer.emitted_count(), 0);
-}
-
-#[test]
-fn test_streaming_buffered_content() {
-    let mut buffer = StreamingChunkBuffer::new();
-
-    buffer.process_line("```rust");
-    buffer.process_line("line1");
-    buffer.process_line("line2");
-
-    assert_eq!(buffer.buffered_content(), "line1\nline2");
-}
-
-#[test]
 fn test_streaming_multiline_code() {
     let mut buffer = StreamingChunkBuffer::new();
 
@@ -290,30 +211,11 @@ fn test_streaming_multiple_code_blocks() {
 }
 
 #[test]
-fn test_streaming_emitted_count_tracking() {
-    let mut buffer = StreamingChunkBuffer::new();
-
-    assert_eq!(buffer.emitted_count(), 0);
-
-    buffer.process_line("line1");
-    assert_eq!(buffer.emitted_count(), 1);
-
-    buffer.process_line("line2");
-    assert_eq!(buffer.emitted_count(), 2);
-
-    buffer.process_line("```rust");
-    buffer.process_line("code");
-    buffer.process_line("```");
-    assert_eq!(buffer.emitted_count(), 3);
-}
-
-#[test]
 fn test_streaming_indented_fence() {
     let mut buffer = StreamingChunkBuffer::new();
 
     // Indented fences should still be detected
     buffer.process_line("  ```rust");
-    assert!(buffer.is_in_code_block());
 
     buffer.process_line("  code");
     let chunks = buffer.process_line("  ```");

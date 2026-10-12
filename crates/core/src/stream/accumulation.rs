@@ -38,7 +38,8 @@ use super::events::StreamEvent;
 /// accumulator.process_event(&event1);
 /// accumulator.process_event(&event2);
 ///
-/// assert_eq!(accumulator.get_text(), "Hello, world!");
+/// accumulator.finish();
+/// assert_eq!(accumulator.get_all_text(), "Hello, world!");
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct TextAccumulator {
@@ -133,22 +134,6 @@ impl TextAccumulator {
         Some(completed_message)
     }
 
-    /// Get the current accumulated text (without finishing).
-    ///
-    /// This returns the text currently in the buffer without marking
-    /// the message as complete.
-    pub fn get_text(&self) -> &str {
-        &self.buffer
-    }
-
-    /// Get all completed messages so far.
-    ///
-    /// This includes messages that were completed when a new message ID
-    /// was detected, plus any message completed via `finish()`.
-    pub fn completed_messages(&self) -> &[AccumulatedMessage] {
-        &self.completed
-    }
-
     /// Get all text from all messages (completed + current buffer).
     ///
     /// This is useful for getting the final combined text after processing
@@ -160,13 +145,6 @@ impl TextAccumulator {
         }
         result.push_str(&self.buffer);
         result
-    }
-
-    /// Reset the accumulator to its initial state.
-    pub fn reset(&mut self) {
-        self.current_message_id = None;
-        self.buffer.clear();
-        self.completed.clear();
     }
 }
 

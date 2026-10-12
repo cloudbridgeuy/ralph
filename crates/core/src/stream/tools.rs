@@ -219,7 +219,6 @@ pub fn correlate_tool_interactions(events: &[StreamEvent]) -> Vec<ToolInteractio
 /// });
 /// let completed = correlator.process_event(&assistant_event);
 /// assert!(completed.is_empty()); // No results yet
-/// assert_eq!(correlator.pending_count(), 1);
 ///
 /// // Process user event with tool result
 /// let user_event = StreamEvent::User(UserEvent {
@@ -236,16 +235,11 @@ pub fn correlate_tool_interactions(events: &[StreamEvent]) -> Vec<ToolInteractio
 /// let completed = correlator.process_event(&user_event);
 /// assert_eq!(completed.len(), 1);
 /// assert_eq!(completed[0].name, "Glob");
-/// assert_eq!(correlator.pending_count(), 0);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct ToolCorrelator {
     /// Pending tool invocations waiting for results, keyed by tool_use_id.
     pending: HashMap<String, ToolInvocation>,
-    /// All completed tool interactions (in order of completion).
-    completed: Vec<ToolInteraction>,
-    /// Order of tool invocations (to preserve order when finalizing).
-    invocation_order: Vec<String>,
 }
 
 impl ToolCorrelator {
@@ -270,7 +264,6 @@ impl ToolCorrelator {
             StreamEvent::Assistant(assistant) => {
                 let invocations = assistant.extract_tool_invocations();
                 for invocation in invocations {
-                    self.invocation_order.push(invocation.id.clone());
                     self.pending.insert(invocation.id.clone(), invocation);
                 }
                 Vec::new()
@@ -282,8 +275,7 @@ impl ToolCorrelator {
                         if let Some(invocation) = self.pending.remove(tool_use_id) {
                             let interaction =
                                 ToolInteraction::from_invocation_and_result(&invocation, result);
-                            newly_completed.push(interaction.clone());
-                            self.completed.push(interaction);
+                            newly_completed.push(interaction);
                         }
                     }
                 }
@@ -291,37 +283,5 @@ impl ToolCorrelator {
             }
             _ => Vec::new(),
         }
-    }
-
-    /// Get the number of pending (unresolved) tool calls.
-    pub fn pending_count(&self) -> usize {
-        self.pending.len()
-    }
-
-    /// Get all completed tool interactions so far.
-    pub fn completed_interactions(&self) -> &[ToolInteraction] {
-        &self.completed
-    }
-
-    /// Finalize the correlator and return all tool interactions.
-    ///
-    /// Tool calls that never received results will have `result: None`.
-    /// The returned interactions are in the order the tool calls were made.
-    pub fn finish(mut self) -> Vec<ToolInteraction> {
-        // Process any remaining pending invocations (never got results)
-        for id in &self.invocation_order {
-            if let Some(invocation) = self.pending.remove(id) {
-                self.completed
-                    .push(ToolInteraction::from_invocation(&invocation));
-            }
-        }
-        self.completed
-    }
-
-    /// Reset the correlator to its initial state.
-    pub fn reset(&mut self) {
-        self.pending.clear();
-        self.completed.clear();
-        self.invocation_order.clear();
     }
 }
