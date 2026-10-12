@@ -105,6 +105,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub worker_base: Option<String>,
     #[serde(default)]
+    pub worktree_dir: Option<String>,
+    #[serde(default)]
     pub permission_mode: Option<String>,
     #[serde(default = "default_true")]
     pub inbox_alert_sound: bool,
@@ -129,6 +131,7 @@ impl Default for ChatSection {
             skills: Vec::new(),
             frozen_window: None,
             worker_base: None,
+            worktree_dir: None,
             permission_mode: None,
             inbox_alert_sound: true,
             inbox_alert_notification: false,
@@ -322,6 +325,16 @@ mod tests {
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.chat.worker_base.as_deref(), Some("develop"));
         assert_eq!(AppConfig::new().chat.worker_base, None);
+    }
+
+    #[test]
+    fn chat_section_parses_worktree_dir() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "[chat]\nworktree_dir = \"../wt\"\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.worktree_dir.as_deref(), Some("../wt"));
+        assert_eq!(AppConfig::new().chat.worktree_dir, None);
     }
 
     #[test]

@@ -3,11 +3,12 @@ use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
     base_branch, base_config_key, branch_name, claude_worker_settings, close_plan, exclude_lines,
     opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
-    opencode_worker_plugin, project_slug, ready_path, reported_path, session_name, session_owner,
-    startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
-    worktree_path, wt_switch_args, CloseState, CloseStep, Harness, Owner, Startup, TaggedSession,
-    WorktreeVia, HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
-    OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    opencode_worker_plugin, project_slug, ready_path, reported_path, resolve_worktree_dir,
+    session_name, session_owner, startup_state, tagged_sessions, worker_command, worker_mcp_config,
+    worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep,
+    Harness, Owner, Startup, TaggedSession, WorktreeDir, WorktreeVia, HARNESS_OPTION, ID_OPTION,
+    INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT,
+    STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -24,14 +25,21 @@ pub struct Workers {
     store_dir: PathBuf,
     exe: PathBuf,
     permission_mode: String,
+    worktree_dir: Option<String>,
 }
 
 impl Workers {
-    pub fn new(store_dir: PathBuf, exe: PathBuf, permission_mode: String) -> Self {
+    pub fn new(
+        store_dir: PathBuf,
+        exe: PathBuf,
+        permission_mode: String,
+        worktree_dir: Option<String>,
+    ) -> Self {
         Self {
             store_dir: canonical_store(store_dir),
             exe,
             permission_mode,
+            worktree_dir,
         }
     }
 
@@ -51,8 +59,10 @@ impl Workers {
             }
         }
         let session = session_name(&project, id);
-        let worktree = worktree_path(&repo, id);
-        exclude(&repo, &exclude_lines(harness))?;
+        let config = AppConfig::load().map_err(|e| e.to_string());
+        let (worktree, worktree_dir) =
+            locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
+        exclude(&repo, &exclude_lines(harness, &repo, &worktree_dir.path))?;
         let via = ensure_worktree(&repo, &worktree, &branch_name(id))?;
         record_base(&repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
@@ -101,12 +111,15 @@ impl Workers {
             ]))?;
         }
         let confirmed = await_startup(&session, &ready)?;
-        let started = format!(
+        let mut started = format!(
             "Worker {id} started in {} on branch {}. {}",
             worktree.display(),
             branch_name(id),
             via.note()
         );
+        if let Some(warning) = worktree_dir.warning {
+            started = format!("{started} {warning}");
+        }
         Ok(if confirmed {
             format!("{started} Watch it with: tmux attach -t {session}")
         } else {
@@ -153,7 +166,9 @@ impl Workers {
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
         let repo = repo_root()?;
         let owner = self.owner(&project_slug(&repo), id);
-        let worktree = worktree_path(&repo, id);
+        let config = AppConfig::load().map_err(|e| e.to_string());
+        let (worktree, worktree_dir) =
+            locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
         let branch = branch_name(id);
         let dirty_worktree = if worktree.join(".git").exists() {
             Some(
@@ -167,13 +182,10 @@ impl Workers {
         } else {
             None
         };
-        let configured = AppConfig::load()
-            .map(|config| config.chat.worker_base)
-            .map_err(|e| e.to_string());
         let base = base_branch(
-            configured
+            config
                 .as_ref()
-                .map(Option::as_deref)
+                .map(|config| config.chat.worker_base.as_deref())
                 .map_err(String::as_str),
             git_value(&repo, &["config", "--get", &base_config_key(id)])?.as_deref(),
             git_value(&repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
@@ -200,14 +212,16 @@ impl Workers {
             markers: ready_path(&self.store_dir, id).exists()
                 || reported_path(&self.store_dir, id).exists(),
         };
-        let with_warning = |text: String| match &base.warning {
-            Some(warning) => format!("{text} {warning}"),
-            None => text,
+        let with_warning = |text: String| {
+            [&base.warning, &worktree_dir.warning]
+                .into_iter()
+                .flatten()
+                .fold(text, |text, warning| format!("{text} {warning}"))
         };
         let steps = close_plan(&state, abandon, force)
             .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
         for step in &steps {
-            self.close_step(step, &repo, id).map_err(|e| {
+            self.close_step(step, &repo, &worktree, id).map_err(|e| {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
         }
@@ -226,7 +240,13 @@ impl Workers {
         )))
     }
 
-    fn close_step(&self, step: &CloseStep, repo: &Path, id: &str) -> io::Result<()> {
+    fn close_step(
+        &self,
+        step: &CloseStep,
+        repo: &Path,
+        worktree: &Path,
+        id: &str,
+    ) -> io::Result<()> {
         let git = || {
             let mut git = Command::new("git");
             git.arg("-C").arg(repo);
@@ -255,7 +275,7 @@ impl Workers {
                 if *force {
                     remove.arg("--force");
                 }
-                run(remove.arg(worktree_path(repo, id)))?;
+                run(remove.arg(worktree))?;
             }
             CloseStep::DeleteBranch => {
                 run(git().args(["branch", "-D", &branch_name(id)]))?;
@@ -266,10 +286,7 @@ impl Workers {
             CloseStep::EvictOpencodeLocation => {
                 run(Command::new("opencode")
                     .args(["api", "debug.location.evict", "--param"])
-                    .arg(format!(
-                        "location[directory]={}",
-                        worktree_path(repo, id).display()
-                    )))?;
+                    .arg(format!("location[directory]={}", worktree.display())))?;
             }
             CloseStep::ClearMarkers => {
                 clear_marker(&ready_path(&self.store_dir, id))?;
@@ -401,11 +418,34 @@ fn session_exists(session: &str) -> io::Result<bool> {
         .success())
 }
 
+fn locate_worktree(
+    repo: &Path,
+    id: &str,
+    flag: Option<&str>,
+    config: Result<&AppConfig, &String>,
+) -> io::Result<(PathBuf, WorktreeDir)> {
+    let dir = resolve_worktree_dir(
+        repo,
+        dirs::home_dir().as_deref(),
+        flag,
+        std::env::var(WORKTREE_DIR_ENV).ok().as_deref(),
+        config
+            .map(|config| config.chat.worktree_dir.as_deref())
+            .map_err(String::as_str),
+    );
+    let git = || {
+        let mut git = Command::new("git");
+        git.arg("-C").arg(repo);
+        git
+    };
+    run(git().args(["worktree", "prune"]))?;
+    let listing = run(git().args(["worktree", "list", "--porcelain"]))?;
+    let worktree = worktree_for_branch(&String::from_utf8_lossy(&listing.stdout), &branch_name(id))
+        .unwrap_or_else(|| worktree_path(&dir.path, id));
+    Ok((worktree, dir))
+}
+
 fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<WorktreeVia> {
-    run(Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["worktree", "prune"]))?;
     if worktree.join(".git").exists() {
         return Ok(WorktreeVia::Existing);
     }

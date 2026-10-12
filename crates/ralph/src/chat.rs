@@ -18,7 +18,7 @@ use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, opencode_active, tmux_listing};
 use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
-    turn_prompt, turn_system_prompt, VIEW_LINES,
+    turn_prompt, turn_system_prompt, ChatMcpOptions, VIEW_LINES,
 };
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_memory::{
@@ -422,7 +422,7 @@ fn write_mcp_config(
     store_dir: &Path,
     exe: &Path,
     server_names: &[String],
-    permission_mode: &str,
+    options: &ChatMcpOptions,
 ) -> io::Result<PathBuf> {
     let claude_config = read_claude_config();
     let imported = select_servers(&claude_config, server_names);
@@ -431,12 +431,7 @@ fn write_mcp_config(
             "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
         ));
     }
-    store.write_mcp_config(&mcp_config(
-        exe,
-        store_dir,
-        permission_mode,
-        &imported.servers,
-    ))
+    store.write_mcp_config(&mcp_config(exe, store_dir, options, &imported.servers))
 }
 
 fn env_skills() -> Vec<PathBuf> {
@@ -555,7 +550,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         &store_dir,
         &exe,
         &chat_config.mcp_servers,
-        &permission_mode,
+        &ChatMcpOptions {
+            permission_mode: &permission_mode,
+            worktree_dir: args.worktree_dir.as_deref(),
+        },
     )?;
     let skills = link_skills(usable_skills(resolve_skills(
         &SkillSources {
