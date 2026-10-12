@@ -20,7 +20,6 @@ fn test_iteration_log_serialization() {
         prompt: None,
         response: None,
         metadata: None,
-        tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
         output_blocks: vec![],
         strategy_name: None,
@@ -39,8 +38,6 @@ fn test_iteration_log_serialization() {
     assert!(toml_str.contains("Test output"));
     // Metadata should not appear when None
     assert!(!toml_str.contains("[metadata]"));
-    // tool_calls should not appear when empty
-    assert!(!toml_str.contains("[[tool_calls]]"));
 }
 
 #[test]
@@ -67,10 +64,35 @@ fn test_iteration_log_deserialization() {
     assert_eq!(log.pending_before, 3);
     assert_eq!(log.pending_after, 2);
     assert!(log.metadata.is_none()); // Backward compatible - no metadata
-    assert!(log.tool_calls.is_empty()); // Backward compatible - no tool_calls
     assert_eq!(log.chunks.len(), 1);
     assert_eq!(log.chunks[0].chunk_type, "prose");
     assert_eq!(log.chunks[0].content, "Implementation complete");
+}
+
+#[test]
+fn test_iteration_log_with_stored_tool_calls_still_loads() {
+    let toml_str = r#"
+        sequence = 1
+        started_at = "2025-01-06T14:30:00Z"
+        completed_at = "2025-01-06T14:35:00Z"
+        exit_code = 0
+        pending_before = 0
+        pending_after = 0
+        prompt = "list files"
+
+        [[tool_calls]]
+        id = "toolu_01"
+        name = "Glob"
+        input = { pattern = "*.rs" }
+        result = "main.rs"
+        result_truncated = false
+        is_error = false
+    "#;
+
+    let log: IterationLog = toml::from_str(toml_str).unwrap();
+
+    assert_eq!(log.sequence, 1);
+    assert_eq!(log.prompt.as_deref(), Some("list files"));
 }
 
 #[test]
@@ -86,7 +108,6 @@ fn test_iteration_log_empty_chunks() {
         prompt: None,
         response: None,
         metadata: None,
-        tool_calls: vec![],
         chunks: vec![],
         output_blocks: vec![],
         strategy_name: None,
@@ -97,7 +118,6 @@ fn test_iteration_log_empty_chunks() {
     let parsed: IterationLog = toml::from_str(&toml_str).unwrap();
 
     assert_eq!(parsed.chunks.len(), 0);
-    assert!(parsed.tool_calls.is_empty());
 }
 
 #[test]
@@ -113,7 +133,6 @@ fn test_iteration_log_with_code_chunk() {
         prompt: None,
         response: None,
         metadata: None,
-        tool_calls: vec![],
         chunks: vec![
             Chunk::prose("I'll implement the function:".to_string()),
             Chunk::code(
@@ -164,7 +183,6 @@ fn test_iteration_log_with_metadata() {
                 cache_creation_input_tokens: Some(12504),
             }),
         }),
-        tool_calls: vec![],
         chunks: vec![Chunk::prose("Test output".to_string())],
         output_blocks: vec![],
         strategy_name: None,
@@ -337,7 +355,6 @@ fn test_iteration_log_with_prompt_and_response() {
         prompt: Some("What is 2+2?".to_string()),
         response: Some("The answer is 4.".to_string()),
         metadata: None,
-        tool_calls: vec![],
         chunks: vec![],
         output_blocks: vec![],
         strategy_name: None,

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::events::{StreamEvent, ToolResult};
-use super::extraction::{extract_tool_invocations_from_events, ToolInvocation};
+use super::extraction::ToolInvocation;
 
 /// A complete tool interaction: the tool call paired with its result.
 ///
@@ -14,45 +14,6 @@ use super::extraction::{extract_tool_invocations_from_events, ToolInvocation};
 /// its corresponding result from a user event. The correlation is done
 /// using the `tool_use_id` field that appears in both the `ToolUse` content
 /// block and the `ToolResult` content.
-///
-/// # Example
-///
-/// ```
-/// use ralph_core::stream::{correlate_tool_interactions, StreamEvent, AssistantEvent, AssistantMessage, ContentBlock, UserEvent, UserMessage, ToolResult};
-/// use serde_json::json;
-///
-/// let events = vec![
-///     StreamEvent::Assistant(AssistantEvent {
-///         message: AssistantMessage {
-///             id: Some("msg_01".to_string()),
-///             content: vec![ContentBlock::ToolUse {
-///                 id: "toolu_01".to_string(),
-///                 name: "Read".to_string(),
-///                 input: json!({"file_path": "/src/main.rs"}),
-///             }],
-///             model: None,
-///             stop_reason: Some("tool_use".to_string()),
-///         },
-///     }),
-///     StreamEvent::User(UserEvent {
-///         message: UserMessage {
-///             id: Some("user_msg_01".to_string()),
-///             content: vec![ToolResult {
-///                 result_type: Some("tool_result".to_string()),
-///                 tool_use_id: Some("toolu_01".to_string()),
-///                 content: Some("fn main() {}".to_string()),
-///                 is_error: false,
-///             }],
-///         },
-///     }),
-/// ];
-///
-/// let interactions = correlate_tool_interactions(&events);
-/// assert_eq!(interactions.len(), 1);
-/// assert_eq!(interactions[0].name, "Read");
-/// assert_eq!(interactions[0].result, Some("fn main() {}".to_string()));
-/// assert!(!interactions[0].is_error);
-/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolInteraction {
     /// Unique identifier for this tool use (from the assistant's ToolUse block).
@@ -74,20 +35,6 @@ pub struct ToolInteraction {
 }
 
 impl ToolInteraction {
-    /// Create a new ToolInteraction from an invocation (without result).
-    ///
-    /// This is used when a tool call has no corresponding result
-    /// (e.g., the stream was interrupted or the tool failed silently).
-    pub fn from_invocation(invocation: &ToolInvocation) -> Self {
-        Self {
-            id: invocation.id.clone(),
-            name: invocation.name.clone(),
-            input: invocation.input.clone(),
-            result: None,
-            is_error: false,
-        }
-    }
-
     /// Create a new ToolInteraction from an invocation and result.
     pub fn from_invocation_and_result(invocation: &ToolInvocation, result: &ToolResult) -> Self {
         Self {
@@ -98,94 +45,6 @@ impl ToolInteraction {
             is_error: result.is_error,
         }
     }
-}
-
-/// Correlates tool calls from assistant events with their results from user events.
-///
-/// This function processes a sequence of stream events and pairs each tool
-/// invocation with its corresponding result. Tool calls and results are
-/// correlated using the `tool_use_id` field.
-///
-/// # Arguments
-///
-/// * `events` - A slice of stream events to process
-///
-/// # Returns
-///
-/// A `Vec<ToolInteraction>` containing all tool calls with their results.
-/// Tool calls without results will have `result: None`.
-/// The order matches the order of tool calls in the stream.
-///
-/// # Example
-///
-/// ```
-/// use ralph_core::stream::{
-///     correlate_tool_interactions, StreamEvent, AssistantEvent, AssistantMessage,
-///     ContentBlock, UserEvent, UserMessage, ToolResult,
-/// };
-/// use serde_json::json;
-///
-/// let events = vec![
-///     StreamEvent::Assistant(AssistantEvent {
-///         message: AssistantMessage {
-///             id: Some("msg_01".to_string()),
-///             content: vec![
-///                 ContentBlock::Text { text: "Let me read the file.".to_string() },
-///                 ContentBlock::ToolUse {
-///                     id: "toolu_01".to_string(),
-///                     name: "Read".to_string(),
-///                     input: json!({"file_path": "/src/main.rs"}),
-///                 },
-///             ],
-///             model: None,
-///             stop_reason: Some("tool_use".to_string()),
-///         },
-///     }),
-///     StreamEvent::User(UserEvent {
-///         message: UserMessage {
-///             id: Some("user_msg_01".to_string()),
-///             content: vec![ToolResult {
-///                 result_type: Some("tool_result".to_string()),
-///                 tool_use_id: Some("toolu_01".to_string()),
-///                 content: Some("fn main() {\n    println!(\"Hello\");\n}".to_string()),
-///                 is_error: false,
-///             }],
-///         },
-///     }),
-/// ];
-///
-/// let interactions = correlate_tool_interactions(&events);
-/// assert_eq!(interactions.len(), 1);
-/// assert_eq!(interactions[0].id, "toolu_01");
-/// assert_eq!(interactions[0].name, "Read");
-/// assert!(interactions[0].result.is_some());
-/// assert!(!interactions[0].is_error);
-/// ```
-pub fn correlate_tool_interactions(events: &[StreamEvent]) -> Vec<ToolInteraction> {
-    // Collect all tool results keyed by tool_use_id
-    let mut results_by_id: HashMap<String, &ToolResult> = HashMap::new();
-    for event in events {
-        if let StreamEvent::User(user) = event {
-            for result in &user.message.content {
-                if let Some(ref tool_use_id) = result.tool_use_id {
-                    results_by_id.insert(tool_use_id.clone(), result);
-                }
-            }
-        }
-    }
-
-    // Extract all tool invocations and pair with results
-    let invocations = extract_tool_invocations_from_events(events);
-    invocations
-        .iter()
-        .map(|invocation| {
-            if let Some(result) = results_by_id.get(&invocation.id) {
-                ToolInteraction::from_invocation_and_result(invocation, result)
-            } else {
-                ToolInteraction::from_invocation(invocation)
-            }
-        })
-        .collect()
 }
 
 /// A stateful correlator for tool calls and results during streaming.

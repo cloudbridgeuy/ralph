@@ -82,26 +82,6 @@ fn test_finish_extracts_metadata() {
 }
 
 #[test]
-fn test_tool_interaction_correlation() {
-    let mut processor = StreamProcessor::new();
-
-    // Tool invocation
-    processor.process_line(
-        r#"{"type":"assistant","message":{"id":"1","content":[{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"/test"}}]}}"#,
-    );
-
-    // Tool result
-    processor.process_line(
-        r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","content":"file contents"}]}}"#,
-    );
-
-    let result = processor.finish();
-    assert_eq!(result.tool_interactions.len(), 1);
-    assert_eq!(result.tool_interactions[0].name, "Read");
-    assert!(result.tool_interactions[0].result.is_some());
-}
-
-#[test]
 fn test_code_block_detection() {
     let mut processor = StreamProcessor::with_highlighting(false);
 
@@ -161,5 +141,4 @@ fn test_empty_finish() {
     let processor = StreamProcessor::new();
     let result = processor.finish();
     assert!(result.chunks.is_empty());
-    assert!(result.tool_interactions.is_empty());
 }

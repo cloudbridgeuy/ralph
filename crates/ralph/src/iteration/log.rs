@@ -1,6 +1,6 @@
 //! IterationLog struct for complete iteration log entries.
 
-use crate::iteration::{Chunk, LogMetadata, LogToolCall};
+use crate::iteration::{Chunk, LogMetadata};
 use crate::stream_processor::OutputBlock;
 use chrono::{DateTime, Utc};
 use ralph_core::chunk::ChunkType;
@@ -30,19 +30,6 @@ use serde::{Deserialize, Serialize};
 /// [metadata.usage]
 /// input_tokens = 712
 /// output_tokens = 2971
-///
-/// [[tool_calls]]
-/// id = "toolu_01YWLzHW2VBHQSz8VV1oCGSp"
-/// name = "Glob"
-/// input = { pattern = ".github/workflows/*.yml" }
-/// result = "/Users/.../release.yml\n/Users/.../ci.yml"
-///
-/// [[tool_calls]]
-/// id = "toolu_01KKvyfhUNr2Bdu32AKbDzmX"
-/// name = "Read"
-/// input = { file_path = "/Users/.../Cargo.toml" }
-/// result = "[workspace]\nmembers = ..."
-/// result_truncated = true
 ///
 /// [[chunks]]
 /// type = "prose"
@@ -77,10 +64,6 @@ pub struct IterationLog {
     /// Contains session_id, model, cost, duration, and token usage.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<LogMetadata>,
-    /// Tool calls made during this iteration with their results.
-    /// Large results are truncated to keep log files manageable.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tool_calls: Vec<LogToolCall>,
     /// Output chunks from the LLM
     #[serde(default)]
     pub chunks: Vec<Chunk>,

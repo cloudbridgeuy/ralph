@@ -9,9 +9,6 @@ mod metadata_tests;
 #[path = "tests/log.rs"]
 mod log_tests;
 
-#[path = "tests/tool_call.rs"]
-mod tool_call_tests;
-
 #[path = "tests/writer.rs"]
 mod writer_tests;
 

@@ -704,7 +704,6 @@ mod tests {
             prompt: None,
             response: None,
             metadata,
-            tool_calls: vec![],
             chunks: vec![],
             output_blocks: vec![],
             strategy_name: None,

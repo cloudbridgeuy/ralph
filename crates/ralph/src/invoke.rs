@@ -7,7 +7,6 @@ use crate::highlight::ThemeConfig;
 use crate::iteration::{
     extract_conversation_messages, extract_response_text, load_session_iterations,
     write_iteration_log, Chunk, ConversationMessage, IterationError, IterationLog, LogMetadata,
-    LogToolCall,
 };
 use crate::session::{self, SessionError};
 use crate::spinner::SpinnerSessionInfo;
@@ -180,7 +179,6 @@ fn build_iteration_log(
         result.stream_result.metadata.clone(),
         result.stream_result.costs.clone(),
     );
-    let tool_calls = LogToolCall::from_interactions(&result.stream_result.tool_interactions);
     let chunks = Chunk::from_parsed_chunks(&result.stream_result.chunks);
     let response = extract_response_text(&result.stream_result.output_blocks);
 
@@ -194,7 +192,6 @@ fn build_iteration_log(
         prompt: Some(prompt.to_string()),
         response,
         metadata: metadata.into_option(),
-        tool_calls,
         chunks,
         output_blocks: result.stream_result.output_blocks.clone(),
         strategy_name: None,
