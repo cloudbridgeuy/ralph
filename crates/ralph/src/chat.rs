@@ -20,6 +20,7 @@ use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
     turn_prompt, turn_system_prompt, VIEW_LINES,
 };
+use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_memory::{
     frozen_block, tail_lines, usage_record, view_stats, CallKind, Frozen, Role, Trigger,
 };
@@ -43,6 +44,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -54,6 +56,7 @@ const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 const POLL: Duration = Duration::from_millis(500);
 const MEMORY_EVERY_POLLS: u32 = 10;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
+const INPUT_LOST_EXIT: i32 = 129;
 
 fn default_store() -> io::Result<PathBuf> {
     dirs::home_dir()
@@ -201,6 +204,33 @@ fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 'static) {
             if monitor.refresh(poll == MEMORY_EVERY_POLLS) {
                 repaint();
             }
+        }
+    });
+}
+
+fn stdin_hung_up() -> bool {
+    let mut stdin = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
+}
+
+fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>) {
+    let started_on_terminal = io::stdin().is_terminal();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(POLL);
+        if input_lost_at_prompt(&InputWatch {
+            hangup_signal: signal::is_interrupted(),
+            started_on_terminal,
+            stdin_hung_up: stdin_hung_up(),
+            at_prompt: at_prompt.load(Ordering::SeqCst),
+        }) {
+            if let Some(dir) = &plugin_dir {
+                std::fs::remove_dir_all(dir).ok();
+            }
+            std::process::exit(INPUT_LOST_EXIT);
         }
     });
 }
@@ -572,6 +602,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     ) {
         println!("{hint}");
     }
+    let at_prompt = Arc::new(AtomicBool::new(false));
+    watch_input(
+        Arc::clone(&at_prompt),
+        plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
+    );
     let mut editor = build_editor(&store_dir)?;
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
@@ -579,7 +614,14 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         monitor: Arc::clone(&monitor),
         color: std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
     };
-    while let Some(route) = next_route(&mut editor, &prompt)? {
+    loop {
+        warn_if_err(editor.sync_history(), "Failed to save chat history");
+        at_prompt.store(true, Ordering::SeqCst);
+        let route = next_route(&mut editor, &prompt);
+        at_prompt.store(false, Ordering::SeqCst);
+        let Some(route) = route? else {
+            break;
+        };
         let keep_going = match route {
             Route::Ignore => continue,
             Route::Send(message) => {
