@@ -151,8 +151,10 @@ ralph ask --no-background 'your prompt'
 |-------|------|---------|-------------|
 | `mcp_servers` | list of strings | `["mcptools"]` | Servers from `~/.claude.json` to load in chat turns |
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
+| `frozen_window` | integer | `32` | Entries per frozen memory-view window, from 1 to 199 |
+| `worker_base` | string | unset | Base branch that `close_worker` checks for unmerged commits |
 
-`--skill` and `RALPH_CHAT_SKILLS` replace `skills`. See [ralph chat](context/ralph-chat.md).
+`--skill` and `RALPH_CHAT_SKILLS` replace `skills`. `--frozen-window <N>` overrides `frozen_window`; a value outside 1-199 stops chat start with an error. Without `worker_base`, `close_worker` uses the branch recorded at spawn (`branch.worker/<ID>.ralphBase`), then `origin/HEAD`, then `main`. See [ralph chat](context/ralph-chat.md).
 
 ## Chat Store
 
