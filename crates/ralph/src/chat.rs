@@ -214,6 +214,11 @@ fn stdin_hung_up() -> bool {
         events: libc::POLLIN,
         revents: 0,
     };
+    // SAFETY: ralph's direct dependencies have no safe poll wrapper, and this is
+    // the backup check for terminals that close without sending SIGHUP.
+    // `stdin` is a valid, initialized pollfd on the stack and nfds is 1, so poll
+    // only touches that one struct. fd 0 is not owned or closed here. A zero
+    // timeout means poll never blocks. revents is read only when poll returns > 0.
     unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
 }
 
