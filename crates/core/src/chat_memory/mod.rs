@@ -10,7 +10,7 @@ use std::collections::HashMap;
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
 pub use nap::{check_summary, nap_prompt, nap_summary, retry_prompt, MAX_NAP_ATTEMPTS};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
-pub use tree::{cover, pending, recall, view, zoom};
+pub use tree::{cover, frozen_block, pending, recall, tail_lines, zoom};
 pub use usage::{encode_usage, usage_record, view_stats, CallKind, Trigger, UsageRecord};
 
 pub const SUMMARY_BYTES: usize = 512;
@@ -61,6 +61,12 @@ pub type Tree = HashMap<Node, String>;
 pub struct View {
     pub lines: Vec<String>,
     pub missing: Vec<Node>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Frozen {
+    pub end: usize,
+    pub lines: Vec<String>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]

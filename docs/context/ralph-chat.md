@@ -18,8 +18,8 @@ ralph                      # same as ralph chat with defaults
 
 ## Layout
 
-- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `view`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts and `check_summary`; `usage.rs` has the per-call usage records.
-- `crates/core/src/chat.rs`: `VIEW_LINES`, `SYSTEM_PROMPT`, `turn_prompt`, `build_mcp_args`.
+- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `frozen_block`, `tail_lines`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts and `check_summary`; `usage.rs` has the per-call usage records.
+- `crates/core/src/chat.rs`: `VIEW_LINES`, `FROZEN_WINDOW`, `SYSTEM_PROMPT`, `turn_system_prompt`, `turn_prompt`, `build_mcp_args`.
 - `crates/core/src/chat_status.rs`: status line, footer hints, input routing, worker state parsing, memory size.
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat.rs`: turn loop shell, reedline input, nap spawn.
@@ -31,9 +31,9 @@ ralph                      # same as ralph chat with defaults
 ## Turn loop
 
 1. `Store::load_settled` takes the `LOCK` (blocking until any running nap finishes), then reads log and tree.
-2. `view(entries, tree, VIEW_LINES)` builds the memory view. `VIEW_LINES` is 200.
+2. `frozen_block(entries, tree, VIEW_LINES, FROZEN_WINDOW, pinned)` and `tail_lines` build the memory view in two parts. `VIEW_LINES` is 200 lines total; `FROZEN_WINDOW` is 32 entries by default. The frozen part is the view of the first `entries / window * window` entries with budget `200 - window`; the chat process pins it and rebuilds only when the entry count crosses a multiple of the window, even if nap summaries land mid-window, so it stays byte-identical for the whole window (default 32 entries) and the prompt cache hits it. The tail is one line per entry after that point. The window comes from `--frozen-window <N>`, else `[chat] frozen_window` in the ralph config, else 32; valid values are 1 to 199, anything else fails chat start with an error.
 3. The user message, or one `worker` entry per report for a worker turn, is appended to the log.
-4. `build_chat_command` runs a fresh `claude --verbose --permission-mode bypassPermissions` with isolation args, `--append-system-prompt <SYSTEM_PROMPT>`, the MCP args, `--output-format stream-json`, and `-p <prompt>`. There is no `--resume` and no `--agent`. The prompt is the view lines, a blank line, `New message:`, then the message. Only view lines precede the message; no task text follows it.
+4. `build_chat_command` runs a fresh `claude --verbose --permission-mode bypassPermissions` with isolation args, `--append-system-prompt <SYSTEM_PROMPT + frozen block>` (`turn_system_prompt`; just `SYSTEM_PROMPT` while the frozen part is empty), the MCP args, `--output-format stream-json`, and `-p <prompt>`. There is no `--resume` and no `--agent`. The prompt is the tail lines, a blank line, `New message:`, then the message. Only tail lines precede the message; no task text follows it.
 5. Output goes through the spinner subprocess runner and `StreamProcessor`, as in `ralph ask`.
 6. On exit code 0 with response text, the reply is appended verbatim and a detached `ralph chat-nap` is spawned (stdio null; spawn failure only warns). Otherwise a warning `chat turn failed (exit N)` prints and the loop continues. The user message stays in the log without a reply.
 7. An interrupted turn ends the chat. Other subprocess errors abort with an error.
@@ -111,5 +111,4 @@ jq -s 'group_by(.kind) | map({kind: .[0].kind, usd: (map(.cost_usd // 0) | add)}
 
 - Mid-turn message injection.
 - Logging tool calls and results into memory.
-- Prompt-cache block tuning.
 - Subagent reports.

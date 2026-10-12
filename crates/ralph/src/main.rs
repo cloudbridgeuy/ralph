@@ -56,6 +56,7 @@ fn main() -> ExitCode {
     let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {
         store: None,
         timeout: cli::CHAT_TIMEOUT_SECS,
+        frozen_window: None,
         skills: Vec::new(),
     })) {
         Commands::Sessions(args) => execute_sessions(args),

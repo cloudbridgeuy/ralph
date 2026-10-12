@@ -1,4 +1,4 @@
-use super::{Entry, Node, Recall, Tree, View, SUMMARY_BYTES};
+use super::{Entry, Frozen, Node, Recall, Tree, View, SUMMARY_BYTES};
 use regex::RegexBuilder;
 use std::collections::VecDeque;
 
@@ -100,7 +100,7 @@ pub(super) fn node_line(entries: &[Entry], tree: &Tree, node: Node) -> Option<St
     }
 }
 
-pub fn view(entries: &[Entry], tree: &Tree, budget: usize) -> View {
+fn view(entries: &[Entry], tree: &Tree, budget: usize) -> View {
     let mut view = View::default();
     for node in cover(entries.len(), budget) {
         match node_line(entries, tree, node) {
@@ -109,6 +109,29 @@ pub fn view(entries: &[Entry], tree: &Tree, budget: usize) -> View {
         }
     }
     view
+}
+
+pub fn frozen_block(
+    entries: &[Entry],
+    tree: &Tree,
+    budget: usize,
+    window: usize,
+    pinned: Option<Frozen>,
+) -> Frozen {
+    let end = entries.len() / window * window;
+    match pinned {
+        Some(pinned) if pinned.end == end => pinned,
+        _ => Frozen {
+            end,
+            lines: view(&entries[..end], tree, budget.saturating_sub(window)).lines,
+        },
+    }
+}
+
+pub fn tail_lines(entries: &[Entry], tree: &Tree, from: usize) -> Vec<String> {
+    (from..entries.len())
+        .filter_map(|i| node_line(entries, tree, Node::leaf(i)))
+        .collect()
 }
 
 pub fn zoom(entries: &[Entry], tree: &Tree, node: Node) -> Result<Vec<String>, String> {
@@ -171,6 +194,19 @@ mod tests {
         (0..count)
             .map(|i| entry(i, if i.is_multiple_of(3) { 600 } else { 5 }))
             .collect()
+    }
+
+    fn summarized(entries: &[Entry]) -> Tree {
+        let mut tree = Tree::new();
+        loop {
+            let todo = pending(entries, &tree);
+            if todo.is_empty() {
+                return tree;
+            }
+            for node in todo {
+                tree.insert(node, format!("sum {}", node.id()));
+            }
+        }
     }
 
     fn pairs(nodes: &[Node]) -> Vec<(usize, usize)> {
@@ -385,6 +421,124 @@ mod tests {
             let same = |k: usize| before.iter().take(k).eq(after.iter().take(k));
             assert_eq!(same(1), first_same, "first line at {count}");
             assert_eq!(same(10), ten_same, "first 10 lines at {count}");
+        }
+    }
+
+    struct Split {
+        frozen: Vec<String>,
+        tail: Vec<String>,
+    }
+
+    fn split(entries: &[Entry], tree: &Tree, window: usize) -> Split {
+        let frozen = frozen_block(entries, tree, 200, window, None);
+        Split {
+            tail: tail_lines(entries, tree, frozen.end),
+            frozen: frozen.lines,
+        }
+    }
+
+    const WINDOWS: [usize; 2] = [32, 7];
+
+    #[test]
+    fn split_edges() {
+        for w in WINDOWS {
+            let tree = Tree::new();
+            let none = split(&[], &tree, w);
+            assert!(none.frozen.is_empty() && none.tail.is_empty());
+            let few: Vec<Entry> = (0..w - 1).map(|i| entry(i, 5)).collect();
+            let s = split(&few, &tree, w);
+            assert!(s.frozen.is_empty());
+            assert_eq!(s.tail.len(), w - 1);
+            let exact: Vec<Entry> = (0..w * 2).map(|i| entry(i, 5)).collect();
+            let s = split(&exact, &summarized(&exact), w);
+            assert!(s.tail.is_empty());
+            assert!(!s.frozen.is_empty());
+        }
+    }
+
+    #[test]
+    fn split_fits_budget_on_long_history() {
+        let entries: Vec<Entry> = (0..1000).map(|i| entry(i, 5)).collect();
+        let tree = summarized(&entries);
+        for w in WINDOWS {
+            let s = split(&entries, &tree, w);
+            assert!(s.frozen.len() + s.tail.len() <= 200, "w={w}");
+            let h = 1000 / w * w;
+            assert_eq!(s.frozen, view(&entries[..h], &tree, 200 - w).lines);
+            assert_eq!(s.tail.len(), 1000 - h);
+            assert!(s.frozen[0].starts_with("#0-"));
+        }
+    }
+
+    #[test]
+    fn frozen_changes_only_at_window_boundaries() {
+        let entries: Vec<Entry> = (0..1201).map(|i| entry(i, 5)).collect();
+        let tree = summarized(&entries);
+        for w in WINDOWS {
+            let mut unchanged_past_200 = 0;
+            for t in 1..=1200 {
+                let a = split(&entries[..t], &tree, w);
+                let b = split(&entries[..t + 1], &tree, w);
+                if a.frozen == b.frozen {
+                    assert_ne!((t + 1) % w, 0, "w={w} t={t}");
+                    assert_eq!(b.tail[..a.tail.len()], a.tail[..], "w={w} t={t}");
+                    if t >= 200 {
+                        unchanged_past_200 += 1;
+                    }
+                } else {
+                    assert_eq!((t + 1) % w, 0, "w={w} t={t}");
+                }
+            }
+            let boundaries = (201..=1201).filter(|n| n % w == 0).count();
+            assert_eq!(unchanged_past_200, 1001 - boundaries, "w={w}");
+        }
+    }
+
+    #[test]
+    fn frozen_block_rolls_over_at_every_window() {
+        let entries: Vec<Entry> = (0..301).map(|i| entry(i, 5)).collect();
+        let tree = summarized(&entries);
+        for w in [1, 32, 7] {
+            let mut pinned: Option<Frozen> = None;
+            for t in 0..=300 {
+                let block = frozen_block(&entries[..t], &tree, 200, w, pinned.take());
+                assert_eq!(block.end, t / w * w, "w={w} t={t}");
+                if let Some(previous) = &pinned {
+                    assert_eq!(previous.end, block.end);
+                }
+                pinned = Some(block);
+            }
+            for t in 0..=300 - w {
+                let end = t / w * w;
+                let first = frozen_block(&entries[..end], &tree, 200, w, None);
+                let mut pin = first.clone();
+                for u in end..end + w {
+                    pin = frozen_block(&entries[..u], &tree, 200, w, Some(pin));
+                    assert_eq!(pin, first, "w={w} u={u}");
+                }
+                let rolled = frozen_block(&entries[..end + w], &tree, 200, w, Some(pin));
+                assert_eq!(rolled.end, end + w, "w={w} t={t}");
+            }
+        }
+    }
+
+    #[test]
+    fn pinned_block_survives_summaries_landing_mid_window() {
+        let entries: Vec<Entry> = (0..400).map(|i| entry(i, 5)).collect();
+        let landed = summarized(&entries);
+        for w in WINDOWS {
+            let h = 256 / w * w;
+            let first = frozen_block(&entries[..h], &Tree::new(), 200, w, None);
+            let mut pinned = first.clone();
+            for t in h..h + w {
+                pinned = frozen_block(&entries[..t], &landed, 200, w, Some(pinned));
+                assert_eq!(pinned, first, "w={w} t={t}");
+            }
+            let unpinned = frozen_block(&entries[..h + 1], &landed, 200, w, None);
+            assert_ne!(unpinned.lines, first.lines, "w={w}");
+            let rolled = frozen_block(&entries[..h + w], &landed, 200, w, Some(pinned));
+            assert_eq!(rolled.end, h + w);
+            assert_ne!(rolled.lines, first.lines);
         }
     }
 }

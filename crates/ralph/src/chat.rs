@@ -15,10 +15,12 @@ use crate::subprocess::{
 use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
 use ralph_core::chat::{
-    build_agents_args, build_mcp_args, mcp_config, select_servers, turn_prompt, SYSTEM_PROMPT,
-    VIEW_LINES,
+    build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
+    turn_prompt, turn_system_prompt, VIEW_LINES,
 };
-use ralph_core::chat_memory::{usage_record, view, view_stats, CallKind, Role, Trigger};
+use ralph_core::chat_memory::{
+    frozen_block, tail_lines, usage_record, view_stats, CallKind, Frozen, Role, Trigger,
+};
 use ralph_core::chat_skills::{
     build_plugin_args, expand_slash_command, plan_links, plugin_manifest, resolve_skills,
     ChatSkill, SkillSources,
@@ -99,6 +101,7 @@ struct Monitor {
     store: Store,
     status: Mutex<Status>,
     seen: Mutex<HashMap<String, String>>,
+    frozen_window: usize,
 }
 
 impl Monitor {
@@ -114,10 +117,9 @@ impl Monitor {
 
     fn measure_memory(&self) -> Option<Memory> {
         let (entries, tree) = self.store.load().ok()?;
-        Some(memory_size(
-            entries.len(),
-            &view(&entries, &tree, VIEW_LINES).lines,
-        ))
+        let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, None);
+        let tail = tail_lines(&entries, &tree, frozen.end);
+        Some(memory_size(entries.len(), &[frozen.lines, tail].concat()))
     }
 
     fn refresh(&self, with_memory: bool) -> bool {
@@ -254,6 +256,8 @@ struct Turn<'a> {
     skills: &'a [ChatSkill],
     timeout_secs: u64,
     theme_config: &'a ThemeConfig,
+    frozen: Mutex<Option<Frozen>>,
+    frozen_window: usize,
 }
 
 impl Turn<'_> {
@@ -264,7 +268,10 @@ impl Turn<'_> {
         message: &str,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let (entries, tree) = self.store.load_settled()?;
-        let lines = view(&entries, &tree, VIEW_LINES).lines;
+        let pinned = locked(&self.frozen).take();
+        let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, pinned);
+        *locked(&self.frozen) = Some(frozen.clone());
+        let tail = tail_lines(&entries, &tree, frozen.end);
         for text in logged {
             self.store.append(trigger.role(), text)?;
         }
@@ -273,8 +280,8 @@ impl Turn<'_> {
             Trigger::Worker => Cow::Borrowed(message),
         };
         let command = build_chat_command(
-            &turn_prompt(&lines, &sent),
-            SYSTEM_PROMPT,
+            &turn_prompt(&tail, &sent),
+            &turn_system_prompt(&frozen.lines),
             &[
                 build_mcp_args(self.mcp_config_path),
                 build_agents_args(),
@@ -316,8 +323,11 @@ impl Turn<'_> {
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
         )
-        .map(|record| record.with_view(view_stats(&lines)))
-        {
+        .map(|record| {
+            record.with_view(view_stats(
+                &[frozen.lines.as_slice(), tail.as_slice()].concat(),
+            ))
+        }) {
             warn_if_err(
                 self.store.append_usage(&record),
                 "Failed to record chat usage",
@@ -456,6 +466,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             warn(format!("Failed to load config: {e}"));
             AppConfig::default().chat
         });
+    let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
     let mcp_config_path = write_mcp_config(&store, &store_dir, &exe, &chat_config.mcp_servers)?;
     let skills = link_skills(usable_skills(resolve_skills(
         &SkillSources {
@@ -479,12 +490,15 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         skills: &skills,
         timeout_secs: args.timeout,
         theme_config: &theme_config,
+        frozen: Mutex::new(None),
+        frozen_window,
     };
     let monitor = Arc::new(Monitor {
         inbox: Inbox::new(store_dir.join(INBOX_DIR)),
         store: Store::new(store_dir.clone()),
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
+        frozen_window,
     });
     monitor.refresh(true);
     let mut editor = build_editor(&store_dir)?;
