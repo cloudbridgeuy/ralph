@@ -1,5 +1,5 @@
 use ralph_core::mcp::tool_result;
-use ralph_core::worker::{handle_request, inbox_file_name, Outcome, Report};
+use ralph_core::worker::{handle_request, inbox_file_name, reported_path, Outcome, Report};
 use serde_json::Value;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -20,6 +20,15 @@ impl Inbox {
         let tmp = self.dir.join(format!(".{name}"));
         fs::write(&tmp, serde_json::to_vec(report)?)?;
         fs::rename(tmp, self.dir.join(name))
+    }
+
+    fn mark_reported(&self, worker: &str) -> io::Result<()> {
+        let store = self.dir.parent().unwrap_or(Path::new("."));
+        let marker = reported_path(store, worker);
+        if let Some(dir) = marker.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        fs::write(marker, "")
     }
 
     fn pending(&self) -> io::Result<Vec<PathBuf>> {
@@ -94,15 +103,20 @@ pub fn run_stdio_server(
                 let report = Report {
                     worker: worker.to_string(),
                     at: chrono::Utc::now().to_rfc3339(),
-                    status,
+                    status: status.as_str().to_string(),
                     text,
                 };
                 match inbox.post(&report, seq) {
-                    Ok(()) => tool_result(
-                        id,
-                        "Delivered. Stop and wait for the person's answer.",
-                        false,
-                    ),
+                    Ok(()) => {
+                        if let Err(e) = inbox.mark_reported(worker) {
+                            crate::warn::warn(format!("could not write the reported marker: {e}"));
+                        }
+                        tool_result(
+                            id,
+                            "Delivered. Stop and wait for the person's answer.",
+                            false,
+                        )
+                    }
                     Err(e) => tool_result(id, &format!("Could not deliver: {e}"), true),
                 }
             }
@@ -126,6 +140,7 @@ mod tests {
         run_stdio_server("GUZ-1", &inbox, format!("{call}\n").as_bytes(), &mut out).unwrap();
         let reply: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(reply["result"]["isError"], false);
+        assert!(dir.path().join("reported").join("GUZ-1").exists());
 
         assert_eq!(inbox.peek().unwrap().len(), 1);
         let reports = inbox.drain().unwrap();

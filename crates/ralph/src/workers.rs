@@ -1,13 +1,13 @@
 use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
-    base_branch, base_config_key, branch_name, claude_ready_settings, close_plan, exclude_lines,
-    opencode_command, opencode_config, opencode_ready_plugin, opencode_session_gone,
-    opencode_session_id, project_slug, ready_path, session_name, session_owner, startup_state,
-    tagged_sessions, worker_command, worker_mcp_config, worktree_add_args, worktree_path,
-    CloseState, CloseStep, Harness, Owner, Startup, HARNESS_OPTION, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION,
-    TRUST_KEYS, WORKERS_DIR,
+    base_branch, base_config_key, branch_name, claude_worker_settings, close_plan, exclude_lines,
+    opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
+    opencode_worker_plugin, project_slug, ready_path, reported_path, session_name, session_owner,
+    startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
+    worktree_path, CloseState, CloseStep, Harness, Owner, Startup, HARNESS_OPTION, ID_OPTION,
+    INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT,
+    STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -54,10 +54,12 @@ impl Workers {
         record_base(&repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
         let ready = ready_path(&self.store_dir, id);
-        clear_ready(&ready)?;
+        let reported = reported_path(&self.store_dir, id);
+        clear_marker(&ready)?;
+        clear_marker(&reported)?;
         let command = match harness {
             Harness::Claude => {
-                let settings = self.write_settings(id, &ready)?;
+                let settings = self.write_settings(id, &ready, &reported)?;
                 worker_command(&self.write_config(id)?, &settings, task)
             }
             Harness::Opencode { model } => {
@@ -67,7 +69,7 @@ impl Workers {
                 if let Some(dir) = plugin.parent() {
                     fs::create_dir_all(dir)?;
                 }
-                fs::write(plugin, opencode_ready_plugin(id, &ready))?;
+                fs::write(plugin, opencode_worker_plugin(id, &ready, &reported))?;
                 opencode_command(id, task)
             }
         };
@@ -252,7 +254,10 @@ impl Workers {
                         worktree_path(repo, id).display()
                     )))?;
             }
-            CloseStep::ClearReady => clear_ready(&ready_path(&self.store_dir, id))?,
+            CloseStep::ClearMarkers => {
+                clear_marker(&ready_path(&self.store_dir, id))?;
+                clear_marker(&reported_path(&self.store_dir, id))?;
+            }
         }
         Ok(())
     }
@@ -266,11 +271,11 @@ impl Workers {
         )
     }
 
-    fn write_settings(&self, id: &str, ready: &Path) -> io::Result<PathBuf> {
+    fn write_settings(&self, id: &str, ready: &Path, reported: &Path) -> io::Result<PathBuf> {
         let dir = self.store_dir.join(WORKERS_DIR);
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{id}.settings.json"));
-        fs::write(&path, claude_ready_settings(ready).to_string())?;
+        fs::write(&path, claude_worker_settings(ready, reported).to_string())?;
         Ok(path)
     }
 
@@ -318,11 +323,11 @@ fn repo_root() -> io::Result<PathBuf> {
     )?)))
 }
 
-fn clear_ready(ready: &Path) -> io::Result<()> {
-    if let Some(dir) = ready.parent() {
+fn clear_marker(marker: &Path) -> io::Result<()> {
+    if let Some(dir) = marker.parent() {
         fs::create_dir_all(dir)?;
     }
-    match fs::remove_file(ready) {
+    match fs::remove_file(marker) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
     }

@@ -13,8 +13,9 @@ pub const INBOX_DIR: &str = "inbox";
 pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
 pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
-pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-ready.ts";
+pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-worker.ts";
 pub const READY_DIR: &str = "ready";
+pub const REPORTED_DIR: &str = "reported";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const STORE_OPTION: &str = "@ralph_store";
@@ -26,7 +27,11 @@ pub const SESSION_FORMAT: &str =
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
 
-Call the report tool only when you finish, are truly blocked, or need a decision only the person can make; then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
+End every turn with the report tool: status done when the task is finished, blocked when you cannot go on, or question when you need a decision only the person can make, and a full summary in text. Then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
+
+pub const REPORT_REMINDER: &str = "You stopped without calling report. Call report now with status done, blocked or question and a full summary of what you did or what you need.";
+
+pub const PERMISSION_DENIED: &str = "No human approves prompts here. Do not retry. If you cannot continue, call report with status blocked or question and a full summary.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
@@ -36,13 +41,39 @@ pub struct Report {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportStatus {
+    Done,
+    Blocked,
+    Question,
+}
+
+impl ReportStatus {
+    pub const ALL: [ReportStatus; 3] = [Self::Done, Self::Blocked, Self::Question];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Blocked => "blocked",
+            Self::Question => "question",
+        }
+    }
+
+    fn parse(status: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|known| known.as_str() == status)
+            .ok_or_else(|| format!("Status '{status}' must be done, blocked or question."))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     Silent,
     Respond(Value),
     Report {
         id: Value,
-        status: String,
+        status: ReportStatus,
         text: String,
     },
 }
@@ -248,38 +279,91 @@ pub fn ready_path(store: &Path, id: &str) -> PathBuf {
     store.join(READY_DIR).join(id)
 }
 
-pub fn claude_ready_settings(ready: &Path) -> Value {
-    let quoted = format!("'{}'", ready.to_string_lossy().replace('\'', r"'\''"));
+pub fn reported_path(store: &Path, id: &str) -> PathBuf {
+    store.join(REPORTED_DIR).join(id)
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+fn stop_hook_command(reported: &Path) -> String {
+    let marker = shell_quote(&reported.to_string_lossy());
+    let background =
+        shell_quote(r#""background_tasks"[[:space:]]*:[[:space:]]*\[[[:space:]]*[^][:space:]]"#);
+    let active = shell_quote(r#""stop_hook_active"[[:space:]]*:[[:space:]]*true"#);
+    let block = shell_quote(&json!({"decision": "block", "reason": REPORT_REMINDER}).to_string());
+    format!(
+        r#"m={marker}; i=$(cat); printf '%s' "$i" | grep -Eq {background} && exit 0; if [ -e "$m" ]; then rm -f "$m"; exit 0; fi; printf '%s' "$i" | grep -Eq {active} && exit 0; printf '%s\n' {block}"#
+    )
+}
+
+fn permission_hook_command() -> String {
+    let deny = json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "deny", "message": PERMISSION_DENIED}
+        }
+    });
+    format!(r#"printf '%s\n' {}"#, shell_quote(&deny.to_string()))
+}
+
+pub fn claude_worker_settings(ready: &Path, reported: &Path) -> Value {
+    let touch = format!("touch {}", shell_quote(&ready.to_string_lossy()));
     json!({
         "hooks": {
             "SessionStart": [{
                 "matcher": "startup",
-                "hooks": [{"type": "command", "command": format!("touch {quoted}")}]
+                "hooks": [{"type": "command", "command": touch}]
+            }],
+            "Stop": [{
+                "hooks": [{"type": "command", "command": stop_hook_command(reported)}]
+            }],
+            "PermissionRequest": [{
+                "hooks": [{"type": "command", "command": permission_hook_command()}]
             }]
         }
     })
 }
 
-pub fn opencode_ready_plugin(id: &str, ready: &Path) -> String {
+pub fn opencode_worker_plugin(id: &str, ready: &Path, reported: &Path) -> String {
     let session = Value::from(opencode_session_id(id));
     let ready = Value::from(ready.to_string_lossy());
-    let plugin = Value::from(format!("ralph-ready-{id}"));
+    let reported = Value::from(reported.to_string_lossy());
+    let reminder = Value::from(REPORT_REMINDER);
+    let plugin = Value::from(format!("ralph-worker-{id}"));
     format!(
-        r#"import {{ writeFileSync }} from "node:fs"
+        r#"import {{ existsSync, rmSync, writeFileSync }} from "node:fs"
 
 const SESSION = {session}
 const READY = {ready}
-const SIGNALS = new Set(["session.created", "session.inbox.enqueued"])
+const REPORTED = {reported}
+const REMINDER = {reminder}
+const STARTED = new Set(["session.created", "session.inbox.enqueued"])
+const ENDED = new Set(["session.execution.succeeded", "session.execution.failed"])
 
 export default {{
   id: {plugin},
   setup: async (ctx: any) => {{
+    let ready = false
+    let nudged = false
     void (async () => {{
       try {{
         for await (const event of ctx.event.subscribe({{}})) {{
-          if (SIGNALS.has(event?.type) && event?.data?.sessionID === SESSION) {{
+          if (event?.data?.sessionID !== SESSION) continue
+          if (!ready && STARTED.has(event.type)) {{
+            ready = true
             writeFileSync(READY, "")
-            return
+          }}
+          if (!ENDED.has(event.type)) continue
+          if (existsSync(REPORTED)) {{
+            rmSync(REPORTED, {{ force: true }})
+            nudged = false
+          }} else if (nudged) {{
+            nudged = false
+          }} else {{
+            nudged = true
+            ctx.session.prompt({{ sessionID: SESSION, text: REMINDER }}).catch(() => {{}})
           }}
         }}
       }} catch {{}}
@@ -346,12 +430,12 @@ pub fn tool_definitions() -> Value {
     json!([
         {
             "name": "report",
-            "description": "Send a message to the person who dispatched you. Use it only when you finish, get blocked, or need a decision, then stop and wait for their answer. Each report costs a full chat turn, so never send progress updates.",
+            "description": "Send a message to the person who dispatched you. Call it at the end of every turn: when you finish, get blocked, or need a decision. Then stop and wait for their answer. Each report costs a full chat turn, so never send progress updates.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "description": "One word: done, blocked, or question."},
-                    "text": {"type": "string", "description": "What happened, or what you need decided."}
+                    "status": {"type": "string", "enum": ReportStatus::ALL.map(ReportStatus::as_str), "description": "done: task finished. blocked: you cannot go on. question: you need a decision."},
+                    "text": {"type": "string", "description": "Full summary: what you did and what you found, or what blocks you, or what you need decided."}
                 },
                 "required": ["status", "text"]
             }
@@ -359,9 +443,12 @@ pub fn tool_definitions() -> Value {
     ])
 }
 
-fn parse_report(name: &str, args: &Value) -> Result<(String, String), String> {
+fn parse_report(name: &str, args: &Value) -> Result<(ReportStatus, String), String> {
     match name {
-        "report" => Ok((string_arg(args, "status")?, string_arg(args, "text")?)),
+        "report" => Ok((
+            ReportStatus::parse(&string_arg(args, "status")?)?,
+            string_arg(args, "text")?,
+        )),
         other => Err(format!("Unknown tool '{other}'.")),
     }
 }
@@ -629,7 +716,7 @@ mod tests {
             [
                 "/.worktrees/",
                 "/opencode.json",
-                "/.opencode/plugins/ralph-ready.ts"
+                "/.opencode/plugins/ralph-worker.ts"
             ]
         );
     }
@@ -678,8 +765,24 @@ mod tests {
     }
 
     #[test]
-    fn claude_ready_settings_touch_the_ready_file_on_startup_only() {
-        let settings = claude_ready_settings(Path::new("/s/it's/ready/A"));
+    fn reported_path_is_per_worker_in_the_store() {
+        assert_eq!(
+            reported_path(Path::new("/s"), "A"),
+            PathBuf::from("/s/reported/A")
+        );
+    }
+
+    fn hook_command(settings: &Value, event: &str) -> String {
+        settings["hooks"][event][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn claude_worker_settings_touch_the_ready_file_on_startup_only() {
+        let settings =
+            claude_worker_settings(Path::new("/s/it's/ready/A"), Path::new("/s/reported/A"));
         let start = &settings["hooks"]["SessionStart"][0];
         assert_eq!(start["matcher"], "startup");
         assert_eq!(
@@ -689,17 +792,68 @@ mod tests {
     }
 
     #[test]
-    fn opencode_ready_plugin_answers_only_for_its_own_session() {
-        let plugin = opencode_ready_plugin("A", Path::new("/s/ready/\"A\""));
+    fn claude_stop_hook_skips_background_work_then_consumes_the_marker_then_blocks_once() {
+        let settings =
+            claude_worker_settings(Path::new("/s/ready/A"), Path::new("/s/it's/reported/A"));
+        let command = hook_command(&settings, "Stop");
+        assert!(command.starts_with(r"m='/s/it'\''s/reported/A'; i=$(cat); "));
+        let background = command.find("background_tasks").unwrap();
+        let marker = command.find(r#"rm -f "$m"; exit 0"#).unwrap();
+        let active = command.find("stop_hook_active").unwrap();
+        let block = command.find(r#"{"decision":"block""#).unwrap();
+        assert!(background < marker && marker < active && active < block);
+        assert!(command.contains(REPORT_REMINDER));
+    }
+
+    #[test]
+    fn claude_permission_hook_denies_with_a_report_hint() {
+        let settings = claude_worker_settings(Path::new("/r"), Path::new("/m"));
+        let command = hook_command(&settings, "PermissionRequest");
+        let json = command
+            .strip_prefix(r"printf '%s\n' '")
+            .and_then(|rest| rest.strip_suffix('\''))
+            .unwrap();
+        let output: Value = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            output["hookSpecificOutput"],
+            json!({
+                "hookEventName": "PermissionRequest",
+                "decision": {"behavior": "deny", "message": PERMISSION_DENIED}
+            })
+        );
+    }
+
+    #[test]
+    fn opencode_worker_plugin_answers_only_for_its_own_session() {
+        let plugin =
+            opencode_worker_plugin("A", Path::new("/s/ready/\"A\""), Path::new("/s/reported/A"));
         assert!(plugin.contains(r#"const SESSION = "ses_ralphA""#));
         assert!(plugin.contains(r#"const READY = "/s/ready/\"A\"""#));
-        assert!(plugin.contains(r#"id: "ralph-ready-A""#));
+        assert!(plugin.contains(r#"const REPORTED = "/s/reported/A""#));
+        assert!(plugin.contains(&format!(
+            "const REMINDER = {}",
+            Value::from(REPORT_REMINDER)
+        )));
+        assert!(plugin.contains(r#"id: "ralph-worker-A""#));
         assert!(plugin.contains(r#"["session.created", "session.inbox.enqueued"]"#));
-        assert!(plugin.contains("event?.data?.sessionID === SESSION"));
-        assert!(plugin.contains("writeFileSync(READY, \"\")\n            return"));
+        assert!(plugin.contains(r#"["session.execution.succeeded", "session.execution.failed"]"#));
+        assert!(plugin.contains("if (event?.data?.sessionID !== SESSION) continue"));
         for forbidden in ["setInterval", "setTimeout", "child_process"] {
             assert!(!plugin.contains(forbidden), "{forbidden}");
         }
+    }
+
+    #[test]
+    fn opencode_worker_plugin_nudges_once_unless_the_worker_reported() {
+        let plugin = opencode_worker_plugin("A", Path::new("/r"), Path::new("/m"));
+        let marker = plugin.find("if (existsSync(REPORTED))").unwrap();
+        let guard = plugin
+            .find("} else if (nudged) {\n            nudged = false")
+            .unwrap();
+        let nudge = plugin
+            .find("nudged = true\n            ctx.session.prompt({ sessionID: SESSION, text: REMINDER })")
+            .unwrap();
+        assert!(marker < guard && guard < nudge);
     }
 
     #[test]
@@ -719,10 +873,27 @@ mod tests {
             handle_request(&request),
             Outcome::Report {
                 id: json!(3),
-                status: "done".into(),
+                status: ReportStatus::Done,
                 text: "hello".into()
             }
         );
+    }
+
+    #[test]
+    fn report_schema_and_parser_accept_only_known_statuses() {
+        assert_eq!(
+            tool_definitions()[0]["inputSchema"]["properties"]["status"]["enum"],
+            json!(["done", "blocked", "question"])
+        );
+        for status in ReportStatus::ALL {
+            assert_eq!(ReportStatus::parse(status.as_str()), Ok(status));
+        }
+        let request = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "report", "arguments": {"status": "ok", "text": "hello"}}});
+        let Outcome::Respond(v) = handle_request(&request) else {
+            panic!("expected error response");
+        };
+        assert_eq!(v["result"]["isError"], true);
     }
 
     #[test]

@@ -125,7 +125,7 @@ pub enum CloseStep {
     DeleteBranch,
     PruneWorktrees,
     EvictOpencodeLocation,
-    ClearReady,
+    ClearMarkers,
 }
 
 pub fn close_plan(state: &CloseState, abandon: bool) -> Result<Vec<CloseStep>, String> {
@@ -174,7 +174,7 @@ pub fn close_plan(state: &CloseState, abandon: bool) -> Result<Vec<CloseStep>, S
     if state.opencode {
         steps.push(CloseStep::EvictOpencodeLocation);
     }
-    steps.push(CloseStep::ClearReady);
+    steps.push(CloseStep::ClearMarkers);
     Ok(steps)
 }
 
@@ -284,7 +284,7 @@ mod tests {
                 CloseStep::DeleteBranch,
                 CloseStep::PruneWorktrees,
                 CloseStep::EvictOpencodeLocation,
-                CloseStep::ClearReady,
+                CloseStep::ClearMarkers,
             ])
         );
     }
@@ -298,7 +298,7 @@ mod tests {
             Ok(vec![
                 CloseStep::DeleteBranch,
                 CloseStep::PruneWorktrees,
-                CloseStep::ClearReady
+                CloseStep::ClearMarkers
             ])
         );
         state.unmerged_commits = None;
