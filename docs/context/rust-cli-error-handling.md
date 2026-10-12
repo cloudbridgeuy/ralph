@@ -11,8 +11,8 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Commands::Sessions(args) => execute_sessions(args),
         Commands::Themes => execute_themes(),
+        Commands::Ask(args) => execute_ask(args),
         // ...
     };
 
@@ -31,7 +31,7 @@ fn main() -> ExitCode {
 Handlers return `Result<_, Box<dyn std::error::Error>>`. Module errors convert via `?`.
 
 ```rust
-fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 ## Module Errors with thiserror
@@ -39,15 +39,14 @@ fn execute_sessions(args: SessionsArgs) -> Result<(), Box<dyn std::error::Error>
 Each module defines its own enum. `#[from]` enables `?` conversion.
 
 ```rust
-// crates/ralph/src/invoke.rs
+// crates/ralph/src/subprocess/types.rs
 #[derive(Debug, thiserror::Error)]
-pub enum InvocationError {
-    #[error("No prompt provided. Use: ralph ask 'your prompt here'")]
-    NoPrompt,
-    #[error("Subprocess failed: {0}")]
-    Subprocess(#[from] SubprocessError),
-    #[error("Session initialization failed: {0}")]
-    Session(#[from] SessionError),
+pub enum SubprocessError {
+    #[error("Failed to spawn subprocess: {0}")]
+    SpawnFailed(#[from] io::Error),
+    #[error("Subprocess terminated by signal")]
+    Signaled,
+    // ...
 }
 ```
 

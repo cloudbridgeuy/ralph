@@ -1,15 +1,14 @@
-//! Output block types for replay serialization.
+//! Output block types.
 //!
 //! This module defines the `OutputBlock` enum and its variants, which capture
-//! all data needed to render output during execution. By serializing these blocks,
-//! sessions can be replayed with identical visual output.
+//! all data needed to render output during execution.
 //!
 //! # Design Principles
 //!
 //! - Each variant captures **data**, not rendered strings
 //! - All variants derive Serialize/Deserialize for TOML storage
 //! - Rendering is handled by separate functions that take OutputBlock variants
-//! - The enum preserves the order of output blocks for faithful replay
+//! - The enum preserves the order of output blocks
 //! - Enums are marked `#[non_exhaustive]` for forward compatibility when adding new variants
 //!
 //! # Variant Count Rationale
@@ -53,8 +52,7 @@ use serde::{Deserialize, Serialize};
 /// A single block of output from an LLM interaction.
 ///
 /// OutputBlock captures all the data needed to render a piece of output.
-/// During execution, these blocks are accumulated and later serialized
-/// to the session file for replay.
+/// During execution, these blocks are accumulated in order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]

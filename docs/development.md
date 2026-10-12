@@ -46,8 +46,7 @@ cargo run
 
 # Run a subcommand
 cargo run -- ask 'What is Rust?'
-cargo run -- sessions
-cargo run -- replay quiet-mountain
+cargo run -- themes
 ```
 
 For release builds:
@@ -146,8 +145,7 @@ ralph/
 │   │       ├── chat*.rs    # Chat turn, status, skills logic
 │   │       ├── chat_memory/ # Compressed memory tree
 │   │       ├── chunk/      # Content chunking
-│   │       ├── stream/     # LLM stream processing
-│   │       └── session.rs  # Session state
+│   │       └── stream/     # LLM stream processing
 │   └── ralph/          # ralph CLI - I/O shell
 │       └── src/
 │           ├── main.rs         # Entry point and command dispatch
@@ -155,8 +153,6 @@ ralph/
 │           ├── chat*.rs        # Chat shell, memory store, MCP server
 │           ├── ask.rs          # ask permission mode
 │           ├── invoke.rs       # Shared claude invocation
-│           ├── iteration/      # Session iteration logs
-│           ├── replay*.rs      # Session replay
 │           ├── render/         # Terminal rendering
 │           ├── stream_processor/ # Stream handling
 │           │   ├── tool_display/  # Tool output rendering
@@ -211,7 +207,6 @@ For development, these environment variables can override default paths:
 | Variable | Description |
 |----------|-------------|
 | `RALPH_CONFIG_DIR` | Config directory override |
-| `RALPH_DATA_DIR` | Sessions data directory override |
 | `RALPH_THEME` | Theme selection |
 | `RALPH_NO_BACKGROUND` | Disable theme backgrounds |
 

@@ -27,7 +27,7 @@ use termimad::{MadSkin, StyledChar};
 /// Create a configured `MadSkin` for terminal markdown rendering (Functional Core).
 ///
 /// This is a pure function that produces the shared skin used across all
-/// rendering paths: streaming, replay, and batch. Customize colors here
+/// rendering paths: streaming and batch. Customize colors here
 /// and every renderer picks them up automatically.
 pub fn create_markdown_skin() -> MadSkin {
     use termimad::crossterm::style::{Attribute, Color};

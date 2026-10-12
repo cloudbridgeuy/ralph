@@ -1,13 +1,7 @@
 //! Shared text block rendering functions.
 //!
 //! This module provides unified rendering for text blocks (prose, code, diff)
-//! used by both the stream processor (live execution) and replay renderer.
-//!
-//! # Design
-//!
-//! Text rendering is consolidated here to ensure visual consistency between
-//! live streaming and replay. Both paths produce identical output for the
-//! same input data.
+//! used by the stream processor during live execution.
 
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{ChunkType, ParsedChunk};
@@ -17,8 +11,7 @@ use super::RenderContext;
 
 /// Render a text block (prose, code, or diff) to a string.
 ///
-/// This is the canonical text rendering function used by both stream processor
-/// and replay renderer. It handles:
+/// This is the canonical text rendering function. It handles:
 /// - Prose: Optional markdown formatting via termimad
 /// - Code: Fenced code blocks with syntax highlighting
 /// - Diff: Fenced diff blocks with +/- coloring
@@ -129,8 +122,7 @@ fn enhance_tables(rendered: &str) -> String {
 
 /// Render a fenced code block with syntax highlighting.
 ///
-/// This is the shared implementation used by both stream processor and replay
-/// renderer for code block rendering with visible fences.
+/// Renders code blocks with visible fences.
 ///
 /// # Arguments
 ///
@@ -159,8 +151,7 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
 
 /// Render a fenced diff block with +/- coloring.
 ///
-/// This is the shared implementation used by both stream processor and replay
-/// renderer for diff block rendering with visible fences.
+/// Renders diff blocks with visible fences.
 ///
 /// # Arguments
 ///

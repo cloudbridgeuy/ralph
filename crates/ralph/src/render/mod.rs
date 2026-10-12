@@ -1,8 +1,7 @@
 //! Shared rendering module for OutputBlock display.
 //!
-//! This module provides unified rendering utilities used by both live execution
-//! (stream processor) and replay. By consolidating these functions, we ensure
-//! consistent output formatting across both rendering paths.
+//! This module provides unified rendering utilities used by the stream processor.
+//! By consolidating these functions, we ensure consistent output formatting.
 //!
 //! # Module Structure
 //!
@@ -13,7 +12,7 @@
 //! # Design Principles
 //!
 //! 1. **Pure Functions**: All utilities are stateless and free of side effects
-//! 2. **Shared Logic**: Functions used by both stream processor and replay
+//! 2. **Shared Logic**: One implementation per rendering concern
 //! 3. **Single Source of Truth**: No duplication between rendering paths
 //! 4. **Data-Centric**: Renderers accept structured data, not processor references
 

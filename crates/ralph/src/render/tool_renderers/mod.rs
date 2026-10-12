@@ -1,7 +1,7 @@
 //! Shared tool rendering functions (Functional Core).
 //!
-//! This module contains pure rendering functions used by both stream processor
-//! (live execution) and replay renderer. Functions accept data parameters directly
+//! This module contains pure rendering functions used by the stream processor
+//! during live execution. Functions accept data parameters directly
 //! and return formatted strings, avoiding any I/O operations.
 //!
 //! # Design Principles
