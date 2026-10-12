@@ -194,6 +194,8 @@ impl Workers {
             base: base.branch.clone(),
             unmerged_commits,
             opencode,
+            markers: ready_path(&self.store_dir, id).exists()
+                || reported_path(&self.store_dir, id).exists(),
         };
         let with_warning = |text: String| match &base.warning {
             Some(warning) => format!("{text} {warning}"),
@@ -205,6 +207,11 @@ impl Workers {
             self.close_step(step, &repo, id).map_err(|e| {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
+        }
+        if steps == [CloseStep::ClearMarkers] {
+            return Ok(format!(
+                "Closed worker {id}: only its ready and reported markers were left; removed them."
+            ));
         }
         let note = if opencode {
             " Its opencode plugin keeps running in the opencode service until that restarts."
