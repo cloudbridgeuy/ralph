@@ -1,67 +1,29 @@
-# Output Block Integration and Data Flow
+# Output Blocks
 
-This document explains how output blocks flow through ralph during execution and replay.
+This document explains how output blocks flow through ralph during execution.
 
 ## Overview
 
-Output blocks are the serialization format for terminal output. During live execution, ralph renders content to stdout while simultaneously accumulating structured `OutputBlock` variants. These blocks are serialized to session TOML files and can be replayed to recreate the original output.
+During live execution, ralph renders content to stdout while it also accumulates structured `OutputBlock` variants. Nothing writes the blocks to disk. `extract_response_text()` joins the text blocks into the final response text that chat turns and naps use.
 
-## Architecture Diagram
+## Data Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           LIVE EXECUTION                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  Claude subprocess (--output-format stream-json)                            │
-│              │                                                               │
-│              ▼                                                               │
-│  StreamProcessor::process_line()                                            │
-│              │                                                               │
-│              ▼                                                               │
-│  parse_stream_line() → StreamEvent                                          │
-│              │                                                               │
-│              ▼                                                               │
-│  handle_event()                                                              │
-│      ├─────────────────────────────┬─────────────────────────────┐          │
-│      ▼                             ▼                             ▼          │
-│  Render to stdout           Build OutputBlock            Push to Vec        │
-│  (syntax highlighting)      (capture data)          (accumulate blocks)     │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           SERIALIZATION                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  StreamProcessor::finish() → StreamProcessorResult { output_blocks }        │
-│              │                                                               │
-│              ▼                                                               │
-│  IterationLog { output_blocks: Vec<OutputBlock>, ... }                      │
-│              │                                                               │
-│              ▼                                                               │
-│  write_iteration_log() → .sessions/<slug>/iteration-N.toml                  │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                             REPLAY                                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  fs::read_to_string(iteration-N.toml)                                       │
-│              │                                                               │
-│              ▼                                                               │
-│  toml::from_str() → IterationLog { output_blocks }                          │
-│              │                                                               │
-│              ▼                                                               │
-│  ReplayRenderer::render(block) for each block                               │
-│              │                                                               │
-│              ▼                                                               │
-│  print!() → stdout (recreates original output)                              │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+Claude subprocess (--output-format stream-json)
+        │
+        ▼
+StreamProcessor::process_line() → parse_stream_line() → StreamEvent
+        │
+        ▼
+handle_event()
+    ├── Render to stdout (syntax highlighting)
+    └── Build OutputBlock → push to output_blocks
+        │
+        ▼
+StreamProcessor::finish() → StreamProcessorResult { output_blocks }
+        │
+        ▼
+extract_response_text(&output_blocks) → Option<String>
 ```
 
 ## OutputBlock Enum
@@ -127,21 +89,10 @@ Tool results have variants to capture before/after states:
 | `stream_processor/block_builders.rs` | Helper functions to build OutputBlocks from tool data |
 | `stream_processor/processor.rs` | Accumulates blocks during streaming |
 | `stream_processor/event_handler.rs` | Pushes blocks during event processing |
-| `iteration/log.rs` | IterationLog struct with output_blocks field |
-| `replay.rs` | Loads and dispatches blocks for replay |
-| `replay_renderer.rs` | Renders OutputBlocks back to formatted strings |
 
-## Data Flow Details
+## Live Execution
 
-### Phase 1: Live Execution
-
-During execution, `StreamProcessor` handles Claude's JSON output:
-
-1. **Event Parsing**: Each line from Claude is parsed into a `StreamEvent`
-2. **Parallel Processing**: For each event:
-   - Render formatted content to stdout (with syntax highlighting)
-   - Build corresponding `OutputBlock` variant
-   - Push block to `output_blocks` vector
+For each event, `StreamProcessor` renders formatted content to stdout and pushes the matching `OutputBlock`:
 
 ```rust
 // In event_handler.rs - both actions happen together
@@ -153,68 +104,14 @@ if self.show_tool_invocations {
 }
 ```
 
-### Phase 2: Serialization
-
-After execution completes (or on interrupt):
-
-1. **Finish**: `StreamProcessor::finish()` returns `StreamProcessorResult` containing `output_blocks`
-2. **Log Creation**: `IterationLog` is created with the output_blocks
-3. **TOML Write**: `write_iteration_log()` serializes to `iteration-N.toml`
-
-The TOML format uses tagged enums with `#[serde(flatten)]` to merge variant fields at the same level as common fields:
-
-```toml
-[[output_blocks]]
-type = "text"
-[output_blocks.chunk]
-chunk_type = { Prose = {} }
-content = "Hello, world!"
-
-[[output_blocks]]
-type = "tool_invocation"
-tool_name = "Bash"
-invocation_type = "bash"
-command = "ls -la"
-description = "List files"
-
-[[output_blocks]]
-type = "tool_result"
-tool_name = "Edit"
-is_error = false
-result_type = "edit_before_after"
-file_path = "test.rs"
-old_content = "fn old() {}"
-new_content = "fn new() {}"
-```
-
-### Phase 3: Replay
-
-When replaying a session:
-
-1. **Load**: Read iteration TOML file and deserialize `IterationLog`
-2. **Render**: `ReplayRenderer` converts each block back to formatted output
-3. **Display**: Print to stdout, recreating the original terminal experience
-
-```rust
-// In replay.rs
-let renderer = ReplayRenderer::new(highlighter.clone(), is_terminal);
-for block in &log.output_blocks {
-    let rendered = renderer.render(block);
-    print!("{}", rendered);
-}
-```
-
-The `output_blocks` format captures full tool invocation and result data for complete replay fidelity.
-
 ## Design Decisions
 
 ### Why Store Data, Not Rendered Strings?
 
 Output blocks capture **structured data** rather than pre-rendered strings:
 
-- **Re-rendering**: Blocks can be rendered with different themes or terminal settings
 - **Testability**: Block data can be asserted without parsing ANSI codes
-- **Flexibility**: Future replay features can present data differently
+- **Text extraction**: The response text comes from text blocks, not from ANSI output
 
 ### Why Tool-Specific Variants?
 
@@ -244,8 +141,6 @@ let snapshot = EditSnapshot {
 // without re-reading the file system
 ```
 
-This ensures replay has complete data without file system access.
-
 ### Non-Exhaustive Enums
 
 All block enums use `#[non_exhaustive]`:
@@ -262,30 +157,3 @@ pub enum ToolResultVariant { ... }
 ```
 
 This allows adding new variants without breaking downstream code.
-
-## Interrupt Handling
-
-On SIGTERM or SIGINT during execution:
-
-1. Signal handler sets `INTERRUPTED` flag
-2. Subprocess drains remaining output
-3. `StreamProcessor::finish()` captures accumulated blocks
-4. Partial `IterationLog` is written with blocks up to interruption
-5. Session is marked as "interrupted"
-
-This ensures no output is lost even on early termination.
-
-## Testing
-
-Output block serialization is tested with round-trip assertions:
-
-```rust
-// In test_helpers.rs
-pub fn assert_toml_roundtrip<T: Serialize + DeserializeOwned + PartialEq>(value: &T) {
-    let serialized = toml::to_string(value).unwrap();
-    let deserialized: T = toml::from_str(&serialized).unwrap();
-    assert_eq!(*value, deserialized);
-}
-```
-
-Each variant has tests verifying TOML serialization/deserialization.

@@ -10,7 +10,7 @@ stream_processor/
 ├── processor.rs           # StreamProcessor struct and builder
 ├── event_handler.rs       # Event processing logic
 ├── result_handlers.rs     # Tool result handler functions
-├── output_block.rs        # Output block types for replay
+├── output_block.rs        # Output block types
 ├── block_builders.rs      # Functions to build output blocks
 ├── tool_display/          # Tool invocation formatters
 │   ├── mod.rs
@@ -118,7 +118,7 @@ pub fn handle_grep_result(
 }
 ```
 
-Handlers return `ToolResultOutput` containing both the formatted display string and the output block for replay serialization.
+Handlers return `ToolResultOutput` containing both the formatted display string and the output block.
 
 ## Parameter Extraction
 
@@ -144,9 +144,9 @@ impl GrepParams {
 
 This consolidates extraction logic that would otherwise be duplicated across display and block builder functions.
 
-## Output Blocks for Replay
+## Output Blocks
 
-The processor accumulates `OutputBlock` instances during execution for replay serialization:
+The processor accumulates `OutputBlock` instances during execution:
 
 ```rust
 pub enum OutputBlock {
@@ -157,7 +157,7 @@ pub enum OutputBlock {
 }
 ```
 
-Each block captures **data**, not rendered strings, allowing re-rendering with different highlighting settings during replay.
+Each block captures **data**, not rendered strings. `extract_response_text()` joins the prose blocks into the final response text for chat turns and naps.
 
 ## Block-Buffered Prose Rendering
 
@@ -185,11 +185,11 @@ Prose chunks are scanned for directive tags (`<ralph-{verb} to="...">...</ralph-
 - Directive blocks receive trailing newlines matching code/diff block behavior
 - In `extract_response_text()`, directive chunks are reconstructed back to XML tags
 
-The splitting happens in `event_handler.rs` at both streaming sites (line processing and flush). The reconstruction happens in `iteration/log.rs::text_block_to_response_text()`.
+The splitting happens in `event_handler.rs` at both streaming sites (line processing and flush). The reconstruction happens in `output_block.rs::text_block_to_response_text()`.
 
 ## Shared Markdown Skin
 
-`create_markdown_skin()` in `markdown.rs` is the single source of truth for terminal markdown styling. Both `StreamProcessor` and `ReplayRenderer` use it, ensuring identical rendering between live streaming and replay.
+`create_markdown_skin()` in `markdown.rs` is the single source of truth for terminal markdown styling. `StreamProcessor`, `render/text.rs`, and the chat shell use it, so all terminal markdown looks the same.
 
 ## Table Enhancement
 

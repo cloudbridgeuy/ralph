@@ -39,10 +39,10 @@ All commits should follow the conventional commit format. This makes git history
 
 ```bash
 # New feature
-feat(ask): add --clone-session flag for branching conversations
+feat(ask): add --permission-mode flag for tool execution
 
 # Bug fix
-fix(session): prevent duplicate iteration sequence numbers
+fix(chat): keep memory node ids stable across naps
 
 # Refactoring
 refactor(startup): extract display functions to separate module
@@ -51,7 +51,7 @@ refactor(startup): extract display functions to separate module
 docs: add git-workflow.md for Progressive Disclosure pattern
 
 # Multiple scopes
-feat(cli,ask): add --history flag with terminal rendering
+feat(cli,ask): add --verbose-tools flag for full tool output
 ```
 
 ### Guidelines

@@ -14,21 +14,16 @@ Ralph stores its configuration in platform-specific directories:
 
 ### Environment Variable Overrides
 
-You can override the default directories using environment variables:
+You can override the config directory with an environment variable:
 
 | Variable | Purpose |
 |----------|---------|
 | `RALPH_CONFIG_DIR` | Override config directory (where `config.toml` is stored) |
-| `RALPH_DATA_DIR` | Override data directory (where sessions are stored) |
 
 Example:
 ```bash
 # Use a custom config directory
 export RALPH_CONFIG_DIR=/path/to/custom/config
-ralph ask 'your prompt'
-
-# Use a different data directory for sessions
-export RALPH_DATA_DIR=/mnt/large-disk/ralph-sessions
 ralph ask 'your prompt'
 ```
 
@@ -159,31 +154,9 @@ ralph ask --no-background 'your prompt'
 
 `--skill` and `RALPH_CHAT_SKILLS` replace `skills`. See [ralph chat](context/ralph-chat.md).
 
-## Data Directory Structure
+## Chat Store
 
-Ralph stores session data separately from configuration:
-
-| Platform | Data Directory |
-|----------|----------------|
-| **Linux** | `~/.local/share/ralph/` |
-| **macOS** | `~/Library/Application Support/ralph/` |
-| **Windows** | `%APPDATA%\ralph\` |
-
-Contents:
-```
-~/.local/share/ralph/           # Data directory
-├── sessions.toml               # Session index
-└── sessions/                   # Session directories
-    ├── quiet-mountain/         # One directory per session
-    │   ├── session.toml        # Session metadata
-    │   ├── iteration-1.toml    # First iteration log
-    │   ├── iteration-2.toml    # Second iteration log
-    │   └── ...
-    └── bright-river/
-        └── ...
-```
-
-`ralph chat` keeps its own store at `~/.ralph/chat`, outside the data directory. See [ralph chat](context/ralph-chat.md).
+`ralph ask` stores nothing. `ralph chat` keeps its store at `~/.ralph/chat`. See [ralph chat](context/ralph-chat.md).
 
 ## Verbose Tools Configuration
 
@@ -227,7 +200,6 @@ Without `--verbose-tools`, tool output is shown in a compact format:
 | Variable | Purpose | Example |
 |----------|---------|---------|
 | `RALPH_CONFIG_DIR` | Override config directory | `/custom/config` |
-| `RALPH_DATA_DIR` | Override data directory | `/mnt/data/ralph` |
 | `RALPH_THEME` | Set syntax highlighting theme | `Solarized (dark)` |
 | `RALPH_NO_BACKGROUND` | Disable theme backgrounds | `1` |
 | `RALPH_PERMISSION_MODE` | Permission mode for `ralph ask` | `acceptEdits` |
