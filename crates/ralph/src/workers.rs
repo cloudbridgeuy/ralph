@@ -44,7 +44,7 @@ impl Workers {
             Harness::Opencode { model } => {
                 let config = opencode_config(model, &self.exe, id, &inbox);
                 fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
-                opencode_command(task)
+                opencode_command(id, task)
             }
         };
         run(Command::new("tmux")

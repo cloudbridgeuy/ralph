@@ -212,7 +212,8 @@ pub fn worker_command(mcp_config: &Path, task: &str) -> Vec<String> {
     .to_vec()
 }
 
-pub fn opencode_command(task: &str) -> Vec<String> {
+pub fn opencode_command(id: &str, task: &str) -> Vec<String> {
+    let session = format!("ses_ralph{id}");
     let prompt = format!("{WORKER_PROMPT}\n\n{task}");
     [
         "zsh",
@@ -220,6 +221,8 @@ pub fn opencode_command(task: &str) -> Vec<String> {
         r#"exec "$0" "$@""#,
         "opencode",
         "--auto",
+        "--session",
+        &session,
         "--prompt",
         &prompt,
     ]
@@ -450,10 +453,19 @@ mod tests {
     }
 
     #[test]
-    fn opencode_command_runs_the_tui_with_the_worker_rules_and_task() {
-        let args = opencode_command("do it");
+    fn opencode_command_runs_the_tui_in_the_worker_session_with_rules_and_task() {
+        let args = opencode_command("GUZ-1", "do it");
         assert_eq!(args[..2], ["zsh", "-lic"]);
-        assert_eq!(args[3..6], ["opencode", "--auto", "--prompt"]);
+        assert_eq!(
+            args[3..8],
+            [
+                "opencode",
+                "--auto",
+                "--session",
+                "ses_ralphGUZ-1",
+                "--prompt"
+            ]
+        );
         let prompt = args.last().unwrap();
         assert!(prompt.starts_with(WORKER_PROMPT));
         assert!(prompt.ends_with("\n\ndo it"));
