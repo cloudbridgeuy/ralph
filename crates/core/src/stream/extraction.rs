@@ -177,63 +177,6 @@ impl AssistantEvent {
     }
 }
 
-/// Extract text content from a slice of stream events.
-///
-/// Filters for `StreamEvent::Assistant` variants and concatenates all text content
-/// from their messages in order.
-///
-/// # Arguments
-///
-/// * `events` - A slice of stream events to extract text from
-///
-/// # Returns
-///
-/// A `String` containing all assistant text content. Returns an empty string if there
-/// are no assistant events or they contain no text.
-///
-/// # Example
-///
-/// ```
-/// use ralph_core::stream::{extract_text_from_events, StreamEvent, AssistantEvent, AssistantMessage, ContentBlock, SystemEvent};
-///
-/// let events = vec![
-///     StreamEvent::System(SystemEvent {
-///         subtype: Some("init".to_string()),
-///         session_id: None,
-///         model: None,
-///         tools: vec![],
-///     }),
-///     StreamEvent::Assistant(AssistantEvent {
-///         message: AssistantMessage {
-///             id: None,
-///             content: vec![ContentBlock::Text { text: "First message. ".to_string() }],
-///             model: None,
-///             stop_reason: None,
-///         },
-///     }),
-///     StreamEvent::Assistant(AssistantEvent {
-///         message: AssistantMessage {
-///             id: None,
-///             content: vec![ContentBlock::Text { text: "Second message.".to_string() }],
-///             model: None,
-///             stop_reason: None,
-///         },
-///     }),
-/// ];
-///
-/// assert_eq!(extract_text_from_events(&events), "First message. Second message.");
-/// ```
-pub fn extract_text_from_events(events: &[StreamEvent]) -> String {
-    events
-        .iter()
-        .filter_map(|event| match event {
-            StreamEvent::Assistant(ast) => Some(ast.extract_text()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("")
-}
-
 /// Extract tool invocations from a slice of stream events.
 ///
 /// Filters for `StreamEvent::Assistant` variants and collects all tool invocations

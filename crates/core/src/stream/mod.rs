@@ -43,9 +43,7 @@ pub use events::{
     AssistantEvent, AssistantMessage, ContentBlock, ResultEvent, StreamEvent, SystemEvent, Tool,
     ToolResult, Usage, UserEvent, UserMessage,
 };
-pub use extraction::{
-    extract_text_from_events, extract_tool_invocations_from_events, ToolInvocation,
-};
+pub use extraction::{extract_tool_invocations_from_events, ToolInvocation};
 pub use metadata::{
     extract_metadata_from_events, extract_metadata_from_events_or_default, IterationMetadata,
 };
