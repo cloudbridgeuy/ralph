@@ -1,9 +1,2 @@
-[default]
-extend-ignore-identifiers-re = [
-  # *sigh* this just isn't worth the cost of fixing
-  "AttributeID.*Supress.*",
-]
-
-[default.extend-identifiers]
-# *sigh* this just isn't worth the cost of fixing
-AttributeIDSupressMenu = "AttributeIDSupressMenu"
+[files]
+extend-exclude = ["vendor/"]
