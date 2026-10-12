@@ -14,6 +14,7 @@ use crate::subprocess::{
 };
 use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
+use crate::workers::absolute_or_same;
 use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
     turn_prompt, turn_system_prompt, VIEW_LINES,
@@ -26,8 +27,8 @@ use ralph_core::chat_skills::{
     ChatSkill, SkillSources,
 };
 use ralph_core::chat_status::{
-    footer, last_turn_cache, latest_states, memory_size, route_input, session_worker_ids,
-    status_line, worker_states, Memory, Route, Status,
+    footer, last_turn_cache, latest_states, memory_size, route_input, status_line,
+    store_worker_ids, worker_states, Memory, Route, Status,
 };
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
 use reedline::{
@@ -85,20 +86,22 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn running_worker_ids() -> Vec<String> {
+fn running_worker_ids(store_dir: &Path) -> Vec<String> {
+    let store = store_dir.to_string_lossy();
     Command::new("tmux")
-        .args(["list-sessions", "-F", "#{session_name}"])
+        .args(["list-sessions", "-F", "#{session_name}\t#{@ralph_store}"])
         .stdin(Stdio::null())
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| session_worker_ids(&String::from_utf8_lossy(&output.stdout)))
+        .map(|output| store_worker_ids(&String::from_utf8_lossy(&output.stdout), &store))
         .unwrap_or_default()
 }
 
 struct Monitor {
     inbox: Inbox,
     store: Store,
+    store_dir: PathBuf,
     status: Mutex<Status>,
     seen: Mutex<HashMap<String, String>>,
     frozen_window: usize,
@@ -129,7 +132,7 @@ impl Monitor {
             seen.extend(latest_states(&pending));
             seen.clone()
         };
-        let workers = worker_states(&running_worker_ids(), &seen);
+        let workers = worker_states(&running_worker_ids(&self.store_dir), &seen);
         let memory = if with_memory {
             self.measure_memory()
         } else {
@@ -496,6 +499,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let monitor = Arc::new(Monitor {
         inbox: Inbox::new(store_dir.join(INBOX_DIR)),
         store: Store::new(store_dir.clone()),
+        store_dir: absolute_or_same(store_dir.clone()),
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
         frozen_window,

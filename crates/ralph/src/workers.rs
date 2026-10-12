@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const STORE_OPTION: &str = "@ralph_store";
 const STARTUP_POLL: Duration = Duration::from_millis(250);
 
 pub struct Workers {
@@ -42,6 +43,9 @@ impl Workers {
             .arg("-c")
             .arg(&worktree)
             .args(worker_command(&config, task)))?;
+        run(Command::new("tmux")
+            .args(["set-option", "-t", &format!("={session}:"), STORE_OPTION])
+            .arg(&self.store_dir))?;
         await_startup(&session)?;
         Ok(format!(
             "Worker {id} started in {} on branch {}. Watch it with: tmux attach -t {session}",
@@ -61,7 +65,7 @@ impl Workers {
 }
 
 /// Workers run inside `.worktrees/<id>`, so relative store paths would resolve wrongly there.
-fn absolute_or_same(path: PathBuf) -> PathBuf {
+pub fn absolute_or_same(path: PathBuf) -> PathBuf {
     std::path::absolute(&path).unwrap_or(path)
 }
 

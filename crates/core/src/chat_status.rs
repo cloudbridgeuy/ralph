@@ -109,11 +109,15 @@ pub fn route_input(line: &str, unread: usize) -> Route {
     }
 }
 
-pub fn session_worker_ids(tmux_sessions: &str) -> Vec<String> {
+/// Worker ids from `tmux list-sessions -F` lines of `<session>\t<@ralph_store>`,
+/// keeping only `ralph-*` sessions tagged with `store`.
+pub fn store_worker_ids(tmux_sessions: &str, store: &str) -> Vec<String> {
     let prefix = session_name("");
     let mut ids: Vec<String> = tmux_sessions
         .lines()
-        .filter_map(|name| name.trim().strip_prefix(&prefix))
+        .filter_map(|line| line.split_once('\t'))
+        .filter(|(_, tag)| tag.trim() == store)
+        .filter_map(|(name, _)| name.trim().strip_prefix(&prefix))
         .filter(|id| !id.is_empty())
         .map(str::to_string)
         .collect();
@@ -420,8 +424,17 @@ mod tests {
     }
 
     #[test]
+    fn store_worker_ids_keep_only_this_stores_sessions() {
+        let listing = "ralph-A\t/s\nralph-B\t/other\nralph-C\t\nralph-D\nmain\t/s\n";
+        assert_eq!(store_worker_ids(listing, "/s"), vec!["A"]);
+        assert_eq!(store_worker_ids(listing, "/other"), vec!["B"]);
+        assert!(store_worker_ids("", "/s").is_empty());
+    }
+
+    #[test]
     fn workers_come_from_prefixed_sessions_with_last_known_state() {
-        let ids = session_worker_ids("main\nralph-GUZ-1\nralph-GUZ-2\nralph-\n");
+        let listing = "main\t/s\nralph-GUZ-2\t/s\nralph-GUZ-1\t/s\nralph-\t/s\n";
+        let ids = store_worker_ids(listing, "/s");
         assert_eq!(ids, vec!["GUZ-1", "GUZ-2"]);
         let reports = [
             Report {
