@@ -1,8 +1,9 @@
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
-    branch_name, exclude_lines, opencode_command, opencode_config, session_name, startup_state,
-    worker_command, worker_mcp_config, worktree_add_args, worktree_path, Harness, Startup,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, TRUST_KEYS, WORKERS_DIR,
+    branch_name, claude_ready_settings, exclude_lines, opencode_command, opencode_config,
+    opencode_ready_plugin, ready_path, session_name, startup_state, worker_command,
+    worker_mcp_config, worktree_add_args, worktree_path, Harness, Startup, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, TRUST_KEYS, WORKERS_DIR,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -42,11 +43,21 @@ impl Workers {
         exclude(&repo, &exclude_lines(harness))?;
         ensure_worktree(&repo, &worktree, &branch_name(id))?;
         let inbox = self.store_dir.join(INBOX_DIR);
+        let ready = ready_path(&self.store_dir, id);
+        clear_ready(&ready)?;
         let command = match harness {
-            Harness::Claude => worker_command(&self.write_config(id)?, task),
+            Harness::Claude => {
+                let settings = self.write_settings(id, &ready)?;
+                worker_command(&self.write_config(id)?, &settings, task)
+            }
             Harness::Opencode { model } => {
                 let config = opencode_config(model, &self.exe, id, &inbox);
                 fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
+                let plugin = worktree.join(OPENCODE_PLUGIN_FILE);
+                if let Some(dir) = plugin.parent() {
+                    fs::create_dir_all(dir)?;
+                }
+                fs::write(plugin, opencode_ready_plugin(id, &ready))?;
                 opencode_command(id, task)
             }
         };
@@ -67,12 +78,28 @@ impl Workers {
                 OPENCODE_HARNESS,
             ]))?;
         }
-        await_startup(&session, harness)?;
-        Ok(format!(
-            "Worker {id} started in {} on branch {}. Watch it with: tmux attach -t {session}",
+        let confirmed = await_startup(&session, &ready)?;
+        let started = format!(
+            "Worker {id} started in {} on branch {}.",
             worktree.display(),
             branch_name(id)
-        ))
+        );
+        Ok(if confirmed {
+            format!("{started} Watch it with: tmux attach -t {session}")
+        } else {
+            format!(
+                "{started} Its ready signal is not confirmed yet after {}s; check it with: tmux attach -t {session}",
+                STARTUP_TIMEOUT.as_secs()
+            )
+        })
+    }
+
+    fn write_settings(&self, id: &str, ready: &Path) -> io::Result<PathBuf> {
+        let dir = self.store_dir.join(WORKERS_DIR);
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(format!("{id}.settings.json"));
+        fs::write(&path, claude_ready_settings(ready).to_string())?;
+        Ok(path)
     }
 
     fn write_config(&self, id: &str) -> io::Result<PathBuf> {
@@ -120,14 +147,31 @@ pub fn reply(id: &str, text: &str) -> io::Result<String> {
     Ok(format!("Sent to worker {id}."))
 }
 
-fn await_startup(session: &str, harness: &Harness) -> io::Result<()> {
+fn clear_ready(ready: &Path) -> io::Result<()> {
+    if let Some(dir) = ready.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    match fs::remove_file(ready) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
+fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
     let target = format!("={session}:");
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     let mut accepted = false;
+    let mut state = Startup::Starting;
     while Instant::now() < deadline {
+        if !session_exists(session)? {
+            return Err(io::Error::other(format!(
+                "worker exited during startup; its tmux session {session} is gone"
+            )));
+        }
         let pane = run(Command::new("tmux").args(["capture-pane", "-p", "-t", &target]))?;
-        match startup_state(harness, &String::from_utf8_lossy(&pane.stdout)) {
-            Startup::Ready => return Ok(()),
+        state = startup_state(&String::from_utf8_lossy(&pane.stdout), ready.exists());
+        match state {
+            Startup::Ready => return Ok(true),
             Startup::TrustPrompt if !accepted => {
                 run(Command::new("tmux")
                     .args(["send-keys", "-t", &target])
@@ -138,10 +182,12 @@ fn await_startup(session: &str, harness: &Harness) -> io::Result<()> {
         }
         thread::sleep(STARTUP_POLL);
     }
-    Err(io::Error::other(format!(
-        "worker started but its agent did not come up within {}s; check it with: tmux attach -t {session}",
-        STARTUP_TIMEOUT.as_secs()
-    )))
+    if state == Startup::TrustPrompt {
+        return Err(io::Error::other(format!(
+            "worker is stuck on the folder-trust prompt; answer it with: tmux attach -t {session}"
+        )));
+    }
+    Ok(false)
 }
 
 fn session_exists(session: &str) -> io::Result<bool> {
