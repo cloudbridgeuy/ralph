@@ -11,7 +11,7 @@
 //! - Syntax highlighting for code blocks using syntect
 //! - Diff highlighting with delta fallback chain
 //! - Terminal detection for automatic color support
-//! - Metadata and tool call extraction for iteration logs
+//! - Metadata and tool call extraction from stream events
 //! - Output block accumulation for response text extraction
 //!
 //! # Example
