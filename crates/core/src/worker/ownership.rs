@@ -115,6 +115,7 @@ pub struct CloseState {
     pub base: String,
     pub unmerged_commits: Option<usize>,
     pub opencode: bool,
+    pub markers: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +139,9 @@ pub fn close_plan(state: &CloseState, abandon: bool) -> Result<Vec<CloseStep>, S
     let nothing_left = state.owner == Owner::Missing
         && state.dirty_worktree.is_none()
         && state.unmerged_commits.is_none();
+    if nothing_left && state.markers {
+        return Ok(vec![CloseStep::ClearMarkers]);
+    }
     if nothing_left {
         return Err(format!(
             "Worker {id} has no tmux session, worktree or branch to close."
@@ -268,6 +272,7 @@ mod tests {
             base: "main".into(),
             unmerged_commits: Some(0),
             opencode: false,
+            markers: false,
         }
     }
 
@@ -303,6 +308,32 @@ mod tests {
         );
         state.unmerged_commits = None;
         assert!(close_plan(&state, true).is_err());
+    }
+
+    #[test]
+    fn close_plan_clears_markers_when_nothing_else_is_left() {
+        let mut state = close_state(Owner::Missing);
+        state.dirty_worktree = None;
+        state.unmerged_commits = None;
+        state.markers = true;
+        assert_eq!(close_plan(&state, false), Ok(vec![CloseStep::ClearMarkers]));
+    }
+
+    #[test]
+    fn close_plan_markers_do_not_bypass_refusals() {
+        let mut foreign = close_state(Owner::Foreign("/other".into()));
+        foreign.markers = true;
+        assert!(close_plan(&foreign, true).is_err());
+
+        let mut unmerged = close_state(Owner::Missing);
+        unmerged.unmerged_commits = Some(1);
+        unmerged.markers = true;
+        assert!(close_plan(&unmerged, false).is_err());
+
+        let mut dirty = close_state(Owner::Missing);
+        dirty.dirty_worktree = Some(true);
+        dirty.markers = true;
+        assert!(close_plan(&dirty, false).is_err());
     }
 
     #[test]
