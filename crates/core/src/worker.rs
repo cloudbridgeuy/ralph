@@ -9,6 +9,8 @@ pub const SERVER_NAME: &str = "ralph-worker";
 pub const INBOX_DIR: &str = "inbox";
 pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
+pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
+pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act; do not stop to ask for confirmation.
@@ -34,10 +36,23 @@ pub enum Outcome {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Harness {
+    Claude,
+    Opencode { model: String },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Spawn { id: String, task: String },
-    Reply { id: String, text: String },
+    Spawn {
+        id: String,
+        task: String,
+        harness: Harness,
+    },
+    Reply {
+        id: String,
+        text: String,
+    },
 }
 
 pub fn command_definitions() -> [Value; 2] {
@@ -49,7 +64,9 @@ pub fn command_definitions() -> [Value; 2] {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
-                    "task": {"type": "string", "description": "What the worker should do, in the person's terms."}
+                    "task": {"type": "string", "description": "What the worker should do, in the person's terms."},
+                    "harness": {"type": "string", "enum": ["claude", "opencode"], "description": "Agent to run. Default claude."},
+                    "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-5.6-sol."}
                 },
                 "required": ["id", "task"]
             }
@@ -71,8 +88,11 @@ pub fn command_definitions() -> [Value; 2] {
 
 pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>> {
     let parsed = match name {
-        "spawn_worker" => string_arg(args, "task")
-            .and_then(|task| worker_id(args).map(|id| Command::Spawn { id, task })),
+        "spawn_worker" => string_arg(args, "task").and_then(|task| {
+            let id = worker_id(args)?;
+            let harness = harness(args)?;
+            Ok(Command::Spawn { id, task, harness })
+        }),
         "reply" => string_arg(args, "text")
             .and_then(|text| worker_id(args).map(|id| Command::Reply { id, text })),
         _ => return None,
@@ -88,6 +108,30 @@ fn worker_id(args: &Value) -> Result<String, String> {
         Err(format!(
             "Worker id '{id}' may only use letters, digits and dashes."
         ))
+    }
+}
+
+fn harness(args: &Value) -> Result<Harness, String> {
+    let model = args.get("model").and_then(Value::as_str);
+    match (args.get("harness").and_then(Value::as_str), model) {
+        (None | Some("claude"), None) => Ok(Harness::Claude),
+        (None | Some("claude"), Some(_)) => {
+            Err("A model can only be set for the opencode harness.".to_string())
+        }
+        (Some("opencode"), model) => {
+            let model = model.unwrap_or(DEFAULT_OPENCODE_MODEL);
+            match model.split_once('/') {
+                Some((provider, name)) if !provider.is_empty() && !name.is_empty() => {
+                    Ok(Harness::Opencode {
+                        model: model.to_string(),
+                    })
+                }
+                _ => Err(format!("Model '{model}' must look like provider/model.")),
+            }
+        }
+        (Some(other), _) => Err(format!(
+            "Unknown harness '{other}'. Use claude or opencode."
+        )),
     }
 }
 
@@ -136,6 +180,20 @@ pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path) -> Value {
     })
 }
 
+pub fn opencode_config(model: &str, exe: &Path, id: &str, inbox: &Path) -> Value {
+    json!({
+        "$schema": "https://opencode.ai/config.json",
+        "model": model,
+        "mcp": {
+            SERVER_NAME: {
+                "type": "local",
+                "command": [exe.to_string_lossy(), "worker-mcp", "--id", id, "--inbox", inbox.to_string_lossy()],
+                "enabled": true
+            }
+        }
+    })
+}
+
 /// Runs Claude through a login, interactive zsh so the worker gets the same
 /// environment as a terminal the person opens; `$0 "$@"` keeps the arguments unquoted.
 pub fn worker_command(mcp_config: &Path, task: &str) -> Vec<String> {
@@ -154,6 +212,29 @@ pub fn worker_command(mcp_config: &Path, task: &str) -> Vec<String> {
     .to_vec()
 }
 
+pub fn opencode_command(task: &str) -> Vec<String> {
+    let prompt = format!("{WORKER_PROMPT}\n\n{task}");
+    [
+        "zsh",
+        "-lic",
+        r#"exec "$0" "$@""#,
+        "opencode",
+        "--auto",
+        "--prompt",
+        &prompt,
+    ]
+    .map(str::to_string)
+    .to_vec()
+}
+
+pub fn exclude_lines(harness: &Harness) -> Vec<String> {
+    let mut lines = vec![format!("/{WORKTREE_DIR}/")];
+    if let Harness::Opencode { .. } = harness {
+        lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
+    }
+    lines
+}
+
 /// Claude asks before working in a folder it has not seen; "No, exit" is preselected,
 /// so accepting takes Down then Enter.
 pub const TRUST_KEYS: [&str; 2] = ["Down", "Enter"];
@@ -165,10 +246,14 @@ pub enum Startup {
     Ready,
 }
 
-pub fn startup_state(pane: &str) -> Startup {
+pub fn startup_state(harness: &Harness, pane: &str) -> Startup {
+    let ready_marker = match harness {
+        Harness::Claude => "Claude Code v",
+        Harness::Opencode { .. } => "ctrl+p commands",
+    };
     if pane.contains("Yes, I trust this folder") {
         Startup::TrustPrompt
-    } else if pane.contains("Claude Code v") {
+    } else if pane.contains(ready_marker) {
         Startup::Ready
     } else {
         Startup::Starting
@@ -261,7 +346,8 @@ mod tests {
             parse_command("spawn_worker", &json!({"id": "GUZ-1", "task": "fix it"})),
             Some(Ok(Command::Spawn {
                 id: "GUZ-1".into(),
-                task: "fix it".into()
+                task: "fix it".into(),
+                harness: Harness::Claude
             }))
         );
         assert_eq!(
@@ -272,6 +358,52 @@ mod tests {
             }))
         );
         assert_eq!(parse_command("zoom", &json!({})), None);
+    }
+
+    fn spawn_harness(args: Value) -> Result<Harness, String> {
+        let mut args = args;
+        args["id"] = json!("A");
+        args["task"] = json!("t");
+        match parse_command("spawn_worker", &args) {
+            Some(Ok(Command::Spawn { harness, .. })) => Ok(harness),
+            Some(Ok(other)) => panic!("unexpected {other:?}"),
+            Some(Err(e)) => Err(e),
+            None => panic!("not a worker command"),
+        }
+    }
+
+    #[test]
+    fn spawn_harness_defaults_to_claude_and_opencode_to_sol() {
+        assert_eq!(spawn_harness(json!({})), Ok(Harness::Claude));
+        assert_eq!(
+            spawn_harness(json!({"harness": "claude"})),
+            Ok(Harness::Claude)
+        );
+        assert_eq!(
+            spawn_harness(json!({"harness": "opencode"})),
+            Ok(Harness::Opencode {
+                model: DEFAULT_OPENCODE_MODEL.into()
+            })
+        );
+        assert_eq!(
+            spawn_harness(json!({"harness": "opencode", "model": "openai/gpt-5.6-luna"})),
+            Ok(Harness::Opencode {
+                model: "openai/gpt-5.6-luna".into()
+            })
+        );
+    }
+
+    #[test]
+    fn spawn_harness_rejects_bad_choices() {
+        for args in [
+            json!({"harness": "codex"}),
+            json!({"model": "openai/gpt-5.6-sol"}),
+            json!({"harness": "opencode", "model": "gpt-5.6-sol"}),
+            json!({"harness": "opencode", "model": "openai/"}),
+            json!({"harness": "opencode", "model": "/sol"}),
+        ] {
+            assert!(spawn_harness(args.clone()).is_err(), "{args}");
+        }
     }
 
     #[test]
@@ -289,6 +421,7 @@ mod tests {
         let spawn = Command::Spawn {
             id: "A".into(),
             task: "t".into(),
+            harness: Harness::Claude,
         };
         assert!(command_allowed(&spawn, &[entry(Role::Assistant), entry(Role::User)]).is_ok());
         assert!(command_allowed(&spawn, &[entry(Role::User), entry(Role::Worker)]).is_err());
@@ -317,6 +450,46 @@ mod tests {
     }
 
     #[test]
+    fn opencode_command_runs_the_tui_with_the_worker_rules_and_task() {
+        let args = opencode_command("do it");
+        assert_eq!(args[..2], ["zsh", "-lic"]);
+        assert_eq!(args[3..6], ["opencode", "--auto", "--prompt"]);
+        let prompt = args.last().unwrap();
+        assert!(prompt.starts_with(WORKER_PROMPT));
+        assert!(prompt.ends_with("\n\ndo it"));
+    }
+
+    #[test]
+    fn opencode_config_sets_model_and_worker_server() {
+        let config = opencode_config(
+            "openai/gpt-5.6-sol",
+            Path::new("/bin/ralph"),
+            "A",
+            Path::new("/s/inbox"),
+        );
+        assert_eq!(config["model"], "openai/gpt-5.6-sol");
+        assert_eq!(
+            config["mcp"][SERVER_NAME],
+            json!({
+                "type": "local",
+                "command": ["/bin/ralph", "worker-mcp", "--id", "A", "--inbox", "/s/inbox"],
+                "enabled": true
+            })
+        );
+    }
+
+    #[test]
+    fn exclude_lines_add_opencode_config_only_for_opencode() {
+        assert_eq!(exclude_lines(&Harness::Claude), ["/.worktrees/"]);
+        assert_eq!(
+            exclude_lines(&Harness::Opencode {
+                model: "a/b".into()
+            }),
+            ["/.worktrees/", "/opencode.json"]
+        );
+    }
+
+    #[test]
     fn worktree_add_args_reuses_an_existing_branch() {
         let path = Path::new("/repo/.worktrees/GUZ-1");
         assert_eq!(
@@ -337,14 +510,32 @@ mod tests {
 
     #[test]
     fn startup_state_reads_the_pane() {
-        assert_eq!(startup_state(""), Startup::Starting);
+        let claude = Harness::Claude;
+        assert_eq!(startup_state(&claude, ""), Startup::Starting);
         assert_eq!(
-            startup_state(" Accessing workspace:\n ❯ No, exit\n   Yes, I trust this folder\n"),
+            startup_state(
+                &claude,
+                " Accessing workspace:\n ❯ No, exit\n   Yes, I trust this folder\n"
+            ),
             Startup::TrustPrompt
         );
         assert_eq!(
-            startup_state(" ▐▛███▛█   Claude Code v2.1.295\n❯ fix it\n"),
+            startup_state(&claude, " ▐▛███▛█   Claude Code v2.1.295\n❯ fix it\n"),
             Startup::Ready
+        );
+    }
+
+    #[test]
+    fn startup_state_reads_the_opencode_footer() {
+        let opencode = Harness::Opencode {
+            model: "a/b".into(),
+        };
+        let footer = "  /tmp/x:main           shift+tab agents  ctrl+p commands\n";
+        assert_eq!(startup_state(&opencode, footer), Startup::Ready);
+        assert_eq!(startup_state(&Harness::Claude, footer), Startup::Starting);
+        assert_eq!(
+            startup_state(&opencode, " ▐▛███▛█   Claude Code v2.1.295\n"),
+            Startup::Starting
         );
     }
 

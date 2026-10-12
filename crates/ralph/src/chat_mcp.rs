@@ -12,7 +12,7 @@ fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<St
         .map_err(|e| format!("Could not read chat memory: {e}"))?;
     command_allowed(command, &entries)?;
     match command {
-        Command::Spawn { id, task } => workers.spawn(id, task),
+        Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
         Command::Reply { id, text } => reply(id, text),
     }
     .map_err(|e| e.to_string())

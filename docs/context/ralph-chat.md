@@ -79,6 +79,8 @@ Hidden `ralph chat-mcp --store <DIR>` speaks newline-delimited JSON-RPC 2.0 on s
 
 Invalid ids, ids beyond the log, bad regexes, and store read errors return a tool result with `isError: true`.
 
+`spawn_worker` takes `id`, `task`, optional `harness` (`claude` default, or `opencode`) and optional `model` (`provider/model`, opencode only, default `openai/gpt-5.6-sol`). `worker::parse_command` refuses an unknown harness, a `model` for claude, and a model without a provider and name. Both harnesses run in tmux session `ralph-<id>` in `.worktrees/<id>` on branch `worker/<id>` through a login `zsh -lic`. Claude gets `--mcp-config <store>/workers/<id>.json` and the worker rules via `--append-system-prompt`. opencode runs its TUI on the shared background service (no `--standalone`) as `opencode --auto --prompt <worker rules + task>`; ralph writes `<worktree>/opencode.json` with `model` and a local `ralph-worker` MCP server, and adds `/opencode.json` next to `/.worktrees/` in the shared `.git/info/exclude`. `--auto` approves every tool call the worker makes. Spawn waits up to 20 s for `Claude Code v` (accepting the folder-trust prompt) or opencode's `ctrl+p commands` footer.
+
 ## Skills
 
 Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not load. No skills are bundled. The user names skill directories (each holds a `SKILL.md`, for example `~/.claude/skills/show-me`) and chat exposes them through a plugin.

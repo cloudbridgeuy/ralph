@@ -1,6 +1,7 @@
 use ralph_core::worker::{
-    branch_name, session_name, startup_state, worker_command, worker_mcp_config, worktree_add_args,
-    worktree_path, Startup, INBOX_DIR, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR,
+    branch_name, exclude_lines, opencode_command, opencode_config, session_name, startup_state,
+    worker_command, worker_mcp_config, worktree_add_args, worktree_path, Harness, Startup,
+    INBOX_DIR, OPENCODE_CONFIG_FILE, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io::{self, Write};
@@ -26,7 +27,7 @@ impl Workers {
         }
     }
 
-    pub fn spawn(&self, id: &str, task: &str) -> io::Result<String> {
+    pub fn spawn(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
         let session = session_name(id);
         if session_exists(&session)? {
             return Err(io::Error::other(format!("worker {id} is already running")));
@@ -35,18 +36,26 @@ impl Workers {
             Command::new("git").args(["rev-parse", "--show-toplevel"])
         )?));
         let worktree = worktree_path(&repo, id);
-        exclude_worktrees(&repo)?;
+        exclude(&repo, &exclude_lines(harness))?;
         ensure_worktree(&repo, &worktree, &branch_name(id))?;
-        let config = self.write_config(id)?;
+        let inbox = self.store_dir.join(INBOX_DIR);
+        let command = match harness {
+            Harness::Claude => worker_command(&self.write_config(id)?, task),
+            Harness::Opencode { model } => {
+                let config = opencode_config(model, &self.exe, id, &inbox);
+                fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
+                opencode_command(task)
+            }
+        };
         run(Command::new("tmux")
             .args(["new-session", "-d", "-s", &session])
             .arg("-c")
             .arg(&worktree)
-            .args(worker_command(&config, task)))?;
+            .args(command))?;
         run(Command::new("tmux")
             .args(["set-option", "-t", &format!("={session}:"), STORE_OPTION])
             .arg(&self.store_dir))?;
-        await_startup(&session)?;
+        await_startup(&session, harness)?;
         Ok(format!(
             "Worker {id} started in {} on branch {}. Watch it with: tmux attach -t {session}",
             worktree.display(),
@@ -88,16 +97,14 @@ pub fn reply(id: &str, text: &str) -> io::Result<String> {
     Ok(format!("Sent to worker {id}."))
 }
 
-/// Waits for Claude's UI, accepting the folder-trust prompt if it shows up.
-fn await_startup(session: &str) -> io::Result<()> {
+fn await_startup(session: &str, harness: &Harness) -> io::Result<()> {
     let target = format!("={session}:");
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     let mut accepted = false;
     while Instant::now() < deadline {
         let pane = run(Command::new("tmux").args(["capture-pane", "-p", "-t", &target]))?;
-        match startup_state(&String::from_utf8_lossy(&pane.stdout)) {
+        match startup_state(harness, &String::from_utf8_lossy(&pane.stdout)) {
             Startup::Ready => return Ok(()),
-            // A second Down could wrap the selection back to "No, exit".
             Startup::TrustPrompt if !accepted => {
                 run(Command::new("tmux")
                     .args(["send-keys", "-t", &target])
@@ -109,7 +116,7 @@ fn await_startup(session: &str) -> io::Result<()> {
         thread::sleep(STARTUP_POLL);
     }
     Err(io::Error::other(format!(
-        "worker started but Claude did not come up within {}s; check it with: tmux attach -t {session}",
+        "worker started but its agent did not come up within {}s; check it with: tmux attach -t {session}",
         STARTUP_TIMEOUT.as_secs()
     )))
 }
@@ -146,20 +153,24 @@ fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<()>
     Ok(())
 }
 
-fn exclude_worktrees(repo: &Path) -> io::Result<()> {
+fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {
     let common = stdout_line(run(Command::new("git").arg("-C").arg(repo).args([
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",
     ]))?);
     let path = Path::new(&common).join("info").join("exclude");
-    let line = format!("/{WORKTREE_DIR}/");
     let current = match fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e),
     };
-    if current.lines().any(|l| l.trim() == line) {
+    let missing: String = lines
+        .iter()
+        .filter(|line| !current.lines().any(|l| l.trim() == line.as_str()))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    if missing.is_empty() {
         return Ok(());
     }
     if let Some(dir) = path.parent() {
@@ -170,7 +181,7 @@ fn exclude_worktrees(repo: &Path) -> io::Result<()> {
     } else {
         "\n"
     };
-    fs::write(&path, format!("{current}{separator}{line}\n"))
+    fs::write(&path, format!("{current}{separator}{missing}"))
 }
 
 fn run(command: &mut Command) -> io::Result<Output> {
