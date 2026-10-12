@@ -5,7 +5,9 @@ use serde_json::{json, Value};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+mod hooks;
 mod ownership;
+pub use hooks::*;
 pub use ownership::*;
 
 pub const SERVER_NAME: &str = "ralph-worker";
@@ -13,8 +15,9 @@ pub const INBOX_DIR: &str = "inbox";
 pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
 pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
-pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-ready.ts";
+pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-worker.ts";
 pub const READY_DIR: &str = "ready";
+pub const REPORTED_DIR: &str = "reported";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const STORE_OPTION: &str = "@ralph_store";
@@ -26,7 +29,11 @@ pub const SESSION_FORMAT: &str =
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
 
-Call the report tool only when you finish, are truly blocked, or need a decision only the person can make; then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
+End every turn with the report tool: status done when the task is finished, blocked when you cannot go on, or question when you need a decision only the person can make, and a full summary in text. Then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
+
+pub const REPORT_REMINDER: &str = "You stopped without calling report. Call report now with status done, blocked or question and a full summary of what you did or what you need.";
+
+pub const PERMISSION_DENIED: &str = "No human approves prompts here. Do not retry. If you cannot continue, call report with status blocked or question and a full summary.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
@@ -36,13 +43,39 @@ pub struct Report {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportStatus {
+    Done,
+    Blocked,
+    Question,
+}
+
+impl ReportStatus {
+    pub const ALL: [ReportStatus; 3] = [Self::Done, Self::Blocked, Self::Question];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Blocked => "blocked",
+            Self::Question => "question",
+        }
+    }
+
+    fn parse(status: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|known| known.as_str() == status)
+            .ok_or_else(|| format!("Status '{status}' must be done, blocked or question."))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     Silent,
     Respond(Value),
     Report {
         id: Value,
-        status: String,
+        status: ReportStatus,
         text: String,
     },
 }
@@ -248,46 +281,8 @@ pub fn ready_path(store: &Path, id: &str) -> PathBuf {
     store.join(READY_DIR).join(id)
 }
 
-pub fn claude_ready_settings(ready: &Path) -> Value {
-    let quoted = format!("'{}'", ready.to_string_lossy().replace('\'', r"'\''"));
-    json!({
-        "hooks": {
-            "SessionStart": [{
-                "matcher": "startup",
-                "hooks": [{"type": "command", "command": format!("touch {quoted}")}]
-            }]
-        }
-    })
-}
-
-pub fn opencode_ready_plugin(id: &str, ready: &Path) -> String {
-    let session = Value::from(opencode_session_id(id));
-    let ready = Value::from(ready.to_string_lossy());
-    let plugin = Value::from(format!("ralph-ready-{id}"));
-    format!(
-        r#"import {{ writeFileSync }} from "node:fs"
-
-const SESSION = {session}
-const READY = {ready}
-const SIGNALS = new Set(["session.created", "session.inbox.enqueued"])
-
-export default {{
-  id: {plugin},
-  setup: async (ctx: any) => {{
-    void (async () => {{
-      try {{
-        for await (const event of ctx.event.subscribe({{}})) {{
-          if (SIGNALS.has(event?.type) && event?.data?.sessionID === SESSION) {{
-            writeFileSync(READY, "")
-            return
-          }}
-        }}
-      }} catch {{}}
-    }})()
-  }},
-}} as any
-"#
-    )
+pub fn reported_path(store: &Path, id: &str) -> PathBuf {
+    store.join(REPORTED_DIR).join(id)
 }
 
 pub fn opencode_session_id(id: &str) -> String {
@@ -346,12 +341,12 @@ pub fn tool_definitions() -> Value {
     json!([
         {
             "name": "report",
-            "description": "Send a message to the person who dispatched you. Use it only when you finish, get blocked, or need a decision, then stop and wait for their answer. Each report costs a full chat turn, so never send progress updates.",
+            "description": "Send a message to the person who dispatched you. Call it at the end of every turn: when you finish, get blocked, or need a decision. Then stop and wait for their answer. Each report costs a full chat turn, so never send progress updates.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "description": "One word: done, blocked, or question."},
-                    "text": {"type": "string", "description": "What happened, or what you need decided."}
+                    "status": {"type": "string", "enum": ReportStatus::ALL.map(ReportStatus::as_str), "description": "done: task finished. blocked: you cannot go on. question: you need a decision."},
+                    "text": {"type": "string", "description": "Full summary: what you did and what you found, or what blocks you, or what you need decided."}
                 },
                 "required": ["status", "text"]
             }
@@ -359,9 +354,12 @@ pub fn tool_definitions() -> Value {
     ])
 }
 
-fn parse_report(name: &str, args: &Value) -> Result<(String, String), String> {
+fn parse_report(name: &str, args: &Value) -> Result<(ReportStatus, String), String> {
     match name {
-        "report" => Ok((string_arg(args, "status")?, string_arg(args, "text")?)),
+        "report" => Ok((
+            ReportStatus::parse(&string_arg(args, "status")?)?,
+            string_arg(args, "text")?,
+        )),
         other => Err(format!("Unknown tool '{other}'.")),
     }
 }
@@ -629,7 +627,7 @@ mod tests {
             [
                 "/.worktrees/",
                 "/opencode.json",
-                "/.opencode/plugins/ralph-ready.ts"
+                "/.opencode/plugins/ralph-worker.ts"
             ]
         );
     }
@@ -678,28 +676,11 @@ mod tests {
     }
 
     #[test]
-    fn claude_ready_settings_touch_the_ready_file_on_startup_only() {
-        let settings = claude_ready_settings(Path::new("/s/it's/ready/A"));
-        let start = &settings["hooks"]["SessionStart"][0];
-        assert_eq!(start["matcher"], "startup");
+    fn reported_path_is_per_worker_in_the_store() {
         assert_eq!(
-            start["hooks"][0],
-            json!({"type": "command", "command": r"touch '/s/it'\''s/ready/A'"})
+            reported_path(Path::new("/s"), "A"),
+            PathBuf::from("/s/reported/A")
         );
-    }
-
-    #[test]
-    fn opencode_ready_plugin_answers_only_for_its_own_session() {
-        let plugin = opencode_ready_plugin("A", Path::new("/s/ready/\"A\""));
-        assert!(plugin.contains(r#"const SESSION = "ses_ralphA""#));
-        assert!(plugin.contains(r#"const READY = "/s/ready/\"A\"""#));
-        assert!(plugin.contains(r#"id: "ralph-ready-A""#));
-        assert!(plugin.contains(r#"["session.created", "session.inbox.enqueued"]"#));
-        assert!(plugin.contains("event?.data?.sessionID === SESSION"));
-        assert!(plugin.contains("writeFileSync(READY, \"\")\n            return"));
-        for forbidden in ["setInterval", "setTimeout", "child_process"] {
-            assert!(!plugin.contains(forbidden), "{forbidden}");
-        }
     }
 
     #[test]
@@ -719,10 +700,27 @@ mod tests {
             handle_request(&request),
             Outcome::Report {
                 id: json!(3),
-                status: "done".into(),
+                status: ReportStatus::Done,
                 text: "hello".into()
             }
         );
+    }
+
+    #[test]
+    fn report_schema_and_parser_accept_only_known_statuses() {
+        assert_eq!(
+            tool_definitions()[0]["inputSchema"]["properties"]["status"]["enum"],
+            json!(["done", "blocked", "question"])
+        );
+        for status in ReportStatus::ALL {
+            assert_eq!(ReportStatus::parse(status.as_str()), Ok(status));
+        }
+        let request = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "report", "arguments": {"status": "ok", "text": "hello"}}});
+        let Outcome::Respond(v) = handle_request(&request) else {
+            panic!("expected error response");
+        };
+        assert_eq!(v["result"]["isError"], true);
     }
 
     #[test]
