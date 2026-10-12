@@ -405,9 +405,7 @@ pub enum SessionOutcome {
     InProgress,
     /// Session completed successfully (all stories done)
     Completed,
-    /// Session was manually aborted by the user at the failure prompt
-    Aborted,
-    /// Session failed due to an error
+    #[serde(alias = "aborted")]
     Failed,
     /// Session was interrupted by a signal (SIGINT/SIGTERM)
     Interrupted,
@@ -418,7 +416,6 @@ impl std::fmt::Display for SessionOutcome {
         match self {
             SessionOutcome::InProgress => write!(f, "in_progress"),
             SessionOutcome::Completed => write!(f, "completed"),
-            SessionOutcome::Aborted => write!(f, "aborted"),
             SessionOutcome::Failed => write!(f, "failed"),
             SessionOutcome::Interrupted => write!(f, "interrupted"),
         }
@@ -835,7 +832,6 @@ mod tests {
     fn test_session_outcome_display() {
         assert_eq!(SessionOutcome::InProgress.to_string(), "in_progress");
         assert_eq!(SessionOutcome::Completed.to_string(), "completed");
-        assert_eq!(SessionOutcome::Aborted.to_string(), "aborted");
         assert_eq!(SessionOutcome::Failed.to_string(), "failed");
         assert_eq!(SessionOutcome::Interrupted.to_string(), "interrupted");
     }
@@ -858,6 +854,20 @@ mod tests {
         // Deserialize
         let parsed: Wrapper = toml::from_str("outcome = \"completed\"").unwrap();
         assert_eq!(parsed.outcome, SessionOutcome::Completed);
+    }
+
+    #[test]
+    fn test_session_entry_aborted_outcome_loads_as_failed() {
+        let toml = r#"
+[[sessions]]
+slug = "quiet-mountain"
+project = "/test/project"
+started_at = "2026-01-01T00:00:00Z"
+iterations = 2
+outcome = "aborted"
+"#;
+        let index: SessionsIndex = toml::from_str(toml).unwrap();
+        assert_eq!(index.sessions[0].outcome, SessionOutcome::Failed);
     }
 
     #[test]

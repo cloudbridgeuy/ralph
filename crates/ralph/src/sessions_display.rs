@@ -413,7 +413,6 @@ fn format_outcome(outcome: SessionOutcome, is_terminal: bool) -> String {
     let outcome_str = match outcome {
         SessionOutcome::Completed => "completed",
         SessionOutcome::InProgress => "in_progress",
-        SessionOutcome::Aborted => "aborted",
         SessionOutcome::Failed => "failed",
         SessionOutcome::Interrupted => "interrupted",
     };
@@ -422,7 +421,6 @@ fn format_outcome(outcome: SessionOutcome, is_terminal: bool) -> String {
         match outcome {
             SessionOutcome::Completed => format!("\x1b[32m{}\x1b[0m", outcome_str), // Green
             SessionOutcome::Failed => format!("\x1b[31m{}\x1b[0m", outcome_str),    // Red
-            SessionOutcome::Aborted => format!("\x1b[33m{}\x1b[0m", outcome_str),   // Yellow
             SessionOutcome::Interrupted => format!("\x1b[33m{}\x1b[0m", outcome_str), // Yellow
             SessionOutcome::InProgress => format!("\x1b[36m{}\x1b[0m", outcome_str), // Cyan
         }

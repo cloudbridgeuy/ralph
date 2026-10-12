@@ -48,7 +48,6 @@ ralph sessions [OPTIONS]
 |-------|-------------|
 | `in_progress` | Session is currently running or crashed without cleanup |
 | `completed` | Session completed successfully |
-| `aborted` | Session was aborted (no current command sets it) |
 | `failed` | Session failed |
 | `interrupted` | Session was interrupted by signal (Ctrl+C) |
 

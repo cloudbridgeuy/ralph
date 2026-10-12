@@ -27,8 +27,6 @@
 //! }
 //! ```
 
-mod accumulation;
-mod chunks;
 mod costs;
 mod events;
 mod extraction;
@@ -40,11 +38,6 @@ mod tools;
 mod tests;
 
 // Re-export all public types and functions
-pub use accumulation::{accumulate_text, AccumulatedMessage, TextAccumulator};
-pub use chunks::{
-    parse_chunks_from_events, parse_chunks_from_events_with_heuristics, parse_text_into_chunks,
-    parse_text_into_chunks_with_heuristics,
-};
 pub use costs::{extract_costs_from_events, extract_costs_from_events_or_default, IterationCosts};
 pub use events::{
     AssistantEvent, AssistantMessage, ContentBlock, ResultEvent, StreamEvent, SystemEvent, Tool,

@@ -12,12 +12,6 @@ mod extraction_tests;
 #[path = "tests/tool_invocation.rs"]
 mod tool_invocation_tests;
 
-#[path = "tests/text_accumulation.rs"]
-mod text_accumulation_tests;
-
-#[path = "tests/chunk_parsing.rs"]
-mod chunk_parsing_tests;
-
 #[path = "tests/iteration_costs.rs"]
 mod iteration_costs_tests;
 

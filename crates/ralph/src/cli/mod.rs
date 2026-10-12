@@ -112,7 +112,7 @@ pub struct SessionsArgs {
 
     /// Filter sessions by outcome status.
     ///
-    /// Valid values: in_progress, completed, aborted, failed, interrupted
+    /// Valid values: in_progress, completed, failed, interrupted
     #[arg(long)]
     pub outcome: Option<String>,
 }
