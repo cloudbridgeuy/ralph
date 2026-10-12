@@ -36,8 +36,8 @@ mod utils;
 
 // Re-export public API
 pub use output_block::{
-    GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem, ToolInvocationBlock,
-    ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
+    extract_response_text, GrepInvocationBuilder, OutputBlock, TextBlock, TodoItem,
+    ToolInvocationBlock, ToolInvocationVariant, ToolResultBlock, ToolResultVariant,
 };
 pub use processor::{StreamProcessor, StreamProcessorBuilder};
 pub use types::{StreamProcessorResult, VerboseToolsConfig};

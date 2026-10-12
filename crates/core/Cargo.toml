@@ -15,12 +15,9 @@ path = "src/lib.rs"
 
 [dependencies]
 # Core dependencies for pure transformation functions
-chrono = { workspace = true }
-rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = { workspace = true }
 unicode-width = "0.2"
 
 [lints]

@@ -1,7 +1,7 @@
 //! Terminal-formatted output with ANSI escape codes.
 
 use super::formatters::{format_duration, format_token_count};
-use super::types::{AskSummary, ConversationHistory, PromptDisplay};
+use super::types::{AskSummary, PromptDisplay};
 use crate::markdown::MarkdownRenderer;
 
 /// Display prompt with terminal formatting.
@@ -58,12 +58,6 @@ pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
     };
     println!("{} {}Ask {}\x1b[0m", status_icon, status_color, status_text);
     println!();
-
-    // Session slug (prominently displayed for replay)
-    println!("\x1b[1mSession:\x1b[0m \x1b[33m{}\x1b[0m", summary.slug);
-
-    // Metrics section
-    println!();
     println!("\x1b[2m─── Metrics ───\x1b[0m");
 
     // Cost
@@ -97,65 +91,5 @@ pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
         );
     }
 
-    println!();
-    println!("\x1b[2mReplay with: ralph replay {}\x1b[0m", summary.slug);
-    println!();
-}
-
-/// Display conversation history with terminal formatting.
-pub(super) fn display_conversation_history_terminal(history: &ConversationHistory) {
-    println!();
-    println!(
-        "\x1b[1m\x1b[36m━━━ Conversation History: {} ━━━\x1b[0m",
-        history.slug
-    );
-    println!();
-
-    if history.is_empty() {
-        println!("\x1b[2mNo conversation history found.\x1b[0m");
-        println!();
-        return;
-    }
-
-    let renderer = MarkdownRenderer::new();
-
-    for turn in &history.turns {
-        // User message header
-        println!(
-            "\x1b[1m\x1b[34m▶ User (Iteration {})\x1b[0m",
-            turn.iteration
-        );
-        println!("\x1b[34m{}\x1b[0m", "─".repeat(60));
-        println!();
-
-        // Render user prompt with markdown
-        let rendered_prompt = renderer.render(&turn.prompt);
-        println!("{}", rendered_prompt);
-
-        println!();
-
-        // Assistant message header
-        println!("\x1b[1m\x1b[32m◀ Assistant\x1b[0m");
-        println!("\x1b[32m{}\x1b[0m", "─".repeat(60));
-        println!();
-
-        // Render assistant response with markdown
-        if turn.response.is_empty() {
-            println!("\x1b[2m(No response recorded)\x1b[0m");
-        } else {
-            let rendered_response = renderer.render(&turn.response);
-            println!("{}", rendered_response);
-        }
-
-        println!();
-        println!("\x1b[2m{}\x1b[0m", "═".repeat(60));
-        println!();
-    }
-
-    println!(
-        "\x1b[2m{} turn(s) in session '{}'\x1b[0m",
-        history.turns.len(),
-        history.slug
-    );
     println!();
 }

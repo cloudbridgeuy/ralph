@@ -233,163 +233,25 @@ fn test_spinner_context_changes_while_running() {
     spinner.stop();
 }
 
-// Session info tests
-
-#[test]
-fn test_spinner_session_info_default() {
-    let info = SpinnerSessionInfo::default();
-    assert!(info.persona.is_none());
-    assert!(info.slug.is_none());
-    assert!(info.current_iteration.is_none());
-    assert!(info.max_iterations.is_none());
-    assert!(!info.has_info());
-}
-
-#[test]
-fn test_spinner_session_info_new() {
-    let info = SpinnerSessionInfo::new("brave-panda".to_string(), 2, 5);
-    assert!(info.persona.is_none());
-    assert_eq!(info.slug, Some("brave-panda".to_string()));
-    assert_eq!(info.current_iteration, Some(2));
-    assert_eq!(info.max_iterations, Some(5));
-    assert!(info.has_info());
-}
-
-#[test]
-fn test_spinner_session_info_partial() {
-    let info = SpinnerSessionInfo {
-        slug: Some("test-session".to_string()),
-        ..Default::default()
-    };
-    assert!(info.has_info());
-
-    let info2 = SpinnerSessionInfo {
-        current_iteration: Some(1),
-        ..Default::default()
-    };
-    assert!(info2.has_info());
-}
-
 #[test]
 fn test_format_session_info_empty() {
-    let info = SpinnerSessionInfo::default();
-    let display = format_session_info(&info);
-    assert_eq!(display, "");
+    assert_eq!(format_session_info(&SpinnerSessionInfo::default()), "");
 }
 
 #[test]
-fn test_format_session_info_full() {
-    let info = SpinnerSessionInfo::new("brave-panda".to_string(), 2, 5);
-    let display = format_session_info(&info);
-    assert_eq!(display, "Session: brave-panda | Iteration: 2/5");
-}
-
-#[test]
-fn test_format_session_info_slug_only() {
+fn test_format_session_info_persona() {
     let info = SpinnerSessionInfo {
-        slug: Some("test-session".to_string()),
-        ..Default::default()
+        persona: Some("developer".to_string()),
     };
-    let display = format_session_info(&info);
-    assert_eq!(display, "Session: test-session");
-}
-
-#[test]
-fn test_format_session_info_iteration_only() {
-    let info = SpinnerSessionInfo {
-        current_iteration: Some(3),
-        max_iterations: Some(10),
-        ..Default::default()
-    };
-    let display = format_session_info(&info);
-    assert_eq!(display, "Iteration: 3/10");
+    assert_eq!(format_session_info(&info), "developer");
 }
 
 #[test]
 fn test_spinner_with_session_context() {
-    let info = SpinnerSessionInfo::new("brave-panda".to_string(), 1, 3);
+    let info = SpinnerSessionInfo {
+        persona: Some("chat".to_string()),
+    };
     let spinner = Spinner::with_session_context(5000, info);
     assert_eq!(spinner.session_elapsed_ms, 5000);
-    assert!(spinner.session_info.has_info());
-    assert_eq!(spinner.session_info.slug, Some("brave-panda".to_string()));
-}
-
-// Persona-related tests
-
-#[test]
-fn test_spinner_session_info_has_info_persona_only() {
-    let info = SpinnerSessionInfo {
-        persona: Some("developer".to_string()),
-        ..Default::default()
-    };
-    assert!(info.has_info());
-}
-
-#[test]
-fn test_format_session_info_persona_with_full_session() {
-    let info = SpinnerSessionInfo {
-        persona: Some("developer".to_string()),
-        slug: Some("brave-panda".to_string()),
-        current_iteration: Some(2),
-        max_iterations: Some(5),
-    };
-    let display = format_session_info(&info);
-    assert_eq!(display, "developer (brave-panda 2/5)");
-}
-
-#[test]
-fn test_format_session_info_persona_with_unknown_max() {
-    let info = SpinnerSessionInfo {
-        persona: Some("developer".to_string()),
-        slug: Some("brave-panda".to_string()),
-        current_iteration: Some(2),
-        max_iterations: None,
-    };
-    let display = format_session_info(&info);
-    assert_eq!(display, "developer (brave-panda 2/?)");
-}
-
-#[test]
-fn test_format_session_info_persona_with_slug_only() {
-    let info = SpinnerSessionInfo {
-        persona: Some("developer".to_string()),
-        slug: Some("brave-panda".to_string()),
-        ..Default::default()
-    };
-    let display = format_session_info(&info);
-    assert_eq!(display, "developer (brave-panda)");
-}
-
-#[test]
-fn test_format_session_info_persona_with_iteration_only() {
-    let info = SpinnerSessionInfo {
-        persona: Some("developer".to_string()),
-        current_iteration: Some(3),
-        max_iterations: Some(10),
-        ..Default::default()
-    };
-    let display = format_session_info(&info);
-    assert_eq!(display, "developer (3/10)");
-}
-
-#[test]
-fn test_format_session_info_persona_only() {
-    let info = SpinnerSessionInfo {
-        persona: Some("developer".to_string()),
-        ..Default::default()
-    };
-    let display = format_session_info(&info);
-    assert_eq!(display, "developer");
-}
-
-#[test]
-fn test_format_session_info_persona_with_iteration_no_max() {
-    let info = SpinnerSessionInfo {
-        persona: Some("reviewer".to_string()),
-        current_iteration: Some(1),
-        max_iterations: None,
-        ..Default::default()
-    };
-    let display = format_session_info(&info);
-    assert_eq!(display, "reviewer (1/?)");
+    assert_eq!(spinner.session_info.persona, Some("chat".to_string()));
 }

@@ -4,10 +4,10 @@ use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::highlight::ThemeConfig;
 use crate::invoke::build_chat_command;
-use crate::iteration::extract_response_text;
 use crate::markdown::create_markdown_skin;
 use crate::signal;
 use crate::spinner::SpinnerSessionInfo;
+use crate::stream_processor::extract_response_text;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, SubprocessError,
@@ -319,9 +319,6 @@ impl Turn<'_> {
             verbose_tools: VerboseToolsConfig::new(),
             session_info: SpinnerSessionInfo {
                 persona: Some("chat".into()),
-                slug: None,
-                current_iteration: None,
-                max_iterations: None,
             },
             pause: None,
             cancel: None,

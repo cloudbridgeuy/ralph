@@ -55,7 +55,6 @@ prettytable = "0.10"
 ralph_core = { version = "0.0.0", path = "crates/core" }
 
 # Random number generation
-rand = "0.10.0"
 
 # Regex
 regex = "1.0"

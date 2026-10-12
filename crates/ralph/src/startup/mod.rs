@@ -1,4 +1,4 @@
-//! Prompt, summary, and conversation history display for the ask command.
+//! Prompt and summary display for the ask command.
 //!
 //! The display adapts based on terminal detection:
 //! - Terminal: Uses box drawing characters and ANSI colors
@@ -14,5 +14,5 @@ mod types;
 mod tests;
 
 // Re-export public API
-pub use display::{display_ask_summary, display_conversation_history, display_prompt};
-pub use types::{AskSummary, ConversationHistory, PromptDisplay};
+pub use display::{display_ask_summary, display_prompt};
+pub use types::{AskSummary, PromptDisplay};

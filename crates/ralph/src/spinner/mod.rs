@@ -71,37 +71,9 @@ impl SpinnerContext {
     }
 }
 
-/// Session metadata for spinner display.
-///
-/// Groups session context information to display alongside the spinner,
-/// keeping the function signatures under 5 arguments.
 #[derive(Debug, Clone, Default)]
 pub struct SpinnerSessionInfo {
-    /// Persona name (e.g., "developer").
     pub persona: Option<String>,
-    /// Session slug/name (e.g., "brave-panda").
-    pub slug: Option<String>,
-    /// Current iteration number (1-indexed).
-    pub current_iteration: Option<usize>,
-    /// Total number of iterations for the session.
-    pub max_iterations: Option<usize>,
-}
-
-impl SpinnerSessionInfo {
-    /// Create new session info with all fields (without persona).
-    pub fn new(slug: String, current_iteration: usize, max_iterations: usize) -> Self {
-        Self {
-            persona: None,
-            slug: Some(slug),
-            current_iteration: Some(current_iteration),
-            max_iterations: Some(max_iterations),
-        }
-    }
-
-    /// Check if any session info is available.
-    pub fn has_info(&self) -> bool {
-        self.persona.is_some() || self.slug.is_some() || self.current_iteration.is_some()
-    }
 }
 
 /// A spinner that displays while waiting for LLM responses.
@@ -188,7 +160,7 @@ impl Spinner {
     /// # Arguments
     ///
     /// * `session_elapsed_ms` - Accumulated time from previous iterations
-    /// * `session_info` - Session metadata (slug, iteration numbers)
+    /// * `session_info` - Persona label shown next to the spinner
     pub fn with_session_context(session_elapsed_ms: u64, session_info: SpinnerSessionInfo) -> Self {
         Self::create(
             std::io::stdout().is_terminal(),
@@ -412,59 +384,8 @@ fn run_spinner(config: SpinnerThreadConfig) {
     }
 }
 
-/// Format session info for spinner display.
-///
-/// # Format
-///
-/// - With persona: `developer (brave-panda 2/5)` — compact format in parentheses
-/// - Without persona: `Session: brave-panda | Iteration: 2/5` — verbose labeled format
-/// - Returns empty string if no info is available.
 fn format_session_info(info: &SpinnerSessionInfo) -> String {
-    match info.persona {
-        Some(ref persona) => format_session_info_with_persona(persona, info),
-        None => format_session_info_without_persona(info),
-    }
-}
-
-/// Format session info with a persona prefix.
-///
-/// Uses compact format: `developer (brave-panda 2/5)`.
-/// Session details are placed in parentheses after the persona name.
-fn format_session_info_with_persona(persona: &str, info: &SpinnerSessionInfo) -> String {
-    let mut detail_parts = Vec::new();
-
-    if let Some(ref slug) = info.slug {
-        detail_parts.push(slug.clone());
-    }
-
-    match (info.current_iteration, info.max_iterations) {
-        (Some(current), Some(max)) => detail_parts.push(format!("{}/{}", current, max)),
-        (Some(current), None) => detail_parts.push(format!("{}/?", current)),
-        _ => {}
-    }
-
-    if detail_parts.is_empty() {
-        persona.to_string()
-    } else {
-        format!("{persona} ({})", detail_parts.join(" "))
-    }
-}
-
-/// Format session info without a persona.
-///
-/// Uses verbose labeled format: `Session: brave-panda | Iteration: 2/5`.
-fn format_session_info_without_persona(info: &SpinnerSessionInfo) -> String {
-    let mut parts = Vec::new();
-
-    if let Some(ref slug) = info.slug {
-        parts.push(format!("Session: {}", slug));
-    }
-
-    if let (Some(current), Some(max)) = (info.current_iteration, info.max_iterations) {
-        parts.push(format!("Iteration: {}/{}", current, max));
-    }
-
-    parts.join(" | ")
+    info.persona.clone().unwrap_or_default()
 }
 
 /// Format elapsed time for spinner display.
