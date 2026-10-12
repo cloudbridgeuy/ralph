@@ -76,7 +76,7 @@ pub struct ChatMcpArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
 
-    #[arg(long, value_name = "MODE", default_value = crate::invoke::DEFAULT_PERMISSION_MODE)]
+    #[arg(long, value_name = "MODE", default_value = crate::invoke::CHAT_DEFAULT_PERMISSION_MODE)]
     pub permission_mode: String,
 }
 
@@ -166,8 +166,8 @@ pub struct AskArgs {
     /// - default: Requires approval for all tools
     /// - acceptEdits: Auto-accepts file edits but requires approval for other tools
     /// - plan: Read-only mode, no tools can modify files
-    /// - auto: Claude decides which tool executions to approve (default)
-    /// - bypassPermissions: Auto-accepts all tool executions
+    /// - auto: Claude decides which tool executions to approve
+    /// - bypassPermissions: Auto-accepts all tool executions (default for ask command)
     ///
     /// SECURITY NOTE: bypassPermissions allows Claude to execute any tool without
     /// confirmation. Use with caution in untrusted environments.

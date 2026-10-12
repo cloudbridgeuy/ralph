@@ -488,7 +488,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         warn(format!("Failed to load config: {e}"));
         AppConfig::default()
     });
-    let permission_mode = config.permission_mode(args.permission_mode.as_deref());
+    let permission_mode = config.chat_permission_mode(
+        args.permission_mode.as_deref(),
+        std::env::var(crate::invoke::CHAT_PERMISSION_MODE_ENV)
+            .ok()
+            .as_deref(),
+    );
     let chat_config = config.chat;
     let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
     let mcp_config_path = write_mcp_config(

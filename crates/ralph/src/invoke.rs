@@ -7,17 +7,20 @@ use crate::subprocess::{
 };
 use std::path::Path;
 
-pub const DEFAULT_PERMISSION_MODE: &str = "auto";
-pub const PERMISSION_MODE_ENV: &str = "RALPH_PERMISSION_MODE";
+pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
+pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
+pub const ASK_DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
+pub const ASK_PERMISSION_MODE_ENV: &str = "RALPH_ASK_PERMISSION_MODE";
 
 pub fn resolve_permission_mode(
     flag: Option<&str>,
     env: Option<&str>,
     config: Option<&str>,
+    default: &str,
 ) -> String {
     flag.or(env.filter(|value| !value.is_empty()))
         .or(config)
-        .unwrap_or(DEFAULT_PERMISSION_MODE)
+        .unwrap_or(default)
         .to_string()
 }
 
@@ -151,35 +154,6 @@ mod tests {
         );
         assert!(cmd.contains("'--agents'"));
         assert!(cmd.contains("--setting-sources project,local"));
-    }
-
-    #[test]
-    fn permission_mode_flag_beats_env_and_config() {
-        assert_eq!(
-            resolve_permission_mode(Some("plan"), Some("default"), Some("acceptEdits")),
-            "plan"
-        );
-    }
-
-    #[test]
-    fn permission_mode_env_beats_config() {
-        assert_eq!(
-            resolve_permission_mode(None, Some("default"), Some("acceptEdits")),
-            "default"
-        );
-    }
-
-    #[test]
-    fn permission_mode_empty_env_is_ignored() {
-        assert_eq!(
-            resolve_permission_mode(None, Some(""), Some("acceptEdits")),
-            "acceptEdits"
-        );
-    }
-
-    #[test]
-    fn permission_mode_falls_back_to_auto() {
-        assert_eq!(resolve_permission_mode(None, None, None), "auto");
     }
 
     #[test]

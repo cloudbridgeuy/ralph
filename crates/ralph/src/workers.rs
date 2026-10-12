@@ -23,13 +23,15 @@ const STARTUP_POLL: Duration = Duration::from_millis(250);
 pub struct Workers {
     store_dir: PathBuf,
     exe: PathBuf,
+    permission_mode: String,
 }
 
 impl Workers {
-    pub fn new(store_dir: PathBuf, exe: PathBuf) -> Self {
+    pub fn new(store_dir: PathBuf, exe: PathBuf, permission_mode: String) -> Self {
         Self {
             store_dir: absolute_or_same(store_dir),
             exe,
+            permission_mode,
         }
     }
 

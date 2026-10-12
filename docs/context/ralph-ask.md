@@ -7,12 +7,12 @@ This document provides comprehensive documentation for the `ralph ask` command, 
 | Component | File | Description |
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | AskArgs struct definition |
-| Permission mode | `crates/ralph/src/invoke.rs`, `crates/ralph/src/config.rs` | resolve_permission_mode(), AppConfig::permission_mode() |
+| Permission mode | `crates/ralph/src/invoke.rs`, `crates/ralph/src/config.rs` | resolve_permission_mode(), AppConfig::ask_permission_mode() |
 | Shared engine | `crates/ralph/src/invoke.rs` | InvocationConfig, invoke(), command building |
 | Prompt source | `crates/ralph/src/prompt_source.rs` | classify_prompt_source(), read_from_source() |
 | Execution | `crates/ralph/src/main.rs` | execute_ask(), build_invocation_config(), resolve_ask_prompt() |
 | Summary | `crates/ralph/src/startup/display.rs` | display_ask_summary() |
-| Config | `crates/ralph/src/config.rs` | AppConfig with top-level permission_mode |
+| Config | `crates/ralph/src/config.rs` | AppConfig with AskSection |
 
 ## Purpose
 
@@ -28,7 +28,7 @@ The `ralph ask` command provides a streamlined interface for quick LLM interacti
 | `--timeout` | u64 | 600 | Subprocess timeout in seconds |
 | `--verbose-tools` | string | none | Verbose output for tools (omit value for all, or specify names) |
 | `--no-prompt` | flag | false | Suppress prompt display before execution |
-| `--permission-mode` | string | `auto` | Permission mode for tool execution |
+| `--permission-mode` | string | `bypassPermissions` | Permission mode for tool execution |
 
 ### Verbose Tools Examples
 
@@ -58,7 +58,7 @@ The prompt can be provided from multiple sources:
 
 ## Permission Modes
 
-The `--permission-mode` flag sets `claude --permission-mode`. `ask`, `ralph chat`, and chat's claude workers share one setting and one default, `auto`. Choices are claude's: `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` (see `claude --help`).
+The `--permission-mode` flag sets `claude --permission-mode`. `ask` has its own setting, default `bypassPermissions`: the user is present, watching, and can stop the run with Ctrl+C. Chat and its workers use `[chat] permission_mode` and `RALPH_CHAT_PERMISSION_MODE`, default `auto`, which do not change ask. Choices are claude's: `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` (see `claude --help`).
 
 ```bash
 ralph ask --permission-mode plan 'Analyze this code'
@@ -67,11 +67,9 @@ ralph ask --permission-mode plan 'Analyze this code'
 ### Configuration Precedence
 
 1. CLI flag (`--permission-mode`)
-2. Environment variable (`RALPH_PERMISSION_MODE`, ignored when empty)
-3. Top-level `permission_mode` in `~/.config/ralph/config.toml`
-4. Default (`auto`)
-
-`[ask] permission_mode` is no longer read.
+2. Environment variable (`RALPH_ASK_PERMISSION_MODE`, ignored when empty)
+3. `[ask] permission_mode` in `~/.config/ralph/config.toml`
+4. Default (`bypassPermissions`)
 
 Config file example:
 ```toml

@@ -5,14 +5,15 @@
 ## CLI
 
 ```bash
-ralph chat [--timeout 600] [--skill <PATH>]...
+ralph chat [--timeout 600] [--skill <PATH>]... [--permission-mode <MODE>]
 ralph                      # same as ralph chat with defaults
 ```
 
 - `--timeout <secs>` per turn, default 600 (`CHAT_TIMEOUT_SECS`).
 - `--skill <PATH>` (repeatable) adds a skill directory. See Skills.
+- `--permission-mode <MODE>` sets the claude permission mode for turns and claude workers. Precedence: flag, `RALPH_CHAT_PERMISSION_MODE`, `[chat] permission_mode` in the ralph config, then `auto`. Resolved once at chat start. `ralph ask` has its own setting.
 - Hidden `--store <DIR>` overrides the store path. Default is `~/.ralph/chat`; a missing home directory is an error. The directory is created at startup.
-- Hidden subcommands: `ralph chat-mcp --store <DIR>` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
+- Hidden subcommands: `ralph chat-mcp --store <DIR> --permission-mode <MODE>` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
 - Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). Ctrl-D or Ctrl-C at the prompt quits; an empty message does nothing unless reports are unread (see Worker inbox). Ctrl-C during a turn interrupts it and ends the chat.
 - A dark-gray full-width rule (the shared termimad skin's `---`, default gray(6) `―`) prints before the turn and after the reply.
 
@@ -33,7 +34,7 @@ ralph                      # same as ralph chat with defaults
 1. `Store::load_settled` takes the `LOCK` (blocking until any running nap finishes), then reads log and tree.
 2. `frozen_block(entries, tree, VIEW_LINES, FROZEN_WINDOW, pinned)` and `tail_lines` build the memory view in two parts. `VIEW_LINES` is 200 lines total; `FROZEN_WINDOW` is 32 entries by default. The frozen part is the view of the first `entries / window * window` entries with budget `200 - window`; the chat process pins it and rebuilds only when the entry count crosses a multiple of the window, even if nap summaries land mid-window, so it stays byte-identical for the whole window (default 32 entries) and the prompt cache hits it. The tail is one line per entry after that point. The window comes from `--frozen-window <N>`, else `[chat] frozen_window` in the ralph config, else 32; valid values are 1 to 199, anything else fails chat start with an error.
 3. The user message, or one `worker` entry per report for a worker turn, is appended to the log.
-4. `build_chat_command` runs a fresh `claude --verbose --permission-mode bypassPermissions` with isolation args, `--append-system-prompt <SYSTEM_PROMPT + frozen block>` (`turn_system_prompt`; just `SYSTEM_PROMPT` while the frozen part is empty), the MCP args, `--output-format stream-json`, and `-p <prompt>`. There is no `--resume` and no `--agent`. The prompt is the tail lines, a blank line, `New message:`, then the message. Only tail lines precede the message; no task text follows it.
+4. `build_chat_command` runs a fresh `claude --verbose --permission-mode <MODE>` (the chat's resolved mode) with isolation args, `--append-system-prompt <SYSTEM_PROMPT + frozen block>` (`turn_system_prompt`; just `SYSTEM_PROMPT` while the frozen part is empty), the MCP args, `--output-format stream-json`, and `-p <prompt>`. There is no `--resume` and no `--agent`. The prompt is the tail lines, a blank line, `New message:`, then the message. Only tail lines precede the message; no task text follows it.
 5. Output goes through the spinner subprocess runner and `StreamProcessor`, as in `ralph ask`.
 6. On exit code 0 with response text, the reply is appended verbatim and a detached `ralph chat-nap` is spawned (stdio null; spawn failure only warns). Otherwise a warning `chat turn failed (exit N)` prints and the loop continues. The user message stays in the log without a reply.
 7. An interrupted turn ends the chat. Other subprocess errors abort with an error.
@@ -68,7 +69,7 @@ Worker reports never interrupt the draft. A watcher thread polls every 500 ms an
 
 ## MCP tools
 
-`[chat] mcp_servers` in the ralph config (default `["mcptools"]`) names servers to import. `select_servers` copies each entry verbatim from the top-level `mcpServers` of `~/.claude.json`. A name absent there, or equal to `ralph-chat`, prints one warning and chat starts without it. `ralph-chat` is inserted last, so an import cannot shadow it. The file is written once at chat start: config changes need a restart. Imported entries can carry secrets, which is why they go in a file and not in argv. Turns run with `bypassPermissions`, so imported tools run without a prompt.
+`[chat] mcp_servers` in the ralph config (default `["mcptools"]`) names servers to import. `select_servers` copies each entry verbatim from the top-level `mcpServers` of `~/.claude.json`. A name absent there, or equal to `ralph-chat`, prints one warning and chat starts without it. `ralph-chat` is inserted last, so an import cannot shadow it. The file is written once at chat start: config changes need a restart. Imported entries can carry secrets, which is why they go in a file and not in argv. Turns run with the chat's permission mode (default `auto`), which decides whether imported tools need approval.
 
 Hidden `ralph chat-mcp --store <DIR>` speaks newline-delimited JSON-RPC 2.0 on stdio (server name `ralph-chat`). At chat start the shell writes `<store>/mcp.json` (mode `0600`) holding `ralph-chat` plus the servers named in `[chat] mcp_servers`, and `build_mcp_args` passes `--mcp-config <store>/mcp.json --strict-mcp-config`, so only those servers load. Each tool call re-reads log and tree without locking, so it sees fresh state.
 
@@ -107,7 +108,7 @@ Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not
 - `LOCK` is an exclusive file lock held for append, settled load, and the whole nap. Store paths that are symlinks or multiply-linked files are rejected.
 - Isolation: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Project and local settings stay active; this is context isolation, not a sandbox.
 - User agents in `~/.claude/agents` do not load, so `build_agents_args` passes the bundled `SUBAGENTS` (`evidence-collector` haiku, `implementer` sonnet, `reviser` opus) as `--agents <json>`. These copies may drift from `~/.claude/agents`.
-- Turns run with `bypassPermissions`.
+- Turns and claude workers run with the chat's resolved permission mode (default `auto`). `mcp.json` passes it to `chat-mcp`, which adds `--permission-mode <MODE>` to each claude worker command, so chat and workers never differ. opencode workers ignore it.
 
 ## Usage
 

@@ -132,7 +132,12 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
         verbose_tools,
         permission_mode: config::AppConfig::load()
             .unwrap_or_default()
-            .permission_mode(args.permission_mode.as_deref()),
+            .ask_permission_mode(
+                args.permission_mode.as_deref(),
+                std::env::var(invoke::ASK_PERMISSION_MODE_ENV)
+                    .ok()
+                    .as_deref(),
+            ),
     })
 }
 
