@@ -3,9 +3,22 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 pub const VIEW_LINES: usize = 200;
+pub const FROZEN_WINDOW: usize = 32;
+
+pub fn resolve_frozen_window(flag: Option<usize>, config: Option<usize>) -> Result<usize, String> {
+    let window = flag.or(config).unwrap_or(FROZEN_WINDOW);
+    if (1..VIEW_LINES).contains(&window) {
+        Ok(window)
+    } else {
+        Err(format!(
+            "frozen window {window} is out of range: use a value from 1 to {}.",
+            VIEW_LINES - 1
+        ))
+    }
+}
 
 pub const SYSTEM_PROMPT: &str = "\
-You are in a long-running chat with one person. The message you receive starts with the whole chat so far, compressed, oldest first, then the new message.
+You are in a long-running chat with one person. The chat so far is compressed, oldest first. The older lines are at the end of this system prompt. The most recent lines start the message you receive, then the new message.
 
 Lines that start with #<id> are summaries of older parts of the chat. The zoom tool opens one into its two halves. The recall tool searches the full chat by regex.
 
@@ -26,6 +39,16 @@ Development roles: you never do the work yourself; you scope it, decide, and acc
 Forget requests: you have no erase tool. Say so plainly; never summarize the item as resolved.
 
 The chat is logged automatically. Never claim to save, store, or remember anything manually.";
+
+pub fn turn_system_prompt(frozen: &[String]) -> String {
+    if frozen.is_empty() {
+        return SYSTEM_PROMPT.to_string();
+    }
+    format!(
+        "{SYSTEM_PROMPT}\n\nOlder chat, compressed, oldest first:\n{}",
+        frozen.join("\n")
+    )
+}
 
 pub fn turn_prompt(view_lines: &[String], message: &str) -> String {
     format!("{}\n\nNew message:\n{message}", view_lines.join("\n"))
@@ -118,6 +141,29 @@ pub fn build_agents_args() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frozen_window_resolution() {
+        assert_eq!(resolve_frozen_window(Some(5), Some(9)), Ok(5));
+        assert_eq!(resolve_frozen_window(None, Some(9)), Ok(9));
+        assert_eq!(resolve_frozen_window(None, None), Ok(32));
+        assert_eq!(resolve_frozen_window(Some(199), None), Ok(199));
+        assert!(resolve_frozen_window(Some(0), None)
+            .unwrap_err()
+            .contains("1 to 199"));
+        assert!(resolve_frozen_window(None, Some(200))
+            .unwrap_err()
+            .contains("200"));
+    }
+
+    #[test]
+    fn turn_system_prompt_appends_frozen_lines() {
+        assert_eq!(turn_system_prompt(&[]), SYSTEM_PROMPT);
+        let frozen = vec!["#0 a".to_string(), "#1 b".to_string()];
+        let prompt = turn_system_prompt(&frozen);
+        assert!(prompt.starts_with(SYSTEM_PROMPT));
+        assert!(prompt.ends_with("#0 a\n#1 b"));
+    }
 
     #[test]
     fn system_prompt_states_working_rules() {

@@ -91,6 +91,8 @@ pub struct ChatSection {
     pub mcp_servers: Vec<String>,
     #[serde(default)]
     pub skills: Vec<PathBuf>,
+    #[serde(default)]
+    pub frozen_window: Option<usize>,
 }
 
 fn default_mcp_servers() -> Vec<String> {
@@ -102,6 +104,7 @@ impl Default for ChatSection {
         Self {
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
+            frozen_window: None,
         }
     }
 }
@@ -249,6 +252,16 @@ mod tests {
         fs::write(&path, "[chat]\n").unwrap();
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.chat.mcp_servers, ["mcptools"]);
+    }
+
+    #[test]
+    fn chat_section_parses_frozen_window() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[chat]\nfrozen_window = 16\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.frozen_window, Some(16));
+        assert_eq!(AppConfig::new().chat.frozen_window, None);
     }
 
     #[test]
