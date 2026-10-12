@@ -25,14 +25,21 @@ pub struct Workers {
     store_dir: PathBuf,
     exe: PathBuf,
     permission_mode: String,
+    worktree_dir: Option<String>,
 }
 
 impl Workers {
-    pub fn new(store_dir: PathBuf, exe: PathBuf, permission_mode: String) -> Self {
+    pub fn new(
+        store_dir: PathBuf,
+        exe: PathBuf,
+        permission_mode: String,
+        worktree_dir: Option<String>,
+    ) -> Self {
         Self {
             store_dir: canonical_store(store_dir),
             exe,
             permission_mode,
+            worktree_dir,
         }
     }
 
@@ -53,7 +60,8 @@ impl Workers {
         }
         let session = session_name(&project, id);
         let config = AppConfig::load().map_err(|e| e.to_string());
-        let (worktree, worktree_dir) = locate_worktree(&repo, id, config.as_ref())?;
+        let (worktree, worktree_dir) =
+            locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
         exclude(&repo, &exclude_lines(harness, &repo, &worktree_dir.path))?;
         let via = ensure_worktree(&repo, &worktree, &branch_name(id))?;
         record_base(&repo, id)?;
@@ -159,7 +167,8 @@ impl Workers {
         let repo = repo_root()?;
         let owner = self.owner(&project_slug(&repo), id);
         let config = AppConfig::load().map_err(|e| e.to_string());
-        let (worktree, worktree_dir) = locate_worktree(&repo, id, config.as_ref())?;
+        let (worktree, worktree_dir) =
+            locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
         let branch = branch_name(id);
         let dirty_worktree = if worktree.join(".git").exists() {
             Some(
@@ -412,12 +421,13 @@ fn session_exists(session: &str) -> io::Result<bool> {
 fn locate_worktree(
     repo: &Path,
     id: &str,
+    flag: Option<&str>,
     config: Result<&AppConfig, &String>,
 ) -> io::Result<(PathBuf, WorktreeDir)> {
     let dir = resolve_worktree_dir(
         repo,
         dirs::home_dir().as_deref(),
-        None,
+        flag,
         std::env::var(WORKTREE_DIR_ENV).ok().as_deref(),
         config
             .map(|config| config.chat.worktree_dir.as_deref())

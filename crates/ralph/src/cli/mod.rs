@@ -70,6 +70,9 @@ pub struct ChatArgs {
     #[arg(long, value_name = "MODE")]
     pub permission_mode: Option<String>,
 
+    #[arg(long, value_name = "DIR")]
+    pub worktree_dir: Option<String>,
+
     #[arg(long)]
     pub no_inbox_sound: bool,
 
@@ -84,6 +87,9 @@ pub struct ChatMcpArgs {
 
     #[arg(long, value_name = "MODE", default_value = crate::invoke::CHAT_DEFAULT_PERMISSION_MODE)]
     pub permission_mode: String,
+
+    #[arg(long, value_name = "DIR")]
+    pub worktree_dir: Option<String>,
 }
 
 #[derive(clap::Args, Debug)]

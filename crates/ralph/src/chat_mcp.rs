@@ -61,7 +61,7 @@ mod tests {
 
     fn run(store: &Store, input: &str) -> Vec<Value> {
         let mut out = Vec::new();
-        let workers = Workers::new("/s".into(), "/bin/ralph".into(), "auto".into());
+        let workers = Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None);
         run_stdio_server(store, &workers, input.as_bytes(), &mut out).unwrap();
         String::from_utf8(out)
             .unwrap()
