@@ -8,7 +8,6 @@
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
 pub mod ansi;
-mod ask;
 mod chat;
 mod chat_mcp;
 mod chat_memory;
@@ -48,6 +47,7 @@ fn main() -> ExitCode {
         timeout: cli::CHAT_TIMEOUT_SECS,
         frozen_window: None,
         skills: Vec::new(),
+        permission_mode: None,
     })) {
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),
@@ -130,7 +130,9 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
         timeout_secs: args.timeout,
         theme_config,
         verbose_tools,
-        permission_mode: ask::resolve_permission_mode(args.permission_mode.as_deref()),
+        permission_mode: config::AppConfig::load()
+            .unwrap_or_default()
+            .permission_mode(args.permission_mode.as_deref()),
     })
 }
 
@@ -178,7 +180,7 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
     let store = chat_memory::Store::new(args.store.clone());
-    let workers = workers::Workers::new(args.store, std::env::current_exe()?);
+    let workers = workers::Workers::new(args.store, std::env::current_exe()?, args.permission_mode);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     chat_mcp::run_stdio_server(&store, &workers, stdin.lock(), stdout.lock())?;

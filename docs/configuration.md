@@ -137,13 +137,19 @@ Or via CLI flag:
 ralph ask --no-background 'your prompt'
 ```
 
-### `[ask]` - Single-Shot Prompts
+### `permission_mode` - Claude Permission Mode
+
+A top-level key, written before any `[section]`:
+
+```toml
+permission_mode = "auto"
+```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `permission_mode` | string | `"bypassPermissions"` | Tool permission mode for `ralph ask` |
+| `permission_mode` | string | `"auto"` | `claude --permission-mode` for `ralph ask`, chat turns, and claude workers |
 
-`--permission-mode` and `RALPH_PERMISSION_MODE` override it. See [ralph ask](context/ralph-ask.md#permission-modes).
+Precedence: `--permission-mode` (on `ask` and `chat`), then `RALPH_PERMISSION_MODE`, then this key, then `auto`. Chat passes its resolved mode to the claude workers it spawns, so chat and workers always use the same mode. The old `[ask] permission_mode` key is no longer read. See [ralph ask](context/ralph-ask.md#permission-modes).
 
 ### `[chat]` - Persistent Chat
 
@@ -204,7 +210,7 @@ Without `--verbose-tools`, tool output is shown in a compact format:
 | `RALPH_CONFIG_DIR` | Override config directory | `/custom/config` |
 | `RALPH_THEME` | Set syntax highlighting theme | `Solarized (dark)` |
 | `RALPH_NO_BACKGROUND` | Disable theme backgrounds | `1` |
-| `RALPH_PERMISSION_MODE` | Permission mode for `ralph ask` | `acceptEdits` |
+| `RALPH_PERMISSION_MODE` | Permission mode for `ralph ask`, chat, and claude workers | `acceptEdits` |
 | `RALPH_CHAT_SKILLS` | `:`-separated skill directories for chat | `~/skills/a:~/skills/b` |
 
 ## Troubleshooting

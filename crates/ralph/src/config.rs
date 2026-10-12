@@ -29,6 +29,7 @@
 //! no_background = false
 //! ```
 
+use crate::invoke::{resolve_permission_mode, PERMISSION_MODE_ENV};
 use crate::paths;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -73,13 +74,12 @@ pub enum ConfigError {
 /// configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+
     /// Theme configuration section.
     #[serde(default)]
     pub theme: ThemeSection,
-
-    /// Ask command configuration section.
-    #[serde(default)]
-    pub ask: AskSection,
 
     #[serde(default)]
     pub chat: ChatSection,
@@ -112,23 +112,6 @@ impl Default for ChatSection {
     }
 }
 
-/// Ask command configuration section.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AskSection {
-    /// Permission mode for tool execution.
-    ///
-    /// Controls how Claude handles tool execution permissions:
-    /// - "default": Requires approval for all tools
-    /// - "acceptEdits": Auto-accepts file edits but requires approval for other tools
-    /// - "plan": Read-only mode, no tools can modify files
-    /// - "bypassPermissions": Auto-accepts all tool executions (default)
-    ///
-    /// SECURITY NOTE: bypassPermissions allows Claude to execute any tool without
-    /// confirmation. Use with caution in untrusted environments.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_mode: Option<String>,
-}
-
 /// Theme configuration section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThemeSection {
@@ -149,6 +132,14 @@ pub struct ThemeSection {
 }
 
 impl AppConfig {
+    pub fn permission_mode(&self, flag: Option<&str>) -> String {
+        resolve_permission_mode(
+            flag,
+            std::env::var(PERMISSION_MODE_ENV).ok().as_deref(),
+            self.permission_mode.as_deref(),
+        )
+    }
+
     /// Create a new empty configuration with defaults.
     pub fn new() -> Self {
         Self::default()
@@ -408,7 +399,7 @@ mod tests {
                 name: Some("Monokai Extended".to_string()),
                 no_background: true,
             },
-            ask: AskSection::default(),
+            permission_mode: None,
             chat: ChatSection::default(),
         };
 
@@ -462,7 +453,7 @@ mod tests {
                 name: None,
                 no_background: false,
             },
-            ask: AskSection::default(),
+            permission_mode: None,
             chat: ChatSection::default(),
         };
 
@@ -479,43 +470,41 @@ mod tests {
     }
 
     #[test]
-    fn test_default_ask_section() {
+    fn test_default_permission_mode() {
         let config = AppConfig::new();
-        assert!(config.ask.permission_mode.is_none());
+        assert!(config.permission_mode.is_none());
     }
 
     #[test]
-    fn test_load_ask_permission_mode() {
+    fn test_load_permission_mode() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("config.toml");
 
         fs::write(
             &path,
             r#"
-            [ask]
             permission_mode = "acceptEdits"
             "#,
         )
         .unwrap();
 
         let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.ask.permission_mode, Some("acceptEdits".to_string()));
+        assert_eq!(config.permission_mode, Some("acceptEdits".to_string()));
     }
 
     #[test]
-    fn test_load_full_ask_and_theme() {
+    fn test_load_full_permission_mode_and_theme() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("config.toml");
 
         fs::write(
             &path,
             r#"
+            permission_mode = "bypassPermissions"
+
             [theme]
             name = "Monokai Extended"
             no_background = true
-
-            [ask]
-            permission_mode = "bypassPermissions"
             "#,
         )
         .unwrap();
@@ -524,7 +513,7 @@ mod tests {
         assert_eq!(config.theme.name, Some("Monokai Extended".to_string()));
         assert!(config.theme.no_background);
         assert_eq!(
-            config.ask.permission_mode,
+            config.permission_mode,
             Some("bypassPermissions".to_string())
         );
     }

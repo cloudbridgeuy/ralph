@@ -7,8 +7,19 @@ use crate::subprocess::{
 };
 use std::path::Path;
 
-/// Default permission mode (allows tool execution).
-pub const DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
+pub const DEFAULT_PERMISSION_MODE: &str = "auto";
+pub const PERMISSION_MODE_ENV: &str = "RALPH_PERMISSION_MODE";
+
+pub fn resolve_permission_mode(
+    flag: Option<&str>,
+    env: Option<&str>,
+    config: Option<&str>,
+) -> String {
+    flag.or(env.filter(|value| !value.is_empty()))
+        .or(config)
+        .unwrap_or(DEFAULT_PERMISSION_MODE)
+        .to_string()
+}
 
 #[derive(Debug, Clone)]
 pub struct InvocationConfig {
@@ -52,6 +63,7 @@ pub fn build_chat_command(
     prompt: &str,
     system_prompt: &str,
     extra_args: &[String],
+    permission_mode: &str,
     home: Option<&Path>,
 ) -> String {
     let extra = extra_args
@@ -60,7 +72,7 @@ pub fn build_chat_command(
         .collect::<String>();
     format!(
         "claude --verbose --permission-mode {} {} --append-system-prompt {}{} --output-format stream-json -p {}",
-        DEFAULT_PERMISSION_MODE,
+        permission_mode,
         isolation_args(home),
         shell_quote(system_prompt),
         extra,
@@ -120,7 +132,8 @@ mod tests {
     #[test]
     fn chat_command_is_fresh_and_isolated() {
         let mcp = vec!["--strict-mcp-config".to_string()];
-        let cmd = build_chat_command("it's", "sys", &mcp, Some(Path::new("/home/u")));
+        let cmd = build_chat_command("it's", "sys", &mcp, "plan", Some(Path::new("/home/u")));
+        assert!(cmd.contains("--permission-mode plan "));
         assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains("--append-system-prompt 'sys' '--strict-mcp-config'"));
@@ -133,10 +146,40 @@ mod tests {
             "p",
             "sys",
             &ralph_core::chat::build_agents_args(),
+            "auto",
             Some(Path::new("/home/u")),
         );
         assert!(cmd.contains("'--agents'"));
         assert!(cmd.contains("--setting-sources project,local"));
+    }
+
+    #[test]
+    fn permission_mode_flag_beats_env_and_config() {
+        assert_eq!(
+            resolve_permission_mode(Some("plan"), Some("default"), Some("acceptEdits")),
+            "plan"
+        );
+    }
+
+    #[test]
+    fn permission_mode_env_beats_config() {
+        assert_eq!(
+            resolve_permission_mode(None, Some("default"), Some("acceptEdits")),
+            "default"
+        );
+    }
+
+    #[test]
+    fn permission_mode_empty_env_is_ignored() {
+        assert_eq!(
+            resolve_permission_mode(None, Some(""), Some("acceptEdits")),
+            "acceptEdits"
+        );
+    }
+
+    #[test]
+    fn permission_mode_falls_back_to_auto() {
+        assert_eq!(resolve_permission_mode(None, None, None), "auto");
     }
 
     #[test]

@@ -259,12 +259,19 @@ pub fn opencode_config(model: &str, exe: &Path, id: &str, inbox: &Path) -> Value
     })
 }
 
-pub fn worker_command(mcp_config: &Path, settings: &Path, task: &str) -> Vec<String> {
+pub fn worker_command(
+    mcp_config: &Path,
+    settings: &Path,
+    permission_mode: &str,
+    task: &str,
+) -> Vec<String> {
     [
         "zsh",
         "-lic",
         r#"exec "$0" "$@""#,
         "claude",
+        "--permission-mode",
+        permission_mode,
         "--mcp-config",
         &mcp_config.to_string_lossy(),
         "--settings",
@@ -562,13 +569,16 @@ mod tests {
         let args = worker_command(
             Path::new("/s/workers/A.json"),
             Path::new("/s/workers/A.settings.json"),
+            "auto",
             "do it",
         );
         assert_eq!(args[..2], ["zsh", "-lic"]);
         assert_eq!(
-            args[3..8],
+            args[3..10],
             [
                 "claude",
+                "--permission-mode",
+                "auto",
                 "--mcp-config",
                 "/s/workers/A.json",
                 "--settings",

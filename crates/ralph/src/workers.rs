@@ -60,7 +60,12 @@ impl Workers {
         let command = match harness {
             Harness::Claude => {
                 let settings = self.write_settings(id, &ready, &reported)?;
-                worker_command(&self.write_config(id)?, &settings, task)
+                worker_command(
+                    &self.write_config(id)?,
+                    &settings,
+                    &self.permission_mode,
+                    task,
+                )
             }
             Harness::Opencode { model } => {
                 let config = opencode_config(model, &self.exe, id, &inbox);
