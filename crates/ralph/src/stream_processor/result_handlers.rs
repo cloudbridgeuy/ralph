@@ -1,7 +1,7 @@
 //! Tool result handling functions (Functional Core).
 //!
 //! Each function handles a specific tool type's result processing,
-//! returning both the formatted output and the output block for replay.
+//! returning both the formatted output and the output block.
 
 use ralph_core::stream::{ToolInvocation, ToolResult};
 
@@ -21,7 +21,7 @@ use super::utils::{count_non_empty_lines, is_content_truncated};
 pub struct ToolResultOutput {
     /// Formatted string for terminal display.
     pub formatted: String,
-    /// Output block for replay serialization.
+    /// Output block that captures the result data.
     pub block: OutputBlock,
 }
 

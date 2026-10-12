@@ -76,7 +76,7 @@ pub struct StreamProcessor {
     /// before the edit runs. When the result arrives, we generate a diff showing
     /// what changed in the cell.
     pub(super) pending_notebook_snapshots: HashMap<String, NotebookSnapshot>,
-    /// Accumulated output blocks for replay serialization.
+    /// Accumulated output blocks.
     ///
     /// Each output block captures the data needed to re-render a piece of output.
     /// Blocks are accumulated in order as they render to stdout during execution.
@@ -423,7 +423,7 @@ impl StreamProcessor {
 
     /// Get the accumulated output blocks.
     ///
-    /// These blocks capture all output data needed for replay serialization.
+    /// These blocks capture the structured data behind the rendered output.
     pub fn output_blocks(&self) -> &[OutputBlock] {
         &self.output_blocks
     }

@@ -12,7 +12,7 @@
 //! - Diff highlighting with delta fallback chain
 //! - Terminal detection for automatic color support
 //! - Metadata and tool call extraction for iteration logs
-//! - Output block accumulation for replay serialization
+//! - Output block accumulation for response text extraction
 //!
 //! # Example
 //!

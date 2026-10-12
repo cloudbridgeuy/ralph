@@ -77,7 +77,7 @@ impl StreamProcessor {
                     // content just flushed from the buffer above)
                     if self.has_emitted_output || !output_parts.is_empty() {
                         output_parts.push("\n".to_string());
-                        // Accumulate separator block for replay
+                        // Accumulate separator block
                         self.output_blocks.push(OutputBlock::separator());
                     }
                     self.response_count += 1;
@@ -129,7 +129,7 @@ impl StreamProcessor {
                     if self.show_tool_invocations {
                         let formatted = tool_display::format_tool_invocation(self, invocation);
                         output_parts.push(formatted);
-                        // Accumulate tool invocation block for replay
+                        // Accumulate tool invocation block
                         let block = build_tool_invocation_block(invocation);
                         self.output_blocks.push(block);
                     }
@@ -230,7 +230,7 @@ impl StreamProcessor {
                     // Store chunk
                     self.collected_chunks.push(sub_chunk.clone());
 
-                    // Accumulate text block for replay
+                    // Accumulate text block
                     self.output_blocks
                         .push(OutputBlock::text(sub_chunk.clone()));
 
@@ -260,7 +260,7 @@ impl StreamProcessor {
     /// Apply syntax highlighting to a chunk.
     ///
     /// Delegates to the shared `render_text_block()` function for all chunk types,
-    /// ensuring consistency between streaming and replay rendering paths.
+    /// so every rendering path produces the same output.
     pub(super) fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
         let ctx = self.create_render_context();
         let markdown_skin = if self.highlighting_enabled {
@@ -304,7 +304,7 @@ impl StreamProcessor {
                     ChunkType::Prose => {}
                 }
 
-                // Accumulate text block for replay
+                // Accumulate text block
                 self.output_blocks
                     .push(OutputBlock::text(sub_chunk.clone()));
                 self.collected_chunks.push(sub_chunk);

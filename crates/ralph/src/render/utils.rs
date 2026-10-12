@@ -1,7 +1,7 @@
 //! Pure utility functions for output rendering (Functional Core).
 //!
-//! This module contains stateless helper functions used by both stream processor
-//! and replay renderer. All functions are pure with no side effects.
+//! This module contains stateless helper functions used by the stream processor.
+//! All functions are pure with no side effects.
 
 use std::collections::BTreeMap;
 

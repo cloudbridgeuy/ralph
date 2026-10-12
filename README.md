@@ -20,7 +20,7 @@
 
 ---
 
-**ralph** is a CLI tool for working with an LLM from the terminal. It offers a persistent chat with compressed memory and single-shot `ask` prompts, records every session, and renders rich terminal output with syntax highlighting.
+**ralph** is a CLI tool for working with an LLM from the terminal. It offers a persistent chat with compressed memory and single-shot `ask` prompts, and renders rich terminal output with syntax highlighting.
 
 ## Table of Contents
 
@@ -35,9 +35,8 @@
 ## Features
 
 - **Chat** - Persistent chat with compressed memory, run by bare `ralph`
-- **Session Management** - Track `ask` sessions with unique slugs and iteration history
+- **Single-shot Ask** - `ralph ask` sends one prompt and stores nothing
 - **Rich Terminal Output** - Syntax highlighting for code, diffs, and tool results
-- **Replay Sessions** - Review past sessions with full syntax highlighting
 - **Theme Support** - Multiple built-in themes or use custom `.tmTheme` files
 
 ## Installation
@@ -66,25 +65,6 @@ ralph
 
 ```bash
 ralph ask 'Explain this codebase'
-```
-
-3. **Continue the most recent session in the current project**:
-
-```bash
-ralph ask --continue 'Now add tests'
-```
-
-4. **Review sessions**:
-
-```bash
-# List all sessions
-ralph sessions
-
-# Replay a session's output
-ralph replay quiet-mountain
-
-# Replay a specific iteration
-ralph replay quiet-mountain -i 3
 ```
 
 ## Configuration
@@ -118,7 +98,7 @@ See [Configuration](docs/configuration.md) for complete documentation.
 
 - [CLI Reference](docs/cli-reference.md) - All commands, flags, and options
 - [ralph chat](docs/context/ralph-chat.md) - Persistent chat with compressed memory
-- [ralph ask](docs/context/ralph-ask.md) - Single-shot prompts, `--continue`, `--history`
+- [ralph ask](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
 - [Configuration](docs/configuration.md) - Config file format and options
 - [Development Guide](docs/development.md) - Building and contributing
 

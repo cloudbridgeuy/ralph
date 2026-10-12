@@ -1,7 +1,7 @@
 //! Helper functions to build OutputBlock variants from tool data.
 //!
 //! These functions extract the same data used for display formatting
-//! and structure it as OutputBlock variants for replay serialization.
+//! and structure it as OutputBlock variants.
 
 use ralph_core::stream::ToolInvocation;
 

@@ -124,7 +124,7 @@ pub struct StreamProcessorResult {
     pub metadata: IterationMetadata,
     /// Costs extracted from result event.
     pub costs: IterationCosts,
-    /// Accumulated output blocks for replay serialization.
+    /// Accumulated output blocks.
     ///
     /// Each block captures the data needed to re-render a piece of output.
     /// Blocks are ordered as they appeared during live execution.
