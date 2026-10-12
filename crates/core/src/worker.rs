@@ -3,7 +3,7 @@ use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 mod hooks;
 mod ownership;
@@ -14,6 +14,7 @@ pub const SERVER_NAME: &str = "ralph-worker";
 pub const INBOX_DIR: &str = "inbox";
 pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
+pub const WORKTREE_DIR_ENV: &str = "RALPH_WORKTREE_DIR";
 pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
 pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-worker.ts";
 pub const READY_DIR: &str = "ready";
@@ -224,8 +225,23 @@ pub fn branch_name(id: &str) -> String {
     format!("worker/{id}")
 }
 
-pub fn worktree_path(repo: &Path, id: &str) -> PathBuf {
-    repo.join(WORKTREE_DIR).join(id)
+pub fn resolve_worktree_dir(
+    repo: &Path,
+    flag: Option<&str>,
+    env: Option<&str>,
+    config: Option<&str>,
+) -> PathBuf {
+    let dir = [flag, env, config]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|dir| !dir.is_empty())
+        .unwrap_or(WORKTREE_DIR);
+    repo.join(dir)
+}
+
+pub fn worktree_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(id)
 }
 
 /// Arguments for `git worktree add`: reuse the worker branch if an earlier spawn created it.
@@ -363,8 +379,19 @@ pub fn opencode_command(id: &str, task: &str) -> Vec<String> {
     .to_vec()
 }
 
-pub fn exclude_lines(harness: &Harness) -> Vec<String> {
-    let mut lines = vec![format!("/{WORKTREE_DIR}/")];
+pub fn exclude_lines(harness: &Harness, repo: &Path, worktree_dir: &Path) -> Vec<String> {
+    let mut lines: Vec<String> = worktree_dir
+        .strip_prefix(repo)
+        .ok()
+        .filter(|inside| {
+            inside.components().next().is_some()
+                && inside
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_)))
+        })
+        .map(|inside| format!("/{}/", inside.to_string_lossy()))
+        .into_iter()
+        .collect();
     if let Harness::Opencode { .. } = harness {
         lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
         lines.push(format!("/{OPENCODE_PLUGIN_FILE}"));
@@ -693,16 +720,71 @@ mod tests {
 
     #[test]
     fn exclude_lines_add_opencode_config_only_for_opencode() {
-        assert_eq!(exclude_lines(&Harness::Claude), ["/.worktrees/"]);
+        let repo = Path::new("/repo");
+        let dir = repo.join(WORKTREE_DIR);
         assert_eq!(
-            exclude_lines(&Harness::Opencode {
-                model: "a/b".into()
-            }),
+            exclude_lines(&Harness::Claude, repo, &dir),
+            ["/.worktrees/"]
+        );
+        assert_eq!(
+            exclude_lines(
+                &Harness::Opencode {
+                    model: "a/b".into()
+                },
+                repo,
+                &dir
+            ),
             [
                 "/.worktrees/",
                 "/opencode.json",
                 "/.opencode/plugins/ralph-worker.ts"
             ]
+        );
+    }
+
+    #[test]
+    fn exclude_lines_cover_only_a_worktree_dir_inside_the_repo() {
+        let repo = Path::new("/repo");
+        assert_eq!(
+            exclude_lines(&Harness::Claude, repo, Path::new("/repo/tmp/wt")),
+            ["/tmp/wt/"]
+        );
+        assert!(exclude_lines(&Harness::Claude, repo, Path::new("/elsewhere/wt")).is_empty());
+        assert!(exclude_lines(&Harness::Claude, repo, Path::new("/repo/../wt")).is_empty());
+        assert!(exclude_lines(&Harness::Claude, repo, repo).is_empty());
+    }
+
+    #[test]
+    fn worktree_dir_precedence_is_flag_env_config_default() {
+        let repo = Path::new("/repo");
+        let resolve = |flag, env, config| resolve_worktree_dir(repo, flag, env, config);
+        assert_eq!(
+            resolve(Some("f"), Some("e"), Some("c")),
+            Path::new("/repo/f")
+        );
+        assert_eq!(resolve(None, Some("e"), Some("c")), Path::new("/repo/e"));
+        assert_eq!(resolve(None, None, Some("c")), Path::new("/repo/c"));
+        assert_eq!(resolve(None, None, None), Path::new("/repo/.worktrees"));
+        assert_eq!(
+            resolve(Some(" "), Some(""), Some("c")),
+            Path::new("/repo/c")
+        );
+    }
+
+    #[test]
+    fn worktree_dir_resolves_relative_to_the_repo_and_keeps_absolute_paths() {
+        let repo = Path::new("/repo");
+        assert_eq!(
+            resolve_worktree_dir(repo, None, None, Some("../wt")),
+            Path::new("/repo/../wt")
+        );
+        assert_eq!(
+            resolve_worktree_dir(repo, None, Some("/tmp/wt"), None),
+            Path::new("/tmp/wt")
+        );
+        assert_eq!(
+            worktree_path(Path::new("/tmp/wt"), "GUZ-1"),
+            Path::new("/tmp/wt/GUZ-1")
         );
     }
 
