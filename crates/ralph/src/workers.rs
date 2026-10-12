@@ -1,10 +1,11 @@
+use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
-    branch_name, claude_ready_settings, close_plan, exclude_lines, opencode_command,
-    opencode_config, opencode_ready_plugin, opencode_session_gone, opencode_session_id,
-    project_slug, ready_path, session_name, session_owner, startup_state, tagged_sessions,
-    worker_command, worker_mcp_config, worktree_add_args, worktree_path, CloseState, CloseStep,
-    Harness, Owner, Startup, HARNESS_OPTION, ID_OPTION, INBOX_DIR, MAIN_BRANCH,
+    base_branch, base_config_key, branch_name, claude_ready_settings, close_plan, exclude_lines,
+    opencode_command, opencode_config, opencode_ready_plugin, opencode_session_gone,
+    opencode_session_id, project_slug, ready_path, session_name, session_owner, startup_state,
+    tagged_sessions, worker_command, worker_mcp_config, worktree_add_args, worktree_path,
+    CloseState, CloseStep, Harness, Owner, Startup, HARNESS_OPTION, ID_OPTION, INBOX_DIR,
     OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION,
     TRUST_KEYS, WORKERS_DIR,
 };
@@ -50,6 +51,7 @@ impl Workers {
         let worktree = worktree_path(&repo, id);
         exclude(&repo, &exclude_lines(harness))?;
         ensure_worktree(&repo, &worktree, &branch_name(id))?;
+        record_base(&repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
         let ready = ready_path(&self.store_dir, id);
         clear_ready(&ready)?;
@@ -153,12 +155,20 @@ impl Workers {
         } else {
             None
         };
+        let base = base_branch(
+            AppConfig::load()
+                .ok()
+                .and_then(|config| config.chat.worker_base)
+                .as_deref(),
+            git_value(&repo, &["config", "--get", &base_config_key(id)])?.as_deref(),
+            git_value(&repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
+        );
         let unmerged_commits = if branch_exists(&repo, &branch)? {
             let count = stdout_line(run(Command::new("git")
                 .arg("-C")
                 .arg(&repo)
                 .args(["rev-list", "--count"])
-                .arg(format!("{MAIN_BRANCH}..{branch}")))?);
+                .arg(format!("{base}..{branch}")))?);
             Some(count.parse().map_err(io::Error::other)?)
         } else {
             None
@@ -169,6 +179,7 @@ impl Workers {
             id: id.to_string(),
             owner,
             dirty_worktree,
+            base,
             unmerged_commits,
             opencode,
         };
@@ -367,6 +378,35 @@ fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<()>
             branch_exists(repo, branch)?,
         )))?;
     Ok(())
+}
+
+fn record_base(repo: &Path, id: &str) -> io::Result<()> {
+    let key = base_config_key(id);
+    if git_value(repo, &["config", "--get", &key])?.is_some() {
+        return Ok(());
+    }
+    if let Some(base) = git_value(repo, &["symbolic-ref", "-q", "--short", "HEAD"])? {
+        run(Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["config", &key, &base]))?;
+    }
+    Ok(())
+}
+
+fn git_value(repo: &Path, args: &[&str]) -> io::Result<Option<String>> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value = stdout_line(output);
+    Ok((!value.is_empty()).then_some(value))
 }
 
 fn branch_exists(repo: &Path, branch: &str) -> io::Result<bool> {

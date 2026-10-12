@@ -1,7 +1,31 @@
 use super::{branch_name, OPENCODE_HARNESS};
 use std::path::Path;
 
-pub const MAIN_BRANCH: &str = "main";
+pub const FALLBACK_BASE_BRANCH: &str = "main";
+const ORIGIN_PREFIX: &str = "refs/remotes/origin/";
+
+pub fn base_config_key(id: &str) -> String {
+    format!("branch.{}.ralphBase", branch_name(id))
+}
+
+pub fn base_branch(
+    configured: Option<&str>,
+    recorded: Option<&str>,
+    origin_head: Option<&str>,
+) -> String {
+    let origin_default = origin_head.map(|head| {
+        head.trim()
+            .strip_prefix(ORIGIN_PREFIX)
+            .unwrap_or(head.trim())
+    });
+    [configured, recorded, origin_default]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|branch| !branch.is_empty())
+        .unwrap_or(FALLBACK_BASE_BRANCH)
+        .to_string()
+}
 
 pub fn project_slug(repo: &Path) -> String {
     let slug: String = repo
@@ -72,6 +96,7 @@ pub struct CloseState {
     pub id: String,
     pub owner: Owner,
     pub dirty_worktree: Option<bool>,
+    pub base: String,
     pub unmerged_commits: Option<usize>,
     pub opencode: bool,
 }
@@ -105,8 +130,9 @@ pub fn close_plan(state: &CloseState, abandon: bool) -> Result<Vec<CloseStep>, S
     if !abandon {
         if let Some(count @ 1..) = state.unmerged_commits {
             return Err(format!(
-                "Branch {} has {count} commit(s) not in {MAIN_BRANCH}. Merge it first, or close with abandon to drop them.",
-                branch_name(id)
+                "Branch {} has {count} commit(s) not in {}. Merge it first, or close with abandon to drop them.",
+                branch_name(id),
+                state.base
             ));
         }
         if state.dirty_worktree == Some(true) {
@@ -223,6 +249,7 @@ mod tests {
             id: "A".into(),
             owner,
             dirty_worktree: Some(false),
+            base: "main".into(),
             unmerged_commits: Some(0),
             opencode: false,
         }
@@ -286,6 +313,31 @@ mod tests {
         assert!(close_plan(&dirty, true)
             .unwrap()
             .contains(&CloseStep::RemoveWorktree { force: true }));
+    }
+
+    #[test]
+    fn base_branch_prefers_config_then_spawn_base_then_origin_head_then_main() {
+        let origin = Some("refs/remotes/origin/trunk\n");
+        assert_eq!(base_branch(Some("dev"), Some("feat"), origin), "dev");
+        assert_eq!(base_branch(None, Some("feat"), origin), "feat");
+        assert_eq!(base_branch(Some(" "), None, origin), "trunk");
+        assert_eq!(base_branch(None, None, None), "main");
+        assert_eq!(base_branch(None, Some(""), Some("")), "main");
+    }
+
+    #[test]
+    fn base_config_key_lives_under_the_worker_branch() {
+        assert_eq!(base_config_key("GUZ-1"), "branch.worker/GUZ-1.ralphBase");
+    }
+
+    #[test]
+    fn close_plan_names_the_base_branch_in_the_unmerged_refusal() {
+        let mut state = close_state(Owner::Missing);
+        state.base = "develop".into();
+        state.unmerged_commits = Some(1);
+        assert!(close_plan(&state, false)
+            .unwrap_err()
+            .contains("1 commit(s) not in develop"));
     }
 
     #[test]
