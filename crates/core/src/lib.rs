@@ -24,3 +24,4 @@ pub mod inbox_alert;
 pub mod mcp;
 pub mod stream;
 pub mod worker;
+pub mod worker_check;
