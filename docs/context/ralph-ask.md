@@ -7,7 +7,7 @@ This document provides comprehensive documentation for the `ralph ask` command, 
 | Component | File | Description |
 |-----------|------|-------------|
 | CLI args | `crates/ralph/src/cli/mod.rs` | AskArgs struct definition |
-| Permission mode | `crates/ralph/src/ask.rs` | resolve_permission_mode() |
+| Permission mode | `crates/ralph/src/invoke.rs`, `crates/ralph/src/config.rs` | resolve_permission_mode(), AppConfig::ask_permission_mode() |
 | Shared engine | `crates/ralph/src/invoke.rs` | InvocationConfig, invoke(), command building |
 | Prompt source | `crates/ralph/src/prompt_source.rs` | classify_prompt_source(), read_from_source() |
 | Execution | `crates/ralph/src/main.rs` | execute_ask(), build_invocation_config(), resolve_ask_prompt() |
@@ -58,35 +58,17 @@ The prompt can be provided from multiple sources:
 
 ## Permission Modes
 
-The `--permission-mode` flag controls how Claude handles tool execution:
-
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `default` | Requires approval for all tools | Maximum control |
-| `acceptEdits` | Auto-accepts file edits, requires approval for others | Trusted editing |
-| `plan` | Read-only mode, no tools can modify files | Research/exploration |
-| `bypassPermissions` | Auto-accepts all tool executions | **Default for ask** |
-
-### Security Considerations
-
-`bypassPermissions` is the default for `ask` because:
-- Single-shot queries often need quick tool access
-- User is present and watching output
-- The run can be interrupted with Ctrl+C
-
-For untrusted environments, use a more restrictive mode:
+The `--permission-mode` flag sets `claude --permission-mode`. `ask` has its own setting, default `bypassPermissions`: the user is present, watching, and can stop the run with Ctrl+C. Chat and its workers use `[chat] permission_mode` and `RALPH_CHAT_PERMISSION_MODE`, default `auto`, which do not change ask. Choices are claude's: `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` (see `claude --help`).
 
 ```bash
-ralph ask --permission-mode default 'Analyze this code'
+ralph ask --permission-mode plan 'Analyze this code'
 ```
 
 ### Configuration Precedence
 
-Permission mode is resolved in this order:
-
 1. CLI flag (`--permission-mode`)
-2. Environment variable (`RALPH_PERMISSION_MODE`)
-3. Config file (`~/.config/ralph/config.toml` under `[ask]` section)
+2. Environment variable (`RALPH_ASK_PERMISSION_MODE`, ignored when empty)
+3. `[ask] permission_mode` in `~/.config/ralph/config.toml`
 4. Default (`bypassPermissions`)
 
 Config file example:

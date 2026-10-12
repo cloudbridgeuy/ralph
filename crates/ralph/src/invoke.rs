@@ -7,8 +7,22 @@ use crate::subprocess::{
 };
 use std::path::Path;
 
-/// Default permission mode (allows tool execution).
-pub const DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
+pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
+pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
+pub const ASK_DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
+pub const ASK_PERMISSION_MODE_ENV: &str = "RALPH_ASK_PERMISSION_MODE";
+
+pub fn resolve_permission_mode(
+    flag: Option<&str>,
+    env: Option<&str>,
+    config: Option<&str>,
+    default: &str,
+) -> String {
+    flag.or(env.filter(|value| !value.is_empty()))
+        .or(config)
+        .unwrap_or(default)
+        .to_string()
+}
 
 #[derive(Debug, Clone)]
 pub struct InvocationConfig {
@@ -52,6 +66,7 @@ pub fn build_chat_command(
     prompt: &str,
     system_prompt: &str,
     extra_args: &[String],
+    permission_mode: &str,
     home: Option<&Path>,
 ) -> String {
     let extra = extra_args
@@ -60,7 +75,7 @@ pub fn build_chat_command(
         .collect::<String>();
     format!(
         "claude --verbose --permission-mode {} {} --append-system-prompt {}{} --output-format stream-json -p {}",
-        DEFAULT_PERMISSION_MODE,
+        permission_mode,
         isolation_args(home),
         shell_quote(system_prompt),
         extra,
@@ -120,7 +135,8 @@ mod tests {
     #[test]
     fn chat_command_is_fresh_and_isolated() {
         let mcp = vec!["--strict-mcp-config".to_string()];
-        let cmd = build_chat_command("it's", "sys", &mcp, Some(Path::new("/home/u")));
+        let cmd = build_chat_command("it's", "sys", &mcp, "plan", Some(Path::new("/home/u")));
+        assert!(cmd.contains("--permission-mode plan "));
         assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains("--append-system-prompt 'sys' '--strict-mcp-config'"));
@@ -133,6 +149,7 @@ mod tests {
             "p",
             "sys",
             &ralph_core::chat::build_agents_args(),
+            "auto",
             Some(Path::new("/home/u")),
         );
         assert!(cmd.contains("'--agents'"));

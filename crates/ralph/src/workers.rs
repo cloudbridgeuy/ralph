@@ -23,13 +23,15 @@ const STARTUP_POLL: Duration = Duration::from_millis(250);
 pub struct Workers {
     store_dir: PathBuf,
     exe: PathBuf,
+    permission_mode: String,
 }
 
 impl Workers {
-    pub fn new(store_dir: PathBuf, exe: PathBuf) -> Self {
+    pub fn new(store_dir: PathBuf, exe: PathBuf, permission_mode: String) -> Self {
         Self {
             store_dir: absolute_or_same(store_dir),
             exe,
+            permission_mode,
         }
     }
 
@@ -60,7 +62,12 @@ impl Workers {
         let command = match harness {
             Harness::Claude => {
                 let settings = self.write_settings(id, &ready, &reported)?;
-                worker_command(&self.write_config(id)?, &settings, task)
+                worker_command(
+                    &self.write_config(id)?,
+                    &settings,
+                    &self.permission_mode,
+                    task,
+                )
             }
             Harness::Opencode { model } => {
                 let config = opencode_config(model, &self.exe, id, &inbox);

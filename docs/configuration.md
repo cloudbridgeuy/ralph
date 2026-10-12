@@ -143,7 +143,7 @@ ralph ask --no-background 'your prompt'
 |-------|------|---------|-------------|
 | `permission_mode` | string | `"bypassPermissions"` | Tool permission mode for `ralph ask` |
 
-`--permission-mode` and `RALPH_PERMISSION_MODE` override it. See [ralph ask](context/ralph-ask.md#permission-modes).
+Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this key, then `bypassPermissions`. `[chat] permission_mode` does not apply to ask. See [ralph ask](context/ralph-ask.md#permission-modes).
 
 ### `[chat]` - Persistent Chat
 
@@ -153,8 +153,9 @@ ralph ask --no-background 'your prompt'
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
 | `frozen_window` | integer | `32` | Entries per frozen memory-view window, from 1 to 199 |
 | `worker_base` | string | unset | Base branch that `close_worker` checks for unmerged commits |
+| `permission_mode` | string | `"auto"` | `claude --permission-mode` for chat turns and claude workers |
 
-`--skill` and `RALPH_CHAT_SKILLS` replace `skills`. `--frozen-window <N>` overrides `frozen_window`; a value outside 1-199 stops chat start with an error. Without `worker_base`, `close_worker` uses the branch recorded at spawn (`branch.worker/<ID>.ralphBase`), then `origin/HEAD`, then `main`. See [ralph chat](context/ralph-chat.md).
+`--skill` and `RALPH_CHAT_SKILLS` replace `skills`. For `permission_mode` the precedence is `chat --permission-mode`, then `RALPH_CHAT_PERMISSION_MODE`, then this key, then `auto`; chat passes the resolved mode to every claude worker it spawns, so chat and workers always match. `--frozen-window <N>` overrides `frozen_window`; a value outside 1-199 stops chat start with an error. Without `worker_base`, `close_worker` uses the branch recorded at spawn (`branch.worker/<ID>.ralphBase`), then `origin/HEAD`, then `main`. See [ralph chat](context/ralph-chat.md).
 
 ## Chat Store
 
@@ -204,7 +205,8 @@ Without `--verbose-tools`, tool output is shown in a compact format:
 | `RALPH_CONFIG_DIR` | Override config directory | `/custom/config` |
 | `RALPH_THEME` | Set syntax highlighting theme | `Solarized (dark)` |
 | `RALPH_NO_BACKGROUND` | Disable theme backgrounds | `1` |
-| `RALPH_PERMISSION_MODE` | Permission mode for `ralph ask` | `acceptEdits` |
+| `RALPH_ASK_PERMISSION_MODE` | Permission mode for `ralph ask` | `acceptEdits` |
+| `RALPH_CHAT_PERMISSION_MODE` | Permission mode for chat turns and claude workers | `auto` |
 | `RALPH_CHAT_SKILLS` | `:`-separated skill directories for chat | `~/skills/a:~/skills/b` |
 
 ## Troubleshooting

@@ -151,7 +151,6 @@ ralph/
 │           ├── main.rs         # Entry point and command dispatch
 │           ├── cli/            # CLI definitions (clap)
 │           ├── chat*.rs        # Chat shell, memory store, MCP server
-│           ├── ask.rs          # ask permission mode
 │           ├── invoke.rs       # Shared claude invocation
 │           ├── render/         # Terminal rendering
 │           ├── stream_processor/ # Stream handling

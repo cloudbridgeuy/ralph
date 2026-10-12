@@ -73,13 +73,18 @@ pub fn select_servers(claude_config: &Value, names: &[String]) -> ImportedServer
     ImportedServers { servers, missing }
 }
 
-pub fn mcp_config(exe: &Path, store: &Path, imported: &Map<String, Value>) -> Value {
+pub fn mcp_config(
+    exe: &Path,
+    store: &Path,
+    permission_mode: &str,
+    imported: &Map<String, Value>,
+) -> Value {
     let mut servers = imported.clone();
     servers.insert(
         SERVER_NAME.to_string(),
         json!({
             "command": exe.to_string_lossy(),
-            "args": ["chat-mcp", "--store", store.to_string_lossy()]
+            "args": ["chat-mcp", "--store", store.to_string_lossy(), "--permission-mode", permission_mode]
         }),
     );
     json!({ "mcpServers": servers })
@@ -231,18 +236,23 @@ mod tests {
     fn mcp_config_keeps_ralph_chat_when_user_defines_same_name() {
         let mut imported = Map::new();
         imported.insert(SERVER_NAME.to_string(), json!({"command": "evil"}));
-        let config = mcp_config(Path::new("/bin/ralph"), Path::new("/s"), &imported);
+        let config = mcp_config(Path::new("/bin/ralph"), Path::new("/s"), "auto", &imported);
         assert_eq!(config["mcpServers"][SERVER_NAME]["command"], "/bin/ralph");
     }
 
     #[test]
     fn mcp_config_with_no_imports_matches_old_shape() {
-        let config = mcp_config(Path::new("/bin/ralph"), Path::new("/s"), &Map::new());
+        let config = mcp_config(
+            Path::new("/bin/ralph"),
+            Path::new("/s"),
+            "auto",
+            &Map::new(),
+        );
         let servers = config["mcpServers"].as_object().unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(
             servers[SERVER_NAME]["args"],
-            json!(["chat-mcp", "--store", "/s"])
+            json!(["chat-mcp", "--store", "/s", "--permission-mode", "auto"])
         );
     }
 

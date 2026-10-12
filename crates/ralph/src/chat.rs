@@ -271,6 +271,7 @@ struct Turn<'a> {
     store: &'a Store,
     store_dir: &'a Path,
     mcp_config_path: &'a Path,
+    permission_mode: &'a str,
     plugin_args: &'a [String],
     skills: &'a [ChatSkill],
     timeout_secs: u64,
@@ -307,6 +308,7 @@ impl Turn<'_> {
                 self.plugin_args.to_vec(),
             ]
             .concat(),
+            self.permission_mode,
             dirs::home_dir().as_deref(),
         );
         print_rule();
@@ -366,6 +368,7 @@ fn write_mcp_config(
     store_dir: &Path,
     exe: &Path,
     server_names: &[String],
+    permission_mode: &str,
 ) -> io::Result<PathBuf> {
     let claude_config = read_claude_config();
     let imported = select_servers(&claude_config, server_names);
@@ -374,7 +377,12 @@ fn write_mcp_config(
             "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
         ));
     }
-    store.write_mcp_config(&mcp_config(exe, store_dir, &imported.servers))
+    store.write_mcp_config(&mcp_config(
+        exe,
+        store_dir,
+        permission_mode,
+        &imported.servers,
+    ))
 }
 
 fn env_skills() -> Vec<PathBuf> {
@@ -476,14 +484,25 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&store_dir)?;
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;
-    let chat_config = AppConfig::load()
-        .map(|config| config.chat)
-        .unwrap_or_else(|e| {
-            warn(format!("Failed to load config: {e}"));
-            AppConfig::default().chat
-        });
+    let config = AppConfig::load().unwrap_or_else(|e| {
+        warn(format!("Failed to load config: {e}"));
+        AppConfig::default()
+    });
+    let permission_mode = config.chat_permission_mode(
+        args.permission_mode.as_deref(),
+        std::env::var(crate::invoke::CHAT_PERMISSION_MODE_ENV)
+            .ok()
+            .as_deref(),
+    );
+    let chat_config = config.chat;
     let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
-    let mcp_config_path = write_mcp_config(&store, &store_dir, &exe, &chat_config.mcp_servers)?;
+    let mcp_config_path = write_mcp_config(
+        &store,
+        &store_dir,
+        &exe,
+        &chat_config.mcp_servers,
+        &permission_mode,
+    )?;
     let skills = link_skills(usable_skills(resolve_skills(
         &SkillSources {
             cli: &args.skills,
@@ -502,6 +521,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         store: &store,
         store_dir: &store_dir,
         mcp_config_path: &mcp_config_path,
+        permission_mode: &permission_mode,
         plugin_args: &plugin_args,
         skills: &skills,
         timeout_secs: args.timeout,

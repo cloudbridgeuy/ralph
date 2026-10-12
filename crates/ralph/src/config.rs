@@ -29,6 +29,9 @@
 //! no_background = false
 //! ```
 
+use crate::invoke::{
+    resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
+};
 use crate::paths;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -77,12 +80,17 @@ pub struct AppConfig {
     #[serde(default)]
     pub theme: ThemeSection,
 
-    /// Ask command configuration section.
     #[serde(default)]
     pub ask: AskSection,
 
     #[serde(default)]
     pub chat: ChatSection,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AskSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +103,8 @@ pub struct ChatSection {
     pub frozen_window: Option<usize>,
     #[serde(default)]
     pub worker_base: Option<String>,
+    #[serde(default)]
+    pub permission_mode: Option<String>,
 }
 
 fn default_mcp_servers() -> Vec<String> {
@@ -108,25 +118,9 @@ impl Default for ChatSection {
             skills: Vec::new(),
             frozen_window: None,
             worker_base: None,
+            permission_mode: None,
         }
     }
-}
-
-/// Ask command configuration section.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AskSection {
-    /// Permission mode for tool execution.
-    ///
-    /// Controls how Claude handles tool execution permissions:
-    /// - "default": Requires approval for all tools
-    /// - "acceptEdits": Auto-accepts file edits but requires approval for other tools
-    /// - "plan": Read-only mode, no tools can modify files
-    /// - "bypassPermissions": Auto-accepts all tool executions (default)
-    ///
-    /// SECURITY NOTE: bypassPermissions allows Claude to execute any tool without
-    /// confirmation. Use with caution in untrusted environments.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub permission_mode: Option<String>,
 }
 
 /// Theme configuration section.
@@ -149,6 +143,24 @@ pub struct ThemeSection {
 }
 
 impl AppConfig {
+    pub fn chat_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+        resolve_permission_mode(
+            flag,
+            env,
+            self.chat.permission_mode.as_deref(),
+            CHAT_DEFAULT_PERMISSION_MODE,
+        )
+    }
+
+    pub fn ask_permission_mode(&self, flag: Option<&str>, env: Option<&str>) -> String {
+        resolve_permission_mode(
+            flag,
+            env,
+            self.ask.permission_mode.as_deref(),
+            ASK_DEFAULT_PERMISSION_MODE,
+        )
+    }
+
     /// Create a new empty configuration with defaults.
     pub fn new() -> Self {
         Self::default()
@@ -479,19 +491,23 @@ mod tests {
     }
 
     #[test]
-    fn test_default_ask_section() {
+    fn test_default_permission_modes() {
         let config = AppConfig::new();
+        assert!(config.chat.permission_mode.is_none());
         assert!(config.ask.permission_mode.is_none());
     }
 
     #[test]
-    fn test_load_ask_permission_mode() {
+    fn test_load_chat_and_ask_permission_modes_separately() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("config.toml");
 
         fs::write(
             &path,
             r#"
+            [chat]
+            permission_mode = "plan"
+
             [ask]
             permission_mode = "acceptEdits"
             "#,
@@ -499,33 +515,52 @@ mod tests {
         .unwrap();
 
         let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.permission_mode, Some("plan".to_string()));
         assert_eq!(config.ask.permission_mode, Some("acceptEdits".to_string()));
     }
 
+    fn configured(chat: Option<&str>, ask: Option<&str>) -> AppConfig {
+        let mut config = AppConfig::new();
+        config.chat.permission_mode = chat.map(str::to_string);
+        config.ask.permission_mode = ask.map(str::to_string);
+        config
+    }
+
     #[test]
-    fn test_load_full_ask_and_theme() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("config.toml");
-
-        fs::write(
-            &path,
-            r#"
-            [theme]
-            name = "Monokai Extended"
-            no_background = true
-
-            [ask]
-            permission_mode = "bypassPermissions"
-            "#,
-        )
-        .unwrap();
-
-        let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.theme.name, Some("Monokai Extended".to_string()));
-        assert!(config.theme.no_background);
+    fn chat_permission_mode_precedence() {
+        let config = configured(Some("plan"), Some("dontAsk"));
         assert_eq!(
-            config.ask.permission_mode,
-            Some("bypassPermissions".to_string())
+            config.chat_permission_mode(Some("manual"), Some("acceptEdits")),
+            "manual"
+        );
+        assert_eq!(
+            config.chat_permission_mode(None, Some("acceptEdits")),
+            "acceptEdits"
+        );
+        assert_eq!(config.chat_permission_mode(None, Some("")), "plan");
+        assert_eq!(config.chat_permission_mode(None, None), "plan");
+        assert_eq!(
+            configured(None, Some("dontAsk")).chat_permission_mode(None, None),
+            "auto"
+        );
+    }
+
+    #[test]
+    fn ask_permission_mode_precedence() {
+        let config = configured(Some("plan"), Some("dontAsk"));
+        assert_eq!(
+            config.ask_permission_mode(Some("manual"), Some("acceptEdits")),
+            "manual"
+        );
+        assert_eq!(
+            config.ask_permission_mode(None, Some("acceptEdits")),
+            "acceptEdits"
+        );
+        assert_eq!(config.ask_permission_mode(None, Some("")), "dontAsk");
+        assert_eq!(config.ask_permission_mode(None, None), "dontAsk");
+        assert_eq!(
+            configured(Some("plan"), None).ask_permission_mode(None, None),
+            "bypassPermissions"
         );
     }
 }

@@ -59,7 +59,8 @@ Environment variables can be used instead of CLI flags. CLI flags take precedenc
 | `RALPH_CONFIG_DIR` | N/A | Override config directory location |
 | `RALPH_THEME` | `--theme` | Set syntax highlighting theme |
 | `RALPH_NO_BACKGROUND` | `--no-background` | Disable theme backgrounds (set to `1`) |
-| `RALPH_PERMISSION_MODE` | `ask --permission-mode` | Permission mode for `ask` |
+| `RALPH_ASK_PERMISSION_MODE` | `ask --permission-mode` | Permission mode for `ask` |
+| `RALPH_CHAT_PERMISSION_MODE` | `chat --permission-mode` | Permission mode for chat turns and claude workers |
 | `RALPH_CHAT_SKILLS` | `chat --skill` | `:`-separated skill directories for chat |
 
 ### Examples
