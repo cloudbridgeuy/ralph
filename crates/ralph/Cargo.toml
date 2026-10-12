@@ -20,7 +20,6 @@ ctrlc = { workspace = true }
 dirs = { workspace = true }
 libc = { workspace = true }
 ralph_core = { workspace = true }
-rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }

@@ -109,7 +109,7 @@ fn join_output_threads(
 ///     theme_config: ThemeConfig::new().with_theme("Monokai Extended"),
 ///     session_elapsed_ms: 0,
 ///     verbose_tools: VerboseToolsConfig::new(),
-///     session_info: SpinnerSessionInfo::new("brave-panda".to_string(), 1, 5),
+///     session_info: SpinnerSessionInfo::default(),
 ///     pause: None,
 ///     cancel: None,
 /// };

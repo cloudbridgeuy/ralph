@@ -1,13 +1,10 @@
 //! Data structures for startup and iteration display.
 
-use crate::iteration::ConversationMessage;
 use std::path::PathBuf;
 
 /// Information for ask command summary display.
 #[derive(Debug, Clone)]
 pub struct AskSummary {
-    /// The session slug.
-    pub slug: String,
     /// Whether the ask succeeded (exit code 0).
     pub success: bool,
     /// Cost in USD.
@@ -51,8 +48,7 @@ impl<'a> PromptDisplay<'a> {
     /// Create a PromptDisplay by extracting file references from the prompt text.
     ///
     /// This parses `@/path/to/file` references from the prompt and creates
-    /// AttachedFile entries for each. Useful for replay when we only have
-    /// the stored prompt text.
+    /// AttachedFile entries for each.
     pub fn from_prompt(prompt: &'a str) -> Self {
         let attached_files = extract_file_references(prompt);
         Self {
@@ -119,50 +115,6 @@ fn extract_file_references(prompt: &str) -> Vec<AttachedFile> {
 /// as these are shown in the attached files table instead.
 pub(super) fn strip_file_references(prompt: &str) -> String {
     parse_prompt_file_references(prompt).0
-}
-
-/// A single turn in a conversation history for display.
-#[derive(Debug, Clone)]
-pub struct ConversationTurn {
-    /// The user's prompt for this turn.
-    pub prompt: String,
-    /// The assistant's response for this turn.
-    pub response: String,
-    /// The iteration number (1-indexed).
-    pub iteration: u32,
-}
-
-/// Conversation history for display.
-#[derive(Debug, Clone)]
-pub struct ConversationHistory {
-    /// The session slug.
-    pub slug: String,
-    /// The conversation turns in chronological order.
-    pub turns: Vec<ConversationTurn>,
-}
-
-impl ConversationHistory {
-    /// Create conversation history from iteration messages.
-    ///
-    /// Transforms a list of conversation messages into a display-ready history
-    /// by adding 1-indexed iteration numbers to each turn.
-    pub fn from_messages(slug: String, messages: Vec<ConversationMessage>) -> Self {
-        let turns = messages
-            .into_iter()
-            .enumerate()
-            .map(|(i, msg)| ConversationTurn {
-                prompt: msg.prompt,
-                response: msg.response,
-                iteration: (i + 1) as u32,
-            })
-            .collect();
-        Self { slug, turns }
-    }
-
-    /// Check if the conversation history is empty.
-    pub fn is_empty(&self) -> bool {
-        self.turns.is_empty()
-    }
 }
 
 /// Collapse multiple consecutive blank lines into a single blank line.

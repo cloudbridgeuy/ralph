@@ -47,7 +47,7 @@
 //! 3. Add a handler in `result_handlers.rs`
 //! 4. Add a renderer in `render/tool_renderers/results/`
 
-use ralph_core::chunk::ParsedChunk;
+use ralph_core::chunk::{ChunkType, ParsedChunk};
 use serde::{Deserialize, Serialize};
 
 /// A single block of output from an LLM interaction.
@@ -421,11 +421,34 @@ impl GrepInvocationBuilder {
     }
 }
 
+pub fn extract_response_text(output_blocks: &[OutputBlock]) -> Option<String> {
+    let text_parts: Vec<_> = output_blocks
+        .iter()
+        .filter_map(|block| match block {
+            OutputBlock::Text(text_block) => Some(text_block_to_response_text(text_block)),
+            _ => None,
+        })
+        .collect();
+
+    (!text_parts.is_empty()).then(|| text_parts.join("\n\n"))
+}
+
+fn text_block_to_response_text(text_block: &TextBlock) -> String {
+    match &text_block.chunk.chunk_type {
+        ChunkType::Directive { verb, target } => {
+            format!(
+                "<ralph-{verb} to=\"{target}\">{}</ralph-{verb}>",
+                text_block.chunk.content
+            )
+        }
+        _ => text_block.chunk.content.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::stream_processor::test_helpers::assert_toml_roundtrip;
-    use ralph_core::chunk::ChunkType;
 
     #[test]
     fn test_output_block_text_serialization() {
@@ -616,5 +639,68 @@ mod tests {
             .build();
         let block = OutputBlock::tool_invocation("Grep", variant);
         assert_toml_roundtrip(&block);
+    }
+
+    #[test]
+    fn test_extract_response_text_empty() {
+        assert!(extract_response_text(&[]).is_none());
+    }
+
+    #[test]
+    fn test_extract_response_text_single_text_block() {
+        let blocks = vec![OutputBlock::text(ParsedChunk::prose("Hello, world!"))];
+        assert_eq!(
+            extract_response_text(&blocks),
+            Some("Hello, world!".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_response_text_multiple_text_blocks() {
+        let blocks = vec![
+            OutputBlock::text(ParsedChunk::prose("First paragraph.")),
+            OutputBlock::text(ParsedChunk::code("fn main() {}", Some("rust".to_string()))),
+            OutputBlock::text(ParsedChunk::prose("Second paragraph.")),
+        ];
+        let text = extract_response_text(&blocks).unwrap();
+        assert!(text.contains("First paragraph."));
+        assert!(text.contains("fn main() {}"));
+        assert!(text.contains("Second paragraph."));
+    }
+
+    #[test]
+    fn test_extract_response_text_ignores_non_text_blocks() {
+        let blocks = vec![
+            OutputBlock::text(ParsedChunk::prose("Assistant response.")),
+            OutputBlock::tool_invocation(
+                "Bash",
+                ToolInvocationVariant::Bash {
+                    command: "ls".to_string(),
+                    description: None,
+                },
+            ),
+            OutputBlock::tool_result(
+                "Bash",
+                false,
+                ToolResultVariant::Bash {
+                    content: Some("file.txt".to_string()),
+                    truncated: false,
+                },
+            ),
+            OutputBlock::separator(),
+        ];
+        assert_eq!(
+            extract_response_text(&blocks),
+            Some("Assistant response.".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_response_text_rebuilds_directive_tag() {
+        let blocks = vec![OutputBlock::text(ParsedChunk::directive("Q", "ask", "a"))];
+        assert_eq!(
+            extract_response_text(&blocks),
+            Some("<ralph-ask to=\"a\">Q</ralph-ask>".to_string())
+        );
     }
 }

@@ -213,7 +213,6 @@ fn test_clean_blank_lines_only_blanks() {
 
 fn create_test_ask_summary() -> AskSummary {
     AskSummary {
-        slug: "test-ask".to_string(),
         success: true,
         cost_usd: Some(0.05),
         duration_ms: Some(10_000),
@@ -225,7 +224,6 @@ fn create_test_ask_summary() -> AskSummary {
 #[test]
 fn test_ask_summary_creation() {
     let summary = create_test_ask_summary();
-    assert_eq!(summary.slug, "test-ask");
     assert!(summary.success);
     assert_eq!(summary.cost_usd, Some(0.05));
     assert_eq!(summary.duration_ms, Some(10_000));
@@ -236,7 +234,6 @@ fn test_ask_summary_creation() {
 #[test]
 fn test_ask_summary_failed() {
     let summary = AskSummary {
-        slug: "failed-ask".to_string(),
         success: false,
         cost_usd: Some(0.01),
         duration_ms: Some(5_000),
@@ -244,14 +241,12 @@ fn test_ask_summary_failed() {
         output_tokens: None,
     };
     assert!(!summary.success);
-    assert_eq!(summary.slug, "failed-ask");
     assert_eq!(summary.cost_usd, Some(0.01));
 }
 
 #[test]
 fn test_ask_summary_with_none_values() {
     let summary = AskSummary {
-        slug: "minimal-ask".to_string(),
         success: true,
         cost_usd: None,
         duration_ms: None,
@@ -269,7 +264,6 @@ fn test_ask_summary_with_none_values() {
 fn test_ask_summary_clone() {
     let original = create_test_ask_summary();
     let cloned = original.clone();
-    assert_eq!(original.slug, cloned.slug);
     assert_eq!(original.success, cloned.success);
     assert_eq!(original.cost_usd, cloned.cost_usd);
     assert_eq!(original.duration_ms, cloned.duration_ms);
@@ -279,7 +273,6 @@ fn test_ask_summary_clone() {
 fn test_ask_summary_zero_cost() {
     // Zero cost is valid (e.g., cached responses)
     let summary = AskSummary {
-        slug: "cached-ask".to_string(),
         success: true,
         cost_usd: Some(0.0),
         duration_ms: Some(100),
@@ -295,7 +288,6 @@ fn test_ask_summary_zero_cost() {
 fn test_ask_summary_large_values() {
     // Large token counts and costs
     let summary = AskSummary {
-        slug: "big-ask".to_string(),
         success: true,
         cost_usd: Some(5.5678),
         duration_ms: Some(300_000), // 5 minutes

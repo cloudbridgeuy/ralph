@@ -20,6 +20,5 @@ pub mod chat_status;
 pub mod chunk;
 pub mod directive;
 pub mod mcp;
-pub mod session;
 pub mod stream;
 pub mod worker;
