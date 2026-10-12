@@ -33,6 +33,7 @@ use crate::invoke::{
     resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
 };
 use crate::paths;
+use ralph_core::inbox_alert::UnknownFocus;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -105,6 +106,16 @@ pub struct ChatSection {
     pub worker_base: Option<String>,
     #[serde(default)]
     pub permission_mode: Option<String>,
+    #[serde(default = "default_true")]
+    pub inbox_alert_sound: bool,
+    #[serde(default)]
+    pub inbox_alert_notification: bool,
+    #[serde(default)]
+    pub inbox_alert_unknown_focus: UnknownFocus,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_mcp_servers() -> Vec<String> {
@@ -119,6 +130,9 @@ impl Default for ChatSection {
             frozen_window: None,
             worker_base: None,
             permission_mode: None,
+            inbox_alert_sound: true,
+            inbox_alert_notification: false,
+            inbox_alert_unknown_focus: UnknownFocus::Alert,
         }
     }
 }
@@ -277,6 +291,27 @@ mod tests {
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.chat.frozen_window, Some(16));
         assert_eq!(AppConfig::new().chat.frozen_window, None);
+    }
+
+    #[test]
+    fn chat_section_parses_inbox_alert() {
+        let defaults = AppConfig::new().chat;
+        assert!(defaults.inbox_alert_sound);
+        assert!(!defaults.inbox_alert_notification);
+        assert_eq!(defaults.inbox_alert_unknown_focus, UnknownFocus::Alert);
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[chat]\ninbox_alert_sound = false\ninbox_alert_notification = true\ninbox_alert_unknown_focus = \"silent\"\n",
+        )
+        .unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert!(!config.chat.inbox_alert_sound);
+        assert!(config.chat.inbox_alert_notification);
+        assert_eq!(config.chat.inbox_alert_unknown_focus, UnknownFocus::Silent);
+        fs::write(&path, "[chat]\ninbox_alert_unknown_focus = \"loud\"\n").unwrap();
+        assert!(AppConfig::load_from(&path).is_err());
     }
 
     #[test]

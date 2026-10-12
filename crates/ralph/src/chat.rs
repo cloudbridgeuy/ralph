@@ -3,6 +3,7 @@ use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::highlight::ThemeConfig;
+use crate::inbox_alert;
 use crate::invoke::build_chat_command;
 use crate::markdown::create_markdown_skin;
 use crate::signal;
@@ -30,6 +31,7 @@ use ralph_core::chat_status::{
     footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
     store_workers, worker_states, Memory, Route, RunningWorker, Status,
 };
+use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{chat_message, Report, INBOX_DIR, READY_DIR};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
@@ -109,6 +111,8 @@ struct Monitor {
     seen: Mutex<HashMap<String, String>>,
     active: Mutex<Option<HashSet<String>>>,
     frozen_window: usize,
+    known: Mutex<Vec<Report>>,
+    alert: AlertConfig,
 }
 
 impl Monitor {
@@ -129,8 +133,23 @@ impl Monitor {
         Some(memory_size(entries.len(), &[frozen.lines, tail].concat()))
     }
 
+    fn alert_fresh(&self, pending: &[Report]) {
+        let mut known = locked(&self.known);
+        let fresh = fresh_reports(&known, pending);
+        if !fresh.is_empty() && self.alert.enabled() {
+            if let Some(alert) = inbox_alert(&fresh, inbox_alert::focus(), &self.alert) {
+                inbox_alert::deliver(&alert);
+            }
+        }
+        *known = pending.to_vec();
+    }
+
     fn refresh(&self, with_memory: bool) -> bool {
-        let pending = self.inbox.peek().unwrap_or_default();
+        let peeked = self.inbox.peek();
+        if let Ok(pending) = &peeked {
+            self.alert_fresh(pending);
+        }
+        let pending = peeked.unwrap_or_default();
         let seen = {
             let mut seen = locked(&self.seen);
             seen.extend(latest_states(&pending));
@@ -529,14 +548,22 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         frozen: Mutex::new(None),
         frozen_window,
     };
+    let inbox = Inbox::new(store_dir.join(INBOX_DIR));
+    let known = inbox.peek().unwrap_or_default();
     let monitor = Arc::new(Monitor {
-        inbox: Inbox::new(store_dir.join(INBOX_DIR)),
+        inbox,
         store: Store::new(store_dir.clone()),
         store_dir: absolute_or_same(store_dir.clone()),
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
         frozen_window,
+        known: Mutex::new(known),
+        alert: AlertConfig {
+            sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
+            notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
+            unknown_focus: chat_config.inbox_alert_unknown_focus,
+        },
     });
     monitor.refresh(true);
     if let Some(hint) = orphan_hint(

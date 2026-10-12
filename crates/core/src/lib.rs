@@ -19,6 +19,7 @@ pub mod chat_skills;
 pub mod chat_status;
 pub mod chunk;
 pub mod directive;
+pub mod inbox_alert;
 pub mod mcp;
 pub mod stream;
 pub mod worker;
