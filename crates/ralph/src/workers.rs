@@ -5,9 +5,9 @@ use ralph_core::worker::{
     opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
     opencode_worker_plugin, project_slug, ready_path, reported_path, session_name, session_owner,
     startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
-    worktree_path, CloseState, CloseStep, Harness, Owner, Startup, HARNESS_OPTION, ID_OPTION,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT,
-    STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    worktree_path, wt_switch_args, CloseState, CloseStep, Harness, Owner, Startup, WorktreeVia,
+    HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
+    OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -52,7 +52,7 @@ impl Workers {
         let session = session_name(&project, id);
         let worktree = worktree_path(&repo, id);
         exclude(&repo, &exclude_lines(harness))?;
-        ensure_worktree(&repo, &worktree, &branch_name(id))?;
+        let via = ensure_worktree(&repo, &worktree, &branch_name(id))?;
         record_base(&repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
         let ready = ready_path(&self.store_dir, id);
@@ -101,9 +101,10 @@ impl Workers {
         }
         let confirmed = await_startup(&session, &ready)?;
         let started = format!(
-            "Worker {id} started in {} on branch {}.",
+            "Worker {id} started in {} on branch {}. {}",
             worktree.display(),
-            branch_name(id)
+            branch_name(id),
+            via.note()
         );
         Ok(if confirmed {
             format!("{started} Watch it with: tmux attach -t {session}")
@@ -391,14 +392,31 @@ fn session_exists(session: &str) -> io::Result<bool> {
         .success())
 }
 
-fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<()> {
+fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<WorktreeVia> {
     run(Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["worktree", "prune"]))?;
     if worktree.join(".git").exists() {
-        return Ok(());
+        return Ok(WorktreeVia::Existing);
     }
+    let wt_error = match Command::new("wt")
+        .args(wt_switch_args(
+            repo,
+            worktree,
+            branch,
+            branch_exists(repo, branch)?,
+        ))
+        .stdin(Stdio::null())
+        .output()
+    {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        output => match output.and_then(check) {
+            _ if worktree.join(".git").exists() => return Ok(WorktreeVia::Wt),
+            Ok(_) => Some(format!("it did not create {}", worktree.display())),
+            Err(e) => Some(e.to_string()),
+        },
+    };
     run(Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -407,7 +425,7 @@ fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<()>
             branch,
             branch_exists(repo, branch)?,
         )))?;
-    Ok(())
+    Ok(WorktreeVia::Git { wt_error })
 }
 
 fn record_base(repo: &Path, id: &str) -> io::Result<()> {
