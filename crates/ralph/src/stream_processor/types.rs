@@ -4,7 +4,7 @@
 //! the stream processing pipeline.
 
 use ralph_core::chunk::ParsedChunk;
-use ralph_core::stream::{IterationCosts, IterationMetadata, ToolInteraction};
+use ralph_core::stream::{IterationCosts, IterationMetadata};
 use std::collections::HashSet;
 
 use super::output_block::OutputBlock;
@@ -124,8 +124,6 @@ pub struct StreamProcessorResult {
     pub metadata: IterationMetadata,
     /// Costs extracted from result event.
     pub costs: IterationCosts,
-    /// Tool interactions (calls correlated with results).
-    pub tool_interactions: Vec<ToolInteraction>,
     /// Accumulated output blocks for replay serialization.
     ///
     /// Each block captures the data needed to re-render a piece of output.

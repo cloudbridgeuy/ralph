@@ -8,8 +8,8 @@ use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::markdown::create_markdown_skin;
 use ralph_core::chunk::{ParsedChunk, StreamingChunkBuffer};
 use ralph_core::stream::{
-    correlate_tool_interactions, extract_costs_from_events_or_default,
-    extract_metadata_from_events_or_default, StreamEvent, ToolCorrelator, ToolInvocation,
+    extract_costs_from_events_or_default, extract_metadata_from_events_or_default, StreamEvent,
+    ToolInvocation,
 };
 use std::collections::HashMap;
 use std::io::IsTerminal;
@@ -50,8 +50,6 @@ pub struct StreamProcessor {
     pub(super) collected_chunks: Vec<ParsedChunk>,
     /// Parse errors encountered.
     pub(super) parse_errors: Vec<(String, String)>,
-    /// Tool correlator for tracking tool calls and results.
-    pub(super) tool_correlator: ToolCorrelator,
     /// Whether we've emitted any output (for visual separation).
     pub(super) has_emitted_output: bool,
     /// Count of distinct assistant responses processed.
@@ -179,7 +177,6 @@ impl StreamProcessorBuilder {
             current_message_id: None,
             collected_chunks: Vec::new(),
             parse_errors: Vec::new(),
-            tool_correlator: ToolCorrelator::new(),
             has_emitted_output: false,
             response_count: 0,
             pending_invocations: HashMap::new(),
@@ -354,8 +351,7 @@ impl StreamProcessor {
     /// 1. Flushes any remaining buffered content
     /// 2. Extracts metadata from system init event
     /// 3. Extracts costs from result event
-    /// 4. Correlates tool calls with results
-    /// 5. Returns all collected data
+    /// 4. Returns all collected data
     ///
     /// # Returns
     ///
@@ -368,14 +364,10 @@ impl StreamProcessor {
         let metadata = extract_metadata_from_events_or_default(&self.events);
         let costs = extract_costs_from_events_or_default(&self.events);
 
-        // Correlate tool interactions
-        let tool_interactions = correlate_tool_interactions(&self.events);
-
         StreamProcessorResult {
             chunks: self.collected_chunks,
             metadata,
             costs,
-            tool_interactions,
             output_blocks: self.output_blocks,
             final_output,
         }

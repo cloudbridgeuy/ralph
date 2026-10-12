@@ -408,7 +408,6 @@ mod tests {
             prompt: None,
             response: None,
             metadata: None,
-            tool_calls: vec![],
             chunks: vec![
                 Chunk::prose(format!("This is iteration {}", sequence)),
                 Chunk::code("fn main() {}".to_string(), Some("rust".to_string())),

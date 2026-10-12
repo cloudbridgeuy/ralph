@@ -16,7 +16,6 @@ mod chunk;
 mod error;
 mod log;
 mod metadata;
-mod tool_call;
 mod writer;
 
 #[cfg(test)]
@@ -27,12 +26,7 @@ pub use chunk::Chunk;
 pub use error::IterationError;
 pub use log::{extract_response_text, IterationLog};
 pub use metadata::LogMetadata;
-pub use tool_call::LogToolCall;
 pub use writer::{
     count_iterations, extract_conversation_messages, load_session_iterations, write_iteration_log,
     ConversationMessage,
 };
-
-/// Maximum size in bytes for tool results before truncation.
-/// Results larger than this will be truncated with an indicator.
-pub(crate) const MAX_RESULT_SIZE: usize = 10_000;

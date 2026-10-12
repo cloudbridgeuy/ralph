@@ -41,11 +41,10 @@ impl ConversationMessage {
 /// # Example
 ///
 /// ```no_run
-/// use ralph::iteration::{IterationLog, Chunk, LogMetadata, LogToolCall, write_iteration_log};
+/// use ralph::iteration::{IterationLog, Chunk, LogMetadata, write_iteration_log};
 /// use ralph_core::stream::Usage;
 /// use std::path::PathBuf;
 /// use chrono::Utc;
-/// use serde_json::json;
 ///
 /// let session_dir = PathBuf::from("/home/user/.config/ralph/sessions/test-session");
 /// let log = IterationLog {
@@ -62,16 +61,6 @@ impl ConversationMessage {
 ///         duration_ms: Some(10000),
 ///         usage: Some(Usage::default()),
 ///     }),
-///     tool_calls: vec![
-///         LogToolCall {
-///             id: "toolu_01".to_string(),
-///             name: "Read".to_string(),
-///             input: json!({"file_path": "/src/main.rs"}),
-///             result: Some("fn main() {}".to_string()),
-///             result_truncated: false,
-///             is_error: false,
-///         },
-///     ],
 ///     chunks: vec![Chunk::prose("Implementation complete".to_string())],
 ///     output_blocks: vec![],
 /// };

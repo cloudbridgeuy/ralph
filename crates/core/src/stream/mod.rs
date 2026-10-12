@@ -32,7 +32,6 @@ mod events;
 mod extraction;
 mod metadata;
 mod parsing;
-mod tools;
 
 #[cfg(test)]
 mod tests;
@@ -43,14 +42,11 @@ pub use events::{
     AssistantEvent, AssistantMessage, ContentBlock, ResultEvent, StreamEvent, SystemEvent, Tool,
     ToolResult, Usage, UserEvent, UserMessage,
 };
-pub use extraction::{
-    extract_text_from_events, extract_tool_invocations_from_events, ToolInvocation,
-};
+pub use extraction::ToolInvocation;
 pub use metadata::{
     extract_metadata_from_events, extract_metadata_from_events_or_default, IterationMetadata,
 };
 pub use parsing::{parse_stream_line, parse_stream_output, ParsedLine, StreamParser};
-pub use tools::{correlate_tool_interactions, ToolCorrelator, ToolInteraction};
 
 // Re-export chunk types for convenience
 pub use crate::chunk::{parse_chunks, parse_chunks_with_heuristics, ChunkType, ParsedChunk};

@@ -14,6 +14,3 @@ mod tool_invocation_tests;
 
 #[path = "tests/iteration_costs.rs"]
 mod iteration_costs_tests;
-
-#[path = "tests/tool_correlation.rs"]
-mod tool_correlation_tests;

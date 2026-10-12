@@ -198,9 +198,6 @@ impl StreamProcessor {
             }
         }
 
-        // Track tool calls/results through correlator
-        self.tool_correlator.process_event(&event);
-
         // Store event for post-processing
         self.events.push(event);
 
