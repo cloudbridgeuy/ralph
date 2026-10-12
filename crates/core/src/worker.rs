@@ -10,6 +10,8 @@ pub const INBOX_DIR: &str = "inbox";
 pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
 pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
+pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-ready.ts";
+pub const READY_DIR: &str = "ready";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 
@@ -195,9 +197,7 @@ pub fn opencode_config(model: &str, exe: &Path, id: &str, inbox: &Path) -> Value
     })
 }
 
-/// Runs Claude through a login, interactive zsh so the worker gets the same
-/// environment as a terminal the person opens; `$0 "$@"` keeps the arguments unquoted.
-pub fn worker_command(mcp_config: &Path, task: &str) -> Vec<String> {
+pub fn worker_command(mcp_config: &Path, settings: &Path, task: &str) -> Vec<String> {
     [
         "zsh",
         "-lic",
@@ -205,12 +205,60 @@ pub fn worker_command(mcp_config: &Path, task: &str) -> Vec<String> {
         "claude",
         "--mcp-config",
         &mcp_config.to_string_lossy(),
+        "--settings",
+        &settings.to_string_lossy(),
         "--append-system-prompt",
         WORKER_PROMPT,
         task,
     ]
     .map(str::to_string)
     .to_vec()
+}
+
+pub fn ready_path(store: &Path, id: &str) -> PathBuf {
+    store.join(READY_DIR).join(id)
+}
+
+pub fn claude_ready_settings(ready: &Path) -> Value {
+    let quoted = format!("'{}'", ready.to_string_lossy().replace('\'', r"'\''"));
+    json!({
+        "hooks": {
+            "SessionStart": [{
+                "matcher": "startup",
+                "hooks": [{"type": "command", "command": format!("touch {quoted}")}]
+            }]
+        }
+    })
+}
+
+pub fn opencode_ready_plugin(id: &str, ready: &Path) -> String {
+    let session = Value::from(opencode_session_id(id));
+    let ready = Value::from(ready.to_string_lossy());
+    let plugin = Value::from(format!("ralph-ready-{id}"));
+    format!(
+        r#"import {{ writeFileSync }} from "node:fs"
+
+const SESSION = {session}
+const READY = {ready}
+const SIGNALS = new Set(["session.created", "session.inbox.enqueued"])
+
+export default {{
+  id: {plugin},
+  setup: async (ctx: any) => {{
+    void (async () => {{
+      try {{
+        for await (const event of ctx.event.subscribe({{}})) {{
+          if (SIGNALS.has(event?.type) && event?.data?.sessionID === SESSION) {{
+            writeFileSync(READY, "")
+            return
+          }}
+        }}
+      }} catch {{}}
+    }})()
+  }},
+}} as any
+"#
+    )
 }
 
 pub fn opencode_session_id(id: &str) -> String {
@@ -239,6 +287,7 @@ pub fn exclude_lines(harness: &Harness) -> Vec<String> {
     let mut lines = vec![format!("/{WORKTREE_DIR}/")];
     if let Harness::Opencode { .. } = harness {
         lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
+        lines.push(format!("/{OPENCODE_PLUGIN_FILE}"));
     }
     lines
 }
@@ -254,15 +303,11 @@ pub enum Startup {
     Ready,
 }
 
-pub fn startup_state(harness: &Harness, pane: &str) -> Startup {
-    let ready_marker = match harness {
-        Harness::Claude => "Claude Code v",
-        Harness::Opencode { .. } => "ctrl+p commands",
-    };
-    if pane.contains("Yes, I trust this folder") {
-        Startup::TrustPrompt
-    } else if pane.contains(ready_marker) {
+pub fn startup_state(pane: &str, ready: bool) -> Startup {
+    if ready {
         Startup::Ready
+    } else if pane.contains("Yes, I trust this folder") {
+        Startup::TrustPrompt
     } else {
         Startup::Starting
     }
@@ -451,9 +496,22 @@ mod tests {
 
     #[test]
     fn worker_command_runs_claude_through_zsh_and_ends_with_the_task() {
-        let args = worker_command(Path::new("/s/workers/A.json"), "do it");
+        let args = worker_command(
+            Path::new("/s/workers/A.json"),
+            Path::new("/s/workers/A.settings.json"),
+            "do it",
+        );
         assert_eq!(args[..2], ["zsh", "-lic"]);
-        assert_eq!(args[3..6], ["claude", "--mcp-config", "/s/workers/A.json"]);
+        assert_eq!(
+            args[3..8],
+            [
+                "claude",
+                "--mcp-config",
+                "/s/workers/A.json",
+                "--settings",
+                "/s/workers/A.settings.json"
+            ]
+        );
         assert_eq!(args.last().unwrap(), "do it");
     }
 
@@ -502,7 +560,11 @@ mod tests {
             exclude_lines(&Harness::Opencode {
                 model: "a/b".into()
             }),
-            ["/.worktrees/", "/opencode.json"]
+            [
+                "/.worktrees/",
+                "/opencode.json",
+                "/.opencode/plugins/ralph-ready.ts"
+            ]
         );
     }
 
@@ -526,34 +588,52 @@ mod tests {
     }
 
     #[test]
-    fn startup_state_reads_the_pane() {
-        let claude = Harness::Claude;
-        assert_eq!(startup_state(&claude, ""), Startup::Starting);
+    fn startup_state_waits_for_the_ready_signal_and_spots_the_trust_prompt() {
+        let trust = " Accessing workspace:\n ❯ No, exit\n   Yes, I trust this folder\n";
+        assert_eq!(startup_state("", false), Startup::Starting);
+        assert_eq!(startup_state(trust, false), Startup::TrustPrompt);
+        assert_eq!(startup_state(trust, true), Startup::Ready);
         assert_eq!(
-            startup_state(
-                &claude,
-                " Accessing workspace:\n ❯ No, exit\n   Yes, I trust this folder\n"
-            ),
-            Startup::TrustPrompt
+            startup_state(" ▐▛███▛█   Claude Code v2.1.295\n", false),
+            Startup::Starting
         );
         assert_eq!(
-            startup_state(&claude, " ▐▛███▛█   Claude Code v2.1.295\n❯ fix it\n"),
-            Startup::Ready
+            startup_state("  ctrl+p commands\n", false),
+            Startup::Starting
         );
     }
 
     #[test]
-    fn startup_state_reads_the_opencode_footer() {
-        let opencode = Harness::Opencode {
-            model: "a/b".into(),
-        };
-        let footer = "  /tmp/x:main           shift+tab agents  ctrl+p commands\n";
-        assert_eq!(startup_state(&opencode, footer), Startup::Ready);
-        assert_eq!(startup_state(&Harness::Claude, footer), Startup::Starting);
+    fn ready_path_is_per_worker_in_the_store() {
         assert_eq!(
-            startup_state(&opencode, " ▐▛███▛█   Claude Code v2.1.295\n"),
-            Startup::Starting
+            ready_path(Path::new("/s"), "A"),
+            PathBuf::from("/s/ready/A")
         );
+    }
+
+    #[test]
+    fn claude_ready_settings_touch_the_ready_file_on_startup_only() {
+        let settings = claude_ready_settings(Path::new("/s/it's/ready/A"));
+        let start = &settings["hooks"]["SessionStart"][0];
+        assert_eq!(start["matcher"], "startup");
+        assert_eq!(
+            start["hooks"][0],
+            json!({"type": "command", "command": r"touch '/s/it'\''s/ready/A'"})
+        );
+    }
+
+    #[test]
+    fn opencode_ready_plugin_answers_only_for_its_own_session() {
+        let plugin = opencode_ready_plugin("A", Path::new("/s/ready/\"A\""));
+        assert!(plugin.contains(r#"const SESSION = "ses_ralphA""#));
+        assert!(plugin.contains(r#"const READY = "/s/ready/\"A\"""#));
+        assert!(plugin.contains(r#"id: "ralph-ready-A""#));
+        assert!(plugin.contains(r#"["session.created", "session.inbox.enqueued"]"#));
+        assert!(plugin.contains("event?.data?.sessionID === SESSION"));
+        assert!(plugin.contains("writeFileSync(READY, \"\")\n            return"));
+        for forbidden in ["setInterval", "setTimeout", "child_process"] {
+            assert!(!plugin.contains(forbidden), "{forbidden}");
+        }
     }
 
     #[test]
