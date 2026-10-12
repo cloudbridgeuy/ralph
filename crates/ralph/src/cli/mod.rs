@@ -69,6 +69,12 @@ pub struct ChatArgs {
 
     #[arg(long, value_name = "MODE")]
     pub permission_mode: Option<String>,
+
+    #[arg(long)]
+    pub no_inbox_sound: bool,
+
+    #[arg(long)]
+    pub no_inbox_notification: bool,
 }
 
 #[derive(clap::Args, Debug)]

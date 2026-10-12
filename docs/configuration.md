@@ -154,8 +154,11 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `frozen_window` | integer | `32` | Entries per frozen memory-view window, from 1 to 199 |
 | `worker_base` | string | unset | Base branch that `close_worker` checks for unmerged commits |
 | `permission_mode` | string | `"auto"` | `claude --permission-mode` for chat turns and claude workers |
+| `inbox_alert_sound` | bool | `true` | Play a sound when a worker report arrives and the chat is not focused |
+| `inbox_alert_notification` | bool | `false` | Also send a system notification (`<id> <status>`) |
+| `inbox_alert_unknown_focus` | `"alert"` or `"silent"` | `"alert"` | What to do when focus cannot be detected (outside tmux, no attached client, tmux query failed) |
 
-`--skill` and `RALPH_CHAT_SKILLS` replace `skills`. For `permission_mode` the precedence is `chat --permission-mode`, then `RALPH_CHAT_PERMISSION_MODE`, then this key, then `auto`; chat passes the resolved mode to every claude worker it spawns, so chat and workers always match. `--frozen-window <N>` overrides `frozen_window`; a value outside 1-199 stops chat start with an error. Without `worker_base`, `close_worker` uses the branch recorded at spawn (`branch.worker/<ID>.ralphBase`), then `origin/HEAD`, then `main`. See [ralph chat](context/ralph-chat.md).
+`--skill` and `RALPH_CHAT_SKILLS` replace `skills`. For `permission_mode` the precedence is `chat --permission-mode`, then `RALPH_CHAT_PERMISSION_MODE`, then this key, then `auto`; chat passes the resolved mode to every claude worker it spawns, so chat and workers always match. `--frozen-window <N>` overrides `frozen_window`; a value outside 1-199 stops chat start with an error. Without `worker_base`, `close_worker` uses the branch recorded at spawn (`branch.worker/<ID>.ralphBase`), then `origin/HEAD`, then `main`. `chat --no-inbox-sound` and `--no-inbox-notification` turn off the matching alert for one run; focus rules are in [ralph chat](context/ralph-chat.md#worker-inbox). See [ralph chat](context/ralph-chat.md).
 
 ## Chat Store
 

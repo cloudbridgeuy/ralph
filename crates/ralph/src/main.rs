@@ -16,6 +16,7 @@ pub mod config;
 pub mod diff_highlight;
 pub mod formatting;
 pub mod highlight;
+mod inbox_alert;
 mod invoke;
 pub mod markdown;
 pub mod paths;
@@ -48,6 +49,8 @@ fn main() -> ExitCode {
         frozen_window: None,
         skills: Vec::new(),
         permission_mode: None,
+        no_inbox_sound: false,
+        no_inbox_notification: false,
     })) {
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),
