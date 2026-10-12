@@ -21,6 +21,9 @@ pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
 pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-worker.ts";
 pub const READY_DIR: &str = "ready";
 pub const REPORTED_DIR: &str = "reported";
+pub const BLOCKED_DIR: &str = "blocked";
+pub const WAITING_DIR: &str = "waiting";
+pub const UNREPORTED_DIR: &str = "unreported";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const STORE_OPTION: &str = "@ralph_store";
@@ -342,6 +345,28 @@ pub fn ready_path(store: &Path, id: &str) -> PathBuf {
 
 pub fn reported_path(store: &Path, id: &str) -> PathBuf {
     store.join(REPORTED_DIR).join(id)
+}
+
+pub fn blocked_path(store: &Path, id: &str) -> PathBuf {
+    store.join(BLOCKED_DIR).join(id)
+}
+
+pub fn waiting_path(store: &Path, id: &str) -> PathBuf {
+    store.join(WAITING_DIR).join(id)
+}
+
+pub fn unreported_path(store: &Path, id: &str) -> PathBuf {
+    store.join(UNREPORTED_DIR).join(id)
+}
+
+pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 5] {
+    [
+        ready_path(store, id),
+        reported_path(store, id),
+        blocked_path(store, id),
+        waiting_path(store, id),
+        unreported_path(store, id),
+    ]
 }
 
 pub fn opencode_session_id(id: &str) -> String {
@@ -848,6 +873,20 @@ mod tests {
         assert_eq!(
             reported_path(Path::new("/s"), "A"),
             PathBuf::from("/s/reported/A")
+        );
+    }
+
+    #[test]
+    fn marker_paths_cover_every_marker_dir_for_the_worker() {
+        assert_eq!(
+            marker_paths(Path::new("/s"), "A"),
+            [
+                PathBuf::from("/s/ready/A"),
+                PathBuf::from("/s/reported/A"),
+                PathBuf::from("/s/blocked/A"),
+                PathBuf::from("/s/waiting/A"),
+                PathBuf::from("/s/unreported/A"),
+            ]
         );
     }
 

@@ -2,7 +2,7 @@ use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
     base_branch, base_config_key, branch_name, claude_worker_settings, close_plan, exclude_lines,
-    opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
+    marker_paths, opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
     opencode_worker_plugin, project_slug, ready_path, reported_path, resolve_worktree_dir,
     session_name, session_owner, startup_state, tagged_sessions, worker_command, worker_mcp_config,
     worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep,
@@ -68,8 +68,9 @@ impl Workers {
         let inbox = self.store_dir.join(INBOX_DIR);
         let ready = ready_path(&self.store_dir, id);
         let reported = reported_path(&self.store_dir, id);
-        clear_marker(&ready)?;
-        clear_marker(&reported)?;
+        for marker in marker_paths(&self.store_dir, id) {
+            clear_marker(&marker)?;
+        }
         let command = match harness {
             Harness::Claude => {
                 let settings = self.write_settings(id, &ready, &reported)?;
@@ -209,8 +210,9 @@ impl Workers {
             base: base.branch.clone(),
             unmerged_commits,
             opencode,
-            markers: ready_path(&self.store_dir, id).exists()
-                || reported_path(&self.store_dir, id).exists(),
+            markers: marker_paths(&self.store_dir, id)
+                .iter()
+                .any(|marker| marker.exists()),
         };
         let with_warning = |text: String| {
             [&base.warning, &worktree_dir.warning]
@@ -227,7 +229,7 @@ impl Workers {
         }
         if steps == [CloseStep::ClearMarkers] {
             return Ok(format!(
-                "Closed worker {id}: only its ready and reported markers were left; removed them."
+                "Closed worker {id}: only its markers were left; removed them."
             ));
         }
         let note = if opencode {
@@ -289,8 +291,9 @@ impl Workers {
                     .arg(format!("location[directory]={}", worktree.display())))?;
             }
             CloseStep::ClearMarkers => {
-                clear_marker(&ready_path(&self.store_dir, id))?;
-                clear_marker(&reported_path(&self.store_dir, id))?;
+                for marker in marker_paths(&self.store_dir, id) {
+                    clear_marker(&marker)?;
+                }
             }
         }
         Ok(())
