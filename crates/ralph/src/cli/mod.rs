@@ -48,6 +48,9 @@ pub enum Commands {
 
     #[command(hide = true)]
     WorkerMcp(WorkerMcpArgs),
+
+    #[command(hide = true)]
+    WorkerStopHook(WorkerStopHookArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -78,6 +81,12 @@ pub struct WorkerMcpArgs {
 
     #[arg(long, value_name = "DIR")]
     pub inbox: std::path::PathBuf,
+}
+
+#[derive(clap::Args, Debug)]
+pub struct WorkerStopHookArgs {
+    #[arg(long, value_name = "PATH")]
+    pub reported: std::path::PathBuf,
 }
 
 #[derive(clap::Args, Debug)]

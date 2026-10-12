@@ -1,8 +1,11 @@
 use ralph_core::mcp::tool_result;
-use ralph_core::worker::{handle_request, inbox_file_name, reported_path, Outcome, Report};
+use ralph_core::worker::{
+    handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision, Outcome,
+    Report, StopDecision,
+};
 use serde_json::Value;
 use std::fs;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 
 pub struct Inbox {
@@ -127,9 +130,64 @@ pub fn run_stdio_server(
     Ok(())
 }
 
+pub fn run_stop_hook(
+    reported: &Path,
+    mut input: impl Read,
+    mut output: impl Write,
+) -> io::Result<()> {
+    let mut payload = String::new();
+    if let Err(e) = input.read_to_string(&mut payload) {
+        crate::warn::warn(format!(
+            "letting the worker stop: unreadable Stop hook input: {e}"
+        ));
+        return Ok(());
+    }
+    match stop_decision(&payload, reported.exists()) {
+        StopDecision::Allow => {}
+        StopDecision::ConsumeMarker => match fs::remove_file(reported) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        },
+        StopDecision::Block => writeln!(output, "{}", stop_block_output())?,
+        StopDecision::FailOpen(reason) => {
+            crate::warn::warn(format!("letting the worker stop: {reason}"))
+        }
+    }
+    output.flush()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stop_hook(reported: &Path, payload: &str) -> String {
+        let mut out = Vec::new();
+        run_stop_hook(reported, payload.as_bytes(), &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn stop_hook_blocks_once_then_a_report_clears_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let reported = dir.path().join("reported").join("A");
+        let first = stop_hook(&reported, r#"{"stop_hook_active":false}"#);
+        assert_eq!(
+            serde_json::from_str::<Value>(&first).unwrap(),
+            stop_block_output()
+        );
+        assert_eq!(stop_hook(&reported, r#"{"stop_hook_active":true}"#), "");
+
+        fs::create_dir_all(reported.parent().unwrap()).unwrap();
+        fs::write(&reported, "").unwrap();
+        assert_eq!(stop_hook(&reported, r#"{"stop_hook_active":false}"#), "");
+        assert!(!reported.exists());
+    }
+
+    #[test]
+    fn stop_hook_lets_malformed_input_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(stop_hook(&dir.path().join("A"), "not json"), "");
+    }
 
     #[test]
     fn report_lands_in_inbox_and_drains_once() {

@@ -32,7 +32,9 @@ mod worker_mcp;
 mod workers;
 
 use clap::Parser;
-use cli::{AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, WorkerMcpArgs};
+use cli::{
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, WorkerMcpArgs, WorkerStopHookArgs,
+};
 use invoke::InvocationConfig;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
@@ -53,6 +55,7 @@ fn main() -> ExitCode {
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::WorkerMcp(args) => execute_worker_mcp(args),
+        Commands::WorkerStopHook(args) => execute_worker_stop_hook(args),
     };
 
     match result {
@@ -187,6 +190,15 @@ fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Err
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     worker_mcp::run_stdio_server(&args.id, &inbox, stdin.lock(), stdout.lock())?;
+    Ok(())
+}
+
+fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std::error::Error>> {
+    worker_mcp::run_stop_hook(
+        &args.reported,
+        std::io::stdin().lock(),
+        std::io::stdout().lock(),
+    )?;
     Ok(())
 }
 

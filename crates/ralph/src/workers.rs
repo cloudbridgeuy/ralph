@@ -275,7 +275,10 @@ impl Workers {
         let dir = self.store_dir.join(WORKERS_DIR);
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{id}.settings.json"));
-        fs::write(&path, claude_worker_settings(ready, reported).to_string())?;
+        fs::write(
+            &path,
+            claude_worker_settings(&self.exe, ready, reported).to_string(),
+        )?;
         Ok(path)
     }
 
