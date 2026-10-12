@@ -7,8 +7,10 @@ use std::path::{Component, Path, PathBuf};
 
 mod hooks;
 mod ownership;
+mod worktree;
 pub use hooks::*;
 pub use ownership::*;
+pub use worktree::*;
 
 pub const SERVER_NAME: &str = "ralph-worker";
 pub const INBOX_DIR: &str = "inbox";
@@ -223,21 +225,6 @@ pub fn command_allowed(command: &Command, entries: &[Entry]) -> Result<(), Strin
 
 pub fn branch_name(id: &str) -> String {
     format!("worker/{id}")
-}
-
-pub fn resolve_worktree_dir(
-    repo: &Path,
-    flag: Option<&str>,
-    env: Option<&str>,
-    config: Option<&str>,
-) -> PathBuf {
-    let dir = [flag, env, config]
-        .into_iter()
-        .flatten()
-        .map(str::trim)
-        .find(|dir| !dir.is_empty())
-        .unwrap_or(WORKTREE_DIR);
-    repo.join(dir)
 }
 
 pub fn worktree_path(dir: &Path, id: &str) -> PathBuf {
@@ -752,40 +739,6 @@ mod tests {
         assert!(exclude_lines(&Harness::Claude, repo, Path::new("/elsewhere/wt")).is_empty());
         assert!(exclude_lines(&Harness::Claude, repo, Path::new("/repo/../wt")).is_empty());
         assert!(exclude_lines(&Harness::Claude, repo, repo).is_empty());
-    }
-
-    #[test]
-    fn worktree_dir_precedence_is_flag_env_config_default() {
-        let repo = Path::new("/repo");
-        let resolve = |flag, env, config| resolve_worktree_dir(repo, flag, env, config);
-        assert_eq!(
-            resolve(Some("f"), Some("e"), Some("c")),
-            Path::new("/repo/f")
-        );
-        assert_eq!(resolve(None, Some("e"), Some("c")), Path::new("/repo/e"));
-        assert_eq!(resolve(None, None, Some("c")), Path::new("/repo/c"));
-        assert_eq!(resolve(None, None, None), Path::new("/repo/.worktrees"));
-        assert_eq!(
-            resolve(Some(" "), Some(""), Some("c")),
-            Path::new("/repo/c")
-        );
-    }
-
-    #[test]
-    fn worktree_dir_resolves_relative_to_the_repo_and_keeps_absolute_paths() {
-        let repo = Path::new("/repo");
-        assert_eq!(
-            resolve_worktree_dir(repo, None, None, Some("../wt")),
-            Path::new("/repo/../wt")
-        );
-        assert_eq!(
-            resolve_worktree_dir(repo, None, Some("/tmp/wt"), None),
-            Path::new("/tmp/wt")
-        );
-        assert_eq!(
-            worktree_path(Path::new("/tmp/wt"), "GUZ-1"),
-            Path::new("/tmp/wt/GUZ-1")
-        );
     }
 
     #[test]
