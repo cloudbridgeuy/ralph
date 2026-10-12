@@ -4,6 +4,14 @@ use std::path::Path;
 
 pub const VIEW_LINES: usize = 200;
 pub const FROZEN_WINDOW: usize = 32;
+pub const WORKER_CHECK_SECS: u64 = 60;
+
+pub fn resolve_worker_check_secs(config: Option<u64>) -> Option<u64> {
+    match config.unwrap_or(WORKER_CHECK_SECS) {
+        0 => None,
+        secs => Some(secs),
+    }
+}
 
 pub fn resolve_frozen_window(flag: Option<usize>, config: Option<usize>) -> Result<usize, String> {
     let window = flag.or(config).unwrap_or(FROZEN_WINDOW);
@@ -163,6 +171,13 @@ mod tests {
         permission_mode: "auto",
         worktree_dir: None,
     };
+
+    #[test]
+    fn worker_check_secs_resolution() {
+        assert_eq!(resolve_worker_check_secs(None), Some(60));
+        assert_eq!(resolve_worker_check_secs(Some(0)), None);
+        assert_eq!(resolve_worker_check_secs(Some(15)), Some(15));
+    }
 
     #[test]
     fn frozen_window_resolution() {

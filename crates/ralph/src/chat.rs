@@ -17,8 +17,9 @@ use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, opencode_active, tmux_listing};
 use ralph_core::chat::{
-    build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
-    turn_prompt, turn_system_prompt, ChatMcpOptions, VIEW_LINES,
+    build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window,
+    resolve_worker_check_secs, select_servers, turn_prompt, turn_system_prompt, ChatMcpOptions,
+    VIEW_LINES,
 };
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_memory::{
@@ -114,6 +115,8 @@ struct Monitor {
     seen: Mutex<HashMap<String, String>>,
     active: Mutex<Option<HashSet<String>>>,
     frozen_window: usize,
+    #[expect(dead_code)]
+    worker_check_secs: Option<u64>,
     known: Mutex<Vec<Report>>,
     alert: AlertConfig,
 }
@@ -545,6 +548,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     let chat_config = config.chat;
     let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
+    let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
     let mcp_config_path = write_mcp_config(
         &store,
         &store_dir,
@@ -591,6 +595,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
         frozen_window,
+        worker_check_secs,
         known: Mutex::new(known),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
