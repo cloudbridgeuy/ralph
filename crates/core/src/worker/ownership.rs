@@ -8,23 +8,39 @@ pub fn base_config_key(id: &str) -> String {
     format!("branch.{}.ralphBase", branch_name(id))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Base {
+    pub branch: String,
+    pub warning: Option<String>,
+}
+
 pub fn base_branch(
-    configured: Option<&str>,
+    configured: Result<Option<&str>, &str>,
     recorded: Option<&str>,
     origin_head: Option<&str>,
-) -> String {
+) -> Base {
+    let (configured, config_error) = match configured {
+        Ok(configured) => (configured, None),
+        Err(error) => (None, Some(error)),
+    };
     let origin_default = origin_head.map(|head| {
         head.trim()
             .strip_prefix(ORIGIN_PREFIX)
             .unwrap_or(head.trim())
     });
-    [configured, recorded, origin_default]
+    let branch = [configured, recorded, origin_default]
         .into_iter()
         .flatten()
         .map(str::trim)
         .find(|branch| !branch.is_empty())
         .unwrap_or(FALLBACK_BASE_BRANCH)
-        .to_string()
+        .to_string();
+    let warning = config_error.map(|error| {
+        format!(
+            "Warning: [chat] worker_base was skipped because the ralph config did not load ({error}). Unmerged commits were checked against {branch} instead."
+        )
+    });
+    Base { branch, warning }
 }
 
 pub fn project_slug(repo: &Path) -> String {
@@ -315,14 +331,59 @@ mod tests {
             .contains(&CloseStep::RemoveWorktree { force: true }));
     }
 
+    fn branch(
+        configured: Option<&str>,
+        recorded: Option<&str>,
+        origin_head: Option<&str>,
+    ) -> String {
+        base_branch(Ok(configured), recorded, origin_head).branch
+    }
+
     #[test]
     fn base_branch_prefers_config_then_spawn_base_then_origin_head_then_main() {
         let origin = Some("refs/remotes/origin/trunk\n");
-        assert_eq!(base_branch(Some("dev"), Some("feat"), origin), "dev");
-        assert_eq!(base_branch(None, Some("feat"), origin), "feat");
-        assert_eq!(base_branch(Some(" "), None, origin), "trunk");
-        assert_eq!(base_branch(None, None, None), "main");
-        assert_eq!(base_branch(None, Some(""), Some("")), "main");
+        assert_eq!(branch(Some("dev"), Some("feat"), origin), "dev");
+        assert_eq!(branch(None, Some("feat"), origin), "feat");
+        assert_eq!(branch(Some(" "), None, origin), "trunk");
+        assert_eq!(branch(None, None, None), "main");
+        assert_eq!(branch(None, Some(""), Some("")), "main");
+    }
+
+    #[test]
+    fn base_branch_without_a_config_file_does_not_warn() {
+        assert_eq!(
+            base_branch(Ok(None), Some("feat"), None),
+            Base {
+                branch: "feat".into(),
+                warning: None
+            }
+        );
+    }
+
+    #[test]
+    fn base_branch_uses_a_valid_worker_base_without_warning() {
+        assert_eq!(
+            base_branch(Ok(Some("develop")), Some("feat"), None),
+            Base {
+                branch: "develop".into(),
+                warning: None
+            }
+        );
+    }
+
+    #[test]
+    fn base_branch_warns_and_falls_back_when_the_config_fails_to_load() {
+        let error = "Failed to parse config file at /c/config.toml: expected `=`";
+        let base = base_branch(Err(error), Some("feat"), Some("refs/remotes/origin/trunk"));
+        assert_eq!(base.branch, "feat");
+        let warning = base.warning.unwrap();
+        assert!(warning.contains("worker_base was skipped"), "{warning}");
+        assert!(warning.contains(error), "{warning}");
+        assert!(
+            warning.ends_with("checked against feat instead."),
+            "{warning}"
+        );
+        assert_eq!(base_branch(Err(error), None, None).branch, "main");
     }
 
     #[test]

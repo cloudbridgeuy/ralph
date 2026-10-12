@@ -155,11 +155,14 @@ impl Workers {
         } else {
             None
         };
+        let configured = AppConfig::load()
+            .map(|config| config.chat.worker_base)
+            .map_err(|e| e.to_string());
         let base = base_branch(
-            AppConfig::load()
-                .ok()
-                .and_then(|config| config.chat.worker_base)
-                .as_deref(),
+            configured
+                .as_ref()
+                .map(Option::as_deref)
+                .map_err(String::as_str),
             git_value(&repo, &["config", "--get", &base_config_key(id)])?.as_deref(),
             git_value(&repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
         );
@@ -168,7 +171,7 @@ impl Workers {
                 .arg("-C")
                 .arg(&repo)
                 .args(["rev-list", "--count"])
-                .arg(format!("{base}..{branch}")))?);
+                .arg(format!("{}..{branch}", base.branch)))?);
             Some(count.parse().map_err(io::Error::other)?)
         } else {
             None
@@ -179,11 +182,16 @@ impl Workers {
             id: id.to_string(),
             owner,
             dirty_worktree,
-            base,
+            base: base.branch.clone(),
             unmerged_commits,
             opencode,
         };
-        let steps = close_plan(&state, abandon).map_err(io::Error::other)?;
+        let with_warning = |text: String| match &base.warning {
+            Some(warning) => format!("{text} {warning}"),
+            None => text,
+        };
+        let steps = close_plan(&state, abandon)
+            .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
         for step in &steps {
             self.close_step(step, &repo, id).map_err(|e| {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
@@ -194,9 +202,9 @@ impl Workers {
         } else {
             ""
         };
-        Ok(format!(
+        Ok(with_warning(format!(
             "Closed worker {id}: removed its sessions, worktree and branch {branch}.{note}"
-        ))
+        )))
     }
 
     fn close_step(&self, step: &CloseStep, repo: &Path, id: &str) -> io::Result<()> {
