@@ -16,9 +16,9 @@ pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 
 pub const WORKER_PROMPT: &str = "\
-You work for one person on the task you were given, in your own git worktree. Act; do not stop to ask for confirmation.
+You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
 
-When you finish, get blocked, or need a decision, call the report tool, then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
+Call the report tool only when you finish, are truly blocked, or need a decision only the person can make; then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
@@ -187,6 +187,7 @@ pub fn opencode_config(model: &str, exe: &Path, id: &str, inbox: &Path) -> Value
     json!({
         "$schema": "https://opencode.ai/config.json",
         "model": model,
+        "permission": { "question": "deny" },
         "mcp": {
             SERVER_NAME: {
                 "type": "local",
@@ -543,6 +544,7 @@ mod tests {
             Path::new("/s/inbox"),
         );
         assert_eq!(config["model"], "openai/gpt-5.6-sol");
+        assert_eq!(config["permission"]["question"], "deny");
         assert_eq!(
             config["mcp"][SERVER_NAME],
             json!({
