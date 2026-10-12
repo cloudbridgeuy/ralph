@@ -26,7 +26,7 @@ jobs:
       - name: Install cargo-rail
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-rail
+          tool: cargo-rail@0.11.0
 
       - name: Cache cargo registry and index
         uses: actions/cache@v4
