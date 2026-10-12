@@ -233,6 +233,49 @@ pub fn worktree_add_args(path: &Path, branch: &str, branch_exists: bool) -> Vec<
     args
 }
 
+pub fn wt_switch_args(
+    repo: &Path,
+    path: &Path,
+    branch: &str,
+    branch_exists: bool,
+) -> Vec<OsString> {
+    let pinned_path = Value::from(path.to_string_lossy()).to_string();
+    let mut args: Vec<OsString> = vec![
+        "-C".into(),
+        repo.into(),
+        "--config-set".into(),
+        format!("worktree-path={pinned_path}").into(),
+        "switch".into(),
+    ];
+    if !branch_exists {
+        args.extend(["--create".into(), "--base".into(), "@".into()]);
+    }
+    args.extend([branch.into(), "--no-cd".into()]);
+    args
+}
+
+#[derive(Debug, PartialEq)]
+pub enum WorktreeVia {
+    Existing,
+    Wt,
+    Git { wt_error: Option<String> },
+}
+
+impl WorktreeVia {
+    pub fn note(&self) -> String {
+        match self {
+            Self::Existing => "Reused its existing worktree.".to_string(),
+            Self::Wt => "Created its worktree with wt.".to_string(),
+            Self::Git { wt_error: None } => {
+                "Created its worktree with git (wt is not installed).".to_string()
+            }
+            Self::Git {
+                wt_error: Some(error),
+            } => format!("Created its worktree with git because wt failed: {error}"),
+        }
+    }
+}
+
 pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path) -> Value {
     json!({
         "mcpServers": {
@@ -658,6 +701,65 @@ mod tests {
         assert_eq!(
             worktree_add_args(path, "worker/GUZ-1", true),
             ["worktree", "add", "/repo/.worktrees/GUZ-1", "worker/GUZ-1"]
+        );
+    }
+
+    #[test]
+    fn wt_switch_args_pin_the_worktree_path_and_create_only_a_new_branch() {
+        let repo = Path::new("/repo");
+        let path = Path::new("/repo/.worktrees/GUZ-1");
+        assert_eq!(
+            wt_switch_args(repo, path, "worker/GUZ-1", false),
+            [
+                "-C",
+                "/repo",
+                "--config-set",
+                "worktree-path=\"/repo/.worktrees/GUZ-1\"",
+                "switch",
+                "--create",
+                "--base",
+                "@",
+                "worker/GUZ-1",
+                "--no-cd"
+            ]
+        );
+        assert_eq!(
+            wt_switch_args(repo, path, "worker/GUZ-1", true),
+            [
+                "-C",
+                "/repo",
+                "--config-set",
+                "worktree-path=\"/repo/.worktrees/GUZ-1\"",
+                "switch",
+                "worker/GUZ-1",
+                "--no-cd"
+            ]
+        );
+    }
+
+    #[test]
+    fn wt_switch_args_escape_quotes_in_the_path() {
+        let args = wt_switch_args(Path::new("/r"), Path::new("/r/a\"b"), "worker/A", true);
+        assert_eq!(args[3], "worktree-path=\"/r/a\\\"b\"");
+    }
+
+    #[test]
+    fn worktree_via_note_names_the_path_used() {
+        assert_eq!(WorktreeVia::Wt.note(), "Created its worktree with wt.");
+        assert_eq!(
+            WorktreeVia::Git { wt_error: None }.note(),
+            "Created its worktree with git (wt is not installed)."
+        );
+        assert_eq!(
+            WorktreeVia::Git {
+                wt_error: Some("boom".into())
+            }
+            .note(),
+            "Created its worktree with git because wt failed: boom"
+        );
+        assert_eq!(
+            WorktreeVia::Existing.note(),
+            "Reused its existing worktree."
         );
     }
 
