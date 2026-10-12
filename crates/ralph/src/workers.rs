@@ -5,8 +5,8 @@ use ralph_core::worker::{
     opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
     opencode_worker_plugin, project_slug, ready_path, reported_path, session_name, session_owner,
     startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
-    worktree_path, wt_switch_args, CloseState, CloseStep, Harness, Owner, Startup, WorktreeVia,
-    HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
+    worktree_path, wt_switch_args, CloseState, CloseStep, Harness, Owner, Startup, TaggedSession,
+    WorktreeVia, HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
     OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::collections::HashSet;
@@ -29,7 +29,7 @@ pub struct Workers {
 impl Workers {
     pub fn new(store_dir: PathBuf, exe: PathBuf, permission_mode: String) -> Self {
         Self {
-            store_dir: absolute_or_same(store_dir),
+            store_dir: canonical_store(store_dir),
             exe,
             permission_mode,
         }
@@ -43,9 +43,10 @@ impl Workers {
             Owner::Mine(_) => {
                 return Err(io::Error::other(format!("worker {id} is already running")))
             }
-            Owner::Foreign(store) => {
+            Owner::Foreign(session) => {
                 return Err(io::Error::other(format!(
-                    "worker {id} is running for another chat (store {store})"
+                    "worker {id} is running for another chat (store {})",
+                    session.store
                 )))
             }
         }
@@ -120,9 +121,10 @@ impl Workers {
         let session = match self.owner(&project_slug(&repo_root()?), id) {
             Owner::Mine(session) => session.name,
             Owner::Missing => return Err(io::Error::other(format!("worker {id} is not running"))),
-            Owner::Foreign(store) => {
+            Owner::Foreign(session) => {
                 return Err(io::Error::other(format!(
-                    "worker {id} belongs to another chat (store {store})"
+                    "worker {id} belongs to another chat (store {})",
+                    session.store
                 )))
             }
         };
@@ -148,7 +150,7 @@ impl Workers {
         Ok(format!("Sent to worker {id}."))
     }
 
-    pub fn close(&self, id: &str, abandon: bool) -> io::Result<String> {
+    pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
         let repo = repo_root()?;
         let owner = self.owner(&project_slug(&repo), id);
         let worktree = worktree_path(&repo, id);
@@ -186,7 +188,7 @@ impl Workers {
         } else {
             None
         };
-        let opencode = matches!(&owner, Owner::Mine(session) if session.opencode)
+        let opencode = matches!(&owner, Owner::Mine(session) | Owner::Foreign(session) if session.opencode)
             || worktree.join(OPENCODE_CONFIG_FILE).exists();
         let state = CloseState {
             id: id.to_string(),
@@ -202,7 +204,7 @@ impl Workers {
             Some(warning) => format!("{text} {warning}"),
             None => text,
         };
-        let steps = close_plan(&state, abandon)
+        let steps = close_plan(&state, abandon, force)
             .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
         for step in &steps {
             self.close_step(step, &repo, id).map_err(|e| {
@@ -278,12 +280,18 @@ impl Workers {
     }
 
     fn owner(&self, project: &str, id: &str) -> Owner {
-        session_owner(
-            &tagged_sessions(&tmux_listing()),
-            &self.store_dir.to_string_lossy(),
-            project,
-            id,
-        )
+        let sessions: Vec<TaggedSession> = tagged_sessions(&tmux_listing())
+            .into_iter()
+            .map(|mut session| {
+                if !session.store.is_empty() {
+                    session.store = canonical_store(PathBuf::from(&session.store))
+                        .to_string_lossy()
+                        .into_owned();
+                }
+                session
+            })
+            .collect();
+        session_owner(&sessions, &self.store_dir.to_string_lossy(), project, id)
     }
 
     fn write_settings(&self, id: &str, ready: &Path, reported: &Path) -> io::Result<PathBuf> {
@@ -307,9 +315,10 @@ impl Workers {
     }
 }
 
-/// Workers run inside `.worktrees/<id>`, so relative store paths would resolve wrongly there.
-pub fn absolute_or_same(path: PathBuf) -> PathBuf {
-    std::path::absolute(&path).unwrap_or(path)
+pub fn canonical_store(path: PathBuf) -> PathBuf {
+    fs::canonicalize(&path)
+        .or_else(|_| std::path::absolute(&path))
+        .unwrap_or(path)
 }
 
 pub fn opencode_active() -> Option<HashSet<String>> {
@@ -524,14 +533,24 @@ mod tests {
 
     #[test]
     fn relative_store_becomes_absolute() {
-        assert!(absolute_or_same(PathBuf::from("./.memory")).is_absolute());
+        assert!(canonical_store(PathBuf::from("./.memory")).is_absolute());
     }
 
     #[test]
     fn absolute_store_is_unchanged() {
         assert_eq!(
-            absolute_or_same(PathBuf::from("/s/.memory")),
+            canonical_store(PathBuf::from("/s/.memory")),
             PathBuf::from("/s/.memory")
         );
+    }
+
+    #[test]
+    fn symlinked_store_canonicalizes_to_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(canonical_store(link), canonical_store(real));
     }
 }

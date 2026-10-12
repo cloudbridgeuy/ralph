@@ -1,4 +1,4 @@
-use crate::worker::{opencode_session_id, tagged_sessions, Report};
+use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -121,7 +121,7 @@ pub fn route_input(line: &str, unread: usize) -> Route {
 pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
     let mut workers: Vec<RunningWorker> = tagged_sessions(tmux_sessions)
         .into_iter()
-        .filter(|session| session.store == store && !session.id.is_empty())
+        .filter(|session| same_store(&session.store, store) && !session.id.is_empty())
         .map(|session| RunningWorker {
             id: session.id,
             opencode: session.opencode,

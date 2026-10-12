@@ -1,5 +1,5 @@
 use super::{branch_name, OPENCODE_HARNESS};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
 const ORIGIN_PREFIX: &str = "refs/remotes/origin/";
@@ -90,7 +90,29 @@ pub fn tagged_sessions(listing: &str) -> Vec<TaggedSession> {
 pub enum Owner {
     Missing,
     Mine(TaggedSession),
-    Foreign(String),
+    Foreign(TaggedSession),
+}
+
+fn normalized(path: &str) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push(component);
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+pub fn same_store(tag: &str, store: &str) -> bool {
+    !tag.trim().is_empty()
+        && !store.trim().is_empty()
+        && normalized(tag.trim()) == normalized(store.trim())
 }
 
 pub fn session_owner(sessions: &[TaggedSession], store: &str, project: &str, id: &str) -> Owner {
@@ -99,8 +121,11 @@ pub fn session_owner(sessions: &[TaggedSession], store: &str, project: &str, id:
         .iter()
         .filter(|session| names.contains(&session.name))
         .collect();
-    match found.iter().find(|session| session.store != store) {
-        Some(foreign) => Owner::Foreign(foreign.store.clone()),
+    match found
+        .iter()
+        .find(|session| !same_store(&session.store, store))
+    {
+        Some(foreign) => Owner::Foreign((*foreign).clone()),
         None => found
             .first()
             .map_or(Owner::Missing, |mine| Owner::Mine((*mine).clone())),
@@ -129,11 +154,16 @@ pub enum CloseStep {
     ClearMarkers,
 }
 
-pub fn close_plan(state: &CloseState, abandon: bool) -> Result<Vec<CloseStep>, String> {
+pub fn close_plan(
+    state: &CloseState,
+    abandon: bool,
+    force: bool,
+) -> Result<Vec<CloseStep>, String> {
     let id = &state.id;
-    if let Owner::Foreign(store) = &state.owner {
+    if let (Owner::Foreign(session), false) = (&state.owner, force) {
         return Err(format!(
-            "Worker {id} belongs to another chat (store {store}). Not closing it."
+            "Worker {id} belongs to another chat (store {}). Not closing it.",
+            session.store
         ));
     }
     let nothing_left = state.owner == Owner::Missing
@@ -165,7 +195,7 @@ pub fn close_plan(state: &CloseState, abandon: bool) -> Result<Vec<CloseStep>, S
     if state.opencode {
         steps.push(CloseStep::RemoveOpencodeSession);
     }
-    if let Owner::Mine(session) = &state.owner {
+    if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
         steps.push(CloseStep::KillSession(session.name.clone()));
     }
     if let Some(dirty) = state.dirty_worktree {
@@ -248,11 +278,11 @@ mod tests {
         );
         assert_eq!(
             session_owner(&[tagged("ralph-p-A", "/other")], "/s", "p", "A"),
-            Owner::Foreign("/other".into())
+            Owner::Foreign(tagged("ralph-p-A", "/other"))
         );
         assert_eq!(
             session_owner(&[tagged("ralph-A", "/other")], "/s", "p", "A"),
-            Owner::Foreign("/other".into())
+            Owner::Foreign(tagged("ralph-A", "/other"))
         );
         assert_eq!(
             session_owner(&[tagged("ralph-q-A", "/other")], "/s", "p", "A"),
@@ -260,7 +290,7 @@ mod tests {
         );
         assert_eq!(
             session_owner(&[tagged("ralph-p-A", "")], "/s", "p", "A"),
-            Owner::Foreign("".into())
+            Owner::Foreign(tagged("ralph-p-A", ""))
         );
     }
 
@@ -281,7 +311,7 @@ mod tests {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
         state.opencode = true;
         assert_eq!(
-            close_plan(&state, false),
+            close_plan(&state, false, false),
             Ok(vec![
                 CloseStep::RemoveOpencodeSession,
                 CloseStep::KillSession("ralph-p-A".into()),
@@ -299,7 +329,7 @@ mod tests {
         let mut state = close_state(Owner::Missing);
         state.dirty_worktree = None;
         assert_eq!(
-            close_plan(&state, false),
+            close_plan(&state, false, false),
             Ok(vec![
                 CloseStep::DeleteBranch,
                 CloseStep::PruneWorktrees,
@@ -307,7 +337,7 @@ mod tests {
             ])
         );
         state.unmerged_commits = None;
-        assert!(close_plan(&state, true).is_err());
+        assert!(close_plan(&state, true, false).is_err());
     }
 
     #[test]
@@ -316,48 +346,85 @@ mod tests {
         state.dirty_worktree = None;
         state.unmerged_commits = None;
         state.markers = true;
-        assert_eq!(close_plan(&state, false), Ok(vec![CloseStep::ClearMarkers]));
+        assert_eq!(
+            close_plan(&state, false, false),
+            Ok(vec![CloseStep::ClearMarkers])
+        );
     }
 
     #[test]
     fn close_plan_markers_do_not_bypass_refusals() {
-        let mut foreign = close_state(Owner::Foreign("/other".into()));
+        let mut foreign = close_state(Owner::Foreign(tagged("ralph-p-A", "/other")));
         foreign.markers = true;
-        assert!(close_plan(&foreign, true).is_err());
+        assert!(close_plan(&foreign, true, false).is_err());
 
         let mut unmerged = close_state(Owner::Missing);
         unmerged.unmerged_commits = Some(1);
         unmerged.markers = true;
-        assert!(close_plan(&unmerged, false).is_err());
+        assert!(close_plan(&unmerged, false, false).is_err());
 
         let mut dirty = close_state(Owner::Missing);
         dirty.dirty_worktree = Some(true);
         dirty.markers = true;
-        assert!(close_plan(&dirty, false).is_err());
+        assert!(close_plan(&dirty, false, false).is_err());
     }
 
     #[test]
     fn close_plan_refuses_foreign_workers_even_with_abandon() {
-        let state = close_state(Owner::Foreign("/other".into()));
-        let refusal = close_plan(&state, true).unwrap_err();
+        let state = close_state(Owner::Foreign(tagged("ralph-p-A", "/other")));
+        let refusal = close_plan(&state, true, false).unwrap_err();
         assert!(refusal.contains("another chat"), "{refusal}");
+    }
+
+    #[test]
+    fn close_plan_with_force_kills_the_foreign_session_but_keeps_other_refusals() {
+        let mut state = close_state(Owner::Foreign(tagged("ralph-p-A", "/other")));
+        assert_eq!(
+            close_plan(&state, false, true).unwrap(),
+            vec![
+                CloseStep::KillSession("ralph-p-A".into()),
+                CloseStep::RemoveWorktree { force: false },
+                CloseStep::DeleteBranch,
+                CloseStep::PruneWorktrees,
+                CloseStep::ClearMarkers,
+            ]
+        );
+        state.unmerged_commits = Some(1);
+        assert!(close_plan(&state, false, true).is_err());
+        assert!(close_plan(&state, true, true).is_ok());
+        state.unmerged_commits = Some(0);
+        state.dirty_worktree = Some(true);
+        assert!(close_plan(&state, false, true).is_err());
+    }
+
+    #[test]
+    fn same_store_ignores_lexical_differences() {
+        assert!(same_store("/x/chat", "/x/chat"));
+        assert!(same_store("/x/chat/", "/x/chat"));
+        assert!(same_store("/x//chat", "/x/chat"));
+        assert!(same_store("/x/./chat", "/x/chat"));
+        assert!(same_store("/x/a/../chat", "/x/chat"));
+        assert!(!same_store("/x/chat", "/x/other"));
+        assert!(!same_store("", "/x/chat"));
+        assert!(!same_store("/x/chat", " "));
+        assert!(!same_store("", ""));
     }
 
     #[test]
     fn close_plan_refuses_unmerged_or_dirty_work_unless_abandoned() {
         let mut unmerged = close_state(Owner::Missing);
         unmerged.unmerged_commits = Some(2);
-        assert!(close_plan(&unmerged, false)
+        assert!(close_plan(&unmerged, false, false)
             .unwrap_err()
             .contains("2 commit(s) not in main"));
-        assert!(close_plan(&unmerged, true).is_ok());
+        assert!(close_plan(&unmerged, true, false).is_ok());
 
         let mut dirty = close_state(Owner::Missing);
         dirty.dirty_worktree = Some(true);
-        assert!(close_plan(&dirty, false)
+        assert!(close_plan(&dirty, false, false)
             .unwrap_err()
             .contains("uncommitted changes"));
-        assert!(close_plan(&dirty, true)
+        assert!(close_plan(&dirty, true, false)
             .unwrap()
             .contains(&CloseStep::RemoveWorktree { force: true }));
     }
@@ -427,7 +494,7 @@ mod tests {
         let mut state = close_state(Owner::Missing);
         state.base = "develop".into();
         state.unmerged_commits = Some(1);
-        assert!(close_plan(&state, false)
+        assert!(close_plan(&state, false, false)
             .unwrap_err()
             .contains("1 commit(s) not in develop"));
     }

@@ -14,7 +14,7 @@ fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<St
     match command {
         Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
         Command::Reply { id, text } => workers.reply(id, text),
-        Command::Close { id, abandon } => workers.close(id, *abandon),
+        Command::Close { id, abandon, force } => workers.close(id, *abandon, *force),
     }
     .map_err(|e| e.to_string())
 }

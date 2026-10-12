@@ -100,6 +100,7 @@ pub enum Command {
     Close {
         id: String,
         abandon: bool,
+        force: bool,
     },
 }
 
@@ -133,12 +134,13 @@ pub fn command_definitions() -> [Value; 3] {
         }),
         json!({
             "name": "close_worker",
-            "description": "Close a worker of this chat: stop its tmux session and opencode session, remove its worktree and delete its worker/<id> branch. Refuses while the branch has commits not in main or the worktree has uncommitted changes, unless abandon is true. Only when the person asked for it in their latest message.",
+            "description": "Close a worker of this chat: stop its tmux session and opencode session, remove its worktree and delete its worker/<id> branch. Refuses while the branch has commits not in main or the worktree has uncommitted changes, unless abandon is true, and refuses a worker of another chat unless force is true. Only when the person asked for it in their latest message.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
-                    "abandon": {"type": "boolean", "description": "Drop unmerged commits and uncommitted changes. Only when the person said so. Default false."}
+                    "abandon": {"type": "boolean", "description": "Drop unmerged commits and uncommitted changes. Only when the person said so. Default false."},
+                    "force": {"type": "boolean", "description": "Close even when the session is tagged with another chat's store or is untagged. Only when the person said so. Default false."}
                 },
                 "required": ["id"]
             }
@@ -156,12 +158,16 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
         "reply" => string_arg(args, "text")
             .and_then(|text| worker_id(args).map(|id| Command::Reply { id, text })),
         "close_worker" => worker_id(args).and_then(|id| {
-            let abandon = match args.get("abandon") {
-                None | Some(Value::Null) => false,
-                Some(Value::Bool(abandon)) => *abandon,
-                Some(_) => return Err("abandon must be true or false.".to_string()),
+            let flag = |name: &str| match args.get(name) {
+                None | Some(Value::Null) => Ok(false),
+                Some(Value::Bool(value)) => Ok(*value),
+                Some(_) => Err(format!("{name} must be true or false.")),
             };
-            Ok(Command::Close { id, abandon })
+            Ok(Command::Close {
+                id,
+                abandon: flag("abandon")?,
+                force: flag("force")?,
+            })
         }),
         _ => return None,
     };
@@ -496,16 +502,30 @@ mod tests {
             parse_command("close_worker", &json!({"id": "GUZ-1"})),
             Some(Ok(Command::Close {
                 id: "GUZ-1".into(),
-                abandon: false
+                abandon: false,
+                force: false
             }))
         );
         assert_eq!(
             parse_command("close_worker", &json!({"id": "GUZ-1", "abandon": true})),
             Some(Ok(Command::Close {
                 id: "GUZ-1".into(),
-                abandon: true
+                abandon: true,
+                force: false
             }))
         );
+        assert_eq!(
+            parse_command("close_worker", &json!({"id": "GUZ-1", "force": true})),
+            Some(Ok(Command::Close {
+                id: "GUZ-1".into(),
+                abandon: false,
+                force: true
+            }))
+        );
+        assert!(matches!(
+            parse_command("close_worker", &json!({"id": "GUZ-1", "force": 1})),
+            Some(Err(_))
+        ));
         assert!(matches!(
             parse_command("close_worker", &json!({"id": "GUZ-1", "abandon": "yes"})),
             Some(Err(_))
@@ -521,6 +541,7 @@ mod tests {
         let close = Command::Close {
             id: "A".into(),
             abandon: false,
+            force: false,
         };
         assert!(command_allowed(&close, &[entry(Role::User)]).is_ok());
         assert!(command_allowed(&close, &[entry(Role::User), entry(Role::Worker)]).is_err());
