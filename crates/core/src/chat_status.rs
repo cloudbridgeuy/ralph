@@ -1,9 +1,12 @@
-use crate::worker::{session_name, Report};
+use crate::worker::{opencode_session_id, session_name, Report, OPENCODE_HARNESS};
+use serde::de::IgnoredAny;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const DEFAULT_STATE: &str = "running";
+const BUSY_STATE: &str = "busy";
+const IDLE_STATE: &str = "idle";
 const INBOX_COMMAND: &str = "/inbox";
 const SEPARATOR: &str = " · ";
 
@@ -11,6 +14,12 @@ const SEPARATOR: &str = " · ";
 pub struct WorkerState {
     pub id: String,
     pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunningWorker {
+    pub id: String,
+    pub opencode: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -109,20 +118,36 @@ pub fn route_input(line: &str, unread: usize) -> Route {
     }
 }
 
-/// Worker ids from `tmux list-sessions -F` lines of `<session>\t<@ralph_store>`,
+/// Workers from `tmux list-sessions -F` lines of `<session>\t<@ralph_store>\t<@ralph_harness>`,
 /// keeping only `ralph-*` sessions tagged with `store`.
-pub fn store_worker_ids(tmux_sessions: &str, store: &str) -> Vec<String> {
+pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
     let prefix = session_name("");
-    let mut ids: Vec<String> = tmux_sessions
+    let mut workers: Vec<RunningWorker> = tmux_sessions
         .lines()
-        .filter_map(|line| line.split_once('\t'))
-        .filter(|(_, tag)| tag.trim() == store)
-        .filter_map(|(name, _)| name.trim().strip_prefix(&prefix))
-        .filter(|id| !id.is_empty())
-        .map(str::to_string)
+        .filter_map(|line| {
+            let mut fields = line.split('\t').map(str::trim);
+            let id = fields.next()?.strip_prefix(&prefix)?;
+            let tagged = fields.next()? == store && !id.is_empty();
+            tagged.then(|| RunningWorker {
+                id: id.to_string(),
+                opencode: fields.next() == Some(OPENCODE_HARNESS),
+            })
+        })
         .collect();
-    ids.sort();
-    ids
+    workers.sort_by(|a, b| a.id.cmp(&b.id));
+    workers
+}
+
+#[derive(Deserialize)]
+struct ActiveSessions {
+    data: HashMap<String, IgnoredAny>,
+}
+
+/// Session ids in `opencode api session.active` output; sessions absent from it are idle.
+pub fn active_sessions(json: &str) -> Option<HashSet<String>> {
+    serde_json::from_str::<ActiveSessions>(json)
+        .ok()
+        .map(|active| active.data.into_keys().collect())
 }
 
 pub fn latest_states(reports: &[Report]) -> HashMap<String, String> {
@@ -132,16 +157,35 @@ pub fn latest_states(reports: &[Report]) -> HashMap<String, String> {
         .collect()
 }
 
-pub fn worker_states(ids: &[String], seen: &HashMap<String, String>) -> Vec<WorkerState> {
-    ids.iter()
-        .map(|id| WorkerState {
-            id: id.clone(),
-            state: seen
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| DEFAULT_STATE.to_string()),
+pub fn worker_states(
+    workers: &[RunningWorker],
+    seen: &HashMap<String, String>,
+    active: Option<&HashSet<String>>,
+) -> Vec<WorkerState> {
+    workers
+        .iter()
+        .map(|worker| WorkerState {
+            id: worker.id.clone(),
+            state: worker_state(worker, seen.get(&worker.id), active),
         })
         .collect()
+}
+
+fn worker_state(
+    worker: &RunningWorker,
+    reported: Option<&String>,
+    active: Option<&HashSet<String>>,
+) -> String {
+    let session_active = active
+        .filter(|_| worker.opencode)
+        .map(|active| active.contains(&opencode_session_id(&worker.id)));
+    match (session_active, reported) {
+        (Some(true), _) => BUSY_STATE,
+        (_, Some(state)) => state,
+        (Some(false), None) => IDLE_STATE,
+        (None, None) => DEFAULT_STATE,
+    }
+    .to_string()
 }
 
 fn tokens_label(tokens: u64) -> String {
@@ -424,17 +468,24 @@ mod tests {
     }
 
     #[test]
-    fn store_worker_ids_keep_only_this_stores_sessions() {
-        let listing = "ralph-A\t/s\nralph-B\t/other\nralph-C\t\nralph-D\nmain\t/s\n";
-        assert_eq!(store_worker_ids(listing, "/s"), vec!["A"]);
-        assert_eq!(store_worker_ids(listing, "/other"), vec!["B"]);
-        assert!(store_worker_ids("", "/s").is_empty());
+    fn store_workers_keep_only_this_stores_sessions() {
+        let listing = "ralph-A\t/s\nralph-B\t/other\topencode\nralph-C\t\nralph-D\nmain\t/s\n";
+        let ids = |store| -> Vec<String> {
+            store_workers(listing, store)
+                .into_iter()
+                .map(|worker| worker.id)
+                .collect()
+        };
+        assert_eq!(ids("/s"), vec!["A"]);
+        assert_eq!(ids("/other"), vec!["B"]);
+        assert!(store_workers("", "/s").is_empty());
     }
 
     #[test]
     fn workers_come_from_prefixed_sessions_with_last_known_state() {
         let listing = "main\t/s\nralph-GUZ-2\t/s\nralph-GUZ-1\t/s\nralph-\t/s\n";
-        let ids = store_worker_ids(listing, "/s");
+        let workers = store_workers(listing, "/s");
+        let ids: Vec<&str> = workers.iter().map(|worker| worker.id.as_str()).collect();
         assert_eq!(ids, vec!["GUZ-1", "GUZ-2"]);
         let reports = [
             Report {
@@ -450,9 +501,61 @@ mod tests {
                 text: "y".into(),
             },
         ];
-        let states = worker_states(&ids, &latest_states(&reports));
+        let states = worker_states(&workers, &latest_states(&reports), None);
         assert_eq!(states[0].state, "running");
         assert_eq!(states[1].state, "done");
+    }
+
+    #[test]
+    fn store_workers_read_the_harness_tag() {
+        let listing = "ralph-A\t/s\topencode\nralph-B\t/s\t\nralph-C\t/s\n";
+        let opencode: Vec<bool> = store_workers(listing, "/s")
+            .iter()
+            .map(|worker| worker.opencode)
+            .collect();
+        assert_eq!(opencode, vec![true, false, false]);
+    }
+
+    #[test]
+    fn active_sessions_reads_the_session_keys() {
+        let active = active_sessions(r#"{"data":{"ses_ralphA":{"type":"running"}}}"#);
+        assert_eq!(active, Some(HashSet::from(["ses_ralphA".to_string()])));
+        assert_eq!(active_sessions(r#"{"data":{}}"#), Some(HashSet::new()));
+        assert_eq!(active_sessions("HTTP 500"), None);
+    }
+
+    #[test]
+    fn opencode_workers_are_busy_while_their_session_is_active() {
+        let worker = |id: &str, opencode| RunningWorker {
+            id: id.into(),
+            opencode,
+        };
+        let workers = [
+            worker("busy", true),
+            worker("idle", true),
+            worker("done", true),
+            worker("redo", true),
+            worker("claude", false),
+        ];
+        let seen = HashMap::from([
+            ("done".to_string(), "done".to_string()),
+            ("redo".to_string(), "done".to_string()),
+        ]);
+        let active = HashSet::from(["ses_ralphbusy".to_string(), "ses_ralphredo".to_string()]);
+        let states = |active| -> Vec<String> {
+            worker_states(&workers, &seen, active)
+                .into_iter()
+                .map(|worker| worker.state)
+                .collect()
+        };
+        assert_eq!(
+            states(Some(&active)),
+            vec!["busy", "idle", "done", "busy", "running"]
+        );
+        assert_eq!(
+            states(None),
+            vec!["running", "running", "done", "done", "running"]
+        );
     }
 
     #[test]
