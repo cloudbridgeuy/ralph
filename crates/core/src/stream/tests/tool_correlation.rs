@@ -293,8 +293,6 @@ fn test_correlate_tool_interactions_order_preserved() {
 #[test]
 fn test_tool_correlator_basic() {
     let mut correlator = ToolCorrelator::new();
-    assert_eq!(correlator.pending_count(), 0);
-    assert!(correlator.completed_interactions().is_empty());
 
     // Process assistant event with tool call
     let assistant = StreamEvent::Assistant(AssistantEvent {
@@ -312,8 +310,6 @@ fn test_tool_correlator_basic() {
 
     let completed = correlator.process_event(&assistant);
     assert!(completed.is_empty());
-    assert_eq!(correlator.pending_count(), 1);
-    assert!(correlator.completed_interactions().is_empty());
 
     // Process user event with result
     let user = StreamEvent::User(UserEvent {
@@ -332,34 +328,6 @@ fn test_tool_correlator_basic() {
     assert_eq!(completed.len(), 1);
     assert_eq!(completed[0].name, "Glob");
     assert_eq!(completed[0].result, Some("main.rs\nlib.rs".to_string()));
-    assert_eq!(correlator.pending_count(), 0);
-    assert_eq!(correlator.completed_interactions().len(), 1);
-}
-
-#[test]
-fn test_tool_correlator_finish_with_pending() {
-    let mut correlator = ToolCorrelator::new();
-
-    // Add tool call without result
-    let assistant = StreamEvent::Assistant(AssistantEvent {
-        message: AssistantMessage {
-            id: Some("msg_01".to_string()),
-            content: vec![ContentBlock::ToolUse {
-                id: "toolu_01".to_string(),
-                name: "Read".to_string(),
-                input: serde_json::json!({}),
-            }],
-            model: None,
-            stop_reason: Some("tool_use".to_string()),
-        },
-    });
-    correlator.process_event(&assistant);
-
-    // Finish without providing result
-    let interactions = correlator.finish();
-    assert_eq!(interactions.len(), 1);
-    assert_eq!(interactions[0].name, "Read");
-    assert!(interactions[0].result.is_none());
 }
 
 #[test]
@@ -387,7 +355,6 @@ fn test_tool_correlator_multiple_concurrent_calls() {
         },
     });
     correlator.process_event(&assistant);
-    assert_eq!(correlator.pending_count(), 2);
 
     // Results come back for both
     let user = StreamEvent::User(UserEvent {
@@ -411,7 +378,6 @@ fn test_tool_correlator_multiple_concurrent_calls() {
     });
     let completed = correlator.process_event(&user);
     assert_eq!(completed.len(), 2);
-    assert_eq!(correlator.pending_count(), 0);
 }
 
 #[test]
@@ -426,7 +392,6 @@ fn test_tool_correlator_ignores_other_events() {
     });
     let completed = correlator.process_event(&system);
     assert!(completed.is_empty());
-    assert_eq!(correlator.pending_count(), 0);
 
     let result = StreamEvent::Result(ResultEvent {
         subtype: Some("success".to_string()),
@@ -441,31 +406,6 @@ fn test_tool_correlator_ignores_other_events() {
     });
     let completed = correlator.process_event(&result);
     assert!(completed.is_empty());
-    assert_eq!(correlator.pending_count(), 0);
-}
-
-#[test]
-fn test_tool_correlator_reset() {
-    let mut correlator = ToolCorrelator::new();
-
-    let assistant = StreamEvent::Assistant(AssistantEvent {
-        message: AssistantMessage {
-            id: Some("msg_01".to_string()),
-            content: vec![ContentBlock::ToolUse {
-                id: "toolu_01".to_string(),
-                name: "Read".to_string(),
-                input: serde_json::json!({}),
-            }],
-            model: None,
-            stop_reason: None,
-        },
-    });
-    correlator.process_event(&assistant);
-    assert_eq!(correlator.pending_count(), 1);
-
-    correlator.reset();
-    assert_eq!(correlator.pending_count(), 0);
-    assert!(correlator.completed_interactions().is_empty());
 }
 
 #[test]

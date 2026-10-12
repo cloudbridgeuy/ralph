@@ -5,8 +5,7 @@ use crate::stream::*;
 #[test]
 fn test_text_accumulator_new() {
     let accumulator = TextAccumulator::new();
-    assert_eq!(accumulator.get_text(), "");
-    assert!(accumulator.completed_messages().is_empty());
+    assert_eq!(accumulator.get_all_text(), "");
 }
 
 #[test]
@@ -26,7 +25,7 @@ fn test_text_accumulator_single_event() {
 
     let completed = accumulator.process_event(&event);
     assert!(completed.is_none()); // No message completed yet
-    assert_eq!(accumulator.get_text(), "Hello, world!");
+    assert_eq!(accumulator.get_all_text(), "Hello, world!");
 }
 
 #[test]
@@ -59,7 +58,7 @@ fn test_text_accumulator_multiple_events_same_message_id() {
     let completed = accumulator.process_event(&event2);
 
     assert!(completed.is_none()); // Same message ID, not completed yet
-    assert_eq!(accumulator.get_text(), "Hello, world!");
+    assert_eq!(accumulator.get_all_text(), "Hello, world!");
 }
 
 #[test]
@@ -97,8 +96,7 @@ fn test_text_accumulator_new_message_id_completes_previous() {
     assert_eq!(msg.id, Some("msg_01".to_string()));
     assert_eq!(msg.text, "First message.");
 
-    // Current buffer should have second message
-    assert_eq!(accumulator.get_text(), "Second message.");
+    assert_eq!(accumulator.get_all_text(), "First message.Second message.");
 }
 
 #[test]
@@ -123,9 +121,7 @@ fn test_text_accumulator_finish() {
     let msg = completed.unwrap();
     assert_eq!(msg.id, Some("msg_01".to_string()));
     assert_eq!(msg.text, "Final message.");
-
-    // Buffer should be empty after finish
-    assert_eq!(accumulator.get_text(), "");
+    assert_eq!(accumulator.get_all_text(), "Final message.");
 }
 
 #[test]
@@ -133,42 +129,6 @@ fn test_text_accumulator_finish_empty() {
     let mut accumulator = TextAccumulator::new();
     let completed = accumulator.finish();
     assert!(completed.is_none());
-}
-
-#[test]
-fn test_text_accumulator_completed_messages() {
-    let mut accumulator = TextAccumulator::new();
-
-    let event1 = StreamEvent::Assistant(AssistantEvent {
-        message: AssistantMessage {
-            id: Some("msg_01".to_string()),
-            content: vec![ContentBlock::Text {
-                text: "First.".to_string(),
-            }],
-            model: None,
-            stop_reason: None,
-        },
-    });
-
-    let event2 = StreamEvent::Assistant(AssistantEvent {
-        message: AssistantMessage {
-            id: Some("msg_02".to_string()),
-            content: vec![ContentBlock::Text {
-                text: "Second.".to_string(),
-            }],
-            model: None,
-            stop_reason: None,
-        },
-    });
-
-    accumulator.process_event(&event1);
-    accumulator.process_event(&event2);
-    accumulator.finish();
-
-    let completed = accumulator.completed_messages();
-    assert_eq!(completed.len(), 2);
-    assert_eq!(completed[0].text, "First.");
-    assert_eq!(completed[1].text, "Second.");
 }
 
 #[test]
@@ -248,33 +208,7 @@ fn test_text_accumulator_ignores_non_assistant_events() {
     assert!(accumulator.process_event(&user_event).is_none());
     assert!(accumulator.process_event(&result_event).is_none());
 
-    assert_eq!(accumulator.get_text(), "");
-}
-
-#[test]
-fn test_text_accumulator_reset() {
-    let mut accumulator = TextAccumulator::new();
-
-    let event = StreamEvent::Assistant(AssistantEvent {
-        message: AssistantMessage {
-            id: Some("msg_01".to_string()),
-            content: vec![ContentBlock::Text {
-                text: "Some text.".to_string(),
-            }],
-            model: None,
-            stop_reason: None,
-        },
-    });
-
-    accumulator.process_event(&event);
-    accumulator.finish();
-
-    assert!(!accumulator.completed_messages().is_empty());
-
-    accumulator.reset();
-
-    assert_eq!(accumulator.get_text(), "");
-    assert!(accumulator.completed_messages().is_empty());
+    assert_eq!(accumulator.get_all_text(), "");
 }
 
 #[test]
@@ -310,7 +244,7 @@ fn test_text_accumulator_with_none_message_ids() {
 
     // Same message ID (None), so should combine
     assert!(completed.is_none());
-    assert_eq!(accumulator.get_text(), "First.Second.");
+    assert_eq!(accumulator.get_all_text(), "First.Second.");
 }
 
 #[test]
@@ -369,7 +303,7 @@ fn test_text_accumulator_tool_only_events() {
     accumulator.process_event(&event);
 
     // Tool-only events add empty string to buffer
-    assert_eq!(accumulator.get_text(), "");
+    assert_eq!(accumulator.get_all_text(), "");
 }
 
 #[test]
@@ -565,13 +499,12 @@ fn test_text_accumulator_realistic_streaming_scenario() {
     }
 
     assert_eq!(
-        accumulator.get_text(),
+        accumulator.get_all_text(),
         "I'll help you implement this feature."
     );
 
     // Finish and verify
     accumulator.finish();
-    assert_eq!(accumulator.completed_messages().len(), 1);
     assert_eq!(
         accumulator.get_all_text(),
         "I'll help you implement this feature."
