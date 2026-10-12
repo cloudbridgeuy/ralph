@@ -11,6 +11,7 @@ pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
 pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
+pub const OPENCODE_HARNESS: &str = "opencode";
 
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act; do not stop to ask for confirmation.
@@ -118,7 +119,7 @@ fn harness(args: &Value) -> Result<Harness, String> {
         (None | Some("claude"), Some(_)) => {
             Err("A model can only be set for the opencode harness.".to_string())
         }
-        (Some("opencode"), model) => {
+        (Some(OPENCODE_HARNESS), model) => {
             let model = model.unwrap_or(DEFAULT_OPENCODE_MODEL);
             match model.split_once('/') {
                 Some((provider, name)) if !provider.is_empty() && !name.is_empty() => {
@@ -212,8 +213,12 @@ pub fn worker_command(mcp_config: &Path, task: &str) -> Vec<String> {
     .to_vec()
 }
 
+pub fn opencode_session_id(id: &str) -> String {
+    format!("ses_ralph{id}")
+}
+
 pub fn opencode_command(id: &str, task: &str) -> Vec<String> {
-    let session = format!("ses_ralph{id}");
+    let session = opencode_session_id(id);
     let prompt = format!("{WORKER_PROMPT}\n\n{task}");
     [
         "zsh",

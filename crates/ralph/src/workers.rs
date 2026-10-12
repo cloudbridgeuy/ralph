@@ -1,8 +1,10 @@
+use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
     branch_name, exclude_lines, opencode_command, opencode_config, session_name, startup_state,
     worker_command, worker_mcp_config, worktree_add_args, worktree_path, Harness, Startup,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, TRUST_KEYS, WORKERS_DIR,
+    INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, TRUST_KEYS, WORKERS_DIR,
 };
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -12,6 +14,7 @@ use std::time::{Duration, Instant};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STORE_OPTION: &str = "@ralph_store";
+const HARNESS_OPTION: &str = "@ralph_harness";
 const STARTUP_POLL: Duration = Duration::from_millis(250);
 
 pub struct Workers {
@@ -55,6 +58,15 @@ impl Workers {
         run(Command::new("tmux")
             .args(["set-option", "-t", &format!("={session}:"), STORE_OPTION])
             .arg(&self.store_dir))?;
+        if let Harness::Opencode { .. } = harness {
+            run(Command::new("tmux").args([
+                "set-option",
+                "-t",
+                &format!("={session}:"),
+                HARNESS_OPTION,
+                OPENCODE_HARNESS,
+            ]))?;
+        }
         await_startup(&session, harness)?;
         Ok(format!(
             "Worker {id} started in {} on branch {}. Watch it with: tmux attach -t {session}",
@@ -76,6 +88,17 @@ impl Workers {
 /// Workers run inside `.worktrees/<id>`, so relative store paths would resolve wrongly there.
 pub fn absolute_or_same(path: PathBuf) -> PathBuf {
     std::path::absolute(&path).unwrap_or(path)
+}
+
+pub fn opencode_active() -> Option<HashSet<String>> {
+    Command::new("opencode")
+        .args(["api", "session.active"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| active_sessions(&String::from_utf8_lossy(&output.stdout)))
 }
 
 pub fn reply(id: &str, text: &str) -> io::Result<String> {

@@ -14,7 +14,7 @@ use crate::subprocess::{
 };
 use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
-use crate::workers::absolute_or_same;
+use crate::workers::{absolute_or_same, opencode_active};
 use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
     turn_prompt, turn_system_prompt, VIEW_LINES,
@@ -27,8 +27,8 @@ use ralph_core::chat_skills::{
     ChatSkill, SkillSources,
 };
 use ralph_core::chat_status::{
-    footer, last_turn_cache, latest_states, memory_size, route_input, status_line,
-    store_worker_ids, worker_states, Memory, Route, Status,
+    footer, last_turn_cache, latest_states, memory_size, route_input, status_line, store_workers,
+    worker_states, Memory, Route, RunningWorker, Status,
 };
 use ralph_core::worker::{chat_message, Report, INBOX_DIR};
 use reedline::{
@@ -37,7 +37,7 @@ use reedline::{
     ReedlineEvent, Signal, DEFAULT_MULTILINE_INDICATOR,
 };
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -86,15 +86,19 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn running_worker_ids(store_dir: &Path) -> Vec<String> {
+fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     let store = store_dir.to_string_lossy();
     Command::new("tmux")
-        .args(["list-sessions", "-F", "#{session_name}\t#{@ralph_store}"])
+        .args([
+            "list-sessions",
+            "-F",
+            "#{session_name}\t#{@ralph_store}\t#{@ralph_harness}",
+        ])
         .stdin(Stdio::null())
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| store_worker_ids(&String::from_utf8_lossy(&output.stdout), &store))
+        .map(|output| store_workers(&String::from_utf8_lossy(&output.stdout), &store))
         .unwrap_or_default()
 }
 
@@ -104,6 +108,7 @@ struct Monitor {
     store_dir: PathBuf,
     status: Mutex<Status>,
     seen: Mutex<HashMap<String, String>>,
+    active: Mutex<Option<HashSet<String>>>,
     frozen_window: usize,
 }
 
@@ -132,7 +137,19 @@ impl Monitor {
             seen.extend(latest_states(&pending));
             seen.clone()
         };
-        let workers = worker_states(&running_worker_ids(&self.store_dir), &seen);
+        let running = running_workers(&self.store_dir);
+        let active = {
+            let mut active = locked(&self.active);
+            if with_memory {
+                *active = running
+                    .iter()
+                    .any(|worker| worker.opencode)
+                    .then(opencode_active)
+                    .flatten();
+            }
+            active.clone()
+        };
+        let workers = worker_states(&running, &seen, active.as_ref());
         let memory = if with_memory {
             self.measure_memory()
         } else {
@@ -502,6 +519,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         store_dir: absolute_or_same(store_dir.clone()),
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
+        active: Mutex::new(None),
         frozen_window,
     });
     monitor.refresh(true);
