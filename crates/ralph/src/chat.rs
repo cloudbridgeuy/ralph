@@ -10,8 +10,8 @@ use crate::markdown::{create_agent_markdown_skin, create_markdown_skin};
 use crate::render::{cap_wrap_width, render_markdown, wrap_width, RenderContext};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
-use crate::stream_processor::extract_response_text;
 use crate::stream_processor::VerboseToolsConfig;
+use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, SubprocessError,
 };
@@ -56,6 +56,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+use termimad::MadSkin;
 
 const PROMPT: &str = ">>> ";
 const HISTORY_FILE: &str = "history.txt";
@@ -440,8 +441,22 @@ fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Result<Option<R
     })
 }
 
+fn rule(skin: &MadSkin, width: usize) -> String {
+    skin.text("---", Some(width)).to_string()
+}
+
 fn print_rule() {
-    print!("{}", create_markdown_skin().term_text("---"));
+    print!("{}", rule(&create_markdown_skin(), screen_columns()));
+}
+
+fn shown_output(blocks: &[OutputBlock]) -> bool {
+    !blocks.is_empty()
+}
+
+fn print_rule_after(blocks: &[OutputBlock]) {
+    if shown_output(blocks) {
+        print_rule();
+    }
 }
 
 fn spawn_nap(store: &Path) -> io::Result<()> {
@@ -530,7 +545,9 @@ impl Turn<'_> {
         match end {
             TurnEnd::Exit => return Ok(false),
             TurnEnd::Cancelled => {
-                print_rule();
+                if let Ok(partial) = &result {
+                    print_rule_after(&partial.stream_result.output_blocks);
+                }
                 warn("Turn cancelled.");
                 return Ok(true);
             }
@@ -539,8 +556,11 @@ impl Turn<'_> {
         let result = match result {
             Ok(result) => result,
             Err(SubprocessError::Interrupted { .. }) => return Ok(false),
-            Err(SubprocessError::Timeout { timeout_secs, .. }) => {
-                print_rule();
+            Err(SubprocessError::Timeout {
+                timeout_secs,
+                partial_result,
+            }) => {
+                print_rule_after(&partial_result.stream_result.output_blocks);
                 warn(format!(
                     "chat turn timed out after {timeout_secs}s; restart with a larger --timeout for long work"
                 ));
@@ -855,6 +875,18 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rule_follows_shown_output_only() {
+        assert!(!shown_output(&[]));
+        assert!(shown_output(&[OutputBlock::Separator]));
+    }
+
+    #[test]
+    fn rule_spans_the_given_width() {
+        let line = rule(&MadSkin::no_style(), 20);
+        assert_eq!(line.trim_end().chars().count(), 20);
+    }
 
     #[test]
     fn second_esc_clears_the_draft() {
