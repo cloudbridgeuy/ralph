@@ -18,6 +18,7 @@ use {
         terminal::{self, Clear, ClearType},
         QueueableCommand,
     },
+    nu_ansi_term::Style,
     std::io::{Result, Write},
     std::ops::RangeInclusive,
     unicode_segmentation::UnicodeSegmentation,
@@ -754,13 +755,17 @@ impl Painter {
         self.hide_cursor()?;
 
         let screen_width = self.screen_width();
-        let soft_wrapped;
-        let lines = if screen_width < self.terminal_size.0 {
-            soft_wrapped = lines.soft_wrapped(screen_width);
-            &soft_wrapped
+        let continuation = prompt.render_prompt_multiline_indicator();
+        let continuation = if use_ansi_coloring {
+            Style::new()
+                .fg(prompt.get_prompt_multiline_color())
+                .paint(continuation)
+                .to_string()
         } else {
-            lines
+            continuation.into_owned()
         };
+        let soft_wrapped = lines.soft_wrapped(screen_width, &continuation);
+        let lines = &soft_wrapped;
 
         self.prompt_height = lines.prompt_height(screen_width);
         let lines_before_cursor = lines.required_lines(screen_width, true, None);
@@ -2755,6 +2760,22 @@ mod tests {
         assert_eq!(wide_rows, plain_rows);
         assert_eq!(wide.screen, plain.screen);
         assert_eq!(wide.cursor, plain.cursor);
+    }
+
+    #[rstest]
+    #[case("hello wor", "ld again", (1, 3, false))]
+    #[case("hello ", "world again", (1, 0, false))]
+    #[case("hello world ag", "ain", (2, 2, false))]
+    fn wrapped_words_keep_the_cursor_on_its_grapheme(
+        #[case] before: &str,
+        #[case] after: &str,
+        #[case] cursor: (u16, u16, bool),
+    ) {
+        let lines = make_lines("", "> ", "", before, after);
+        let (painted, rows) = paint_at(40, Some(10), &lines);
+        assert_eq!(painted.screen, "> helloworldagain");
+        assert_eq!(painted.cursor, cursor);
+        assert_eq!(rows, 3);
     }
 
     #[test]

@@ -69,12 +69,19 @@ impl<'prompt> PromptLines<'prompt> {
         self
     }
 
-    pub(crate) fn soft_wrapped(&self, columns: u16) -> Self {
-        let (prompt_str_left, column) = soft_wrap(&self.prompt_str_left, 0, columns);
-        let (prompt_indicator, column) = soft_wrap(&self.prompt_indicator, column, columns);
-        let (before_cursor, cursor) = soft_wrap(&self.before_cursor, column, columns);
-        let (after_cursor, end) = soft_wrap(&self.after_cursor, cursor, columns);
-        let (hint, _) = soft_wrap(&self.hint, end, columns);
+    pub(crate) fn soft_wrapped(&self, columns: u16, prefix: &str) -> Self {
+        let [prompt_str_left, prompt_indicator, before_cursor, after_cursor, hint] = soft_wrap(
+            [
+                &self.prompt_str_left,
+                &self.prompt_indicator,
+                &self.before_cursor,
+                &self.after_cursor,
+                &self.hint,
+            ],
+            2,
+            columns,
+            prefix,
+        );
         Self {
             prompt_str_left: Cow::Owned(prompt_str_left),
             prompt_str_right: self.prompt_str_right.clone(),
@@ -83,10 +90,20 @@ impl<'prompt> PromptLines<'prompt> {
             after_cursor: Cow::Owned(after_cursor),
             hint: Cow::Owned(hint),
             right_prompt_on_last_line: self.right_prompt_on_last_line,
-            exit_after_cursor: self
-                .exit_after_cursor
-                .as_ref()
-                .map(|text| Cow::Owned(soft_wrap(text, cursor, columns).0)),
+            exit_after_cursor: self.exit_after_cursor.as_ref().map(|text| {
+                let [_, _, _, exit_after_cursor] = soft_wrap(
+                    [
+                        &self.prompt_str_left,
+                        &self.prompt_indicator,
+                        &self.before_cursor,
+                        text,
+                    ],
+                    2,
+                    columns,
+                    prefix,
+                );
+                Cow::Owned(exit_after_cursor)
+            }),
         }
     }
 

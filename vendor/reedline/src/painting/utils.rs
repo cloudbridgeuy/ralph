@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use unicode_linebreak::{linebreaks, BreakOpportunity};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -214,25 +215,92 @@ pub(crate) fn advance_grapheme(
     }
 }
 
-pub(crate) fn soft_wrap(text: &str, column: u16, columns: u16) -> (String, u16) {
-    let mut out = String::with_capacity(text.len());
-    let mut col = column;
-    for (is_escape, segment) in ansi_segments(text) {
-        if is_escape {
-            out.push_str(segment);
-            continue;
-        }
-        for grapheme in segment.graphemes(true) {
-            let step = if grapheme == "\r\n" { "\n" } else { grapheme };
-            let ((row, at), width) = advance_grapheme((0, col), step, columns);
-            if row > 0 && step != "\n" {
-                out.push_str("\r\n");
+pub(crate) fn soft_wrap<const N: usize>(
+    parts: [&str; N],
+    fixed: usize,
+    columns: u16,
+    prefix: &str,
+) -> [String; N] {
+    let prefix = if line_width(prefix) < usize::from(columns) {
+        prefix
+    } else {
+        ""
+    };
+    let prefix_width = line_width(prefix) as u16;
+    let row_break = format!("\r\n{prefix}");
+    let plain_prefix = visible_text(prefix);
+    let visible: String = parts.iter().map(|part| visible_text(part)).collect();
+    let breaks: Vec<usize> = linebreaks(&visible)
+        .filter(|(_, opportunity)| *opportunity == BreakOpportunity::Allowed)
+        .map(|(at, _)| at)
+        .collect();
+    let fixed_end: usize = parts[..fixed]
+        .iter()
+        .map(|part| visible_text(part).len())
+        .sum();
+    let mut out: [String; N] = std::array::from_fn(|i| String::with_capacity(parts[i].len()));
+    let mut offset = 0;
+    let mut row_start = fixed_end;
+    let mut col = 0;
+    let mut last_break: Option<(usize, usize, u16, usize)> = None;
+    for (part, text) in parts.iter().enumerate() {
+        let part_start = offset;
+        for (is_escape, segment) in ansi_segments(text) {
+            if is_escape {
+                out[part].push_str(segment);
+                continue;
             }
-            out.push_str(grapheme);
-            col = at.saturating_add(width);
+            for grapheme in segment.graphemes(true) {
+                let slot = if offset == part_start && part > 0 {
+                    (part - 1, out[part - 1].len())
+                } else {
+                    (part, out[part].len())
+                };
+                if offset > row_start && breaks.binary_search(&offset).is_ok() {
+                    last_break = Some((slot.0, slot.1, col, offset));
+                }
+                let step = if grapheme == "\r\n" { "\n" } else { grapheme };
+                let mut placed = advance_grapheme((0, col), step, columns);
+                if step == "\n" {
+                    last_break = None;
+                    let next = offset + grapheme.len();
+                    let content = next
+                        + if visible[next..].starts_with(&plain_prefix) {
+                            plain_prefix.len()
+                        } else {
+                            0
+                        };
+                    row_start = content.max(fixed_end);
+                } else if placed.0 .0 > 0 {
+                    if let Some((at_part, at, break_col, break_offset)) = last_break.take() {
+                        out[at_part].insert_str(at, &row_break);
+                        col = prefix_width + (col - break_col);
+                        row_start = break_offset;
+                        placed = advance_grapheme((0, col), step, columns);
+                    }
+                    if placed.0 .0 > 0 {
+                        out[slot.0].insert_str(slot.1, &row_break);
+                        col = prefix_width;
+                        row_start = offset;
+                        placed = advance_grapheme((0, col), step, columns);
+                    }
+                }
+                let ((_, at), width) = placed;
+                out[part].push_str(grapheme);
+                col = at.saturating_add(width);
+                offset += grapheme.len();
+            }
         }
     }
-    (out, col)
+    out
+}
+
+fn visible_text(text: &str) -> String {
+    ansi_segments(text)
+        .into_iter()
+        .filter(|(is_escape, _)| !is_escape)
+        .map(|(_, segment)| segment)
+        .collect()
 }
 
 fn ansi_segments(text: &str) -> Vec<(bool, &str)> {
@@ -287,29 +355,56 @@ mod test {
     use rstest::rstest;
 
     #[rstest]
-    #[case("abcdef", 0, ("abcd\r\nef", 2))]
-    #[case("abcd", 0, ("abcd", 4))]
-    #[case("e", 4, ("\r\ne", 1))]
-    #[case("ab\r\ncdef", 2, ("ab\r\ncdef", 4))]
-    #[case("\x1b[31mabcde\x1b[0m", 0, ("\x1b[31mabcd\r\ne\x1b[0m", 1))]
-    #[case("\x1b]8;;http://x\x07abcde\x1b]8;;\x1b\\", 0, ("\x1b]8;;http://x\x07abcd\r\ne\x1b]8;;\x1b\\", 1))]
-    #[case("abc😇", 0, ("abc\r\n😇", 2))]
-    fn soft_wrap_breaks_where_the_terminal_would(
+    #[case("abcdef", "abcd\r\nef")]
+    #[case("abcd", "abcd")]
+    #[case("ab cdef", "ab \r\ncdef")]
+    #[case("ab cdefgh", "ab \r\ncdef\r\ngh")]
+    #[case("abc de", "abc \r\nde")]
+    #[case("abcd ef", "abcd\r\n ef")]
+    #[case("ab\r\ncdef", "ab\r\ncdef")]
+    #[case("\x1b[31mab cd\x1b[0m", "\x1b[31mab \r\ncd\x1b[0m")]
+    #[case(
+        "\x1b]8;;http://x\x07abcde\x1b]8;;\x1b\\",
+        "\x1b]8;;http://x\x07abcd\r\ne\x1b]8;;\x1b\\"
+    )]
+    #[case("abc😇", "abc\r\n😇")]
+    fn soft_wrap_breaks_at_words_then_where_the_terminal_would(
         #[case] text: &str,
-        #[case] column: u16,
-        #[case] expected: (&str, u16),
+        #[case] expected: &str,
     ) {
-        let (wrapped, end) = soft_wrap(text, column, 4);
-        assert_eq!((wrapped.as_str(), end), expected);
+        let [wrapped] = soft_wrap([text], 0, 4, "");
+        assert_eq!(wrapped, expected);
+    }
+
+    #[rstest]
+    #[case(["", "> ", "hello wor", "ld"], ["", "> ", "hello \r\n: wor", "ld"])]
+    #[case(["", "> ", "hello ", "world"], ["", "> ", "hello \r\n: ", "world"])]
+    #[case(["", "> ", "abcdefghijkl", ""], ["", "> ", "abcdefgh\r\n: ijkl", ""])]
+    #[case(["", "> ", "a\n: bbbbbbbbbb c", ""], ["", "> ", "a\n: bbbbbbbb\r\n: bb c", ""])]
+    #[case(["", "> ", "a\n: bb cc dddd", ""], ["", "> ", "a\n: bb cc \r\n: dddd", ""])]
+    fn soft_wrap_prefixes_continuation_rows_and_keeps_the_cursor_on_its_word(
+        #[case] parts: [&str; 4],
+        #[case] expected: [&str; 4],
+    ) {
+        assert_eq!(soft_wrap(parts, 2, 10, ": "), expected);
+    }
+
+    #[test]
+    fn soft_wrap_drops_a_prefix_that_leaves_no_room() {
+        assert_eq!(soft_wrap(["abcdef"], 0, 4, "::::"), ["abcd\r\nef"]);
     }
 
     #[rstest]
     #[case("abcdefghijklmnopq")]
-    #[case("abcdefgh")]
-    #[case("ab😇😇😇cd\r\nefghijklm")]
-    fn soft_wrap_lands_where_the_narrow_terminal_would(#[case] text: &str) {
-        let (wrapped, _) = soft_wrap(text, 0, 4);
-        assert_eq!(wrap_position([&*wrapped], 40), wrap_position([text], 4));
+    #[case("the quick brown fox jumps over")]
+    #[case("ab😇😇😇cd\r\nefghij klm")]
+    fn soft_wrap_rows_fit_and_only_add_breaks(#[case] text: &str) {
+        let [wrapped] = soft_wrap([text], 0, 6, "> ");
+        assert_eq!(
+            wrap_position([&*wrapped], 6),
+            wrap_position([&*wrapped], 400)
+        );
+        assert_eq!(wrapped.replace("\r\n> ", ""), text);
     }
 
     #[rstest]
