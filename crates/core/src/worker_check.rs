@@ -13,6 +13,7 @@ pub struct WorkerObservation {
     pub ready: bool,
     pub blocked: bool,
     pub waiting: bool,
+    pub unreported: bool,
     pub reported_since_nudge: bool,
     pub pane: Option<String>,
     pub pane_changed: bool,
@@ -43,6 +44,7 @@ pub struct CheckMemory {
 pub struct WorkerMemory {
     pub state: WorkerState,
     pub nudged: bool,
+    pub unknown_posted: bool,
 }
 
 pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
@@ -82,7 +84,7 @@ pub fn classify(obs: &WorkerObservation) -> WorkerState {
         WorkerState::Waiting
     } else if obs.reported_since_nudge {
         WorkerState::Reported
-    } else if obs.pane.is_some() && !obs.pane_changed {
+    } else if obs.pane.is_some() && !obs.pane_changed && !obs.unreported {
         WorkerState::Unknown
     } else {
         WorkerState::Working
@@ -123,13 +125,26 @@ pub fn plan(
             actions.push(CheckAction::Nudge(obs.id.clone()));
             nudged = true;
         }
-        if prev_entry.map(|p| p.state) != Some(state) {
+        let was_unknown_posted = prev_entry.is_some_and(|p| p.unknown_posted);
+        let repeat_unknown = state == WorkerState::Unknown && was_unknown_posted;
+        if prev_entry.map(|p| p.state) != Some(state) && !repeat_unknown {
             if let Some(text) = inbox_text(state, obs) {
                 actions.push(CheckAction::Inbox(obs.id.clone(), text));
             }
         }
-        next.workers
-            .insert(obs.id.clone(), WorkerMemory { state, nudged });
+        let unknown_posted = match state {
+            WorkerState::Unknown => true,
+            WorkerState::Working => was_unknown_posted,
+            _ => false,
+        };
+        next.workers.insert(
+            obs.id.clone(),
+            WorkerMemory {
+                state,
+                nudged,
+                unknown_posted,
+            },
+        );
     }
     (actions, next)
 }
@@ -145,6 +160,7 @@ mod tests {
             ready: true,
             blocked: false,
             waiting: false,
+            unreported: false,
             reported_since_nudge: false,
             pane: None,
             pane_changed: true,
@@ -251,6 +267,48 @@ mod tests {
             ..unchanged
         };
         assert_eq!(classify(&changed), WorkerState::Working);
+    }
+
+    #[test]
+    fn classify_unchanged_pane_is_working_while_waiting_is_pending() {
+        let o = WorkerObservation {
+            unreported: true,
+            pane: Some("x".to_string()),
+            pane_changed: false,
+            ..obs()
+        };
+        assert_eq!(classify(&o), WorkerState::Working);
+        let (actions, _) = plan(&CheckMemory::default(), &[o]);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn unknown_posts_once_until_the_wait_ends() {
+        let unknown = WorkerObservation {
+            pane: Some("x".to_string()),
+            pane_changed: false,
+            ..obs()
+        };
+        let reported = WorkerObservation {
+            reported_since_nudge: true,
+            ..obs()
+        };
+        let mut memory = CheckMemory::default();
+        let mut posts = Vec::new();
+        for o in [
+            unknown.clone(),
+            obs(),
+            unknown.clone(),
+            obs(),
+            unknown.clone(),
+            reported,
+            unknown,
+        ] {
+            let (actions, next) = plan(&memory, &[o]);
+            posts.push(inboxes(&actions));
+            memory = next;
+        }
+        assert_eq!(posts, vec![1, 0, 0, 0, 0, 0, 1]);
     }
 
     #[test]
