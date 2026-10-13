@@ -15,6 +15,7 @@ mod cli;
 pub mod config;
 pub mod diff_highlight;
 pub mod formatting;
+mod frame;
 pub mod highlight;
 mod inbox_alert;
 mod invoke;

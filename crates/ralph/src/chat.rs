@@ -2,6 +2,7 @@ use crate::ansi::{DIM, RESET};
 use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
+use crate::frame::worker_header;
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::inbox_alert;
 use crate::invoke::build_chat_command;
@@ -773,14 +774,19 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     .map(|report| chat_message(std::slice::from_ref(report)))
                     .collect();
                 let message = chat_message(&reports);
-                print!(
-                    "{}",
-                    render_markdown(
-                        &RenderContext::new(&agent_highlighter, color),
-                        &message,
-                        &agent_skin
-                    )
-                );
+                let width = terminal_width();
+                let ctx = RenderContext::new(&agent_highlighter, color);
+                let shown: Vec<String> = reports
+                    .iter()
+                    .map(|report| {
+                        format!(
+                            "{}\n{}",
+                            worker_header(&report.worker, &report.status, width, color),
+                            render_markdown(&ctx, &report.text, &agent_skin)
+                        )
+                    })
+                    .collect();
+                print!("{}", shown.join("\n\n"));
                 turn.run(Trigger::Worker, &logged, &message)?
             }
         };
