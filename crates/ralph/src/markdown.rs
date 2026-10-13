@@ -54,6 +54,19 @@ pub fn create_markdown_skin() -> MadSkin {
     skin
 }
 
+pub fn create_agent_markdown_skin() -> MadSkin {
+    use termimad::crossterm::style::Color;
+
+    let mut skin = create_markdown_skin();
+    skin.headers[0].set_fg(Color::Green);
+    skin.headers[1].set_fg(Color::DarkGreen);
+    skin.headers[2].set_fg(Color::DarkYellow);
+    skin.inline_code
+        .set_fgbg(Color::DarkCyan, termimad::gray(3));
+    skin.bullet = StyledChar::from_fg_char(Color::DarkGreen, '•');
+    skin
+}
+
 /// A markdown renderer for terminal output using termimad.
 ///
 /// This struct wraps termimad's MadSkin with customizations suitable for
@@ -127,6 +140,16 @@ impl MarkdownRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_skin_differs_from_chat_skin() {
+        let chat = create_markdown_skin().term_text("# Title").to_string();
+        let agent = create_agent_markdown_skin()
+            .term_text("# Title")
+            .to_string();
+        assert!(agent.contains("Title"));
+        assert_ne!(chat, agent);
+    }
 
     #[test]
     fn test_renderer_new() {

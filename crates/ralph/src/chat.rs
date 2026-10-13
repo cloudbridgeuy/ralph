@@ -2,10 +2,11 @@ use crate::ansi::{DIM, RESET};
 use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
-use crate::highlight::ThemeConfig;
+use crate::highlight::{Highlighter, ThemeConfig};
 use crate::inbox_alert;
 use crate::invoke::build_chat_command;
-use crate::markdown::create_markdown_skin;
+use crate::markdown::{create_agent_markdown_skin, create_markdown_skin};
+use crate::render::{render_markdown, RenderContext};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::extract_response_text;
@@ -680,6 +681,16 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .map(|plugin| build_plugin_args(plugin.path()))
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
+    let agent_highlighter = Highlighter::with_config(
+        theme_config
+            .clone()
+            .merge_cli(config.theme.agent.as_deref(), false),
+    )
+    .unwrap_or_else(|e| {
+        warn(format!("Failed to load agent theme: {e}"));
+        Highlighter::new()
+    });
+    let agent_skin = create_agent_markdown_skin();
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -732,9 +743,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut editor = build_editor(&store_dir)?;
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
-        color: std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+        color,
     };
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
@@ -761,7 +773,14 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     .map(|report| chat_message(std::slice::from_ref(report)))
                     .collect();
                 let message = chat_message(&reports);
-                println!("{message}");
+                print!(
+                    "{}",
+                    render_markdown(
+                        &RenderContext::new(&agent_highlighter, color),
+                        &message,
+                        &agent_skin
+                    )
+                );
                 turn.run(Trigger::Worker, &logged, &message)?
             }
         };

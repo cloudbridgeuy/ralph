@@ -160,6 +160,9 @@ pub struct ThemeSection {
     /// allowing the terminal's default background to show through.
     #[serde(default)]
     pub no_background: bool,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 impl AppConfig {
@@ -400,6 +403,13 @@ mod tests {
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.theme.name, Some("Monokai Extended".to_string()));
         assert!(!config.theme.no_background);
+        assert_eq!(config.theme.agent, None);
+    }
+
+    #[test]
+    fn theme_section_parses_agent() {
+        let config: AppConfig = toml::from_str("[theme]\nagent = \"Solarized (dark)\"\n").unwrap();
+        assert_eq!(config.theme.agent.as_deref(), Some("Solarized (dark)"));
     }
 
     #[test]
@@ -470,6 +480,7 @@ mod tests {
             theme: ThemeSection {
                 name: Some("Monokai Extended".to_string()),
                 no_background: true,
+                agent: None,
             },
             ask: AskSection::default(),
             chat: ChatSection::default(),
@@ -524,6 +535,7 @@ mod tests {
             theme: ThemeSection {
                 name: None,
                 no_background: false,
+                agent: None,
             },
             ask: AskSection::default(),
             chat: ChatSection::default(),

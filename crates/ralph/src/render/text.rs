@@ -4,7 +4,7 @@
 //! used by the stream processor during live execution.
 
 use crate::diff_highlight::highlight_with_basic_colors;
-use ralph_core::chunk::{ChunkType, ParsedChunk};
+use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use termimad::MadSkin;
 
 use super::RenderContext;
@@ -49,6 +49,19 @@ pub fn render_text_block(
             render_directive_block(ctx, &chunk.content, verb, target)
         }
     }
+}
+
+pub fn render_markdown(ctx: &RenderContext<'_>, text: &str, markdown_skin: &MadSkin) -> String {
+    parse_chunks(text)
+        .iter()
+        .map(|chunk| {
+            let rendered = render_text_block(ctx, chunk, Some(markdown_skin));
+            match chunk.chunk_type {
+                ChunkType::Prose => rendered,
+                _ => rendered + "\n",
+            }
+        })
+        .collect()
 }
 
 // --- Table enhancement (post-processing) ---
@@ -189,6 +202,32 @@ mod tests {
         let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
         let skin = crate::markdown::create_markdown_skin();
         (highlighter, skin)
+    }
+
+    #[test]
+    fn render_markdown_plain_keeps_source_text() {
+        let (highlighter, skin) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let text = "[worker A · done]\n# Title\n\n```rust\nfn main() {}\n```\nend";
+        let rendered = render_markdown(&ctx, text, &skin);
+        assert!(!rendered.contains('\x1b'));
+        assert!(rendered.contains("[worker A · done]"));
+        assert!(rendered.contains("# Title"));
+        assert!(rendered.contains("```rust\nfn main() {}\n```\n"));
+        assert!(rendered.contains("end"));
+    }
+
+    #[test]
+    fn render_markdown_terminal_styles_prose_and_code() {
+        let (highlighter, skin) = create_test_context();
+        let ctx = RenderContext::terminal(&highlighter);
+        let text = "[worker A · done]\n# Title\n\n```rust\nfn main() {}\n```\n";
+        let rendered = render_markdown(&ctx, text, &skin);
+        assert!(rendered.contains("[worker A · done]"));
+        assert!(!rendered.contains("# Title"));
+        assert!(rendered.contains("\x1b["));
+        assert!(rendered.contains("```rust\n"));
+        assert!(!rendered.contains("fn main() {}"));
     }
 
     #[test]

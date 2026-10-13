@@ -78,6 +78,7 @@ Controls how code blocks and diffs are displayed in the terminal.
 |-------|------|---------|-------------|
 | `name` | string | `"base16-ocean.dark"` | Theme name or path to `.tmTheme` file |
 | `no_background` | bool | `false` | Disable theme background colors |
+| `agent` | string | `name` | Theme for code blocks in worker messages shown by `ralph chat` |
 
 #### Built-in Themes
 

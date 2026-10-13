@@ -27,7 +27,7 @@ pub use utils::{
 };
 
 // Re-export text rendering
-pub use text::{render_code_block, render_diff_block, render_text_block};
+pub use text::{render_code_block, render_diff_block, render_markdown, render_text_block};
 
 // Re-export tool renderer components
 pub use tool_renderers::{
