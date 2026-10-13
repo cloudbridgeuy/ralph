@@ -188,7 +188,7 @@ fn push_diff_stat(chars: &[char], start: usize, stat: &DiffStat, close: char, ou
 
 fn diff_stat(chars: &[char], start: usize) -> Option<DiffStat> {
     let starts_token = start == 0 || chars[start - 1].is_whitespace();
-    if !starts_token || is_table_row(chars, start) {
+    if !starts_token || is_table_or_heading_line(chars, start) {
         return None;
     }
     let ends_token = |end: usize| chars.get(end).is_none_or(|ch| ch.is_whitespace());
@@ -239,12 +239,19 @@ fn digit_run(chars: &[char], start: usize) -> usize {
         .count()
 }
 
-fn is_table_row(chars: &[char], at: usize) -> bool {
+fn is_table_or_heading_line(chars: &[char], at: usize) -> bool {
     let line_start = chars[..at]
         .iter()
         .rposition(|&ch| ch == '\n')
         .map_or(0, |newline| newline + 1);
-    chars[line_start..at].iter().find(|ch| !ch.is_whitespace()) == Some(&'|')
+    let lead: Vec<char> = chars[line_start..at]
+        .iter()
+        .copied()
+        .skip_while(|ch| ch.is_whitespace())
+        .collect();
+    let hashes = lead.iter().take_while(|&&ch| ch == '#').count();
+    lead.first() == Some(&'|')
+        || (1..=6).contains(&hashes) && lead.get(hashes).is_some_and(|ch| ch.is_whitespace())
 }
 
 fn is_memory_boundary(chars: &[char], hash: usize) -> bool {
@@ -512,6 +519,14 @@ mod tests {
     }
 
     #[test]
+    fn signed_numbers_after_hash_words_that_are_not_headings_are_colored() {
+        assert_eq!(
+            paint(&mark_links("#303 +5\n#tag -2")),
+            format!("{MEMORY_STYLE}#303{COLOR_OFF} {GREEN}+5{COLOR_OFF}\n#tag {RED}-2{COLOR_OFF}")
+        );
+    }
+
+    #[test]
     fn paint_restores_inline_code_color_after_diff_stats() {
         let palette = Palette {
             inline_code: Some(Color::DarkCyan),
@@ -571,6 +586,9 @@ mod tests {
             "| +1 |",
             "  | a | -2",
             "`+5`",
+            "## Release 7 has +204 lines",
+            "# +1",
+            "  ### a -2/x",
         ] {
             assert_eq!(mark_links(text), text, "{text}");
         }
