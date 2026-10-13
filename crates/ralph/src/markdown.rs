@@ -22,49 +22,200 @@
 //! let rendered = renderer.render("# Hello\n\nThis is **bold** text.");
 //! ```
 
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use termimad::crossterm::style::{Attribute, Color};
 use termimad::{MadSkin, StyledChar};
 
-/// Create a configured `MadSkin` for terminal markdown rendering (Functional Core).
-///
-/// This is a pure function that produces the shared skin used across all
-/// rendering paths: streaming and batch. Customize colors here
-/// and every renderer picks them up automatically.
-pub fn create_markdown_skin() -> MadSkin {
-    use termimad::crossterm::style::{Attribute, Color};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeRole {
+    Assistant,
+    Agent,
+}
 
+impl ThemeRole {
+    fn name(self) -> &'static str {
+        match self {
+            ThemeRole::Assistant => "assistant",
+            ThemeRole::Agent => "agent",
+        }
+    }
+
+    fn base(self) -> Palette {
+        match self {
+            ThemeRole::Assistant => Palette::default(),
+            ThemeRole::Agent => Palette {
+                headings: [
+                    Some(Color::Green),
+                    Some(Color::DarkGreen),
+                    Some(Color::DarkYellow),
+                ],
+                inline_code: Some(Color::DarkCyan),
+                bullet: Some(Color::DarkGreen),
+                ..Palette::default()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Palette {
+    pub headings: [Option<Color>; 3],
+    pub bold: Option<Color>,
+    pub italic: Option<Color>,
+    pub inline_code: Option<Color>,
+    pub bullet: Option<Color>,
+    pub quote: Option<Color>,
+    pub table: Option<Color>,
+    pub link: Option<Color>,
+    pub url: Option<Color>,
+    pub memory_ref: Option<Color>,
+    pub border: Option<Color>,
+    pub done: Option<Color>,
+    pub blocked: Option<Color>,
+    pub waiting: Option<Color>,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            headings: [Some(Color::Cyan), Some(Color::Blue), Some(Color::Magenta)],
+            bold: None,
+            italic: None,
+            inline_code: Some(Color::Yellow),
+            bullet: Some(Color::DarkGrey),
+            quote: None,
+            table: None,
+            link: Some(Color::Blue),
+            url: Some(Color::Cyan),
+            memory_ref: Some(Color::Magenta),
+            border: Some(Color::DarkBlue),
+            done: Some(Color::DarkGreen),
+            blocked: Some(Color::DarkRed),
+            waiting: Some(Color::DarkYellow),
+        }
+    }
+}
+
+impl Palette {
+    fn slot(&mut self, key: &str) -> Option<&mut Option<Color>> {
+        match key {
+            "heading1" => Some(&mut self.headings[0]),
+            "heading2" => Some(&mut self.headings[1]),
+            "heading3" => Some(&mut self.headings[2]),
+            "bold" => Some(&mut self.bold),
+            "italic" => Some(&mut self.italic),
+            "inline_code" => Some(&mut self.inline_code),
+            "bullet" => Some(&mut self.bullet),
+            "quote" => Some(&mut self.quote),
+            "table" => Some(&mut self.table),
+            "link" => Some(&mut self.link),
+            "url" => Some(&mut self.url),
+            "memory_ref" => Some(&mut self.memory_ref),
+            "border" => Some(&mut self.border),
+            "done" => Some(&mut self.done),
+            "blocked" => Some(&mut self.blocked),
+            "waiting" => Some(&mut self.waiting),
+            _ => None,
+        }
+    }
+}
+
+pub fn parse_color(value: &str) -> Option<Color> {
+    let Some(hex) = value.strip_prefix('#') else {
+        return Color::try_from(value).ok();
+    };
+    if hex.len() != 6 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
+    Some(Color::Rgb {
+        r: channel(0)?,
+        g: channel(2)?,
+        b: channel(4)?,
+    })
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RoleTheme {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(flatten)]
+    pub colors: BTreeMap<String, String>,
+}
+
+impl RoleTheme {
+    pub fn palette(&self, role: ThemeRole) -> (Palette, Vec<String>) {
+        let mut palette = role.base();
+        let mut warnings = Vec::new();
+        for (key, value) in &self.colors {
+            match (palette.slot(key), parse_color(value)) {
+                (Some(slot), Some(color)) => *slot = Some(color),
+                (Some(_), None) => warnings.push(format!(
+                    "[theme.{}] {key} = \"{value}\" is not a color; using the default",
+                    role.name()
+                )),
+                (None, _) => warnings.push(format!(
+                    "[theme.{}] unknown key \"{key}\"; ignored",
+                    role.name()
+                )),
+            }
+        }
+        (palette, warnings)
+    }
+}
+
+pub fn markdown_skin(palette: &Palette) -> MadSkin {
     let mut skin = MadSkin::default();
-
-    skin.headers[0].set_fg(Color::Cyan);
-    skin.headers[0].add_attr(Attribute::Bold);
-
-    skin.headers[1].set_fg(Color::Blue);
-    skin.headers[1].add_attr(Attribute::Bold);
-
-    skin.headers[2].set_fg(Color::Magenta);
-    skin.headers[2].add_attr(Attribute::Bold);
-
+    for (header, color) in skin.headers.iter_mut().zip(palette.headings) {
+        if let Some(color) = color {
+            header.set_fg(color);
+        }
+        header.add_attr(Attribute::Bold);
+    }
     skin.bold.add_attr(Attribute::Bold);
     skin.italic.add_attr(Attribute::Italic);
-
-    // Yellow on dark background for visual distinction from prose
-    skin.inline_code.set_fgbg(Color::Yellow, termimad::gray(3));
-
-    skin.bullet = StyledChar::from_fg_char(Color::DarkGrey, '•');
-
+    if let Some(color) = palette.bold {
+        skin.bold.set_fg(color);
+    }
+    if let Some(color) = palette.italic {
+        skin.italic.set_fg(color);
+    }
+    skin.inline_code.set_bg(termimad::gray(3));
+    if let Some(color) = palette.inline_code {
+        skin.inline_code.set_fg(color);
+    }
+    skin.bullet = palette.bullet.map_or(StyledChar::nude('•'), |color| {
+        StyledChar::from_fg_char(color, '•')
+    });
+    if let Some(color) = palette.quote {
+        skin.quote_mark.set_fg(color);
+    }
+    if let Some(color) = palette.table {
+        skin.table.set_fg(color);
+    }
     skin
 }
 
-pub fn create_agent_markdown_skin() -> MadSkin {
-    use termimad::crossterm::style::Color;
+#[derive(Clone)]
+pub struct MarkdownTheme {
+    pub skin: MadSkin,
+    pub palette: Palette,
+}
 
-    let mut skin = create_markdown_skin();
-    skin.headers[0].set_fg(Color::Green);
-    skin.headers[1].set_fg(Color::DarkGreen);
-    skin.headers[2].set_fg(Color::DarkYellow);
-    skin.inline_code
-        .set_fgbg(Color::DarkCyan, termimad::gray(3));
-    skin.bullet = StyledChar::from_fg_char(Color::DarkGreen, '•');
-    skin
+impl MarkdownTheme {
+    pub fn new(palette: Palette) -> Self {
+        Self {
+            skin: markdown_skin(&palette),
+            palette,
+        }
+    }
+}
+
+impl Default for MarkdownTheme {
+    fn default() -> Self {
+        Self::new(Palette::default())
+    }
 }
 
 /// A markdown renderer for terminal output using termimad.
@@ -104,7 +255,7 @@ impl MarkdownRenderer {
     /// ```
     pub fn new() -> Self {
         Self {
-            skin: create_markdown_skin(),
+            skin: markdown_skin(&Palette::default()),
         }
     }
 
@@ -141,14 +292,100 @@ impl MarkdownRenderer {
 mod tests {
     use super::*;
 
+    fn role_theme(pairs: &[(&str, &str)]) -> RoleTheme {
+        RoleTheme {
+            code: None,
+            colors: pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        }
+    }
+
     #[test]
-    fn agent_skin_differs_from_chat_skin() {
-        let chat = create_markdown_skin().term_text("# Title").to_string();
-        let agent = create_agent_markdown_skin()
+    fn agent_skin_differs_from_assistant_skin() {
+        let assistant = markdown_skin(&ThemeRole::Assistant.base())
+            .term_text("# Title")
+            .to_string();
+        let agent = markdown_skin(&ThemeRole::Agent.base())
             .term_text("# Title")
             .to_string();
         assert!(agent.contains("Title"));
-        assert_ne!(chat, agent);
+        assert_ne!(assistant, agent);
+    }
+
+    #[test]
+    fn empty_role_theme_keeps_role_defaults() {
+        assert_eq!(
+            RoleTheme::default().palette(ThemeRole::Assistant),
+            (Palette::default(), vec![])
+        );
+        assert_eq!(
+            RoleTheme::default().palette(ThemeRole::Agent).0.headings[0],
+            Some(Color::Green)
+        );
+    }
+
+    #[test]
+    fn role_theme_overrides_named_and_hex_colors() {
+        let (palette, warnings) = role_theme(&[
+            ("heading1", "red"),
+            ("link", "#ff8800"),
+            ("border", "dark_magenta"),
+        ])
+        .palette(ThemeRole::Agent);
+        assert!(warnings.is_empty());
+        assert_eq!(palette.headings[0], Some(Color::Red));
+        assert_eq!(
+            palette.link,
+            Some(Color::Rgb {
+                r: 255,
+                g: 136,
+                b: 0
+            })
+        );
+        assert_eq!(palette.border, Some(Color::DarkMagenta));
+        assert_eq!(palette.headings[1], Some(Color::DarkGreen));
+    }
+
+    #[test]
+    fn role_theme_warns_on_bad_color_and_unknown_key() {
+        let (palette, warnings) =
+            role_theme(&[("heading1", "#12345"), ("headng2", "red")]).palette(ThemeRole::Assistant);
+        assert_eq!(palette, Palette::default());
+        assert_eq!(
+            warnings,
+            [
+                "[theme.assistant] heading1 = \"#12345\" is not a color; using the default",
+                "[theme.assistant] unknown key \"headng2\"; ignored",
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_color_accepts_names_and_hex_only() {
+        assert_eq!(parse_color("Dark_Cyan"), Some(Color::DarkCyan));
+        assert_eq!(
+            parse_color("#0a0B0c"),
+            Some(Color::Rgb {
+                r: 10,
+                g: 11,
+                b: 12
+            })
+        );
+        assert_eq!(parse_color("#+f0000"), None);
+        assert_eq!(parse_color("#ffff"), None);
+        assert_eq!(parse_color("pink"), None);
+    }
+
+    #[test]
+    fn skin_applies_inline_code_color() {
+        let palette = Palette {
+            inline_code: Some(Color::Rgb { r: 1, g: 2, b: 3 }),
+            ..Palette::default()
+        };
+        let rendered = markdown_skin(&palette).inline("`x`").to_string();
+        assert!(rendered.contains("38;2;1;2;3"));
     }
 
     #[test]
@@ -304,8 +541,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_markdown_skin_returns_configured_skin() {
-        let skin = create_markdown_skin();
+    fn test_markdown_skin_returns_configured_skin() {
+        let skin = markdown_skin(&Palette::default());
         // Inline code should produce ANSI escape codes (fg + bg set)
         let rendered = skin.inline("`code`").to_string();
         assert!(

@@ -5,7 +5,7 @@
 //! is in the event_handler module.
 
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
-use crate::markdown::create_markdown_skin;
+use crate::markdown::MarkdownTheme;
 use ralph_core::chunk::{ParsedChunk, StreamingChunkBuffer};
 use ralph_core::stream::{
     extract_costs_from_events_or_default, extract_metadata_from_events_or_default, StreamEvent,
@@ -13,7 +13,6 @@ use ralph_core::stream::{
 };
 use std::collections::HashMap;
 use std::io::IsTerminal;
-use termimad::MadSkin;
 
 use super::output_block::OutputBlock;
 use super::types::{
@@ -39,7 +38,7 @@ pub struct StreamProcessor {
     /// Syntax highlighter for code blocks.
     pub(super) code_highlighter: Highlighter,
     /// Markdown skin for prose rendering via termimad.
-    pub(super) markdown_skin: MadSkin,
+    pub(super) markdown: MarkdownTheme,
     /// Whether highlighting is enabled (terminal detection).
     pub(super) highlighting_enabled: bool,
     /// Whether to display tool invocations.
@@ -158,7 +157,12 @@ impl StreamProcessorBuilder {
         // Determine show_tools: explicit setting > highlighting setting
         let show_tool_invocations = self.show_tools.unwrap_or(highlighting_enabled);
 
-        // Build highlighter
+        let markdown = MarkdownTheme::new(
+            self.theme_config
+                .as_ref()
+                .map(|config| config.palette().clone())
+                .unwrap_or_default(),
+        );
         let code_highlighter = match self.theme_config {
             Some(config) => Highlighter::with_config(config)?,
             None => Highlighter::new(),
@@ -171,7 +175,7 @@ impl StreamProcessorBuilder {
             events: Vec::new(),
             chunk_buffer: StreamingChunkBuffer::with_prose_threshold(usize::MAX),
             code_highlighter,
-            markdown_skin: create_markdown_skin(),
+            markdown,
             highlighting_enabled,
             show_tool_invocations,
             current_message_id: None,

@@ -162,7 +162,7 @@ fn columns(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::markdown::create_markdown_skin;
+    use crate::markdown::{markdown_skin, Palette};
 
     #[test]
     fn wrap_cap_narrows_but_never_widens_the_terminal() {
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn prose_wraps_list_items_with_follow_up_lines() {
-        let skin = create_markdown_skin();
+        let skin = markdown_skin(&Palette::default());
         let rendered = strip_ansi(&render_prose(&skin, "* alpha beta gamma delta", 14));
         let lines: Vec<&str> = rendered.lines().map(str::trim_end).collect();
         assert_eq!(lines, ["• alpha beta", "  gamma delta"]);
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn prose_keeps_bold_style_on_both_sides_of_a_break() {
-        let skin = create_markdown_skin();
+        let skin = markdown_skin(&Palette::default());
         let rendered = render_prose(&skin, "**aaaa bbbb**", 6);
         let lines: Vec<&str> = rendered.lines().collect();
         assert_eq!(lines.len(), 2);
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn prose_keeps_tables_fitted_to_width() {
-        let skin = create_markdown_skin();
+        let skin = markdown_skin(&Palette::default());
         let src = "|a|b|\n|-|-|\n|one two three four|five six seven eight|\n";
         let rendered = strip_ansi(&render_prose(&skin, src, 24));
         assert!(

@@ -189,7 +189,7 @@ The splitting happens in `event_handler.rs` at both streaming sites (line proces
 
 ## Shared Markdown Skin
 
-`create_markdown_skin()` in `markdown.rs` is the single source of truth for terminal markdown styling. `StreamProcessor`, `render/text.rs`, and the chat shell use it, so all terminal markdown looks the same.
+`markdown.rs` owns terminal markdown styling. A `Palette` holds every color for one role (assistant or agent); `RoleTheme::palette` resolves it purely from the role default plus `[theme.<role>]` overrides and returns warnings. `MarkdownTheme` pairs the `Palette` with its `MadSkin` (`markdown_skin`). `StreamProcessor` builds the assistant `MarkdownTheme` from `ThemeConfig::palette()`; the chat shell builds the agent one for `/inbox`. `render_text_block` and `render_markdown` take a `MarkdownTheme`.
 
 ## Table Enhancement
 
@@ -203,7 +203,7 @@ This runs after `render_prose()` inside `render_text_block()`. Box-drawing chara
 
 ## Links
 
-termimad has no link concept. `render/link.rs` rewrites `[label](url)` before `render_prose()` (`mark_links`) to `label ↗ url` wrapped in zero-width marker chars, so wrapping widths stay correct. After rendering, `paint_links` swaps the markers for ANSI: label bright blue underlined, URL bright cyan. Colors are fixed, not per skin. Code spans, escaped `\[`, and images stay literal. The same pass marks memory references (`#` plus digits, e.g. `#303`) and paints them bright magenta (pink). A reference must not follow a letter, digit, `_`, `#`, `&`, `/` or `\`, and must not run into a letter, digit or `_`; so `# Title`, `abc#12`, `&#123;` and URL fragments stay plain, as do refs in code spans and link labels. Non-terminal output keeps the raw markdown. When a styled span wraps, `paint_links` opens its color again after the newline.
+termimad has no link concept. `render/link.rs` rewrites `[label](url)` before `render_prose()` (`mark_links`) to `label ↗ url` wrapped in zero-width marker chars, so wrapping widths stay correct. After rendering, `paint_links` swaps the markers for ANSI: label underlined in the palette `link` color (default bright blue), URL in `url` (default bright cyan). Code spans, escaped `\[`, and images stay literal. The same pass marks memory references (`#` plus digits, e.g. `#303`) and paints them in `memory_ref` (default bright magenta). A reference must not follow a letter, digit, `_`, `#`, `&`, `/` or `\`, and must not run into a letter, digit or `_`; so `# Title`, `abc#12`, `&#123;` and URL fragments stay plain, as do refs in code spans and link labels. Non-terminal output keeps the raw markdown. When a styled span wraps, `paint_links` opens its color again after the newline.
 
 ## Prose Wrapping
 

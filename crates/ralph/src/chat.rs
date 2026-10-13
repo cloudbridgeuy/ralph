@@ -6,7 +6,7 @@ use crate::frame::worker_header;
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::inbox_alert;
 use crate::invoke::build_chat_command;
-use crate::markdown::{create_agent_markdown_skin, create_markdown_skin};
+use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::render::{cap_wrap_width, render_markdown, wrap_width, RenderContext};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
@@ -446,7 +446,7 @@ fn rule(skin: &MadSkin, width: usize) -> String {
 }
 
 fn print_rule() {
-    print!("{}", rule(&create_markdown_skin(), screen_columns()));
+    print!("{}", rule(&MadSkin::default(), screen_columns()));
 }
 
 fn shown_output(blocks: &[OutputBlock]) -> bool {
@@ -795,16 +795,15 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .map(|plugin| build_plugin_args(plugin.path()))
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
-    let agent_highlighter = Highlighter::with_config(
-        theme_config
-            .clone()
-            .merge_cli(config.theme.agent.as_deref(), false),
-    )
-    .unwrap_or_else(|e| {
-        warn(format!("Failed to load agent theme: {e}"));
-        Highlighter::new()
-    });
-    let agent_skin = create_agent_markdown_skin();
+    config.theme.warnings().into_iter().for_each(warn);
+    let agent = config.theme.agent();
+    let agent_highlighter =
+        Highlighter::with_config(theme_config.clone().merge_cli(agent.code.as_deref(), false))
+            .unwrap_or_else(|e| {
+                warn(format!("Failed to load agent theme: {e}"));
+                Highlighter::new()
+            });
+    let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -900,8 +899,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     .map(|report| {
                         format!(
                             "{}\n{}",
-                            worker_header(&report.worker, &report.status, width, color),
-                            render_markdown(&ctx, &report.text, &agent_skin)
+                            worker_header(
+                                &report.worker,
+                                &report.status,
+                                width,
+                                color.then_some(&agent_theme.palette)
+                            ),
+                            render_markdown(&ctx, &report.text, &agent_theme)
                         )
                     })
                     .collect();

@@ -78,7 +78,41 @@ Controls how code blocks and diffs are displayed in the terminal.
 |-------|------|---------|-------------|
 | `name` | string | `"base16-ocean.dark"` | Theme name or path to `.tmTheme` file |
 | `no_background` | bool | `false` | Disable theme background colors |
-| `agent` | string | `name` | Theme for code blocks in worker messages shown by `ralph chat` |
+
+#### Per-role themes: `[theme.assistant]` and `[theme.agent]`
+
+Each role has its own markdown theme. `assistant` styles the replies of `ralph ask` and `ralph chat`. `agent` styles worker messages that `ralph chat` shows from `/inbox`, including the worker header box.
+
+```toml
+[theme.assistant]
+code = "Monokai Extended"   # code-block theme; overrides [theme] name
+heading1 = "cyan"
+
+[theme.agent]
+code = "Solarized (dark)"   # default: the assistant code theme
+heading1 = "#ff6ac1"
+inline_code = "dark_cyan"
+border = "magenta"
+```
+
+| Key | Assistant default | Agent default | Styles |
+|-----|-------------------|---------------|--------|
+| `code` | `[theme] name` | assistant code theme | Syntax theme for fenced code blocks |
+| `heading1`, `heading2`, `heading3` | `cyan`, `blue`, `magenta` | `green`, `dark_green`, `dark_yellow` | Headings (always bold) |
+| `bold`, `italic` | terminal default | terminal default | Emphasis color |
+| `inline_code` | `yellow` | `dark_cyan` | Inline code (on a dark gray background) |
+| `bullet` | `dark_grey` | `dark_green` | List bullets |
+| `quote`, `table` | termimad default | termimad default | Quote mark, table borders |
+| `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL |
+| `memory_ref` | `magenta` | `magenta` | `#N` memory references |
+| `border` | `dark_blue` | `dark_blue` | Worker header box border |
+| `done`, `blocked`, `waiting` | `dark_green`, `dark_red`, `dark_yellow` | same | Worker status (`failed` uses `blocked`, `check` uses `waiting`) |
+
+A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `grey`, their `dark_` forms, `dark_grey`, `reset`) or `#rrggbb`. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+
+Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.
+
+The old `[theme] agent = "<theme>"` string still works as `[theme.agent] code = "<theme>"`; `ralph chat` prints a deprecation warning for it.
 
 #### Built-in Themes
 
