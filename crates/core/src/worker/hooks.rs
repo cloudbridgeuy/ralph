@@ -7,11 +7,12 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
-fn stop_hook_command(exe: &Path, reported: &Path) -> String {
+fn stop_hook_command(exe: &Path, markers: &WorkerMarkers) -> String {
     format!(
-        "{} worker-stop-hook --reported {}",
+        "{} worker-stop-hook --reported {} --unreported {}",
         shell_quote(&exe.to_string_lossy()),
-        shell_quote(&reported.to_string_lossy())
+        shell_quote(&markers.reported.to_string_lossy()),
+        shell_quote(&markers.unreported.to_string_lossy())
     )
 }
 
@@ -42,7 +43,7 @@ pub fn claude_worker_settings(exe: &Path, markers: &WorkerMarkers) -> Value {
                 "hooks": [command_hook(touch_command(&markers.ready))]
             }],
             "Stop": [{
-                "hooks": [command_hook(stop_hook_command(exe, &markers.reported))]
+                "hooks": [command_hook(stop_hook_command(exe, markers))]
             }],
             "PermissionRequest": [{
                 "hooks": [command_hook(touch_command(&markers.blocked))]
@@ -69,7 +70,8 @@ struct StopPayload {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StopDecision {
-    Allow,
+    AllowBackground,
+    GiveUp,
     ConsumeMarker,
     Block,
     FailOpen(String),
@@ -84,14 +86,14 @@ pub fn stop_decision(payload: &str, reported: bool) -> StopDecision {
         .background_tasks
         .is_some_and(|tasks| !tasks.is_empty())
     {
-        return StopDecision::Allow;
+        return StopDecision::AllowBackground;
     }
     if reported {
         return StopDecision::ConsumeMarker;
     }
     match payload.stop_hook_active {
         Some(false) => StopDecision::Block,
-        Some(true) => StopDecision::Allow,
+        Some(true) => StopDecision::GiveUp,
         None => StopDecision::FailOpen("Stop hook input has no stop_hook_active".to_string()),
     }
 }
@@ -181,7 +183,7 @@ mod tests {
         let settings = claude_worker_settings(Path::new("/bin/ral'ph"), &markers);
         assert_eq!(
             hook_command(&settings, "Stop"),
-            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A'"
+            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A' --unreported '/s/it'\''s/unreported/A'"
         );
     }
 
@@ -231,7 +233,7 @@ mod tests {
         );
         assert_eq!(
             stop_decision(r#"{"stop_hook_active":true}"#, false),
-            StopDecision::Allow
+            StopDecision::GiveUp
         );
         assert_eq!(
             stop_decision(r#"{"stop_hook_active":false}"#, true),
@@ -254,8 +256,8 @@ mod tests {
     #[test]
     fn stop_decision_waits_for_background_tasks_and_keeps_the_marker() {
         let busy = r#"{"stop_hook_active":false,"background_tasks":[{"id":"x"}]}"#;
-        assert_eq!(stop_decision(busy, false), StopDecision::Allow);
-        assert_eq!(stop_decision(busy, true), StopDecision::Allow);
+        assert_eq!(stop_decision(busy, false), StopDecision::AllowBackground);
+        assert_eq!(stop_decision(busy, true), StopDecision::AllowBackground);
         let idle = r#"{"stop_hook_active":false,"background_tasks":null}"#;
         assert_eq!(stop_decision(idle, false), StopDecision::Block);
     }

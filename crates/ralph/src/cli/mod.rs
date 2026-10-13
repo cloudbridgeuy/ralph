@@ -105,6 +105,9 @@ pub struct WorkerMcpArgs {
 pub struct WorkerStopHookArgs {
     #[arg(long, value_name = "PATH")]
     pub reported: std::path::PathBuf,
+
+    #[arg(long, value_name = "PATH")]
+    pub unreported: std::path::PathBuf,
 }
 
 #[derive(clap::Args, Debug)]
