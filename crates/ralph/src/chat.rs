@@ -185,7 +185,7 @@ impl Monitor {
         let blocked = blocked_path(&self.store_dir, id).exists();
         let waiting = waiting_path(&self.store_dir, id).exists();
         let reported = reported_since_nudge(state.reports.get(id), state.nudges.get(id));
-        let pane = (!blocked && !waiting && !(ready && reported))
+        let pane = (!(blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
             .flatten();
         let pane_changed = match &pane {
