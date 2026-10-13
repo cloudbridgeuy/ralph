@@ -186,6 +186,10 @@ fn test_spinner_context_messages() {
         SpinnerContext::Summarizing.message(),
         "Summarizing progress file..."
     );
+    assert_eq!(
+        SpinnerContext::WaitingForMemory.message(),
+        "Waiting for memory..."
+    );
 }
 
 #[test]

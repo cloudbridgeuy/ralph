@@ -3,7 +3,7 @@ use ralph_core::chat_memory::{
     check_summary, encode_entry, encode_record, encode_usage, nap_prompt, parse_log, parse_tree,
     pending, retry_prompt, Entry, Node, Role, Tree, UsageRecord, MAX_NAP_ATTEMPTS,
 };
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -40,6 +40,14 @@ fn read_optional(path: &Path) -> io::Result<Vec<u8>> {
     }
 }
 
+fn must_wait(attempt: Result<(), TryLockError>) -> io::Result<bool> {
+    match attempt {
+        Ok(()) => Ok(false),
+        Err(TryLockError::WouldBlock) => Ok(true),
+        Err(TryLockError::Error(e)) => Err(e),
+    }
+}
+
 impl Store {
     pub fn new(dir: PathBuf) -> Self {
         Self { dir }
@@ -61,21 +69,29 @@ impl Store {
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    fn lock(&self) -> io::Result<File> {
+    fn open_lock(&self) -> io::Result<File> {
         fs::create_dir_all(&self.dir)?;
         let path = self.dir.join("LOCK");
         check_path(&path)?;
-        let lock = OpenOptions::new()
+        OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
-            .open(path)?;
+            .open(path)
+    }
+
+    fn lock(&self) -> io::Result<File> {
+        let lock = self.open_lock()?;
         lock.lock()?;
         Ok(lock)
     }
 
-    pub fn load_settled(&self) -> io::Result<(Vec<Entry>, Tree)> {
-        let _lock = self.lock()?;
+    pub fn load_settled<W>(&self, on_wait: impl FnOnce() -> W) -> io::Result<(Vec<Entry>, Tree)> {
+        let lock = self.open_lock()?;
+        if must_wait(lock.try_lock())? {
+            let _waiting = on_wait();
+            lock.lock()?;
+        }
         self.load()
     }
 
@@ -177,12 +193,19 @@ mod tests {
     }
 
     #[test]
+    fn must_wait_only_when_lock_is_held() {
+        assert!(!must_wait(Ok(())).unwrap());
+        assert!(must_wait(Err(TryLockError::WouldBlock)).unwrap());
+        assert!(must_wait(Err(TryLockError::Error(io::Error::other("x")))).is_err());
+    }
+
+    #[test]
     fn append_round_trips_through_load() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().join("new"));
         store.append(Role::User, "hi").unwrap();
         store.append(Role::Assistant, "yo").unwrap();
-        let (entries, _) = store.load_settled().unwrap();
+        let (entries, _) = store.load_settled(|| ()).unwrap();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[1].role, Role::Assistant);
         assert_eq!(entries[1].text, "yo");
