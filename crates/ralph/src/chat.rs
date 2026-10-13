@@ -477,6 +477,21 @@ fn chat_session_info() -> SpinnerSessionInfo {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnOutcome {
+    Replied,
+    Unanswered,
+    Exit,
+}
+
+fn logged_before_reply(trigger: Trigger) -> bool {
+    trigger == Trigger::Worker
+}
+
+fn draft_after(outcome: TurnOutcome, message: String) -> Option<String> {
+    (outcome == TurnOutcome::Unanswered).then_some(message)
+}
+
 struct Turn<'a> {
     store: &'a Store,
     store_dir: &'a Path,
@@ -497,7 +512,7 @@ impl Turn<'_> {
         trigger: Trigger,
         logged: &[String],
         message: &str,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
         self.cancel.store(false, Ordering::SeqCst);
         let (entries, tree) = self.store.load_settled(|| {
             let mut spinner = Spinner::with_session_context(0, chat_session_info());
@@ -508,8 +523,8 @@ impl Turn<'_> {
         let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, pinned);
         *locked(&self.frozen) = Some(frozen.clone());
         let tail = tail_lines(&entries, &tree, frozen.end);
-        for text in logged {
-            self.store.append(trigger.role(), text)?;
+        if logged_before_reply(trigger) {
+            self.append_logged(trigger, logged)?;
         }
         let sent = match trigger {
             Trigger::User => expand_slash_command(message, self.skills),
@@ -543,19 +558,19 @@ impl Turn<'_> {
             terminated: signal::is_terminated(),
         });
         match end {
-            TurnEnd::Exit => return Ok(false),
+            TurnEnd::Exit => return Ok(TurnOutcome::Exit),
             TurnEnd::Cancelled => {
                 if let Ok(partial) = &result {
                     print_rule_after(&partial.stream_result.output_blocks);
                 }
                 warn("Turn cancelled.");
-                return Ok(true);
+                return Ok(TurnOutcome::Unanswered);
             }
             TurnEnd::Completed => {}
         }
         let result = match result {
             Ok(result) => result,
-            Err(SubprocessError::Interrupted { .. }) => return Ok(false),
+            Err(SubprocessError::Interrupted { .. }) => return Ok(TurnOutcome::Exit),
             Err(SubprocessError::Timeout {
                 timeout_secs,
                 partial_result,
@@ -564,9 +579,12 @@ impl Turn<'_> {
                 warn(format!(
                     "chat turn timed out after {timeout_secs}s; restart with a larger --timeout for long work"
                 ));
-                return Ok(true);
+                return Ok(TurnOutcome::Unanswered);
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                warn(format!("chat turn failed: {e}"));
+                return Ok(TurnOutcome::Unanswered);
+            }
         };
         if let Some(record) = usage_record(
             CallKind::Turn { trigger },
@@ -586,12 +604,24 @@ impl Turn<'_> {
         print_rule();
         match extract_response_text(&result.stream_result.output_blocks) {
             Some(reply) if result.exit_code == 0 => {
+                if !logged_before_reply(trigger) {
+                    self.append_logged(trigger, logged)?;
+                }
                 self.store.append(Role::Assistant, &reply)?;
                 warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
+                Ok(TurnOutcome::Replied)
             }
-            _ => warn(format!("chat turn failed (exit {})", result.exit_code)),
+            _ => {
+                warn(format!("chat turn failed (exit {})", result.exit_code));
+                Ok(TurnOutcome::Unanswered)
+            }
         }
-        Ok(true)
+    }
+
+    fn append_logged(&self, trigger: Trigger, logged: &[String]) -> io::Result<()> {
+        logged
+            .iter()
+            .try_for_each(|text| self.store.append(trigger.role(), text))
     }
 }
 
@@ -831,10 +861,14 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let Some(route) = route? else {
             break;
         };
-        let keep_going = match route {
+        let outcome = match route {
             Route::Ignore => continue,
             Route::Send(message) => {
-                turn.run(Trigger::User, std::slice::from_ref(&message), &message)?
+                let outcome = turn.run(Trigger::User, std::slice::from_ref(&message), &message)?;
+                if let Some(draft) = draft_after(outcome, message) {
+                    editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
+                }
+                outcome
             }
             Route::ReadInbox => {
                 let reports = monitor.drain()?;
@@ -865,7 +899,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         };
         monitor.refresh(true);
-        if !keep_going {
+        if outcome == TurnOutcome::Exit {
             break;
         }
     }
@@ -875,6 +909,22 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_worker_turns_log_before_the_reply() {
+        assert!(logged_before_reply(Trigger::Worker));
+        assert!(!logged_before_reply(Trigger::User));
+    }
+
+    #[test]
+    fn unanswered_turn_restores_the_draft() {
+        assert_eq!(
+            draft_after(TurnOutcome::Unanswered, "hi".into()),
+            Some("hi".into())
+        );
+        assert_eq!(draft_after(TurnOutcome::Replied, "hi".into()), None);
+        assert_eq!(draft_after(TurnOutcome::Exit, "hi".into()), None);
+    }
 
     #[test]
     fn rule_follows_shown_output_only() {
