@@ -492,6 +492,15 @@ fn draft_after(outcome: TurnOutcome, message: String) -> Option<String> {
     (outcome == TurnOutcome::Unanswered).then_some(message)
 }
 
+/// Clears the in-flight turn marker on every exit path (reply, cancel, timeout, error).
+struct PendingTurn<'a>(&'a Store);
+
+impl Drop for PendingTurn<'_> {
+    fn drop(&mut self) {
+        self.0.clear_pending_turn();
+    }
+}
+
 struct Turn<'a> {
     store: &'a Store,
     store_dir: &'a Path,
@@ -514,6 +523,8 @@ impl Turn<'_> {
         message: &str,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
         self.cancel.store(false, Ordering::SeqCst);
+        self.store.set_pending_turn(trigger)?;
+        let _pending = PendingTurn(self.store);
         let (entries, tree) = self.store.load_settled(|| {
             let mut spinner = Spinner::with_session_context(0, chat_session_info());
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
