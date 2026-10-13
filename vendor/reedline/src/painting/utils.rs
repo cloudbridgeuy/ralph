@@ -214,11 +214,103 @@ pub(crate) fn advance_grapheme(
     }
 }
 
+pub(crate) fn soft_wrap(text: &str, column: u16, columns: u16) -> (String, u16) {
+    let mut out = String::with_capacity(text.len());
+    let mut col = column;
+    for (is_escape, segment) in ansi_segments(text) {
+        if is_escape {
+            out.push_str(segment);
+            continue;
+        }
+        for grapheme in segment.graphemes(true) {
+            let step = if grapheme == "\r\n" { "\n" } else { grapheme };
+            let ((row, at), width) = advance_grapheme((0, col), step, columns);
+            if row > 0 && step != "\n" {
+                out.push_str("\r\n");
+            }
+            out.push_str(grapheme);
+            col = at.saturating_add(width);
+        }
+    }
+    (out, col)
+}
+
+fn ansi_segments(text: &str) -> Vec<(bool, &str)> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        if c != '\x1b' {
+            continue;
+        }
+        if start < at {
+            segments.push((false, &text[start..at]));
+        }
+        let end = match chars.next() {
+            Some((_, '[')) => chars
+                .find(|(_, c)| ('\x40'..='\x7e').contains(c))
+                .map(|(i, c)| i + c.len_utf8()),
+            Some((_, ']')) => {
+                let mut end = None;
+                while let Some((i, c)) = chars.next() {
+                    if c == '\x07' {
+                        end = Some(i + 1);
+                        break;
+                    }
+                    if c == '\x1b' && chars.peek().is_some_and(|(_, c)| *c == '\\') {
+                        end = Some(i + 2);
+                        break;
+                    }
+                }
+                end
+            }
+            Some((i, c)) => Some(i + c.len_utf8()),
+            None => None,
+        };
+        let end = end.unwrap_or(text.len());
+        segments.push((true, &text[at..end]));
+        while chars.peek().is_some_and(|(i, _)| *i < end) {
+            chars.next();
+        }
+        start = end;
+    }
+    if start < text.len() {
+        segments.push((false, &text[start..]));
+    }
+    segments
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
+
+    #[rstest]
+    #[case("abcdef", 0, ("abcd\r\nef", 2))]
+    #[case("abcd", 0, ("abcd", 4))]
+    #[case("e", 4, ("\r\ne", 1))]
+    #[case("ab\r\ncdef", 2, ("ab\r\ncdef", 4))]
+    #[case("\x1b[31mabcde\x1b[0m", 0, ("\x1b[31mabcd\r\ne\x1b[0m", 1))]
+    #[case("\x1b]8;;http://x\x07abcde\x1b]8;;\x1b\\", 0, ("\x1b]8;;http://x\x07abcd\r\ne\x1b]8;;\x1b\\", 1))]
+    #[case("abc😇", 0, ("abc\r\n😇", 2))]
+    fn soft_wrap_breaks_where_the_terminal_would(
+        #[case] text: &str,
+        #[case] column: u16,
+        #[case] expected: (&str, u16),
+    ) {
+        let (wrapped, end) = soft_wrap(text, column, 4);
+        assert_eq!((wrapped.as_str(), end), expected);
+    }
+
+    #[rstest]
+    #[case("abcdefghijklmnopq")]
+    #[case("abcdefgh")]
+    #[case("ab😇😇😇cd\r\nefghijklm")]
+    fn soft_wrap_lands_where_the_narrow_terminal_would(#[case] text: &str) {
+        let (wrapped, _) = soft_wrap(text, 0, 4);
+        assert_eq!(wrap_position([&*wrapped], 40), wrap_position([text], 4));
+    }
 
     #[rstest]
     #[case("sentence\nsentence", "sentence\r\nsentence")]

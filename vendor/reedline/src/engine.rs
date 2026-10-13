@@ -886,6 +886,15 @@ impl Reedline {
         self
     }
 
+    /// A builder that wraps the prompt and buffer at `width` columns, or at
+    /// the terminal width when that is narrower. `None` or 0 wraps at the
+    /// terminal width.
+    #[must_use]
+    pub fn with_wrap_width(mut self, width: Option<u16>) -> Self {
+        self.painter.set_wrap_width(width);
+        self
+    }
+
     /// A builder which configures the edit mode for your instance of the Reedline engine
     #[must_use]
     pub fn with_edit_mode(mut self, edit_mode: Box<dyn EditMode>) -> Self {
