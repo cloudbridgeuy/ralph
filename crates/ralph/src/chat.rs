@@ -44,9 +44,9 @@ use ralph_core::worker_check::{
     WorkerObservation, CHECK_STATUS, NUDGE_TEXT,
 };
 use reedline::{
-    default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
-    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
-    ReedlineEvent, Signal, DEFAULT_MULTILINE_INDICATOR,
+    default_emacs_keybindings, EditCommand, EditMode, Emacs, FileBackedHistory, KeyCode,
+    KeyModifiers, Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
+    ReedlineEvent, ReedlineRawEvent, Signal, DEFAULT_MULTILINE_INDICATOR,
 };
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -74,6 +74,31 @@ fn default_store() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::other("home directory not found"))
 }
 
+struct ChatEditMode {
+    emacs: Emacs,
+    esc_pending: bool,
+}
+
+fn esc_esc(esc_pending: bool, event: ReedlineEvent) -> (bool, ReedlineEvent) {
+    match (esc_pending, event) {
+        (true, ReedlineEvent::Esc) => (false, ReedlineEvent::Edit(vec![EditCommand::Clear])),
+        (false, ReedlineEvent::Esc) => (true, ReedlineEvent::Esc),
+        (_, event) => (false, event),
+    }
+}
+
+impl EditMode for ChatEditMode {
+    fn parse_event(&mut self, event: ReedlineRawEvent) -> ReedlineEvent {
+        let (esc_pending, event) = esc_esc(self.esc_pending, self.emacs.parse_event(event));
+        self.esc_pending = esc_pending;
+        event
+    }
+
+    fn edit_mode(&self) -> PromptEditMode {
+        self.emacs.edit_mode()
+    }
+}
+
 fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>> {
     let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     let mut keybindings = default_emacs_keybindings();
@@ -92,7 +117,10 @@ fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>
         .unwrap_or_else(|_| "vi".to_string());
     Ok(Reedline::create()
         .with_history(Box::new(history))
-        .with_edit_mode(Box::new(Emacs::new(keybindings)))
+        .with_edit_mode(Box::new(ChatEditMode {
+            emacs: Emacs::new(keybindings),
+            esc_pending: false,
+        }))
         .with_buffer_editor(Command::new(editor), store_dir.join(EDITOR_FILE))
         .use_bracketed_paste(true))
 }
@@ -822,4 +850,23 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn second_esc_clears_the_draft() {
+        let (pending, first) = esc_esc(false, ReedlineEvent::Esc);
+        assert!(pending && first == ReedlineEvent::Esc);
+        let (pending, second) = esc_esc(pending, ReedlineEvent::Esc);
+        assert!(!pending && second == ReedlineEvent::Edit(vec![EditCommand::Clear]));
+    }
+
+    #[test]
+    fn other_event_resets_pending_esc() {
+        let (pending, event) = esc_esc(true, ReedlineEvent::Enter);
+        assert!(!pending && event == ReedlineEvent::Enter);
+    }
 }
