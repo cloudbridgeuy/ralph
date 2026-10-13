@@ -5,9 +5,10 @@
 
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
-use termimad::MadSkin;
+use termimad::{terminal_size, MadSkin};
 
 use super::link::{mark_links, paint_links};
+use super::wrap::render_prose;
 use super::RenderContext;
 
 /// Render a text block (prose, code, or diff) to a string.
@@ -36,7 +37,9 @@ pub fn render_text_block(
             if ctx.terminal {
                 markdown_skin
                     .map(|skin| {
-                        let rendered = skin.term_text(&mark_links(&chunk.content)).to_string();
+                        let (width, _) = terminal_size();
+                        let rendered =
+                            render_prose(skin, &mark_links(&chunk.content), width.into());
                         paint_links(&enhance_tables(&rendered))
                     })
                     .unwrap_or_else(|| chunk.content.clone())

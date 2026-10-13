@@ -161,7 +161,7 @@ Each block captures **data**, not rendered strings. `extract_response_text()` jo
 
 ## Block-Buffered Prose Rendering
 
-Prose text uses **block buffering** (`prose_threshold = usize::MAX`) so that `term_text()` receives complete multi-line content. This enables proper markdown block rendering (tables, lists, paragraphs) rather than line-by-line rendering.
+Prose text uses **block buffering** (`prose_threshold = usize::MAX`) so that `render_prose()` receives complete multi-line content. This enables proper markdown block rendering (tables, lists, paragraphs) rather than line-by-line rendering.
 
 ### Flush points
 
@@ -199,8 +199,12 @@ The splitting happens in `event_handler.rs` at both streaming sites (line proces
 
 termimad already constrains tables to terminal width and provides cell spacing via column alignment. `enhance_tables()` only adds top/bottom borders by character-substituting the separator (`├→┌`, `┼→┬`, `┤→┐`). No characters are added or removed — only substituted — so the table stays within terminal width.
 
-This runs after `skin.term_text()` inside `render_text_block()`. Box-drawing characters are multi-byte UTF-8 (bytes > 0x7F), so they cannot appear inside ANSI escape sequences — making string splitting on `│`/`├` safe even in ANSI-coded output.
+This runs after `render_prose()` inside `render_text_block()`. Box-drawing characters are multi-byte UTF-8 (bytes > 0x7F), so they cannot appear inside ANSI escape sequences — making string splitting on `│`/`├` safe even in ANSI-coded output.
 
 ## Links
 
-termimad has no link concept. `render/link.rs` rewrites `[label](url)` before `skin.term_text()` (`mark_links`) to `label ↗ url` wrapped in zero-width marker chars, so wrapping widths stay correct. After rendering, `paint_links` swaps the markers for ANSI: label bright blue underlined, URL bright cyan. Colors are fixed, not per skin. Code spans, escaped `\[`, and images stay literal. The same pass marks memory references (`#` plus digits, e.g. `#303`) and paints them bright magenta (pink). A reference must not follow a letter, digit, `_`, `#`, `&`, `/` or `\`, and must not run into a letter, digit or `_`; so `# Title`, `abc#12`, `&#123;` and URL fragments stay plain, as do refs in code spans and link labels. Non-terminal output keeps the raw markdown.
+termimad has no link concept. `render/link.rs` rewrites `[label](url)` before `render_prose()` (`mark_links`) to `label ↗ url` wrapped in zero-width marker chars, so wrapping widths stay correct. After rendering, `paint_links` swaps the markers for ANSI: label bright blue underlined, URL bright cyan. Colors are fixed, not per skin. Code spans, escaped `\[`, and images stay literal. The same pass marks memory references (`#` plus digits, e.g. `#303`) and paints them bright magenta (pink). A reference must not follow a letter, digit, `_`, `#`, `&`, `/` or `\`, and must not run into a letter, digit or `_`; so `# Title`, `abc#12`, `&#123;` and URL fragments stay plain, as do refs in code spans and link labels. Non-terminal output keeps the raw markdown. When a styled span wraps, `paint_links` opens its color again after the newline.
+
+## Prose Wrapping
+
+`render_prose()` in `render/wrap.rs` renders prose at the terminal width (`terminal_size()`) and replaces termimad's space-only wrapping with UAX #14 line breaking (`unicode-linebreak`). It renders the markdown twice: once without a width, for the normal lines, and once at the terminal width, for the fitted table rows. Each normal line is broken by the pure `break_lines(text, first, rest)`: greedy fit over the UAX #14 break opportunities, widths from `unicode-width` (CJK and emoji are 2 columns), trailing spaces dropped. A segment wider than the line is cut at the column limit. Break opportunities are computed with the link markers removed, so they add no breaks and take no columns; a marker before a word moves to the next line with the word. Lines are sliced back into termimad compounds, so bold, italic and inline code styles stay on both sides of a break. List items and quotes continue with their follow-up indent. Code lines are not wrapped. Limit: there is no configurable reading width yet; the width is always the terminal width.

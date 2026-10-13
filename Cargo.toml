@@ -39,6 +39,9 @@ clap = { version = "4.5", features = ["derive", "env"] }
 # Cross-platform terminal manipulation
 crossterm = "0.29"
 
+# UAX #14 line breaking
+unicode-linebreak = "0.1.5"
+
 # Ctrl+C / SIGINT handling
 ctrlc = { version = "3.4", features = ["termination"] }
 

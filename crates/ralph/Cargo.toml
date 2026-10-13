@@ -29,6 +29,7 @@ tempfile = { workspace = true }
 thiserror = { workspace = true }
 crossterm = { workspace = true }
 unicode-width = "0.2"
+unicode-linebreak = { workspace = true }
 toml = { workspace = true }
 reedline = { workspace = true }
 
