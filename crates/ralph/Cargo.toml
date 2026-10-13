@@ -28,6 +28,7 @@ termimad = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 crossterm = { workspace = true }
+unicode-width = "0.2"
 toml = { workspace = true }
 reedline = { workspace = true }
 

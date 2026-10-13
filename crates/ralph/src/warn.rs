@@ -1,4 +1,5 @@
 use crate::ansi::{BOLD, RESET, YELLOW};
+use crate::frame::frame;
 use std::fmt::Display;
 use std::io::IsTerminal;
 
@@ -49,25 +50,19 @@ fn format_warning(message: &str, terminal_width: usize, color: bool) -> String {
         return format!("Warning: {message}");
     }
     let body_width = terminal_width.saturating_sub(FRAME_WIDTH).max(1);
-    let lines = wrap_text(message, body_width);
-    let text_width = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    let rule = "\u{2500}".repeat(text_width + 4);
-    let body = lines.iter().enumerate().map(|(i, line)| {
-        let marker = if i == 0 {
-            format!("{BOLD}{YELLOW}{SYMBOL}{RESET}")
-        } else {
-            " ".to_string()
-        };
-        let pad = " ".repeat(text_width - line.chars().count());
-        format!("{YELLOW}\u{2502}{RESET} {marker} {line}{pad} {YELLOW}\u{2502}{RESET}")
-    });
-    std::iter::once(format!("{YELLOW}\u{256d}{rule}\u{256e}{RESET}"))
-        .chain(body)
-        .chain(std::iter::once(format!(
-            "{YELLOW}\u{2570}{rule}\u{256f}{RESET}"
-        )))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let rows: Vec<String> = wrap_text(message, body_width)
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let marker = if i == 0 {
+                format!("{BOLD}{YELLOW}{SYMBOL}{RESET}")
+            } else {
+                " ".to_string()
+            };
+            format!("{marker} {line}")
+        })
+        .collect();
+    frame(&rows, YELLOW)
 }
 
 pub fn warn(message: impl Display) {
@@ -87,21 +82,8 @@ pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::strip_ansi;
     use std::io;
-
-    fn strip_ansi(s: &str) -> String {
-        let mut out = String::new();
-        let mut in_escape = false;
-        for c in s.chars() {
-            match (in_escape, c) {
-                (false, '\x1b') => in_escape = true,
-                (true, 'm') => in_escape = false,
-                (false, c) => out.push(c),
-                _ => {}
-            }
-        }
-        out
-    }
 
     #[test]
     fn plain_format_when_not_color() {
