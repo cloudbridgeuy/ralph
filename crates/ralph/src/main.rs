@@ -212,6 +212,7 @@ fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Err
 fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std::error::Error>> {
     worker_mcp::run_stop_hook(
         &args.reported,
+        &args.unreported,
         std::io::stdin().lock(),
         std::io::stdout().lock(),
     )?;

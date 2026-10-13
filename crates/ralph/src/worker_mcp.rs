@@ -1,7 +1,7 @@
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
-    handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision, Outcome,
-    Report, StopDecision,
+    handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision,
+    unreported_path, Outcome, Report, StopDecision,
 };
 use serde_json::Value;
 use std::fs;
@@ -31,7 +31,8 @@ impl Inbox {
         if let Some(dir) = marker.parent() {
             fs::create_dir_all(dir)?;
         }
-        fs::write(marker, "")
+        fs::write(marker, "")?;
+        remove_if_present(&unreported_path(store, worker))
     }
 
     fn pending(&self) -> io::Result<Vec<PathBuf>> {
@@ -130,8 +131,16 @@ pub fn run_stdio_server(
     Ok(())
 }
 
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 pub fn run_stop_hook(
     reported: &Path,
+    unreported: &Path,
     mut input: impl Read,
     mut output: impl Write,
 ) -> io::Result<()> {
@@ -143,11 +152,17 @@ pub fn run_stop_hook(
         return Ok(());
     }
     match stop_decision(&payload, reported.exists()) {
-        StopDecision::Allow => {}
-        StopDecision::ConsumeMarker => match fs::remove_file(reported) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-            _ => {}
-        },
+        StopDecision::AllowBackground => {}
+        StopDecision::GiveUp => {
+            if let Some(dir) = unreported.parent() {
+                fs::create_dir_all(dir)?;
+            }
+            fs::write(unreported, "")?;
+        }
+        StopDecision::ConsumeMarker => {
+            remove_if_present(reported)?;
+            remove_if_present(unreported)?;
+        }
         StopDecision::Block => writeln!(output, "{}", stop_block_output())?,
         StopDecision::FailOpen(reason) => {
             crate::warn::warn(format!("letting the worker stop: {reason}"))
@@ -161,9 +176,15 @@ mod tests {
     use super::*;
 
     fn stop_hook(reported: &Path, payload: &str) -> String {
+        let unreported = reported.with_file_name("unreported");
         let mut out = Vec::new();
-        run_stop_hook(reported, payload.as_bytes(), &mut out).unwrap();
+        run_stop_hook(reported, &unreported, payload.as_bytes(), &mut out).unwrap();
         String::from_utf8(out).unwrap()
+    }
+
+    fn touch(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "").unwrap();
     }
 
     #[test]
@@ -177,10 +198,34 @@ mod tests {
         );
         assert_eq!(stop_hook(&reported, r#"{"stop_hook_active":true}"#), "");
 
-        fs::create_dir_all(reported.parent().unwrap()).unwrap();
-        fs::write(&reported, "").unwrap();
+        touch(&reported);
         assert_eq!(stop_hook(&reported, r#"{"stop_hook_active":false}"#), "");
         assert!(!reported.exists());
+    }
+
+    #[test]
+    fn stop_hook_give_up_writes_unreported_and_a_report_removes_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let reported = dir.path().join("reported").join("A");
+        let unreported = reported.with_file_name("unreported");
+        assert_eq!(stop_hook(&reported, r#"{"stop_hook_active":true}"#), "");
+        assert!(unreported.exists());
+
+        touch(&reported);
+        assert_eq!(stop_hook(&reported, r#"{"stop_hook_active":true}"#), "");
+        assert!(!reported.exists() && !unreported.exists());
+    }
+
+    #[test]
+    fn stop_hook_with_background_tasks_leaves_markers_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let reported = dir.path().join("reported").join("A");
+        let unreported = reported.with_file_name("unreported");
+        touch(&reported);
+        touch(&unreported);
+        let busy = r#"{"stop_hook_active":false,"background_tasks":[{"id":"x"}]}"#;
+        assert_eq!(stop_hook(&reported, busy), "");
+        assert!(reported.exists() && unreported.exists());
     }
 
     #[test]
@@ -206,5 +251,16 @@ mod tests {
         assert_eq!(reports[0].worker, "GUZ-1");
         assert_eq!(reports[0].text, "hello");
         assert!(inbox.peek().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_report_removes_the_unreported_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let unreported = unreported_path(dir.path(), "A");
+        touch(&unreported);
+        inbox.mark_reported("A").unwrap();
+        assert!(!unreported.exists());
+        assert!(reported_path(dir.path(), "A").exists());
     }
 }

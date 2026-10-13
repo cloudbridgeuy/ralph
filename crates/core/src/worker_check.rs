@@ -118,8 +118,7 @@ pub fn plan(
     for obs in observations {
         let state = classify(obs);
         let prev_entry = prev.workers.get(&obs.id);
-        let mut nudged = prev_entry.is_some_and(|p| p.nudged)
-            && (state == WorkerState::Waiting || !obs.reported_since_nudge);
+        let mut nudged = prev_entry.is_some_and(|p| p.nudged) && !obs.reported_since_nudge;
         if state == WorkerState::Waiting && !nudged {
             actions.push(CheckAction::Nudge(obs.id.clone()));
             nudged = true;
@@ -293,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn lingering_waiting_marker_with_repeated_reports_nudges_once() {
+    fn lingering_waiting_marker_nudges_once_per_new_report() {
         let reported_waiting = WorkerObservation {
             reported_since_nudge: true,
             ..waiting()
@@ -301,12 +300,65 @@ mod tests {
         let (first, mut memory) = plan(&CheckMemory::default(), &[waiting()]);
         let mut total = nudges(&first);
         for _ in 0..5 {
+            for _ in 0..3 {
+                let (actions, next) = plan(&memory, &[waiting()]);
+                assert_eq!(nudges(&actions), 0);
+                memory = next;
+            }
             let (actions, next) = plan(&memory, std::slice::from_ref(&reported_waiting));
             total += nudges(&actions);
             memory = next;
         }
-        assert_eq!(total, 1);
+        assert_eq!(total, 1 + 5);
         assert!(memory.workers["w1"].nudged);
+    }
+
+    #[test]
+    fn second_wait_after_a_report_nudges_without_a_check_between() {
+        let (first, memory) = plan(&CheckMemory::default(), &[waiting()]);
+        assert_eq!(nudges(&first), 1);
+        let reported_waiting = WorkerObservation {
+            reported_since_nudge: true,
+            ..waiting()
+        };
+        let (actions, _) = plan(&memory, &[reported_waiting]);
+        assert_eq!(nudges(&actions), 1);
+    }
+
+    #[test]
+    fn cleared_marker_after_a_nudge_does_not_loop() {
+        let reported = WorkerObservation {
+            reported_since_nudge: true,
+            ..obs()
+        };
+        let (first, mut memory) = plan(&CheckMemory::default(), &[waiting()]);
+        let mut total = nudges(&first);
+        for o in [
+            obs(),
+            reported.clone(),
+            reported.clone(),
+            reported.clone(),
+            reported,
+        ] {
+            let (actions, next) = plan(&memory, &[o]);
+            total += nudges(&actions);
+            memory = next;
+        }
+        assert_eq!(total, 1);
+        assert_eq!(memory.workers["w1"].state, WorkerState::Reported);
+
+        let fresh_wait = WorkerObservation {
+            reported_since_nudge: true,
+            ..waiting()
+        };
+        let (actions, next) = plan(&memory, &[fresh_wait]);
+        assert_eq!(nudges(&actions), 1);
+        memory = next;
+        for _ in 0..3 {
+            let (actions, next) = plan(&memory, &[waiting()]);
+            assert_eq!(nudges(&actions), 0);
+            memory = next;
+        }
     }
 
     #[test]
