@@ -74,15 +74,29 @@ pub fn mark_links(text: &str) -> String {
     out
 }
 
+pub fn is_marker(ch: char) -> bool {
+    MARKERS.contains(&ch)
+}
+
 pub fn paint_links(rendered: &str) -> String {
     let mut out = String::with_capacity(rendered.len());
+    let mut open = None;
     for ch in rendered.chars() {
         match ch {
-            LABEL_START => out.push_str(LABEL_STYLE),
+            LABEL_START => open = Some(LABEL_STYLE),
+            URL_START => open = Some(URL_STYLE),
+            MEMORY_START => open = Some(MEMORY_STYLE),
+            LABEL_END | URL_END | MEMORY_END => open = None,
+            _ => {}
+        }
+        match ch {
+            LABEL_START | URL_START | MEMORY_START => out.push_str(open.unwrap_or_default()),
             LABEL_END => out.push_str(LABEL_STYLE_OFF),
-            URL_START => out.push_str(URL_STYLE),
-            MEMORY_START => out.push_str(MEMORY_STYLE),
             URL_END | MEMORY_END => out.push_str(COLOR_OFF),
+            '\n' => {
+                out.push('\n');
+                out.push_str(open.unwrap_or_default());
+            }
             _ => out.push(ch),
         }
     }
@@ -270,6 +284,16 @@ mod tests {
         assert_eq!(
             strip(&rendered).lines().next().map(str::trim_end),
             Some("aa #303")
+        );
+    }
+
+    #[test]
+    fn paint_reopens_style_after_a_line_break() {
+        assert_eq!(
+            paint_links(&mark_links("[a b](https://x.dev/a)").replace(' ', "\n")),
+            format!(
+                "{LABEL_STYLE}a\n{LABEL_STYLE}b{LABEL_STYLE_OFF}\n{LINK_SYMBOL}\n{URL_STYLE}https://x.dev/a{COLOR_OFF}"
+            )
         );
     }
 

@@ -20,6 +20,7 @@ mod link;
 pub mod text;
 pub mod tool_renderers;
 pub mod utils;
+mod wrap;
 
 // Re-export commonly used functions for convenience
 pub use utils::{
