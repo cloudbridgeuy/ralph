@@ -7,7 +7,7 @@ use crate::highlight::{Highlighter, ThemeConfig};
 use crate::inbox_alert;
 use crate::invoke::build_chat_command;
 use crate::markdown::{create_agent_markdown_skin, create_markdown_skin};
-use crate::render::{render_markdown, RenderContext};
+use crate::render::{cap_wrap_width, render_markdown, wrap_width, RenderContext};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::extract_response_text;
@@ -20,8 +20,8 @@ use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
 use ralph_core::chat::{
     build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window,
-    resolve_worker_check_secs, select_servers, turn_prompt, turn_system_prompt, ChatMcpOptions,
-    VIEW_LINES,
+    resolve_worker_check_secs, resolve_wrap_width, select_servers, turn_prompt, turn_system_prompt,
+    ChatMcpOptions, VIEW_LINES,
 };
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_memory::{
@@ -62,6 +62,7 @@ const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
 const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
+const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 const POLL: Duration = Duration::from_millis(500);
 const MEMORY_EVERY_POLLS: u64 = 10;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
@@ -359,19 +360,21 @@ impl ChatPrompt {
     }
 }
 
-fn terminal_width() -> usize {
-    crossterm::terminal::size()
-        .map(|(w, _)| usize::from(w))
-        .unwrap_or(DEFAULT_TERMINAL_WIDTH)
+fn screen_columns() -> usize {
+    wrap_width(
+        crossterm::terminal::size()
+            .map(|(w, _)| usize::from(w))
+            .unwrap_or(DEFAULT_TERMINAL_WIDTH),
+    )
 }
 
 impl Prompt for ChatPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Owned(self.dim(&status_line(&self.monitor.status(), terminal_width())))
+        Cow::Owned(self.dim(&status_line(&self.monitor.status(), screen_columns())))
     }
 
     fn render_prompt_footer(&self) -> Cow<'_, str> {
-        let hints = footer(self.monitor.status().unread, terminal_width());
+        let hints = footer(self.monitor.status().unread, screen_columns());
         Cow::Owned(self.dim(hints.trim_end_matches('\n')))
     }
 
@@ -658,6 +661,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let chat_config = config.chat;
     let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
     let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
+    let wrap_cap = resolve_wrap_width(
+        args.wrap_width,
+        std::env::var(WRAP_WIDTH_ENV).ok().as_deref(),
+        chat_config.wrap_width,
+    )?;
+    cap_wrap_width(wrap_cap);
     let mcp_config_path = write_mcp_config(
         &store,
         &store_dir,
@@ -741,7 +750,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&at_prompt),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
     );
-    let mut editor = build_editor(&store_dir)?;
+    let mut editor = build_editor(&store_dir)?
+        .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
@@ -774,7 +784,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     .map(|report| chat_message(std::slice::from_ref(report)))
                     .collect();
                 let message = chat_message(&reports);
-                let width = terminal_width();
+                let width = screen_columns();
                 let ctx = RenderContext::new(&agent_highlighter, color);
                 let shown: Vec<String> = reports
                     .iter()

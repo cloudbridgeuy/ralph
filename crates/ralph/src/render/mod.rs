@@ -28,6 +28,8 @@ pub use utils::{
     highlight_grep_match, normalize_cat_n_format,
 };
 
+pub use wrap::{cap_wrap_width, wrap_width};
+
 // Re-export text rendering
 pub use text::{render_code_block, render_diff_block, render_markdown, render_text_block};
 

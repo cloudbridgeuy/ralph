@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use termimad::minimad::Compound;
 use termimad::{CompositeKind, FmtComposite, FmtLine, FmtText, MadSkin};
@@ -6,6 +7,22 @@ use unicode_linebreak::linebreaks;
 use unicode_width::UnicodeWidthChar;
 
 use super::link::is_marker;
+
+static WRAP_CAP: OnceLock<usize> = OnceLock::new();
+
+pub fn cap_wrap_width(cap: Option<usize>) {
+    if let Some(cap) = cap {
+        WRAP_CAP.get_or_init(|| cap);
+    }
+}
+
+pub fn wrap_width(terminal: usize) -> usize {
+    capped_width(terminal, WRAP_CAP.get().copied())
+}
+
+fn capped_width(terminal: usize, cap: Option<usize>) -> usize {
+    cap.map_or(terminal, |cap| cap.min(terminal))
+}
 
 pub fn render_prose(skin: &MadSkin, src: &str, width: usize) -> String {
     let mut fitted_tables = skin
@@ -146,6 +163,13 @@ fn columns(text: &str) -> usize {
 mod tests {
     use super::*;
     use crate::markdown::create_markdown_skin;
+
+    #[test]
+    fn wrap_cap_narrows_but_never_widens_the_terminal() {
+        assert_eq!(capped_width(200, None), 200);
+        assert_eq!(capped_width(200, Some(80)), 80);
+        assert_eq!(capped_width(60, Some(80)), 60);
+    }
 
     fn wrap(text: &str, width: usize) -> Vec<&str> {
         break_lines(text, width, width)

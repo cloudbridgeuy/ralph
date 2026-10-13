@@ -356,6 +356,7 @@ pub struct Painter {
     // The number of lines that the prompt takes up
     prompt_height: u16,
     terminal_size: (u16, u16),
+    wrap_width: Option<u16>,
     /// Cached terminal policy, refreshed on resize.
     term_is_dumb: bool,
     last_required_lines: u16,
@@ -389,6 +390,7 @@ impl Painter {
             prompt_start_row: PromptStartRow::Unverified,
             prompt_height: 0,
             terminal_size: (0, 0),
+            wrap_width: None,
             term_is_dumb,
             last_required_lines: 0,
             large_buffer: false,
@@ -410,9 +412,15 @@ impl Painter {
         self.terminal_size.1
     }
 
-    /// Width of the current terminal window
+    /// Width of the current terminal window, narrowed to the wrap width if set
     pub fn screen_width(&self) -> u16 {
-        self.terminal_size.0
+        self.wrap_width.map_or(self.terminal_size.0, |width| {
+            width.min(self.terminal_size.0)
+        })
+    }
+
+    pub(crate) fn set_wrap_width(&mut self, width: Option<u16>) {
+        self.wrap_width = width.filter(|&width| width > 0);
     }
 
     /// Sets the semantic prompt markers for terminal integration (OSC 133/633)
@@ -746,6 +754,13 @@ impl Painter {
         self.hide_cursor()?;
 
         let screen_width = self.screen_width();
+        let soft_wrapped;
+        let lines = if screen_width < self.terminal_size.0 {
+            soft_wrapped = lines.soft_wrapped(screen_width);
+            &soft_wrapped
+        } else {
+            lines
+        };
 
         self.prompt_height = lines.prompt_height(screen_width);
         let lines_before_cursor = lines.required_lines(screen_width, true, None);
@@ -2686,6 +2701,60 @@ mod tests {
             max_written,
             screen,
         }
+    }
+
+    fn paint_at(terminal: u16, wrap: Option<u16>, lines: &PromptLines) -> (Replayed, u16) {
+        let mut p = Painter::new(W::capture());
+        p.terminal_size = (terminal, 10);
+        p.set_wrap_width(wrap);
+        p.term_is_dumb = false;
+        p.prompt_start_row.mark_verified(0);
+        p.prompt_height = 1;
+        p.repaint_buffer(
+            &TestPrompt,
+            lines,
+            PromptEditMode::Default,
+            None,
+            false,
+            &None,
+        )
+        .expect("repaint_buffer failed");
+        let out = String::from_utf8_lossy(p.stdout.captured()).into_owned();
+        (replay(&out, terminal, false), p.last_required_lines)
+    }
+
+    #[rstest]
+    #[case("abcdefghijklmnopqrstuvw", "xyz")]
+    #[case("abcdefgh", "ijklmnopqrstuvw")]
+    #[case("abc\ndefghijklmnopq", "rs")]
+    fn wrap_width_paints_what_a_terminal_that_narrow_would(
+        #[case] before: &str,
+        #[case] after: &str,
+    ) {
+        let lines = PromptLines::new(
+            &TestPrompt,
+            PromptEditMode::Default,
+            None,
+            before,
+            after,
+            "",
+        );
+        let (narrow, narrow_rows) = paint_at(10, None, &lines);
+        let (capped, capped_rows) = paint_at(40, Some(10), &lines);
+        assert_eq!(capped_rows, narrow_rows);
+        assert_eq!(capped.screen, narrow.screen);
+        assert_eq!(capped.max_written, narrow.max_written);
+        assert_eq!(capped.cursor, narrow.cursor);
+    }
+
+    #[test]
+    fn wrap_width_wider_than_the_terminal_changes_nothing() {
+        let lines = make_lines("", "> ", "", "abcdefghijklmnopqrstuvw", "xyz");
+        let (plain, plain_rows) = paint_at(10, None, &lines);
+        let (wide, wide_rows) = paint_at(10, Some(40), &lines);
+        assert_eq!(wide_rows, plain_rows);
+        assert_eq!(wide.screen, plain.screen);
+        assert_eq!(wide.cursor, plain.cursor);
     }
 
     #[test]

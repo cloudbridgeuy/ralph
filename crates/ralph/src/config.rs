@@ -105,6 +105,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub worker_check_secs: Option<u64>,
     #[serde(default)]
+    pub wrap_width: Option<usize>,
+    #[serde(default)]
     pub worker_base: Option<String>,
     #[serde(default)]
     pub worktree_dir: Option<String>,
@@ -133,6 +135,7 @@ impl Default for ChatSection {
             skills: Vec::new(),
             frozen_window: None,
             worker_check_secs: None,
+            wrap_width: None,
             worker_base: None,
             worktree_dir: None,
             permission_mode: None,
@@ -300,6 +303,16 @@ mod tests {
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.chat.frozen_window, Some(16));
         assert_eq!(AppConfig::new().chat.frozen_window, None);
+    }
+
+    #[test]
+    fn chat_section_parses_wrap_width() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[chat]\nwrap_width = 80\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.wrap_width, Some(80));
+        assert_eq!(AppConfig::new().chat.wrap_width, None);
     }
 
     #[test]

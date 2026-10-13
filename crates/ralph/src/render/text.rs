@@ -8,7 +8,7 @@ use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use termimad::{terminal_size, MadSkin};
 
 use super::link::{mark_links, paint_links};
-use super::wrap::render_prose;
+use super::wrap::{render_prose, wrap_width};
 use super::RenderContext;
 
 /// Render a text block (prose, code, or diff) to a string.
@@ -37,9 +37,8 @@ pub fn render_text_block(
             if ctx.terminal {
                 markdown_skin
                     .map(|skin| {
-                        let (width, _) = terminal_size();
-                        let rendered =
-                            render_prose(skin, &mark_links(&chunk.content), width.into());
+                        let width = wrap_width(terminal_size().0.into());
+                        let rendered = render_prose(skin, &mark_links(&chunk.content), width);
                         paint_links(&enhance_tables(&rendered))
                     })
                     .unwrap_or_else(|| chunk.content.clone())

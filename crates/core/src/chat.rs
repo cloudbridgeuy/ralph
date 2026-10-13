@@ -13,6 +13,22 @@ pub fn resolve_worker_check_secs(config: Option<u64>) -> Option<u64> {
     }
 }
 
+pub fn resolve_wrap_width(
+    flag: Option<usize>,
+    env: Option<&str>,
+    config: Option<usize>,
+) -> Result<Option<usize>, String> {
+    let env = env
+        .map(|value| {
+            value
+                .trim()
+                .parse()
+                .map_err(|_| format!("wrap width {value:?} is not a column count."))
+        })
+        .transpose()?;
+    Ok(flag.or(env).or(config).filter(|&width| width > 0))
+}
+
 pub fn resolve_frozen_window(flag: Option<usize>, config: Option<usize>) -> Result<usize, String> {
     let window = flag.or(config).unwrap_or(FROZEN_WINDOW);
     if (1..VIEW_LINES).contains(&window) {
@@ -177,6 +193,25 @@ mod tests {
         assert_eq!(resolve_worker_check_secs(None), Some(60));
         assert_eq!(resolve_worker_check_secs(Some(0)), None);
         assert_eq!(resolve_worker_check_secs(Some(15)), Some(15));
+    }
+
+    #[test]
+    fn wrap_width_resolution() {
+        assert_eq!(
+            resolve_wrap_width(Some(70), Some("90"), Some(100)),
+            Ok(Some(70))
+        );
+        assert_eq!(
+            resolve_wrap_width(None, Some(" 90 "), Some(100)),
+            Ok(Some(90))
+        );
+        assert_eq!(resolve_wrap_width(None, None, Some(100)), Ok(Some(100)));
+        assert_eq!(resolve_wrap_width(None, None, None), Ok(None));
+        assert_eq!(resolve_wrap_width(Some(0), None, Some(100)), Ok(None));
+        assert_eq!(resolve_wrap_width(None, Some("0"), Some(100)), Ok(None));
+        assert!(resolve_wrap_width(None, Some("wide"), None)
+            .unwrap_err()
+            .contains("\"wide\""));
     }
 
     #[test]

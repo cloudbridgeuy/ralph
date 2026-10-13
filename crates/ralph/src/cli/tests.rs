@@ -12,6 +12,17 @@ fn test_cli_bare_ralph_has_no_subcommand() {
 }
 
 #[test]
+fn test_cli_chat_takes_a_wrap_width() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "--wrap-width", "80"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected chat");
+    };
+    assert_eq!(chat.wrap_width, Some(80));
+}
+
+#[test]
 fn test_cli_chat_and_chat_mcp_take_a_worktree_dir() {
     let Some(Commands::Chat(chat)) =
         Cli::try_parse_from(["ralph", "chat", "--worktree-dir", "~/wt"])

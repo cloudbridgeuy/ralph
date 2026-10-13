@@ -1,4 +1,6 @@
-use super::utils::{coerce_crlf, estimate_required_lines, line_width, resolve_wrap, wrap_position};
+use super::utils::{
+    coerce_crlf, estimate_required_lines, line_width, resolve_wrap, soft_wrap, wrap_position,
+};
 use crate::{
     menu::{Menu, ReedlineMenu},
     prompt::PromptEditMode,
@@ -65,6 +67,27 @@ impl<'prompt> PromptLines<'prompt> {
     pub(crate) fn with_exit_after_cursor(mut self, after_cursor: &'prompt str) -> Self {
         self.exit_after_cursor = Some(coerce_crlf(after_cursor));
         self
+    }
+
+    pub(crate) fn soft_wrapped(&self, columns: u16) -> Self {
+        let (prompt_str_left, column) = soft_wrap(&self.prompt_str_left, 0, columns);
+        let (prompt_indicator, column) = soft_wrap(&self.prompt_indicator, column, columns);
+        let (before_cursor, cursor) = soft_wrap(&self.before_cursor, column, columns);
+        let (after_cursor, end) = soft_wrap(&self.after_cursor, cursor, columns);
+        let (hint, _) = soft_wrap(&self.hint, end, columns);
+        Self {
+            prompt_str_left: Cow::Owned(prompt_str_left),
+            prompt_str_right: self.prompt_str_right.clone(),
+            prompt_indicator: Cow::Owned(prompt_indicator),
+            before_cursor: Cow::Owned(before_cursor),
+            after_cursor: Cow::Owned(after_cursor),
+            hint: Cow::Owned(hint),
+            right_prompt_on_last_line: self.right_prompt_on_last_line,
+            exit_after_cursor: self
+                .exit_after_cursor
+                .as_ref()
+                .map(|text| Cow::Owned(soft_wrap(text, cursor, columns).0)),
+        }
     }
 
     /// Rows to reserve for the prompt and buffer, laid out end to end.

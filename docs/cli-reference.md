@@ -63,6 +63,7 @@ Environment variables can be used instead of CLI flags. CLI flags take precedenc
 | `RALPH_CHAT_PERMISSION_MODE` | `chat --permission-mode` | Permission mode for chat turns and claude workers |
 | `RALPH_WORKTREE_DIR` | `chat --worktree-dir` | Directory for worker worktrees |
 | `RALPH_CHAT_SKILLS` | `chat --skill` | `:`-separated skill directories for chat |
+| `RALPH_WRAP_WIDTH` | `chat --wrap-width` | Column cap for chat replies and the prompt area (also `[chat] wrap_width`); `0` = terminal width |
 
 ### Examples
 

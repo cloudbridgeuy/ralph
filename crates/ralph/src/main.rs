@@ -48,6 +48,7 @@ fn main() -> ExitCode {
         store: None,
         timeout: cli::CHAT_TIMEOUT_SECS,
         frozen_window: None,
+        wrap_width: None,
         skills: Vec::new(),
         permission_mode: None,
         worktree_dir: None,

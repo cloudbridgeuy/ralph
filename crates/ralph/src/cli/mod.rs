@@ -64,6 +64,9 @@ pub struct ChatArgs {
     #[arg(long)]
     pub frozen_window: Option<usize>,
 
+    #[arg(long, value_name = "COLUMNS")]
+    pub wrap_width: Option<usize>,
+
     #[arg(long = "skill", value_name = "PATH")]
     pub skills: Vec<std::path::PathBuf>,
 
