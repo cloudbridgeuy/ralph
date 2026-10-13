@@ -263,12 +263,8 @@ impl StreamProcessor {
     /// so every rendering path produces the same output.
     pub(super) fn highlight_chunk(&self, chunk: &ParsedChunk) -> String {
         let ctx = self.create_render_context();
-        let markdown_skin = if self.highlighting_enabled {
-            Some(&self.markdown_skin)
-        } else {
-            None
-        };
-        render_text_block(&ctx, chunk, markdown_skin)
+        let markdown = self.highlighting_enabled.then_some(&self.markdown);
+        render_text_block(&ctx, chunk, markdown)
     }
 
     /// Create a render context for use with shared rendering functions.

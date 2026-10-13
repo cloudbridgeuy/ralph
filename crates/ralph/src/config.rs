@@ -32,6 +32,7 @@
 use crate::invoke::{
     resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
 };
+use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use ralph_core::inbox_alert::UnknownFocus;
 use serde::{Deserialize, Serialize};
@@ -77,7 +78,6 @@ pub enum ConfigError {
 /// configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
-    /// Theme configuration section.
     #[serde(default)]
     pub theme: ThemeSection,
 
@@ -149,23 +149,51 @@ impl Default for ChatSection {
 /// Theme configuration section.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ThemeSection {
-    /// Theme name or file path.
-    ///
-    /// Can be either:
-    /// - A built-in theme name (e.g., "Monokai Extended", "base16-ocean.dark")
-    /// - A path to a .tmTheme file (e.g., "/path/to/theme.tmTheme")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
-    /// Whether to disable background colors.
-    ///
-    /// When true, the theme's background colors are not applied,
-    /// allowing the terminal's default background to show through.
     #[serde(default)]
     pub no_background: bool,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<String>,
+    #[serde(default)]
+    pub assistant: RoleTheme,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<AgentTheme>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AgentTheme {
+    Legacy(String),
+    Role(RoleTheme),
+}
+
+impl ThemeSection {
+    pub fn agent(&self) -> RoleTheme {
+        match &self.agent {
+            None => RoleTheme::default(),
+            Some(AgentTheme::Legacy(code)) => RoleTheme {
+                code: Some(code.clone()),
+                ..RoleTheme::default()
+            },
+            Some(AgentTheme::Role(role)) => role.clone(),
+        }
+    }
+
+    pub fn warnings(&self) -> Vec<String> {
+        let legacy = match &self.agent {
+            Some(AgentTheme::Legacy(code)) => Some(format!(
+                "[theme] agent = \"{code}\" is deprecated; move it to [theme.agent] code = \"{code}\""
+            )),
+            _ => None,
+        };
+        legacy
+            .into_iter()
+            .chain(self.assistant.palette(ThemeRole::Assistant).1)
+            .chain(self.agent().palette(ThemeRole::Agent).1)
+            .collect()
+    }
 }
 
 impl AppConfig {
@@ -417,12 +445,42 @@ mod tests {
         assert_eq!(config.theme.name, Some("Monokai Extended".to_string()));
         assert!(!config.theme.no_background);
         assert_eq!(config.theme.agent, None);
+        assert_eq!(config.theme.assistant, RoleTheme::default());
     }
 
     #[test]
-    fn theme_section_parses_agent() {
+    fn legacy_agent_key_keeps_working_with_a_warning() {
         let config: AppConfig = toml::from_str("[theme]\nagent = \"Solarized (dark)\"\n").unwrap();
-        assert_eq!(config.theme.agent.as_deref(), Some("Solarized (dark)"));
+        assert_eq!(
+            config.theme.agent().code.as_deref(),
+            Some("Solarized (dark)")
+        );
+        assert_eq!(
+            config.theme.warnings(),
+            ["[theme] agent = \"Solarized (dark)\" is deprecated; move it to [theme.agent] code = \"Solarized (dark)\""]
+        );
+    }
+
+    #[test]
+    fn role_tables_parse_code_and_colors() {
+        let config: AppConfig = toml::from_str(
+            "[theme.assistant]\ncode = \"Monokai Extended\"\nheading1 = \"red\"\n\n[theme.agent]\ncode = \"Sublime Snazzy\"\nborder = \"#00ff00\"\nbad = \"x\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.theme.assistant.code.as_deref(),
+            Some("Monokai Extended")
+        );
+        let agent = config.theme.agent();
+        assert_eq!(agent.code.as_deref(), Some("Sublime Snazzy"));
+        assert_eq!(
+            agent.colors.get("border").map(String::as_str),
+            Some("#00ff00")
+        );
+        assert_eq!(
+            config.theme.warnings(),
+            ["[theme.agent] unknown key \"bad\"; ignored"]
+        );
     }
 
     #[test]
@@ -493,6 +551,7 @@ mod tests {
             theme: ThemeSection {
                 name: Some("Monokai Extended".to_string()),
                 no_background: true,
+                assistant: RoleTheme::default(),
                 agent: None,
             },
             ask: AskSection::default(),
@@ -548,6 +607,7 @@ mod tests {
             theme: ThemeSection {
                 name: None,
                 no_background: false,
+                assistant: RoleTheme::default(),
                 agent: None,
             },
             ask: AskSection::default(),

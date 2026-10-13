@@ -38,6 +38,8 @@ use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
+use crate::markdown::{Palette, ThemeRole};
+
 /// Default theme name used when no theme is specified.
 pub const DEFAULT_THEME: &str = "base16-ocean.dark";
 
@@ -90,10 +92,9 @@ pub enum ThemeError {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct ThemeConfig {
-    /// Theme name or path. None uses the default.
     theme: Option<String>,
-    /// Whether to disable background colors.
     no_background: bool,
+    palette: Palette,
 }
 
 impl ThemeConfig {
@@ -118,38 +119,38 @@ impl ThemeConfig {
         Self {
             theme,
             no_background,
+            palette: Palette::default(),
         }
     }
 
-    /// Create a theme configuration from config file and environment variables.
-    ///
-    /// Loads configuration in this order (higher priority sources override lower):
-    /// 1. Environment variables (`RALPH_THEME`, `RALPH_NO_BACKGROUND`)
-    /// 2. Config file (`~/.config/ralph/config.toml`)
-    /// 3. Default values
-    ///
-    /// If the config file doesn't exist or fails to parse, falls back to env + defaults.
     pub fn from_config_and_env() -> Self {
-        // Load config file once
         let app_config = crate::config::AppConfig::load().ok();
 
-        // Extract config file settings
-        let config_theme = app_config.as_ref().and_then(|c| c.theme.name.clone());
+        let config_theme = app_config.as_ref().and_then(|c| {
+            c.theme
+                .assistant
+                .code
+                .clone()
+                .or_else(|| c.theme.name.clone())
+        });
+        let palette = app_config
+            .as_ref()
+            .map(|c| c.theme.assistant.palette(ThemeRole::Assistant).0)
+            .unwrap_or_default();
         let config_no_background = app_config.map(|c| c.theme.no_background).unwrap_or(false);
 
-        // Get environment variable values
         let env_theme = std::env::var(RALPH_THEME_ENV).ok();
         let env_no_background = std::env::var(RALPH_NO_BACKGROUND_ENV)
             .map(|v| !v.is_empty())
             .unwrap_or(false);
 
-        // Env vars take precedence over config file
         let theme = env_theme.or(config_theme);
         let no_background = env_no_background || config_no_background;
 
         Self {
             theme,
             no_background,
+            palette,
         }
     }
 
@@ -187,6 +188,10 @@ impl ThemeConfig {
     /// Check if background colors should be disabled.
     pub fn no_background(&self) -> bool {
         self.no_background
+    }
+
+    pub fn palette(&self) -> &Palette {
+        &self.palette
     }
 
     /// Check if the theme looks like a file path.

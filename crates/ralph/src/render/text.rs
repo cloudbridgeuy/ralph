@@ -5,41 +5,27 @@
 
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
-use termimad::{terminal_size, MadSkin};
+use termimad::terminal_size;
 
 use super::link::{mark_links, paint_links};
 use super::wrap::{render_prose, wrap_width};
 use super::RenderContext;
+use crate::markdown::MarkdownTheme;
 
-/// Render a text block (prose, code, or diff) to a string.
-///
-/// This is the canonical text rendering function. It handles:
-/// - Prose: Optional markdown formatting via termimad
-/// - Code: Fenced code blocks with syntax highlighting
-/// - Diff: Fenced diff blocks with +/- coloring
-///
-/// # Arguments
-///
-/// * `ctx` - Render context with highlighter and terminal flag
-/// * `chunk` - The parsed chunk to render
-/// * `markdown_skin` - Optional markdown skin for prose rendering
-///
-/// # Returns
-///
-/// The rendered text as a string.
 pub fn render_text_block(
     ctx: &RenderContext<'_>,
     chunk: &ParsedChunk,
-    markdown_skin: Option<&MadSkin>,
+    markdown: Option<&MarkdownTheme>,
 ) -> String {
     match &chunk.chunk_type {
         ChunkType::Prose => {
             if ctx.terminal {
-                markdown_skin
-                    .map(|skin| {
+                markdown
+                    .map(|theme| {
                         let width = wrap_width(terminal_size().0.into());
-                        let rendered = render_prose(skin, &mark_links(&chunk.content), width);
-                        paint_links(&enhance_tables(&rendered))
+                        let rendered =
+                            render_prose(&theme.skin, &mark_links(&chunk.content), width);
+                        paint_links(&enhance_tables(&rendered), &theme.palette)
                     })
                     .unwrap_or_else(|| chunk.content.clone())
             } else {
@@ -54,11 +40,11 @@ pub fn render_text_block(
     }
 }
 
-pub fn render_markdown(ctx: &RenderContext<'_>, text: &str, markdown_skin: &MadSkin) -> String {
+pub fn render_markdown(ctx: &RenderContext<'_>, text: &str, markdown: &MarkdownTheme) -> String {
     parse_chunks(text)
         .iter()
         .map(|chunk| {
-            let rendered = render_text_block(ctx, chunk, Some(markdown_skin));
+            let rendered = render_text_block(ctx, chunk, Some(markdown));
             match chunk.chunk_type {
                 ChunkType::Prose => rendered,
                 _ => rendered + "\n",
@@ -201,9 +187,9 @@ mod tests {
     use super::*;
     use crate::highlight::{Highlighter, ThemeConfig};
 
-    fn create_test_context() -> (Highlighter, MadSkin) {
+    fn create_test_context() -> (Highlighter, MarkdownTheme) {
         let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
-        let skin = crate::markdown::create_markdown_skin();
+        let skin = MarkdownTheme::default();
         (highlighter, skin)
     }
 

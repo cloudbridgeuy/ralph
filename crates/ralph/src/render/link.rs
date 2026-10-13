@@ -13,11 +13,12 @@ const MARKERS: [char; 6] = [
     MEMORY_END,
 ];
 
+use crate::ansi::fg;
+use crate::markdown::Palette;
+
 const LINK_SYMBOL: &str = "↗";
-const LABEL_STYLE: &str = "\x1b[4;94m";
+const UNDERLINE: &str = "\x1b[4m";
 const LABEL_STYLE_OFF: &str = "\x1b[24m";
-const URL_STYLE: &str = "\x1b[96m";
-const MEMORY_STYLE: &str = "\x1b[95m";
 const COLOR_OFF: &str = "\x1b[39m";
 
 pub fn mark_links(text: &str) -> String {
@@ -78,14 +79,17 @@ pub fn is_marker(ch: char) -> bool {
     MARKERS.contains(&ch)
 }
 
-pub fn paint_links(rendered: &str) -> String {
+pub fn paint_links(rendered: &str, palette: &Palette) -> String {
+    let label = format!("{UNDERLINE}{}", fg(palette.link));
+    let url = fg(palette.url);
+    let memory = fg(palette.memory_ref);
     let mut out = String::with_capacity(rendered.len());
-    let mut open = None;
+    let mut open: Option<&str> = None;
     for ch in rendered.chars() {
         match ch {
-            LABEL_START => open = Some(LABEL_STYLE),
-            URL_START => open = Some(URL_STYLE),
-            MEMORY_START => open = Some(MEMORY_STYLE),
+            LABEL_START => open = Some(&label),
+            URL_START => open = Some(&url),
+            MEMORY_START => open = Some(&memory),
             LABEL_END | URL_END | MEMORY_END => open = None,
             _ => {}
         }
@@ -178,6 +182,17 @@ fn parse_link(chars: &[char], open: usize) -> Option<Link> {
 mod tests {
     use super::*;
 
+    use termimad::crossterm::style::Color;
+    use termimad::MadSkin;
+
+    const LABEL_STYLE: &str = "\x1b[4m\x1b[94m";
+    const URL_STYLE: &str = "\x1b[96m";
+    const MEMORY_STYLE: &str = "\x1b[95m";
+
+    fn paint(text: &str) -> String {
+        paint_links(text, &Palette::default())
+    }
+
     fn strip(text: &str) -> String {
         text.chars().filter(|ch| !MARKERS.contains(ch)).collect()
     }
@@ -231,7 +246,7 @@ mod tests {
 
     #[test]
     fn markers_take_no_columns_when_wrapping() {
-        let skin = crate::markdown::create_markdown_skin();
+        let skin = MadSkin::default();
         let rendered = skin.text(&mark_links("aa [b](c)"), Some(8)).to_string();
         assert_eq!(strip(&rendered).trim_end(), "aa b ↗ c");
     }
@@ -279,7 +294,7 @@ mod tests {
 
     #[test]
     fn memory_ref_markers_take_no_columns_when_wrapping() {
-        let skin = crate::markdown::create_markdown_skin();
+        let skin = MadSkin::default();
         let rendered = skin.text(&mark_links("aa #303 b"), Some(8)).to_string();
         assert_eq!(
             strip(&rendered).lines().next().map(str::trim_end),
@@ -290,7 +305,7 @@ mod tests {
     #[test]
     fn paint_reopens_style_after_a_line_break() {
         assert_eq!(
-            paint_links(&mark_links("[a b](https://x.dev/a)").replace(' ', "\n")),
+            paint(&mark_links("[a b](https://x.dev/a)").replace(' ', "\n")),
             format!(
                 "{LABEL_STYLE}a\n{LABEL_STYLE}b{LABEL_STYLE_OFF}\n{LINK_SYMBOL}\n{URL_STYLE}https://x.dev/a{COLOR_OFF}"
             )
@@ -300,14 +315,14 @@ mod tests {
     #[test]
     fn paint_colors_memory_ref_pink() {
         assert_eq!(
-            paint_links(&mark_links("#303")),
+            paint(&mark_links("#303")),
             format!("{MEMORY_STYLE}#303{COLOR_OFF}")
         );
     }
 
     #[test]
     fn paint_colors_label_and_url_differently() {
-        let painted = paint_links(&mark_links("[docs](https://x.dev)"));
+        let painted = paint(&mark_links("[docs](https://x.dev)"));
         assert_eq!(
             painted,
             format!(
@@ -315,5 +330,17 @@ mod tests {
             )
         );
         assert_ne!(LABEL_STYLE, URL_STYLE);
+    }
+
+    #[test]
+    fn paint_uses_palette_colors() {
+        let palette = Palette {
+            memory_ref: Some(Color::DarkGreen),
+            ..Palette::default()
+        };
+        assert_eq!(
+            paint_links(&mark_links("#7"), &palette),
+            format!("\x1b[32m#7{COLOR_OFF}")
+        );
     }
 }
