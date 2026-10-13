@@ -23,7 +23,7 @@ use ralph_core::chat::{
     resolve_worker_check_secs, resolve_wrap_width, select_servers, turn_prompt, turn_system_prompt,
     ChatMcpOptions, VIEW_LINES,
 };
-use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
+use ralph_core::chat_input::{input_lost_at_prompt, turn_end, InputWatch, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
     frozen_block, tail_lines, usage_record, view_stats, CallKind, Frozen, Role, Trigger,
 };
@@ -332,7 +332,7 @@ fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(POLL);
         if input_lost_at_prompt(&InputWatch {
-            hangup_signal: signal::is_interrupted(),
+            hangup_signal: signal::is_terminated(),
             started_on_terminal,
             stdin_hung_up: stdin_hung_up(),
             at_prompt: at_prompt.load(Ordering::SeqCst),
@@ -445,6 +445,7 @@ struct Turn<'a> {
     theme_config: &'a ThemeConfig,
     frozen: Mutex<Option<Frozen>>,
     frozen_window: usize,
+    cancel: Arc<AtomicBool>,
 }
 
 impl Turn<'_> {
@@ -454,6 +455,7 @@ impl Turn<'_> {
         logged: &[String],
         message: &str,
     ) -> Result<bool, Box<dyn std::error::Error>> {
+        self.cancel.store(false, Ordering::SeqCst);
         let (entries, tree) = self.store.load_settled(|| {
             let mut spinner = Spinner::with_session_context(0, chat_session_info());
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
@@ -491,8 +493,21 @@ impl Turn<'_> {
             verbose_tools: VerboseToolsConfig::new(),
             session_info: chat_session_info(),
             pause: None,
-            cancel: None,
+            cancel: Some(Arc::clone(&self.cancel)),
         });
+        let end = turn_end(&TurnSignals {
+            cancelled: self.cancel.swap(false, Ordering::SeqCst),
+            terminated: signal::is_terminated(),
+        });
+        match end {
+            TurnEnd::Exit => return Ok(false),
+            TurnEnd::Cancelled => {
+                print_rule();
+                warn("Turn cancelled.");
+                return Ok(true);
+            }
+            TurnEnd::Completed => {}
+        }
         let result = match result {
             Ok(result) => result,
             Err(SubprocessError::Interrupted { .. }) => return Ok(false),
@@ -712,6 +727,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         theme_config: &theme_config,
         frozen: Mutex::new(None),
         frozen_window,
+        cancel: signal::interrupt_flag(),
     };
     let inbox = Inbox::new(store_dir.join(INBOX_DIR));
     let known = inbox.peek().unwrap_or_default();

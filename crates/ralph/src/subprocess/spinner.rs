@@ -4,7 +4,7 @@
 //! - Animated spinner during wait periods
 //! - Gap detection to show spinner when LLM is thinking
 //!
-//! `Ctrl+C` kills the child process via the signal path (`signal::is_interrupted()`).
+//! `Ctrl+C` kills the child process via the cancel flag or the signal path (`signal::is_interrupted()`).
 
 use super::kill_process_group;
 use super::timeout::try_wait_child;
