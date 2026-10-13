@@ -152,6 +152,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `mcp_servers` | list of strings | `["mcptools"]` | Servers from `~/.claude.json` to load in chat turns |
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
 | `frozen_window` | integer | `32` | Entries per frozen memory-view window, from 1 to 199 |
+| `worker_check_secs` | integer | `60` | Seconds between worker checks while chat is open; `0` turns the check off |
 | `worker_base` | string | unset | Base branch that `close_worker` checks for unmerged commits |
 | `worktree_dir` | string | `.worktrees` | Directory that holds worker worktrees; a leading `~` expands to home, relative paths resolve against the repo root |
 | `permission_mode` | string | `"auto"` | `claude --permission-mode` for chat turns and claude workers |

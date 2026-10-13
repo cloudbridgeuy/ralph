@@ -17,7 +17,7 @@ impl Inbox {
         Self { dir }
     }
 
-    fn post(&self, report: &Report, seq: u64) -> io::Result<()> {
+    pub fn post(&self, report: &Report, seq: u64) -> io::Result<()> {
         fs::create_dir_all(&self.dir)?;
         let name = inbox_file_name(report, seq);
         let tmp = self.dir.join(format!(".{name}"));

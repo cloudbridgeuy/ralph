@@ -552,6 +552,13 @@ fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {
     fs::write(&path, format!("{current}{separator}{missing}"))
 }
 
+pub fn capture_pane(session: &str) -> Option<String> {
+    let output =
+        run(Command::new("tmux").args(["capture-pane", "-p", "-t", &format!("={session}:")]))
+            .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 fn run(command: &mut Command) -> io::Result<Output> {
     check(command.stdin(Stdio::null()).output()?)
 }

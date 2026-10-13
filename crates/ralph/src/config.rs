@@ -103,6 +103,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub frozen_window: Option<usize>,
     #[serde(default)]
+    pub worker_check_secs: Option<u64>,
+    #[serde(default)]
     pub worker_base: Option<String>,
     #[serde(default)]
     pub worktree_dir: Option<String>,
@@ -130,6 +132,7 @@ impl Default for ChatSection {
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
             frozen_window: None,
+            worker_check_secs: None,
             worker_base: None,
             worktree_dir: None,
             permission_mode: None,

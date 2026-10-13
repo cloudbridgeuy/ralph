@@ -1,0 +1,442 @@
+use crate::worker::{startup_state, Report, ReportStatus, Startup};
+use std::collections::{BTreeMap, HashMap};
+use std::time::Duration;
+
+pub const CHECK_STATUS: &str = "check";
+pub const NUDGE_TEXT: &str =
+    "You stopped without calling report. Call the report tool now: done, blocked or question.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerObservation {
+    pub id: String,
+    pub session: String,
+    pub ready: bool,
+    pub blocked: bool,
+    pub waiting: bool,
+    pub reported_since_nudge: bool,
+    pub pane: Option<String>,
+    pub pane_changed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkerState {
+    Working,
+    Waiting,
+    BlockedPermission,
+    BlockedTrust,
+    Unknown,
+    Reported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckAction {
+    Nudge(String),
+    Inbox(String, String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CheckMemory {
+    pub workers: BTreeMap<String, WorkerMemory>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerMemory {
+    pub state: WorkerState,
+    pub nudged: bool,
+}
+
+pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
+    reports
+        .iter()
+        .filter(|report| {
+            ReportStatus::ALL
+                .iter()
+                .any(|status| status.as_str() == report.status)
+        })
+        .map(|report| (report.worker.clone(), report.at.clone()))
+        .collect()
+}
+
+pub fn reported_since_nudge(last_report: Option<&String>, nudge: Option<&Option<String>>) -> bool {
+    match nudge {
+        None => last_report.is_some(),
+        Some(before) => last_report.is_some() && last_report != before.as_ref(),
+    }
+}
+
+pub fn check_every_polls(secs: u64, poll: Duration) -> u64 {
+    let poll_ms = u64::try_from(poll.as_millis()).unwrap_or(u64::MAX).max(1);
+    secs.saturating_mul(1000).div_ceil(poll_ms).max(1)
+}
+
+pub fn classify(obs: &WorkerObservation) -> WorkerState {
+    if obs.blocked {
+        return WorkerState::BlockedPermission;
+    }
+    if let Some(pane) = &obs.pane {
+        if startup_state(pane, obs.ready) == Startup::TrustPrompt {
+            return WorkerState::BlockedTrust;
+        }
+    }
+    if obs.waiting {
+        WorkerState::Waiting
+    } else if obs.reported_since_nudge {
+        WorkerState::Reported
+    } else if obs.pane.is_some() && !obs.pane_changed {
+        WorkerState::Unknown
+    } else {
+        WorkerState::Working
+    }
+}
+
+fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
+    let id = &obs.id;
+    let session = &obs.session;
+    match state {
+        WorkerState::Waiting => Some(format!(
+            "Worker {id} stopped without calling report. To look: tmux attach -t {session}"
+        )),
+        WorkerState::BlockedPermission => Some(format!(
+            "Worker {id} is waiting at a permission prompt; ralph does not type into it. To answer: tmux attach -t {session}"
+        )),
+        WorkerState::BlockedTrust => Some(format!(
+            "Worker {id} is waiting at the folder-trust dialog. To answer: tmux attach -t {session}"
+        )),
+        WorkerState::Unknown => Some(format!(
+            "ralph can't tell what worker {id} is waiting on: its pane has not changed and it has not reported. To look: tmux attach -t {session}"
+        )),
+        WorkerState::Working | WorkerState::Reported => None,
+    }
+}
+
+pub fn plan(
+    prev: &CheckMemory,
+    observations: &[WorkerObservation],
+) -> (Vec<CheckAction>, CheckMemory) {
+    let mut actions = Vec::new();
+    let mut next = CheckMemory::default();
+    for obs in observations {
+        let state = classify(obs);
+        let prev_entry = prev.workers.get(&obs.id);
+        let mut nudged = prev_entry.is_some_and(|p| p.nudged)
+            && (state == WorkerState::Waiting || !obs.reported_since_nudge);
+        if state == WorkerState::Waiting && !nudged {
+            actions.push(CheckAction::Nudge(obs.id.clone()));
+            nudged = true;
+        }
+        if prev_entry.map(|p| p.state) != Some(state) {
+            if let Some(text) = inbox_text(state, obs) {
+                actions.push(CheckAction::Inbox(obs.id.clone(), text));
+            }
+        }
+        next.workers
+            .insert(obs.id.clone(), WorkerMemory { state, nudged });
+    }
+    (actions, next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obs() -> WorkerObservation {
+        WorkerObservation {
+            id: "w1".to_string(),
+            session: "sess".to_string(),
+            ready: true,
+            blocked: false,
+            waiting: false,
+            reported_since_nudge: false,
+            pane: None,
+            pane_changed: true,
+        }
+    }
+
+    fn waiting() -> WorkerObservation {
+        WorkerObservation {
+            waiting: true,
+            ..obs()
+        }
+    }
+
+    fn trust_pane() -> Option<String> {
+        Some("Yes, I trust this folder".to_string())
+    }
+
+    fn nudges(actions: &[CheckAction]) -> usize {
+        actions
+            .iter()
+            .filter(|a| matches!(a, CheckAction::Nudge(_)))
+            .count()
+    }
+
+    fn inboxes(actions: &[CheckAction]) -> usize {
+        actions
+            .iter()
+            .filter(|a| matches!(a, CheckAction::Inbox(..)))
+            .count()
+    }
+
+    #[test]
+    fn classify_blocked_beats_waiting() {
+        let o = WorkerObservation {
+            blocked: true,
+            waiting: true,
+            ..obs()
+        };
+        assert_eq!(classify(&o), WorkerState::BlockedPermission);
+    }
+
+    #[test]
+    fn classify_trust_only_when_not_ready() {
+        let not_ready = WorkerObservation {
+            ready: false,
+            pane: trust_pane(),
+            ..obs()
+        };
+        assert_eq!(classify(&not_ready), WorkerState::BlockedTrust);
+        let ready = WorkerObservation {
+            ready: true,
+            ..not_ready
+        };
+        assert_ne!(classify(&ready), WorkerState::BlockedTrust);
+    }
+
+    #[test]
+    fn classify_trust_beats_waiting() {
+        let o = WorkerObservation {
+            ready: false,
+            waiting: true,
+            pane: trust_pane(),
+            ..obs()
+        };
+        assert_eq!(classify(&o), WorkerState::BlockedTrust);
+    }
+
+    #[test]
+    fn classify_waiting_beats_reported() {
+        let o = WorkerObservation {
+            reported_since_nudge: true,
+            ..waiting()
+        };
+        assert_eq!(classify(&o), WorkerState::Waiting);
+    }
+
+    #[test]
+    fn classify_reported_beats_unknown() {
+        let o = WorkerObservation {
+            reported_since_nudge: true,
+            pane: Some("x".to_string()),
+            pane_changed: false,
+            ..obs()
+        };
+        assert_eq!(classify(&o), WorkerState::Reported);
+    }
+
+    #[test]
+    fn classify_unknown_needs_pane_and_no_change() {
+        let unchanged = WorkerObservation {
+            pane: Some("x".to_string()),
+            pane_changed: false,
+            ..obs()
+        };
+        assert_eq!(classify(&unchanged), WorkerState::Unknown);
+        let no_pane = WorkerObservation {
+            pane: None,
+            pane_changed: false,
+            ..obs()
+        };
+        assert_eq!(classify(&no_pane), WorkerState::Working);
+        let changed = WorkerObservation {
+            pane_changed: true,
+            ..unchanged
+        };
+        assert_eq!(classify(&changed), WorkerState::Working);
+    }
+
+    #[test]
+    fn first_waiting_nudges_then_informs() {
+        let (actions, memory) = plan(&CheckMemory::default(), &[waiting()]);
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0], CheckAction::Nudge("w1".to_string()));
+        assert!(matches!(&actions[1], CheckAction::Inbox(id, _) if id == "w1"));
+        assert!(memory.workers["w1"].nudged);
+    }
+
+    #[test]
+    fn waiting_again_does_nothing() {
+        let (_, memory) = plan(&CheckMemory::default(), &[waiting()]);
+        let (actions, _) = plan(&memory, &[waiting()]);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn waiting_working_waiting_informs_without_nudge() {
+        let (_, m1) = plan(&CheckMemory::default(), &[waiting()]);
+        let (_, m2) = plan(&m1, &[obs()]);
+        let (actions, _) = plan(&m2, &[waiting()]);
+        assert_eq!(nudges(&actions), 0);
+        assert_eq!(inboxes(&actions), 1);
+    }
+
+    #[test]
+    fn report_resets_nudge() {
+        let (_, m1) = plan(&CheckMemory::default(), &[waiting()]);
+        let reported = WorkerObservation {
+            reported_since_nudge: true,
+            ..obs()
+        };
+        let (_, m2) = plan(&m1, &[reported]);
+        assert!(!m2.workers["w1"].nudged);
+        let (actions, _) = plan(&m2, &[waiting()]);
+        assert_eq!(nudges(&actions), 1);
+    }
+
+    #[test]
+    fn lingering_waiting_marker_with_repeated_reports_nudges_once() {
+        let reported_waiting = WorkerObservation {
+            reported_since_nudge: true,
+            ..waiting()
+        };
+        let (first, mut memory) = plan(&CheckMemory::default(), &[waiting()]);
+        let mut total = nudges(&first);
+        for _ in 0..5 {
+            let (actions, next) = plan(&memory, std::slice::from_ref(&reported_waiting));
+            total += nudges(&actions);
+            memory = next;
+        }
+        assert_eq!(total, 1);
+        assert!(memory.workers["w1"].nudged);
+    }
+
+    #[test]
+    fn blocked_and_unknown_never_nudge() {
+        let blocked = WorkerObservation {
+            blocked: true,
+            ..obs()
+        };
+        let trust = WorkerObservation {
+            ready: false,
+            pane: trust_pane(),
+            ..obs()
+        };
+        let unknown = WorkerObservation {
+            pane: Some("x".to_string()),
+            pane_changed: false,
+            ..obs()
+        };
+        for o in [blocked, trust, unknown] {
+            let (actions, _) = plan(&CheckMemory::default(), &[o]);
+            assert_eq!(nudges(&actions), 0);
+            assert_eq!(inboxes(&actions), 1);
+        }
+    }
+
+    #[test]
+    fn one_inbox_per_state_change() {
+        let blocked = WorkerObservation {
+            blocked: true,
+            ..obs()
+        };
+        let (first, memory) = plan(&CheckMemory::default(), std::slice::from_ref(&blocked));
+        let (second, _) = plan(&memory, &[blocked]);
+        assert_eq!(inboxes(&first), 1);
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn working_and_reported_emit_nothing() {
+        let reported = WorkerObservation {
+            reported_since_nudge: true,
+            ..obs()
+        };
+        let (actions, _) = plan(&CheckMemory::default(), &[obs(), reported]);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn inbox_texts_point_at_session() {
+        let states = [
+            waiting(),
+            WorkerObservation {
+                blocked: true,
+                ..obs()
+            },
+            WorkerObservation {
+                ready: false,
+                pane: trust_pane(),
+                ..obs()
+            },
+            WorkerObservation {
+                pane: Some("x".to_string()),
+                pane_changed: false,
+                ..obs()
+            },
+        ];
+        for o in states {
+            let (actions, _) = plan(&CheckMemory::default(), &[o]);
+            let text = actions
+                .iter()
+                .find_map(|a| match a {
+                    CheckAction::Inbox(_, text) => Some(text.clone()),
+                    CheckAction::Nudge(_) => None,
+                })
+                .unwrap();
+            assert!(text.ends_with("tmux attach -t sess"));
+        }
+    }
+
+    #[test]
+    fn unobserved_workers_are_dropped() {
+        let other = WorkerObservation {
+            id: "w2".to_string(),
+            ..obs()
+        };
+        let (_, memory) = plan(&CheckMemory::default(), &[obs(), other.clone()]);
+        assert_eq!(memory.workers.len(), 2);
+        let (_, memory) = plan(&memory, &[other]);
+        assert_eq!(memory.workers.keys().collect::<Vec<_>>(), vec!["w2"]);
+    }
+
+    fn report(worker: &str, at: &str, status: &str) -> Report {
+        Report {
+            worker: worker.to_string(),
+            at: at.to_string(),
+            status: status.to_string(),
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn last_reports_ignore_check_posts() {
+        let reports = [
+            report("w1", "t1", "done"),
+            report("w1", "t2", CHECK_STATUS),
+            report("w2", "t3", CHECK_STATUS),
+            report("w1", "t4", "question"),
+        ];
+        let last = last_reports(&reports);
+        assert_eq!(last.len(), 1);
+        assert_eq!(last["w1"], "t4");
+    }
+
+    #[test]
+    fn reported_since_nudge_needs_a_newer_report() {
+        let t1 = "t1".to_string();
+        let t2 = "t2".to_string();
+        assert!(!reported_since_nudge(None, None));
+        assert!(reported_since_nudge(Some(&t1), None));
+        assert!(!reported_since_nudge(None, Some(&None)));
+        assert!(reported_since_nudge(Some(&t1), Some(&None)));
+        assert!(!reported_since_nudge(Some(&t1), Some(&Some(t1.clone()))));
+        assert!(reported_since_nudge(Some(&t2), Some(&Some(t1))));
+    }
+
+    #[test]
+    fn check_every_polls_rounds_up_to_at_least_one() {
+        let poll = Duration::from_millis(500);
+        assert_eq!(check_every_polls(60, poll), 120);
+        assert_eq!(check_every_polls(1, Duration::from_millis(700)), 2);
+        assert_eq!(check_every_polls(0, poll), 1);
+    }
+}

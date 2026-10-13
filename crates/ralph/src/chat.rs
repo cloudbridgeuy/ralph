@@ -15,10 +15,11 @@ use crate::subprocess::{
 };
 use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
-use crate::workers::{canonical_store, opencode_active, tmux_listing};
+use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
 use ralph_core::chat::{
-    build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window, select_servers,
-    turn_prompt, turn_system_prompt, ChatMcpOptions, VIEW_LINES,
+    build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window,
+    resolve_worker_check_secs, select_servers, turn_prompt, turn_system_prompt, ChatMcpOptions,
+    VIEW_LINES,
 };
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_memory::{
@@ -33,7 +34,13 @@ use ralph_core::chat_status::{
     store_workers, worker_states, Memory, Route, RunningWorker, Status,
 };
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
-use ralph_core::worker::{chat_message, Report, INBOX_DIR, READY_DIR};
+use ralph_core::worker::{
+    blocked_path, chat_message, ready_path, waiting_path, Report, INBOX_DIR, READY_DIR,
+};
+use ralph_core::worker_check::{
+    check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, CheckMemory,
+    WorkerObservation, CHECK_STATUS, NUDGE_TEXT,
+};
 use reedline::{
     default_emacs_keybindings, EditCommand, Emacs, FileBackedHistory, KeyCode, KeyModifiers,
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline,
@@ -54,7 +61,7 @@ const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
 const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 const POLL: Duration = Duration::from_millis(500);
-const MEMORY_EVERY_POLLS: u32 = 10;
+const MEMORY_EVERY_POLLS: u64 = 10;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 const INPUT_LOST_EXIT: i32 = 129;
 
@@ -106,6 +113,14 @@ fn ready_ids(store_dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[derive(Default)]
+struct CheckState {
+    memory: CheckMemory,
+    panes: HashMap<String, String>,
+    nudges: HashMap<String, Option<String>>,
+    reports: HashMap<String, String>,
+}
+
 struct Monitor {
     inbox: Inbox,
     store: Store,
@@ -114,6 +129,9 @@ struct Monitor {
     seen: Mutex<HashMap<String, String>>,
     active: Mutex<Option<HashSet<String>>>,
     frozen_window: usize,
+    worker_check_secs: Option<u64>,
+    workers: Workers,
+    check: Mutex<CheckState>,
     known: Mutex<Vec<Report>>,
     alert: AlertConfig,
 }
@@ -126,7 +144,82 @@ impl Monitor {
     fn drain(&self) -> io::Result<Vec<Report>> {
         let reports = self.inbox.drain()?;
         locked(&self.seen).extend(latest_states(&reports));
+        locked(&self.check).reports.extend(last_reports(&reports));
         Ok(reports)
+    }
+
+    fn observe(&self, state: &mut CheckState, worker: &RunningWorker) -> WorkerObservation {
+        let id = &worker.id;
+        let ready = ready_path(&self.store_dir, id).exists();
+        let blocked = blocked_path(&self.store_dir, id).exists();
+        let waiting = waiting_path(&self.store_dir, id).exists();
+        let reported = reported_since_nudge(state.reports.get(id), state.nudges.get(id));
+        let pane = (!blocked && !waiting && !(ready && reported))
+            .then(|| capture_pane(&worker.session))
+            .flatten();
+        let pane_changed = match &pane {
+            Some(pane) => state.panes.insert(id.clone(), pane.clone()).as_ref() != Some(pane),
+            None => {
+                state.panes.remove(id);
+                true
+            }
+        };
+        WorkerObservation {
+            id: id.clone(),
+            session: worker.session.clone(),
+            ready,
+            blocked,
+            waiting,
+            reported_since_nudge: reported,
+            pane,
+            pane_changed,
+        }
+    }
+
+    fn check(&self) {
+        let running = running_workers(&self.store_dir);
+        let actions = {
+            let mut state = locked(&self.check);
+            let observations: Vec<WorkerObservation> = running
+                .iter()
+                .map(|worker| self.observe(&mut state, worker))
+                .collect();
+            state
+                .panes
+                .retain(|id, _| running.iter().any(|worker| &worker.id == id));
+            state
+                .nudges
+                .retain(|id, _| running.iter().any(|worker| &worker.id == id));
+            let (actions, memory) = plan(&state.memory, &observations);
+            state.memory = memory;
+            for action in &actions {
+                if let CheckAction::Nudge(id) = action {
+                    let last = state.reports.get(id).cloned();
+                    state.nudges.insert(id.clone(), last);
+                }
+            }
+            actions
+        };
+        for action in actions {
+            match action {
+                CheckAction::Nudge(id) => warn_if_err(
+                    self.workers.reply(&id, NUDGE_TEXT),
+                    format!("nudging worker {id}"),
+                ),
+                CheckAction::Inbox(id, text) => {
+                    let report = Report {
+                        worker: id.clone(),
+                        at: chrono::Utc::now().to_rfc3339(),
+                        status: CHECK_STATUS.to_string(),
+                        text,
+                    };
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting check for worker {id}"),
+                    );
+                }
+            }
+        }
     }
 
     fn measure_memory(&self) -> Option<Memory> {
@@ -153,6 +246,7 @@ impl Monitor {
             self.alert_fresh(pending);
         }
         let pending = peeked.unwrap_or_default();
+        locked(&self.check).reports.extend(last_reports(&pending));
         let seen = {
             let mut seen = locked(&self.seen);
             seen.extend(latest_states(&pending));
@@ -199,10 +293,18 @@ impl Monitor {
 
 fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 'static) {
     std::thread::spawn(move || {
-        for poll in (1..=MEMORY_EVERY_POLLS).cycle() {
+        let check_every = monitor
+            .worker_check_secs
+            .map(|secs| check_every_polls(secs, POLL));
+        let mut tick: u64 = 0;
+        loop {
             std::thread::sleep(POLL);
-            if monitor.refresh(poll == MEMORY_EVERY_POLLS) {
+            tick += 1;
+            if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
                 repaint();
+            }
+            if check_every.is_some_and(|every| tick.is_multiple_of(every)) {
+                monitor.check();
             }
         }
     });
@@ -545,6 +647,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     let chat_config = config.chat;
     let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
+    let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
     let mcp_config_path = write_mcp_config(
         &store,
         &store_dir,
@@ -591,6 +694,14 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
         frozen_window,
+        worker_check_secs,
+        workers: Workers::new(
+            store_dir.clone(),
+            exe.clone(),
+            permission_mode.clone(),
+            args.worktree_dir.clone(),
+        ),
+        check: Mutex::new(CheckState::default()),
         known: Mutex::new(known),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
