@@ -967,6 +967,7 @@ dependencies = [
  "serde",
  "strip-ansi-escapes",
  "strum",
+ "unicode-linebreak",
  "unicode-segmentation",
  "unicode-width 0.2.2",
 ]
