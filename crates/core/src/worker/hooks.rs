@@ -1,4 +1,4 @@
-use super::{opencode_session_id, PERMISSION_DENIED, REPORT_REMINDER};
+use super::{opencode_session_id, WorkerMarkers, REPORT_REMINDER};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -15,29 +15,47 @@ fn stop_hook_command(exe: &Path, reported: &Path) -> String {
     )
 }
 
-fn permission_hook_command() -> String {
-    let deny = json!({
-        "hookSpecificOutput": {
-            "hookEventName": "PermissionRequest",
-            "decision": {"behavior": "deny", "message": PERMISSION_DENIED}
-        }
-    });
-    format!(r#"printf '%s\n' {}"#, shell_quote(&deny.to_string()))
+fn touch_command(path: &Path) -> String {
+    format!("touch {}", shell_quote(&path.to_string_lossy()))
 }
 
-pub fn claude_worker_settings(exe: &Path, ready: &Path, reported: &Path) -> Value {
-    let touch = format!("touch {}", shell_quote(&ready.to_string_lossy()));
+fn command_hook(command: String) -> Value {
+    json!({"type": "command", "command": command})
+}
+
+pub fn claude_worker_settings(exe: &Path, markers: &WorkerMarkers) -> Value {
+    let quote = |path: &Path| shell_quote(&path.to_string_lossy());
+    let idle = format!(
+        "[ ! -e {} ] || {}",
+        quote(&markers.unreported),
+        touch_command(&markers.waiting)
+    );
+    let clear = format!(
+        "rm -f {} {}",
+        quote(&markers.blocked),
+        quote(&markers.waiting)
+    );
     json!({
         "hooks": {
             "SessionStart": [{
                 "matcher": "startup",
-                "hooks": [{"type": "command", "command": touch}]
+                "hooks": [command_hook(touch_command(&markers.ready))]
             }],
             "Stop": [{
-                "hooks": [{"type": "command", "command": stop_hook_command(exe, reported)}]
+                "hooks": [command_hook(stop_hook_command(exe, &markers.reported))]
             }],
             "PermissionRequest": [{
-                "hooks": [{"type": "command", "command": permission_hook_command()}]
+                "hooks": [command_hook(touch_command(&markers.blocked))]
+            }],
+            "Notification": [{
+                "matcher": "idle_prompt",
+                "hooks": [command_hook(idle)]
+            }],
+            "UserPromptSubmit": [{
+                "hooks": [command_hook(clear.clone())]
+            }],
+            "PostToolUse": [{
+                "hooks": [command_hook(clear)]
             }]
         }
     })
@@ -141,13 +159,14 @@ mod tests {
             .to_string()
     }
 
+    fn markers() -> WorkerMarkers {
+        WorkerMarkers::new(Path::new("/s"), "A")
+    }
+
     #[test]
     fn claude_worker_settings_touch_the_ready_file_on_startup_only() {
-        let settings = claude_worker_settings(
-            Path::new("/bin/ralph"),
-            Path::new("/s/it's/ready/A"),
-            Path::new("/s/reported/A"),
-        );
+        let markers = WorkerMarkers::new(Path::new("/s/it's"), "A");
+        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers);
         let start = &settings["hooks"]["SessionStart"][0];
         assert_eq!(start["matcher"], "startup");
         assert_eq!(
@@ -158,15 +177,50 @@ mod tests {
 
     #[test]
     fn claude_stop_hook_runs_ralph_with_the_marker() {
-        let settings = claude_worker_settings(
-            Path::new("/bin/ral'ph"),
-            Path::new("/s/ready/A"),
-            Path::new("/s/it's/reported/A"),
-        );
+        let markers = WorkerMarkers::new(Path::new("/s/it's"), "A");
+        let settings = claude_worker_settings(Path::new("/bin/ral'ph"), &markers);
         assert_eq!(
             hook_command(&settings, "Stop"),
             r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A'"
         );
+    }
+
+    #[test]
+    fn claude_permission_hook_only_touches_the_blocked_marker() {
+        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers());
+        assert_eq!(
+            hook_command(&settings, "PermissionRequest"),
+            "touch '/s/blocked/A'"
+        );
+    }
+
+    #[test]
+    fn claude_idle_notification_touches_waiting_only_while_unreported() {
+        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers());
+        assert_eq!(
+            settings["hooks"]["Notification"][0]["matcher"],
+            "idle_prompt"
+        );
+        assert_eq!(
+            hook_command(&settings, "Notification"),
+            "[ ! -e '/s/unreported/A' ] || touch '/s/waiting/A'"
+        );
+    }
+
+    #[test]
+    fn claude_activity_hooks_clear_blocked_and_waiting_for_every_event() {
+        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers());
+        for event in ["UserPromptSubmit", "PostToolUse"] {
+            assert!(
+                settings["hooks"][event][0].get("matcher").is_none(),
+                "{event}"
+            );
+            assert_eq!(
+                hook_command(&settings, event),
+                "rm -f '/s/blocked/A' '/s/waiting/A'",
+                "{event}"
+            );
+        }
     }
 
     #[test]
@@ -226,25 +280,6 @@ mod tests {
         assert_eq!(
             stop_block_output(),
             json!({"decision": "block", "reason": REPORT_REMINDER})
-        );
-    }
-
-    #[test]
-    fn claude_permission_hook_denies_with_a_report_hint() {
-        let settings =
-            claude_worker_settings(Path::new("/bin/ralph"), Path::new("/r"), Path::new("/m"));
-        let command = hook_command(&settings, "PermissionRequest");
-        let json = command
-            .strip_prefix(r"printf '%s\n' '")
-            .and_then(|rest| rest.strip_suffix('\''))
-            .unwrap();
-        let output: Value = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            output["hookSpecificOutput"],
-            json!({
-                "hookEventName": "PermissionRequest",
-                "decision": {"behavior": "deny", "message": PERMISSION_DENIED}
-            })
         );
     }
 

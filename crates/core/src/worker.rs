@@ -39,8 +39,6 @@ End every turn with the report tool: status done when the task is finished, bloc
 
 pub const REPORT_REMINDER: &str = "You stopped without calling report. Call report now with status done, blocked or question and a full summary of what you did or what you need.";
 
-pub const PERMISSION_DENIED: &str = "No human approves prompts here. Do not retry. If you cannot continue, call report with status blocked or question and a full summary.";
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
     pub worker: String,
@@ -359,14 +357,36 @@ pub fn unreported_path(store: &Path, id: &str) -> PathBuf {
     store.join(UNREPORTED_DIR).join(id)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerMarkers {
+    pub ready: PathBuf,
+    pub reported: PathBuf,
+    pub blocked: PathBuf,
+    pub waiting: PathBuf,
+    pub unreported: PathBuf,
+}
+
+impl WorkerMarkers {
+    pub fn new(store: &Path, id: &str) -> Self {
+        Self {
+            ready: ready_path(store, id),
+            reported: reported_path(store, id),
+            blocked: blocked_path(store, id),
+            waiting: waiting_path(store, id),
+            unreported: unreported_path(store, id),
+        }
+    }
+}
+
 pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 5] {
-    [
-        ready_path(store, id),
-        reported_path(store, id),
-        blocked_path(store, id),
-        waiting_path(store, id),
-        unreported_path(store, id),
-    ]
+    let WorkerMarkers {
+        ready,
+        reported,
+        blocked,
+        waiting,
+        unreported,
+    } = WorkerMarkers::new(store, id);
+    [ready, reported, blocked, waiting, unreported]
 }
 
 pub fn opencode_session_id(id: &str) -> String {

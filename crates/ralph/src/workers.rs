@@ -3,10 +3,10 @@ use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
     base_branch, base_config_key, branch_name, claude_worker_settings, close_plan, exclude_lines,
     marker_paths, opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
-    opencode_worker_plugin, project_slug, ready_path, reported_path, resolve_worktree_dir,
-    session_name, session_owner, startup_state, tagged_sessions, worker_command, worker_mcp_config,
-    worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep,
-    Harness, Owner, Startup, TaggedSession, WorktreeDir, WorktreeVia, HARNESS_OPTION, ID_OPTION,
+    opencode_worker_plugin, project_slug, resolve_worktree_dir, session_name, session_owner,
+    startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
+    worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep, Harness, Owner,
+    Startup, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia, HARNESS_OPTION, ID_OPTION,
     INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT,
     STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
 };
@@ -66,14 +66,13 @@ impl Workers {
         let via = ensure_worktree(&repo, &worktree, &branch_name(id))?;
         record_base(&repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
-        let ready = ready_path(&self.store_dir, id);
-        let reported = reported_path(&self.store_dir, id);
+        let markers = WorkerMarkers::new(&self.store_dir, id);
         for marker in marker_paths(&self.store_dir, id) {
             clear_marker(&marker)?;
         }
         let command = match harness {
             Harness::Claude => {
-                let settings = self.write_settings(id, &ready, &reported)?;
+                let settings = self.write_settings(id, &markers)?;
                 worker_command(
                     &self.write_config(id)?,
                     &settings,
@@ -88,7 +87,10 @@ impl Workers {
                 if let Some(dir) = plugin.parent() {
                     fs::create_dir_all(dir)?;
                 }
-                fs::write(plugin, opencode_worker_plugin(id, &ready, &reported))?;
+                fs::write(
+                    plugin,
+                    opencode_worker_plugin(id, &markers.ready, &markers.reported),
+                )?;
                 opencode_command(id, task)
             }
         };
@@ -111,7 +113,7 @@ impl Workers {
                 OPENCODE_HARNESS,
             ]))?;
         }
-        let confirmed = await_startup(&session, &ready)?;
+        let confirmed = await_startup(&session, &markers.ready)?;
         let mut started = format!(
             "Worker {id} started in {} on branch {}. {}",
             worktree.display(),
@@ -314,13 +316,13 @@ impl Workers {
         session_owner(&sessions, &self.store_dir.to_string_lossy(), project, id)
     }
 
-    fn write_settings(&self, id: &str, ready: &Path, reported: &Path) -> io::Result<PathBuf> {
+    fn write_settings(&self, id: &str, markers: &WorkerMarkers) -> io::Result<PathBuf> {
         let dir = self.store_dir.join(WORKERS_DIR);
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{id}.settings.json"));
         fs::write(
             &path,
-            claude_worker_settings(&self.exe, ready, reported).to_string(),
+            claude_worker_settings(&self.exe, markers).to_string(),
         )?;
         Ok(path)
     }
