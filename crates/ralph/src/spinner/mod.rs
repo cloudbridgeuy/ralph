@@ -56,6 +56,7 @@ pub enum SpinnerContext {
     Buffering,
     /// Summarizing the progress file.
     Summarizing,
+    WaitingForMemory,
 }
 
 impl SpinnerContext {
@@ -67,6 +68,7 @@ impl SpinnerContext {
             Self::WaitingForTool => "Running tool...",
             Self::Buffering => "Buffering code...",
             Self::Summarizing => "Summarizing progress file...",
+            Self::WaitingForMemory => "Waiting for memory...",
         }
     }
 }

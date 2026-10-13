@@ -7,7 +7,7 @@ use crate::inbox_alert;
 use crate::invoke::build_chat_command;
 use crate::markdown::create_markdown_skin;
 use crate::signal;
-use crate::spinner::SpinnerSessionInfo;
+use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::extract_response_text;
 use crate::stream_processor::VerboseToolsConfig;
 use crate::subprocess::{
@@ -423,6 +423,12 @@ fn spawn_nap(store: &Path) -> io::Result<()> {
         .map(drop)
 }
 
+fn chat_session_info() -> SpinnerSessionInfo {
+    SpinnerSessionInfo {
+        persona: Some("chat".into()),
+    }
+}
+
 struct Turn<'a> {
     store: &'a Store,
     store_dir: &'a Path,
@@ -443,7 +449,11 @@ impl Turn<'_> {
         logged: &[String],
         message: &str,
     ) -> Result<bool, Box<dyn std::error::Error>> {
-        let (entries, tree) = self.store.load_settled()?;
+        let (entries, tree) = self.store.load_settled(|| {
+            let mut spinner = Spinner::with_session_context(0, chat_session_info());
+            spinner.start_with_context(SpinnerContext::WaitingForMemory);
+            spinner
+        })?;
         let pinned = locked(&self.frozen).take();
         let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, pinned);
         *locked(&self.frozen) = Some(frozen.clone());
@@ -474,9 +484,7 @@ impl Turn<'_> {
             theme_config: self.theme_config.clone(),
             session_elapsed_ms: 0,
             verbose_tools: VerboseToolsConfig::new(),
-            session_info: SpinnerSessionInfo {
-                persona: Some("chat".into()),
-            },
+            session_info: chat_session_info(),
             pause: None,
             cancel: None,
         });
