@@ -200,3 +200,7 @@ The splitting happens in `event_handler.rs` at both streaming sites (line proces
 termimad already constrains tables to terminal width and provides cell spacing via column alignment. `enhance_tables()` only adds top/bottom borders by character-substituting the separator (`├→┌`, `┼→┬`, `┤→┐`). No characters are added or removed — only substituted — so the table stays within terminal width.
 
 This runs after `skin.term_text()` inside `render_text_block()`. Box-drawing characters are multi-byte UTF-8 (bytes > 0x7F), so they cannot appear inside ANSI escape sequences — making string splitting on `│`/`├` safe even in ANSI-coded output.
+
+## Links
+
+termimad has no link concept. `render/link.rs` rewrites `[label](url)` before `skin.term_text()` (`mark_links`) to `label ↗ url` wrapped in zero-width marker chars, so wrapping widths stay correct. After rendering, `paint_links` swaps the markers for ANSI: label bright blue underlined, URL bright cyan. Colors are fixed, not per skin. Code spans, escaped `\[`, and images stay literal. Non-terminal output keeps the raw markdown.

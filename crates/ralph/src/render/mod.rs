@@ -16,6 +16,7 @@
 //! 3. **Single Source of Truth**: No duplication between rendering paths
 //! 4. **Data-Centric**: Renderers accept structured data, not processor references
 
+mod link;
 pub mod text;
 pub mod tool_renderers;
 pub mod utils;
