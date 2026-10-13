@@ -37,7 +37,8 @@ use ralph_core::chat_status::{
 };
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    blocked_path, chat_message, ready_path, waiting_path, Report, INBOX_DIR, READY_DIR,
+    blocked_path, chat_message, ready_path, unreported_path, waiting_path, Report, INBOX_DIR,
+    READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, CheckMemory,
@@ -185,6 +186,7 @@ impl Monitor {
         let ready = ready_path(&self.store_dir, id).exists();
         let blocked = blocked_path(&self.store_dir, id).exists();
         let waiting = waiting_path(&self.store_dir, id).exists();
+        let unreported = unreported_path(&self.store_dir, id).exists();
         let reported = reported_since_nudge(state.reports.get(id), state.nudges.get(id));
         let pane = (!(blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
@@ -202,6 +204,7 @@ impl Monitor {
             ready,
             blocked,
             waiting,
+            unreported,
             reported_since_nudge: reported,
             pane,
             pane_changed,

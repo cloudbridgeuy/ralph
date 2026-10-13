@@ -26,8 +26,9 @@ fn command_hook(command: String) -> Value {
 
 pub fn claude_worker_settings(exe: &Path, markers: &WorkerMarkers) -> Value {
     let quote = |path: &Path| shell_quote(&path.to_string_lossy());
+    let clear_blocked = format!("rm -f {}", quote(&markers.blocked));
     let idle = format!(
-        "[ ! -e {} ] || {}",
+        "{clear_blocked}; [ ! -e {} ] || {}",
         quote(&markers.unreported),
         touch_command(&markers.waiting)
     );
@@ -43,7 +44,10 @@ pub fn claude_worker_settings(exe: &Path, markers: &WorkerMarkers) -> Value {
                 "hooks": [command_hook(touch_command(&markers.ready))]
             }],
             "Stop": [{
-                "hooks": [command_hook(stop_hook_command(exe, markers))]
+                "hooks": [
+                    command_hook(stop_hook_command(exe, markers)),
+                    command_hook(clear_blocked)
+                ]
             }],
             "PermissionRequest": [{
                 "hooks": [command_hook(touch_command(&markers.blocked))]
@@ -202,7 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_idle_notification_touches_waiting_only_while_unreported() {
+    fn claude_idle_notification_clears_blocked_and_touches_waiting_only_while_unreported() {
         let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers());
         assert_eq!(
             settings["hooks"]["Notification"][0]["matcher"],
@@ -210,7 +214,16 @@ mod tests {
         );
         assert_eq!(
             hook_command(&settings, "Notification"),
-            "[ ! -e '/s/unreported/A' ] || touch '/s/waiting/A'"
+            "rm -f '/s/blocked/A'; [ ! -e '/s/unreported/A' ] || touch '/s/waiting/A'"
+        );
+    }
+
+    #[test]
+    fn claude_stop_clears_the_blocked_marker_after_the_stop_hook() {
+        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers());
+        assert_eq!(
+            settings["hooks"]["Stop"][0]["hooks"][1]["command"],
+            "rm -f '/s/blocked/A'"
         );
     }
 
