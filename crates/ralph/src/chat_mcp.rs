@@ -7,10 +7,10 @@ use serde_json::Value;
 use std::io::{self, BufRead, Write};
 
 fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<String, String> {
-    let (entries, _) = store
-        .load()
+    let pending = store
+        .pending_turn()
         .map_err(|e| format!("Could not read chat memory: {e}"))?;
-    command_allowed(command, &entries)?;
+    command_allowed(command, pending)?;
     match command {
         Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
         Command::Reply { id, text } => workers.reply(id, text),
@@ -58,6 +58,7 @@ pub fn run_stdio_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::chat_memory::Trigger;
 
     fn run(store: &Store, input: &str) -> Vec<Value> {
         let mut out = Vec::new();
@@ -106,6 +107,7 @@ mod tests {
             "{\"role\":\"worker\",\"at\":\"t\",\"text\":\"merge?\"}\n",
         )
         .unwrap();
+        store.set_pending_turn(Trigger::Worker).unwrap();
         let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"spawn_worker","arguments":{"id":"A","task":"merge"}}}"#;
         let lines = run(&store, &format!("{call}\n"));
         assert_eq!(lines[0]["result"]["isError"], true);

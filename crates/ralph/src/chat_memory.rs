@@ -1,8 +1,9 @@
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, encode_entry, encode_record, encode_usage, nap_prompt, parse_log, parse_tree,
-    pending, retry_prompt, Entry, Node, Role, Tree, UsageRecord, MAX_NAP_ATTEMPTS,
+    pending, retry_prompt, Entry, Node, Role, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
+use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 #[cfg(unix)]
@@ -125,6 +126,23 @@ impl Store {
         check_path(&path)?;
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         file.write_all(line.as_bytes())
+    }
+
+    pub fn set_pending_turn(&self, trigger: Trigger) -> io::Result<()> {
+        fs::create_dir_all(&self.dir)?;
+        let path = self.dir.join(PENDING_TURN_FILE);
+        check_path(&path)?;
+        fs::write(path, pending_turn_marker(trigger))
+    }
+
+    pub fn clear_pending_turn(&self) {
+        // Best effort: a missing marker already means no turn is in flight.
+        let _ = fs::remove_file(self.dir.join(PENDING_TURN_FILE));
+    }
+
+    pub fn pending_turn(&self) -> io::Result<Option<Trigger>> {
+        let marker = read_optional(&self.dir.join(PENDING_TURN_FILE))?;
+        Ok(parse_pending_turn(&String::from_utf8_lossy(&marker)))
     }
 
     pub fn write_mcp_config(&self, config: &serde_json::Value) -> io::Result<PathBuf> {

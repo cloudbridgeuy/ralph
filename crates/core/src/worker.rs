@@ -1,4 +1,4 @@
-use crate::chat_memory::{Entry, Role};
+use crate::chat_memory::Trigger;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -213,14 +213,31 @@ fn harness(args: &Value) -> Result<Harness, String> {
     }
 }
 
-pub fn command_allowed(command: &Command, entries: &[Entry]) -> Result<(), String> {
-    let last = entries.last().map(|entry| entry.role);
-    match (command, last) {
-        (_, Some(Role::User)) | (Command::Reply { .. }, Some(Role::Worker)) => Ok(()),
+/// Workers are directed only in a turn the person started; a worker-triggered turn may only reply.
+pub fn command_allowed(command: &Command, pending: Option<Trigger>) -> Result<(), String> {
+    match (command, pending) {
+        (_, Some(Trigger::User)) | (Command::Reply { .. }, Some(Trigger::Worker)) => Ok(()),
         _ => Err(
             "Only the person can direct workers. Relay this to them and wait for their answer."
                 .to_string(),
         ),
+    }
+}
+
+pub const PENDING_TURN_FILE: &str = "turn";
+
+pub fn pending_turn_marker(trigger: Trigger) -> &'static str {
+    match trigger {
+        Trigger::User => "user",
+        Trigger::Worker => "worker",
+    }
+}
+
+pub fn parse_pending_turn(marker: &str) -> Option<Trigger> {
+    match marker.trim() {
+        "user" => Some(Trigger::User),
+        "worker" => Some(Trigger::Worker),
+        _ => None,
     }
 }
 
@@ -527,14 +544,6 @@ mod tests {
         }
     }
 
-    fn entry(role: Role) -> Entry {
-        Entry {
-            role,
-            at: "t".into(),
-            text: "x".into(),
-        }
-    }
-
     #[test]
     fn parse_command_reads_spawn_and_reply() {
         assert_eq!(
@@ -596,14 +605,15 @@ mod tests {
     }
 
     #[test]
-    fn close_allowed_only_after_a_user_message() {
+    fn close_allowed_only_in_a_user_turn() {
         let close = Command::Close {
             id: "A".into(),
             abandon: false,
             force: false,
         };
-        assert!(command_allowed(&close, &[entry(Role::User)]).is_ok());
-        assert!(command_allowed(&close, &[entry(Role::User), entry(Role::Worker)]).is_err());
+        assert!(command_allowed(&close, Some(Trigger::User)).is_ok());
+        assert!(command_allowed(&close, Some(Trigger::Worker)).is_err());
+        assert!(command_allowed(&close, None).is_err());
     }
 
     fn spawn_harness(args: Value) -> Result<Harness, String> {
@@ -663,28 +673,38 @@ mod tests {
     }
 
     #[test]
-    fn spawn_allowed_only_after_a_user_message() {
+    fn spawn_allowed_only_in_a_user_turn() {
         let spawn = Command::Spawn {
             id: "A".into(),
             task: "t".into(),
             harness: Harness::Claude,
         };
-        assert!(command_allowed(&spawn, &[entry(Role::Assistant), entry(Role::User)]).is_ok());
-        assert!(command_allowed(&spawn, &[entry(Role::User), entry(Role::Worker)]).is_err());
-        assert!(command_allowed(&spawn, &[entry(Role::User), entry(Role::Assistant)]).is_err());
-        assert!(command_allowed(&spawn, &[]).is_err());
+        assert!(command_allowed(&spawn, Some(Trigger::User)).is_ok());
+        assert!(command_allowed(&spawn, Some(Trigger::Worker)).is_err());
+        assert!(command_allowed(&spawn, None).is_err());
     }
 
     #[test]
-    fn reply_allowed_after_a_user_message_or_a_worker_report() {
+    fn reply_allowed_in_a_user_or_worker_turn() {
         let reply = Command::Reply {
             id: "A".into(),
             text: "t".into(),
         };
-        assert!(command_allowed(&reply, &[entry(Role::Assistant), entry(Role::User)]).is_ok());
-        assert!(command_allowed(&reply, &[entry(Role::User), entry(Role::Worker)]).is_ok());
-        assert!(command_allowed(&reply, &[entry(Role::User), entry(Role::Assistant)]).is_err());
-        assert!(command_allowed(&reply, &[]).is_err());
+        assert!(command_allowed(&reply, Some(Trigger::User)).is_ok());
+        assert!(command_allowed(&reply, Some(Trigger::Worker)).is_ok());
+        assert!(command_allowed(&reply, None).is_err());
+    }
+
+    #[test]
+    fn pending_turn_marker_round_trips() {
+        for trigger in [Trigger::User, Trigger::Worker] {
+            assert_eq!(
+                parse_pending_turn(pending_turn_marker(trigger)),
+                Some(trigger)
+            );
+        }
+        assert_eq!(parse_pending_turn("junk"), None);
+        assert_eq!(parse_pending_turn(""), None);
     }
 
     #[test]
