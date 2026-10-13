@@ -118,7 +118,8 @@ pub fn plan(
     for obs in observations {
         let state = classify(obs);
         let prev_entry = prev.workers.get(&obs.id);
-        let mut nudged = !obs.reported_since_nudge && prev_entry.is_some_and(|p| p.nudged);
+        let mut nudged = prev_entry.is_some_and(|p| p.nudged)
+            && (state == WorkerState::Waiting || !obs.reported_since_nudge);
         if state == WorkerState::Waiting && !nudged {
             actions.push(CheckAction::Nudge(obs.id.clone()));
             nudged = true;
@@ -289,6 +290,23 @@ mod tests {
         assert!(!m2.workers["w1"].nudged);
         let (actions, _) = plan(&m2, &[waiting()]);
         assert_eq!(nudges(&actions), 1);
+    }
+
+    #[test]
+    fn lingering_waiting_marker_with_repeated_reports_nudges_once() {
+        let reported_waiting = WorkerObservation {
+            reported_since_nudge: true,
+            ..waiting()
+        };
+        let (first, mut memory) = plan(&CheckMemory::default(), &[waiting()]);
+        let mut total = nudges(&first);
+        for _ in 0..5 {
+            let (actions, next) = plan(&memory, std::slice::from_ref(&reported_waiting));
+            total += nudges(&actions);
+            memory = next;
+        }
+        assert_eq!(total, 1);
+        assert!(memory.workers["w1"].nudged);
     }
 
     #[test]
