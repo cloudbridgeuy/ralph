@@ -87,10 +87,7 @@ impl Workers {
                 if let Some(dir) = plugin.parent() {
                     fs::create_dir_all(dir)?;
                 }
-                fs::write(
-                    plugin,
-                    opencode_worker_plugin(id, &markers.ready, &markers.reported),
-                )?;
+                fs::write(plugin, opencode_worker_plugin(id, &markers))?;
                 opencode_command(id, task)
             }
         };

@@ -102,10 +102,11 @@ pub fn stop_block_output() -> Value {
     json!({"decision": "block", "reason": REPORT_REMINDER})
 }
 
-pub fn opencode_worker_plugin(id: &str, ready: &Path, reported: &Path) -> String {
+pub fn opencode_worker_plugin(id: &str, markers: &WorkerMarkers) -> String {
     let session = Value::from(opencode_session_id(id));
-    let ready = Value::from(ready.to_string_lossy());
-    let reported = Value::from(reported.to_string_lossy());
+    let ready = Value::from(markers.ready.to_string_lossy());
+    let reported = Value::from(markers.reported.to_string_lossy());
+    let waiting = Value::from(markers.waiting.to_string_lossy());
     let reminder = Value::from(REPORT_REMINDER);
     let plugin = Value::from(format!("ralph-worker-{id}"));
     format!(
@@ -114,8 +115,10 @@ pub fn opencode_worker_plugin(id: &str, ready: &Path, reported: &Path) -> String
 const SESSION = {session}
 const READY = {ready}
 const REPORTED = {reported}
+const WAITING = {waiting}
 const REMINDER = {reminder}
 const STARTED = new Set(["session.created", "session.inbox.enqueued"])
+const CLEARED = new Set(["session.inbox.enqueued", "session.execution.started"])
 const ENDED = new Set(["session.execution.succeeded", "session.execution.failed"])
 
 export default {{
@@ -131,12 +134,14 @@ export default {{
             ready = true
             writeFileSync(READY, "")
           }}
+          if (CLEARED.has(event.type)) rmSync(WAITING, {{ force: true }})
           if (!ENDED.has(event.type)) continue
           if (existsSync(REPORTED)) {{
             rmSync(REPORTED, {{ force: true }})
             nudged = false
           }} else if (nudged) {{
             nudged = false
+            writeFileSync(WAITING, "")
           }} else {{
             nudged = true
             ctx.session.prompt({{ sessionID: SESSION, text: REMINDER }}).catch(() => {{}})
@@ -287,11 +292,12 @@ mod tests {
 
     #[test]
     fn opencode_worker_plugin_answers_only_for_its_own_session() {
-        let plugin =
-            opencode_worker_plugin("A", Path::new("/s/ready/\"A\""), Path::new("/s/reported/A"));
+        let plugin = opencode_worker_plugin("A", &WorkerMarkers::new(Path::new("/s/it\"s"), "A"));
         assert!(plugin.contains(r#"const SESSION = "ses_ralphA""#));
-        assert!(plugin.contains(r#"const READY = "/s/ready/\"A\"""#));
-        assert!(plugin.contains(r#"const REPORTED = "/s/reported/A""#));
+        assert!(plugin.contains(r#"const READY = "/s/it\"s/ready/A""#));
+        assert!(plugin.contains(r#"const REPORTED = "/s/it\"s/reported/A""#));
+        assert!(plugin.contains(r#"const WAITING = "/s/it\"s/waiting/A""#));
+        assert!(plugin.contains(r#"["session.inbox.enqueued", "session.execution.started"]"#));
         assert!(plugin.contains(&format!(
             "const REMINDER = {}",
             Value::from(REPORT_REMINDER)
@@ -307,7 +313,7 @@ mod tests {
 
     #[test]
     fn opencode_worker_plugin_nudges_once_unless_the_worker_reported() {
-        let plugin = opencode_worker_plugin("A", Path::new("/r"), Path::new("/m"));
+        let plugin = opencode_worker_plugin("A", &markers());
         let marker = plugin.find("if (existsSync(REPORTED))").unwrap();
         let guard = plugin
             .find("} else if (nudged) {\n            nudged = false")
@@ -316,5 +322,29 @@ mod tests {
             .find("nudged = true\n            ctx.session.prompt({ sessionID: SESSION, text: REMINDER })")
             .unwrap();
         assert!(marker < guard && guard < nudge);
+    }
+
+    #[test]
+    fn opencode_worker_plugin_clears_waiting_on_new_input_before_the_end_check() {
+        let plugin = opencode_worker_plugin("A", &markers());
+        let filter = plugin
+            .find("if (event?.data?.sessionID !== SESSION) continue")
+            .unwrap();
+        let clear = plugin
+            .find("if (CLEARED.has(event.type)) rmSync(WAITING, { force: true })")
+            .unwrap();
+        let ended = plugin.find("if (!ENDED.has(event.type)) continue").unwrap();
+        assert!(filter < clear && clear < ended);
+    }
+
+    #[test]
+    fn opencode_worker_plugin_writes_waiting_only_in_the_second_nudge_branch() {
+        let plugin = opencode_worker_plugin("A", &markers());
+        assert_eq!(plugin.matches("writeFileSync(WAITING").count(), 1);
+        let reported = plugin.find("if (existsSync(REPORTED))").unwrap();
+        let guard = plugin.find("} else if (nudged) {").unwrap();
+        let write = plugin.find("writeFileSync(WAITING").unwrap();
+        let last_else = plugin.find("} else {\n            nudged = true").unwrap();
+        assert!(reported < guard && guard < write && write < last_else);
     }
 }
