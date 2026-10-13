@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 chrono = { workspace = true }
 clap = { workspace = true }
-ctrlc = { workspace = true }
+signal-hook = { workspace = true }
 dirs = { workspace = true }
 libc = { workspace = true }
 ralph_core = { workspace = true }

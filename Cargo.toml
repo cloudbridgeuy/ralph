@@ -42,8 +42,8 @@ crossterm = "0.29"
 # UAX #14 line breaking
 unicode-linebreak = "0.1.5"
 
-# Ctrl+C / SIGINT handling
-ctrlc = { version = "3.4", features = ["termination"] }
+# SIGINT / SIGTERM / SIGHUP handling
+signal-hook = "0.3"
 
 # Configuration directories
 dirs = "7.0.0"

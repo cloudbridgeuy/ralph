@@ -9,6 +9,28 @@ pub fn input_lost_at_prompt(watch: &InputWatch) -> bool {
     watch.at_prompt && (watch.hangup_signal || (watch.started_on_terminal && watch.stdin_hung_up))
 }
 
+pub struct TurnSignals {
+    pub cancelled: bool,
+    pub terminated: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TurnEnd {
+    Completed,
+    Cancelled,
+    Exit,
+}
+
+pub fn turn_end(signals: &TurnSignals) -> TurnEnd {
+    if signals.terminated {
+        TurnEnd::Exit
+    } else if signals.cancelled {
+        TurnEnd::Cancelled
+    } else {
+        TurnEnd::Completed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +87,18 @@ mod tests {
             at_prompt: false,
             ..watch()
         }));
+    }
+
+    #[test]
+    fn turn_end_prefers_exit_over_cancel() {
+        let end = |cancelled, terminated| {
+            turn_end(&TurnSignals {
+                cancelled,
+                terminated,
+            })
+        };
+        assert_eq!(end(true, true), TurnEnd::Exit);
+        assert_eq!(end(true, false), TurnEnd::Cancelled);
+        assert_eq!(end(false, false), TurnEnd::Completed);
     }
 }
