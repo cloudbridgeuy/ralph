@@ -2,12 +2,22 @@ const LABEL_START: char = '\u{200B}';
 const LABEL_END: char = '\u{200C}';
 const URL_START: char = '\u{200D}';
 const URL_END: char = '\u{2060}';
-const MARKERS: [char; 4] = [LABEL_START, LABEL_END, URL_START, URL_END];
+const MEMORY_START: char = '\u{2061}';
+const MEMORY_END: char = '\u{2062}';
+const MARKERS: [char; 6] = [
+    LABEL_START,
+    LABEL_END,
+    URL_START,
+    URL_END,
+    MEMORY_START,
+    MEMORY_END,
+];
 
 const LINK_SYMBOL: &str = "↗";
 const LABEL_STYLE: &str = "\x1b[4;94m";
 const LABEL_STYLE_OFF: &str = "\x1b[24m";
 const URL_STYLE: &str = "\x1b[96m";
+const MEMORY_STYLE: &str = "\x1b[95m";
 const COLOR_OFF: &str = "\x1b[39m";
 
 pub fn mark_links(text: &str) -> String {
@@ -43,6 +53,18 @@ pub fn mark_links(text: &str) -> String {
                     i += 1;
                 }
             },
+            '#' if is_memory_boundary(&chars, i) => match memory_ref_end(&chars, i) {
+                Some(end) => {
+                    out.push(MEMORY_START);
+                    out.extend(&chars[i..end]);
+                    out.push(MEMORY_END);
+                    i = end;
+                }
+                None => {
+                    out.push('#');
+                    i += 1;
+                }
+            },
             ch => {
                 out.push(ch);
                 i += 1;
@@ -59,7 +81,8 @@ pub fn paint_links(rendered: &str) -> String {
             LABEL_START => out.push_str(LABEL_STYLE),
             LABEL_END => out.push_str(LABEL_STYLE_OFF),
             URL_START => out.push_str(URL_STYLE),
-            URL_END => out.push_str(COLOR_OFF),
+            MEMORY_START => out.push_str(MEMORY_STYLE),
+            URL_END | MEMORY_END => out.push_str(COLOR_OFF),
             _ => out.push(ch),
         }
     }
@@ -70,6 +93,24 @@ struct Link {
     label: (usize, usize),
     url: (usize, usize),
     end: usize,
+}
+
+fn is_memory_boundary(chars: &[char], hash: usize) -> bool {
+    hash == 0
+        || !matches!(chars[hash - 1], '_' | '#' | '&' | '/' | '\\')
+            && !chars[hash - 1].is_alphanumeric()
+}
+
+fn memory_ref_end(chars: &[char], hash: usize) -> Option<usize> {
+    let digits = chars[hash + 1..]
+        .iter()
+        .take_while(|ch| ch.is_ascii_digit())
+        .count();
+    let end = hash + 1 + digits;
+    let word_continues = chars
+        .get(end)
+        .is_some_and(|&ch| ch == '_' || ch.is_alphanumeric());
+    (digits > 0 && !word_continues).then_some(end)
 }
 
 fn code_span_end(chars: &[char], start: usize) -> usize {
@@ -179,6 +220,65 @@ mod tests {
         let skin = crate::markdown::create_markdown_skin();
         let rendered = skin.text(&mark_links("aa [b](c)"), Some(8)).to_string();
         assert_eq!(strip(&rendered).trim_end(), "aa b ↗ c");
+    }
+
+    fn memory_refs(text: &str) -> Vec<String> {
+        let marked = mark_links(text);
+        marked
+            .split(MEMORY_START)
+            .skip(1)
+            .filter_map(|rest| rest.split_once(MEMORY_END).map(|(id, _)| id.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn memory_refs_are_marked_at_word_boundaries() {
+        assert_eq!(memory_refs("see #303."), ["#303"]);
+        assert_eq!(
+            memory_refs("#1 and (#22), #4-#5"),
+            ["#1", "#22", "#4", "#5"]
+        );
+        assert_eq!(memory_refs("line\n#7"), ["#7"]);
+    }
+
+    #[test]
+    fn non_memory_refs_stay_literal() {
+        for text in [
+            "# Title",
+            "## 12",
+            "abc#12",
+            "##12",
+            "#12abc",
+            "#12_x",
+            "&#123;",
+            "https://x.dev/#12",
+            "#",
+            "#x",
+            "`#303`",
+            "``a `#303` b``",
+            "\\#303",
+            "[see #303](https://x.dev/i#12)",
+        ] {
+            assert!(memory_refs(text).is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn memory_ref_markers_take_no_columns_when_wrapping() {
+        let skin = crate::markdown::create_markdown_skin();
+        let rendered = skin.text(&mark_links("aa #303 b"), Some(8)).to_string();
+        assert_eq!(
+            strip(&rendered).lines().next().map(str::trim_end),
+            Some("aa #303")
+        );
+    }
+
+    #[test]
+    fn paint_colors_memory_ref_pink() {
+        assert_eq!(
+            paint_links(&mark_links("#303")),
+            format!("{MEMORY_STYLE}#303{COLOR_OFF}")
+        );
     }
 
     #[test]
