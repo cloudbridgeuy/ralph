@@ -4,13 +4,21 @@ const URL_START: char = '\u{200D}';
 const URL_END: char = '\u{2060}';
 const MEMORY_START: char = '\u{2061}';
 const MEMORY_END: char = '\u{2062}';
-const MARKERS: [char; 6] = [
+const ADD_START: char = '\u{2063}';
+const DEL_START: char = '\u{2064}';
+const DIFF_END: char = '\u{FEFF}';
+const DIFF_CODE_END: char = '\u{200E}';
+const MARKERS: [char; 10] = [
     LABEL_START,
     LABEL_END,
     URL_START,
     URL_END,
     MEMORY_START,
     MEMORY_END,
+    ADD_START,
+    DEL_START,
+    DIFF_END,
+    DIFF_CODE_END,
 ];
 
 use crate::ansi::fg;
@@ -33,9 +41,19 @@ pub fn mark_links(text: &str) -> String {
             }
             '`' => {
                 let end = code_span_end(&chars, i);
-                out.extend(&chars[i..end]);
+                push_marked_diffs(&chars[i..end], i, &chars, &mut out);
                 i = end;
             }
+            '+' | '-' | '\u{2212}' | '(' => match diff_stat(&chars, i) {
+                Some(stat) => {
+                    push_diff_stat(&chars, i, &stat, DIFF_END, &mut out);
+                    i = stat.end;
+                }
+                None => {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+            },
             '[' if i == 0 || chars[i - 1] != '!' => match parse_link(&chars, i) {
                 Some(link) => {
                     out.push(LABEL_START);
@@ -83,6 +101,12 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
     let label = format!("{UNDERLINE}{}", fg(palette.link));
     let url = fg(palette.url);
     let memory = fg(palette.memory_ref);
+    let add = fg(palette.done);
+    let del = fg(palette.blocked);
+    let code_restore = match palette.inline_code {
+        Some(_) => fg(palette.inline_code),
+        None => COLOR_OFF.to_string(),
+    };
     let mut out = String::with_capacity(rendered.len());
     let mut open: Option<&str> = None;
     for ch in rendered.chars() {
@@ -90,13 +114,18 @@ pub fn paint_links(rendered: &str, palette: &Palette) -> String {
             LABEL_START => open = Some(&label),
             URL_START => open = Some(&url),
             MEMORY_START => open = Some(&memory),
-            LABEL_END | URL_END | MEMORY_END => open = None,
+            ADD_START => open = Some(&add),
+            DEL_START => open = Some(&del),
+            LABEL_END | URL_END | MEMORY_END | DIFF_END | DIFF_CODE_END => open = None,
             _ => {}
         }
         match ch {
-            LABEL_START | URL_START | MEMORY_START => out.push_str(open.unwrap_or_default()),
+            LABEL_START | URL_START | MEMORY_START | ADD_START | DEL_START => {
+                out.push_str(open.unwrap_or_default())
+            }
             LABEL_END => out.push_str(LABEL_STYLE_OFF),
-            URL_END | MEMORY_END => out.push_str(COLOR_OFF),
+            URL_END | MEMORY_END | DIFF_END => out.push_str(COLOR_OFF),
+            DIFF_CODE_END => out.push_str(&code_restore),
             '\n' => {
                 out.push('\n');
                 out.push_str(open.unwrap_or_default());
@@ -111,6 +140,118 @@ struct Link {
     label: (usize, usize),
     url: (usize, usize),
     end: usize,
+}
+
+fn push_marked_diffs(span: &[char], offset: usize, chars: &[char], out: &mut String) {
+    let mut j = 0;
+    while j < span.len() {
+        let at = offset + j;
+        let stat = match span[j] {
+            '+' | '-' | '\u{2212}' | '(' => {
+                diff_stat(chars, at).filter(|stat| stat.end <= offset + span.len())
+            }
+            _ => None,
+        };
+        match stat {
+            Some(stat) => {
+                push_diff_stat(chars, at, &stat, DIFF_CODE_END, out);
+                j = stat.end - offset;
+            }
+            None => {
+                out.push(span[j]);
+                j += 1;
+            }
+        }
+    }
+}
+
+struct DiffStat {
+    parts: Vec<(usize, usize)>,
+    end: usize,
+}
+
+fn push_diff_stat(chars: &[char], start: usize, stat: &DiffStat, close: char, out: &mut String) {
+    let mut at = start;
+    for &(part_start, part_end) in &stat.parts {
+        out.extend(&chars[at..part_start]);
+        out.push(if chars[part_start] == '+' {
+            ADD_START
+        } else {
+            DEL_START
+        });
+        out.extend(&chars[part_start..part_end]);
+        out.push(close);
+        at = part_end;
+    }
+    out.extend(&chars[at..stat.end]);
+}
+
+fn diff_stat(chars: &[char], start: usize) -> Option<DiffStat> {
+    let starts_token = start == 0 || chars[start - 1].is_whitespace();
+    if !starts_token || is_table_or_heading_line(chars, start) {
+        return None;
+    }
+    let ends_token = |end: usize| chars.get(end).is_none_or(|ch| ch.is_whitespace());
+    signed_number_end(chars, start)
+        .filter(|&end| ends_token(end))
+        .map(|end| DiffStat {
+            parts: vec![(start, end)],
+            end,
+        })
+        .or_else(|| diff_pair(chars, start).filter(|stat| ends_token(stat.end)))
+}
+
+fn signed_number_end(chars: &[char], sign: usize) -> Option<usize> {
+    if !matches!(chars.get(sign), Some('+' | '-' | '\u{2212}')) {
+        return None;
+    }
+    let digits = digit_run(chars, sign + 1);
+    (digits > 0).then_some(sign + 1 + digits)
+}
+
+fn diff_pair(chars: &[char], start: usize) -> Option<DiffStat> {
+    let wrapped = chars.get(start) == Some(&'(');
+    let plus = start + usize::from(wrapped);
+    if chars.get(plus) != Some(&'+') {
+        return None;
+    }
+    let plus_end = signed_number_end(chars, plus)?;
+    let minus = plus_end + 1;
+    if chars.get(plus_end) != Some(&'/') || !matches!(chars.get(minus), Some('-' | '\u{2212}')) {
+        return None;
+    }
+    let minus_end = signed_number_end(chars, minus)?;
+    let end = match wrapped {
+        true if chars.get(minus_end) == Some(&')') => minus_end + 1,
+        true => return None,
+        false => minus_end,
+    };
+    Some(DiffStat {
+        parts: vec![(plus, plus_end), (minus, minus_end)],
+        end,
+    })
+}
+
+fn digit_run(chars: &[char], start: usize) -> usize {
+    chars[start..]
+        .iter()
+        .take_while(|ch| ch.is_ascii_digit())
+        .count()
+}
+
+fn is_table_or_heading_line(chars: &[char], at: usize) -> bool {
+    let line_start = chars[..at]
+        .iter()
+        .rposition(|&ch| ch == '\n')
+        .map_or(0, |newline| newline + 1);
+    let lead: Vec<char> = chars[line_start..at]
+        .iter()
+        .copied()
+        .skip_while(|ch| ch.is_whitespace())
+        .collect();
+    let hashes = lead.iter().take_while(|&&ch| ch == '#').count();
+    lead.first() == Some(&'|')
+        || (1..=6).contains(&hashes) && lead.get(hashes).is_some_and(|ch| ch.is_whitespace())
 }
 
 fn is_memory_boundary(chars: &[char], hash: usize) -> bool {
@@ -342,5 +483,132 @@ mod tests {
             paint_links(&mark_links("#7"), &palette),
             format!("\x1b[32m#7{COLOR_OFF}")
         );
+    }
+
+    const GREEN: &str = "\x1b[32m";
+    const RED: &str = "\x1b[31m";
+
+    #[test]
+    fn paint_colors_signed_numbers_green_and_red() {
+        assert_eq!(
+            paint(&mark_links("a +5 b -7 c \u{2212}85\n-3\n+4")),
+            format!(
+                "a {GREEN}+5{COLOR_OFF} b {RED}-7{COLOR_OFF} c {RED}\u{2212}85{COLOR_OFF}\n{RED}-3{COLOR_OFF}\n{GREEN}+4{COLOR_OFF}"
+            )
+        );
+        assert_eq!(
+            paint(&mark_links("+204")),
+            format!("{GREEN}+204{COLOR_OFF}")
+        );
+    }
+
+    #[test]
+    fn paint_colors_diff_stat_pairs_and_leaves_slash_and_parens_plain() {
+        assert_eq!(
+            paint(&mark_links("+204/-85")),
+            format!("{GREEN}+204{COLOR_OFF}/{RED}-85{COLOR_OFF}")
+        );
+        assert_eq!(
+            paint(&mark_links("x (+204/-85) y")),
+            format!("x ({GREEN}+204{COLOR_OFF}/{RED}-85{COLOR_OFF}) y")
+        );
+        assert_eq!(
+            paint(&mark_links("+295/\u{2212}97")),
+            format!("{GREEN}+295{COLOR_OFF}/{RED}\u{2212}97{COLOR_OFF}")
+        );
+    }
+
+    #[test]
+    fn signed_numbers_after_hash_words_that_are_not_headings_are_colored() {
+        assert_eq!(
+            paint(&mark_links("#303 +5\n#tag -2")),
+            format!("{MEMORY_STYLE}#303{COLOR_OFF} {GREEN}+5{COLOR_OFF}\n#tag {RED}-2{COLOR_OFF}")
+        );
+    }
+
+    #[test]
+    fn paint_restores_inline_code_color_after_diff_stats() {
+        let palette = Palette {
+            inline_code: Some(Color::DarkCyan),
+            ..Palette::default()
+        };
+        assert_eq!(
+            paint_links(&mark_links("`a +5 b`"), &palette),
+            format!("`a {GREEN}+5\x1b[36m b`")
+        );
+        let plain = Palette {
+            inline_code: None,
+            ..Palette::default()
+        };
+        assert_eq!(
+            paint_links(&mark_links("`a -2 b`"), &plain),
+            format!("`a {RED}-2{COLOR_OFF} b`")
+        );
+    }
+
+    #[test]
+    fn paint_diff_stats_use_palette_colors() {
+        let palette = Palette {
+            done: Some(Color::DarkBlue),
+            blocked: Some(Color::DarkMagenta),
+            ..Palette::default()
+        };
+        assert_eq!(
+            paint_links(&mark_links("+1 -2"), &palette),
+            format!("\x1b[34m+1{COLOR_OFF} \x1b[35m-2{COLOR_OFF}")
+        );
+    }
+
+    #[test]
+    fn non_diff_stats_stay_literal() {
+        for text in [
+            "- item",
+            "2026-10-13",
+            "483-486",
+            "-85)",
+            "+12px",
+            "abc-5",
+            "+204/-85,",
+            "(+204/-85).",
+            "+204/+85",
+            "-85/+204",
+            "(+204)",
+            "+204/-85)",
+            "(+204/-85",
+            "x+204/-85",
+            "(+204/-85)x",
+            "(+5",
+            "+",
+            "-",
+            "+5.",
+            "+5,",
+            "\\+1",
+            "| +1 |",
+            "  | a | -2",
+            "`+5`",
+            "## Release 7 has +204 lines",
+            "# +1",
+            "  ### a -2/x",
+        ] {
+            assert_eq!(mark_links(text), text, "{text}");
+        }
+    }
+
+    #[test]
+    fn diff_stat_markers_take_no_columns_when_wrapping() {
+        let skin = MadSkin::default();
+        let rendered = skin.text(&mark_links("aa +12 -34 b"), Some(12)).to_string();
+        assert_eq!(strip(&rendered).trim_end(), "aa +12 -34 b");
+    }
+
+    #[test]
+    fn diff_stat_markers_survive_skin_rendering() {
+        let skin = MadSkin::default();
+        let rendered = skin
+            .text(&mark_links("x +1 -2 `a +3 b`"), Some(40))
+            .to_string();
+        for marker in [ADD_START, DEL_START, DIFF_END, DIFF_CODE_END] {
+            assert!(rendered.contains(marker), "{marker:?}");
+        }
     }
 }
