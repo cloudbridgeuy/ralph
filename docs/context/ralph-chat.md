@@ -17,7 +17,7 @@ ralph                      # same as ralph chat with defaults
 - `--no-inbox-sound` and `--no-inbox-notification` turn off the inbox alert parts (see Inbox alerts).
 - Hidden `--store <DIR>` overrides the store path. Default is `~/.ralph/chat`; a missing home directory is an error. The directory is created at startup.
 - Hidden subcommands: `ralph chat-mcp --store <DIR> --permission-mode <MODE> [--worktree-dir <DIR>]` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
-- Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Ctrl-V saves a clipboard image (macOS) to `<store>/attachments` and inserts `[Image #N: path]` into the draft. Esc Esc clears the whole draft (Ctrl-Z undoes it). Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). Ctrl-D or Ctrl-C at the prompt quits; an empty message does nothing unless reports are unread (see Worker inbox). Ctrl-C during a turn cancels that turn (nothing is stored) and returns to the prompt with the message restored as the draft; SIGTERM and SIGHUP end the chat. While a turn runs, chat keeps a `<store>/turn` marker (`user` or `worker`, removed when the turn ends); chat-mcp reads it so `spawn_worker` and `close_worker` work only in a user-started turn (`reply` also in a worker turn).
+- Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-O opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Ctrl-V pastes a clipboard image as `[Image #N: path]` (see [Images](#images)). Esc Esc clears the whole draft (Ctrl-Z undoes it). Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). Ctrl-D or Ctrl-C at the prompt quits; an empty message does nothing unless reports are unread (see Worker inbox). Ctrl-C during a turn cancels that turn (nothing is stored) and returns to the prompt with the message restored as the draft; SIGTERM and SIGHUP end the chat. While a turn runs, chat keeps a `<store>/turn` marker (`user` or `worker`, removed when the turn ends); chat-mcp reads it so `spawn_worker` and `close_worker` work only in a user-started turn (`reply` also in a worker turn).
 - A dark-gray full-width rule (the shared termimad skin's `---`, default gray(6) `―`) prints before the turn and after the reply.
 
 ## Layout
@@ -122,9 +122,16 @@ Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not
 - If at least one skill survives, chat builds a temporary plugin directory (removed when chat exits) with `.claude-plugin/plugin.json` (`{"name": "ralph"}`) and `skills/<name>` as symlinks to the skill directories. Each turn adds `--plugin-dir <dir>`. Skills appear as `ralph:<name>`.
 - Skills are read at start: changes to the list need a restart.
 
+## Images
+
+- Ctrl-V (macOS only) runs `osascript` to write the clipboard as PNG to `<store>/attachments/.clipboard-<pid>.tmp`, then `attachment::parse_image` checks it. A valid image is renamed to `<sha256>.<ext>` (same image, same file; nothing is ever deleted) and `[Image #N: <absolute path>]` is inserted at the cursor. `N` is one above the largest `[Image #N:` already in the draft (`attachment::next_number`), else 1. No image on the clipboard prints `No image on the clipboard.`; a bad image prints `Image paste failed: <error>` and removes the temp file.
+- Limits: 10 MiB per image (`MAX_IMAGE_BYTES`); PNG, JPEG, GIF or WebP by magic bytes (the clipboard script always asks for PNG). No paste on Linux or Windows; a path typed by hand works the same way.
+- The placeholder is plain text: `log.jsonl`, history and memory hold only the text with the path, never the image bytes. Claude reads the image itself with its Read tool when it sees the path. A turn has no `--add-dir`, so with a store outside the working directory a Read of the path can hit a permission prompt.
+- Workers: placeholders in `spawn_worker` task or `reply` text pass through unchanged. Claude workers get `--add-dir <store>/attachments`; opencode workers get `permission.external_directory` for `<store>/attachments/**` (see [MCP tools](#mcp-tools)).
+
 ## Storage and isolation
 
-- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`, `history.txt`, `editor.md`, `mcp.json`, `usage.jsonl`. It is not project-scoped.
+- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`, `history.txt`, `editor.md`, `mcp.json`, `usage.jsonl`, `attachments/`. It is not project-scoped.
 - `LOCK` is an exclusive file lock held for append, settled load, and the whole nap. Store paths that are symlinks or multiply-linked files are rejected.
 - Isolation: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Project and local settings stay active; this is context isolation, not a sandbox.
 - User agents in `~/.claude/agents` do not load, so `build_agents_args` passes the bundled `SUBAGENTS` (`evidence-collector` haiku, `implementer` sonnet, `reviser` opus) as `--agents <json>`. These copies may drift from `~/.claude/agents`.
