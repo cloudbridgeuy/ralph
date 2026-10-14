@@ -10,7 +10,7 @@ ralph [OPTIONS] <COMMAND>
 
 | Option | Description |
 |--------|-------------|
-| `--version` | Print version information |
+| `-V`, `--version` | Print version information (see [version scheme](context/release-process.md#version-scheme)) |
 | `--help` | Print help information |
 
 ## Commands

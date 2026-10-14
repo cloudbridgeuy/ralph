@@ -12,6 +12,15 @@ fn test_cli_bare_ralph_has_no_subcommand() {
 }
 
 #[test]
+fn test_cli_version_flags_render_the_current_version() {
+    for flag in ["--version", "-V"] {
+        let err = Cli::try_parse_from(["ralph", flag]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert!(err.to_string().contains(crate::version::current()));
+    }
+}
+
+#[test]
 fn test_cli_chat_takes_a_wrap_width() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "--wrap-width", "80"])
         .unwrap()

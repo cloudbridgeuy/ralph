@@ -21,7 +21,7 @@ The command refuses a dirty tree, an existing tag, and a version that is not gre
 
 ## Version scheme
 
-All crates share one version, set in `[workspace.package]`. `ralph --version` reports:
+All crates share one version, set in `[workspace.package]`. `ralph --version` (or `-V`) reports:
 
 | Build | Output |
 | --- | --- |
