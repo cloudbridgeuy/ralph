@@ -125,6 +125,16 @@ fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>
         KeyCode::Char('v'),
         ReedlineEvent::ExecuteHostCommand(PASTE_IMAGE.to_string()),
     );
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('g'),
+        ReedlineEvent::OpenEditor,
+    );
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('o'),
+        ReedlineEvent::Edit(vec![EditCommand::Redo]),
+    );
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".to_string());
