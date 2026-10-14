@@ -13,7 +13,6 @@ mod chat_cell;
 mod chat_mcp;
 mod chat_memory;
 mod cli;
-#[allow(dead_code)]
 mod clipboard;
 pub mod config;
 pub mod diff_highlight;

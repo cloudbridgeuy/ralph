@@ -1,8 +1,11 @@
-use ralph_core::attachment::{file_name, parse_image, Image};
+use ralph_core::attachment::{file_name, next_number, parse_image, placeholder, Image};
+use reedline::{EditCommand, Reedline};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+pub const PASTE_IMAGE: &str = "paste-image";
 
 const SCRIPT_LINES: [&str; 6] = [
     "on run argv",
@@ -46,4 +49,17 @@ pub fn save_image(dir: &Path) -> io::Result<Option<(Image, PathBuf)>> {
     let path = dir.join(file_name(&image));
     fs::rename(&tmp, &path)?;
     Ok(Some((image, path)))
+}
+
+pub fn paste_image(editor: &mut Reedline, dir: &Path) -> Option<String> {
+    match save_image(dir) {
+        Ok(Some((_, path))) => {
+            let number = next_number(editor.current_buffer_contents());
+            let text = placeholder(number, &path.to_string_lossy());
+            editor.run_edit_commands(&[EditCommand::InsertString(text)]);
+            None
+        }
+        Ok(None) => Some("No image on the clipboard.".into()),
+        Err(error) => Some(format!("Image paste failed: {error}")),
+    }
 }

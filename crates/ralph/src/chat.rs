@@ -2,6 +2,7 @@ use crate::ansi::{DIM, RESET};
 use crate::chat_cell;
 use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
+use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::config::AppConfig;
 use crate::frame::worker_header;
 use crate::highlight::{Highlighter, ThemeConfig};
@@ -52,6 +53,7 @@ use reedline::{
     ReedlineEvent, ReedlineRawEvent, Signal, DEFAULT_MULTILINE_INDICATOR,
 };
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -118,6 +120,11 @@ fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>
             ReedlineEvent::Edit(vec![EditCommand::InsertNewline]),
         );
     }
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('v'),
+        ReedlineEvent::ExecuteHostCommand(PASTE_IMAGE.to_string()),
+    );
     let editor = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".to_string());
@@ -384,6 +391,7 @@ fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>) {
 struct ChatPrompt {
     monitor: Arc<Monitor>,
     color: bool,
+    notice: RefCell<Option<String>>,
 }
 
 impl ChatPrompt {
@@ -410,6 +418,9 @@ impl Prompt for ChatPrompt {
     }
 
     fn render_prompt_footer(&self) -> Cow<'_, str> {
+        if let Some(notice) = self.notice.borrow().as_deref() {
+            return Cow::Owned(self.dim(notice));
+        }
         let hints = footer(self.monitor.status().unread, screen_columns());
         Cow::Owned(self.dim(hints.trim_end_matches('\n')))
     }
@@ -442,10 +453,19 @@ impl Prompt for ChatPrompt {
 }
 
 fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Result<Option<Route>> {
-    Ok(match editor.read_line(prompt)? {
-        Signal::Success(line) => Some(route_input(&line, prompt.monitor.status().unread)),
-        _ => None,
-    })
+    let attachments = prompt.monitor.store_dir.join("attachments");
+    loop {
+        match editor.read_line(prompt)? {
+            Signal::Success(line) => {
+                prompt.notice.take();
+                return Ok(Some(route_input(&line, prompt.monitor.status().unread)));
+            }
+            Signal::HostCommand(command) if command == PASTE_IMAGE => {
+                *prompt.notice.borrow_mut() = paste_image(editor, &attachments)
+            }
+            _ => return Ok(None),
+        }
+    }
 }
 
 fn rule(skin: &MadSkin, width: usize) -> String {
@@ -875,6 +895,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
         color,
+        notice: RefCell::new(None),
     };
     let mut shell_state = chat_cell::ShellState::default();
     loop {
@@ -946,48 +967,5 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_worker_turns_log_before_the_reply() {
-        assert!(logged_before_reply(Trigger::Worker));
-        assert!(!logged_before_reply(Trigger::User));
-    }
-
-    #[test]
-    fn unanswered_turn_restores_the_draft() {
-        assert_eq!(
-            draft_after(TurnOutcome::Unanswered, "hi".into()),
-            Some("hi".into())
-        );
-        assert_eq!(draft_after(TurnOutcome::Replied, "hi".into()), None);
-        assert_eq!(draft_after(TurnOutcome::Exit, "hi".into()), None);
-    }
-
-    #[test]
-    fn rule_follows_shown_output_only() {
-        assert!(!shown_output(&[]));
-        assert!(shown_output(&[OutputBlock::Separator]));
-    }
-
-    #[test]
-    fn rule_spans_the_given_width() {
-        let line = rule(&MadSkin::no_style(), 20);
-        assert_eq!(line.trim_end().chars().count(), 20);
-    }
-
-    #[test]
-    fn second_esc_clears_the_draft() {
-        let (pending, first) = esc_esc(false, ReedlineEvent::Esc);
-        assert!(pending && first == ReedlineEvent::Esc);
-        let (pending, second) = esc_esc(pending, ReedlineEvent::Esc);
-        assert!(!pending && second == ReedlineEvent::Edit(vec![EditCommand::Clear]));
-    }
-
-    #[test]
-    fn other_event_resets_pending_esc() {
-        let (pending, event) = esc_esc(true, ReedlineEvent::Enter);
-        assert!(!pending && event == ReedlineEvent::Enter);
-    }
-}
+#[path = "chat_tests.rs"]
+mod tests;
