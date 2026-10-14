@@ -6,6 +6,7 @@ use ralph_core::chat_cell::{
     build_message, diff_snapshots, display_results, parse_cells, parse_snapshots, shell_stdin,
     strip_shell_preamble, Cell, CellLimits, CellRun, SavedState, ShellKind,
 };
+use std::borrow::Cow;
 use std::ffi::OsString;
 use std::io::{self, IsTerminal, Read, Write};
 use std::os::fd::AsRawFd;
@@ -279,11 +280,32 @@ fn announce(index: usize, runtime: &str) {
     println!("{dim}▸ cell {index} · {runtime}{reset}");
 }
 
+fn expand_bang_shell(message: &str) -> Cow<'_, str> {
+    let Some(body) = message.strip_prefix('!') else {
+        return Cow::Borrowed(message);
+    };
+    if body.trim().is_empty() {
+        return Cow::Borrowed(message);
+    }
+    let body = body.trim_end_matches(['\n', '\r']);
+    let longest = body
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            trimmed.len() - trimmed.trim_start_matches('`').len()
+        })
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    Cow::Owned(format!("{fence}!shell\n{body}\n{fence}"))
+}
+
 pub fn prepare(
     message: &str,
     limits: CellLimits,
     state: &mut ShellState,
 ) -> Result<Prepared, TurnOutcome> {
+    let message = &*expand_bang_shell(message);
     let cells = parse_cells(message);
     if cells.is_empty() {
         return Ok(Prepared {
@@ -345,5 +367,44 @@ mod tests {
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(find_on_path("tool", &path), Some(tool));
         assert_eq!(find_on_path("too", &path), None);
+    }
+
+    #[test]
+    fn leading_bang_becomes_a_shell_cell() {
+        assert_eq!(
+            expand_bang_shell("!echo something"),
+            "```!shell\necho something\n```"
+        );
+        assert_eq!(
+            parse_cells(&expand_bang_shell("!echo something")),
+            parse_cells("```!shell\necho something\n```")
+        );
+    }
+
+    #[test]
+    fn every_line_after_the_bang_is_the_body() {
+        let expanded = expand_bang_shell("!cd /tmp\npwd\n");
+        assert_eq!(expanded, "```!shell\ncd /tmp\npwd\n```");
+        assert_eq!(parse_cells(&expanded)[0].code, "cd /tmp\npwd");
+    }
+
+    #[test]
+    fn body_with_backtick_fences_gets_a_longer_fence() {
+        let expanded = expand_bang_shell("!cat <<EOF\n```\nEOF");
+        assert_eq!(expanded, "````!shell\ncat <<EOF\n```\nEOF\n````");
+        assert_eq!(parse_cells(&expanded)[0].code, "cat <<EOF\n```\nEOF");
+    }
+
+    #[test]
+    fn bang_without_a_command_stays_plain_text() {
+        assert_eq!(expand_bang_shell("!"), "!");
+        assert_eq!(expand_bang_shell("!  \n "), "!  \n ");
+    }
+
+    #[test]
+    fn only_a_bang_at_the_very_start_counts() {
+        assert_eq!(expand_bang_shell(" !echo"), " !echo");
+        assert_eq!(expand_bang_shell("hello !echo"), "hello !echo");
+        assert_eq!(expand_bang_shell("```!zsh\nls\n```"), "```!zsh\nls\n```");
     }
 }
