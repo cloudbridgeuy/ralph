@@ -1,10 +1,10 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat_cell;
+use crate::chat_inbox::{self, Display};
 use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::config::AppConfig;
-use crate::frame::worker_header;
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::inbox_alert;
 use crate::invoke::build_chat_command;
@@ -36,13 +36,12 @@ use ralph_core::chat_skills::{
 };
 use ralph_core::chat_status::{
     footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
-    store_workers, worker_states, Memory, Route, RunningWorker, Status, INBOX_USAGE,
+    store_workers, worker_states, Memory, Route, RunningWorker, Status,
 };
-use ralph_core::inbox;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    blocked_path, chat_message, ready_path, unreported_path, waiting_path, Report, ATTACHMENTS_DIR,
-    INBOX_DIR, READY_DIR,
+    blocked_path, ready_path, unreported_path, waiting_path, Report, ATTACHMENTS_DIR, INBOX_DIR,
+    READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, CheckMemory,
@@ -405,7 +404,7 @@ impl ChatPrompt {
     }
 }
 
-fn screen_columns() -> usize {
+pub(crate) fn screen_columns() -> usize {
     wrap_width(
         crossterm::terminal::size()
             .map(|(w, _)| usize::from(w))
@@ -899,6 +898,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         color,
         notice: RefCell::new(None),
     };
+    let inbox_display = |color| Display {
+        ctx: RenderContext::new(&agent_highlighter, color),
+        theme: &agent_theme,
+        color,
+    };
     let mut shell_state = chat_cell::ShellState::default();
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
@@ -934,34 +938,19 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     println!("No unread reports.");
                     continue;
                 }
-                let logged: Vec<String> = reports
-                    .iter()
-                    .map(|report| chat_message(std::slice::from_ref(report)))
-                    .collect();
-                let message = chat_message(&reports);
-                let ctx = RenderContext::new(&agent_highlighter, color);
-                let shown: Vec<String> = reports
-                    .iter()
-                    .map(|report| render_report(report, &ctx, &agent_theme, color))
-                    .collect();
-                print!("{}", shown.join("\n\n"));
-                turn.run(Trigger::Worker, &logged, &message)?
+                let unread = chat_inbox::show_unread(&reports, &inbox_display(color));
+                turn.run(Trigger::Worker, &unread.logged, &unread.message)?
             }
             Route::ListInbox => {
-                let ledger = monitor.inbox.ledger()?;
-                println!("{}", inbox::list(ledger.entries(), chrono::Utc::now()));
+                chat_inbox::list(&monitor.inbox)?;
                 continue;
             }
             Route::PeekInbox(id) => {
-                let ctx = RenderContext::new(&agent_highlighter, color);
-                match monitor.inbox.ledger()?.get(id) {
-                    Some(e) => println!("{}", render_report(&e.report, &ctx, &agent_theme, color)),
-                    None => println!("No report {id}. /inbox list shows IDs."),
-                }
+                chat_inbox::peek(&monitor.inbox, id, &inbox_display(color))?;
                 continue;
             }
             Route::InboxUsage => {
-                println!("{INBOX_USAGE}");
+                chat_inbox::usage();
                 continue;
             }
         };
@@ -971,24 +960,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
-}
-
-fn render_report(
-    report: &Report,
-    ctx: &RenderContext,
-    theme: &MarkdownTheme,
-    color: bool,
-) -> String {
-    format!(
-        "{}\n{}",
-        worker_header(
-            &report.worker,
-            &report.status,
-            screen_columns(),
-            color.then_some(&theme.palette)
-        ),
-        render_markdown(ctx, &report.text, theme)
-    )
 }
 
 #[cfg(test)]
