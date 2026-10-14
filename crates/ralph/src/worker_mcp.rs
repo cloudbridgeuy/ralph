@@ -1,4 +1,4 @@
-use ralph_core::inbox::{drop_log_line, Entry, Ledger, ReportId};
+use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision,
@@ -107,25 +107,25 @@ impl Inbox {
     }
 
     pub fn peek(&self) -> io::Result<Vec<Report>> {
-        self.sync(|ledger| (ledger.unread(), false))
+        self.sync(|ledger| (ledger.reports(), false))
     }
 
     pub fn drain(&self) -> io::Result<Vec<Report>> {
         self.sync(|ledger| {
-            let reports = ledger.read_unread();
+            let reports = ledger.take_all();
             let changed = !reports.is_empty();
             (reports, changed)
         })
     }
 
-    pub fn drop_report(&self, id: ReportId) -> io::Result<Option<Entry>> {
+    pub fn drop_report(&self, position: Position) -> io::Result<Option<Entry>> {
         let log = self.dir.with_file_name(DROP_LOG);
-        self.sync(|ledger| match ledger.get(id).cloned() {
+        self.sync(|ledger| match ledger.get(position).cloned() {
             None => (Ok(None), false),
             Some(entry) => match append_line(&log, &drop_log_line(&entry, chrono::Utc::now())) {
                 Err(e) => (Err(e), false),
                 Ok(()) => {
-                    ledger.remove(id);
+                    ledger.remove(position);
                     (Ok(Some(entry)), true)
                 }
             },
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn ledger_keeps_stable_ids_across_reads() {
+    fn drained_reports_leave_the_ledger_and_the_queue_restarts_at_one() {
         let dir = tempfile::tempdir().unwrap();
         let inbox = Inbox::new(dir.path().join("inbox"));
         let post = |text: &str, seq| {
@@ -345,18 +345,13 @@ mod tests {
         assert_eq!(inbox.drain().unwrap().len(), 2);
         post("three", 3);
 
-        let unread = inbox.peek().unwrap();
-        assert_eq!(unread.len(), 1);
-        assert_eq!(unread[0].text, "three");
+        let queued = inbox.peek().unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].text, "three");
+        assert!(inbox.pending().unwrap().is_empty());
         let value: Value =
             serde_json::from_slice(&fs::read(dir.path().join("inbox.json")).unwrap()).unwrap();
-        let summary: Vec<_> = value["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|e| (e["id"].as_u64().unwrap(), e["read"].as_bool().unwrap()))
-            .collect();
-        assert_eq!(summary, [(1, true), (2, true), (3, false)]);
+        assert_eq!(value["entries"].as_array().unwrap().len(), 1);
     }
 
     #[test]

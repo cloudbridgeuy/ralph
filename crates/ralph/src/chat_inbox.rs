@@ -4,7 +4,7 @@ use crate::markdown::MarkdownTheme;
 use crate::render::{render_markdown, RenderContext};
 use crate::worker_mcp::Inbox;
 use ralph_core::chat_status::INBOX_USAGE;
-use ralph_core::inbox::{self, ReportId};
+use ralph_core::inbox::{self, Position};
 use ralph_core::worker::{chat_message, Report};
 use std::io;
 
@@ -41,18 +41,18 @@ pub fn list(inbox: &Inbox) -> io::Result<()> {
     Ok(())
 }
 
-pub fn peek(inbox: &Inbox, id: ReportId, display: &Display) -> io::Result<()> {
-    match inbox.ledger()?.get(id) {
+pub fn peek(inbox: &Inbox, position: Position, display: &Display) -> io::Result<()> {
+    match inbox.ledger()?.get(position) {
         Some(e) => println!("{}", render_report(&e.report, display)),
-        None => println!("No report {id}. /inbox list shows IDs."),
+        None => println!("No report {position}. /inbox list shows the queue."),
     }
     Ok(())
 }
 
-pub fn drop_report(inbox: &Inbox, id: ReportId) -> io::Result<()> {
-    match inbox.drop_report(id)? {
-        Some(_) => println!("Dropped report {id}."),
-        None => println!("No report {id}. /inbox list shows IDs."),
+pub fn drop_report(inbox: &Inbox, position: Position) -> io::Result<()> {
+    match inbox.drop_report(position)? {
+        Some(_) => println!("Dropped report {position}."),
+        None => println!("No report {position}. /inbox list shows the queue."),
     }
     Ok(())
 }
