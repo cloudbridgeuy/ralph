@@ -263,14 +263,16 @@ pub fn status_line(status: &Status, width: usize) -> String {
     let unread = status.unread;
     let long_cache = status.turn.map(|turn| turn.long_label());
     let compact_cache = status.turn.map(|turn| turn.compact_label());
-    let build = |mail: String, workers: Option<String>, mem: String, cache: Option<String>| {
-        [Some(mail), workers, Some(mem), cache]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(SEPARATOR)
-    };
-    let long_mail = || format!("📬 {unread} unread");
+    let build =
+        |mail: Option<String>, workers: Option<String>, mem: String, cache: Option<String>| {
+            [mail, workers, Some(mem), cache]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(SEPARATOR)
+        };
+    let long_mail = || (unread > 0).then(|| format!("📬 {unread} unread"));
+    let compact_mail = || (unread > 0).then(|| format!("📬 {unread}"));
     let long_mem = || format!("mem {msgs} msgs ~{tok} tok");
     let compact_mem = || format!("{msgs}m ~{tok}");
     let candidates = vec![
@@ -293,13 +295,13 @@ pub fn status_line(status: &Status, width: usize) -> String {
             long_cache,
         ),
         build(
-            format!("📬 {unread}"),
+            compact_mail(),
             (count > 0).then(|| format!("{count}w")),
             compact_mem(),
             compact_cache.clone(),
         ),
-        build(format!("📬 {unread}"), None, compact_mem(), compact_cache),
-        format!("📬 {unread}"),
+        build(compact_mail(), None, compact_mem(), compact_cache),
+        compact_mail().unwrap_or_else(compact_mem),
     ];
     fit(candidates, width)
 }
@@ -472,6 +474,51 @@ mod tests {
             status_line(&status, 200),
             "📬 2 unread · mem 132 msgs ~4.1k tok"
         );
+    }
+
+    #[test]
+    fn status_line_hides_mail_when_inbox_is_empty() {
+        let status = Status {
+            unread: 0,
+            ..status()
+        };
+        let full = status_line(&status, 200);
+        assert_eq!(
+            full,
+            "workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok"
+        );
+        assert!(!full.contains("📬"));
+        assert!(!full.starts_with(SEPARATOR));
+        let no_workers = Status {
+            workers: Vec::new(),
+            ..status
+        };
+        assert_eq!(status_line(&no_workers, 200), "mem 132 msgs ~4.1k tok");
+    }
+
+    #[test]
+    fn status_line_without_mail_falls_back_to_compact_memory() {
+        let status = Status {
+            unread: 0,
+            ..status()
+        };
+        let narrow = status_line(&status, 12);
+        assert_eq!(narrow, "132m ~4.1k");
+        assert!((0..120).all(|w| {
+            let line = status_line(&status, w);
+            line.width() <= w && !line.contains("📬")
+        }));
+    }
+
+    #[test]
+    fn status_line_with_one_unread_keeps_mail_at_every_form() {
+        let status = Status {
+            unread: 1,
+            ..status()
+        };
+        assert!(status_line(&status, 200).starts_with("📬 1 unread · "));
+        assert_eq!(status_line(&status, 4), "📬 1");
+        assert!(status_line(&status, 30).contains("📬 1 · "));
     }
 
     #[test]
