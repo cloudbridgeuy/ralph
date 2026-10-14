@@ -541,4 +541,35 @@ mod tests {
             assert_ne!(rolled.lines, first.lines);
         }
     }
+
+    #[test]
+    fn frozen_prompt_is_byte_stable_inside_window() {
+        let entries: Vec<Entry> = (0..700).map(|i| entry(i, 5)).collect();
+        let napped = summarized(&entries);
+        for w in [1, 32, 199] {
+            let h = 400 / w * w;
+            let before_nap = summarized(&entries[..h / 2]);
+            let first = frozen_block(&entries[..h], &before_nap, 200, w, None);
+            assert!(!first.lines.is_empty(), "w={w}");
+            let prompt = crate::chat::turn_system_prompt(&first.lines);
+            let nap_at = h + w / 2;
+            let mut pinned = first;
+            for t in h..h + w {
+                let tree = if t < nap_at { &before_nap } else { &napped };
+                pinned = frozen_block(&entries[..t], tree, 200, w, Some(pinned));
+                assert_eq!(pinned.end, h, "w={w} t={t}");
+                assert_eq!(
+                    crate::chat::turn_system_prompt(&pinned.lines),
+                    prompt,
+                    "w={w} t={t}"
+                );
+            }
+            let unpinned = frozen_block(&entries[..nap_at], &napped, 200, w, None);
+            assert_ne!(
+                crate::chat::turn_system_prompt(&unpinned.lines),
+                prompt,
+                "w={w}"
+            );
+        }
+    }
 }
