@@ -876,6 +876,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         monitor: Arc::clone(&monitor),
         color,
     };
+    let mut shell_state = chat_cell::ShellState::default();
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
         at_prompt.store(true, Ordering::SeqCst);
@@ -887,8 +888,15 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let outcome = match route {
             Route::Ignore => continue,
             Route::Send(message) => {
-                let outcome = match chat_cell::prepare(&message, cell_limits) {
-                    Ok(sent) => turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)?,
+                let outcome = match chat_cell::prepare(&message, cell_limits, &mut shell_state) {
+                    Ok(prepared) => {
+                        if let Some(shown) = &prepared.shown {
+                            let ctx = RenderContext::new(&agent_highlighter, color);
+                            print!("{}", render_markdown(&ctx, shown, &agent_theme));
+                        }
+                        let sent = prepared.sent;
+                        turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)?
+                    }
                     Err(outcome) => outcome,
                 };
                 if let Some(draft) = draft_after(outcome, message) {
