@@ -21,9 +21,9 @@ use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
 use ralph_core::chat::{
-    build_agents_args, build_attachments_args, build_mcp_args, mcp_config, resolve_frozen_window,
-    resolve_worker_check_secs, resolve_wrap_width, select_servers, turn_prompt, turn_system_prompt,
-    ChatMcpOptions, VIEW_LINES,
+    build_agents_args, build_attachments_args, build_mcp_args, build_nap_args, mcp_config,
+    resolve_frozen_window, resolve_worker_check_secs, resolve_wrap_width, select_servers,
+    turn_prompt, turn_system_prompt, ChatMcpOptions, VIEW_LINES,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_input::{input_lost_at_prompt, turn_end, InputWatch, TurnEnd, TurnSignals};
@@ -506,11 +506,9 @@ fn print_rule_after(blocks: &[OutputBlock]) {
     }
 }
 
-fn spawn_nap(store: &Path) -> io::Result<()> {
+fn spawn_nap(store: &Path, timeout_secs: u64) -> io::Result<()> {
     Command::new(std::env::current_exe()?)
-        .arg("chat-nap")
-        .arg("--store")
-        .arg(store)
+        .args(build_nap_args(store, timeout_secs))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -667,7 +665,10 @@ impl Turn<'_> {
                     self.append_logged(trigger, logged)?;
                 }
                 self.store.append(Role::Assistant, &reply)?;
-                warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
+                warn_if_err(
+                    spawn_nap(self.store_dir, self.timeout_secs),
+                    "Failed to start chat memory nap",
+                );
                 Ok(TurnOutcome::Replied)
             }
             _ => {
