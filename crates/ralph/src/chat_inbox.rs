@@ -49,6 +49,14 @@ pub fn peek(inbox: &Inbox, id: ReportId, display: &Display) -> io::Result<()> {
     Ok(())
 }
 
+pub fn drop_report(inbox: &Inbox, id: ReportId) -> io::Result<()> {
+    match inbox.drop_report(id)? {
+        Some(_) => println!("Dropped report {id}."),
+        None => println!("No report {id}. /inbox list shows IDs."),
+    }
+    Ok(())
+}
+
 pub fn usage() {
     println!("{INBOX_USAGE}");
 }

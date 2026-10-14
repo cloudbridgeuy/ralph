@@ -1,4 +1,4 @@
-use ralph_core::inbox::Ledger;
+use ralph_core::inbox::{drop_log_line, Entry, Ledger, ReportId};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision,
@@ -9,6 +9,8 @@ use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
+
+const DROP_LOG: &str = "inbox-drops.jsonl";
 
 pub struct Inbox {
     dir: PathBuf,
@@ -116,9 +118,32 @@ impl Inbox {
         })
     }
 
+    pub fn drop_report(&self, id: ReportId) -> io::Result<Option<Entry>> {
+        let log = self.dir.with_file_name(DROP_LOG);
+        self.sync(|ledger| match ledger.get(id).cloned() {
+            None => (Ok(None), false),
+            Some(entry) => match append_line(&log, &drop_log_line(&entry, chrono::Utc::now())) {
+                Err(e) => (Err(e), false),
+                Ok(()) => {
+                    ledger.remove(id);
+                    (Ok(Some(entry)), true)
+                }
+            },
+        })?
+    }
+
     pub fn ledger(&self) -> io::Result<Ledger> {
         self.sync(|ledger| (ledger.clone(), false))
     }
+}
+
+fn append_line(path: &Path, line: &str) -> io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(file, "{line}")?;
+    file.sync_all()
 }
 
 fn is_message(path: &Path) -> bool {

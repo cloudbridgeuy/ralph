@@ -949,6 +949,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 chat_inbox::peek(&monitor.inbox, id, &inbox_display(color))?;
                 continue;
             }
+            Route::DropInbox(id) => {
+                chat_inbox::drop_report(&monitor.inbox, id)?;
+                monitor.refresh(true);
+                continue;
+            }
             Route::InboxUsage => {
                 chat_inbox::usage();
                 continue;

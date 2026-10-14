@@ -9,7 +9,7 @@ const DEFAULT_STATE: &str = "running";
 const BUSY_STATE: &str = "busy";
 const IDLE_STATE: &str = "idle";
 const INBOX_COMMAND: &str = "/inbox";
-pub const INBOX_USAGE: &str = "Usage: /inbox [list | peek N]";
+pub const INBOX_USAGE: &str = "Usage: /inbox [list | peek N | drop N]";
 const SEPARATOR: &str = " · ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +103,7 @@ pub enum Route {
     ReadInbox,
     ListInbox,
     PeekInbox(ReportId),
+    DropInbox(ReportId),
     InboxUsage,
     Ignore,
 }
@@ -123,6 +124,7 @@ pub fn route_input(line: &str, unread: usize) -> Route {
             (None, ..) => Route::ReadInbox,
             (Some("list"), None, _) => Route::ListInbox,
             (Some("peek"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
+            (Some("drop"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::DropInbox),
             _ => Route::InboxUsage,
         };
     }
@@ -494,7 +496,14 @@ mod tests {
             route_input("/inbox peek 3", 0),
             Route::PeekInbox("3".parse().unwrap())
         );
+        assert_eq!(
+            route_input("/inbox drop 3", 0),
+            Route::DropInbox("3".parse().unwrap())
+        );
         for usage in [
+            "/inbox drop x",
+            "/inbox drop",
+            "/inbox drop 1 2",
             "/inbox peek x",
             "/inbox peek",
             "/inbox foo",
