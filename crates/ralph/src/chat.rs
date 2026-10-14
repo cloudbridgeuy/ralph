@@ -36,8 +36,9 @@ use ralph_core::chat_skills::{
 };
 use ralph_core::chat_status::{
     footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
-    store_workers, worker_states, Memory, Route, RunningWorker, Status,
+    store_workers, worker_states, Memory, Route, RunningWorker, Status, INBOX_USAGE,
 };
+use ralph_core::inbox;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
     blocked_path, chat_message, ready_path, unreported_path, waiting_path, Report, ATTACHMENTS_DIR,
@@ -938,25 +939,30 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     .map(|report| chat_message(std::slice::from_ref(report)))
                     .collect();
                 let message = chat_message(&reports);
-                let width = screen_columns();
                 let ctx = RenderContext::new(&agent_highlighter, color);
                 let shown: Vec<String> = reports
                     .iter()
-                    .map(|report| {
-                        format!(
-                            "{}\n{}",
-                            worker_header(
-                                &report.worker,
-                                &report.status,
-                                width,
-                                color.then_some(&agent_theme.palette)
-                            ),
-                            render_markdown(&ctx, &report.text, &agent_theme)
-                        )
-                    })
+                    .map(|report| render_report(report, &ctx, &agent_theme, color))
                     .collect();
                 print!("{}", shown.join("\n\n"));
                 turn.run(Trigger::Worker, &logged, &message)?
+            }
+            Route::ListInbox => {
+                let ledger = monitor.inbox.ledger()?;
+                println!("{}", inbox::list(ledger.entries(), chrono::Utc::now()));
+                continue;
+            }
+            Route::PeekInbox(id) => {
+                let ctx = RenderContext::new(&agent_highlighter, color);
+                match monitor.inbox.ledger()?.get(id) {
+                    Some(e) => println!("{}", render_report(&e.report, &ctx, &agent_theme, color)),
+                    None => println!("No report {id}. /inbox list shows IDs."),
+                }
+                continue;
+            }
+            Route::InboxUsage => {
+                println!("{INBOX_USAGE}");
+                continue;
             }
         };
         monitor.refresh(true);
@@ -965,6 +971,24 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn render_report(
+    report: &Report,
+    ctx: &RenderContext,
+    theme: &MarkdownTheme,
+    color: bool,
+) -> String {
+    format!(
+        "{}\n{}",
+        worker_header(
+            &report.worker,
+            &report.status,
+            screen_columns(),
+            color.then_some(&theme.palette)
+        ),
+        render_markdown(ctx, &report.text, theme)
+    )
 }
 
 #[cfg(test)]

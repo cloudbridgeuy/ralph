@@ -73,7 +73,7 @@ impl Inbox {
         fs::rename(tmp, path)
     }
 
-    fn sync(&self, mark_read: bool) -> io::Result<Vec<Report>> {
+    fn sync<T>(&self, act: impl FnOnce(&mut Ledger) -> (T, bool)) -> io::Result<T> {
         let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
         let mut ledger = self.load_ledger()?;
         let pending = self.pending()?;
@@ -94,26 +94,30 @@ impl Inbox {
             }
         }
         ledger.ingest(arrivals);
-        let reports = if mark_read {
-            ledger.read_unread()
-        } else {
-            ledger.unread()
-        };
-        if !pending.is_empty() || (mark_read && !reports.is_empty()) {
+        let (value, changed) = act(&mut ledger);
+        if !pending.is_empty() || changed {
             self.save_ledger(&ledger)?;
         }
         for path in pending {
             remove_if_present(&path)?;
         }
-        Ok(reports)
+        Ok(value)
     }
 
     pub fn peek(&self) -> io::Result<Vec<Report>> {
-        self.sync(false)
+        self.sync(|ledger| (ledger.unread(), false))
     }
 
     pub fn drain(&self) -> io::Result<Vec<Report>> {
-        self.sync(true)
+        self.sync(|ledger| {
+            let reports = ledger.read_unread();
+            let changed = !reports.is_empty();
+            (reports, changed)
+        })
+    }
+
+    pub fn ledger(&self) -> io::Result<Ledger> {
+        self.sync(|ledger| (ledger.clone(), false))
     }
 }
 

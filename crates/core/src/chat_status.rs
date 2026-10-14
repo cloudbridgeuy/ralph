@@ -1,3 +1,4 @@
+use crate::inbox::ReportId;
 use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
@@ -8,6 +9,7 @@ const DEFAULT_STATE: &str = "running";
 const BUSY_STATE: &str = "busy";
 const IDLE_STATE: &str = "idle";
 const INBOX_COMMAND: &str = "/inbox";
+pub const INBOX_USAGE: &str = "Usage: /inbox [list | peek N]";
 const SEPARATOR: &str = " · ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +101,9 @@ impl TurnCache {
 pub enum Route {
     Send(String),
     ReadInbox,
+    ListInbox,
+    PeekInbox(ReportId),
+    InboxUsage,
     Ignore,
 }
 
@@ -111,8 +116,17 @@ pub fn memory_size(msgs: usize, view_lines: &[String]) -> Memory {
 }
 
 pub fn route_input(line: &str, unread: usize) -> Route {
-    match line.trim() {
-        INBOX_COMMAND => Route::ReadInbox,
+    let line = line.trim();
+    let mut tokens = line.split_whitespace();
+    if tokens.next() == Some(INBOX_COMMAND) {
+        return match (tokens.next(), tokens.next(), tokens.next()) {
+            (None, ..) => Route::ReadInbox,
+            (Some("list"), None, _) => Route::ListInbox,
+            (Some("peek"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
+            _ => Route::InboxUsage,
+        };
+    }
+    match line {
         "" if unread > 0 => Route::ReadInbox,
         "" => Route::Ignore,
         message => Route::Send(message.to_string()),
@@ -475,6 +489,21 @@ mod tests {
         assert_eq!(route_input("  ", 3), Route::ReadInbox);
         assert_eq!(route_input("", 0), Route::Ignore);
         assert_eq!(route_input(" hi ", 3), Route::Send("hi".into()));
+        assert_eq!(route_input("/inbox list", 0), Route::ListInbox);
+        assert_eq!(
+            route_input("/inbox peek 3", 0),
+            Route::PeekInbox("3".parse().unwrap())
+        );
+        for usage in [
+            "/inbox peek x",
+            "/inbox peek",
+            "/inbox foo",
+            "/inbox list x",
+            "/inbox peek 1 2",
+        ] {
+            assert_eq!(route_input(usage, 3), Route::InboxUsage);
+        }
+        assert_eq!(route_input("/inboxfoo", 0), Route::Send("/inboxfoo".into()));
     }
 
     #[test]
