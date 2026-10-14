@@ -67,6 +67,7 @@ const PROMPT: &str = ">>> ";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
+const STORE_ENV: &str = "RALPH_CHAT_STORE";
 const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
@@ -76,10 +77,19 @@ const MEMORY_EVERY_POLLS: u64 = 10;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 const INPUT_LOST_EXIT: i32 = 129;
 
-fn default_store() -> io::Result<PathBuf> {
-    dirs::home_dir()
-        .map(|home| home.join(".ralph").join("chat"))
-        .ok_or_else(|| io::Error::other("home directory not found"))
+fn resolve_store(
+    flag: Option<PathBuf>,
+    env: Option<PathBuf>,
+    cwd: &Path,
+    home: Option<&Path>,
+) -> io::Result<PathBuf> {
+    let env = env.filter(|dir| !dir.as_os_str().is_empty());
+    match flag.or(env) {
+        Some(dir) => Ok(cwd.join(dir)),
+        None => home
+            .map(|home| home.join(".ralph").join("chat"))
+            .ok_or_else(|| io::Error::other("home directory not found")),
+    }
 }
 
 struct ChatEditMode {
@@ -783,10 +793,12 @@ fn read_claude_config() -> serde_json::Value {
 
 pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
-    let store_dir = match args.store {
-        Some(dir) => dir,
-        None => default_store()?,
-    };
+    let store_dir = resolve_store(
+        args.store,
+        std::env::var_os(STORE_ENV).map(PathBuf::from),
+        &std::env::current_dir()?,
+        dirs::home_dir().as_deref(),
+    )?;
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;

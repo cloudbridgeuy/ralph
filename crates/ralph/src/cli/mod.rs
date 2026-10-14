@@ -55,7 +55,7 @@ pub enum Commands {
 
 #[derive(clap::Args, Debug)]
 pub struct ChatArgs {
-    #[arg(long, value_name = "DIR", hide = true)]
+    #[arg(long, value_name = "DIR")]
     pub store: Option<std::path::PathBuf>,
 
     #[arg(long, default_value_t = CHAT_TIMEOUT_SECS)]
