@@ -21,7 +21,7 @@ use crate::warn::{warn, warn_if_err};
 use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
 use ralph_core::chat::{
-    build_agents_args, build_mcp_args, mcp_config, resolve_frozen_window,
+    build_agents_args, build_attachments_args, build_mcp_args, mcp_config, resolve_frozen_window,
     resolve_worker_check_secs, resolve_wrap_width, select_servers, turn_prompt, turn_system_prompt,
     ChatMcpOptions, VIEW_LINES,
 };
@@ -573,6 +573,7 @@ impl Turn<'_> {
             &turn_system_prompt(&frozen.lines),
             &[
                 build_mcp_args(self.mcp_config_path),
+                build_attachments_args(self.store_dir),
                 build_agents_args(),
                 self.plugin_args.to_vec(),
             ]
@@ -776,7 +777,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         Some(dir) => dir,
         None => default_store()?,
     };
-    std::fs::create_dir_all(&store_dir)?;
+    std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;
     let config = AppConfig::load().unwrap_or_else(|e| {
