@@ -198,7 +198,13 @@ fn diff_stat(chars: &[char], start: usize) -> Option<DiffStat> {
             parts: vec![(start, end)],
             end,
         })
-        .or_else(|| diff_pair(chars, start).filter(|stat| ends_token(stat.end)))
+        .or_else(|| {
+            diff_pair(chars, start).filter(|stat| {
+                ends_token(stat.end)
+                    || matches!(chars.get(stat.end), Some('.' | ',' | ';' | ':'))
+                        && ends_token(stat.end + 1)
+            })
+        })
 }
 
 fn signed_number_end(chars: &[char], sign: usize) -> Option<usize> {
@@ -559,6 +565,21 @@ mod tests {
     }
 
     #[test]
+    fn paint_colors_diff_stat_pairs_before_sentence_punctuation() {
+        let pair = format!("{GREEN}+9{COLOR_OFF}/{RED}-2{COLOR_OFF}");
+        assert_eq!(
+            paint(&mark_links("adds docs (+9/-2).")),
+            format!("adds docs ({pair}).")
+        );
+        assert_eq!(paint(&mark_links("+9/-2, then")), format!("{pair}, then"));
+        assert_eq!(
+            paint(&mark_links("(4 files, +377/\u{2212}160);")),
+            format!("(4 files, {GREEN}+377{COLOR_OFF}/{RED}\u{2212}160{COLOR_OFF});")
+        );
+        assert_eq!(paint(&mark_links("+9/-2:")), format!("{pair}:"));
+    }
+
+    #[test]
     fn signed_numbers_after_hash_words_that_are_not_headings_are_colored() {
         assert_eq!(
             paint(&mark_links("#303 +5\n#tag -2")),
@@ -608,8 +629,10 @@ mod tests {
             "-85)",
             "+12px",
             "abc-5",
-            "+204/-85,",
-            "(+204/-85).",
+            "+204/-85,x",
+            "(+204/-85).x",
+            "(+204/-85)..",
+            "-2.",
             "+204/+85",
             "-85/+204",
             "(+204)",
