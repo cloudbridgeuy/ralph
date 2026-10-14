@@ -13,6 +13,7 @@ mod chat_cell;
 mod chat_mcp;
 mod chat_memory;
 mod cli;
+mod clipboard;
 pub mod config;
 pub mod diff_highlight;
 pub mod formatting;

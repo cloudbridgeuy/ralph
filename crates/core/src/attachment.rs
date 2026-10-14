@@ -125,6 +125,18 @@ pub fn placeholder(number: usize, path: &str) -> String {
     format!("[Image #{number}: {path}]")
 }
 
+pub fn next_number(draft: &str) -> usize {
+    draft
+        .split("[Image #")
+        .skip(1)
+        .filter_map(|rest| {
+            let (digits, _) = rest.split_once(':')?;
+            digits.parse::<usize>().ok()
+        })
+        .max()
+        .map_or(1, |largest| largest + 1)
+}
+
 pub fn user_content(images: &[SavedImage], text: &str) -> Value {
     let mut blocks: Vec<Value> = images
         .iter()
@@ -224,6 +236,14 @@ mod tests {
     #[test]
     fn placeholder_format() {
         assert_eq!(placeholder(2, "/tmp/a.png"), "[Image #2: /tmp/a.png]");
+    }
+
+    #[test]
+    fn next_number_follows_largest_placeholder() {
+        assert_eq!(next_number(""), 1);
+        assert_eq!(next_number("[Image #1: /a.png]"), 2);
+        assert_eq!(next_number("[Image #1: /a] x [Image #3: /b]"), 4);
+        assert_eq!(next_number("[Image #x: /a]"), 1);
     }
 
     #[test]
