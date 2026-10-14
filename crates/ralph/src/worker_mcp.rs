@@ -1,3 +1,4 @@
+use ralph_core::inbox::Ledger;
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision,
@@ -7,14 +8,19 @@ use serde_json::Value;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 pub struct Inbox {
     dir: PathBuf,
+    lock: Mutex<()>,
 }
 
 impl Inbox {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            lock: Mutex::new(()),
+        }
     }
 
     pub fn post(&self, report: &Report, seq: u64) -> io::Result<()> {
@@ -48,27 +54,66 @@ impl Inbox {
         Ok(paths)
     }
 
-    pub fn peek(&self) -> io::Result<Vec<Report>> {
-        Ok(self
-            .pending()?
-            .iter()
-            .filter_map(|path| serde_json::from_slice(&fs::read(path).ok()?).ok())
-            .collect())
+    fn ledger_path(&self) -> PathBuf {
+        self.dir.with_extension("json")
     }
 
-    pub fn drain(&self) -> io::Result<Vec<Report>> {
-        let mut reports = Vec::new();
-        for path in self.pending()? {
-            match serde_json::from_slice(&fs::read(&path)?) {
-                Ok(report) => reports.push(report),
+    fn load_ledger(&self) -> io::Result<Ledger> {
+        match fs::read(self.ledger_path()) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Ledger::default()),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn save_ledger(&self, ledger: &Ledger) -> io::Result<()> {
+        let path = self.ledger_path();
+        let tmp = path.with_file_name(".inbox.json.tmp");
+        fs::write(&tmp, serde_json::to_vec(ledger)?)?;
+        fs::rename(tmp, path)
+    }
+
+    fn sync(&self, mark_read: bool) -> io::Result<Vec<Report>> {
+        let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut ledger = self.load_ledger()?;
+        let pending = self.pending()?;
+        let mut arrivals = Vec::new();
+        for path in &pending {
+            match serde_json::from_slice(&fs::read(path)?) {
+                Ok(report) => {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    arrivals.push((name, report));
+                }
                 Err(e) => crate::warn::warn(format!(
                     "dropping malformed inbox file {}: {e}",
                     path.display()
                 )),
             }
-            fs::remove_file(path)?;
+        }
+        ledger.ingest(arrivals);
+        let reports = if mark_read {
+            ledger.read_unread()
+        } else {
+            ledger.unread()
+        };
+        if !pending.is_empty() || (mark_read && !reports.is_empty()) {
+            self.save_ledger(&ledger)?;
+        }
+        for path in pending {
+            remove_if_present(&path)?;
         }
         Ok(reports)
+    }
+
+    pub fn peek(&self) -> io::Result<Vec<Report>> {
+        self.sync(false)
+    }
+
+    pub fn drain(&self) -> io::Result<Vec<Report>> {
+        self.sync(true)
     }
 }
 
@@ -251,6 +296,38 @@ mod tests {
         assert_eq!(reports[0].worker, "GUZ-1");
         assert_eq!(reports[0].text, "hello");
         assert!(inbox.peek().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ledger_keeps_stable_ids_across_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let post = |text: &str, seq| {
+            let report = Report {
+                worker: "A".to_string(),
+                at: format!("2026-01-01T00:00:0{seq}Z"),
+                status: "done".to_string(),
+                text: text.to_string(),
+            };
+            inbox.post(&report, seq).unwrap();
+        };
+        post("one", 1);
+        post("two", 2);
+        assert_eq!(inbox.drain().unwrap().len(), 2);
+        post("three", 3);
+
+        let unread = inbox.peek().unwrap();
+        assert_eq!(unread.len(), 1);
+        assert_eq!(unread[0].text, "three");
+        let value: Value =
+            serde_json::from_slice(&fs::read(dir.path().join("inbox.json")).unwrap()).unwrap();
+        let summary: Vec<_> = value["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["id"].as_u64().unwrap(), e["read"].as_bool().unwrap()))
+            .collect();
+        assert_eq!(summary, [(1, true), (2, true), (3, false)]);
     }
 
     #[test]
