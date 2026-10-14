@@ -45,7 +45,7 @@ crossterm = "0.29"
 unicode-linebreak = "0.1.5"
 
 # SIGINT / SIGTERM / SIGHUP handling
-signal-hook = "0.3"
+signal-hook = "0.4"
 
 # Configuration directories
 dirs = "7.0.0"
@@ -74,7 +74,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # SHA-256 hashing
-sha2 = "0.10"
+sha2 = "0.11"
 
 # Diff generation
 similar = "3.2.0"
