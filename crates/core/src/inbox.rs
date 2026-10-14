@@ -2,19 +2,25 @@ use crate::worker::Report;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::num::NonZeroUsize;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ReportId(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position(NonZeroUsize);
 
-impl fmt::Display for ReportId {
+impl Position {
+    fn index(self) -> usize {
+        self.0.get() - 1
+    }
+}
+
+impl fmt::Display for Position {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl FromStr for ReportId {
+impl FromStr for Position {
     type Err = std::num::ParseIntError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -22,25 +28,43 @@ impl FromStr for ReportId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Entry {
-    pub id: ReportId,
     pub source: String,
-    pub read: bool,
     pub report: Report,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "StoredLedger")]
 pub struct Ledger {
-    next_id: u64,
     entries: Vec<Entry>,
 }
 
-impl Default for Ledger {
-    fn default() -> Self {
+#[derive(Deserialize)]
+struct StoredLedger {
+    entries: Vec<StoredEntry>,
+}
+
+#[derive(Deserialize)]
+struct StoredEntry {
+    source: String,
+    #[serde(default)]
+    read: bool,
+    report: Report,
+}
+
+impl From<StoredLedger> for Ledger {
+    fn from(stored: StoredLedger) -> Self {
         Self {
-            next_id: 1,
-            entries: Vec::new(),
+            entries: stored
+                .entries
+                .into_iter()
+                .filter(|e| !e.read)
+                .map(|e| Entry {
+                    source: e.source,
+                    report: e.report,
+                })
+                .collect(),
         }
     }
 }
@@ -51,13 +75,7 @@ impl Ledger {
             if self.entries.iter().any(|e| e.source == source) {
                 continue;
             }
-            self.entries.push(Entry {
-                id: ReportId(self.next_id),
-                source,
-                read: false,
-                report,
-            });
-            self.next_id += 1;
+            self.entries.push(Entry { source, report });
         }
     }
 
@@ -65,39 +83,26 @@ impl Ledger {
         &self.entries
     }
 
-    pub fn get(&self, id: ReportId) -> Option<&Entry> {
-        self.entries.iter().find(|e| e.id == id)
+    pub fn get(&self, position: Position) -> Option<&Entry> {
+        self.entries.get(position.index())
     }
 
-    pub fn remove(&mut self, id: ReportId) -> Option<Entry> {
-        let at = self.entries.iter().position(|e| e.id == id)?;
-        Some(self.entries.remove(at))
+    pub fn remove(&mut self, position: Position) -> Option<Entry> {
+        (position.index() < self.entries.len()).then(|| self.entries.remove(position.index()))
     }
 
-    pub fn unread(&self) -> Vec<Report> {
-        self.entries
-            .iter()
-            .filter(|e| !e.read)
-            .map(|e| e.report.clone())
-            .collect()
+    pub fn reports(&self) -> Vec<Report> {
+        self.entries.iter().map(|e| e.report.clone()).collect()
     }
 
-    pub fn read_unread(&mut self) -> Vec<Report> {
-        self.entries
-            .iter_mut()
-            .filter(|e| !e.read)
-            .map(|e| {
-                e.read = true;
-                e.report.clone()
-            })
-            .collect()
+    pub fn take_all(&mut self) -> Vec<Report> {
+        self.entries.drain(..).map(|e| e.report).collect()
     }
 }
 
 pub fn drop_log_line(entry: &Entry, now: DateTime<Utc>) -> String {
     serde_json::json!({
         "timestamp": now.to_rfc3339(),
-        "id": entry.id,
         "worker": entry.report.worker,
         "status": entry.report.status,
         "text": entry.report.text,
@@ -122,33 +127,31 @@ pub fn list(entries: &[Entry], now: DateTime<Utc>) -> String {
     if entries.is_empty() {
         return "No reports.".to_string();
     }
-    let rows: Vec<[String; 5]> = entries
+    let rows: Vec<[String; 4]> = entries
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(i, e)| {
             [
-                format!("#{}", e.id),
+                format!("#{}", i + 1),
                 e.report.worker.clone(),
                 e.report.status.clone(),
                 age(&e.report.at, now),
-                if e.read { "read" } else { "unread" }.to_string(),
             ]
         })
         .collect();
-    let widths: [usize; 4] =
+    let widths: [usize; 3] =
         std::array::from_fn(|i| rows.iter().map(|r| r[i].chars().count()).max().unwrap_or(0));
     rows.iter()
         .map(|r| {
             format!(
-                "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
+                "{:<w0$}  {:<w1$}  {:<w2$}  {}",
                 r[0],
                 r[1],
                 r[2],
                 r[3],
-                r[4],
                 w0 = widths[0],
                 w1 = widths[1],
                 w2 = widths[2],
-                w3 = widths[3],
             )
         })
         .collect::<Vec<_>>()
@@ -171,96 +174,17 @@ mod tests {
         )
     }
 
-    fn ids(ledger: &Ledger) -> Vec<String> {
-        ledger.entries.iter().map(|e| e.id.to_string()).collect()
+    fn pos(n: usize) -> Position {
+        n.to_string().parse().unwrap()
     }
 
-    #[test]
-    fn ids_follow_arrival_order_from_one() {
-        let mut ledger = Ledger::default();
-        ledger.ingest(vec![arrival("a"), arrival("b")]);
-        assert_eq!(ids(&ledger), ["1", "2"]);
+    fn sources(ledger: &Ledger) -> Vec<&str> {
+        ledger.entries.iter().map(|e| e.source.as_str()).collect()
     }
 
-    #[test]
-    fn duplicate_source_is_skipped() {
-        let mut ledger = Ledger::default();
-        ledger.ingest(vec![arrival("a")]);
-        ledger.ingest(vec![arrival("a"), arrival("b")]);
-        assert_eq!(ids(&ledger), ["1", "2"]);
-    }
-
-    #[test]
-    fn reading_keeps_ids_and_later_arrivals_continue() {
-        let mut ledger = Ledger::default();
-        ledger.ingest(vec![arrival("a"), arrival("b")]);
-        assert_eq!(ledger.read_unread().len(), 2);
-        assert!(ledger.unread().is_empty());
-        ledger.ingest(vec![arrival("c")]);
-        assert_eq!(ids(&ledger), ["1", "2", "3"]);
-        assert_eq!(ledger.unread().len(), 1);
-        assert!(ledger.entries[..2].iter().all(|e| e.read));
-    }
-
-    #[test]
-    fn remove_takes_only_that_entry_and_never_reuses_its_id() {
-        let mut ledger = Ledger::default();
-        ledger.ingest(vec![arrival("a"), arrival("b"), arrival("c")]);
-        let id = ledger.entries[2].id;
-        assert_eq!(ledger.remove(id).map(|e| e.report.text), Some("c".into()));
-        assert_eq!(ledger.remove(id), None);
-        ledger.ingest(vec![arrival("d")]);
-        assert_eq!(ids(&ledger), ["1", "2", "4"]);
-    }
-
-    #[test]
-    fn drop_log_line_is_one_json_object_with_the_report() {
-        let mut ledger = Ledger::default();
-        ledger.ingest(vec![arrival("a")]);
-        let now = DateTime::parse_from_rfc3339("2026-01-02T03:04:05Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let line = drop_log_line(&ledger.entries[0], now);
-        assert!(!line.contains('\n'));
-        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(
-            value,
-            serde_json::json!({
-                "timestamp": "2026-01-02T03:04:05+00:00",
-                "id": 1,
-                "worker": "A",
-                "status": "done",
-                "text": "a",
-            })
-        );
-    }
-
-    #[test]
-    fn removed_id_is_not_reused() {
-        let mut ledger = Ledger::default();
-        ledger.ingest(vec![arrival("a"), arrival("b"), arrival("c")]);
-        ledger.entries.retain(|e| e.id.to_string() != "2");
-        assert_eq!(ids(&ledger), ["1", "3"]);
-        ledger.entries.retain(|e| e.id.to_string() != "3");
-        ledger.ingest(vec![arrival("d")]);
-        assert_eq!(ids(&ledger), ["1", "4"]);
-    }
-
-    #[test]
-    fn serde_round_trip() {
-        let mut ledger = Ledger::default();
-        ledger.ingest(vec![arrival("a"), arrival("b")]);
-        ledger.read_unread();
-        ledger.ingest(vec![arrival("c")]);
-        let json = serde_json::to_string(&ledger).unwrap();
-        assert_eq!(serde_json::from_str::<Ledger>(&json).unwrap(), ledger);
-    }
-
-    fn entry(id: &str, worker: &str, at: &str, read: bool) -> Entry {
+    fn entry(worker: &str, at: &str) -> Entry {
         Entry {
-            id: id.parse().unwrap(),
-            source: id.to_string(),
-            read,
+            source: worker.to_string(),
             report: Report {
                 worker: worker.to_string(),
                 at: at.to_string(),
@@ -275,18 +199,99 @@ mod tests {
     }
 
     #[test]
-    fn report_id_parses_numbers_only() {
-        assert_eq!("12".parse::<ReportId>().unwrap().to_string(), "12");
-        assert!("x".parse::<ReportId>().is_err());
-        assert!("-1".parse::<ReportId>().is_err());
+    fn ingest_skips_known_sources() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a"), arrival("b")]);
+        ledger.ingest(vec![arrival("b"), arrival("c")]);
+        assert_eq!(sources(&ledger), ["a", "b", "c"]);
     }
 
     #[test]
-    fn get_finds_by_id() {
+    fn position_parses_positive_numbers_only() {
+        assert_eq!("12".parse::<Position>().unwrap().to_string(), "12");
+        for bad in ["0", "-1", "x", ""] {
+            assert!(bad.parse::<Position>().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn get_finds_by_position_and_removes_nothing() {
         let mut ledger = Ledger::default();
         ledger.ingest(vec![arrival("a"), arrival("b")]);
-        assert_eq!(ledger.get("2".parse().unwrap()).unwrap().source, "b");
-        assert!(ledger.get("3".parse().unwrap()).is_none());
+        assert_eq!(ledger.get(pos(2)).unwrap().source, "b");
+        assert!(ledger.get(pos(3)).is_none());
+        assert_eq!(ledger.reports().len(), 2);
+        assert_eq!(sources(&ledger), ["a", "b"]);
+    }
+
+    #[test]
+    fn remove_shifts_later_positions() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a"), arrival("b"), arrival("c")]);
+        assert_eq!(ledger.remove(pos(2)).unwrap().source, "b");
+        assert!(ledger.remove(pos(3)).is_none());
+        assert_eq!(ledger.get(pos(2)).unwrap().source, "c");
+    }
+
+    #[test]
+    fn take_all_empties_the_queue_and_new_arrivals_start_at_one() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a"), arrival("b")]);
+        let texts: Vec<_> = ledger.take_all().into_iter().map(|r| r.text).collect();
+        assert_eq!(texts, ["a", "b"]);
+        assert!(ledger.entries().is_empty());
+        ledger.ingest(vec![arrival("c")]);
+        assert_eq!(ledger.get(pos(1)).unwrap().source, "c");
+    }
+
+    #[test]
+    fn old_ledger_drops_read_entries_and_ignores_unknown_fields() {
+        let report =
+            |t: &str| serde_json::json!({"worker": "A", "at": "t", "status": "done", "text": t});
+        let old = serde_json::json!({
+            "next_id": 4,
+            "entries": [
+                {"id": 1, "source": "a", "read": true, "report": report("a")},
+                {"id": 2, "source": "b", "read": false, "report": report("b")},
+                {"id": 3, "source": "c", "report": report("c")},
+            ],
+        });
+        let ledger: Ledger = serde_json::from_value(old).unwrap();
+        assert_eq!(sources(&ledger), ["b", "c"]);
+    }
+
+    #[test]
+    fn serde_round_trip_uses_the_new_shape() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a"), arrival("b")]);
+        let value = serde_json::to_value(&ledger).unwrap();
+        assert_eq!(
+            value.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["entries"]
+        );
+        assert_eq!(
+            value["entries"][0]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["report", "source"]
+        );
+        assert_eq!(serde_json::from_value::<Ledger>(value).unwrap(), ledger);
+    }
+
+    #[test]
+    fn drop_log_line_has_no_id() {
+        let line = drop_log_line(&entry("A", "t"), "2026-01-02T03:04:05Z".parse().unwrap());
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&line).unwrap(),
+            serde_json::json!({
+                "timestamp": "2026-01-02T03:04:05+00:00",
+                "worker": "A",
+                "status": "done",
+                "text": "",
+            })
+        );
     }
 
     #[test]
@@ -295,15 +300,13 @@ mod tests {
     }
 
     #[test]
-    fn list_pads_columns_and_marks_read_state() {
-        let entries = [
-            entry("1", "A", "2026-01-09T23:59:30Z", true),
-            entry("10", "GUZ-1", "2026-01-09T23:00:00Z", false),
-        ];
-        assert_eq!(
-            list(&entries, now()),
-            "#1   A      done  30s  read\n#10  GUZ-1  done  1h   unread"
-        );
+    fn list_numbers_by_position_and_pads_columns() {
+        let mut entries: Vec<_> = (0..9).map(|_| entry("A", "2026-01-09T23:59:30Z")).collect();
+        entries.push(entry("GUZ-1", "2026-01-09T23:00:00Z"));
+        let out = list(&entries, now());
+        let lines: Vec<_> = out.lines().collect();
+        assert_eq!(lines[0], "#1   A      done  30s");
+        assert_eq!(lines[9], "#10  GUZ-1  done  1h");
     }
 
     #[test]

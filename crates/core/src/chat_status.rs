@@ -1,4 +1,4 @@
-use crate::inbox::ReportId;
+use crate::inbox::Position;
 use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
@@ -102,8 +102,8 @@ pub enum Route {
     Send(String),
     ReadInbox,
     ListInbox,
-    PeekInbox(ReportId),
-    DropInbox(ReportId),
+    PeekInbox(Position),
+    DropInbox(Position),
     InboxUsage,
     Ignore,
 }
