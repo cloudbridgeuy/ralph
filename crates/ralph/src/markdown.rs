@@ -350,14 +350,14 @@ mod tests {
 
     #[test]
     fn role_theme_warns_on_bad_color_and_unknown_key() {
-        let (palette, warnings) =
-            role_theme(&[("heading1", "#12345"), ("headng2", "red")]).palette(ThemeRole::Assistant);
+        let (palette, warnings) = role_theme(&[("heading1", "#12345"), ("heading9", "red")])
+            .palette(ThemeRole::Assistant);
         assert_eq!(palette, Palette::default());
         assert_eq!(
             warnings,
             [
                 "[theme.assistant] heading1 = \"#12345\" is not a color; using the default",
-                "[theme.assistant] unknown key \"headng2\"; ignored",
+                "[theme.assistant] unknown key \"heading9\"; ignored",
             ]
         );
     }
