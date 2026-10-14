@@ -27,7 +27,7 @@ pub const BLOCKED_DIR: &str = "blocked";
 pub const WAITING_DIR: &str = "waiting";
 pub const ATTACHMENTS_DIR: &str = "attachments";
 pub const UNREPORTED_DIR: &str = "unreported";
-pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
+pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-6.1-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const STORE_OPTION: &str = "@ralph_store";
 pub const HARNESS_OPTION: &str = "@ralph_harness";
@@ -124,7 +124,7 @@ pub fn command_definitions() -> [Value; 3] {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": ["claude", "opencode"], "description": "Agent to run. Default claude."},
-                    "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-5.6-sol."}
+                    "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-6.1-sol."}
                 },
                 "required": ["id", "task"]
             }
@@ -618,8 +618,8 @@ mod tests {
     fn spawn_harness_rejects_bad_choices() {
         for args in [
             json!({"harness": "codex"}),
-            json!({"model": "openai/gpt-5.6-sol"}),
-            json!({"harness": "opencode", "model": "gpt-5.6-sol"}),
+            json!({"model": "openai/gpt-6.1-sol"}),
+            json!({"harness": "opencode", "model": "gpt-6.1-sol"}),
             json!({"harness": "opencode", "model": "openai/"}),
             json!({"harness": "opencode", "model": "/sol"}),
         ] {
@@ -721,13 +721,13 @@ mod tests {
     #[test]
     fn opencode_config_sets_model_and_worker_server() {
         let config = opencode_config(
-            "openai/gpt-5.6-sol",
+            "openai/gpt-6.1-sol",
             Path::new("/bin/ralph"),
             "A",
             Path::new("/s/inbox"),
             Path::new("/s/attachments"),
         );
-        assert_eq!(config["model"], "openai/gpt-5.6-sol");
+        assert_eq!(config["model"], "openai/gpt-6.1-sol");
         assert_eq!(config["permission"]["question"], "deny");
         assert_eq!(
             config["permission"]["external_directory"],
