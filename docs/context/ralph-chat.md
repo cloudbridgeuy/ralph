@@ -60,6 +60,8 @@ Worker reports never interrupt the draft. A watcher thread polls every 500 ms an
 
 A fenced block in a message you type whose info string is `!<runtime>` (for example ```` ```!zsh ````) is a cell. Worker reports and agent replies never run cells; a `!` fence inside another fence is not a cell. Parsing and message building are pure in `ralph_core::chat_cell`; PATH lookup, spawn and streaming are in `chat_cell.rs`.
 
+Shorthand: a message whose first character is `!` is the same as one `!shell` cell holding everything after the `!` (all lines; trailing newlines dropped; a longer fence when the body has backtick fences). `expand_bang_shell` in `chat_cell.rs` rewrites it before parsing. Only the very first character counts: ` !ls` or `hi !ls` is plain text, and so is `!` alone or `!` followed only by whitespace. A failed or cancelled cell restores the draft as typed (`!ls`).
+
 - On Enter, cells run in order, one process each, in the chat's working directory. The runtime is found by exact name on `PATH`; the code goes to its stdin. No sandbox. Stdout and stderr share one pipe. While a cell runs the terminal shows one dim line `▸ cell N · runtime`; the output is not echoed live.
 - Claude gets the message with the `!` removed, then per cell: `[cell N · runtime · exit C]`, the code, and the output. A non-zero exit still sends. The store keeps this enriched message.
 - After all cells ran, the terminal shows the message (the `!` removed) rendered as markdown. Each cell is followed by its full, untrimmed output in a ```` ```result ```` fence (longer fence if the output has backticks; none when the output is empty) and, for a non-zero exit, an `exit N` line (`core::chat_cell::display_results`). The display never reaches Claude, `log.jsonl` or memory.
