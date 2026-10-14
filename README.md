@@ -20,7 +20,9 @@
 
 ---
 
+<!-- ANCHOR: intro -->
 **ralph** is a CLI tool for working with an LLM from the terminal. It offers a persistent chat with compressed memory and single-shot `ask` prompts, and renders rich terminal output with syntax highlighting.
+<!-- ANCHOR_END: intro -->
 
 ## Table of Contents
 
@@ -32,6 +34,7 @@
 - [Contributing](#contributing)
 - [License](#license)
 
+<!-- ANCHOR: start -->
 ## Features
 
 - **Chat** - Persistent chat with compressed memory, run by bare `ralph`
@@ -42,7 +45,7 @@
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/ralph.git
+git clone https://github.com/cloudbridgeuy/ralph.git
 cd ralph
 cargo install --path crates/ralph --root ~/.local --force  # Install to ~/.local/bin
 cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
@@ -66,6 +69,8 @@ ralph
 ```bash
 ralph ask 'Explain this codebase'
 ```
+
+<!-- ANCHOR_END: start -->
 
 ## Configuration
 
@@ -101,6 +106,7 @@ See [Configuration](docs/configuration.md) for complete documentation.
 - [ralph ask](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
 - [Configuration](docs/configuration.md) - Config file format and options
 - [Development Guide](docs/development.md) - Building and contributing
+- [Documentation site](https://cloudbridgeuy.github.io/ralph/) - These docs as a book
 
 ## Contributing
 
