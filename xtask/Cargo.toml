@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.1.0"
+version.workspace = true
 publish = false
 license = "MIT"
 edition = "2021"
@@ -15,3 +15,4 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 anstream = { workspace = true }
 chrono = { workspace = true }
+ralph_core = { workspace = true }

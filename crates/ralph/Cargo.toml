@@ -1,10 +1,10 @@
 [package]
 name = "ralph"
-version = "0.1.0"
 homepage = "https://github.com/cloudbridgeuy/mcptools"
 description = "Ralph pattern implementation for LLM Vibe Coding"
 autobins = false
 
+version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

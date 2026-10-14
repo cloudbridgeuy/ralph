@@ -9,6 +9,7 @@ resolver = "2"
 # See crates/*/src/lib.rs and crates/*/src/main.rs for the denials.
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["Guzmán Monné"]
@@ -57,7 +58,7 @@ log = "0.4"
 # Unix process control
 libc = "0.2"
 prettytable = "0.10"
-ralph_core = { version = "0.0.0", path = "crates/core" }
+ralph_core = { path = "crates/core" }
 
 # Random number generation
 

@@ -10,6 +10,7 @@ use clap::Parser;
 
 mod lint;
 mod prelude;
+mod release;
 
 /// Development tasks for the ralph repository
 #[derive(Debug, Parser)]
@@ -48,6 +49,9 @@ impl Global {
 enum Commands {
     /// Code quality checks and git hooks management
     Lint(lint::LintCommand),
+
+    /// Prepare a release commit and tag
+    Release(release::ReleaseCommand),
 }
 
 #[tokio::main]
@@ -57,6 +61,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Lint(lint_cmd) => {
             lint::run(lint_cmd, cli.global).await?;
+        }
+        Commands::Release(release_cmd) => {
+            release::run(release_cmd, cli.global).await?;
         }
     }
 

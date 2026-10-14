@@ -31,6 +31,7 @@ pub mod spinner;
 pub mod startup;
 pub mod stream_processor;
 pub mod subprocess;
+mod version;
 pub mod warn;
 mod worker_mcp;
 mod workers;

@@ -12,7 +12,7 @@ pub const CHAT_TIMEOUT_SECS: u64 = 600;
 
 /// Ralph - chat and single-shot Claude sessions with rich terminal rendering.
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = crate::version::current(), about, long_about = None)]
 #[command(propagate_version = true)]
 pub struct Cli {
     /// Subcommand to execute
