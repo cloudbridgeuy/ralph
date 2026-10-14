@@ -211,7 +211,11 @@ fn signed_number_end(chars: &[char], sign: usize) -> Option<usize> {
 
 fn diff_pair(chars: &[char], start: usize) -> Option<DiffStat> {
     let wrapped = chars.get(start) == Some(&'(');
-    let plus = start + usize::from(wrapped);
+    let plus = if wrapped {
+        file_count_prefix_end(chars, start + 1)
+    } else {
+        start
+    };
     if chars.get(plus) != Some(&'+') {
         return None;
     }
@@ -230,6 +234,21 @@ fn diff_pair(chars: &[char], start: usize) -> Option<DiffStat> {
         parts: vec![(plus, plus_end), (minus, minus_end)],
         end,
     })
+}
+
+fn file_count_prefix_end(chars: &[char], at: usize) -> usize {
+    let word = at + digit_run(chars, at);
+    let rest = &chars[word.min(chars.len())..];
+    let after_word = if word == at {
+        None
+    } else if rest.starts_with(&[' ', 'f', 'i', 'l', 'e', 's', ',', ' ']) {
+        Some(8)
+    } else if rest.starts_with(&[' ', 'f', 'i', 'l', 'e', ',', ' ']) {
+        Some(7)
+    } else {
+        None
+    };
+    after_word.map_or(at, |len| word + len)
 }
 
 fn digit_run(chars: &[char], start: usize) -> usize {
@@ -519,6 +538,27 @@ mod tests {
     }
 
     #[test]
+    fn paint_colors_file_count_diff_stats() {
+        let pair = format!("{GREEN}+377{COLOR_OFF}/{RED}\u{2212}160{COLOR_OFF}");
+        assert_eq!(
+            paint(&mark_links("(4 files, +377/\u{2212}160)")),
+            format!("(4 files, {pair})")
+        );
+        assert_eq!(
+            paint(&mark_links("Changed (4 files, +377/\u{2212}160) today")),
+            format!("Changed (4 files, {pair}) today")
+        );
+        assert_eq!(
+            paint(&mark_links("(1 file, +3/-1)")),
+            format!("(1 file, {GREEN}+3{COLOR_OFF}/{RED}-1{COLOR_OFF})")
+        );
+        assert_eq!(
+            paint(&mark_links("(4 files, +377/\u{2212}160) extra")),
+            format!("(4 files, {pair}) extra")
+        );
+    }
+
+    #[test]
     fn signed_numbers_after_hash_words_that_are_not_headings_are_colored() {
         assert_eq!(
             paint(&mark_links("#303 +5\n#tag -2")),
@@ -577,6 +617,15 @@ mod tests {
             "(+204/-85",
             "x+204/-85",
             "(+204/-85)x",
+            "(4 files +377/\u{2212}160)",
+            "(files, +377/\u{2212}160)",
+            "(4 files, +377/\u{2212}160)extra",
+            "(4 files, +377/\u{2212}",
+            "(4 files, +377/\u{2212} 160)",
+            "(4 files,+377/\u{2212}160)",
+            "(4 Files, +377/\u{2212}160)",
+            "(4  files, +377/\u{2212}160)",
+            "\u{2212} 160",
             "(+5",
             "+",
             "-",
