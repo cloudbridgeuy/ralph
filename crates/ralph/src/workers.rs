@@ -235,7 +235,7 @@ impl Workers {
             ));
         }
         let note = if opencode {
-            " Its opencode plugin keeps running in the opencode service until that restarts."
+            " Evicted its opencode location."
         } else {
             ""
         };

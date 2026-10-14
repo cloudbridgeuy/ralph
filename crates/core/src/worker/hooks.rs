@@ -128,11 +128,12 @@ const ENDED = new Set(["session.execution.succeeded", "session.execution.failed"
 export default {{
   id: {plugin},
   setup: async (ctx: any) => {{
+    const controller = new AbortController()
     let ready = false
     let nudged = false
     void (async () => {{
       try {{
-        for await (const event of ctx.event.subscribe({{}})) {{
+        for await (const event of ctx.event.subscribe({{ signal: controller.signal }})) {{
           if (event?.data?.sessionID !== SESSION) continue
           if (!ready && STARTED.has(event.type)) {{
             ready = true
@@ -153,6 +154,7 @@ export default {{
         }}
       }} catch {{}}
     }})()
+    return () => controller.abort()
   }},
 }} as any
 "#
@@ -322,6 +324,22 @@ mod tests {
         for forbidden in ["setInterval", "setTimeout", "child_process"] {
             assert!(!plugin.contains(forbidden), "{forbidden}");
         }
+    }
+
+    #[test]
+    fn opencode_worker_plugin_aborts_its_subscription_on_cleanup() {
+        let plugin = opencode_worker_plugin("A", &markers());
+        let setup = plugin.find("setup: async (ctx: any) => {").unwrap();
+        let controller = plugin
+            .find("const controller = new AbortController()")
+            .unwrap();
+        let subscribe = plugin
+            .find("ctx.event.subscribe({ signal: controller.signal })")
+            .unwrap();
+        let cleanup = plugin.find("return () => controller.abort()").unwrap();
+        assert!(setup < controller && controller < subscribe && subscribe < cleanup);
+        assert!(plugin.contains("})()\n    return () => controller.abort()\n  },"));
+        assert_eq!(plugin.matches("ctx.event.subscribe(").count(), 1);
     }
 
     #[test]
