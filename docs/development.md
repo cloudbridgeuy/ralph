@@ -74,6 +74,16 @@ cargo test -p ralph
 cargo test -p ralph_core
 ```
 
+## Documentation Book
+
+The docs build as an mdBook site from `book.toml` and `docs/SUMMARY.md`.
+
+```bash
+cargo install mdbook --locked
+mdbook build        # Output in target/book
+mdbook serve --open # Live preview in the browser
+```
+
 ## Code Quality
 
 Use the xtask lint command for comprehensive code quality checks:
