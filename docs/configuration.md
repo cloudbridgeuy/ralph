@@ -202,7 +202,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 
 ## Chat Store
 
-`ralph ask` stores nothing. `ralph chat` keeps its store at `~/.ralph/chat`. See [ralph chat](context/ralph-chat.md).
+`ralph ask` stores nothing. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
 
 ## Verbose Tools Configuration
 
@@ -251,6 +251,7 @@ Without `--verbose-tools`, tool output is shown in a compact format:
 | `RALPH_ASK_PERMISSION_MODE` | Permission mode for `ralph ask` | `acceptEdits` |
 | `RALPH_CHAT_PERMISSION_MODE` | Permission mode for chat turns and claude workers | `auto` |
 | `RALPH_WORKTREE_DIR` | Directory for worker worktrees; `~` expands, relative paths resolve against the repo root | `.worktrees` |
+| `RALPH_CHAT_STORE` | Chat store directory; relative paths resolve against the cwd | `~/chats/a` |
 | `RALPH_CHAT_SKILLS` | `:`-separated skill directories for chat | `~/skills/a:~/skills/b` |
 | `RALPH_WRAP_WIDTH` | Column cap for chat replies and the prompt area; `0` = terminal width | `80` |
 
