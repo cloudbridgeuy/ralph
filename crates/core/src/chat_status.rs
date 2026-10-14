@@ -71,7 +71,7 @@ pub fn last_turn_cache(usage_jsonl: &str) -> Option<TurnCache> {
 }
 
 impl TurnCache {
-    fn hit_percent(&self) -> u64 {
+    fn token_share_percent(&self) -> u64 {
         let total = self.input + self.read + self.write;
         (self.read * 100).checked_div(total).unwrap_or(0)
     }
@@ -84,16 +84,16 @@ impl TurnCache {
 
     fn long_label(&self) -> String {
         format!(
-            "cache {} read {} write {}% hit{}",
+            "cache {} read {} write {}% tok{}",
             tokens_label(self.read),
             tokens_label(self.write),
-            self.hit_percent(),
+            self.token_share_percent(),
             self.cost_label()
         )
     }
 
     fn compact_label(&self) -> String {
-        format!("c{}%{}", self.hit_percent(), self.cost_label())
+        format!("c{}% tok{}", self.token_share_percent(), self.cost_label())
     }
 }
 
@@ -404,7 +404,7 @@ mod tests {
     fn status_line_full_width_with_cache() {
         assert_eq!(
             status_line(&with_turn(), 200),
-            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok · cache 12.3k read 400 write 96% hit $0.04"
+            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok · cache 12.3k read 400 write 96% tok $0.04"
         );
     }
 
@@ -412,7 +412,7 @@ mod tests {
     fn status_line_with_cache_never_exceeds_width_and_goes_compact() {
         let status = with_turn();
         assert!((0..120).all(|w| status_line(&status, w).width() <= w));
-        assert!(status_line(&status, 40).contains("c96% $0.04"));
+        assert!(status_line(&status, 40).contains("c96% tok $0.04"));
         assert_eq!(status_line(&status, 0), "");
     }
 
@@ -425,12 +425,29 @@ mod tests {
             }),
             ..status()
         };
-        assert!(status_line(&status, 200).ends_with("96% hit"));
+        assert!(status_line(&status, 200).ends_with("96% tok"));
     }
 
     #[test]
-    fn hit_percent_is_zero_without_tokens() {
-        assert_eq!(TurnCache::default().hit_percent(), 0);
+    fn status_line_cache_token_share_is_independent_of_cost() {
+        for cost_usd in [Some(0.0), Some(10.0), None] {
+            let status = Status {
+                turn: Some(TurnCache {
+                    input: 100,
+                    read: 300,
+                    write: 200,
+                    cost_usd,
+                }),
+                ..status()
+            };
+            assert!(status_line(&status, 200).contains("cache 300 read 200 write 50% tok"));
+            assert!(status_line(&status, 40).contains("c50% tok"));
+        }
+    }
+
+    #[test]
+    fn token_share_percent_is_zero_without_tokens() {
+        assert_eq!(TurnCache::default().token_share_percent(), 0);
     }
 
     #[test]
