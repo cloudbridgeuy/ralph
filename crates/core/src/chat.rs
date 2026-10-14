@@ -1,6 +1,7 @@
 use crate::chat_memory::SERVER_NAME;
 use crate::worker::ATTACHMENTS_DIR;
 use serde_json::{json, Map, Value};
+use std::ffi::OsString;
 use std::path::Path;
 
 pub const VIEW_LINES: usize = 200;
@@ -132,6 +133,16 @@ pub fn build_mcp_args(config_path: &Path) -> Vec<String> {
         "--mcp-config".to_string(),
         config_path.to_string_lossy().into_owned(),
         "--strict-mcp-config".to_string(),
+    ]
+}
+
+pub fn build_nap_args(store: &Path, timeout_secs: u64) -> Vec<OsString> {
+    vec![
+        "chat-nap".into(),
+        "--store".into(),
+        store.as_os_str().to_owned(),
+        "--timeout".into(),
+        timeout_secs.to_string().into(),
     ]
 }
 
@@ -360,6 +371,14 @@ mod tests {
         assert_eq!(
             build_mcp_args(Path::new("/s/mcp.json")),
             ["--mcp-config", "/s/mcp.json", "--strict-mcp-config"]
+        );
+    }
+
+    #[test]
+    fn build_nap_args_forwards_non_default_timeout() {
+        assert_eq!(
+            build_nap_args(Path::new("/chat store"), 1234),
+            ["chat-nap", "--store", "/chat store", "--timeout", "1234"].map(OsString::from)
         );
     }
 
