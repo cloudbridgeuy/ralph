@@ -1,12 +1,8 @@
 use std::fmt;
 
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
-use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-pub const MAX_TURN_BYTES: usize = 80 * 1024 * 1024;
 
 const PNG_MAGIC: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 const JPEG_MAGIC: [u8; 3] = [0xFF, 0xD8, 0xFF];
@@ -28,22 +24,12 @@ impl ImageKind {
             ImageKind::Webp => "webp",
         }
     }
-
-    pub fn media_type(self) -> &'static str {
-        match self {
-            ImageKind::Png => "image/png",
-            ImageKind::Jpeg => "image/jpeg",
-            ImageKind::Gif => "image/gif",
-            ImageKind::Webp => "image/webp",
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum AttachmentError {
     NotAnImage,
     ImageTooLarge { bytes: usize },
-    TurnTooLarge { bytes: usize },
 }
 
 impl fmt::Display for AttachmentError {
@@ -55,9 +41,6 @@ impl fmt::Display for AttachmentError {
             AttachmentError::ImageTooLarge { bytes } => {
                 write!(f, "image is {bytes} bytes, limit is {MAX_IMAGE_BYTES}")
             }
-            AttachmentError::TurnTooLarge { bytes } => {
-                write!(f, "images total {bytes} bytes, limit is {MAX_TURN_BYTES}")
-            }
         }
     }
 }
@@ -68,21 +51,6 @@ impl std::error::Error for AttachmentError {}
 pub struct Image {
     kind: ImageKind,
     bytes: Vec<u8>,
-}
-
-impl Image {
-    pub fn kind(&self) -> ImageKind {
-        self.kind
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
-    }
-}
-
-pub struct SavedImage<'a> {
-    pub image: &'a Image,
-    pub path: &'a str,
 }
 
 pub fn detect(bytes: &[u8]) -> Option<ImageKind> {
@@ -107,14 +75,6 @@ pub fn parse_image(bytes: Vec<u8>) -> Result<Image, AttachmentError> {
     Ok(Image { kind, bytes })
 }
 
-pub fn check_turn(images: &[Image]) -> Result<(), AttachmentError> {
-    let total: usize = images.iter().map(|image| image.bytes.len()).sum();
-    if total > MAX_TURN_BYTES {
-        return Err(AttachmentError::TurnTooLarge { bytes: total });
-    }
-    Ok(())
-}
-
 pub fn file_name(image: &Image) -> String {
     let digest = Sha256::digest(&image.bytes);
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -135,35 +95,6 @@ pub fn next_number(draft: &str) -> usize {
         })
         .max()
         .map_or(1, |largest| largest + 1)
-}
-
-pub fn user_content(images: &[SavedImage], text: &str) -> Value {
-    let mut blocks: Vec<Value> = images
-        .iter()
-        .map(|saved| {
-            json!({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": saved.image.kind.media_type(),
-                    "data": STANDARD.encode(&saved.image.bytes),
-                },
-            })
-        })
-        .collect();
-    let placeholders = images
-        .iter()
-        .enumerate()
-        .map(|(index, saved)| placeholder(index + 1, saved.path))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let text = if images.is_empty() {
-        text.to_string()
-    } else {
-        format!("{text}\n\n{placeholders}")
-    };
-    blocks.push(json!({"type": "text", "text": text}));
-    Value::Array(blocks)
 }
 
 #[cfg(test)]
@@ -212,20 +143,6 @@ mod tests {
     }
 
     #[test]
-    fn turn_limit_boundary() {
-        let image = parse_image(png_of_len(MAX_IMAGE_BYTES)).unwrap();
-        let at_limit = vec![image.clone(); 8];
-        assert_eq!(check_turn(&at_limit), Ok(()));
-        let over = vec![image; 9];
-        assert_eq!(
-            check_turn(&over),
-            Err(AttachmentError::TurnTooLarge {
-                bytes: 9 * MAX_IMAGE_BYTES
-            })
-        );
-    }
-
-    #[test]
     fn file_name_is_sha256_hex_with_extension() {
         assert_eq!(
             file_name(&png()),
@@ -244,38 +161,5 @@ mod tests {
         assert_eq!(next_number("[Image #1: /a.png]"), 2);
         assert_eq!(next_number("[Image #1: /a] x [Image #3: /b]"), 4);
         assert_eq!(next_number("[Image #x: /a]"), 1);
-    }
-
-    #[test]
-    fn user_content_puts_images_first_then_text_with_placeholders() {
-        let first = png();
-        let second = parse_image(b"GIF89a".to_vec()).unwrap();
-        let saved = [
-            SavedImage {
-                image: &first,
-                path: "/a.png",
-            },
-            SavedImage {
-                image: &second,
-                path: "/b.gif",
-            },
-        ];
-        let content = user_content(&saved, "look");
-        assert_eq!(
-            content,
-            json!([
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}},
-                {"type": "image", "source": {"type": "base64", "media_type": "image/gif", "data": "R0lGODlh"}},
-                {"type": "text", "text": "look\n\n[Image #1: /a.png]\n[Image #2: /b.gif]"},
-            ])
-        );
-    }
-
-    #[test]
-    fn user_content_without_images_keeps_text() {
-        assert_eq!(
-            user_content(&[], "hi"),
-            json!([{"type": "text", "text": "hi"}])
-        );
     }
 }

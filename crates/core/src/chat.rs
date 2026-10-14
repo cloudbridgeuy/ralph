@@ -1,4 +1,5 @@
 use crate::chat_memory::SERVER_NAME;
+use crate::worker::ATTACHMENTS_DIR;
 use serde_json::{json, Map, Value};
 use std::path::Path;
 
@@ -131,6 +132,16 @@ pub fn build_mcp_args(config_path: &Path) -> Vec<String> {
         "--mcp-config".to_string(),
         config_path.to_string_lossy().into_owned(),
         "--strict-mcp-config".to_string(),
+    ]
+}
+
+pub fn build_attachments_args(store_dir: &Path) -> Vec<String> {
+    vec![
+        "--add-dir".to_string(),
+        store_dir
+            .join(ATTACHMENTS_DIR)
+            .to_string_lossy()
+            .into_owned(),
     ]
 }
 
@@ -349,6 +360,14 @@ mod tests {
         assert_eq!(
             build_mcp_args(Path::new("/s/mcp.json")),
             ["--mcp-config", "/s/mcp.json", "--strict-mcp-config"]
+        );
+    }
+
+    #[test]
+    fn build_attachments_args_adds_store_attachments_dir() {
+        assert_eq!(
+            build_attachments_args(Path::new("/s")),
+            ["--add-dir", "/s/attachments"]
         );
     }
 

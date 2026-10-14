@@ -1,4 +1,4 @@
-use ralph_core::attachment::{file_name, next_number, parse_image, placeholder, Image};
+use ralph_core::attachment::{file_name, next_number, parse_image, placeholder};
 use reedline::{EditCommand, Reedline};
 use std::fs;
 use std::io;
@@ -23,7 +23,7 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
-pub fn save_image(dir: &Path) -> io::Result<Option<(Image, PathBuf)>> {
+pub fn save_image(dir: &Path) -> io::Result<Option<PathBuf>> {
     fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(".clipboard-{}.tmp", std::process::id()));
     let mut command = Command::new("osascript");
@@ -48,12 +48,12 @@ pub fn save_image(dir: &Path) -> io::Result<Option<(Image, PathBuf)>> {
     };
     let path = dir.join(file_name(&image));
     fs::rename(&tmp, &path)?;
-    Ok(Some((image, path)))
+    Ok(Some(path))
 }
 
 pub fn paste_image(editor: &mut Reedline, dir: &Path) -> Option<String> {
     match save_image(dir) {
-        Ok(Some((_, path))) => {
+        Ok(Some(path)) => {
             let number = next_number(editor.current_buffer_contents());
             let text = placeholder(number, &path.to_string_lossy());
             editor.run_edit_commands(&[EditCommand::InsertString(text)]);
