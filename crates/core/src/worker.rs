@@ -6,9 +6,11 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 mod hooks;
+mod markers;
 mod ownership;
 mod worktree;
 pub use hooks::*;
+pub use markers::*;
 pub use ownership::*;
 pub use worktree::*;
 
@@ -23,6 +25,7 @@ pub const READY_DIR: &str = "ready";
 pub const REPORTED_DIR: &str = "reported";
 pub const BLOCKED_DIR: &str = "blocked";
 pub const WAITING_DIR: &str = "waiting";
+pub const ATTACHMENTS_DIR: &str = "attachments";
 pub const UNREPORTED_DIR: &str = "unreported";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-5.6-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
@@ -35,7 +38,9 @@ pub const SESSION_FORMAT: &str =
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
 
-End every turn with the report tool: status done when the task is finished, blocked when you cannot go on, or question when you need a decision only the person can make, and a full summary in text. Then stop and wait. The person's answer arrives as your next message. Never send progress updates.";
+End every turn with the report tool: status done when the task is finished, blocked when you cannot go on, or question when you need a decision only the person can make, and a full summary in text. Then stop and wait. The person's answer arrives as your next message. Never send progress updates.
+
+A reference like [Image #N: <path>] in a message is an image file: read it at that path.";
 
 pub const REPORT_REMINDER: &str = "You stopped without calling report. Call report now with status done, blocked or question and a full summary of what you did or what you need.";
 
@@ -112,12 +117,12 @@ pub fn command_definitions() -> [Value; 3] {
     [
         json!({
             "name": "spawn_worker",
-            "description": "Start a worker agent on a task in its own git worktree and tmux session. Only when the person asked for it in their latest message.",
+            "description": "Start a worker agent on a task in its own git worktree and tmux session. Only when the person asked for it in their latest message. When the worker needs a pasted image, copy its [Image #N: <path>] reference verbatim into task.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
-                    "task": {"type": "string", "description": "What the worker should do, in the person's terms."},
+                    "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": ["claude", "opencode"], "description": "Agent to run. Default claude."},
                     "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-5.6-sol."}
                 },
@@ -131,7 +136,7 @@ pub fn command_definitions() -> [Value; 3] {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
-                    "text": {"type": "string", "description": "The message for the worker."}
+                    "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."}
                 },
                 "required": ["id", "text"]
             }
@@ -314,11 +319,20 @@ pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path) -> Value {
     })
 }
 
-pub fn opencode_config(model: &str, exe: &Path, id: &str, inbox: &Path) -> Value {
+pub fn opencode_config(
+    model: &str,
+    exe: &Path,
+    id: &str,
+    inbox: &Path,
+    attachments: &Path,
+) -> Value {
     json!({
         "$schema": "https://opencode.ai/config.json",
         "model": model,
-        "permission": { "question": "deny" },
+        "permission": {
+            "question": "deny",
+            "external_directory": { format!("{}/**", attachments.to_string_lossy()): "allow" }
+        },
         "mcp": {
             SERVER_NAME: {
                 "type": "local",
@@ -333,6 +347,7 @@ pub fn worker_command(
     mcp_config: &Path,
     settings: &Path,
     permission_mode: &str,
+    attachments: &Path,
     task: &str,
 ) -> Vec<String> {
     [
@@ -346,64 +361,14 @@ pub fn worker_command(
         &mcp_config.to_string_lossy(),
         "--settings",
         &settings.to_string_lossy(),
+        "--add-dir",
+        &attachments.to_string_lossy(),
         "--append-system-prompt",
         WORKER_PROMPT,
         task,
     ]
     .map(str::to_string)
     .to_vec()
-}
-
-pub fn ready_path(store: &Path, id: &str) -> PathBuf {
-    store.join(READY_DIR).join(id)
-}
-
-pub fn reported_path(store: &Path, id: &str) -> PathBuf {
-    store.join(REPORTED_DIR).join(id)
-}
-
-pub fn blocked_path(store: &Path, id: &str) -> PathBuf {
-    store.join(BLOCKED_DIR).join(id)
-}
-
-pub fn waiting_path(store: &Path, id: &str) -> PathBuf {
-    store.join(WAITING_DIR).join(id)
-}
-
-pub fn unreported_path(store: &Path, id: &str) -> PathBuf {
-    store.join(UNREPORTED_DIR).join(id)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkerMarkers {
-    pub ready: PathBuf,
-    pub reported: PathBuf,
-    pub blocked: PathBuf,
-    pub waiting: PathBuf,
-    pub unreported: PathBuf,
-}
-
-impl WorkerMarkers {
-    pub fn new(store: &Path, id: &str) -> Self {
-        Self {
-            ready: ready_path(store, id),
-            reported: reported_path(store, id),
-            blocked: blocked_path(store, id),
-            waiting: waiting_path(store, id),
-            unreported: unreported_path(store, id),
-        }
-    }
-}
-
-pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 5] {
-    let WorkerMarkers {
-        ready,
-        reported,
-        blocked,
-        waiting,
-        unreported,
-    } = WorkerMarkers::new(store, id);
-    [ready, reported, blocked, waiting, unreported]
 }
 
 pub fn opencode_session_id(id: &str) -> String {
@@ -713,11 +678,12 @@ mod tests {
             Path::new("/s/workers/A.json"),
             Path::new("/s/workers/A.settings.json"),
             "auto",
+            Path::new("/s/attachments"),
             "do it",
         );
         assert_eq!(args[..2], ["zsh", "-lic"]);
         assert_eq!(
-            args[3..10],
+            args[3..12],
             [
                 "claude",
                 "--permission-mode",
@@ -725,7 +691,9 @@ mod tests {
                 "--mcp-config",
                 "/s/workers/A.json",
                 "--settings",
-                "/s/workers/A.settings.json"
+                "/s/workers/A.settings.json",
+                "--add-dir",
+                "/s/attachments"
             ]
         );
         assert_eq!(args.last().unwrap(), "do it");
@@ -757,9 +725,14 @@ mod tests {
             Path::new("/bin/ralph"),
             "A",
             Path::new("/s/inbox"),
+            Path::new("/s/attachments"),
         );
         assert_eq!(config["model"], "openai/gpt-5.6-sol");
         assert_eq!(config["permission"]["question"], "deny");
+        assert_eq!(
+            config["permission"]["external_directory"],
+            json!({ "/s/attachments/**": "allow" })
+        );
         assert_eq!(
             config["mcp"][SERVER_NAME],
             json!({
@@ -897,36 +870,6 @@ mod tests {
         assert_eq!(
             startup_state("  ctrl+p commands\n", false),
             Startup::Starting
-        );
-    }
-
-    #[test]
-    fn ready_path_is_per_worker_in_the_store() {
-        assert_eq!(
-            ready_path(Path::new("/s"), "A"),
-            PathBuf::from("/s/ready/A")
-        );
-    }
-
-    #[test]
-    fn reported_path_is_per_worker_in_the_store() {
-        assert_eq!(
-            reported_path(Path::new("/s"), "A"),
-            PathBuf::from("/s/reported/A")
-        );
-    }
-
-    #[test]
-    fn marker_paths_cover_every_marker_dir_for_the_worker() {
-        assert_eq!(
-            marker_paths(Path::new("/s"), "A"),
-            [
-                PathBuf::from("/s/ready/A"),
-                PathBuf::from("/s/reported/A"),
-                PathBuf::from("/s/blocked/A"),
-                PathBuf::from("/s/waiting/A"),
-                PathBuf::from("/s/unreported/A"),
-            ]
         );
     }
 
