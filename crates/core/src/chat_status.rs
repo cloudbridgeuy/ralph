@@ -312,7 +312,7 @@ pub fn footer(unread: usize, width: usize) -> String {
         }
         items.extend(inbox);
         if full {
-            items.push("Ctrl+O editor".to_string());
+            items.push("Ctrl+G editor".to_string());
         }
         items.push("Ctrl+D quit".to_string());
         items.join(SEPARATOR)
@@ -479,7 +479,7 @@ mod tests {
         assert!(!footer(0, 200).contains("/inbox"));
         assert_eq!(
             footer(2, 200),
-            "Enter send · Ctrl+J newline · /inbox or Enter on empty prompt reads 2 reports · Ctrl+O editor · Ctrl+D quit\n"
+            "Enter send · Ctrl+J newline · /inbox or Enter on empty prompt reads 2 reports · Ctrl+G editor · Ctrl+D quit\n"
         );
         assert!(footer(2, 90).contains("/inbox read 2 reports"));
         assert!((0..120).all(|w| footer(2, w).trim_end().width() <= w));
