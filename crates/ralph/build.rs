@@ -26,6 +26,9 @@ fn main() {
     for name in ["HEAD", "index", "refs/tags", "packed-refs"] {
         watch_git_path(name);
     }
+    if let Some(head_ref) = git(&["symbolic-ref", "-q", "HEAD"]) {
+        watch_git_path(&head_ref);
+    }
 
     let sha = git(&["rev-parse", "--short", "HEAD"]).unwrap_or_default();
     let dirty = git(&["status", "--porcelain"]).is_some_and(|status| !status.is_empty());
