@@ -6,9 +6,9 @@ use ralph_core::worker::{
     opencode_worker_plugin, project_slug, resolve_worktree_dir, session_name, session_owner,
     startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
     worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep, Harness, Owner,
-    Startup, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia, HARNESS_OPTION, ID_OPTION,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT,
-    STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
+    Startup, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia, ATTACHMENTS_DIR,
+    HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
+    OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -66,6 +66,8 @@ impl Workers {
         let via = ensure_worktree(&repo, &worktree, &branch_name(id))?;
         record_base(&repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
+        let attachments = self.store_dir.join(ATTACHMENTS_DIR);
+        fs::create_dir_all(&attachments)?;
         let markers = WorkerMarkers::new(&self.store_dir, id);
         for marker in marker_paths(&self.store_dir, id) {
             clear_marker(&marker)?;
@@ -77,11 +79,12 @@ impl Workers {
                     &self.write_config(id)?,
                     &settings,
                     &self.permission_mode,
+                    &attachments,
                     task,
                 )
             }
             Harness::Opencode { model } => {
-                let config = opencode_config(model, &self.exe, id, &inbox);
+                let config = opencode_config(model, &self.exe, id, &inbox, &attachments);
                 fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
                 let plugin = worktree.join(OPENCODE_PLUGIN_FILE);
                 if let Some(dir) = plugin.parent() {

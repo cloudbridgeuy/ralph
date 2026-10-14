@@ -40,8 +40,8 @@ use ralph_core::chat_status::{
 };
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    blocked_path, chat_message, ready_path, unreported_path, waiting_path, Report, INBOX_DIR,
-    READY_DIR,
+    blocked_path, chat_message, ready_path, unreported_path, waiting_path, Report, ATTACHMENTS_DIR,
+    INBOX_DIR, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, CheckMemory,
@@ -453,7 +453,7 @@ impl Prompt for ChatPrompt {
 }
 
 fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Result<Option<Route>> {
-    let attachments = prompt.monitor.store_dir.join("attachments");
+    let attachments = prompt.monitor.store_dir.join(ATTACHMENTS_DIR);
     loop {
         match editor.read_line(prompt)? {
             Signal::Success(line) => {
