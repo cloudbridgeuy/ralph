@@ -1,4 +1,5 @@
 use crate::ansi::{DIM, RESET};
+use crate::chat_cell;
 use crate::chat_memory::Store;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
@@ -23,6 +24,7 @@ use ralph_core::chat::{
     resolve_worker_check_secs, resolve_wrap_width, select_servers, turn_prompt, turn_system_prompt,
     ChatMcpOptions, VIEW_LINES,
 };
+use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_input::{input_lost_at_prompt, turn_end, InputWatch, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
     frozen_block, tail_lines, usage_record, view_stats, CallKind, Frozen, Role, Trigger,
@@ -65,6 +67,8 @@ const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
 const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
+const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
+const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
 const POLL: Duration = Duration::from_millis(500);
 const MEMORY_EVERY_POLLS: u64 = 10;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
@@ -481,7 +485,7 @@ fn chat_session_info() -> SpinnerSessionInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TurnOutcome {
+pub(crate) enum TurnOutcome {
     Replied,
     Unanswered,
     Exit,
@@ -774,6 +778,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         chat_config.wrap_width,
     )?;
     cap_wrap_width(wrap_cap);
+    let cell_limits = resolve_cell_limits(
+        std::env::var(CELL_OUTPUT_LIMIT_ENV).ok().as_deref(),
+        std::env::var(CELL_OUTPUT_BYTES_ENV).ok().as_deref(),
+        chat_config.cell_output_limit,
+        chat_config.cell_output_bytes,
+    )?;
     let mcp_config_path = write_mcp_config(
         &store,
         &store_dir,
@@ -877,7 +887,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let outcome = match route {
             Route::Ignore => continue,
             Route::Send(message) => {
-                let outcome = turn.run(Trigger::User, std::slice::from_ref(&message), &message)?;
+                let outcome = match chat_cell::prepare(&message, cell_limits) {
+                    Ok(sent) => turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)?,
+                    Err(outcome) => outcome,
+                };
                 if let Some(draft) = draft_after(outcome, message) {
                     editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
                 }

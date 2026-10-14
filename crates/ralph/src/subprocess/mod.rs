@@ -23,7 +23,7 @@ pub use types::{StreamingSubprocessResult, SubprocessError};
 /// Uses `libc::killpg` to send SIGKILL to the process group,
 /// ensuring grandchild processes (e.g., `claude` spawned by `sh -c`)
 /// are also terminated.
-fn kill_process_group(child: &mut Child) {
+pub(crate) fn kill_process_group(child: &mut Child) {
     let pid = child.id() as libc::pid_t;
     // Safety: killpg sends a signal to a process group. The pid is valid
     // because we just obtained it from the child process.

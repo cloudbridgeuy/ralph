@@ -107,6 +107,10 @@ pub struct ChatSection {
     #[serde(default)]
     pub wrap_width: Option<usize>,
     #[serde(default)]
+    pub cell_output_limit: Option<usize>,
+    #[serde(default)]
+    pub cell_output_bytes: Option<usize>,
+    #[serde(default)]
     pub worker_base: Option<String>,
     #[serde(default)]
     pub worktree_dir: Option<String>,
@@ -136,6 +140,8 @@ impl Default for ChatSection {
             frozen_window: None,
             worker_check_secs: None,
             wrap_width: None,
+            cell_output_limit: None,
+            cell_output_bytes: None,
             worker_base: None,
             worktree_dir: None,
             permission_mode: None,
