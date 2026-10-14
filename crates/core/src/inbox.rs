@@ -69,6 +69,11 @@ impl Ledger {
         self.entries.iter().find(|e| e.id == id)
     }
 
+    pub fn remove(&mut self, id: ReportId) -> Option<Entry> {
+        let at = self.entries.iter().position(|e| e.id == id)?;
+        Some(self.entries.remove(at))
+    }
+
     pub fn unread(&self) -> Vec<Report> {
         self.entries
             .iter()
@@ -87,6 +92,17 @@ impl Ledger {
             })
             .collect()
     }
+}
+
+pub fn drop_log_line(entry: &Entry, now: DateTime<Utc>) -> String {
+    serde_json::json!({
+        "timestamp": now.to_rfc3339(),
+        "id": entry.id,
+        "worker": entry.report.worker,
+        "status": entry.report.status,
+        "text": entry.report.text,
+    })
+    .to_string()
 }
 
 fn age(at: &str, now: DateTime<Utc>) -> String {
@@ -184,6 +200,39 @@ mod tests {
         assert_eq!(ids(&ledger), ["1", "2", "3"]);
         assert_eq!(ledger.unread().len(), 1);
         assert!(ledger.entries[..2].iter().all(|e| e.read));
+    }
+
+    #[test]
+    fn remove_takes_only_that_entry_and_never_reuses_its_id() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a"), arrival("b"), arrival("c")]);
+        let id = ledger.entries[2].id;
+        assert_eq!(ledger.remove(id).map(|e| e.report.text), Some("c".into()));
+        assert_eq!(ledger.remove(id), None);
+        ledger.ingest(vec![arrival("d")]);
+        assert_eq!(ids(&ledger), ["1", "2", "4"]);
+    }
+
+    #[test]
+    fn drop_log_line_is_one_json_object_with_the_report() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a")]);
+        let now = DateTime::parse_from_rfc3339("2026-01-02T03:04:05Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let line = drop_log_line(&ledger.entries[0], now);
+        assert!(!line.contains('\n'));
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "timestamp": "2026-01-02T03:04:05+00:00",
+                "id": 1,
+                "worker": "A",
+                "status": "done",
+                "text": "a",
+            })
+        );
     }
 
     #[test]
