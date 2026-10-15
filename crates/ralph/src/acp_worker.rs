@@ -72,7 +72,7 @@ impl Permissions {
         &self,
         request: &RequestPermissionRequest,
         responder: Responder<RequestPermissionResponse>,
-    ) {
+    ) -> bool {
         let value = serde_json::to_value(request).unwrap_or_default();
         let content = permission_content(&value);
         if let Some(option) = auto_allow_option(&content) {
@@ -82,11 +82,12 @@ impl Permissions {
             responder
                 .respond(RequestPermissionResponse::new(outcome))
                 .ok();
-            return;
+            return true;
         }
         let mut queue = self.queue();
         queue.push_back(PendingPermission { responder, content });
         self.publish(&queue);
+        false
     }
 
     fn answer(&self, text: &str) -> Result<(), String> {
@@ -188,6 +189,7 @@ impl AcpWorker {
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
         let seen = Arc::clone(&reported);
+        let allowed = Arc::clone(&reported);
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = ByteStreams::new(
@@ -199,7 +201,9 @@ impl AcpWorker {
                     .builder()
                     .on_receive_request(
                         async move |request: RequestPermissionRequest, responder, _cx| {
-                            permissions.push(&request, responder);
+                            if permissions.push(&request, responder) {
+                                allowed.store(true, Ordering::SeqCst);
+                            }
                             Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
