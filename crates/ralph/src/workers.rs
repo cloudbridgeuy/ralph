@@ -1,4 +1,5 @@
 use crate::acp_worker::{caller_owns_cursor, now_secs, sweep_owner, write_file};
+use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
@@ -247,9 +248,22 @@ impl Workers {
         } else {
             ""
         };
-        Ok(with_warning(format!(
-            "Closed worker {id}: removed its sessions, worktree and branch {branch}.{note}"
-        )))
+        let leftovers = if steps
+            .iter()
+            .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
+        {
+            dirs::home_dir()
+                .map(|home| cleanup_worktree_leftovers(&home, &worktree))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        Ok(leftovers.into_iter().fold(
+            with_warning(format!(
+                "Closed worker {id}: removed its sessions, worktree and branch {branch}.{note}"
+            )),
+            |text, warning| format!("{text} {warning}"),
+        ))
     }
 
     fn close_step(

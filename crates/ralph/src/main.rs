@@ -17,6 +17,7 @@ mod chat_mcp;
 mod chat_memory;
 mod chat_route;
 mod chat_watch;
+mod claude_cleanup;
 mod cli;
 mod clipboard;
 pub mod config;

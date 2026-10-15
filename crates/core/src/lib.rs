@@ -21,6 +21,7 @@ pub mod chat_memory;
 pub mod chat_skills;
 pub mod chat_status;
 pub mod chunk;
+pub mod claude_leftovers;
 pub mod directive;
 pub mod inbox;
 pub mod inbox_alert;
