@@ -30,7 +30,7 @@ jobs:
 
       - name: Check tag matches workspace version
         run: |
-          version=$(awk '/^\[/ { in_pkg = ($0 == "[workspace.package]") } in_pkg && /^version[[:space:]]*=/ { gsub(/.*"|".*/, ""); print; exit }' Cargo.toml)
+          version=$(awk '/^\[/ { in_pkg = ($0 == "[workspace.package]") } in_pkg && /^version[[:space:]]*=/ { split($0, a, "\""); print a[2]; exit }' Cargo.toml)
           if [ -z "$version" ] || [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "Tag $GITHUB_REF_NAME does not match workspace version v$version" >&2
             exit 1
