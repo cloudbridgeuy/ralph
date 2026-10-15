@@ -2,6 +2,7 @@ use crate::acp_worker::{caller_owns_cursor, now_secs, sweep_owner, write_file};
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
+use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
     close_plan, exclude_lines, marker_paths, opencode_command, opencode_config,
@@ -248,10 +249,7 @@ impl Workers {
         } else {
             ""
         };
-        let leftovers = if steps
-            .iter()
-            .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
-        {
+        let leftovers = if cleans_claude_leftovers(&state, &steps) {
             dirs::home_dir()
                 .map(|home| cleanup_worktree_leftovers(&home, &worktree))
                 .unwrap_or_default()

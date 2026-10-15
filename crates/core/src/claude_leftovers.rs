@@ -1,6 +1,14 @@
+use crate::worker::{CloseState, CloseStep};
 use serde_json::Value;
 
 const PROJECTS_KEY: &str = "projects";
+
+pub fn cleans_claude_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
+    !state.cursor
+        && steps
+            .iter()
+            .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
+}
 
 pub fn transcript_dir_name(path: &str) -> String {
     path.chars()
@@ -30,6 +38,38 @@ pub fn remove_project_entry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::Owner;
+
+    fn state(cursor: bool) -> CloseState {
+        CloseState {
+            id: "A".into(),
+            owner: Owner::Missing,
+            dirty_worktree: Some(false),
+            base: "main".into(),
+            unmerged_commits: Some(0),
+            opencode: false,
+            markers: false,
+            cursor,
+        }
+    }
+
+    #[test]
+    fn claude_worker_removing_its_worktree_is_cleaned() {
+        let steps = [CloseStep::RemoveWorktree { force: false }];
+        assert!(cleans_claude_leftovers(&state(false), &steps));
+    }
+
+    #[test]
+    fn cursor_worker_is_not_cleaned() {
+        let steps = [CloseStep::RemoveWorktree { force: false }];
+        assert!(!cleans_claude_leftovers(&state(true), &steps));
+    }
+
+    #[test]
+    fn close_without_worktree_removal_is_not_cleaned() {
+        let steps = [CloseStep::DeleteBranch, CloseStep::ClearMarkers];
+        assert!(!cleans_claude_leftovers(&state(false), &steps));
+    }
 
     #[test]
     fn transcript_dir_name_mangles_slashes_and_dots() {
