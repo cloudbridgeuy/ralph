@@ -71,6 +71,31 @@ pub fn check_every_polls(secs: u64, poll: Duration) -> u64 {
     secs.saturating_mul(1000).div_ceil(poll_ms).max(1)
 }
 
+fn pane_footer(pane: &str) -> String {
+    let lines: Vec<&str> = pane.lines().collect();
+    match lines.iter().rposition(|l| l.starts_with('─')) {
+        Some(rule) => lines[rule + 1..].join("\n"),
+        None => lines
+            .iter()
+            .rfind(|l| !l.trim().is_empty())
+            .map(|l| (*l).to_string())
+            .unwrap_or_default(),
+    }
+}
+
+fn counts_running_agents(footer: &str) -> bool {
+    footer.split("← ").skip(1).any(|rest| {
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        let after = &rest[digits.len()..];
+        digits.parse::<u64>().is_ok_and(|n| n >= 1) && after.starts_with(" agent")
+    })
+}
+
+fn pane_busy(pane: &str) -> bool {
+    let footer = pane_footer(pane);
+    footer.contains("esc to interrupt") || counts_running_agents(&footer)
+}
+
 pub fn classify(obs: &WorkerObservation) -> WorkerState {
     if obs.blocked {
         return WorkerState::BlockedPermission;
@@ -84,7 +109,10 @@ pub fn classify(obs: &WorkerObservation) -> WorkerState {
         WorkerState::Waiting
     } else if obs.reported_since_nudge {
         WorkerState::Reported
-    } else if obs.pane.is_some() && !obs.pane_changed && !obs.unreported {
+    } else if !obs.pane_changed
+        && !obs.unreported
+        && obs.pane.as_deref().is_some_and(|pane| !pane_busy(pane))
+    {
         WorkerState::Unknown
     } else {
         WorkerState::Working
@@ -176,6 +204,99 @@ mod tests {
 
     fn trust_pane() -> Option<String> {
         Some("Yes, I trust this folder".to_string())
+    }
+
+    const RULE: &str = "─────────────────────────";
+
+    fn pane_with_footer(above: &str, footer: &str) -> String {
+        format!("{above}\n\n{RULE}\n❯\u{a0}\n{RULE}\n{footer}\n")
+    }
+
+    const SPINNER_PANE: &str = "✽ Zigzagging… (43s · ↓ 2.9k tokens · thought for 1s)\n\n─────────────────────────\n❯\u{a0}\n─────────────────────────\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← for agents\n";
+    const IDLE_DONE_PANE: &str = "⏺ I sent the report and I am waiting for your answer.\n\n✻ Crunched for 16m 50s · done 12:36 PM\n\n─────────────────────────\n❯\u{a0}\n─────────────────────────\n  ⏵⏵ auto mode on (shift+tab to cycle) · PR #2772 · ← for agents\n";
+    const ONE_AGENT_FOOTER: &str = "  ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent";
+    const TWO_AGENTS_FOOTER: &str = "  ⏵⏵ auto mode on (shift+tab to cycle) · ← 2 agents";
+    const IDLE_FOOTER: &str = "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents";
+    const TRANSCRIPT_MARKERS: &str = "esc to interrupt\n  ← 3 agents\n⏺ Done.\n✻ Crunched for 1m";
+
+    fn unchanged(pane: &str) -> WorkerObservation {
+        WorkerObservation {
+            pane: Some(pane.to_string()),
+            pane_changed: false,
+            ..obs()
+        }
+    }
+
+    #[test]
+    fn pane_busy_on_spinner() {
+        assert!(pane_busy(SPINNER_PANE));
+    }
+
+    #[test]
+    fn pane_busy_on_background_agents() {
+        assert!(pane_busy(&pane_with_footer("⏺ ok", ONE_AGENT_FOOTER)));
+        assert!(pane_busy(&pane_with_footer("⏺ ok", TWO_AGENTS_FOOTER)));
+    }
+
+    #[test]
+    fn pane_not_busy_when_idle() {
+        assert!(!pane_busy(&pane_with_footer("", IDLE_FOOTER)));
+        assert!(!pane_busy(IDLE_DONE_PANE));
+        assert!(!pane_busy(&pane_with_footer(
+            "⏺ ok",
+            "  ⏵⏵ auto mode on · ← 0 agents"
+        )));
+    }
+
+    #[test]
+    fn pane_busy_ignores_transcript_above_the_rule() {
+        assert!(!pane_busy(&pane_with_footer(
+            TRANSCRIPT_MARKERS,
+            IDLE_FOOTER
+        )));
+    }
+
+    #[test]
+    fn pane_busy_without_rule_reads_last_non_blank_line() {
+        assert!(pane_busy("old\n  ← 2 agents\n\n"));
+        assert!(!pane_busy("esc to interrupt\nidle line\n\n"));
+        assert!(!pane_busy(""));
+    }
+
+    #[test]
+    fn classify_unchanged_busy_panes_are_working() {
+        for pane in [
+            SPINNER_PANE.to_string(),
+            pane_with_footer("⏺ ok", ONE_AGENT_FOOTER),
+            pane_with_footer("⏺ ok", TWO_AGENTS_FOOTER),
+        ] {
+            assert_eq!(classify(&unchanged(&pane)), WorkerState::Working);
+        }
+    }
+
+    #[test]
+    fn classify_unchanged_idle_pane_is_unknown() {
+        assert_eq!(classify(&unchanged(IDLE_DONE_PANE)), WorkerState::Unknown);
+    }
+
+    #[test]
+    fn idle_unchanged_pane_posts_once_and_busy_pane_never_posts() {
+        let idle = unchanged(IDLE_DONE_PANE);
+        let busy = unchanged(SPINNER_PANE);
+        let mut memory = CheckMemory::default();
+        let mut idle_posts = 0;
+        for _ in 0..3 {
+            let (actions, next) = plan(&memory, std::slice::from_ref(&idle));
+            idle_posts += inboxes(&actions);
+            memory = next;
+        }
+        assert_eq!(idle_posts, 1);
+        let mut memory = CheckMemory::default();
+        for _ in 0..3 {
+            let (actions, next) = plan(&memory, std::slice::from_ref(&busy));
+            assert!(actions.is_empty());
+            memory = next;
+        }
     }
 
     fn nudges(actions: &[CheckAction]) -> usize {
