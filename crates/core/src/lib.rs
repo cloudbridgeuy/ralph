@@ -27,5 +27,6 @@ pub mod inbox_alert;
 pub mod mcp;
 pub mod semver;
 pub mod stream;
+pub mod watch;
 pub mod worker;
 pub mod worker_check;

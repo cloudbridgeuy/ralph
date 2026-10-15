@@ -70,6 +70,16 @@ N is a position in the unread queue: oldest first, from 1, positive integer. Pos
 
 Usage string: `Usage: /inbox [next | N | list | peek N | drop N]`. `/inboxfoo` is a normal message. Local commands never start a turn or call the model. Each report that `/inbox`, `next`, `N` or `peek` prints goes under a header box from the pure `frame::worker_header` (`● worker <id> · <status>`, border and status colors from the agent palette: blue border, green for done, red for blocked or failed, yellow for waiting or check by default; sized by display width and cut to the terminal width), then its text as markdown through the chat renderer with the agent `MarkdownTheme` from `[theme.agent]` (see [configuration](../configuration.md); code blocks default to the assistant theme); plain text (header `[worker <id> · <status>]`) when stdout is not a TTY or `NO_COLOR` is set. The model still gets the plain `[worker <id> · <status>]` message.
 
+## Watches
+
+A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat`, in its own process group, with stdin closed. Ralph keeps only a bounded tail of its stdout and stderr.
+
+- When the watch exits, ralph posts exactly one `watch` report to the worker inbox. The text holds the exit code (or killed or timed-out note), the output tail, and the follow-up instruction.
+- The report goes through the inbox, so it never interrupts the chat channel.
+- Stopping a watch posts one "stopped" report. Closing the chat kills every watch and its child processes and posts nothing.
+- The runner lives in `crates/ralph/src/watches.rs`; the pure report and tail logic lives in `crates/core/src/watch.rs`.
+- Later tickets add the timeout config key (GUZ-483), persistence across restarts (GUZ-484), the MCP `watch` tool (GUZ-485), and the `/watch` command with a status line (GUZ-486).
+
 ## Executable cells
 
 A fenced block in a message you type whose info string is `!<runtime>` (for example ```` ```!zsh ````) is a cell. Worker reports and agent replies never run cells; a `!` fence inside another fence is not a cell. Parsing and message building are pure in `ralph_core::chat_cell`; PATH lookup, spawn and streaming are in `chat_cell.rs`.

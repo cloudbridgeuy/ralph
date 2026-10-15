@@ -18,6 +18,7 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, SubprocessError,
 };
 use crate::warn::{warn, warn_if_err};
+use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
 use ralph_core::chat::{
@@ -60,7 +61,7 @@ use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use termimad::MadSkin;
 
@@ -159,10 +160,6 @@ fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>
         .use_bracketed_paste(true))
 }
 
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     store_workers(&tmux_listing(), &store_dir.to_string_lossy())
 }
@@ -187,7 +184,8 @@ struct CheckState {
 }
 
 struct Monitor {
-    inbox: Inbox,
+    inbox: Arc<Inbox>,
+    watches: Watches,
     store: Store,
     store_dir: PathBuf,
     status: Mutex<Status>,
@@ -391,7 +389,7 @@ fn stdin_hung_up() -> bool {
     unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
 }
 
-fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>) {
+fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>, watches: Watches) {
     let started_on_terminal = io::stdin().is_terminal();
     std::thread::spawn(move || loop {
         std::thread::sleep(POLL);
@@ -404,6 +402,7 @@ fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>) {
             if let Some(dir) = &plugin_dir {
                 std::fs::remove_dir_all(dir).ok();
             }
+            watches.kill_all();
             std::process::exit(INPUT_LOST_EXIT);
         }
     });
@@ -875,9 +874,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         frozen_window,
         cancel: signal::interrupt_flag(),
     };
-    let inbox = Inbox::new(store_dir.join(INBOX_DIR));
+    let inbox = Arc::new(Inbox::new(store_dir.join(INBOX_DIR)));
     let known = inbox.peek().unwrap_or_default();
     let monitor = Arc::new(Monitor {
+        watches: Watches::new(Arc::clone(&inbox)),
         inbox,
         store: Store::new(store_dir.clone()),
         store_dir: canonical_store(store_dir.clone()),
@@ -900,6 +900,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             unknown_focus: chat_config.inbox_alert_unknown_focus,
         },
     });
+    let _close = monitor.watches.close_guard();
     monitor.refresh(true);
     if let Some(hint) = orphan_hint(
         &ready_ids(&monitor.store_dir),
@@ -911,6 +912,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     watch_input(
         Arc::clone(&at_prompt),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
+        monitor.watches.clone(),
     );
     let mut editor = build_editor(&store_dir)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
