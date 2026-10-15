@@ -46,6 +46,48 @@ pub struct SpawnRequest {
     pub at: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerRecord {
+    pub chat_pid: u32,
+    pub chat_start: String,
+    pub group: u32,
+    pub group_start: String,
+}
+
+impl OwnerRecord {
+    pub fn parse(text: &str) -> Option<Self> {
+        serde_json::from_str(text).ok()
+    }
+
+    pub fn render(&self) -> String {
+        json!(self).to_string()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerFacts {
+    pub chat_alive: bool,
+    pub group_alive: bool,
+    pub mine: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sweep {
+    Reclaim { kill_group: bool },
+    Wait,
+    Busy,
+}
+
+pub fn sweep_decision(facts: OwnerFacts) -> Sweep {
+    match (facts.chat_alive, facts.mine) {
+        (true, true) => Sweep::Wait,
+        (true, false) => Sweep::Busy,
+        (false, _) => Sweep::Reclaim {
+            kill_group: facts.group_alive,
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Handoff {
     Pending,
@@ -199,6 +241,45 @@ mod tests {
         assert!(!request_stale(100, 129));
         assert!(request_stale(100, 130));
         assert!(!request_stale(100, 50));
+    }
+
+    fn facts(chat_alive: bool, group_alive: bool, mine: bool) -> OwnerFacts {
+        OwnerFacts {
+            chat_alive,
+            group_alive,
+            mine,
+        }
+    }
+
+    #[test]
+    fn live_owner_chat_is_waited_on_when_mine_and_busy_when_foreign() {
+        assert_eq!(sweep_decision(facts(true, true, true)), Sweep::Wait);
+        assert_eq!(sweep_decision(facts(true, true, false)), Sweep::Busy);
+        assert_eq!(sweep_decision(facts(true, false, false)), Sweep::Busy);
+    }
+
+    #[test]
+    fn dead_owner_chat_is_reclaimed_and_the_group_killed_only_if_it_is_the_same_process() {
+        assert_eq!(
+            sweep_decision(facts(false, true, false)),
+            Sweep::Reclaim { kill_group: true }
+        );
+        assert_eq!(
+            sweep_decision(facts(false, false, false)),
+            Sweep::Reclaim { kill_group: false }
+        );
+    }
+
+    #[test]
+    fn owner_record_round_trips_and_rejects_garbage() {
+        let record = OwnerRecord {
+            chat_pid: 1,
+            chat_start: "Mon Oct 15 10:00:00 2026".into(),
+            group: 2,
+            group_start: "Mon Oct 15 10:00:01 2026".into(),
+        };
+        assert_eq!(OwnerRecord::parse(&record.render()), Some(record));
+        assert_eq!(OwnerRecord::parse("4242"), None);
     }
 
     #[test]

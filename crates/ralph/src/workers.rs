@@ -1,4 +1,4 @@
-use crate::acp_worker::{now_secs, write_file};
+use crate::acp_worker::{now_secs, sweep_owner, write_file};
 use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
@@ -7,7 +7,7 @@ use ralph_core::worker::{
     opencode_session_id, opencode_worker_plugin, project_slug, resolve_worktree_dir, session_name,
     session_owner, spawn_handoff, startup_state, tagged_sessions, worker_command,
     worker_mcp_config, worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args,
-    CloseState, CloseStep, CursorFiles, Handoff, Harness, Owner, SpawnRequest, Startup,
+    CloseState, CloseStep, CursorFiles, Handoff, Harness, Owner, SpawnRequest, Startup, Sweep,
     TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL,
     HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
     OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
@@ -48,6 +48,7 @@ impl Workers {
     pub fn spawn(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
         let repo = repo_root()?;
         let project = project_slug(&repo);
+        self.refuse_busy_cursor(id)?;
         match self.owner(&project, id) {
             Owner::Missing => {}
             Owner::Mine(_) => {
@@ -174,6 +175,7 @@ impl Workers {
 
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
         let repo = repo_root()?;
+        self.refuse_busy_cursor(id)?;
         let owner = self.owner(&project_slug(&repo), id);
         let config = AppConfig::load().map_err(|e| e.to_string());
         let (worktree, worktree_dir) =
@@ -342,6 +344,15 @@ impl Workers {
                 }
                 Handoff::Pending => thread::sleep(HANDOFF_POLL),
             }
+        }
+    }
+
+    fn refuse_busy_cursor(&self, id: &str) -> io::Result<()> {
+        match sweep_owner(&self.store_dir, id) {
+            Some(Sweep::Busy) => Err(io::Error::other(format!(
+                "worker {id} is a cursor worker owned by another running ralph chat"
+            ))),
+            _ => Ok(()),
         }
     }
 
