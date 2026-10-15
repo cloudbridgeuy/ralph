@@ -88,6 +88,7 @@ impl SavedWatch {
             follow_up: self.follow_up.clone(),
             kind: self.kind,
             timeout: self.timeout_secs.map(Duration::from_secs),
+            limit: self.timeout_secs.map(Duration::from_secs),
         }
     }
 
@@ -145,6 +146,7 @@ mod tests {
             follow_up: Some("next".to_string()),
             kind,
             timeout: timeout.map(Duration::from_secs),
+            limit: timeout.map(Duration::from_secs),
         }
     }
 

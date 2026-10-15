@@ -2,6 +2,7 @@ use crate::ansi::{DIM, RESET};
 use crate::chat_cell;
 use crate::chat_inbox::{self, Display};
 use crate::chat_memory::Store;
+use crate::chat_route::{run_local, LocalRoute};
 use crate::cli::ChatArgs;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::config::AppConfig;
@@ -38,7 +39,7 @@ use ralph_core::chat_skills::{
 };
 use ralph_core::chat_status::{
     footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
-    store_workers, worker_states, Memory, Route, RunningWorker, Status,
+    store_workers, watch_states, worker_states, Memory, Route, RunningWorker, Status,
 };
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
@@ -348,6 +349,7 @@ impl Monitor {
         let next = Status {
             unread: pending.len(),
             workers,
+            watches: watch_states(&self.watches.list(), chrono::Utc::now()),
             memory: memory.unwrap_or(status.memory),
             turn: turn.unwrap_or(status.turn),
         };
@@ -969,21 +971,15 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 };
                 turn.run(Trigger::Worker, &unread.logged, &unread.message)?
             }
-            Route::ListInbox => {
-                chat_inbox::list(&monitor.inbox)?;
-                continue;
-            }
-            Route::PeekInbox(id) => {
-                chat_inbox::peek(&monitor.inbox, id, &inbox_display(color))?;
-                continue;
-            }
-            Route::DropInbox(id) => {
-                chat_inbox::drop_report(&monitor.inbox, id)?;
-                monitor.refresh(true);
-                continue;
-            }
-            Route::InboxUsage => {
-                chat_inbox::usage();
+            local => {
+                let ctx = LocalRoute {
+                    inbox: &monitor.inbox,
+                    watches: &monitor.watches,
+                    display: &inbox_display(color),
+                };
+                run_local(local, &ctx, || {
+                    monitor.refresh(true);
+                })?;
                 continue;
             }
         };

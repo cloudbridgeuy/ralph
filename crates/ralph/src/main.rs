@@ -13,6 +13,8 @@ mod chat_cell;
 mod chat_inbox;
 mod chat_mcp;
 mod chat_memory;
+mod chat_route;
+mod chat_watch;
 mod cli;
 mod clipboard;
 pub mod config;

@@ -90,6 +90,7 @@ mod tests {
                 follow_up: None,
                 kind: WatchKind::Persistent,
                 timeout: None,
+                limit: None,
             },
             Utc::now(),
         )

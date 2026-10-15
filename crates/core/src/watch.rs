@@ -23,6 +23,7 @@ pub struct WatchSpec {
     pub follow_up: Option<String>,
     pub kind: WatchKind,
     pub timeout: Option<Duration>,
+    pub limit: Option<Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,6 +163,7 @@ mod tests {
             follow_up: follow_up.map(str::to_string),
             kind: WatchKind::Normal,
             timeout: None,
+            limit: None,
         }
     }
 

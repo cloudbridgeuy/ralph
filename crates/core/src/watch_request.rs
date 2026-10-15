@@ -29,6 +29,7 @@ impl WatchRequest {
                 WatchKind::Normal
             },
             timeout: self.timeout_secs.map(Duration::from_secs),
+            limit: self.timeout_secs.map(Duration::from_secs),
         }
     }
 

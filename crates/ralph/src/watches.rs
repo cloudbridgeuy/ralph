@@ -2,10 +2,12 @@ use crate::subprocess::kill_process_group;
 use crate::warn::{warn, warn_if_err};
 use crate::watch_store::WatchStore;
 use crate::worker_mcp::Inbox;
+use chrono::{DateTime, Utc};
 use ralph_core::watch::{
     build_report, StopReason, Tail, WatchKind, WatchOutcome, WatchSpec, TAIL_MAX_BYTES,
     TAIL_MAX_LINES,
 };
+use ralph_core::watch_command::StopResult;
 use ralph_core::watch_store::{plan_restore, RestoreAction, SavedWatch, WATCHES_DIR};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader};
@@ -44,6 +46,7 @@ impl Drop for CloseGuard {
 
 struct Active {
     spec: WatchSpec,
+    started_at: DateTime<Utc>,
     stop: StopSlot,
     waiter: JoinHandle<()>,
 }
@@ -98,7 +101,7 @@ impl Waiter {
                 .filter(|limit| started.elapsed() >= *limit)
             {
                 kill_process_group(&mut self.child);
-                return Some(WatchOutcome::TimedOut(limit));
+                return Some(WatchOutcome::TimedOut(self.spec.limit.unwrap_or(limit)));
             }
             match self.child.try_wait() {
                 Ok(Some(status)) => {
@@ -174,7 +177,7 @@ impl Watches {
                     self.report_now(&spec, &WatchOutcome::Exited(0), now);
                 }
                 RestoreAction::TimedOutNow(spec) => {
-                    let limit = spec.timeout.unwrap_or_default();
+                    let limit = spec.limit.or(spec.timeout).unwrap_or_default();
                     self.report_now(&spec, &WatchOutcome::TimedOut(limit), now);
                 }
                 RestoreAction::Discard(id) => self.store.remove(&id),
@@ -241,6 +244,7 @@ impl Watches {
             spec.id.clone(),
             Active {
                 spec,
+                started_at: chrono::Utc::now(),
                 stop,
                 waiter: handle,
             },
@@ -248,20 +252,31 @@ impl Watches {
         Ok(())
     }
 
-    #[allow(dead_code, reason = "GUZ-486 adds the /watch command that calls list")]
-    pub fn list(&self) -> Vec<WatchSpec> {
-        let mut specs: Vec<WatchSpec> = locked(&self.active)
+    pub fn list(&self) -> Vec<SavedWatch> {
+        let mut watches: Vec<SavedWatch> = locked(&self.active)
             .values()
-            .map(|entry| entry.spec.clone())
+            .map(|entry| SavedWatch::new(&entry.spec, entry.started_at))
             .collect();
-        specs.sort_by(|a, b| a.id.cmp(&b.id));
-        specs
+        watches.sort_by(|a, b| a.id.cmp(&b.id));
+        watches
     }
 
-    #[allow(dead_code, reason = "GUZ-486 adds the /watch command that calls stop")]
-    pub fn stop(&self, id: &str) -> bool {
+    pub fn used_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = locked(&self.active).keys().cloned().collect();
+        ids.extend(self.store.load_all().into_iter().map(|saved| saved.id));
+        ids
+    }
+
+    pub fn stop(&self, id: &str) -> StopResult {
         let entry = locked(&self.active).remove(id);
-        self.end(entry, StopReason::Requested)
+        if self.end(entry, StopReason::Requested) {
+            return StopResult::Stopped;
+        }
+        if self.store.load_all().iter().any(|saved| saved.id == id) {
+            self.store.remove(id);
+            return StopResult::RemovedSaved;
+        }
+        StopResult::Unknown
     }
 
     pub fn close_guard(&self) -> CloseGuard {

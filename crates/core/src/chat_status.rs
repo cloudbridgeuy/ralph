@@ -1,4 +1,6 @@
 use crate::inbox::{Position, Selection};
+use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
+use crate::watch_store::SavedWatch;
 use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
@@ -10,12 +12,19 @@ const BUSY_STATE: &str = "busy";
 const IDLE_STATE: &str = "idle";
 const INBOX_COMMAND: &str = "/inbox";
 pub const INBOX_USAGE: &str = "Usage: /inbox [next | N | list | peek N | drop N]";
+const WATCH_COMMAND: &str = "/watch";
 const SEPARATOR: &str = " · ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerState {
     pub id: String,
     pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchState {
+    pub id: String,
+    pub left: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +52,7 @@ pub struct TurnCache {
 pub struct Status {
     pub unread: usize,
     pub workers: Vec<WorkerState>,
+    pub watches: Vec<WatchState>,
     pub memory: Memory,
     pub turn: Option<TurnCache>,
 }
@@ -105,6 +115,7 @@ pub enum Route {
     PeekInbox(Position),
     DropInbox(Position),
     InboxUsage,
+    Watch(WatchCommand),
     Ignore,
 }
 
@@ -118,6 +129,12 @@ pub fn memory_size(msgs: usize, view_lines: &[String]) -> Memory {
 
 pub fn route_input(line: &str, unread: usize) -> Route {
     let line = line.trim();
+    if let Some(args) = line
+        .strip_prefix(WATCH_COMMAND)
+        .filter(|args| args.is_empty() || args.starts_with(char::is_whitespace))
+    {
+        return Route::Watch(parse_watch_args(args));
+    }
     let mut tokens = line.split_whitespace();
     if tokens.next() == Some(INBOX_COMMAND) {
         return match (tokens.next(), tokens.next(), tokens.next()) {
@@ -137,6 +154,16 @@ pub fn route_input(line: &str, unread: usize) -> Route {
         "" => Route::Ignore,
         message => Route::Send(message.to_string()),
     }
+}
+
+pub fn watch_states(saved: &[SavedWatch], now: chrono::DateTime<chrono::Utc>) -> Vec<WatchState> {
+    saved
+        .iter()
+        .map(|watch| WatchState {
+            id: watch.id.clone(),
+            left: time_left(watch, now).map(format_left),
+        })
+        .collect()
 }
 
 pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
@@ -262,49 +289,74 @@ pub fn status_line(status: &Status, width: usize) -> String {
             .collect();
         format!("workers {}", names.join(", "))
     };
+    let watch_count = status.watches.len();
+    let watch_names = |with_left: bool| {
+        let names: Vec<String> = status
+            .watches
+            .iter()
+            .map(|watch| match (with_left, &watch.left) {
+                (true, Some(left)) => {
+                    format!("{} {}", watch.id, left)
+                }
+                _ => watch.id.clone(),
+            })
+            .collect();
+        format!("watch {}", names.join(", "))
+    };
     let Memory { msgs, tokens } = status.memory;
     let tok = tokens_label(u64::try_from(tokens).unwrap_or(u64::MAX));
     let unread = status.unread;
     let long_cache = status.turn.map(|turn| turn.long_label());
     let compact_cache = status.turn.map(|turn| turn.compact_label());
-    let build =
-        |mail: Option<String>, workers: Option<String>, mem: String, cache: Option<String>| {
-            [mail, workers, Some(mem), cache]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(SEPARATOR)
-        };
+    let build = |parts: [Option<String>; 5]| {
+        parts
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(SEPARATOR)
+    };
     let long_mail = || (unread > 0).then(|| format!("📬 {unread} unread"));
     let compact_mail = || (unread > 0).then(|| format!("📬 {unread}"));
     let long_mem = || format!("mem {msgs} msgs ~{tok} tok");
     let compact_mem = || format!("{msgs}m ~{tok}");
+    let has_workers = count > 0;
+    let has_watches = watch_count > 0;
     let candidates = vec![
-        build(
+        build([
             long_mail(),
-            (count > 0).then(|| named(true)),
-            long_mem(),
+            has_workers.then(|| named(true)),
+            has_watches.then(|| watch_names(true)),
+            Some(long_mem()),
             long_cache.clone(),
-        ),
-        build(
+        ]),
+        build([
             long_mail(),
-            (count > 0).then(|| named(false)),
-            long_mem(),
+            has_workers.then(|| named(false)),
+            has_watches.then(|| watch_names(false)),
+            Some(long_mem()),
             long_cache.clone(),
-        ),
-        build(
+        ]),
+        build([
             long_mail(),
-            (count > 0).then(|| format!("{count} workers")),
-            long_mem(),
+            has_workers.then(|| format!("{count} workers")),
+            has_watches.then(|| format!("{watch_count} watches")),
+            Some(long_mem()),
             long_cache,
-        ),
-        build(
+        ]),
+        build([
             compact_mail(),
-            (count > 0).then(|| format!("{count}w")),
-            compact_mem(),
+            has_workers.then(|| format!("{count}w")),
+            has_watches.then(|| format!("{watch_count}wt")),
+            Some(compact_mem()),
             compact_cache.clone(),
-        ),
-        build(compact_mail(), None, compact_mem(), compact_cache),
+        ]),
+        build([
+            compact_mail(),
+            None,
+            None,
+            Some(compact_mem()),
+            compact_cache,
+        ]),
         compact_mail().unwrap_or_else(compact_mem),
     ];
     fit(candidates, width)
@@ -359,6 +411,7 @@ mod tests {
                     state: "question".into(),
                 },
             ],
+            watches: Vec::new(),
             memory: Memory {
                 msgs: 132,
                 tokens: 4100,
@@ -540,6 +593,120 @@ mod tests {
         assert!(status_line(&status, 200).starts_with("📬 1 unread · "));
         assert_eq!(status_line(&status, 4), "📬 1");
         assert!(status_line(&status, 30).contains("📬 1 · "));
+    }
+
+    fn with_watches() -> Status {
+        Status {
+            watches: vec![
+                WatchState {
+                    id: "w1".into(),
+                    left: Some("12m".into()),
+                },
+                WatchState {
+                    id: "w2".into(),
+                    left: None,
+                },
+            ],
+            ..status()
+        }
+    }
+
+    #[test]
+    fn status_line_lists_watches_after_workers() {
+        assert_eq!(
+            status_line(&with_watches(), 200),
+            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · watch w1 12m, w2 · mem 132 msgs ~4.1k tok"
+        );
+    }
+
+    #[test]
+    fn status_line_sheds_watch_detail_and_never_exceeds_width() {
+        let status = Status {
+            workers: Vec::new(),
+            ..with_watches()
+        };
+        let full = status_line(&status, 200);
+        assert!(full.contains("watch w1 12m, w2"));
+        let names = status_line(&status, full.width() - 1);
+        assert!(names.contains("watch w1, w2") && !names.contains("12m"));
+        let count = status_line(&status, names.width() - 1);
+        assert!(count.contains("2 watches"));
+        let compact = status_line(&status, count.width() - 1);
+        assert!(compact.contains("2wt"));
+        assert_eq!(status_line(&status, 12), "📬 2");
+        assert!((0..160).all(|w| status_line(&with_watches(), w).width() <= w));
+    }
+
+    #[test]
+    fn status_line_without_watches_has_no_watch_segment() {
+        assert!(!status_line(&status(), 200).contains("watch"));
+    }
+
+    #[test]
+    fn watch_states_report_the_time_left() {
+        use crate::watch::{WatchKind, WatchSpec};
+        let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let spec = |id: &str, command: &str| WatchSpec {
+            id: id.into(),
+            command: command.into(),
+            follow_up: None,
+            kind: WatchKind::Normal,
+            timeout: None,
+            limit: None,
+        };
+        let saved = [
+            SavedWatch::new(&spec("w1", "sleep 90"), now),
+            SavedWatch::new(&spec("w2", "make"), now),
+        ];
+        assert_eq!(
+            watch_states(&saved, now + chrono::Duration::seconds(30)),
+            vec![
+                WatchState {
+                    id: "w1".into(),
+                    left: Some("1m".into())
+                },
+                WatchState {
+                    id: "w2".into(),
+                    left: None
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn watch_states_are_equal_one_second_apart_at_twelve_minutes() {
+        use crate::watch::{WatchKind, WatchSpec};
+        let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let spec = WatchSpec {
+            id: "w1".into(),
+            command: "sleep 3600".into(),
+            follow_up: None,
+            kind: WatchKind::Normal,
+            timeout: None,
+            limit: None,
+        };
+        let saved = [SavedWatch::new(&spec, now)];
+        let at = |secs| watch_states(&saved, now + chrono::Duration::seconds(secs));
+        assert_eq!(at(2870), at(2871));
+        assert_eq!(at(2870)[0].left.as_deref(), Some("12m"));
+    }
+
+    #[test]
+    fn route_input_parses_watch_commands() {
+        assert_eq!(
+            route_input("/watch list", 0),
+            Route::Watch(WatchCommand::List)
+        );
+        assert_eq!(route_input("/watch", 3), Route::Watch(WatchCommand::Usage));
+        assert_eq!(
+            route_input(" /watch stop w1 ", 0),
+            Route::Watch(WatchCommand::Stop("w1".into()))
+        );
+        assert!(matches!(
+            route_input("/watch start --persistent sleep 5 -- done", 0),
+            Route::Watch(WatchCommand::Start(_))
+        ));
+        assert_eq!(route_input("/watchfoo", 0), Route::Send("/watchfoo".into()));
     }
 
     #[test]
