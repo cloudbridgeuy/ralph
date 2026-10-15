@@ -144,6 +144,32 @@ pub fn match_option<'a>(
     options.iter().find(|option| option.option_id == text)
 }
 
+/// The permission prompt of the worker's own `report` tool, as cursor names it.
+fn report_tool_label() -> String {
+    format!("{SERVER_NAME}-report: report")
+}
+
+/// The allow-once option to answer with, only for the ralph worker `report` tool.
+/// Every other request returns `None` and waits for the person.
+pub fn auto_allow_option(content: &BlockedContent) -> Option<&PermissionOption> {
+    let label = report_tool_label();
+    let is_report = content.tool.trim() == label || content.summary.trim() == label;
+    is_report
+        .then(|| {
+            content
+                .options
+                .iter()
+                .find(|option| option.kind == "allow_once")
+        })
+        .flatten()
+}
+
+/// A close may proceed when the chat that owns the worker is the caller itself,
+/// which is the chat or one of the processes below it (claude, chat-mcp).
+pub fn caller_owns_worker(owner_chat_pid: u32, caller_ancestry: &[u32]) -> bool {
+    caller_ancestry.contains(&owner_chat_pid)
+}
+
 pub fn no_option_message(options: &[PermissionOption]) -> String {
     let ids: Vec<&str> = options
         .iter()
@@ -428,6 +454,42 @@ mod tests {
         assert_eq!(match_option(&options, "Allow-Once"), None);
         assert_eq!(match_option(&options, "yes"), None);
         assert_eq!(match_option(&options, ""), None);
+    }
+
+    fn report_content(tool: &str, summary: &str) -> BlockedContent {
+        BlockedContent {
+            tool: tool.into(),
+            summary: summary.into(),
+            options: options(),
+        }
+    }
+
+    #[test]
+    fn only_the_worker_report_tool_is_auto_allowed() {
+        let report = report_content("report", "ralph-worker-report: report");
+        assert_eq!(
+            auto_allow_option(&report).map(|o| o.option_id.as_str()),
+            Some("allow-once")
+        );
+        let by_tool = report_content("ralph-worker-report: report", "x");
+        assert!(auto_allow_option(&by_tool).is_some());
+        assert!(auto_allow_option(&report_content("shell", "Run ls")).is_none());
+        assert!(auto_allow_option(&report_content("x", "other-server-report: report")).is_none());
+        assert!(auto_allow_option(&report_content("x", "ralph-chat-reply: reply")).is_none());
+    }
+
+    #[test]
+    fn report_without_an_allow_once_option_still_waits() {
+        let mut content = report_content("x", "ralph-worker-report: report");
+        content.options.retain(|o| o.kind != "allow_once");
+        assert!(auto_allow_option(&content).is_none());
+    }
+
+    #[test]
+    fn caller_owns_worker_only_when_the_owner_is_an_ancestor() {
+        assert!(caller_owns_worker(7078, &[71512, 71385, 7078, 1]));
+        assert!(!caller_owns_worker(7078, &[71512, 71385, 9999, 1]));
+        assert!(!caller_owns_worker(7078, &[]));
     }
 
     #[test]

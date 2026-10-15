@@ -11,11 +11,11 @@ use futures::channel::oneshot;
 use futures::executor::block_on;
 use futures::future::Either;
 use ralph_core::worker::{
-    acp_mcp_server, blocked_path, check_protocol, match_option, no_option_message,
-    permission_content, prompt_failure_report, prompt_problem, ready_path, request_stale,
-    session_error, sweep_decision, task_prompt, version_warning, BlockedContent, CursorFiles,
-    OwnerFacts, OwnerRecord, SpawnRequest, Sweep, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
-    CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
+    acp_mcp_server, auto_allow_option, blocked_path, caller_owns_worker, check_protocol,
+    match_option, no_option_message, permission_content, prompt_failure_report, prompt_problem,
+    ready_path, request_stale, session_error, sweep_decision, task_prompt, version_warning,
+    BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, CURSOR_ANSWER_DIR,
+    CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -70,11 +70,18 @@ impl Permissions {
         responder: Responder<RequestPermissionResponse>,
     ) {
         let value = serde_json::to_value(request).unwrap_or_default();
+        let content = permission_content(&value);
+        if let Some(option) = auto_allow_option(&content) {
+            let outcome = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+                option.option_id.clone(),
+            ));
+            responder
+                .respond(RequestPermissionResponse::new(outcome))
+                .ok();
+            return;
+        }
         let mut queue = self.queue();
-        queue.push_back(PendingPermission {
-            responder,
-            content: permission_content(&value),
-        });
+        queue.push_back(PendingPermission { responder, content });
         self.publish(&queue);
     }
 
@@ -312,6 +319,37 @@ fn process_start(pid: u32) -> Option<String> {
 
 fn alive_since(pid: u32, start: &str) -> bool {
     process_start(pid).is_some_and(|current| current == start)
+}
+
+/// Pids of this process and every ancestor, nearest first.
+fn own_ancestry() -> Vec<u32> {
+    let mut pids = vec![process::id()];
+    while let Some(parent) = pids.last().and_then(|pid| parent_pid(*pid)) {
+        if parent <= 1 || pids.contains(&parent) {
+            break;
+        }
+        pids.push(parent);
+    }
+    pids
+}
+
+fn parent_pid(pid: u32) -> Option<u32> {
+    let output = Command::new("ps")
+        .args(["-o", "ppid=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// True when the chat that owns this cursor worker is the caller's own.
+pub fn caller_owns_cursor(store_dir: &Path, id: &str) -> bool {
+    fs::read_to_string(CursorFiles::new(store_dir, id).owner)
+        .ok()
+        .and_then(|text| OwnerRecord::parse(&text))
+        .is_some_and(|record| caller_owns_worker(record.chat_pid, &own_ancestry()))
 }
 
 pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {

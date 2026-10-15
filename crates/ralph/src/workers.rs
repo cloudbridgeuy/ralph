@@ -1,4 +1,4 @@
-use crate::acp_worker::{now_secs, sweep_owner, write_file};
+use crate::acp_worker::{caller_owns_cursor, now_secs, sweep_owner, write_file};
 use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
@@ -49,7 +49,7 @@ impl Workers {
     pub fn spawn(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
         let repo = repo_root()?;
         let project = project_slug(&repo);
-        self.refuse_busy_cursor(id)?;
+        self.refuse_busy_cursor(id, false)?;
         match self.owner(&project, id) {
             Owner::Missing => {}
             Owner::Mine(_) => {
@@ -174,7 +174,7 @@ impl Workers {
 
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
         let repo = repo_root()?;
-        self.refuse_busy_cursor(id)?;
+        self.refuse_busy_cursor(id, true)?;
         let owner = self.owner(&project_slug(&repo), id);
         let config = AppConfig::load().map_err(|e| e.to_string());
         let (worktree, worktree_dir) =
@@ -383,8 +383,9 @@ impl Workers {
         }
     }
 
-    fn refuse_busy_cursor(&self, id: &str) -> io::Result<()> {
+    fn refuse_busy_cursor(&self, id: &str, closing: bool) -> io::Result<()> {
         match sweep_owner(&self.store_dir, id) {
+            Some(Sweep::Busy) if closing && caller_owns_cursor(&self.store_dir, id) => Ok(()),
             Some(Sweep::Busy) => Err(io::Error::other(format!(
                 "worker {id} is a cursor worker owned by another running ralph chat"
             ))),
