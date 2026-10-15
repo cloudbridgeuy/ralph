@@ -1,8 +1,10 @@
 use crate::acp_worker::{caller_owns_cursor, now_secs, owned_cursor_ids, sweep_owner, write_file};
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
+use crate::cursor_cleanup::cleanup_cursor_leftovers;
 use ralph_core::chat_status::{active_sessions, store_workers, RunningWorker};
 use ralph_core::claude_leftovers::cleans_claude_leftovers;
+use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
     close_plan, exclude_lines, marker_paths, opencode_command, opencode_config,
@@ -260,6 +262,7 @@ impl Workers {
         };
         let steps = close_plan(&state, abandon, force)
             .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
+        let real_worktree = fs::canonicalize(&worktree).unwrap_or_else(|_| worktree.clone());
         for step in &steps {
             self.close_step(step, &repo, &worktree, id).map_err(|e| {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
@@ -279,6 +282,10 @@ impl Workers {
         let leftovers = if cleans_claude_leftovers(&state, &steps) {
             dirs::home_dir()
                 .map(|home| cleanup_worktree_leftovers(&home, &worktree))
+                .unwrap_or_default()
+        } else if cleans_cursor_leftovers(&state, &steps) {
+            dirs::home_dir()
+                .map(|home| cleanup_cursor_leftovers(&home, &worktree, &real_worktree))
                 .unwrap_or_default()
         } else {
             Vec::new()

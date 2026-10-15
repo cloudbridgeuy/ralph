@@ -14,6 +14,7 @@ mod claude_cleanup;
 mod cli;
 mod clipboard;
 pub mod config;
+mod cursor_cleanup;
 pub mod diff_highlight;
 pub mod formatting;
 mod frame;
