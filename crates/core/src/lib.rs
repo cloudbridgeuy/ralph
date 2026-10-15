@@ -27,6 +27,7 @@ pub mod inbox;
 pub mod inbox_alert;
 pub mod mcp;
 pub mod semver;
+pub mod shell_format;
 pub mod stream;
 pub mod watch;
 pub mod watch_command;
