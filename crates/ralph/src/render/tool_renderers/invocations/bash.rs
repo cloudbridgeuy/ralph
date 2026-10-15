@@ -6,7 +6,8 @@ use crate::render::tool_renderers::context::{ansi, RenderContext};
 
 /// Render a Bash tool invocation.
 ///
-/// Single-line commands show inline; multi-line commands are wrapped in code blocks.
+/// Short single-line commands show inline. Long single-line commands are pretty-printed via
+/// `ralph_core::shell_format::format_command`. Multi-line results are wrapped in code blocks.
 pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
     let formatted = format_command(command, ctx.width);
     let command = formatted.as_deref().unwrap_or(command);
