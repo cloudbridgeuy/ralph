@@ -11,6 +11,7 @@ pub const NUDGE_TEXT: &str =
 pub struct WorkerObservation {
     pub id: String,
     pub session: String,
+    pub cursor: bool,
     pub ready: bool,
     pub blocked: bool,
     pub waiting: bool,
@@ -142,6 +143,15 @@ pub fn classify(obs: &WorkerObservation) -> WorkerState {
 fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
     let id = &obs.id;
     let session = &obs.session;
+    if obs.cursor {
+        return match state {
+            WorkerState::Waiting => Some(format!("Worker {id} stopped without calling report.")),
+            WorkerState::BlockedPermission => Some(format!(
+                "Worker {id} is waiting for a permission answer. Ask the person and relay it with reply."
+            )),
+            _ => None,
+        };
+    }
     match state {
         WorkerState::Waiting => Some(format!(
             "Worker {id} stopped without calling report. To look: tmux attach -t {session}"
@@ -205,6 +215,7 @@ mod tests {
         WorkerObservation {
             id: "w1".to_string(),
             session: "sess".to_string(),
+            cursor: false,
             ready: true,
             blocked: false,
             waiting: false,
@@ -757,5 +768,29 @@ mod tests {
         assert_eq!(check_every_polls(60, poll), 120);
         assert_eq!(check_every_polls(1, Duration::from_millis(700)), 2);
         assert_eq!(check_every_polls(0, poll), 1);
+    }
+
+    #[test]
+    fn cursor_workers_without_a_pane_are_working_and_texts_skip_tmux() {
+        let cursor = WorkerObservation {
+            cursor: true,
+            pane: None,
+            ..obs()
+        };
+        assert_eq!(classify(&cursor), WorkerState::Working);
+        for observation in [
+            WorkerObservation {
+                waiting: true,
+                ..cursor.clone()
+            },
+            WorkerObservation {
+                blocked: true,
+                ..cursor
+            },
+        ] {
+            let state = classify(&observation);
+            let text = inbox_text(state, &observation).unwrap();
+            assert!(!text.contains("tmux"));
+        }
     }
 }

@@ -1,7 +1,7 @@
-use crate::acp_worker::{caller_owns_cursor, now_secs, sweep_owner, write_file};
+use crate::acp_worker::{caller_owns_cursor, now_secs, owned_cursor_ids, sweep_owner, write_file};
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
-use ralph_core::chat_status::active_sessions;
+use ralph_core::chat_status::{active_sessions, store_workers, RunningWorker};
 use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
@@ -172,6 +172,15 @@ impl Workers {
         ]))?;
         run(Command::new("tmux").args(["send-keys", "-t", &target, "Enter"]))?;
         Ok(format!("Sent to worker {id}."))
+    }
+
+    pub fn nudge(&self, id: &str, text: &str) -> io::Result<String> {
+        let files = CursorFiles::new(&self.store_dir, id);
+        if files.owner.exists() {
+            write_file(&files.prompt, text)?;
+            return Ok(format!("Nudged worker {id}."));
+        }
+        self.reply(id, text)
     }
 
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
@@ -695,6 +704,17 @@ fn exclude(repo: &Path, lines: &[String]) -> io::Result<()> {
         "\n"
     };
     fs::write(&path, format!("{current}{separator}{missing}"))
+}
+
+pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
+    let mut workers = store_workers(&tmux_listing(), &store_dir.to_string_lossy());
+    workers.extend(
+        owned_cursor_ids(store_dir)
+            .iter()
+            .map(|id| RunningWorker::cursor(id)),
+    );
+    workers.sort_by(|a, b| a.id.cmp(&b.id));
+    workers
 }
 
 pub fn capture_pane(session: &str) -> Option<String> {

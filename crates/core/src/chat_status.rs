@@ -32,6 +32,18 @@ pub struct RunningWorker {
     pub id: String,
     pub session: String,
     pub opencode: bool,
+    pub cursor: bool,
+}
+
+impl RunningWorker {
+    pub fn cursor(id: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            session: String::new(),
+            opencode: false,
+            cursor: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -174,6 +186,7 @@ pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
             id: session.id,
             session: session.name,
             opencode: session.opencode,
+            cursor: false,
         })
         .collect();
     workers.sort_by(|a, b| a.id.cmp(&b.id));
@@ -810,7 +823,8 @@ mod tests {
             vec![RunningWorker {
                 id: "GUZ-1".into(),
                 session: "ralph-my-proj-GUZ-1".into(),
-                opencode: true
+                opencode: true,
+                cursor: false
             }]
         );
         let active = HashSet::from([opencode_session_id("GUZ-1")]);
@@ -824,6 +838,7 @@ mod tests {
             id: "A".into(),
             session: "ralph-p-A".into(),
             opencode: false,
+            cursor: false,
         }];
         let ready = ["C".to_string(), "A".to_string(), "B".to_string()];
         let hint = orphan_hint(&ready, &running).unwrap();
@@ -857,6 +872,7 @@ mod tests {
             id: id.into(),
             session: format!("ralph-p-{id}"),
             opencode,
+            cursor: false,
         };
         let workers = [
             worker("busy", true),

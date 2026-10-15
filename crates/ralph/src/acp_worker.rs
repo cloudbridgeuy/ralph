@@ -18,8 +18,8 @@ use ralph_core::worker::{
     match_option, no_option_message, permission_content, prompt_failure_report, ready_path,
     request_stale, session_error, sweep_decision, task_prompt, turn_outcome, version_warning,
     BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, TurnOutcome,
-    WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR,
-    HANDOFF_POLL, REPORT_REMINDER,
+    WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
+    CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -128,6 +128,7 @@ pub struct AcpWorker {
     permissions: Arc<Permissions>,
     stop: Option<oneshot::Sender<()>>,
     owner: PathBuf,
+    prompts: queue::UnboundedSender<String>,
     closing: Arc<AtomicBool>,
     done: bool,
 }
@@ -162,6 +163,7 @@ impl AcpWorker {
             permissions: Arc::clone(&permissions),
             stop: None,
             owner: owner.to_path_buf(),
+            prompts: prompts.clone(),
             closing: Arc::clone(&closing),
             done: false,
         };
@@ -259,6 +261,10 @@ impl AcpWorker {
                 READY_TIMEOUT.as_secs()
             )),
         }
+    }
+
+    fn nudge(&self, text: &str) {
+        self.prompts.unbounded_send(text.to_string()).ok();
     }
 
     fn write_owner(&self) -> Result<(), String> {
@@ -423,6 +429,15 @@ pub fn caller_owns_cursor(store_dir: &Path, id: &str) -> bool {
         .is_some_and(|record| caller_owns_worker(record.chat_pid, &own_ancestry()))
 }
 
+pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = request_ids(store_dir, CURSOR_OWNER_DIR)
+        .into_iter()
+        .filter(|id| caller_owns_cursor(store_dir, id))
+        .collect();
+    ids.sort();
+    ids
+}
+
 pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
     let files = CursorFiles::new(store_dir, id);
     let text = fs::read_to_string(&files.owner).ok()?;
@@ -500,6 +515,9 @@ impl CursorHost {
         for id in request_ids(&self.store_dir, CURSOR_ANSWER_DIR) {
             self.answer(&id);
         }
+        for id in request_ids(&self.store_dir, CURSOR_PROMPT_DIR) {
+            self.prompt(&id);
+        }
         for id in request_ids(&self.store_dir, CURSOR_SPAWN_DIR) {
             self.spawn(&id);
         }
@@ -534,6 +552,7 @@ impl CursorHost {
         let files = self.files(id);
         fs::remove_file(&files.owner).ok();
         fs::remove_file(&files.answer).ok();
+        fs::remove_file(&files.prompt).ok();
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
     }
 
@@ -563,6 +582,17 @@ impl CursorHost {
             write_file(&files.error, &message).ok();
         }
         fs::remove_file(&files.answer).ok();
+    }
+
+    fn prompt(&self, id: &str) {
+        let files = self.files(id);
+        let Ok(text) = fs::read_to_string(&files.prompt) else {
+            return;
+        };
+        if let Some(worker) = self.workers().get(id) {
+            worker.nudge(&text);
+        }
+        fs::remove_file(&files.prompt).ok();
     }
 
     fn close(&self, id: &str) {

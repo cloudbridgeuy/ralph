@@ -24,7 +24,7 @@ use crate::warn::{warn, warn_if_err};
 use crate::watch_requests;
 use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
-use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
+use crate::workers::{canonical_store, capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_mcp_args, build_nap_args, mcp_config,
     resolve_frozen_window, resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width,
@@ -41,7 +41,7 @@ use ralph_core::chat_skills::{
 };
 use ralph_core::chat_status::{
     footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
-    store_workers, watch_states, worker_states, Memory, Route, RunningWorker, Status,
+    watch_states, worker_states, Memory, Route, RunningWorker, Status,
 };
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
@@ -164,10 +164,6 @@ fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::error::Error>
         .use_bracketed_paste(true))
 }
 
-fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
-    store_workers(&tmux_listing(), &store_dir.to_string_lossy())
-}
-
 fn ready_ids(store_dir: &Path) -> Vec<String> {
     std::fs::read_dir(store_dir.join(READY_DIR))
         .map(|entries| {
@@ -214,7 +210,7 @@ impl Monitor {
         let waiting = waiting_path(&self.store_dir, id).exists();
         let unreported = unreported_path(&self.store_dir, id).exists();
         let reported = reported_since_nudge(state.reports.get(id), state.nudges.get(id));
-        let pane = (!(blocked || waiting || (ready && reported)))
+        let pane = (!(worker.cursor || blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
             .flatten();
         let pane_changed = match &pane {
@@ -227,6 +223,7 @@ impl Monitor {
         WorkerObservation {
             id: id.clone(),
             session: worker.session.clone(),
+            cursor: worker.cursor,
             ready,
             blocked,
             waiting,
@@ -264,7 +261,7 @@ impl Monitor {
         for action in actions {
             match action {
                 CheckAction::Nudge(id) => warn_if_err(
-                    self.workers.reply(&id, NUDGE_TEXT),
+                    self.workers.nudge(&id, NUDGE_TEXT),
                     format!("nudging worker {id}"),
                 ),
                 CheckAction::Inbox(id, text) => {

@@ -13,6 +13,7 @@ pub const CURSOR_CLOSE_DIR: &str = "cursor-close";
 pub const CURSOR_ERROR_DIR: &str = "cursor-error";
 pub const CURSOR_OWNER_DIR: &str = "cursor";
 pub const CURSOR_ANSWER_DIR: &str = "cursor-answer";
+pub const CURSOR_PROMPT_DIR: &str = "cursor-prompt";
 pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDOFF_POLL: Duration = Duration::from_millis(250);
 const AUTH_REQUIRED_CODE: i32 = -32000;
@@ -24,6 +25,7 @@ pub struct CursorFiles {
     pub error: PathBuf,
     pub owner: PathBuf,
     pub answer: PathBuf,
+    pub prompt: PathBuf,
 }
 
 impl CursorFiles {
@@ -34,16 +36,18 @@ impl CursorFiles {
             error: store.join(CURSOR_ERROR_DIR).join(id),
             owner: store.join(CURSOR_OWNER_DIR).join(id),
             answer: store.join(CURSOR_ANSWER_DIR).join(id),
+            prompt: store.join(CURSOR_PROMPT_DIR).join(id),
         }
     }
 
-    pub fn all(&self) -> [&Path; 5] {
+    pub fn all(&self) -> [&Path; 6] {
         [
             &self.spawn,
             &self.close,
             &self.error,
             &self.owner,
             &self.answer,
+            &self.prompt,
         ]
     }
 }
