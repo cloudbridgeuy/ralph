@@ -110,6 +110,29 @@ border = "magenta"
 
 A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `grey`, their `dark_` forms, `dark_grey`, `reset`) or `#rrggbb`. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
 
+#### Status line colors: `[theme.status]`
+
+`ralph chat` paints its status line from this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table draws the same bar as before. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it.
+
+```toml
+[theme.status]
+mode_fg = "black"         # IDLE block text
+mode_bg = "green"         # IDLE block background
+mail_fg = "black"         # unread mail block text
+mail_bg = "dark_green"    # unread mail block background
+store_fg = "reset"        # store path text
+workers_fg = "reset"      # workers text
+watches_fg = "reset"      # watches text
+memory_fg = "reset"       # memory size text
+cache_fg = "black"        # cache block text
+cache_bg = "dark_green"   # cache block background
+cost_fg = "black"         # cost block text
+cost_bg = "green"         # cost block background
+base_bg = "#303030"       # bar background: filler, store, workers, watches, memory
+```
+
+The default `base_bg` is ANSI color 236, written `#303030` above. `reset` is the terminal's own text color. Powerline glyphs take their colors from the neighbouring blocks, so they have no keys.
+
 Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.
 
 The old `[theme] agent = "<theme>"` string still works as `[theme.agent] code = "<theme>"`; `ralph chat` prints a deprecation warning for it.
@@ -198,6 +221,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `inbox_alert_sound` | bool | `true` | Play a sound when a worker report arrives and the chat is not focused |
 | `inbox_alert_notification` | bool | `false` | Also send a system notification (`<id> <status>`) |
 | `inbox_alert_unknown_focus` | `"alert"` or `"silent"` | `"alert"` | What to do when focus cannot be detected (outside tmux, no attached client, tmux query failed) |
+| `status_powerline` | bool | `false` | Use powerline glyphs (`\ue0b0`, `\ue0b2`) between status line segments; needs a patched font. Off draws plain colour blocks |
 
 `--skill` and `RALPH_CHAT_SKILLS` replace `skills`. For `permission_mode` the precedence is `chat --permission-mode`, then `RALPH_CHAT_PERMISSION_MODE`, then this key, then `auto`; chat passes the resolved mode to every claude worker it spawns, so chat and workers always match. `--frozen-window <N>` overrides `frozen_window`; a value outside 1-199 stops chat start with an error. Without `worker_base`, `close_worker` uses the branch recorded at spawn (`branch.worker/<ID>.ralphBase`), then `origin/HEAD`, then `main`. For `worktree_dir` the precedence is `chat --worktree-dir`, then `RALPH_WORKTREE_DIR`, then this key, then `.worktrees`. A worker that already has a worktree keeps it: spawn and close look up `worker/<ID>` in `git worktree list` first, so changing the key does not lose running workers. A directory inside the repo is added to `.git/info/exclude`. A config that fails to read or parse skips `worktree_dir`, and the spawn or close result ends with a warning. For `wrap_width` the precedence is `chat --wrap-width <N>`, then `RALPH_WRAP_WIDTH`, then this key; a value that is not a whole number stops chat start with an error. The width used is the smaller of this cap and the terminal width, read at each render, so a narrower terminal still wins. The cap is read once at chat start: a change to this key or `RALPH_WRAP_WIDTH` needs a chat restart; a terminal resize does not. It applies to rendered prose (chat turns and drained worker reports) and to the reedline prompt area: the status line, the draft, and the footer. Code blocks are not wrapped. For `cell_output_limit` and `cell_output_bytes` the precedence is `RALPH_CELL_OUTPUT_LIMIT` / `RALPH_CELL_OUTPUT_BYTES`, then the key, then the default; a value that is not a whole number stops chat start with an error. The caps shape only what Claude receives; the terminal shows all output in `result` fences. See [executable cells](context/ralph-chat.md#executable-cells). `worker_check_secs` has no flag or env var; the check is described in [ralph chat](context/ralph-chat.md#worker-inbox). `chat --no-inbox-sound` and `--no-inbox-notification` turn off the matching alert for one run; focus rules are in [ralph chat](context/ralph-chat.md#worker-inbox). See [ralph chat](context/ralph-chat.md).
 
