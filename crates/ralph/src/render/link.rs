@@ -200,11 +200,38 @@ fn diff_stat(chars: &[char], start: usize) -> Option<DiffStat> {
         })
         .or_else(|| {
             diff_pair(chars, start).filter(|stat| {
-                ends_token(stat.end)
-                    || matches!(chars.get(stat.end), Some('.' | ',' | ';' | ':'))
-                        && ends_token(stat.end + 1)
+                let closes_paren = chars.get(stat.end) == Some(&')')
+                    && follows_file_count(chars, start)
+                    && has_open_paren(chars, start);
+                let after = stat.end + usize::from(closes_paren);
+                ends_token(after)
+                    || matches!(chars.get(after), Some('.' | ',' | ';' | ':'))
+                        && ends_token(after + 1)
             })
         })
+}
+
+fn follows_file_count(chars: &[char], at: usize) -> bool {
+    let head: String = chars[..at].iter().collect();
+    ["file, ", "files, "].iter().any(|tail| {
+        head.strip_suffix(tail)
+            .and_then(|rest| rest.strip_suffix(' '))
+            .is_some_and(|rest| rest.ends_with(|ch: char| ch.is_ascii_digit()))
+    })
+}
+
+fn has_open_paren(chars: &[char], before: usize) -> bool {
+    let mut closed = 0usize;
+    for &ch in chars[..before].iter().rev() {
+        match ch {
+            '\n' => return false,
+            ')' => closed += 1,
+            '(' if closed == 0 => return true,
+            '(' => closed -= 1,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn signed_number_end(chars: &[char], sign: usize) -> Option<usize> {
@@ -661,6 +688,43 @@ mod tests {
             "## Release 7 has +204 lines",
             "# +1",
             "  ### a -2/x",
+        ] {
+            assert_eq!(mark_links(text), text, "{text}");
+        }
+    }
+
+    #[test]
+    fn paint_colors_diff_stat_pairs_closing_an_open_parenthetical() {
+        let pair = format!("{GREEN}+271{COLOR_OFF}/{RED}\u{2212}15{COLOR_OFF}");
+        assert_eq!(
+            paint(&mark_links(
+                "GUZ-520 done on `worker/GUZ-520` (`c2d2c0f`, `44a2e6f`; 10 files, +271/\u{2212}15) but can't merge"
+            )),
+            format!(
+                "GUZ-520 done on `worker/GUZ-520` (`c2d2c0f`, `44a2e6f`; 10 files, {pair}) but can't merge"
+            )
+        );
+        assert_eq!(
+            paint(&mark_links("(see 10 files, +271/-15) x")),
+            format!("(see 10 files, {GREEN}+271{COLOR_OFF}/{RED}-15{COLOR_OFF}) x")
+        );
+        assert_eq!(
+            paint(&mark_links("(10 files, +271/\u{2212}15).")),
+            format!("(10 files, {pair}).")
+        );
+        assert_eq!(
+            paint(&mark_links("(a (b) 3 files, +271/\u{2212}15)")),
+            format!("(a (b) 3 files, {pair})")
+        );
+    }
+
+    #[test]
+    fn closing_paren_without_open_paren_keeps_diff_stat_literal() {
+        for text in [
+            "x +204/-85)",
+            "(a) +204/-85)",
+            "(a\nb +204/-85)",
+            "(a) +204/-85).",
         ] {
             assert_eq!(mark_links(text), text, "{text}");
         }
