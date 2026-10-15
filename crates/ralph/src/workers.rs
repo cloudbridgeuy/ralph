@@ -284,8 +284,17 @@ impl Workers {
                 .map(|home| cleanup_worktree_leftovers(&home, &worktree))
                 .unwrap_or_default()
         } else if cleans_cursor_leftovers(&state, &steps) {
+            let porcelain = run(Command::new("git").arg("-C").arg(&repo).args([
+                "worktree",
+                "list",
+                "--porcelain",
+            ]))
+            .ok()
+            .map(|listing| String::from_utf8_lossy(&listing.stdout).into_owned());
             dirs::home_dir()
-                .map(|home| cleanup_cursor_leftovers(&home, &worktree, &real_worktree))
+                .map(|home| {
+                    cleanup_cursor_leftovers(&home, &worktree, &real_worktree, porcelain.as_deref())
+                })
                 .unwrap_or_default()
         } else {
             Vec::new()

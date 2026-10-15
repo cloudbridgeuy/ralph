@@ -61,9 +61,25 @@ pub fn project_dirs(projects_base: &Path, real_worktree: &str) -> Vec<PathBuf> {
     dirs
 }
 
-pub fn session_names_worktree(meta_json: &str, worktree: &str, real: &str) -> bool {
+pub fn session_cwd(meta_json: &str) -> Option<String> {
     serde_json::from_str::<SessionMeta>(meta_json)
-        .is_ok_and(|meta| meta.cwd == worktree || meta.cwd == real)
+        .ok()
+        .map(|meta| meta.cwd)
+}
+
+pub fn session_names_worktree(meta_json: &str, worktree: &str, real: &str) -> bool {
+    session_cwd(meta_json).is_some_and(|cwd| cwd == worktree || cwd == real)
+}
+
+pub fn slug_owner_conflict<'a>(
+    worktree: &str,
+    real: &str,
+    others: &'a [String],
+) -> Option<&'a String> {
+    let slug = cursor_slug(real);
+    others
+        .iter()
+        .find(|other| *other != worktree && *other != real && cursor_slug(other) == slug)
 }
 
 #[cfg(test)]
@@ -166,6 +182,32 @@ mod tests {
             "/a/wt",
             "/p/a/wt"
         ));
+    }
+
+    fn conflict(worktree: &str, real: &str, others: &[&str]) -> Option<String> {
+        let others: Vec<String> = others.iter().map(|other| other.to_string()).collect();
+        slug_owner_conflict(worktree, real, &others).cloned()
+    }
+
+    #[test]
+    fn lossy_slug_collision_is_a_conflict() {
+        assert_eq!(
+            conflict("/x/a.b", "/x/a.b", &["/x/a-b"]),
+            Some("/x/a-b".to_string())
+        );
+    }
+
+    #[test]
+    fn same_path_or_other_slug_is_no_conflict() {
+        assert_eq!(conflict("/x/a.b", "/x/a.b", &["/x/a.b", "/x/c"]), None);
+    }
+
+    #[test]
+    fn non_canonical_spelling_of_the_worktree_is_no_conflict() {
+        assert_eq!(
+            conflict("/tmp/x/wt", "/private/tmp/x/wt", &["/tmp/x/wt"]),
+            None
+        );
     }
 
     #[test]

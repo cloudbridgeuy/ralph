@@ -56,6 +56,14 @@ pub fn worktree_for_branch(porcelain: &str, branch: &str) -> Option<PathBuf> {
     })
 }
 
+pub fn worktree_paths(porcelain: &str) -> Vec<String> {
+    porcelain
+        .lines()
+        .filter_map(|line| line.strip_prefix(WORKTREE_PREFIX))
+        .map(String::from)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +126,13 @@ mod tests {
         assert!(resolve_worktree_dir(repo, None, None, None, Ok(None))
             .warning
             .is_none());
+    }
+
+    #[test]
+    fn worktree_paths_lists_every_entry() {
+        let porcelain =
+            "worktree /repo\nHEAD 1\nbranch refs/heads/main\n\nworktree /d\nHEAD 3\ndetached\n";
+        assert_eq!(worktree_paths(porcelain), ["/repo", "/d"]);
     }
 
     #[test]
