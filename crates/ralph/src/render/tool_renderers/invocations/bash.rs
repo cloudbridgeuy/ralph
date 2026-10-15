@@ -1,11 +1,15 @@
 //! Bash tool invocation rendering.
 
+use ralph_core::shell_format::format_command;
+
 use crate::render::tool_renderers::context::{ansi, RenderContext};
 
 /// Render a Bash tool invocation.
 ///
 /// Single-line commands show inline; multi-line commands are wrapped in code blocks.
 pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
+    let formatted = format_command(command, ctx.width);
+    let command = formatted.as_deref().unwrap_or(command);
     let is_multiline = command.contains('\n');
 
     if ctx.terminal {

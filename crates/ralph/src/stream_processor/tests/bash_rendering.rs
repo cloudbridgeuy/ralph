@@ -20,9 +20,11 @@ fn test_bash_command_shown_in_full_without_truncation() {
 
     assert!(output.is_some());
     let out = output.unwrap();
-    // Should contain the full command
+    // Should contain the full command, pretty-printed one statement per line
     assert!(
-        out.contains(long_command),
+        out.contains(
+            "git log --oneline --graph --decorate --all --color=always | head -100 &&\n  echo 'Done'"
+        ),
         "Full command should be shown: {}",
         out
     );

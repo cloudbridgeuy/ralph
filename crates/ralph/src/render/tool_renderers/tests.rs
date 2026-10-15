@@ -50,6 +50,44 @@ fn test_render_bash_invocation_multiline() {
     assert!(output.contains("echo 'line1'"));
 }
 
+#[test]
+fn test_render_bash_invocation_long_command_is_pretty_printed_plain() {
+    let highlighter = test_highlighter();
+    let mut ctx = RenderContext::plain(&highlighter);
+    ctx.width = 40;
+    let output = render_bash_invocation(
+        &ctx,
+        "echo one; for b in x y; do echo $b; done; echo a-long-final-statement",
+    );
+
+    assert_eq!(
+        output,
+        "> Bash\n```sh\necho one\nfor b in x y; do\n  echo $b\ndone\necho a-long-final-statement\n```\n"
+    );
+}
+
+#[test]
+fn test_render_bash_invocation_long_command_is_pretty_printed_terminal() {
+    let highlighter = test_highlighter();
+    let mut ctx = RenderContext::terminal(&highlighter);
+    ctx.width = 20;
+    let output = render_bash_invocation(&ctx, "echo first-statement; echo second-statement");
+
+    assert!(output.contains("▶ Bash"));
+    assert!(output.contains("```sh\n"));
+    assert!(output.matches('\n').count() >= 4, "Output: {:?}", output);
+}
+
+#[test]
+fn test_render_bash_invocation_short_command_fits_width_unchanged() {
+    let highlighter = test_highlighter();
+    let mut ctx = RenderContext::plain(&highlighter);
+    ctx.width = 80;
+    let output = render_bash_invocation(&ctx, "cd x && cargo test; echo ok");
+
+    assert_eq!(output, "> Bash\n  cd x && cargo test; echo ok\n");
+}
+
 // =========================================================================
 // Grep Invocation Tests
 // =========================================================================
