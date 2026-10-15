@@ -4,10 +4,19 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 pub const WATCH_STATUS: &str = "watch";
+pub const WATCH_ID_PREFIX: &str = "watch:";
 pub const TAIL_MAX_LINES: usize = 50;
 pub const TAIL_MAX_BYTES: usize = 8 * 1024;
 const TRUNCATED_MARKER: &str = "[earlier output truncated]";
 const NO_OUTPUT: &str = "(no output)";
+
+pub fn watch_id(raw: &str) -> String {
+    if raw.starts_with(WATCH_ID_PREFIX) {
+        raw.to_string()
+    } else {
+        format!("{WATCH_ID_PREFIX}{raw}")
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -184,6 +193,24 @@ mod tests {
         let mut tail = Tail::new(TAIL_MAX_LINES, TAIL_MAX_BYTES);
         lines.iter().for_each(|line| tail.push_line(line));
         tail
+    }
+
+    #[test]
+    fn watch_ids_get_the_prefix_once() {
+        assert_eq!(watch_id("w1"), "watch:w1");
+        assert_eq!(watch_id("watch:w1"), "watch:w1");
+        assert_eq!(watch_id("foo"), "watch:foo");
+    }
+
+    #[test]
+    fn a_watch_id_is_never_a_valid_worker_id() {
+        for raw in ["w1", "ci", "watch:w1", "a-b"] {
+            let args = serde_json::json!({"id": watch_id(raw), "text": "t"});
+            assert!(matches!(
+                crate::worker::parse_command("reply", &args),
+                Some(Err(_))
+            ));
+        }
     }
 
     #[test]

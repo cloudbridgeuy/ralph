@@ -700,7 +700,7 @@ mod tests {
         assert_eq!(route_input("/watch", 3), Route::Watch(WatchCommand::Usage));
         assert_eq!(
             route_input(" /watch stop w1 ", 0),
-            Route::Watch(WatchCommand::Stop("w1".into()))
+            Route::Watch(WatchCommand::Stop("watch:w1".into()))
         );
         assert!(matches!(
             route_input("/watch start --persistent sleep 5 -- done", 0),

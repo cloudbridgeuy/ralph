@@ -61,7 +61,7 @@ Before you guess or ask the person for a fact, use zoom and recall until the fac
 
 Messages that start with [worker <id> · <status>] come from agents working for the person, not from the person. Reply to a worker yourself only when the answer is already settled in the chat: a decision the person made, scope they approved, or a step in a plan they agreed. Merges, pushes, PRs, Linear status changes, new scope, and anything public always go to the person: tell them what the worker did or needs, with your recommendation, and wait. List every reply you sent to a worker in your next message to the person. Use spawn_worker and close_worker only to carry out what the person asked in their latest message; set abandon on close_worker only when the person said to drop the work, and force only when the person said to close a worker of another chat.
 
-Messages that start with [worker <id> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report.
+Messages that start with [worker watch:<name> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report.
 
 Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options.
 
@@ -302,7 +302,7 @@ mod tests {
         assert!(SYSTEM_PROMPT.contains(
             "Before calling watch, show the person the exact command and wait for their approval."
         ));
-        assert!(SYSTEM_PROMPT.contains("[worker <id> · watch]"));
+        assert!(SYSTEM_PROMPT.contains("[worker watch:<name> · watch]"));
     }
 
     #[test]

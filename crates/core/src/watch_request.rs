@@ -1,5 +1,5 @@
 use crate::mcp::string_arg;
-use crate::watch::{WatchKind, WatchSpec, WATCH_STATUS};
+use crate::watch::{watch_id, WatchKind, WatchSpec, WATCH_STATUS};
 use crate::watch_store::file_name;
 use crate::worker::Report;
 use serde::{Deserialize, Serialize};
@@ -64,7 +64,7 @@ pub fn parse_watch_args(args: &Value) -> Result<WatchRequest, String> {
         ));
     }
     Ok(WatchRequest {
-        id,
+        id: watch_id(&id),
         command: string_arg(args, "command")?,
         follow_up: string_arg(args, "follow_up")?,
         persistent: bool_arg(args, "persistent")?,
@@ -109,7 +109,7 @@ mod tests {
 
     fn request() -> WatchRequest {
         WatchRequest {
-            id: "ci".to_string(),
+            id: "watch:ci".to_string(),
             command: "gh run watch 1".to_string(),
             follow_up: "report the result".to_string(),
             persistent: false,
@@ -122,6 +122,14 @@ mod tests {
         let args =
             json!({"id": "ci", "command": "gh run watch 1", "follow_up": "report the result"});
         assert_eq!(parse_watch_args(&args), Ok(request()));
+    }
+
+    #[test]
+    fn the_request_id_is_prefixed_once() {
+        for id in ["ci", "watch:ci"] {
+            let args = json!({"id": id, "command": "c", "follow_up": "f"});
+            assert_eq!(parse_watch_args(&args).unwrap().id, "watch:ci");
+        }
     }
 
     #[test]

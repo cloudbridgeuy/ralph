@@ -1,4 +1,4 @@
-use crate::watch::WatchKind;
+use crate::watch::{watch_id, WatchKind};
 use crate::watch_store::SavedWatch;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
@@ -41,7 +41,7 @@ pub fn parse_watch_args(args: &str) -> WatchCommand {
         "start" => parse_start(rest),
         "list" if rest.is_empty() => WatchCommand::List,
         "stop" => match rest.split_whitespace().collect::<Vec<_>>().as_slice() {
-            [id] => WatchCommand::Stop((*id).to_string()),
+            [id] => WatchCommand::Stop(watch_id(id)),
             _ => WatchCommand::Usage,
         },
         _ => WatchCommand::Usage,
@@ -69,7 +69,7 @@ fn parse_start(rest: &str) -> WatchCommand {
 
 pub fn next_watch_id(used: &[String]) -> String {
     (1u64..)
-        .map(|n| format!("w{n}"))
+        .map(|n| watch_id(&format!("w{n}")))
         .find(|id| !used.contains(id))
         .unwrap_or_default()
 }
@@ -216,7 +216,11 @@ mod tests {
         assert_eq!(parse_watch_args("list"), WatchCommand::List);
         assert_eq!(
             parse_watch_args(" stop w3 "),
-            WatchCommand::Stop("w3".into())
+            WatchCommand::Stop("watch:w3".into())
+        );
+        assert_eq!(
+            parse_watch_args("stop watch:w3"),
+            WatchCommand::Stop("watch:w3".into())
         );
     }
 
@@ -230,10 +234,13 @@ mod tests {
     #[test]
     fn next_id_is_the_lowest_unused() {
         let ids = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
-        assert_eq!(next_watch_id(&[]), "w1");
-        assert_eq!(next_watch_id(&ids(&["w1", "w2"])), "w3");
-        assert_eq!(next_watch_id(&ids(&["w2", "ci", "w1", "w4"])), "w3");
-        assert_eq!(next_watch_id(&ids(&["w1x", "W1"])), "w1");
+        assert_eq!(next_watch_id(&[]), "watch:w1");
+        assert_eq!(next_watch_id(&ids(&["watch:w1", "watch:w2"])), "watch:w3");
+        assert_eq!(
+            next_watch_id(&ids(&["watch:w2", "watch:ci", "watch:w1", "watch:w4"])),
+            "watch:w3"
+        );
+        assert_eq!(next_watch_id(&ids(&["w1", "watch:w1x"])), "watch:w1");
     }
 
     #[test]
