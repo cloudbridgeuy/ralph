@@ -94,6 +94,10 @@ pub fn queued_message(id: &str) -> String {
     format!("Watch `{id}` is queued. Its report will arrive in the inbox when the command ends.")
 }
 
+pub fn already_queued_message(id: &str) -> String {
+    format!("watch `{id}` is already queued")
+}
+
 pub fn start_failure_report(id: &str, error: &str, at: &str) -> Report {
     Report {
         worker: id.to_string(),
@@ -122,6 +126,14 @@ mod tests {
         let args =
             json!({"id": "ci", "command": "gh run watch 1", "follow_up": "report the result"});
         assert_eq!(parse_watch_args(&args), Ok(request()));
+    }
+
+    #[test]
+    fn the_duplicate_message_names_the_id() {
+        assert_eq!(
+            already_queued_message("watch:ci"),
+            "watch `watch:ci` is already queued"
+        );
     }
 
     #[test]

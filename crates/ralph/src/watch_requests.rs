@@ -1,7 +1,9 @@
 use crate::warn::{warn, warn_if_err};
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
-use ralph_core::watch_request::{start_failure_report, WatchRequest, WATCH_REQUESTS_DIR};
+use ralph_core::watch_request::{
+    already_queued_message, start_failure_report, WatchRequest, WATCH_REQUESTS_DIR,
+};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,9 +16,17 @@ pub fn queue(store_dir: &Path, request: &WatchRequest) -> io::Result<()> {
     let dir = requests_dir(store_dir);
     fs::create_dir_all(&dir)?;
     let name = request.file_name();
-    let tmp = dir.join(format!(".{name}"));
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     fs::write(&tmp, serde_json::to_vec(request)?)?;
-    fs::rename(tmp, dir.join(name))
+    let claimed = fs::hard_link(&tmp, dir.join(&name));
+    warn_if_err(fs::remove_file(&tmp), format!("removing {}", tmp.display()));
+    claimed.map_err(|e| match e.kind() {
+        io::ErrorKind::AlreadyExists => io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            already_queued_message(&request.id),
+        ),
+        _ => e,
+    })
 }
 
 pub fn take_all(store_dir: &Path) -> Vec<WatchRequest> {
@@ -92,6 +102,28 @@ mod tests {
         taken.sort_by(|x, y| x.id.cmp(&y.id));
         assert_eq!(taken, [request("a"), request("b")]);
         assert!(take_all(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn a_second_queue_of_the_same_id_errors_and_keeps_one_file() {
+        let dir = tempfile::tempdir().unwrap();
+        queue(dir.path(), &request("watch:a")).unwrap();
+        let error = queue(dir.path(), &request("watch:a")).unwrap_err();
+        assert_eq!(error.to_string(), "watch `watch:a` is already queued");
+        let names: Vec<_> = fs::read_dir(requests_dir(dir.path()))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 1);
+        assert_eq!(take_all(dir.path()), [request("watch:a")]);
+    }
+
+    #[test]
+    fn an_id_can_be_queued_again_after_it_was_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        queue(dir.path(), &request("a")).unwrap();
+        take_all(dir.path());
+        queue(dir.path(), &request("a")).unwrap();
     }
 
     #[test]
