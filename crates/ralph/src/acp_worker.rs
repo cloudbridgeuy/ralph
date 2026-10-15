@@ -3,19 +3,23 @@ use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{
     InitializeRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
+    SessionNotification,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
+use futures::channel::mpsc as queue;
 use futures::channel::oneshot;
 use futures::executor::block_on;
 use futures::future::Either;
+use futures::StreamExt;
 use ralph_core::worker::{
-    acp_mcp_server, auto_allow_option, blocked_path, caller_owns_worker, check_protocol,
-    match_option, no_option_message, permission_content, prompt_failure_report, prompt_problem,
-    ready_path, request_stale, session_error, sweep_decision, task_prompt, version_warning,
-    BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, CURSOR_ANSWER_DIR,
-    CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
+    acp_mcp_server, auto_allow_option, caller_owns_worker, check_protocol, is_report_tool_call,
+    match_option, no_option_message, permission_content, prompt_failure_report, ready_path,
+    request_stale, session_error, sweep_decision, task_prompt, turn_outcome, version_warning,
+    BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, TurnOutcome,
+    WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR,
+    HANDOFF_POLL, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -124,6 +128,7 @@ pub struct AcpWorker {
     permissions: Arc<Permissions>,
     stop: Option<oneshot::Sender<()>>,
     owner: PathBuf,
+    closing: Arc<AtomicBool>,
     done: bool,
 }
 
@@ -132,7 +137,7 @@ impl AcpWorker {
         request: &SpawnRequest,
         id: &str,
         owner: &Path,
-        blocked: PathBuf,
+        markers: WorkerMarkers,
         starting: &Mutex<HashMap<String, u32>>,
     ) -> Result<Self, String> {
         if let Some(warning) = agent_version_warning() {
@@ -148,12 +153,16 @@ impl AcpWorker {
             .spawn()
             .map_err(|e| format!("could not start `{AGENT_COMMAND} acp`: {e}"))?;
         let streams = child.stdin.take().zip(child.stdout.take());
-        let permissions = Permissions::new(blocked);
+        let permissions = Permissions::new(markers.blocked.clone());
+        let (prompts, prompt_rx) = queue::unbounded();
+        let closing = Arc::new(AtomicBool::new(false));
+        let reported = Arc::new(AtomicBool::new(false));
         let mut worker = Self {
             child,
             permissions: Arc::clone(&permissions),
             stop: None,
             owner: owner.to_path_buf(),
+            closing: Arc::clone(&closing),
             done: false,
         };
         worker.write_owner()?;
@@ -172,6 +181,7 @@ impl AcpWorker {
         let prompt = task_prompt(&request.task);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
+        let seen = Arc::clone(&reported);
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = ByteStreams::new(
@@ -187,6 +197,17 @@ impl AcpWorker {
                             Ok(())
                         },
                         agent_client_protocol::on_receive_request!(),
+                    )
+                    .on_receive_notification(
+                        async move |notification: SessionNotification, _cx| {
+                            let update =
+                                serde_json::to_value(&notification.update).unwrap_or_default();
+                            if is_report_tool_call(&update) {
+                                seen.store(true, Ordering::SeqCst);
+                            }
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_notification!(),
                     )
                     .connect_with(transport, |connection: ConnectionTo<Agent>| async move {
                         let init = connection
@@ -204,30 +225,16 @@ impl AcpWorker {
                         match session {
                             Ok(created) => {
                                 ready_tx.send(Ok(())).ok();
-                                let sent = connection
-                                    .send_request(PromptRequest::new(
-                                        created.session_id,
-                                        vec![prompt.into()],
-                                    ))
-                                    .block_task();
-                                match futures::future::select(Box::pin(sent), stop_rx).await {
-                                    Either::Left((result, stop)) => {
-                                        let problem = match result {
-                                            Ok(done) => serde_json::to_value(done.stop_reason)
-                                                .ok()
-                                                .and_then(|v| v.as_str().and_then(prompt_problem)),
-                                            Err(e) => Some(e.message),
-                                        };
-                                        if let Some(problem) = problem {
-                                            let at = chrono::Utc::now().to_rfc3339();
-                                            let report =
-                                                prompt_failure_report(&worker_id, &at, &problem);
-                                            inbox.post(&report, 0).ok();
-                                        }
-                                        stop.await.ok();
-                                    }
-                                    Either::Right(_) => {}
-                                }
+                                prompts.unbounded_send(prompt).ok();
+                                let turns = Turns {
+                                    session: created.session_id,
+                                    worker_id,
+                                    markers,
+                                    inbox,
+                                    reported,
+                                    closing,
+                                };
+                                run_turns(&connection, &turns, prompts, prompt_rx, stop_rx).await;
                             }
                             Err(e) => {
                                 ready_tx
@@ -273,6 +280,7 @@ impl AcpWorker {
             return;
         }
         self.done = true;
+        self.closing.store(true, Ordering::SeqCst);
         self.permissions.cancel_all();
         if let Some(stop) = self.stop.take() {
             stop.send(()).ok();
@@ -292,6 +300,69 @@ impl AcpWorker {
 impl Drop for AcpWorker {
     fn drop(&mut self) {
         self.terminate();
+    }
+}
+
+struct Turns {
+    session: SessionId,
+    worker_id: String,
+    markers: WorkerMarkers,
+    inbox: Inbox,
+    reported: Arc<AtomicBool>,
+    closing: Arc<AtomicBool>,
+}
+
+async fn run_turns(
+    connection: &ConnectionTo<Agent>,
+    turns: &Turns,
+    prompts: queue::UnboundedSender<String>,
+    mut queued: queue::UnboundedReceiver<String>,
+    mut stop: oneshot::Receiver<()>,
+) {
+    loop {
+        let Either::Left((Some(text), _)) = futures::future::select(queued.next(), &mut stop).await
+        else {
+            return;
+        };
+        fs::remove_file(&turns.markers.waiting).ok();
+        turns.reported.store(false, Ordering::SeqCst);
+        let sent = connection
+            .send_request(PromptRequest::new(
+                turns.session.clone(),
+                vec![text.clone().into()],
+            ))
+            .block_task();
+        let Either::Left((result, _)) = futures::future::select(Box::pin(sent), &mut stop).await
+        else {
+            return;
+        };
+        let reason = result.as_ref().map(|done| {
+            serde_json::to_value(done.stop_reason)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_default()
+        });
+        let outcome = turn_outcome(
+            reason.as_deref().map_err(|e| e.message.as_str()),
+            turns.reported.load(Ordering::SeqCst),
+            text == REPORT_REMINDER,
+            turns.closing.load(Ordering::SeqCst),
+        );
+        match outcome {
+            TurnOutcome::Remind => {
+                prompts.unbounded_send(REPORT_REMINDER.to_string()).ok();
+            }
+            TurnOutcome::Unreported => {
+                write_file(&turns.markers.unreported, "").ok();
+                write_file(&turns.markers.waiting, "").ok();
+            }
+            TurnOutcome::Problem(problem) => {
+                let at = chrono::Utc::now().to_rfc3339();
+                let report = prompt_failure_report(&turns.worker_id, &at, &problem);
+                turns.inbox.post(&report, 0).ok();
+            }
+            TurnOutcome::Reported | TurnOutcome::Closed => {}
+        }
     }
 }
 
@@ -521,7 +592,7 @@ impl CursorHost {
             &request,
             id,
             &files.owner,
-            blocked_path(&self.store_dir, id),
+            WorkerMarkers::new(&self.store_dir, id),
             &self.starting,
         );
         self.starting

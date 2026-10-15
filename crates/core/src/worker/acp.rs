@@ -263,11 +263,44 @@ pub fn task_prompt(task: &str) -> String {
     format!("{WORKER_PROMPT}\n\n{task}")
 }
 
-pub fn prompt_problem(stop_reason: &str) -> Option<String> {
-    match stop_reason {
-        "end_turn" => None,
-        other => Some(format!("the cursor agent ended its turn with `{other}`")),
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnOutcome {
+    Reported,
+    Remind,
+    Unreported,
+    Problem(String),
+    Closed,
+}
+
+pub fn turn_outcome(
+    stop: Result<&str, &str>,
+    reported: bool,
+    reminded: bool,
+    closing: bool,
+) -> TurnOutcome {
+    if closing {
+        return TurnOutcome::Closed;
     }
+    if reported {
+        return TurnOutcome::Reported;
+    }
+    match stop {
+        Err(message) => TurnOutcome::Problem(message.to_string()),
+        Ok("end_turn") if reminded => TurnOutcome::Unreported,
+        Ok("end_turn") => TurnOutcome::Remind,
+        Ok(other) => {
+            TurnOutcome::Problem(format!("the cursor agent ended its turn with `{other}`"))
+        }
+    }
+}
+
+pub fn is_report_tool_call(update: &Value) -> bool {
+    let label = report_tool_label();
+    let kind = update["sessionUpdate"].as_str();
+    matches!(kind, Some("tool_call" | "tool_call_update"))
+        && ["title", "name"]
+            .iter()
+            .any(|key| update[*key].as_str().is_some_and(|v| v.trim() == label))
 }
 
 pub fn prompt_failure_report(id: &str, at: &str, problem: &str) -> Report {
@@ -513,10 +546,51 @@ mod tests {
     }
 
     #[test]
-    fn only_end_turn_is_not_a_problem() {
-        assert_eq!(prompt_problem("end_turn"), None);
-        assert!(prompt_problem("refusal").unwrap().contains("refusal"));
-        assert!(prompt_problem("cancelled").is_some());
+    fn turn_outcome_covers_every_branch() {
+        let end = Ok("end_turn");
+        assert_eq!(turn_outcome(end, true, false, false), TurnOutcome::Reported);
+        assert_eq!(turn_outcome(end, false, false, false), TurnOutcome::Remind);
+        assert_eq!(
+            turn_outcome(end, false, true, false),
+            TurnOutcome::Unreported
+        );
+        assert_eq!(
+            turn_outcome(Ok("cancelled"), false, false, true),
+            TurnOutcome::Closed
+        );
+        assert_eq!(
+            turn_outcome(Err("x"), true, false, true),
+            TurnOutcome::Closed
+        );
+        assert_eq!(
+            turn_outcome(Ok("refusal"), false, false, false),
+            TurnOutcome::Problem("the cursor agent ended its turn with `refusal`".into())
+        );
+        assert_eq!(
+            turn_outcome(Err("boom"), false, false, false),
+            TurnOutcome::Problem("boom".into())
+        );
+    }
+
+    #[test]
+    fn only_the_worker_report_tool_call_counts_as_reported() {
+        let call = |kind: &str, title: &str| json!({"sessionUpdate": kind, "title": title});
+        assert!(is_report_tool_call(&call(
+            "tool_call",
+            "ralph-worker-report: report"
+        )));
+        assert!(is_report_tool_call(&call(
+            "tool_call_update",
+            "ralph-worker-report: report"
+        )));
+        assert!(is_report_tool_call(
+            &json!({"sessionUpdate": "tool_call", "name": "ralph-worker-report: report"})
+        ));
+        assert!(!is_report_tool_call(&call("tool_call", "Run ls")));
+        assert!(!is_report_tool_call(&call(
+            "agent_message_chunk",
+            "ralph-worker-report: report"
+        )));
     }
 
     #[test]
