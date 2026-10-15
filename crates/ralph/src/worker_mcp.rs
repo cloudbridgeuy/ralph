@@ -1,8 +1,8 @@
 use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
-    handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision,
-    unreported_path, Outcome, Report, StopDecision,
+    accept_report, handle_request, inbox_file_name, reported_path, stop_block_output,
+    stop_decision, unreported_path, Outcome, Report, StopDecision,
 };
 use serde_json::Value;
 use std::fs;
@@ -14,6 +14,7 @@ const DROP_LOG: &str = "inbox-drops.jsonl";
 
 pub struct Inbox {
     dir: PathBuf,
+    owner: Option<PathBuf>,
     lock: Mutex<()>,
 }
 
@@ -21,8 +22,21 @@ impl Inbox {
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
+            owner: None,
             lock: Mutex::new(()),
         }
+    }
+
+    pub fn requiring_owner(mut self, owner: Option<PathBuf>) -> Self {
+        self.owner = owner;
+        self
+    }
+
+    fn accepts_report(&self) -> bool {
+        accept_report(
+            self.owner.is_some(),
+            self.owner.as_ref().is_some_and(|owner| owner.exists()),
+        )
     }
 
     pub fn post(&self, report: &Report, seq: u64) -> io::Result<()> {
@@ -177,6 +191,12 @@ pub fn run_stdio_server(
             Outcome::Silent => continue,
             Outcome::Respond(v) => v,
             Outcome::Report { id, status, text } => {
+                if !inbox.accepts_report() {
+                    let closed = tool_result(id, "Could not deliver: worker closed.", true);
+                    writeln!(output, "{closed}")?;
+                    output.flush()?;
+                    continue;
+                }
                 seq += 1;
                 let report = Report {
                     worker: worker.to_string(),

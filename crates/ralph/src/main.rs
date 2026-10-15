@@ -230,7 +230,7 @@ fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>>
 }
 
 fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let inbox = worker_mcp::Inbox::new(args.inbox);
+    let inbox = worker_mcp::Inbox::new(args.inbox).requiring_owner(args.owner);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     worker_mcp::run_stdio_server(&args.id, &inbox, stdin.lock(), stdout.lock())?;

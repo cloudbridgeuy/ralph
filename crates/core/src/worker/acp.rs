@@ -316,11 +316,23 @@ pub fn prompt_failure_report(id: &str, at: &str, problem: &str) -> Report {
     }
 }
 
-pub fn acp_mcp_server(exe: &Path, id: &str, inbox: &Path) -> Value {
+pub fn accept_report(owner_required: bool, owner_exists: bool) -> bool {
+    !owner_required || owner_exists
+}
+
+pub fn acp_mcp_server(exe: &Path, id: &str, inbox: &Path, owner: &Path) -> Value {
     json!({
         "name": SERVER_NAME,
         "command": exe.to_string_lossy(),
-        "args": ["worker-mcp", "--id", id, "--inbox", inbox.to_string_lossy()],
+        "args": [
+            "worker-mcp",
+            "--id",
+            id,
+            "--inbox",
+            inbox.to_string_lossy(),
+            "--owner",
+            owner.to_string_lossy()
+        ],
         "env": []
     })
 }
@@ -362,14 +374,34 @@ mod tests {
 
     #[test]
     fn mcp_server_entry_is_a_stdio_worker_mcp_command() {
-        let entry = acp_mcp_server(Path::new("/bin/ralph"), "A", Path::new("/s/inbox"));
+        let entry = acp_mcp_server(
+            Path::new("/bin/ralph"),
+            "A",
+            Path::new("/s/inbox"),
+            Path::new("/s/cursor/A"),
+        );
         assert_eq!(entry["name"], SERVER_NAME);
         assert_eq!(entry["command"], "/bin/ralph");
         assert_eq!(
             entry["args"],
-            json!(["worker-mcp", "--id", "A", "--inbox", "/s/inbox"])
+            json!([
+                "worker-mcp",
+                "--id",
+                "A",
+                "--inbox",
+                "/s/inbox",
+                "--owner",
+                "/s/cursor/A"
+            ])
         );
         assert_eq!(entry["env"], json!([]));
+    }
+
+    #[test]
+    fn a_report_needs_the_owner_file_only_when_one_is_required() {
+        assert!(accept_report(false, false));
+        assert!(accept_report(true, true));
+        assert!(!accept_report(true, false));
     }
 
     #[test]

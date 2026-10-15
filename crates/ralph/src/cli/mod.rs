@@ -111,6 +111,9 @@ pub struct WorkerMcpArgs {
 
     #[arg(long, value_name = "DIR")]
     pub inbox: std::path::PathBuf,
+
+    #[arg(long, value_name = "PATH")]
+    pub owner: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]

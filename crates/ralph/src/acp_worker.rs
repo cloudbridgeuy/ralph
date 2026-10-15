@@ -173,9 +173,13 @@ impl AcpWorker {
             .unwrap_or_else(PoisonError::into_inner)
             .insert(id.to_string(), worker.child.id());
         let (stdin, stdout) = streams.ok_or("cursor agent has no stdio pipes")?;
-        let server =
-            serde_json::from_value::<McpServer>(acp_mcp_server(&request.exe, id, &request.inbox))
-                .map_err(|e| format!("could not build the worker MCP entry: {e}"))?;
+        let server = serde_json::from_value::<McpServer>(acp_mcp_server(
+            &request.exe,
+            id,
+            &request.inbox,
+            owner,
+        ))
+        .map_err(|e| format!("could not build the worker MCP entry: {e}"))?;
         let (ready_tx, ready_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = oneshot::channel();
         worker.stop = Some(stop_tx);
