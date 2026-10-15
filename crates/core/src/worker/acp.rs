@@ -140,14 +140,7 @@ pub fn match_option<'a>(
     text: &str,
 ) -> Option<&'a PermissionOption> {
     let text = text.trim();
-    options
-        .iter()
-        .find(|option| option.option_id == text)
-        .or_else(|| {
-            options
-                .iter()
-                .find(|option| option.name.trim().eq_ignore_ascii_case(text))
-        })
+    options.iter().find(|option| option.option_id == text)
 }
 
 pub fn no_option_message(options: &[PermissionOption]) -> String {
@@ -406,11 +399,11 @@ mod tests {
     }
 
     #[test]
-    fn match_option_takes_an_exact_id_or_a_trimmed_case_insensitive_name() {
+    fn match_option_takes_only_an_exact_option_id() {
         let options = options();
         assert_eq!(match_option(&options, "allow-once"), Some(&options[0]));
-        assert_eq!(match_option(&options, "  reject  "), Some(&options[1]));
-        assert_eq!(match_option(&options, "ALLOW ONCE"), Some(&options[0]));
+        assert_eq!(match_option(&options, " reject-once\n"), Some(&options[1]));
+        assert_eq!(match_option(&options, &options[0].name), None);
         assert_eq!(match_option(&options, "Allow-Once"), None);
         assert_eq!(match_option(&options, "yes"), None);
         assert_eq!(match_option(&options, ""), None);
