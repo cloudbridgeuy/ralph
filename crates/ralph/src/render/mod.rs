@@ -17,6 +17,7 @@
 //! 4. **Data-Centric**: Renderers accept structured data, not processor references
 
 mod link;
+pub mod mermaid;
 pub mod text;
 pub mod tool_renderers;
 pub mod utils;

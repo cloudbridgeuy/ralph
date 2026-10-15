@@ -35,7 +35,11 @@ pub struct RenderContext<'a> {
     pub highlighter: &'a Highlighter,
     /// Whether ANSI color codes should be included
     pub terminal: bool,
+    pub width: usize,
+    pub mermaid: fn(&str, usize) -> Option<String>,
 }
+
+const DEFAULT_WIDTH: usize = 80;
 
 impl<'a> RenderContext<'a> {
     /// Create a context with explicit terminal flag.
@@ -43,9 +47,18 @@ impl<'a> RenderContext<'a> {
     /// Use this when you have a boolean flag for terminal mode.
     /// For convenience, `terminal()` and `plain()` methods are also available.
     pub fn new(highlighter: &'a Highlighter, terminal: bool) -> Self {
+        let width = if terminal {
+            crossterm::terminal::size()
+                .map(|(w, _)| usize::from(w))
+                .unwrap_or(DEFAULT_WIDTH)
+        } else {
+            DEFAULT_WIDTH
+        };
         Self {
             highlighter,
             terminal,
+            width,
+            mermaid: crate::mermaid_guard::render,
         }
     }
 

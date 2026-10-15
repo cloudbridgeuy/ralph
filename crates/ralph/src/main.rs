@@ -23,6 +23,7 @@ pub mod highlight;
 mod inbox_alert;
 mod invoke;
 pub mod markdown;
+mod mermaid_guard;
 pub mod paths;
 pub mod prompt_source;
 pub mod render;
@@ -38,7 +39,8 @@ mod workers;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, WorkerMcpArgs, WorkerStopHookArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, MermaidArgs, WorkerMcpArgs,
+    WorkerStopHookArgs,
 };
 use invoke::InvocationConfig;
 use std::process::ExitCode;
@@ -64,6 +66,7 @@ fn main() -> ExitCode {
         Commands::Chat(args) => chat::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
+        Commands::Mermaid(args) => execute_mermaid(args),
         Commands::WorkerMcp(args) => execute_worker_mcp(args),
         Commands::WorkerStopHook(args) => execute_worker_stop_hook(args),
     };
@@ -98,6 +101,17 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("You can also load custom .tmTheme files by specifying a file path.");
 
+    Ok(())
+}
+
+fn execute_mermaid(args: MermaidArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Read;
+    let mut source = String::new();
+    std::io::stdin().read_to_string(&mut source)?;
+    println!(
+        "{}",
+        mermaid_text::render_with_width(&source, Some(args.width))?
+    );
     Ok(())
 }
 

@@ -86,6 +86,55 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub chat: ChatSection,
+
+    #[serde(default)]
+    pub mermaid: MermaidSection,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MermaidSection {
+    #[serde(default = "default_mermaid_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_mermaid_max_rss_mb")]
+    pub max_rss_mb: u64,
+    #[serde(default = "default_mermaid_max_input_bytes")]
+    pub max_input_bytes: usize,
+    #[serde(default = "default_mermaid_max_flowchart_edges")]
+    pub max_flowchart_edges: usize,
+    #[serde(default = "default_mermaid_max_class_relations")]
+    pub max_class_relations: usize,
+}
+
+fn default_mermaid_timeout_ms() -> u64 {
+    500
+}
+
+fn default_mermaid_max_rss_mb() -> u64 {
+    256
+}
+
+fn default_mermaid_max_input_bytes() -> usize {
+    1_048_576
+}
+
+fn default_mermaid_max_flowchart_edges() -> usize {
+    50
+}
+
+fn default_mermaid_max_class_relations() -> usize {
+    400
+}
+
+impl Default for MermaidSection {
+    fn default() -> Self {
+        Self {
+            timeout_ms: default_mermaid_timeout_ms(),
+            max_rss_mb: default_mermaid_max_rss_mb(),
+            max_input_bytes: default_mermaid_max_input_bytes(),
+            max_flowchart_edges: default_mermaid_max_flowchart_edges(),
+            max_class_relations: default_mermaid_max_class_relations(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -330,6 +379,26 @@ mod tests {
     }
 
     #[test]
+    fn mermaid_section_defaults_and_overrides() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[mermaid]\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.mermaid, MermaidSection::default());
+        assert_eq!(config.mermaid.timeout_ms, 500);
+        assert_eq!(config.mermaid.max_class_relations, 400);
+        fs::write(
+            &path,
+            "[mermaid]\ntimeout_ms = 900\nmax_flowchart_edges = 10\n",
+        )
+        .unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.mermaid.timeout_ms, 900);
+        assert_eq!(config.mermaid.max_flowchart_edges, 10);
+        assert_eq!(config.mermaid.max_rss_mb, 256);
+    }
+
+    #[test]
     fn chat_section_parses_frozen_window() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("config.toml");
@@ -562,6 +631,7 @@ mod tests {
             },
             ask: AskSection::default(),
             chat: ChatSection::default(),
+            mermaid: MermaidSection::default(),
         };
 
         config.save_to(&path).unwrap();
@@ -618,6 +688,7 @@ mod tests {
             },
             ask: AskSection::default(),
             chat: ChatSection::default(),
+            mermaid: MermaidSection::default(),
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

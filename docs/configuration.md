@@ -200,6 +200,20 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 
 `--skill` and `RALPH_CHAT_SKILLS` replace `skills`. For `permission_mode` the precedence is `chat --permission-mode`, then `RALPH_CHAT_PERMISSION_MODE`, then this key, then `auto`; chat passes the resolved mode to every claude worker it spawns, so chat and workers always match. `--frozen-window <N>` overrides `frozen_window`; a value outside 1-199 stops chat start with an error. Without `worker_base`, `close_worker` uses the branch recorded at spawn (`branch.worker/<ID>.ralphBase`), then `origin/HEAD`, then `main`. For `worktree_dir` the precedence is `chat --worktree-dir`, then `RALPH_WORKTREE_DIR`, then this key, then `.worktrees`. A worker that already has a worktree keeps it: spawn and close look up `worker/<ID>` in `git worktree list` first, so changing the key does not lose running workers. A directory inside the repo is added to `.git/info/exclude`. A config that fails to read or parse skips `worktree_dir`, and the spawn or close result ends with a warning. For `wrap_width` the precedence is `chat --wrap-width <N>`, then `RALPH_WRAP_WIDTH`, then this key; a value that is not a whole number stops chat start with an error. The width used is the smaller of this cap and the terminal width, read at each render, so a narrower terminal still wins. The cap is read once at chat start: a change to this key or `RALPH_WRAP_WIDTH` needs a chat restart; a terminal resize does not. It applies to rendered prose (chat turns and drained worker reports) and to the reedline prompt area: the status line, the draft, and the footer. Code blocks are not wrapped. For `cell_output_limit` and `cell_output_bytes` the precedence is `RALPH_CELL_OUTPUT_LIMIT` / `RALPH_CELL_OUTPUT_BYTES`, then the key, then the default; a value that is not a whole number stops chat start with an error. The caps shape only what Claude receives; the terminal shows all output in `result` fences. See [executable cells](context/ralph-chat.md#executable-cells). `worker_check_secs` has no flag or env var; the check is described in [ralph chat](context/ralph-chat.md#worker-inbox). `chat --no-inbox-sound` and `--no-inbox-notification` turn off the matching alert for one run; focus rules are in [ralph chat](context/ralph-chat.md#worker-inbox). See [ralph chat](context/ralph-chat.md).
 
+### `[mermaid]` - Diagram Rendering
+
+In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, and classDiagram. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `timeout_ms` | `500` | Kill the render child after this many milliseconds |
+| `max_rss_mb` | `256` | Kill the child above this resident size (macOS and Linux only; elsewhere only the timeout applies) |
+| `max_input_bytes` | `1048576` | Refuse a block with more source bytes |
+| `max_flowchart_edges` | `50` | Refuse a flowchart/graph with more arrow tokens |
+| `max_class_relations` | `400` | Refuse a classDiagram with more relation tokens (provisional: dense graphs among few classes can exceed the timeout well below 400; the timeout still bounds them) |
+
+Fixed limits: flowchart source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements. A config that fails to load prints a warning and uses these defaults.
+
 ## Chat Store
 
 `ralph ask` stores nothing. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).

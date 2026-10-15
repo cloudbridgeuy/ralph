@@ -140,7 +140,12 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
     let lang_suffix = language.filter(|l| !l.is_empty()).unwrap_or("");
     let opening_fence = format!("```{lang_suffix}");
 
-    // Highlight the code content (or leave plain if highlighting disabled)
+    if ctx.terminal && language == Some("mermaid") {
+        if let Some(diagram) = (ctx.mermaid)(content, ctx.width) {
+            return format!("{opening_fence}\n{diagram}\n```");
+        }
+    }
+
     let highlighted_content = if ctx.terminal {
         ctx.highlighter.highlight(content, language)
     } else {
@@ -191,6 +196,31 @@ mod tests {
         let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
         let skin = MarkdownTheme::default();
         (highlighter, skin)
+    }
+
+    #[test]
+    fn mermaid_block_uses_renderer_and_falls_back_to_highlight() {
+        let (highlighter, _) = create_test_context();
+        let mut ctx = RenderContext::terminal(&highlighter);
+        ctx.mermaid = |_, _| Some("DIAGRAM".to_string());
+        assert_eq!(
+            render_code_block(&ctx, "graph TD\nA-->B", Some("mermaid")),
+            "```mermaid\nDIAGRAM\n```"
+        );
+        ctx.mermaid = |_, _| None;
+        let fallback = render_code_block(&ctx, "graph TD\nA-->B", Some("mermaid"));
+        assert_eq!(
+            fallback,
+            format!(
+                "```mermaid\n{}\n```",
+                highlighter.highlight("graph TD\nA-->B", Some("mermaid"))
+            )
+        );
+        let plain = RenderContext::plain(&highlighter);
+        assert_eq!(
+            render_code_block(&plain, "graph TD", Some("mermaid")),
+            "```mermaid\ngraph TD\n```"
+        );
     }
 
     #[test]

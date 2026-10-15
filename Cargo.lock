@@ -77,6 +77,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "ascii-dag"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd898d2dcffeeb51015c511a2849a8637c894b833afc946936d48b1e5c8aa6ec"
+
+[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -712,6 +718,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
+name = "mermaid-text"
+version = "0.57.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "830067de2eb67eff2201ad257af77099a32de25126dd06b0848f677589e13862"
+dependencies = [
+ "ascii-dag",
+ "chrono",
+ "unicode-width 0.2.2",
+]
+
+[[package]]
 name = "minimad"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -874,6 +891,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "libc",
+ "mermaid-text",
  "ralph_core",
  "reedline",
  "regex",

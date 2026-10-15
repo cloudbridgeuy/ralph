@@ -19,6 +19,7 @@ clap = { workspace = true }
 signal-hook = { workspace = true }
 dirs = { workspace = true }
 libc = { workspace = true }
+mermaid-text = { workspace = true }
 ralph_core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

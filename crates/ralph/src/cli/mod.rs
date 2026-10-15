@@ -46,11 +46,20 @@ pub enum Commands {
     #[command(hide = true)]
     ChatNap(ChatNapArgs),
 
+    #[command(hide = true, name = "__mermaid")]
+    Mermaid(MermaidArgs),
+
     #[command(hide = true)]
     WorkerMcp(WorkerMcpArgs),
 
     #[command(hide = true)]
     WorkerStopHook(WorkerStopHookArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct MermaidArgs {
+    #[arg(long)]
+    pub width: usize,
 }
 
 #[derive(clap::Args, Debug)]

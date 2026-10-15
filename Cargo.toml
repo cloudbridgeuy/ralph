@@ -91,6 +91,9 @@ reedline = "0.52.1"
 # Testing
 tempfile = "3.10"
 
+# Mermaid diagram rendering
+mermaid-text = "0.57"
+
 # Markdown terminal rendering
 termimad = "0.35.5"
 thiserror = "2.0.21"
