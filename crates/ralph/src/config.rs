@@ -34,6 +34,7 @@ use crate::invoke::{
 };
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
+use crate::status_theme::StatusTheme;
 use ralph_core::inbox_alert::UnknownFocus;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -221,6 +222,9 @@ pub struct ThemeSection {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentTheme>,
+
+    #[serde(default)]
+    pub status: StatusTheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -253,6 +257,7 @@ impl ThemeSection {
             .into_iter()
             .chain(self.assistant.palette(ThemeRole::Assistant).1)
             .chain(self.agent().palette(ThemeRole::Agent).1)
+            .chain(self.status.resolve().1)
             .collect()
     }
 }
@@ -456,6 +461,23 @@ mod tests {
     }
 
     #[test]
+    fn theme_status_table_loads_and_reports_warnings() {
+        let config: AppConfig = toml::from_str(
+            "[theme.status]\nmode_bg = \"#102030\"\ncost_bg = \"nope\"\nbranch_fg = \"red\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.theme.status.colors.len(), 3);
+        assert_eq!(
+            config.theme.warnings(),
+            [
+                "[theme.status] unknown key \"branch_fg\"; ignored",
+                "[theme.status] cost_bg = \"nope\" is not a color; using the default"
+            ]
+        );
+        assert!(AppConfig::new().theme.warnings().is_empty());
+    }
+
+    #[test]
     fn chat_section_parses_status_powerline() {
         assert!(!AppConfig::new().chat.status_powerline);
         let temp_dir = TempDir::new().unwrap();
@@ -654,6 +676,7 @@ mod tests {
                 no_background: true,
                 assistant: RoleTheme::default(),
                 agent: None,
+                status: StatusTheme::default(),
             },
             ask: AskSection::default(),
             chat: ChatSection::default(),
@@ -711,6 +734,7 @@ mod tests {
                 no_background: false,
                 assistant: RoleTheme::default(),
                 agent: None,
+                status: StatusTheme::default(),
             },
             ask: AskSection::default(),
             chat: ChatSection::default(),

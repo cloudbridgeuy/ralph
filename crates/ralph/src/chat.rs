@@ -5,6 +5,7 @@ use crate::chat_check::CheckState;
 use crate::chat_inbox::{self, Display};
 use crate::chat_memory::Store;
 use crate::chat_route::{run_local, LocalRoute};
+use crate::chat_statusbar::StatusBar;
 use crate::cli::ChatArgs;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::config::AppConfig;
@@ -40,8 +41,8 @@ use ralph_core::chat_skills::{
     ChatSkill, SkillSources,
 };
 use ralph_core::chat_status::{
-    footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
-    watch_states, worker_states, Memory, Route, RunningWorker, Status,
+    footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, watch_states,
+    worker_states, Memory, Route, RunningWorker, Status,
 };
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
@@ -406,6 +407,7 @@ fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>, exit: Ex
 struct ChatPrompt {
     monitor: Arc<Monitor>,
     color: bool,
+    bar: StatusBar,
     notice: RefCell<Option<String>>,
 }
 
@@ -429,7 +431,7 @@ pub(crate) fn screen_columns() -> usize {
 
 impl Prompt for ChatPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Owned(self.dim(&status_line(&self.monitor.status(), screen_columns())))
+        Cow::Owned(self.bar.line(&self.monitor.status(), screen_columns()))
     }
 
     fn render_prompt_footer(&self) -> Cow<'_, str> {
@@ -920,6 +922,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
         color,
+        bar: StatusBar::new(
+            &config.theme.status,
+            &monitor.store_dir,
+            &chat_config,
+            color,
+        ),
         notice: RefCell::new(None),
     };
     let inbox_display = |color| Display {

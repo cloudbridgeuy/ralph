@@ -93,29 +93,9 @@ pub fn last_turn_cache(usage_jsonl: &str) -> Option<TurnCache> {
 }
 
 impl TurnCache {
-    fn token_share_percent(&self) -> u64 {
+    pub(crate) fn token_share_percent(&self) -> u64 {
         let total = self.input + self.read + self.write;
         (self.read * 100).checked_div(total).unwrap_or(0)
-    }
-
-    fn cost_label(&self) -> String {
-        self.cost_usd
-            .map(|cost| format!(" ${cost:.2}"))
-            .unwrap_or_default()
-    }
-
-    fn long_label(&self) -> String {
-        format!(
-            "cache {} read {} write {}% tok{}",
-            tokens_label(self.read),
-            tokens_label(self.write),
-            self.token_share_percent(),
-            self.cost_label()
-        )
-    }
-
-    fn compact_label(&self) -> String {
-        format!("c{}% tok{}", self.token_share_percent(), self.cost_label())
     }
 }
 
@@ -258,7 +238,7 @@ fn worker_state(
     .to_string()
 }
 
-fn tokens_label(tokens: u64) -> String {
+pub(crate) fn tokens_label(tokens: u64) -> String {
     if tokens < 1000 {
         tokens.to_string()
     } else {
@@ -284,95 +264,6 @@ fn truncate_to_width(line: &str, width: usize) -> String {
             used <= width
         })
         .collect()
-}
-
-pub fn status_line(status: &Status, width: usize) -> String {
-    let workers = &status.workers;
-    let count = workers.len();
-    let named = |with_state: bool| {
-        let names: Vec<String> = workers
-            .iter()
-            .map(|w| {
-                if with_state {
-                    format!("{} {}", w.id, w.state)
-                } else {
-                    w.id.clone()
-                }
-            })
-            .collect();
-        format!("workers {}", names.join(", "))
-    };
-    let watch_count = status.watches.len();
-    let watch_names = |with_left: bool| {
-        let names: Vec<String> = status
-            .watches
-            .iter()
-            .map(|watch| match (with_left, &watch.left) {
-                (true, Some(left)) => {
-                    format!("{} {}", watch.id, left)
-                }
-                _ => watch.id.clone(),
-            })
-            .collect();
-        format!("watch {}", names.join(", "))
-    };
-    let Memory { msgs, tokens } = status.memory;
-    let tok = tokens_label(u64::try_from(tokens).unwrap_or(u64::MAX));
-    let unread = status.unread;
-    let long_cache = status.turn.map(|turn| turn.long_label());
-    let compact_cache = status.turn.map(|turn| turn.compact_label());
-    let build = |parts: [Option<String>; 5]| {
-        parts
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(SEPARATOR)
-    };
-    let long_mail = || (unread > 0).then(|| format!("📬 {unread} unread"));
-    let compact_mail = || (unread > 0).then(|| format!("📬 {unread}"));
-    let long_mem = || format!("mem {msgs} msgs ~{tok} tok");
-    let compact_mem = || format!("{msgs}m ~{tok}");
-    let has_workers = count > 0;
-    let has_watches = watch_count > 0;
-    let candidates = vec![
-        build([
-            long_mail(),
-            has_workers.then(|| named(true)),
-            has_watches.then(|| watch_names(true)),
-            Some(long_mem()),
-            long_cache.clone(),
-        ]),
-        build([
-            long_mail(),
-            has_workers.then(|| named(false)),
-            has_watches.then(|| watch_names(false)),
-            Some(long_mem()),
-            long_cache.clone(),
-        ]),
-        build([
-            long_mail(),
-            has_workers.then(|| format!("{count} workers")),
-            has_watches.then(|| format!("{watch_count} watches")),
-            Some(long_mem()),
-            long_cache,
-        ]),
-        build([
-            compact_mail(),
-            has_workers.then(|| format!("{count}w")),
-            has_watches.then(|| format!("{watch_count}wt")),
-            Some(compact_mem()),
-            compact_cache.clone(),
-        ]),
-        build([
-            compact_mail(),
-            None,
-            None,
-            Some(compact_mem()),
-            compact_cache,
-        ]),
-        compact_mail().unwrap_or_else(compact_mem),
-    ];
-    fit(candidates, width)
 }
 
 pub fn footer(unread: usize, width: usize) -> String {
@@ -411,44 +302,6 @@ pub fn footer(unread: usize, width: usize) -> String {
 mod tests {
     use super::*;
 
-    fn status() -> Status {
-        Status {
-            unread: 2,
-            workers: vec![
-                WorkerState {
-                    id: "GUZ-416".into(),
-                    state: "running".into(),
-                },
-                WorkerState {
-                    id: "GUZ-417".into(),
-                    state: "question".into(),
-                },
-            ],
-            watches: Vec::new(),
-            memory: Memory {
-                msgs: 132,
-                tokens: 4100,
-            },
-            turn: None,
-        }
-    }
-
-    fn turn() -> TurnCache {
-        TurnCache {
-            input: 100,
-            read: 12_300,
-            write: 400,
-            cost_usd: Some(0.0412),
-        }
-    }
-
-    fn with_turn() -> Status {
-        Status {
-            turn: Some(turn()),
-            ..status()
-        }
-    }
-
     #[test]
     fn last_turn_cache_picks_last_turn_and_ignores_the_rest() {
         let jsonl = concat!(
@@ -473,72 +326,8 @@ mod tests {
     }
 
     #[test]
-    fn status_line_full_width_with_cache() {
-        assert_eq!(
-            status_line(&with_turn(), 200),
-            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok · cache 12.3k read 400 write 96% tok $0.04"
-        );
-    }
-
-    #[test]
-    fn status_line_with_cache_never_exceeds_width_and_goes_compact() {
-        let status = with_turn();
-        assert!((0..120).all(|w| status_line(&status, w).width() <= w));
-        assert!(status_line(&status, 40).contains("c96% tok $0.04"));
-        assert_eq!(status_line(&status, 0), "");
-    }
-
-    #[test]
-    fn status_line_cache_omits_missing_cost() {
-        let status = Status {
-            turn: Some(TurnCache {
-                cost_usd: None,
-                ..turn()
-            }),
-            ..status()
-        };
-        assert!(status_line(&status, 200).ends_with("96% tok"));
-    }
-
-    #[test]
-    fn status_line_cache_token_share_is_independent_of_cost() {
-        for cost_usd in [Some(0.0), Some(10.0), None] {
-            let status = Status {
-                turn: Some(TurnCache {
-                    input: 100,
-                    read: 300,
-                    write: 200,
-                    cost_usd,
-                }),
-                ..status()
-            };
-            assert!(status_line(&status, 200).contains("cache 300 read 200 write 50% tok"));
-            assert!(status_line(&status, 40).contains("c50% tok"));
-        }
-    }
-
-    #[test]
-    fn token_share_percent_is_zero_without_tokens() {
+    pub(crate) fn token_share_percent_is_zero_without_tokens() {
         assert_eq!(TurnCache::default().token_share_percent(), 0);
-    }
-
-    #[test]
-    fn status_line_full_width() {
-        assert_eq!(
-            status_line(&status(), 200),
-            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok"
-        );
-    }
-
-    #[test]
-    fn status_line_degrades_and_never_exceeds_width() {
-        let status = status();
-        let lines: Vec<String> = (0..120).map(|w| status_line(&status, w)).collect();
-        assert!(lines.iter().enumerate().all(|(w, l)| l.width() <= w));
-        assert!(status_line(&status, 70).contains("workers GUZ-416, GUZ-417"));
-        assert!(status_line(&status, 50).contains("2 workers"));
-        assert!(status_line(&status, 30).contains("2w"));
-        assert_eq!(status_line(&status, 0), "");
     }
 
     #[test]
@@ -549,110 +338,6 @@ mod tests {
             assert!(fitted.width() <= width, "width {width}: {fitted:?}");
         }
         assert_eq!(fit(vec![line], 1), "");
-    }
-
-    #[test]
-    fn status_line_without_workers_omits_the_section() {
-        let status = Status {
-            workers: Vec::new(),
-            ..status()
-        };
-        assert_eq!(
-            status_line(&status, 200),
-            "📬 2 unread · mem 132 msgs ~4.1k tok"
-        );
-    }
-
-    #[test]
-    fn status_line_hides_mail_when_inbox_is_empty() {
-        let status = Status {
-            unread: 0,
-            ..status()
-        };
-        let full = status_line(&status, 200);
-        assert_eq!(
-            full,
-            "workers GUZ-416 running, GUZ-417 question · mem 132 msgs ~4.1k tok"
-        );
-        assert!(!full.contains("📬"));
-        assert!(!full.starts_with(SEPARATOR));
-        let no_workers = Status {
-            workers: Vec::new(),
-            ..status
-        };
-        assert_eq!(status_line(&no_workers, 200), "mem 132 msgs ~4.1k tok");
-    }
-
-    #[test]
-    fn status_line_without_mail_falls_back_to_compact_memory() {
-        let status = Status {
-            unread: 0,
-            ..status()
-        };
-        let narrow = status_line(&status, 12);
-        assert_eq!(narrow, "132m ~4.1k");
-        assert!((0..120).all(|w| {
-            let line = status_line(&status, w);
-            line.width() <= w && !line.contains("📬")
-        }));
-    }
-
-    #[test]
-    fn status_line_with_one_unread_keeps_mail_at_every_form() {
-        let status = Status {
-            unread: 1,
-            ..status()
-        };
-        assert!(status_line(&status, 200).starts_with("📬 1 unread · "));
-        assert_eq!(status_line(&status, 4), "📬 1");
-        assert!(status_line(&status, 30).contains("📬 1 · "));
-    }
-
-    fn with_watches() -> Status {
-        Status {
-            watches: vec![
-                WatchState {
-                    id: "w1".into(),
-                    left: Some("12m".into()),
-                },
-                WatchState {
-                    id: "w2".into(),
-                    left: None,
-                },
-            ],
-            ..status()
-        }
-    }
-
-    #[test]
-    fn status_line_lists_watches_after_workers() {
-        assert_eq!(
-            status_line(&with_watches(), 200),
-            "📬 2 unread · workers GUZ-416 running, GUZ-417 question · watch w1 12m, w2 · mem 132 msgs ~4.1k tok"
-        );
-    }
-
-    #[test]
-    fn status_line_sheds_watch_detail_and_never_exceeds_width() {
-        let status = Status {
-            workers: Vec::new(),
-            ..with_watches()
-        };
-        let full = status_line(&status, 200);
-        assert!(full.contains("watch w1 12m, w2"));
-        let names = status_line(&status, full.width() - 1);
-        assert!(names.contains("watch w1, w2") && !names.contains("12m"));
-        let count = status_line(&status, names.width() - 1);
-        assert!(count.contains("2 watches"));
-        let compact = status_line(&status, count.width() - 1);
-        assert!(compact.contains("2wt"));
-        assert_eq!(status_line(&status, 12), "📬 2");
-        assert!((0..160).all(|w| status_line(&with_watches(), w).width() <= w));
-    }
-
-    #[test]
-    fn status_line_without_watches_has_no_watch_segment() {
-        assert!(!status_line(&status(), 200).contains("watch"));
     }
 
     #[test]
