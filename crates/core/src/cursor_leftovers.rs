@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_meta_never_matches() {
+    fn unparsable_meta_never_matches() {
         assert!(!session_names_worktree("{nope", "/a/wt", "/a/wt"));
         assert!(!session_names_worktree("{}", "/a/wt", "/a/wt"));
     }
