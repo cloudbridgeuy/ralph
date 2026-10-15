@@ -1,12 +1,16 @@
 use crate::subprocess::kill_process_group;
 use crate::warn::{warn, warn_if_err};
+use crate::watch_store::WatchStore;
 use crate::worker_mcp::Inbox;
 use ralph_core::watch::{
-    build_report, StopReason, Tail, WatchOutcome, WatchSpec, TAIL_MAX_BYTES, TAIL_MAX_LINES,
+    build_report, StopReason, Tail, WatchKind, WatchOutcome, WatchSpec, TAIL_MAX_BYTES,
+    TAIL_MAX_LINES,
 };
+use ralph_core::watch_store::{plan_restore, RestoreAction, SavedWatch, WATCHES_DIR};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -47,6 +51,7 @@ struct Active {
 #[derive(Clone)]
 pub struct Watches {
     inbox: Arc<Inbox>,
+    store: WatchStore,
     active: Arc<Mutex<HashMap<String, Active>>>,
 }
 
@@ -56,6 +61,7 @@ struct Waiter {
     tail: Arc<Mutex<Tail>>,
     drained: Receiver<()>,
     stop: StopSlot,
+    store: WatchStore,
 }
 
 fn request_stop(slot: &StopSlot, reason: StopReason) {
@@ -110,6 +116,7 @@ impl Waiter {
 
     fn run(mut self, inbox: &Inbox) {
         if let Some(outcome) = self.wait_for_outcome() {
+            let persistent = self.spec.kind == WatchKind::Persistent;
             let _ = self.drained.recv_timeout(DRAIN_GRACE);
             let report = build_report(
                 &self.spec,
@@ -121,6 +128,9 @@ impl Waiter {
                 inbox.post(&report, 0),
                 format!("posting watch {}", self.spec.id),
             );
+            if persistent {
+                self.store.remove(&self.spec.id);
+            }
         }
     }
 }
@@ -138,20 +148,69 @@ fn spawn_child(command: &str) -> io::Result<(Child, io::PipeReader)> {
 }
 
 impl Watches {
-    pub fn new(inbox: Arc<Inbox>) -> Self {
+    pub fn new(inbox: Arc<Inbox>, store_dir: &Path) -> Self {
         Self {
             inbox,
+            store: WatchStore::new(store_dir.join(WATCHES_DIR)),
             active: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     #[allow(dead_code, reason = "GUZ-485 adds the MCP watch tool that calls start")]
     pub fn start(&self, spec: WatchSpec) -> Result<(), WatchError> {
+        let saved = (spec.kind == WatchKind::Persistent)
+            .then(|| SavedWatch::new(&spec, chrono::Utc::now()));
+        self.launch(spec, saved.as_ref())
+    }
+
+    pub fn restore(&self) {
+        let now = chrono::Utc::now();
+        for action in plan_restore(&self.store.load_all(), now) {
+            match action {
+                RestoreAction::Restart(spec) => {
+                    let id = spec.id.clone();
+                    warn_if_err(self.launch(spec, None), format!("restoring watch {id}"));
+                }
+                RestoreAction::FireNow(spec) => {
+                    self.report_now(&spec, &WatchOutcome::Exited(0), now);
+                }
+                RestoreAction::TimedOutNow(spec) => {
+                    let limit = spec.timeout.unwrap_or_default();
+                    self.report_now(&spec, &WatchOutcome::TimedOut(limit), now);
+                }
+                RestoreAction::Discard(id) => self.store.remove(&id),
+            }
+        }
+    }
+
+    fn report_now(
+        &self,
+        spec: &WatchSpec,
+        outcome: &WatchOutcome,
+        now: chrono::DateTime<chrono::Utc>,
+    ) {
+        let tail = Tail::new(TAIL_MAX_LINES, TAIL_MAX_BYTES);
+        let report = build_report(spec, outcome, &tail, &now.to_rfc3339());
+        warn_if_err(
+            self.inbox.post(&report, 0),
+            format!("posting watch {}", spec.id),
+        );
+        self.store.remove(&spec.id);
+    }
+
+    fn launch(&self, spec: WatchSpec, fresh: Option<&SavedWatch>) -> Result<(), WatchError> {
         let mut active = locked(&self.active);
         if active.contains_key(&spec.id) {
             return Err(WatchError::Duplicate(spec.id));
         }
-        let (child, pipe) = spawn_child(&spec.command)?;
+        if let Some(saved) = fresh {
+            self.store.save(saved)?;
+        }
+        let (child, pipe) = spawn_child(&spec.command).inspect_err(|_| {
+            if fresh.is_some() {
+                self.store.remove(&spec.id);
+            }
+        })?;
         let tail = Arc::new(Mutex::new(Tail::new(TAIL_MAX_LINES, TAIL_MAX_BYTES)));
         let (drained_tx, drained) = mpsc::channel();
         let reader_tail = Arc::clone(&tail);
@@ -163,6 +222,7 @@ impl Watches {
             tail,
             drained,
             stop: Arc::clone(&stop),
+            store: self.store.clone(),
         };
         let registry = Arc::clone(&self.active);
         let inbox = Arc::clone(&self.inbox);

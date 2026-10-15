@@ -1,4 +1,5 @@
 use crate::worker::Report;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -8,7 +9,8 @@ pub const TAIL_MAX_BYTES: usize = 8 * 1024;
 const TRUNCATED_MARKER: &str = "[earlier output truncated]";
 const NO_OUTPUT: &str = "(no output)";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WatchKind {
     Normal,
     Persistent,

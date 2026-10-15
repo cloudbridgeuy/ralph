@@ -877,7 +877,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let inbox = Arc::new(Inbox::new(store_dir.join(INBOX_DIR)));
     let known = inbox.peek().unwrap_or_default();
     let monitor = Arc::new(Monitor {
-        watches: Watches::new(Arc::clone(&inbox)),
+        watches: Watches::new(Arc::clone(&inbox), &store_dir),
         inbox,
         store: Store::new(store_dir.clone()),
         store_dir: canonical_store(store_dir.clone()),
@@ -901,6 +901,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         },
     });
     let _close = monitor.watches.close_guard();
+    monitor.watches.restore();
     monitor.refresh(true);
     if let Some(hint) = orphan_hint(
         &ready_ids(&monitor.store_dir),

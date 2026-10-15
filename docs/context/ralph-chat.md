@@ -78,7 +78,12 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 - The report goes through the inbox, so it never interrupts the chat channel.
 - Stopping a watch posts one "stopped" report. Closing the chat kills every watch and its child processes and posts nothing.
 - The runner lives in `crates/ralph/src/watches.rs`; the pure report and tail logic lives in `crates/core/src/watch.rs`.
-- Later tickets add the timeout config key (GUZ-483), persistence across restarts (GUZ-484), the MCP `watch` tool (GUZ-485), and the `/watch` command with a status line (GUZ-486).
+- Persistent watches are saved as one JSON file each in `<store>/watches/` (spec, `started_at`, timeout deadline, wake deadline), written atomically before the command starts.
+- On every `ralph chat` start, `Watches::restore` reruns all saved persistent watches, also after Ctrl-D or `/quit`. Normal records are deleted, never restored. An unreadable record warns and is deleted.
+- A restart keeps the original `started_at` and deadlines. The timeout becomes the time left. A command that is exactly `sleep <N>` is rewritten to `sleep <left>` (rounded up to whole seconds). Other commands rerun unchanged.
+- A watch whose wake deadline passed posts an exit-0 report right away. One whose timeout deadline passed posts a timed-out report right away (the earlier deadline wins). Neither is spawned.
+- The saved record is removed when the watch exits, times out, or is stopped. Closing the chat kills the watch but keeps the record. The pure logic lives in `crates/core/src/watch_store.rs`; the file store is `crates/ralph/src/watch_store.rs`.
+- Later tickets add the timeout config key (GUZ-483), the MCP `watch` tool (GUZ-485), and the `/watch` command with a status line (GUZ-486).
 
 ## Executable cells
 
