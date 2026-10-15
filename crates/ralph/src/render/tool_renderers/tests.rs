@@ -79,13 +79,16 @@ fn test_render_bash_invocation_long_command_is_pretty_printed_terminal() {
 }
 
 #[test]
-fn test_render_bash_invocation_short_command_fits_width_unchanged() {
+fn test_render_bash_invocation_short_semicolon_chain_splits() {
     let highlighter = test_highlighter();
     let mut ctx = RenderContext::plain(&highlighter);
     ctx.width = 80;
-    let output = render_bash_invocation(&ctx, "cd x && cargo test");
+    let output = render_bash_invocation(&ctx, "cd x && cargo test; echo ok");
 
-    assert_eq!(output, "> Bash\n  cd x && cargo test\n");
+    assert_eq!(
+        output,
+        "> Bash\n```sh\ncd x &&\n  cargo test\necho ok\n```\n"
+    );
 }
 
 // =========================================================================
