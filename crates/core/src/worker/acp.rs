@@ -14,6 +14,7 @@ pub const CURSOR_ERROR_DIR: &str = "cursor-error";
 pub const CURSOR_OWNER_DIR: &str = "cursor";
 pub const CURSOR_ANSWER_DIR: &str = "cursor-answer";
 pub const CURSOR_PROMPT_DIR: &str = "cursor-prompt";
+pub const CURSOR_SESSION_DIR: &str = "cursor-session";
 pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDOFF_POLL: Duration = Duration::from_millis(250);
 const AUTH_REQUIRED_CODE: i32 = -32000;
@@ -26,6 +27,7 @@ pub struct CursorFiles {
     pub owner: PathBuf,
     pub answer: PathBuf,
     pub prompt: PathBuf,
+    pub session: PathBuf,
 }
 
 impl CursorFiles {
@@ -37,6 +39,7 @@ impl CursorFiles {
             owner: store.join(CURSOR_OWNER_DIR).join(id),
             answer: store.join(CURSOR_ANSWER_DIR).join(id),
             prompt: store.join(CURSOR_PROMPT_DIR).join(id),
+            session: store.join(CURSOR_SESSION_DIR).join(id),
         }
     }
 
@@ -77,6 +80,54 @@ impl OwnerRecord {
     pub fn render(&self) -> String {
         json!(self).to_string()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionRecord {
+    pub session_id: String,
+    pub cwd: PathBuf,
+    pub inbox: PathBuf,
+    #[serde(default)]
+    pub store: Option<PathBuf>,
+}
+
+impl SessionRecord {
+    pub fn parse(text: &str) -> Option<Self> {
+        serde_json::from_str(text).ok()
+    }
+
+    pub fn render(&self) -> String {
+        json!(self).to_string()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    Go,
+    Skip(String),
+}
+
+pub fn resume_decision(
+    id: &str,
+    record: &SessionRecord,
+    store: &Path,
+    loads_session: bool,
+) -> Resume {
+    let skip = |why: String| Resume::Skip(format!("cursor session {id} not resumed: {why}"));
+    match record.store.as_deref() {
+        None => skip("the record has no owner".to_string()),
+        Some(owner) if owner != store => skip(format!(
+            "it belongs to the chat store {}, this chat uses {}",
+            owner.display(),
+            store.display()
+        )),
+        Some(_) if !loads_session => skip("the agent does not support session/load".to_string()),
+        Some(_) => Resume::Go,
+    }
+}
+
+pub fn prompt_entry_name(nanos: u64, pid: u32) -> String {
+    format!("{nanos:020}-{pid}")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,6 +389,51 @@ pub fn acp_mcp_server(exe: &Path, id: &str, inbox: &Path, owner: &Path) -> Value
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn record(store: Option<&str>) -> SessionRecord {
+        SessionRecord {
+            session_id: "s1".to_string(),
+            cwd: PathBuf::from("/w"),
+            inbox: PathBuf::from("/store/inbox"),
+            store: store.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn session_record_round_trips_and_old_records_have_no_owner() {
+        let owned = record(Some("/store"));
+        assert_eq!(SessionRecord::parse(&owned.render()), Some(owned));
+        let bare = r#"{"session_id":"s1","cwd":"/w","inbox":"/i"}"#;
+        assert_eq!(SessionRecord::parse(bare).map(|r| r.store), Some(None));
+        assert_eq!(SessionRecord::parse("nope"), None);
+    }
+
+    #[test]
+    fn resume_requires_this_store_and_the_load_capability() {
+        let store = Path::new("/store");
+        assert_eq!(
+            resume_decision("a", &record(Some("/store")), store, true),
+            Resume::Go
+        );
+        for (rec, loads, why) in [
+            (record(None), true, "no owner"),
+            (record(Some("/other")), true, "/other"),
+            (record(Some("/store")), false, "session/load"),
+        ] {
+            match resume_decision("a", &rec, store, loads) {
+                Resume::Skip(message) => {
+                    assert!(message.starts_with("cursor session a not resumed: "));
+                    assert!(message.contains(why), "{message}");
+                }
+                Resume::Go => panic!("must skip"),
+            }
+        }
+    }
+
+    #[test]
+    fn prompt_entries_sort_in_arrival_order() {
+        assert!(prompt_entry_name(9, 5) < prompt_entry_name(10, 1));
+    }
 
     #[test]
     fn version_output_is_parsed_without_the_build_hash() {

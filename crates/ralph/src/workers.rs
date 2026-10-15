@@ -7,21 +7,21 @@ use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
     close_plan, exclude_lines, marker_paths, opencode_command, opencode_config,
     opencode_session_gone, opencode_session_id, opencode_worker_plugin, project_slug,
-    resolve_worktree_dir, session_name, session_owner, spawn_handoff, startup_state,
-    tagged_sessions, worker_command, worker_mcp_config, worktree_add_args, worktree_for_branch,
-    worktree_path, wt_switch_args, CloseState, CloseStep, CursorFiles, Handoff, Harness, Owner,
-    SpawnRequest, Startup, Sweep, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia,
-    ATTACHMENTS_DIR, HANDOFF_POLL, HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
-    OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
-    WORKTREE_DIR_ENV,
+    prompt_entry_name, resolve_worktree_dir, session_name, session_owner, spawn_handoff,
+    startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
+    worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep, CursorFiles,
+    Handoff, Harness, Owner, SpawnRequest, Startup, Sweep, TaggedSession, WorkerMarkers,
+    WorktreeDir, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL, HARNESS_OPTION, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION,
+    TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{self, Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STARTUP_POLL: Duration = Duration::from_millis(250);
@@ -140,7 +140,10 @@ impl Workers {
 
     pub fn reply(&self, id: &str, text: &str) -> io::Result<String> {
         if CursorFiles::new(&self.store_dir, id).owner.exists() {
-            return self.answer_permission(id, text);
+            if self.awaits_permission(id) {
+                return self.answer_permission(id, text);
+            }
+            return self.queue_prompt(id, text, "Sent to");
         }
         let session = match self.owner(&project_slug(&repo_root()?), id) {
             Owner::Mine(session) => session.name,
@@ -175,12 +178,26 @@ impl Workers {
     }
 
     pub fn nudge(&self, id: &str, text: &str) -> io::Result<String> {
-        let files = CursorFiles::new(&self.store_dir, id);
-        if files.owner.exists() {
-            write_file(&files.prompt, text)?;
-            return Ok(format!("Nudged worker {id}."));
+        if CursorFiles::new(&self.store_dir, id).owner.exists() {
+            return self.queue_prompt(id, text, "Nudged");
         }
         self.reply(id, text)
+    }
+
+    fn queue_prompt(&self, id: &str, text: &str, verb: &str) -> io::Result<String> {
+        let entry = prompt_entry_name(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| {
+                    u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+                }),
+            process::id(),
+        );
+        let files = CursorFiles::new(&self.store_dir, id);
+        let pending = files.prompt.join(format!(".{entry}"));
+        write_file(&pending, text)?;
+        fs::rename(&pending, files.prompt.join(entry))?;
+        Ok(format!("{verb} worker {id}."))
     }
 
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
@@ -248,6 +265,7 @@ impl Workers {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
         }
+        clear_marker(&CursorFiles::new(&self.store_dir, id).session)?;
         if steps == [CloseStep::ClearMarkers] {
             return Ok(format!(
                 "Closed worker {id}: only its markers were left; removed them."
@@ -374,11 +392,6 @@ impl Workers {
     }
 
     fn answer_permission(&self, id: &str, text: &str) -> io::Result<String> {
-        if !self.awaits_permission(id) {
-            return Err(io::Error::other(format!(
-                "worker {id} is a cursor worker with no permission request waiting; other replies to cursor workers are not supported yet"
-            )));
-        }
         let files = CursorFiles::new(&self.store_dir, id);
         clear_marker(&files.error)?;
         write_file(&files.answer, text)?;
@@ -528,7 +541,12 @@ fn clear_marker(marker: &Path) -> io::Result<()> {
     if let Some(dir) = marker.parent() {
         fs::create_dir_all(dir)?;
     }
-    match fs::remove_file(marker) {
+    let removed = if marker.is_dir() {
+        fs::remove_dir_all(marker)
+    } else {
+        fs::remove_file(marker)
+    };
+    match removed {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
     }

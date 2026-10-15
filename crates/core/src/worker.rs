@@ -128,7 +128,7 @@ pub fn command_definitions() -> [Value; 4] {
                 "properties": {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
-                    "harness": {"type": "string", "enum": ["claude", "opencode", "cursor"], "description": "Agent to run. Default claude. cursor runs headless without a tmux session and does not take replies yet."},
+                    "harness": {"type": "string", "enum": ["claude", "opencode", "cursor"], "description": "Agent to run. Default claude. cursor runs headless without a tmux session; a reply to it is delivered as a new prompt between its turns, or answers a waiting permission request. It resumes after a chat restart."},
                     "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-6.1-sol."}
                 },
                 "required": ["id", "task"]

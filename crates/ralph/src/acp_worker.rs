@@ -2,9 +2,9 @@ use crate::warn::warn;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{
-    InitializeRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
-    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
-    SessionNotification,
+    InitializeRequest, LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest,
+    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    SelectedPermissionOutcome, SessionId, SessionNotification,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
@@ -16,10 +16,11 @@ use futures::StreamExt;
 use ralph_core::worker::{
     acp_mcp_server, auto_allow_option, caller_owns_worker, check_protocol, is_report_tool_call,
     match_option, no_option_message, permission_content, prompt_failure_report, ready_path,
-    request_stale, session_error, sweep_decision, task_prompt, turn_outcome, version_warning,
-    BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, TurnOutcome,
-    WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
-    CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
+    request_stale, resume_decision, session_error, sweep_decision, task_prompt, turn_outcome,
+    version_warning, BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, Resume, SessionRecord,
+    SpawnRequest, Sweep, TurnOutcome, WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
+    REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -124,6 +125,73 @@ impl Permissions {
     }
 }
 
+pub enum Launch {
+    Fresh {
+        path: PathBuf,
+        template: SessionRecord,
+    },
+    Resume {
+        record: SessionRecord,
+        store: PathBuf,
+    },
+}
+
+pub struct Slot<'a> {
+    pub id: &'a str,
+    pub owner: &'a Path,
+    pub markers: WorkerMarkers,
+    pub starting: &'a Mutex<HashMap<String, u32>>,
+}
+
+struct Opening {
+    launch: Launch,
+    cwd: PathBuf,
+    server: McpServer,
+    loading: Arc<AtomicBool>,
+    worker_id: String,
+}
+
+async fn open_session(
+    connection: &ConnectionTo<Agent>,
+    opening: &Opening,
+    loads_session: bool,
+) -> Result<SessionId, String> {
+    match &opening.launch {
+        Launch::Fresh { .. } => connection
+            .send_request(
+                NewSessionRequest::new(opening.cwd.clone())
+                    .mcp_servers(vec![opening.server.clone()]),
+            )
+            .block_task()
+            .await
+            .map(|created| created.session_id)
+            .map_err(|e| session_error(i32::from(e.code), &e.message)),
+        Launch::Resume { record, store } => {
+            if let Resume::Skip(message) =
+                resume_decision(&opening.worker_id, record, store, loads_session)
+            {
+                return Err(message);
+            }
+            let session = SessionId::new(record.session_id.clone());
+            opening.loading.store(true, Ordering::SeqCst);
+            let loaded = connection
+                .send_request(
+                    LoadSessionRequest::new(session.clone(), opening.cwd.clone())
+                        .mcp_servers(vec![opening.server.clone()]),
+                )
+                .block_task()
+                .await;
+            opening.loading.store(false, Ordering::SeqCst);
+            loaded.map(|_| session).map_err(|e| {
+                format!(
+                    "cursor session {} could not be loaded: {}",
+                    opening.worker_id, e.message
+                )
+            })
+        }
+    }
+}
+
 pub struct AcpWorker {
     child: Child,
     permissions: Arc<Permissions>,
@@ -135,13 +203,13 @@ pub struct AcpWorker {
 }
 
 impl AcpWorker {
-    pub fn start(
-        request: &SpawnRequest,
-        id: &str,
-        owner: &Path,
-        markers: WorkerMarkers,
-        starting: &Mutex<HashMap<String, u32>>,
-    ) -> Result<Self, String> {
+    pub fn start(request: &SpawnRequest, launch: Launch, slot: Slot) -> Result<Self, String> {
+        let Slot {
+            id,
+            owner,
+            markers,
+            starting,
+        } = slot;
         if let Some(warning) = agent_version_warning() {
             warn(warning);
         }
@@ -186,6 +254,8 @@ impl AcpWorker {
         worker.stop = Some(stop_tx);
         let cwd = request.worktree.clone();
         let prompt = task_prompt(&request.task);
+        let loading = Arc::new(AtomicBool::new(false));
+        let replaying = Arc::clone(&loading);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
         let seen = Arc::clone(&reported);
@@ -212,7 +282,7 @@ impl AcpWorker {
                         async move |notification: SessionNotification, _cx| {
                             let update =
                                 serde_json::to_value(&notification.update).unwrap_or_default();
-                            if is_report_tool_call(&update) {
+                            if !replaying.load(Ordering::SeqCst) && is_report_tool_call(&update) {
                                 seen.store(true, Ordering::SeqCst);
                             }
                             Ok(())
@@ -228,16 +298,31 @@ impl AcpWorker {
                             ready_tx.send(Err(message)).ok();
                             return Ok(());
                         }
-                        let session = connection
-                            .send_request(NewSessionRequest::new(cwd).mcp_servers(vec![server]))
-                            .block_task()
-                            .await;
-                        match session {
-                            Ok(created) => {
+                        let opening = Opening {
+                            launch,
+                            cwd,
+                            server,
+                            loading,
+                            worker_id: worker_id.clone(),
+                        };
+                        let loads = init.agent_capabilities.load_session;
+                        match open_session(&connection, &opening, loads).await {
+                            Ok(session) => {
+                                if let Launch::Fresh { path, template } = &opening.launch {
+                                    let record = SessionRecord {
+                                        session_id: session.to_string(),
+                                        ..template.clone()
+                                    };
+                                    if let Err(e) = write_file(path, &record.render()) {
+                                        warn(format!(
+                                            "could not write the cursor session record: {e}"
+                                        ));
+                                    }
+                                    prompts.unbounded_send(prompt).ok();
+                                }
                                 ready_tx.send(Ok(())).ok();
-                                prompts.unbounded_send(prompt).ok();
                                 let turns = Turns {
-                                    session: created.session_id,
+                                    session,
                                     worker_id,
                                     markers,
                                     inbox,
@@ -246,10 +331,8 @@ impl AcpWorker {
                                 };
                                 run_turns(&connection, &turns, prompts, prompt_rx, stop_rx).await;
                             }
-                            Err(e) => {
-                                ready_tx
-                                    .send(Err(session_error(i32::from(e.code), &e.message)))
-                                    .ok();
+                            Err(message) => {
+                                ready_tx.send(Err(message)).ok();
                             }
                         }
                         Ok(())
@@ -473,6 +556,7 @@ pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
         for path in files.all() {
             fs::remove_file(path).ok();
         }
+        fs::remove_dir_all(&files.prompt).ok();
         fs::remove_file(ready_path(store_dir, id)).ok();
     }
     Some(decision)
@@ -560,7 +644,7 @@ impl CursorHost {
         let files = self.files(id);
         fs::remove_file(&files.owner).ok();
         fs::remove_file(&files.answer).ok();
-        fs::remove_file(&files.prompt).ok();
+        fs::remove_dir_all(&files.prompt).ok();
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
     }
 
@@ -594,13 +678,29 @@ impl CursorHost {
 
     fn prompt(&self, id: &str) {
         let files = self.files(id);
-        let Ok(text) = fs::read_to_string(&files.prompt) else {
+        let starting = self
+            .starting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains_key(id);
+        if starting && !self.workers().contains_key(id) {
             return;
-        };
-        if let Some(worker) = self.workers().get(id) {
-            worker.nudge(&text);
         }
-        fs::remove_file(&files.prompt).ok();
+        let mut entries: Vec<PathBuf> = fs::read_dir(&files.prompt)
+            .map(|dir| {
+                dir.filter_map(Result::ok)
+                    .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                    .map(|entry| entry.path())
+                    .collect()
+            })
+            .unwrap_or_default();
+        entries.sort();
+        for entry in entries {
+            if let (Ok(text), Some(worker)) = (fs::read_to_string(&entry), self.workers().get(id)) {
+                worker.nudge(&text);
+            }
+            fs::remove_file(&entry).ok();
+        }
     }
 
     fn close(&self, id: &str) {
@@ -610,6 +710,7 @@ impl CursorHost {
             worker.terminate();
         }
         self.forget(id);
+        fs::remove_file(&self.files(id).session).ok();
         fs::remove_file(&self.files(id).close).ok();
     }
 
@@ -626,20 +727,114 @@ impl CursorHost {
             self.fail(id, "worker is already running");
             return;
         }
+        let launch = Launch::Fresh {
+            path: files.session.clone(),
+            template: SessionRecord {
+                session_id: String::new(),
+                cwd: request.worktree.clone(),
+                inbox: request.inbox.clone(),
+                store: Some(self.store_dir.clone()),
+            },
+        };
+        match self.launch(id, &request, launch) {
+            Ok(worker) => self.adopt(id, worker),
+            Err(message) => {
+                fs::remove_file(&files.session).ok();
+                self.fail(id, &message);
+            }
+        }
+    }
+
+    fn launch(
+        &self,
+        id: &str,
+        request: &SpawnRequest,
+        launch: Launch,
+    ) -> Result<AcpWorker, String> {
         let started = AcpWorker::start(
-            &request,
-            id,
-            &files.owner,
-            WorkerMarkers::new(&self.store_dir, id),
-            &self.starting,
+            request,
+            launch,
+            Slot {
+                id,
+                owner: &self.files(id).owner,
+                markers: WorkerMarkers::new(&self.store_dir, id),
+                starting: &self.starting,
+            },
         );
         self.starting
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(id);
-        match started {
-            Ok(worker) => self.adopt(id, worker),
-            Err(message) => self.fail(id, &message),
+        started
+    }
+
+    pub fn resume_all(&self) {
+        for id in request_ids(&self.store_dir, CURSOR_SESSION_DIR) {
+            self.resume(&id);
+        }
+    }
+
+    fn resume(&self, id: &str) {
+        let files = self.files(id);
+        if files.owner.exists() {
+            warn(format!(
+                "cursor session {id} not resumed: a running chat owns it"
+            ));
+            return;
+        }
+        let Some(record) = fs::read_to_string(&files.session)
+            .ok()
+            .and_then(|text| SessionRecord::parse(&text))
+        else {
+            warn(format!(
+                "cursor session {id} not resumed: its record is unreadable"
+            ));
+            return;
+        };
+        if let Resume::Skip(message) = resume_decision(id, &record, &self.store_dir, true) {
+            warn(message);
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            warn(format!(
+                "cursor session {id} not resumed: could not find the ralph executable"
+            ));
+            return;
+        };
+        if !record.cwd.is_dir() {
+            warn(format!(
+                "cursor session {id} not resumed: its worktree {} is gone",
+                record.cwd.display()
+            ));
+            return;
+        }
+        let request = SpawnRequest {
+            worktree: record.cwd.clone(),
+            exe,
+            inbox: record.inbox.clone(),
+            task: String::new(),
+            at: now_secs(),
+        };
+        let launch = Launch::Resume {
+            record,
+            store: self.store_dir.clone(),
+        };
+        match self.launch(id, &request, launch) {
+            Ok(worker) => self.adopt_resumed(id, worker),
+            Err(message) => {
+                warn(message.clone());
+                write_file(&files.error, &message).ok();
+            }
+        }
+    }
+
+    fn adopt_resumed(&self, id: &str, worker: AcpWorker) {
+        let ready = ready_path(&self.store_dir, id);
+        if !self.closed.load(Ordering::SeqCst) && write_file(&ready, "").is_ok() {
+            self.workers().insert(id.to_string(), worker);
+        } else {
+            drop(worker);
+            fs::remove_file(ready).ok();
         }
     }
 
@@ -653,6 +848,7 @@ impl CursorHost {
         } else {
             drop(worker);
             fs::remove_file(ready_path(&self.store_dir, id)).ok();
+            fs::remove_file(&files.session).ok();
         }
     }
 
@@ -668,6 +864,8 @@ pub struct CursorShutdown(Arc<CursorHost>);
 impl CursorShutdown {
     pub fn start(store_dir: PathBuf) -> Self {
         let host = CursorHost::new(store_dir);
+        let resumed = Arc::clone(&host);
+        thread::spawn(move || resumed.resume_all());
         let polled = Arc::clone(&host);
         thread::spawn(move || loop {
             thread::sleep(HANDOFF_POLL);
