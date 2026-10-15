@@ -1,3 +1,4 @@
+use crate::chat_memory::{Entry, Role};
 use crate::worker::{startup_state, Report, ReportStatus, Startup};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
@@ -57,6 +58,25 @@ pub fn last_reports(reports: &[Report]) -> HashMap<String, String> {
         })
         .map(|report| (report.worker.clone(), report.at.clone()))
         .collect()
+}
+
+pub fn logged_reports(entries: &[Entry]) -> HashMap<String, String> {
+    let mut reports = HashMap::new();
+    for entry in entries.iter().filter(|entry| entry.role == Role::Worker) {
+        for id in entry.text.lines().filter_map(report_header_id) {
+            reports.insert(id.to_string(), entry.at.clone());
+        }
+    }
+    reports
+}
+
+fn report_header_id(line: &str) -> Option<&str> {
+    let inner = line.strip_prefix("[worker ")?.strip_suffix(']')?;
+    let (id, status) = inner.split_once(" · ")?;
+    ReportStatus::ALL
+        .iter()
+        .any(|known| known.as_str() == status)
+        .then_some(id)
 }
 
 pub fn reported_since_nudge(last_report: Option<&String>, nudge: Option<&Option<String>>) -> bool {
@@ -649,6 +669,74 @@ mod tests {
         let last = last_reports(&reports);
         assert_eq!(last.len(), 1);
         assert_eq!(last["w1"], "t4");
+    }
+
+    fn worker_entry(at: &str, text: &str) -> Entry {
+        Entry {
+            role: Role::Worker,
+            at: at.to_string(),
+            text: text.to_string(),
+        }
+    }
+
+    #[test]
+    fn logged_reports_maps_a_single_report() {
+        let entries = [worker_entry("t1", "[worker w1 · done]\nall good")];
+        let reports = logged_reports(&entries);
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports["w1"], "t1");
+    }
+
+    #[test]
+    fn logged_reports_reads_several_reports_in_one_entry() {
+        let entries = [worker_entry(
+            "t1",
+            "[worker a · done]\none\n\n[worker b · question]\ntwo",
+        )];
+        let reports = logged_reports(&entries);
+        assert_eq!(reports["a"], "t1");
+        assert_eq!(reports["b"], "t1");
+    }
+
+    #[test]
+    fn logged_reports_ignores_check_status() {
+        let entries = [worker_entry("t1", "[worker w1 · check]\nstuck")];
+        assert!(logged_reports(&entries).is_empty());
+    }
+
+    #[test]
+    fn logged_reports_ignores_other_roles_and_partial_lines() {
+        let user = Entry {
+            role: Role::User,
+            at: "t1".to_string(),
+            text: "[worker w1 · done]".to_string(),
+        };
+        let inline = worker_entry("t2", "see [worker w2 · done] above");
+        assert!(logged_reports(&[user, inline]).is_empty());
+    }
+
+    #[test]
+    fn logged_reports_later_entry_wins() {
+        let entries = [
+            worker_entry("t1", "[worker w1 · blocked]\nx"),
+            worker_entry("t2", "[worker w1 · done]\ny"),
+        ];
+        assert_eq!(logged_reports(&entries)["w1"], "t2");
+    }
+
+    #[test]
+    fn restart_with_logged_done_report_stays_reported_and_silent() {
+        let reports = logged_reports(&[worker_entry("t1", "[worker w1 · done]\nfinished")]);
+        let observation = WorkerObservation {
+            reported_since_nudge: reported_since_nudge(reports.get("w1"), None),
+            pane: Some("idle".to_string()),
+            pane_changed: false,
+            ..obs()
+        };
+        assert_eq!(classify(&observation), WorkerState::Reported);
+        let (actions, _) = plan(&CheckMemory::default(), &[observation]);
+        assert_eq!(inboxes(&actions), 0);
+        assert_eq!(nudges(&actions), 0);
     }
 
     #[test]

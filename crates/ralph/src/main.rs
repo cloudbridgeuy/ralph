@@ -10,6 +10,7 @@
 pub mod ansi;
 mod chat;
 mod chat_cell;
+mod chat_check;
 mod chat_inbox;
 mod chat_mcp;
 mod chat_memory;

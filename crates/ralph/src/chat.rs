@@ -1,5 +1,6 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat_cell;
+use crate::chat_check::CheckState;
 use crate::chat_inbox::{self, Display};
 use crate::chat_memory::Store;
 use crate::chat_route::{run_local, LocalRoute};
@@ -48,8 +49,8 @@ use ralph_core::worker::{
     READY_DIR,
 };
 use ralph_core::worker_check::{
-    check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, CheckMemory,
-    WorkerObservation, CHECK_STATUS, NUDGE_TEXT,
+    check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
+    CHECK_STATUS, NUDGE_TEXT,
 };
 use reedline::{
     default_emacs_keybindings, EditCommand, EditMode, Emacs, FileBackedHistory, KeyCode,
@@ -175,14 +176,6 @@ fn ready_ids(store_dir: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-#[derive(Default)]
-struct CheckState {
-    memory: CheckMemory,
-    panes: HashMap<String, String>,
-    nudges: HashMap<String, Option<String>>,
-    reports: HashMap<String, String>,
 }
 
 struct Monitor {
@@ -897,7 +890,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             permission_mode.clone(),
             args.worktree_dir.clone(),
         ),
-        check: Mutex::new(CheckState::default()),
+        check: Mutex::new(CheckState::seeded(&store)),
         known: Mutex::new(known),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
