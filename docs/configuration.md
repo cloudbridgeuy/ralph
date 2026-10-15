@@ -124,16 +124,10 @@ mode_inbox_fg = "black"   # INBOX block text
 mode_inbox_bg = "yellow"  # INBOX block background
 mode_work_fg = "white"    # WORK block text
 mode_work_bg = "blue"     # WORK block background
-mail_fg = "black"         # unread mail block text
-mail_bg = "dark_green"    # unread mail block background
 store_fg = "reset"        # store path text
 workers_fg = "reset"      # workers text
 watches_fg = "reset"      # watches text
 memory_fg = "reset"       # memory size text
-cache_fg = "black"        # cache block text
-cache_bg = "dark_green"   # cache block background
-cost_fg = "black"         # cost block text
-cost_bg = "green"         # cost block background
 base_bg = "#303030"       # bar background: filler, store, workers, watches, memory
 ```
 
