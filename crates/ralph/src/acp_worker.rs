@@ -25,6 +25,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const AGENT_COMMAND: &str = "agent";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const TERM_GRACE: Duration = Duration::from_secs(3);
+const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const TERM_POLL: Duration = Duration::from_millis(20);
 
 pub struct AcpWorker {
@@ -35,7 +36,12 @@ pub struct AcpWorker {
 }
 
 impl AcpWorker {
-    pub fn start(request: &SpawnRequest, id: &str, owner: &Path) -> Result<Self, String> {
+    pub fn start(
+        request: &SpawnRequest,
+        id: &str,
+        owner: &Path,
+        starting: &Mutex<HashMap<String, u32>>,
+    ) -> Result<Self, String> {
         if let Some(warning) = agent_version_warning() {
             warn(warning);
         }
@@ -56,6 +62,10 @@ impl AcpWorker {
             done: false,
         };
         worker.write_owner()?;
+        starting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.to_string(), worker.child.id());
         let (stdin, stdout) = streams.ok_or("cursor agent has no stdio pipes")?;
         let server =
             serde_json::from_value::<McpServer>(acp_mcp_server(&request.exe, id, &request.inbox))
@@ -226,6 +236,7 @@ fn agent_version_warning() -> Option<String> {
 pub struct CursorHost {
     store_dir: PathBuf,
     workers: Mutex<HashMap<String, AcpWorker>>,
+    starting: Mutex<HashMap<String, u32>>,
     closed: AtomicBool,
 }
 
@@ -237,6 +248,7 @@ impl CursorHost {
         Arc::new(Self {
             store_dir,
             workers: Mutex::new(HashMap::new()),
+            starting: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
         })
     }
@@ -264,6 +276,22 @@ impl CursorHost {
         for (id, mut worker) in drained {
             worker.terminate();
             self.forget(&id);
+        }
+        let starting: Vec<(String, u32)> = self
+            .starting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain()
+            .collect();
+        for (_, group) in &starting {
+            signal_group(*group, "TERM");
+        }
+        if !starting.is_empty() {
+            thread::sleep(SHUTDOWN_GRACE);
+        }
+        for (id, group) in &starting {
+            signal_group(*group, "KILL");
+            self.forget(id);
         }
     }
 
@@ -295,7 +323,12 @@ impl CursorHost {
             self.fail(id, "worker is already running");
             return;
         }
-        match AcpWorker::start(&request, id, &files.owner) {
+        let started = AcpWorker::start(&request, id, &files.owner, &self.starting);
+        self.starting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
+        match started {
             Ok(worker) => self.adopt(id, worker),
             Err(message) => self.fail(id, &message),
         }
