@@ -2,8 +2,8 @@ use crate::warn::warn;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{
-    InitializeRequest, LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest,
-    RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    CancelNotification, InitializeRequest, LoadSessionRequest, McpServer, NewSessionRequest,
+    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
     SelectedPermissionOutcome, SessionId, SessionNotification,
 };
 use agent_client_protocol::schema::ProtocolVersion;
@@ -12,15 +12,15 @@ use futures::channel::mpsc as queue;
 use futures::channel::oneshot;
 use futures::executor::block_on;
 use futures::future::Either;
-use futures::StreamExt;
+use futures::{select, FutureExt, StreamExt};
 use ralph_core::worker::{
     acp_mcp_server, auto_allow_option, caller_owns_worker, check_protocol, is_report_tool_call,
     match_option, no_option_message, permission_content, prompt_failure_report, ready_path,
     request_stale, resume_decision, session_error, sweep_decision, task_prompt, turn_outcome,
-    version_warning, BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, Resume, SessionRecord,
-    SpawnRequest, Sweep, TurnOutcome, WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
-    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
-    REPORT_REMINDER,
+    version_warning, BlockedContent, CursorFiles, Inbound, OwnerFacts, OwnerRecord, PromptQueue,
+    Resume, SessionRecord, SpawnRequest, Step, Sweep, TurnOutcome, WorkerMarkers,
+    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
+    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -197,7 +197,7 @@ pub struct AcpWorker {
     permissions: Arc<Permissions>,
     stop: Option<oneshot::Sender<()>>,
     owner: PathBuf,
-    prompts: queue::UnboundedSender<String>,
+    prompts: queue::UnboundedSender<Inbound>,
     closing: Arc<AtomicBool>,
     done: bool,
 }
@@ -258,6 +258,7 @@ impl AcpWorker {
         let replaying = Arc::clone(&loading);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
+        let turns_permissions = Arc::clone(&permissions);
         let seen = Arc::clone(&reported);
         let allowed = Arc::clone(&reported);
         thread::spawn(move || {
@@ -318,10 +319,11 @@ impl AcpWorker {
                                             "could not write the cursor session record: {e}"
                                         ));
                                     }
-                                    prompts.unbounded_send(prompt).ok();
+                                    prompts.unbounded_send(Inbound::Prompt(prompt)).ok();
                                 }
                                 ready_tx.send(Ok(())).ok();
                                 let turns = Turns {
+                                    permissions: Arc::clone(&turns_permissions),
                                     session,
                                     worker_id,
                                     markers,
@@ -329,7 +331,7 @@ impl AcpWorker {
                                     reported,
                                     closing,
                                 };
-                                run_turns(&connection, &turns, prompts, prompt_rx, stop_rx).await;
+                                run_turns(&connection, &turns, prompt_rx, stop_rx).await;
                             }
                             Err(message) => {
                                 ready_tx.send(Err(message)).ok();
@@ -355,7 +357,15 @@ impl AcpWorker {
     }
 
     fn nudge(&self, text: &str) {
-        self.prompts.unbounded_send(text.to_string()).ok();
+        self.prompts
+            .unbounded_send(Inbound::Prompt(text.to_string()))
+            .ok();
+    }
+
+    fn interrupt(&self, text: &str) {
+        self.prompts
+            .unbounded_send(Inbound::Interrupt(text.to_string()))
+            .ok();
     }
 
     fn write_owner(&self) -> Result<(), String> {
@@ -401,6 +411,7 @@ impl Drop for AcpWorker {
 }
 
 struct Turns {
+    permissions: Arc<Permissions>,
     session: SessionId,
     worker_id: String,
     markers: WorkerMarkers,
@@ -409,30 +420,58 @@ struct Turns {
     closing: Arc<AtomicBool>,
 }
 
+fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) {
+    for step in steps {
+        match step {
+            Step::CancelPermissions => turns.permissions.cancel_all(),
+            Step::CancelSession => {
+                connection
+                    .send_notification(CancelNotification::new(turns.session.clone()))
+                    .ok();
+            }
+        }
+    }
+}
+
 async fn run_turns(
     connection: &ConnectionTo<Agent>,
     turns: &Turns,
-    prompts: queue::UnboundedSender<String>,
-    mut queued: queue::UnboundedReceiver<String>,
+    inbound: queue::UnboundedReceiver<Inbound>,
     mut stop: oneshot::Receiver<()>,
 ) {
+    let mut inbound = inbound.fuse();
+    let mut queue = PromptQueue::default();
     loop {
-        let Either::Left((Some(text), _)) = futures::future::select(queued.next(), &mut stop).await
-        else {
-            return;
+        let Some(text) = queue.start() else {
+            match futures::future::select(inbound.next(), &mut stop).await {
+                Either::Left((Some(item), _)) => {
+                    run_steps(connection, turns, queue.accept(item));
+                    continue;
+                }
+                _ => return,
+            }
         };
         fs::remove_file(&turns.markers.waiting).ok();
         turns.reported.store(false, Ordering::SeqCst);
-        let sent = connection
-            .send_request(PromptRequest::new(
-                turns.session.clone(),
-                vec![text.clone().into()],
-            ))
-            .block_task();
-        let Either::Left((result, _)) = futures::future::select(Box::pin(sent), &mut stop).await
-        else {
-            return;
+        let mut sent = Box::pin(
+            connection
+                .send_request(PromptRequest::new(
+                    turns.session.clone(),
+                    vec![text.clone().into()],
+                ))
+                .block_task(),
+        )
+        .fuse();
+        let result = loop {
+            select! {
+                result = sent => break result,
+                _ = stop => return,
+                item = inbound.select_next_some() => {
+                    run_steps(connection, turns, queue.accept(item));
+                }
+            }
         };
+        let interrupted = queue.finish();
         let reason = result.as_ref().map(|done| {
             serde_json::to_value(done.stop_reason)
                 .ok()
@@ -444,10 +483,11 @@ async fn run_turns(
             turns.reported.load(Ordering::SeqCst),
             text == REPORT_REMINDER,
             turns.closing.load(Ordering::SeqCst),
+            interrupted,
         );
         match outcome {
             TurnOutcome::Remind => {
-                prompts.unbounded_send(REPORT_REMINDER.to_string()).ok();
+                queue.accept(Inbound::Prompt(REPORT_REMINDER.to_string()));
             }
             TurnOutcome::Unreported => {
                 write_file(&turns.markers.unreported, "").ok();
@@ -458,6 +498,7 @@ async fn run_turns(
                 let report = prompt_failure_report(&turns.worker_id, &at, &problem);
                 turns.inbox.post(&report, 0).ok();
             }
+            TurnOutcome::Cancelled => turns.permissions.cancel_all(),
             TurnOutcome::Reported | TurnOutcome::Closed => {}
         }
     }
@@ -557,6 +598,7 @@ pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
             fs::remove_file(path).ok();
         }
         fs::remove_dir_all(&files.prompt).ok();
+        fs::remove_dir_all(&files.interrupt).ok();
         fs::remove_file(ready_path(store_dir, id)).ok();
     }
     Some(decision)
@@ -608,7 +650,10 @@ impl CursorHost {
             self.answer(&id);
         }
         for id in request_ids(&self.store_dir, CURSOR_PROMPT_DIR) {
-            self.prompt(&id);
+            self.prompt(&id, |files| &files.prompt, AcpWorker::nudge);
+        }
+        for id in request_ids(&self.store_dir, CURSOR_INTERRUPT_DIR) {
+            self.prompt(&id, |files| &files.interrupt, AcpWorker::interrupt);
         }
         for id in request_ids(&self.store_dir, CURSOR_SPAWN_DIR) {
             self.spawn(&id);
@@ -645,6 +690,7 @@ impl CursorHost {
         fs::remove_file(&files.owner).ok();
         fs::remove_file(&files.answer).ok();
         fs::remove_dir_all(&files.prompt).ok();
+        fs::remove_dir_all(&files.interrupt).ok();
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
     }
 
@@ -676,7 +722,7 @@ impl CursorHost {
         fs::remove_file(&files.answer).ok();
     }
 
-    fn prompt(&self, id: &str) {
+    fn prompt(&self, id: &str, dir: fn(&CursorFiles) -> &PathBuf, deliver: fn(&AcpWorker, &str)) {
         let files = self.files(id);
         let starting = self
             .starting
@@ -686,7 +732,7 @@ impl CursorHost {
         if starting && !self.workers().contains_key(id) {
             return;
         }
-        let mut entries: Vec<PathBuf> = fs::read_dir(&files.prompt)
+        let mut entries: Vec<PathBuf> = fs::read_dir(dir(&files))
             .map(|dir| {
                 dir.filter_map(Result::ok)
                     .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
@@ -697,7 +743,7 @@ impl CursorHost {
         entries.sort();
         for entry in entries {
             if let (Ok(text), Some(worker)) = (fs::read_to_string(&entry), self.workers().get(id)) {
-                worker.nudge(&text);
+                deliver(worker, &text);
             }
             fs::remove_file(&entry).ok();
         }

@@ -20,7 +20,11 @@ fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<St
     }
     match command {
         Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
-        Command::Reply { id, text } => workers.reply(id, text),
+        Command::Reply {
+            id,
+            text,
+            interrupt,
+        } => workers.reply(id, text, *interrupt),
         Command::Close { id, abandon, force } => workers.close(id, *abandon, *force),
         Command::Watch(request) => {
             watch_requests::queue(store.dir(), request).map(|()| queued_message(&request.id))

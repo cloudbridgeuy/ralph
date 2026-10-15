@@ -156,17 +156,24 @@ impl Workers {
         sent
     }
 
-    pub fn reply(&self, id: &str, text: &str) -> io::Result<String> {
-        let delivered = self.deliver(id, text);
+    pub fn reply(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
+        let delivered = self.deliver(id, text, interrupt);
         self.mark_sent(id, delivered)
     }
 
-    fn deliver(&self, id: &str, text: &str) -> io::Result<String> {
-        if CursorFiles::new(&self.store_dir, id).owner.exists() {
+    fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
+        let files = CursorFiles::new(&self.store_dir, id);
+        if files.owner.exists() {
+            if interrupt {
+                return self.queue_prompt(&files.interrupt, id, text, "Interrupted");
+            }
             if self.awaits_permission(id) {
                 return self.answer_permission(id, text);
             }
-            return self.queue_prompt(id, text, "Sent to");
+            return self.queue_prompt(&files.prompt, id, text, "Sent to");
+        }
+        if interrupt {
+            return Err(io::Error::other("interrupt needs a Cursor worker"));
         }
         let session = match self.owner(&project_slug(&repo_root()?), id) {
             Owner::Mine(session) => session.name,
@@ -201,14 +208,15 @@ impl Workers {
     }
 
     pub fn nudge(&self, id: &str, text: &str) -> io::Result<String> {
-        if CursorFiles::new(&self.store_dir, id).owner.exists() {
-            let queued = self.queue_prompt(id, text, "Nudged");
+        let files = CursorFiles::new(&self.store_dir, id);
+        if files.owner.exists() {
+            let queued = self.queue_prompt(&files.prompt, id, text, "Nudged");
             return self.mark_sent(id, queued);
         }
-        self.reply(id, text)
+        self.reply(id, text, false)
     }
 
-    fn queue_prompt(&self, id: &str, text: &str, verb: &str) -> io::Result<String> {
+    fn queue_prompt(&self, dir: &Path, id: &str, text: &str, verb: &str) -> io::Result<String> {
         let entry = prompt_entry_name(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -217,10 +225,9 @@ impl Workers {
                 }),
             process::id(),
         );
-        let files = CursorFiles::new(&self.store_dir, id);
-        let pending = files.prompt.join(format!(".{entry}"));
+        let pending = dir.join(format!(".{entry}"));
         write_file(&pending, text)?;
-        fs::rename(&pending, files.prompt.join(entry))?;
+        fs::rename(&pending, dir.join(entry))?;
         Ok(format!("{verb} worker {id}."))
     }
 

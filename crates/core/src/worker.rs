@@ -110,6 +110,7 @@ pub enum Command {
     Reply {
         id: String,
         text: String,
+        interrupt: bool,
     },
     Close {
         id: String,
@@ -142,7 +143,8 @@ pub fn command_definitions() -> [Value; 4] {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
-                    "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."}
+                    "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."},
+                    "interrupt": {"type": "boolean", "description": "cursor workers only: cancel the running turn and run this message next. Default false."}
                 },
                 "required": ["id", "text"]
             }
@@ -171,14 +173,17 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
             let harness = harness(args)?;
             Ok(Command::Spawn { id, task, harness })
         }),
-        "reply" => string_arg(args, "text")
-            .and_then(|text| worker_id(args).map(|id| Command::Reply { id, text })),
+        "reply" => string_arg(args, "text").and_then(|text| {
+            let id = worker_id(args)?;
+            let interrupt = bool_flag(args, "interrupt")?;
+            Ok(Command::Reply {
+                id,
+                text,
+                interrupt,
+            })
+        }),
         "close_worker" => worker_id(args).and_then(|id| {
-            let flag = |name: &str| match args.get(name) {
-                None | Some(Value::Null) => Ok(false),
-                Some(Value::Bool(value)) => Ok(*value),
-                Some(_) => Err(format!("{name} must be true or false.")),
-            };
+            let flag = |name: &str| bool_flag(args, name);
             Ok(Command::Close {
                 id,
                 abandon: flag("abandon")?,
@@ -189,6 +194,14 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
         _ => return None,
     };
     Some(parsed)
+}
+
+fn bool_flag(args: &Value, name: &str) -> Result<bool, String> {
+    match args.get(name) {
+        None | Some(Value::Null) => Ok(false),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(format!("{name} must be true or false.")),
+    }
 }
 
 fn worker_id(args: &Value) -> Result<String, String> {
@@ -535,7 +548,19 @@ mod tests {
             parse_command("reply", &json!({"id": "GUZ-1", "text": "merge"})),
             Some(Ok(Command::Reply {
                 id: "GUZ-1".into(),
-                text: "merge".into()
+                text: "merge".into(),
+                interrupt: false
+            }))
+        );
+        assert_eq!(
+            parse_command(
+                "reply",
+                &json!({"id": "GUZ-1", "text": "stop", "interrupt": true})
+            ),
+            Some(Ok(Command::Reply {
+                id: "GUZ-1".into(),
+                text: "stop".into(),
+                interrupt: true
             }))
         );
         assert_eq!(parse_command("zoom", &json!({})), None);
@@ -677,6 +702,7 @@ mod tests {
         let reply = Command::Reply {
             id: "A".into(),
             text: "t".into(),
+            interrupt: false,
         };
         assert!(command_allowed(&reply, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&reply, Some(Trigger::Worker)).is_ok());

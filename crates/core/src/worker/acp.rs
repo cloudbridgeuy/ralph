@@ -2,6 +2,7 @@ use super::{Report, ReportStatus, SERVER_NAME, WORKER_PROMPT};
 use crate::chat_memory::Trigger;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -14,6 +15,7 @@ pub const CURSOR_ERROR_DIR: &str = "cursor-error";
 pub const CURSOR_OWNER_DIR: &str = "cursor";
 pub const CURSOR_ANSWER_DIR: &str = "cursor-answer";
 pub const CURSOR_PROMPT_DIR: &str = "cursor-prompt";
+pub const CURSOR_INTERRUPT_DIR: &str = "cursor-interrupt";
 pub const CURSOR_SESSION_DIR: &str = "cursor-session";
 pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDOFF_POLL: Duration = Duration::from_millis(250);
@@ -27,6 +29,7 @@ pub struct CursorFiles {
     pub owner: PathBuf,
     pub answer: PathBuf,
     pub prompt: PathBuf,
+    pub interrupt: PathBuf,
     pub session: PathBuf,
 }
 
@@ -39,11 +42,12 @@ impl CursorFiles {
             owner: store.join(CURSOR_OWNER_DIR).join(id),
             answer: store.join(CURSOR_ANSWER_DIR).join(id),
             prompt: store.join(CURSOR_PROMPT_DIR).join(id),
+            interrupt: store.join(CURSOR_INTERRUPT_DIR).join(id),
             session: store.join(CURSOR_SESSION_DIR).join(id),
         }
     }
 
-    pub fn all(&self) -> [&Path; 6] {
+    pub fn all(&self) -> [&Path; 7] {
         [
             &self.spawn,
             &self.close,
@@ -51,6 +55,7 @@ impl CursorFiles {
             &self.owner,
             &self.answer,
             &self.prompt,
+            &self.interrupt,
         ]
     }
 }
@@ -326,6 +331,62 @@ pub enum TurnOutcome {
     Unreported,
     Problem(String),
     Closed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inbound {
+    Prompt(String),
+    Interrupt(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    CancelPermissions,
+    CancelSession,
+}
+
+#[derive(Debug, Default)]
+pub struct PromptQueue {
+    pending: VecDeque<String>,
+    running: bool,
+    interrupted: bool,
+}
+
+impl PromptQueue {
+    pub fn accept(&mut self, inbound: Inbound) -> Vec<Step> {
+        match inbound {
+            Inbound::Prompt(text) => {
+                self.pending.push_back(text);
+                Vec::new()
+            }
+            Inbound::Interrupt(text) => {
+                self.pending.push_front(text);
+                if self.running {
+                    self.interrupted = true;
+                    vec![Step::CancelPermissions, Step::CancelSession]
+                } else {
+                    vec![Step::CancelPermissions]
+                }
+            }
+        }
+    }
+
+    pub fn start(&mut self) -> Option<String> {
+        let text = self.pending.pop_front()?;
+        self.running = true;
+        self.interrupted = false;
+        Some(text)
+    }
+
+    pub fn finish(&mut self) -> bool {
+        self.running = false;
+        self.interrupted
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
 }
 
 pub fn turn_outcome(
@@ -333,6 +394,7 @@ pub fn turn_outcome(
     reported: bool,
     reminded: bool,
     closing: bool,
+    interrupted: bool,
 ) -> TurnOutcome {
     if closing {
         return TurnOutcome::Closed;
@@ -342,6 +404,8 @@ pub fn turn_outcome(
     }
     match stop {
         Err(message) => TurnOutcome::Problem(message.to_string()),
+        Ok("cancelled") => TurnOutcome::Cancelled,
+        Ok("end_turn") if interrupted => TurnOutcome::Cancelled,
         Ok("end_turn") if reminded => TurnOutcome::Unreported,
         Ok("end_turn") => TurnOutcome::Remind,
         Ok(other) => {
@@ -678,28 +742,112 @@ mod tests {
     #[test]
     fn turn_outcome_covers_every_branch() {
         let end = Ok("end_turn");
-        assert_eq!(turn_outcome(end, true, false, false), TurnOutcome::Reported);
-        assert_eq!(turn_outcome(end, false, false, false), TurnOutcome::Remind);
         assert_eq!(
-            turn_outcome(end, false, true, false),
+            turn_outcome(end, true, false, false, false),
+            TurnOutcome::Reported
+        );
+        assert_eq!(
+            turn_outcome(end, false, false, false, false),
+            TurnOutcome::Remind
+        );
+        assert_eq!(
+            turn_outcome(end, false, true, false, false),
             TurnOutcome::Unreported
         );
         assert_eq!(
-            turn_outcome(Ok("cancelled"), false, false, true),
+            turn_outcome(Ok("cancelled"), false, false, true, false),
             TurnOutcome::Closed
         );
         assert_eq!(
-            turn_outcome(Err("x"), true, false, true),
+            turn_outcome(Err("x"), true, false, true, false),
             TurnOutcome::Closed
         );
         assert_eq!(
-            turn_outcome(Ok("refusal"), false, false, false),
+            turn_outcome(Ok("refusal"), false, false, false, false),
             TurnOutcome::Problem("the cursor agent ended its turn with `refusal`".into())
         );
         assert_eq!(
-            turn_outcome(Err("boom"), false, false, false),
+            turn_outcome(Err("boom"), false, false, false, false),
             TurnOutcome::Problem("boom".into())
         );
+        assert_eq!(
+            turn_outcome(Ok("cancelled"), false, false, false, false),
+            TurnOutcome::Cancelled
+        );
+        assert_eq!(
+            turn_outcome(end, false, false, false, true),
+            TurnOutcome::Cancelled
+        );
+        assert_eq!(
+            turn_outcome(Ok("cancelled"), true, false, false, true),
+            TurnOutcome::Reported
+        );
+        assert_eq!(
+            turn_outcome(end, false, true, false, true),
+            TurnOutcome::Cancelled
+        );
+    }
+
+    fn prompt(text: &str) -> Inbound {
+        Inbound::Prompt(text.into())
+    }
+
+    fn interrupt(text: &str) -> Inbound {
+        Inbound::Interrupt(text.into())
+    }
+
+    #[test]
+    fn interrupt_prompt_runs_before_queued_replies() {
+        let mut queue = PromptQueue::default();
+        queue.accept(prompt("a"));
+        queue.accept(prompt("b"));
+        queue.accept(interrupt("now"));
+        assert_eq!(queue.start().as_deref(), Some("now"));
+        queue.finish();
+        assert_eq!(queue.start().as_deref(), Some("a"));
+        queue.finish();
+        assert_eq!(queue.start().as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn interrupt_while_idle_only_cancels_permissions() {
+        let mut queue = PromptQueue::default();
+        queue.accept(prompt("a"));
+        assert_eq!(
+            queue.accept(interrupt("now")),
+            vec![Step::CancelPermissions]
+        );
+        assert_eq!(queue.start().as_deref(), Some("now"));
+        assert!(!queue.finish());
+    }
+
+    #[test]
+    fn interrupt_while_running_cancels_permissions_then_session() {
+        let mut queue = PromptQueue::default();
+        queue.accept(prompt("a"));
+        queue.start();
+        assert_eq!(
+            queue.accept(interrupt("now")),
+            vec![Step::CancelPermissions, Step::CancelSession]
+        );
+    }
+
+    #[test]
+    fn interrupted_turn_is_cancelled_and_the_interrupt_starts_once() {
+        let mut queue = PromptQueue::default();
+        queue.accept(prompt("a"));
+        queue.start();
+        queue.accept(interrupt("now"));
+        let interrupted = queue.finish();
+        assert!(interrupted);
+        assert_eq!(
+            turn_outcome(Ok("end_turn"), false, false, false, interrupted),
+            TurnOutcome::Cancelled
+        );
+        assert_eq!(queue.start().as_deref(), Some("now"));
+        assert!(!queue.finish());
+        assert!(queue.is_empty());
+        assert_eq!(queue.start(), None);
     }
 
     #[test]
