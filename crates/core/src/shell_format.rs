@@ -23,8 +23,22 @@ impl Sep {
     }
 }
 
+#[derive(Clone)]
+struct Stage {
+    text: String,
+    flags: Vec<usize>,
+}
+
+fn join_stages(stages: &[Stage]) -> String {
+    stages
+        .iter()
+        .map(|stage| stage.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 struct Segment {
-    stages: Vec<String>,
+    stages: Vec<Stage>,
     sep: Sep,
 }
 
@@ -44,15 +58,25 @@ enum Block {
 
 struct Scanner {
     segments: Vec<Segment>,
-    stages: Vec<String>,
+    stages: Vec<Stage>,
     current: String,
+    flags: Vec<usize>,
+    options_ended: bool,
 }
 
 impl Scanner {
     fn take_stage(&mut self) -> Option<()> {
-        let stage = self.current.trim().to_string();
+        let leading = self.current.len() - self.current.trim_start().len();
+        let stage = Stage {
+            text: self.current.trim().to_string(),
+            flags: std::mem::take(&mut self.flags)
+                .into_iter()
+                .map(|offset| offset - leading)
+                .collect(),
+        };
         self.current.clear();
-        if stage.is_empty() {
+        self.options_ended = false;
+        if stage.text.is_empty() {
             return None;
         }
         self.stages.push(stage);
@@ -90,6 +114,8 @@ fn scan(chars: &[char]) -> Option<Vec<Segment>> {
         segments: Vec::new(),
         stages: Vec::new(),
         current: String::new(),
+        flags: Vec::new(),
+        options_ended: false,
     };
     let mut stack: Vec<Ctx> = Vec::new();
     let mut groups = 0usize;
@@ -107,7 +133,22 @@ fn scan(chars: &[char]) -> Option<Vec<Segment>> {
         }
         let in_double = stack.last() == Some(&Ctx::Double);
         if c == '\'' && !in_double {
-            let close = chars[i + 1..].iter().position(|&x| x == '\'')? + i + 1;
+            let ansi = prev == Some('$')
+                && chars[..i - 1]
+                    .iter()
+                    .rev()
+                    .take_while(|&&c| c == '\\')
+                    .count()
+                    % 2
+                    == 0;
+            let mut close = i + 1;
+            loop {
+                let quoted = *chars.get(close)?;
+                if quoted == '\'' {
+                    break;
+                }
+                close += if ansi && quoted == '\\' { 2 } else { 1 };
+            }
             scanner.current.extend(&chars[i..=close]);
             i = close + 1;
             continue;
@@ -195,6 +236,18 @@ fn scan(chars: &[char]) -> Option<Vec<Segment>> {
             i += 1;
             continue;
         }
+        if matches!(c, ' ' | '\t')
+            && next == Some('-')
+            && chars
+                .get(i + 2)
+                .is_some_and(|n| *n == '-' || n.is_ascii_alphabetic())
+            && !scanner.current.trim().is_empty()
+            && !scanner.options_ended
+        {
+            scanner.flags.push(scanner.current.len() + c.len_utf8());
+            scanner.options_ended = chars.get(i + 2) == Some(&'-')
+                && chars.get(i + 3).is_none_or(|n| n.is_whitespace());
+        }
         match c {
             ';' => {
                 if next == Some(';') {
@@ -271,23 +324,51 @@ impl Layout {
             .push(format!("{}{}{}", " ".repeat(indent), text, sep.suffix()));
     }
 
-    fn statement(&mut self, stages: &[String], sep: Sep, chain: bool) {
+    fn push_stage(&mut self, indent: usize, prefix: &str, stage: &Stage, sep: Sep) {
+        let total =
+            indent + prefix.chars().count() + stage.text.chars().count() + sep.suffix().len();
+        if total <= self.width || stage.flags.is_empty() {
+            self.push_line(indent, &format!("{prefix}{}", stage.text), sep);
+            return;
+        }
+        let mut start = 0;
+        for &end in &stage.flags {
+            let text = &stage.text[start..end - 1];
+            if start == 0 {
+                self.push_line(indent, &format!("{prefix}{text} \\"), Sep::Semi);
+            } else {
+                self.push_line(indent + INDENT, &format!("{text} \\"), Sep::Semi);
+            }
+            start = end;
+        }
+        self.push_line(indent + INDENT, &stage.text[start..], sep);
+    }
+
+    fn statement(&mut self, stages: &[Stage], sep: Sep, chain: bool) {
         let base = if self.header_open && chain {
             INDENT * (self.stack.len() - 1)
         } else {
             self.body_indent()
         };
         let indent = base + if chain { INDENT } else { 0 };
-        let joined = stages.join(" | ");
+        let joined = join_stages(stages);
         let total = indent + joined.chars().count() + sep.suffix().chars().count();
         if stages.len() > 1 && total > self.width {
-            self.push_line(indent, &stages[0], Sep::Semi);
-            for stage in &stages[1..] {
-                self.push_line(indent + INDENT, &format!("| {stage}"), Sep::Semi);
+            for (index, stage) in stages.iter().enumerate() {
+                let (indent, prefix) = if index == 0 {
+                    (indent, "")
+                } else {
+                    (indent + INDENT, "| ")
+                };
+                let suffix = if index + 1 == stages.len() {
+                    sep
+                } else {
+                    Sep::Semi
+                };
+                self.push_stage(indent, prefix, stage, suffix);
             }
-            if let Some(last) = self.lines.last_mut() {
-                last.push_str(sep.suffix());
-            }
+        } else if stages.len() == 1 {
+            self.push_stage(indent, "", &stages[0], sep);
         } else {
             self.push_line(indent, &joined, sep);
         }
@@ -300,7 +381,7 @@ impl Layout {
         let mut chain = prev.is_chain();
         let mut stages = seg.stages.clone();
         loop {
-            let word = first_word(&stages[0]).to_string();
+            let word = first_word(&stages[0].text).to_string();
             let Some(keyword) = Keyword::parse(&word) else {
                 self.statement(&stages, seg.sep, chain);
                 return Some(());
@@ -308,7 +389,7 @@ impl Layout {
             if chain || (prev == Sep::Background && !matches!(keyword, Keyword::Header)) {
                 return None;
             }
-            let joined = stages.join(" | ");
+            let joined = join_stages(&stages);
             match keyword {
                 Keyword::Header => {
                     if seg.sep == Sep::Background {
@@ -359,8 +440,17 @@ impl Layout {
                     return Some(());
                 }
             }
-            stages[0] = stages[0][word.len()..].trim_start().to_string();
-            if stages[0].is_empty() {
+            let remaining = stages[0].text[word.len()..].trim_start().to_string();
+            let removed = stages[0].text.len() - remaining.len();
+            stages[0].text = remaining;
+            stages[0].flags.retain_mut(|offset| {
+                if *offset <= removed {
+                    return false;
+                }
+                *offset -= removed;
+                true
+            });
+            if stages[0].text.is_empty() {
                 if stages.len() > 1 {
                     return None;
                 }
@@ -410,6 +500,165 @@ mod tests {
     use super::*;
 
     const REAL: &str = "git status --short | head; git log --oneline -1 main; for b in GUZ-450 GUZ-413; do echo \"== $b\"; git log --oneline main..worker/$b; git diff --stat main...worker/$b | tail -1; done; echo \"== overlap\"; comm -12 <(git diff --name-only main...worker/GUZ-450|sort) <(git diff --name-only main...worker/GUZ-413|sort)";
+
+    #[test]
+    fn long_gh_command_puts_each_flag_and_value_on_its_own_line() {
+        let command = r#"gh run list --branch main --limit 4 --json databaseId,name,status,conclusion,headSha --jq '.[]|"\(.databaseId) \(.name) \(.status) \(.conclusion) \(.headSha[0:7])"'"#;
+        let expected = [
+            "gh run list \\",
+            "  --branch main \\",
+            "  --limit 4 \\",
+            "  --json databaseId,name,status,conclusion,headSha \\",
+            r#"  --jq '.[]|"\(.databaseId) \(.name) \(.status) \(.conclusion) \(.headSha[0:7])"'"#,
+        ]
+        .join("\n");
+        assert_eq!(format_command(command, 80), Some(expected));
+    }
+
+    #[test]
+    fn flagged_command_wraps_only_above_the_given_width() {
+        let command = "gh run list --branch main --limit 4";
+        let width = command.chars().count();
+        assert_eq!(format_command(command, width + 1), None);
+        assert_eq!(format_command(command, width), None);
+        assert_eq!(
+            format_command(command, width - 1),
+            Some("gh run list \\\n  --branch main \\\n  --limit 4".to_string())
+        );
+    }
+
+    #[test]
+    fn quoted_flag_like_values_are_not_split() {
+        let command =
+            r#"tool --single 'one --not-a-flag two' --double "three --also-not-a-flag four""#;
+        let expected = [
+            "tool \\",
+            "  --single 'one --not-a-flag two' \\",
+            r#"  --double "three --also-not-a-flag four""#,
+        ]
+        .join("\n");
+        assert_eq!(format_command(command, 30), Some(expected));
+    }
+
+    #[test]
+    fn escaped_quotes_keep_flag_like_text_inside_values() {
+        for value in [
+            r#""one \" --not-a-flag two""#,
+            r"$'one\' --not-a-flag \'two'",
+            r"\$'one\'",
+        ] {
+            let command = format!("tool --message {value} --next yes");
+            let expected = format!("tool \\\n  --message {value} \\\n  --next yes");
+            assert_eq!(format_command(&command, 20), Some(expected));
+        }
+    }
+
+    #[test]
+    fn nested_substitutions_and_groups_are_not_split_at_flags() {
+        let command = r#"tool --value "$(echo "a --nested b")" --other $(echo --inner) --path <(cat --inside) --fallback ${value:-a --literal} --tick `echo --hidden`"#;
+        let expected = [
+            "tool \\",
+            r#"  --value "$(echo "a --nested b")" \"#,
+            "  --other $(echo --inner) \\",
+            "  --path <(cat --inside) \\",
+            "  --fallback ${value:-a --literal} \\",
+            "  --tick `echo --hidden`",
+        ]
+        .join("\n");
+        assert_eq!(format_command(command, 30), Some(expected));
+    }
+
+    #[test]
+    fn escaped_spaces_and_dashes_do_not_start_flags() {
+        let command = r"tool escaped\ --not-a-flag \--literal --path some\ path --next yes";
+        let expected = [
+            r"tool escaped\ --not-a-flag \--literal \",
+            r"  --path some\ path \",
+            "  --next yes",
+        ]
+        .join("\n");
+        assert_eq!(format_command(command, 30), Some(expected));
+    }
+
+    #[test]
+    fn escaped_trailing_whitespace_in_values_is_preserved() {
+        for value in ["value\\ ", "value\\\t"] {
+            let command = format!("tool --first {value} --second next");
+            let expected = format!("tool \\\n  --first {value} \\\n  --second next");
+            assert_eq!(format_command(&command, 20), Some(expected));
+        }
+    }
+
+    #[test]
+    fn short_boolean_and_attached_flags_get_separate_lines() {
+        let command = "cargo test --workspace --release -q -j4 --color=always";
+        let expected = [
+            "cargo test \\",
+            "  --workspace \\",
+            "  --release \\",
+            "  -q \\",
+            "  -j4 \\",
+            "  --color=always",
+        ]
+        .join("\n");
+        assert_eq!(format_command(command, 30), Some(expected));
+    }
+
+    #[test]
+    fn negative_values_and_stdin_stay_with_their_flags() {
+        let command = "tool --offset -42 --input - --other next";
+        let expected = "tool \\\n  --offset -42 \\\n  --input - \\\n  --other next";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
+
+    #[test]
+    fn option_terminator_keeps_remaining_arguments_together() {
+        let command = "tool --verbose -- --not-a-flag -also-not";
+        let expected = "tool \\\n  --verbose \\\n  -- --not-a-flag -also-not";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
+
+    #[test]
+    fn unicode_and_leading_whitespace_keep_flag_offsets_correct() {
+        let command = "  工具 查找\t--名字 'café --不是选项' --数量 4  ";
+        let expected = "工具 查找 \\\n  --名字 'café --不是选项' \\\n  --数量 4";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
+
+    #[test]
+    fn wrapped_flags_use_loop_body_indent_after_do() {
+        let command = "for f in a; do tool --first value --second other; done";
+        let expected = "for f in a; do\n  tool \\\n    --first value \\\n    --second other\ndone";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
+
+    #[test]
+    fn wrapped_flags_keep_chain_operators_on_the_last_line() {
+        let command = "tool --first value --second other && echo done";
+        let expected = "tool \\\n  --first value \\\n  --second other &&\n  echo done";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
+
+    #[test]
+    fn wrapped_pipeline_stages_keep_their_pipe_prefix() {
+        let command = "tool --first value --second other | next --third value --fourth other";
+        let expected = "tool \\\n  --first value \\\n  --second other\n  | next \\\n    --third value \\\n    --fourth other";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
+
+    #[test]
+    fn short_statements_in_a_long_command_keep_flags_inline() {
+        let command = "tool --one x; tool --two y; tool --three z";
+        let expected = "tool --one x\ntool --two y\ntool --three z";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
+
+    #[test]
+    fn command_starting_with_a_dash_after_do_is_not_an_option() {
+        let command = "for f in a; do -tool --first value --second other; done";
+        let expected = "for f in a; do\n  -tool \\\n    --first value \\\n    --second other\ndone";
+        assert_eq!(format_command(command, 20), Some(expected.to_string()));
+    }
 
     #[test]
     fn real_example_is_split_per_statement() {
@@ -490,7 +739,7 @@ mod tests {
     fn escaped_semicolon_is_not_an_operator() {
         assert_eq!(
             format_command("find . -name x -exec rm {} \\; ; echo ok", 20),
-            Some("find . -name x -exec rm {} \\;\necho ok".to_string())
+            Some("find . \\\n  -name x \\\n  -exec rm {} \\;\necho ok".to_string())
         );
     }
 
