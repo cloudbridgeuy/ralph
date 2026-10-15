@@ -1,5 +1,6 @@
 use crate::chat_memory::Trigger;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
+use crate::watch_request::{parse_watch_args, WatchRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::ffi::OsString;
@@ -111,9 +112,10 @@ pub enum Command {
         abandon: bool,
         force: bool,
     },
+    Watch(WatchRequest),
 }
 
-pub fn command_definitions() -> [Value; 3] {
+pub fn command_definitions() -> [Value; 4] {
     [
         json!({
             "name": "spawn_worker",
@@ -154,6 +156,7 @@ pub fn command_definitions() -> [Value; 3] {
                 "required": ["id"]
             }
         }),
+        crate::watch_request::watch_definition(),
     ]
 }
 
@@ -178,6 +181,7 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
                 force: flag("force")?,
             })
         }),
+        "watch" => parse_watch_args(args).map(Command::Watch),
         _ => return None,
     };
     Some(parsed)
@@ -647,6 +651,17 @@ mod tests {
         assert!(command_allowed(&spawn, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&spawn, Some(Trigger::Worker)).is_err());
         assert!(command_allowed(&spawn, None).is_err());
+    }
+
+    #[test]
+    fn watch_allowed_only_in_a_user_turn() {
+        let args = json!({"id": "ci", "command": "c", "follow_up": "f"});
+        let Some(Ok(watch)) = parse_command("watch", &args) else {
+            panic!("expected a watch command")
+        };
+        assert!(command_allowed(&watch, Some(Trigger::User)).is_ok());
+        assert!(command_allowed(&watch, Some(Trigger::Worker)).is_err());
+        assert!(command_allowed(&watch, None).is_err());
     }
 
     #[test]

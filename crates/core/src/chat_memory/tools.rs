@@ -140,7 +140,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["zoom", "recall", "spawn_worker", "reply", "close_worker"]
+            [
+                "zoom",
+                "recall",
+                "spawn_worker",
+                "reply",
+                "close_worker",
+                "watch"
+            ]
         );
     }
 

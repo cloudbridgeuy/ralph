@@ -34,6 +34,7 @@ pub mod stream_processor;
 pub mod subprocess;
 mod version;
 pub mod warn;
+mod watch_requests;
 mod watch_store;
 mod watches;
 mod worker_mcp;

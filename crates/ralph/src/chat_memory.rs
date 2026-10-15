@@ -54,6 +54,10 @@ impl Store {
         Self { dir }
     }
 
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     pub fn load(&self) -> io::Result<(Vec<Entry>, Tree)> {
         let log = read_optional(&self.dir.join("log.jsonl"))?;
         let tree = read_optional(&self.dir.join("tree.jsonl"))?;

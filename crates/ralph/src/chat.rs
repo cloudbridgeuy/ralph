@@ -18,6 +18,7 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, SubprocessError,
 };
 use crate::warn::{warn, warn_if_err};
+use crate::watch_requests;
 use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
@@ -365,6 +366,7 @@ fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 'static) {
         loop {
             std::thread::sleep(POLL);
             tick += 1;
+            watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
             if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
                 repaint();
             }

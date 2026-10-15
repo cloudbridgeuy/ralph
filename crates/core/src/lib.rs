@@ -28,6 +28,7 @@ pub mod mcp;
 pub mod semver;
 pub mod stream;
 pub mod watch;
+pub mod watch_request;
 pub mod watch_store;
 pub mod worker;
 pub mod worker_check;

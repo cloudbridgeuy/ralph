@@ -17,7 +17,7 @@ ralph                      # same as ralph chat with defaults
 - `--no-inbox-sound` and `--no-inbox-notification` turn off the inbox alert parts (see Inbox alerts).
 - `--store <DIR>` sets the store path. Precedence: `--store`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; an empty `RALPH_CHAT_STORE` counts as unset, and a missing home directory is an error when neither is set. A relative path resolves against the cwd at startup. The directory is created at startup. Parallel chat instances need separate stores; otherwise they share the log, `history.txt`, `editor.md`, `mcp.json`, and `inbox/`.
 - Hidden subcommands: `ralph chat-mcp --store <DIR> --permission-mode <MODE> [--worktree-dir <DIR>]` and `ralph chat-nap --store <DIR> [--timeout 600]`. Both are spawned by ralph itself.
-- Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-G opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Ctrl-V pastes a clipboard image as `[Image #N: path]` (see [Images](#images)). Esc Esc clears the whole draft (Ctrl-Z undoes it, Ctrl-O redoes). Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). Ctrl-D or Ctrl-C at the prompt quits; an empty message does nothing unless reports are unread (see Worker inbox). Ctrl-C during a turn cancels that turn (nothing is stored) and returns to the prompt with the message restored as the draft; SIGTERM and SIGHUP end the chat. While a turn runs, chat keeps a `<store>/turn` marker (`user` or `worker`, removed when the turn ends); chat-mcp reads it so `spawn_worker` and `close_worker` work only in a user-started turn (`reply` also in a worker turn).
+- Input is a reedline editor on the main thread with prompt `>>> `. Enter sends; Alt-Enter or Ctrl-J inserts a newline; Ctrl-G opens `$VISUAL`, `$EDITOR`, or `vi` on `<store>/editor.md`. Ctrl-V pastes a clipboard image as `[Image #N: path]` (see [Images](#images)). Esc Esc clears the whole draft (Ctrl-Z undoes it, Ctrl-O redoes). Up/Down and Ctrl-R use the history file `<store>/history.txt` (1000 entries). Ctrl-D or Ctrl-C at the prompt quits; an empty message does nothing unless reports are unread (see Worker inbox). Ctrl-C during a turn cancels that turn (nothing is stored) and returns to the prompt with the message restored as the draft; SIGTERM and SIGHUP end the chat. While a turn runs, chat keeps a `<store>/turn` marker (`user` or `worker`, removed when the turn ends); chat-mcp reads it so `spawn_worker`, `close_worker` and `watch` work only in a user-started turn (`reply` also in a worker turn).
 - A dark-gray full-width rule (the shared termimad skin's `---`, default gray(6) `―`) prints before the turn and after the reply.
 
 ## Layout
@@ -83,7 +83,10 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 - A restart keeps the original `started_at` and deadlines. The timeout becomes the time left. A command that is exactly `sleep <N>` is rewritten to `sleep <left>` (rounded up to whole seconds). Other commands rerun unchanged.
 - A watch whose wake deadline passed posts an exit-0 report right away. One whose timeout deadline passed posts a timed-out report right away (the earlier deadline wins). Neither is spawned.
 - The saved record is removed when the watch exits, times out, or is stopped. Closing the chat kills the watch but keeps the record. The pure logic lives in `crates/core/src/watch_store.rs`; the file store is `crates/ralph/src/watch_store.rs`.
-- Later tickets add the timeout config key (GUZ-483), the MCP `watch` tool (GUZ-485), and the `/watch` command with a status line (GUZ-486).
+- The agent starts a watch with the `watch` tool (see [MCP tools](#mcp-tools)). chat-mcp runs in another process, so the tool writes a request file to `<store>/watch-requests/` (atomic, one JSON file per request). The chat watcher thread takes every request on each 500 ms poll, calls `Watches::start`, and deletes the file (`crates/ralph/src/watch_requests.rs`; pure parsing in `crates/core/src/watch_request.rs`). If the start fails (duplicate id, spawn error), chat posts one `watch` report with the error to the inbox.
+- Watch reports show as `[worker <id> · watch]`. The system prompt says they come from a watch, not from an agent or the person.
+- Approval: the system prompt tells the model to show the person the exact command and wait for approval before it calls `watch`. The prompt enforces this, not the tool. The tool only refuses outside a user-started turn, like `spawn_worker`.
+- Later tickets add the timeout config key (GUZ-483) and the `/watch` command with a status line (GUZ-486).
 
 ## Executable cells
 
@@ -127,6 +130,7 @@ Hidden `ralph chat-mcp --store <DIR>` speaks newline-delimited JSON-RPC 2.0 on s
 | --- | --- | --- |
 | `zoom` | `id` (string, such as `16-31` or `5`) | A block id returns its two halves (summary lines, or `#<id> not compressed yet`; halves past the log end are dropped). A single index returns the raw message. |
 | `recall` | `pattern` (string) | Case-insensitive regex over raw messages (`#<i> <role> <at> <text>` lines). Returns matching lines plus `N hits`. Output is capped at 8192 bytes, oldest hits dropped first and counted. |
+| `watch` | `id` (string, no spaces or slashes), `command` (string), `follow_up` (string), optional `persistent` (boolean, default false), optional `timeout_secs` (positive integer, default none) | Queues the watch and returns at once. The report arrives in the inbox when the command ends. Needs a user-started turn. The model must get the person's approval of the exact command first. |
 
 Invalid ids, ids beyond the log, bad regexes, and store read errors return a tool result with `isError: true`.
 

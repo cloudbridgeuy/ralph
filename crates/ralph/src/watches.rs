@@ -156,7 +156,6 @@ impl Watches {
         }
     }
 
-    #[allow(dead_code, reason = "GUZ-485 adds the MCP watch tool that calls start")]
     pub fn start(&self, spec: WatchSpec) -> Result<(), WatchError> {
         let saved = (spec.kind == WatchKind::Persistent)
             .then(|| SavedWatch::new(&spec, chrono::Utc::now()));

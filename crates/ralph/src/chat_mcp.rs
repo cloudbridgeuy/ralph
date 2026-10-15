@@ -1,7 +1,9 @@
 use crate::chat_memory::Store;
+use crate::watch_requests;
 use crate::workers::Workers;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::mcp::tool_result;
+use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, Command};
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
@@ -15,6 +17,9 @@ fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<St
         Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
         Command::Reply { id, text } => workers.reply(id, text),
         Command::Close { id, abandon, force } => workers.close(id, *abandon, *force),
+        Command::Watch(request) => {
+            watch_requests::queue(store.dir(), request).map(|()| queued_message(&request.id))
+        }
     }
     .map_err(|e| e.to_string())
 }
@@ -96,6 +101,32 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("hello raw"));
+    }
+
+    #[test]
+    fn watch_call_queues_one_request_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::User).unwrap();
+        let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"watch","arguments":{"id":"ci","command":"gh run watch 1","follow_up":"report","persistent":true,"timeout_secs":60}}}"#;
+        let lines = run(&store, &format!("{call}\n"));
+        assert_eq!(lines[0]["result"]["isError"], false);
+        let queued = watch_requests::take_all(dir.path());
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].command, "gh run watch 1");
+        assert!(queued[0].persistent);
+        assert_eq!(queued[0].timeout_secs, Some(60));
+    }
+
+    #[test]
+    fn watch_is_refused_on_a_worker_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::Worker).unwrap();
+        let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"watch","arguments":{"id":"ci","command":"c","follow_up":"f"}}}"#;
+        let lines = run(&store, &format!("{call}\n"));
+        assert_eq!(lines[0]["result"]["isError"], true);
+        assert!(watch_requests::take_all(dir.path()).is_empty());
     }
 
     #[test]
