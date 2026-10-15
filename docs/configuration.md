@@ -116,8 +116,14 @@ A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
 
 ```toml
 [theme.status]
-mode_fg = "black"         # IDLE block text
-mode_bg = "green"         # IDLE block background
+mode_idle_fg = "black"    # IDLE block text
+mode_idle_bg = "green"    # IDLE block background
+mode_nap_fg = "black"     # NAP block text
+mode_nap_bg = "magenta"   # NAP block background
+mode_inbox_fg = "black"   # INBOX block text
+mode_inbox_bg = "yellow"  # INBOX block background
+mode_work_fg = "white"    # WORK block text
+mode_work_bg = "blue"     # WORK block background
 mail_fg = "black"         # unread mail block text
 mail_bg = "dark_green"    # unread mail block background
 store_fg = "reset"        # store path text
