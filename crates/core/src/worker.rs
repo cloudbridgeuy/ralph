@@ -9,11 +9,13 @@ use std::path::{Component, Path, PathBuf};
 mod acp;
 mod hooks;
 mod markers;
+mod opencode_http;
 mod ownership;
 mod worktree;
 pub use acp::*;
 pub use hooks::*;
 pub use markers::*;
+pub use opencode_http::*;
 pub use ownership::*;
 pub use worktree::*;
 
