@@ -188,6 +188,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
 | `frozen_window` | integer | `32` | Entries per frozen memory-view window, from 1 to 199 |
 | `worker_check_secs` | integer | `60` | Seconds between worker checks while chat is open; `0` turns the check off |
+| `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
 | `wrap_width` | integer | unset | Column cap for chat replies and the prompt area; `0` or unset wraps at the terminal width |
 | `cell_output_limit` | integer | `200` | Lines of cell output sent to Claude: first half and last half kept; `0` sends all |
 | `cell_output_bytes` | integer | `65536` | Bytes of cell output sent to Claude: head and tail kept; `0` sends all |

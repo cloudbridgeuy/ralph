@@ -25,8 +25,8 @@ use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, capture_pane, opencode_active, tmux_listing, Workers};
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_mcp_args, build_nap_args, mcp_config,
-    resolve_frozen_window, resolve_worker_check_secs, resolve_wrap_width, select_servers,
-    turn_prompt, turn_system_prompt, ChatMcpOptions, VIEW_LINES,
+    resolve_frozen_window, resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width,
+    select_servers, turn_prompt, turn_system_prompt, ChatMcpOptions, VIEW_LINES,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_input::{input_lost_at_prompt, turn_end, InputWatch, TurnEnd, TurnSignals};
@@ -820,6 +820,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let chat_config = config.chat;
     let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
     let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
+    let watch_timeout = resolve_watch_timeout(chat_config.watch_timeout_secs)?;
     let wrap_cap = resolve_wrap_width(
         args.wrap_width,
         std::env::var(WRAP_WIDTH_ENV).ok().as_deref(),
@@ -881,7 +882,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let inbox = Arc::new(Inbox::new(store_dir.join(INBOX_DIR)));
     let known = inbox.peek().unwrap_or_default();
     let monitor = Arc::new(Monitor {
-        watches: Watches::new(Arc::clone(&inbox), &store_dir),
+        watches: Watches::new(Arc::clone(&inbox), &store_dir, watch_timeout),
         inbox,
         store: Store::new(store_dir.clone()),
         store_dir: canonical_store(store_dir.clone()),

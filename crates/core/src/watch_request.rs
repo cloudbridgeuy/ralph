@@ -49,7 +49,7 @@ pub fn watch_definition() -> Value {
                 "command": {"type": "string", "description": "The exact shell command to run, as the person approved it."},
                 "follow_up": {"type": "string", "description": "What to do when the command ends."},
                 "persistent": {"type": "boolean", "description": "Keep the watch across chat restarts. Default false."},
-                "timeout_secs": {"type": "integer", "minimum": 1, "description": "Kill the command after this many seconds. Default none."}
+                "timeout_secs": {"type": "integer", "minimum": 1, "description": "Kill the command after this many seconds. Default: the configured watch timeout, 1 hour unless changed."}
             },
             "required": ["id", "command", "follow_up"]
         }

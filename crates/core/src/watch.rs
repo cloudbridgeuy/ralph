@@ -26,6 +26,19 @@ pub struct WatchSpec {
     pub limit: Option<Duration>,
 }
 
+impl WatchSpec {
+    pub fn with_default_timeout(self, default: Duration) -> Self {
+        if self.timeout.is_some() {
+            return self;
+        }
+        Self {
+            timeout: Some(default),
+            limit: Some(default),
+            ..self
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WatchOutcome {
     Exited(i32),
@@ -171,6 +184,22 @@ mod tests {
         let mut tail = Tail::new(TAIL_MAX_LINES, TAIL_MAX_BYTES);
         lines.iter().for_each(|line| tail.push_line(line));
         tail
+    }
+
+    #[test]
+    fn a_spec_without_a_timeout_gets_the_default_as_timeout_and_limit() {
+        let spec = spec(None).with_default_timeout(Duration::from_secs(3600));
+        assert_eq!(spec.timeout, Some(Duration::from_secs(3600)));
+        assert_eq!(spec.limit, Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn a_spec_with_a_timeout_keeps_it_and_its_limit() {
+        let mut own = spec(None);
+        own.timeout = Some(Duration::from_secs(10));
+        own.limit = Some(Duration::from_secs(30));
+        let kept = own.clone().with_default_timeout(Duration::from_secs(3600));
+        assert_eq!(kept, own);
     }
 
     #[test]

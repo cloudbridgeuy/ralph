@@ -3,15 +3,24 @@ use crate::worker::ATTACHMENTS_DIR;
 use serde_json::{json, Map, Value};
 use std::ffi::OsString;
 use std::path::Path;
+use std::time::Duration;
 
 pub const VIEW_LINES: usize = 200;
 pub const FROZEN_WINDOW: usize = 32;
 pub const WORKER_CHECK_SECS: u64 = 60;
+pub const WATCH_TIMEOUT_SECS: u64 = 3600;
 
 pub fn resolve_worker_check_secs(config: Option<u64>) -> Option<u64> {
     match config.unwrap_or(WORKER_CHECK_SECS) {
         0 => None,
         secs => Some(secs),
+    }
+}
+
+pub fn resolve_watch_timeout(config: Option<u64>) -> Result<Duration, String> {
+    match config.unwrap_or(WATCH_TIMEOUT_SECS) {
+        0 => Err("watch_timeout_secs must be above 0.".to_string()),
+        secs => Ok(Duration::from_secs(secs)),
     }
 }
 
@@ -217,6 +226,15 @@ mod tests {
         assert_eq!(resolve_worker_check_secs(None), Some(60));
         assert_eq!(resolve_worker_check_secs(Some(0)), None);
         assert_eq!(resolve_worker_check_secs(Some(15)), Some(15));
+    }
+
+    #[test]
+    fn watch_timeout_resolution() {
+        assert_eq!(resolve_watch_timeout(None), Ok(Duration::from_secs(3600)));
+        assert_eq!(resolve_watch_timeout(Some(90)), Ok(Duration::from_secs(90)));
+        assert!(resolve_watch_timeout(Some(0))
+            .unwrap_err()
+            .contains("watch_timeout_secs"));
     }
 
     #[test]

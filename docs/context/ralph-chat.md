@@ -94,7 +94,7 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
   - Bare `/watch` or any other argument prints `Usage: /watch start [--persistent] <command> -- <follow-up> | list | stop <id>`. `/watchfoo` is a normal message.
 - A restarted watch that times out reports the original timeout, not the time left.
 - Status line: running watches show after the workers as `watch <id> <left>, <id>, ...` (the time left is omitted when there is none). It sheds detail as the terminal narrows: time left, then names to `<n> watches`, then `<n>wt`, then nothing. It refreshes on the same 500 ms poll, so it updates when a watch starts, ends or is stopped.
-- Later tickets add the timeout config key (GUZ-483).
+- Every watch has a timeout. A watch without its own `timeout_secs` (from the `watch` tool, `/watch start`, or an old saved record) gets `[chat] watch_timeout_secs` (default 3600, so 1 hour; `0` is a config error, resolved by `resolve_watch_timeout` in `crates/core/src/chat.rs`, same file-then-default precedence as `worker_check_secs`). `WatchSpec::with_default_timeout` applies it at start and at restore. When it passes, ralph kills the watch and posts one report that says `timed out after <n>s and was killed`, where `<n>` is the original limit.
 
 ## Executable cells
 
@@ -138,7 +138,7 @@ Hidden `ralph chat-mcp --store <DIR>` speaks newline-delimited JSON-RPC 2.0 on s
 | --- | --- | --- |
 | `zoom` | `id` (string, such as `16-31` or `5`) | A block id returns its two halves (summary lines, or `#<id> not compressed yet`; halves past the log end are dropped). A single index returns the raw message. |
 | `recall` | `pattern` (string) | Case-insensitive regex over raw messages (`#<i> <role> <at> <text>` lines). Returns matching lines plus `N hits`. Output is capped at 8192 bytes, oldest hits dropped first and counted. |
-| `watch` | `id` (string, no spaces or slashes), `command` (string), `follow_up` (string), optional `persistent` (boolean, default false), optional `timeout_secs` (positive integer, default none) | Queues the watch and returns at once. The report arrives in the inbox when the command ends. Needs a user-started turn. The model must get the person's approval of the exact command first. |
+| `watch` | `id` (string, no spaces or slashes), `command` (string), `follow_up` (string), optional `persistent` (boolean, default false), optional `timeout_secs` (positive integer, default `[chat] watch_timeout_secs`, 1 hour) | Queues the watch and returns at once. The report arrives in the inbox when the command ends. Needs a user-started turn. The model must get the person's approval of the exact command first. |
 
 Invalid ids, ids beyond the log, bad regexes, and store read errors return a tool result with `isError: true`.
 

@@ -56,6 +56,7 @@ pub struct Watches {
     inbox: Arc<Inbox>,
     store: WatchStore,
     active: Arc<Mutex<HashMap<String, Active>>>,
+    default_timeout: Duration,
 }
 
 struct Waiter {
@@ -151,15 +152,17 @@ fn spawn_child(command: &str) -> io::Result<(Child, io::PipeReader)> {
 }
 
 impl Watches {
-    pub fn new(inbox: Arc<Inbox>, store_dir: &Path) -> Self {
+    pub fn new(inbox: Arc<Inbox>, store_dir: &Path, default_timeout: Duration) -> Self {
         Self {
             inbox,
             store: WatchStore::new(store_dir.join(WATCHES_DIR)),
             active: Arc::new(Mutex::new(HashMap::new())),
+            default_timeout,
         }
     }
 
     pub fn start(&self, spec: WatchSpec) -> Result<(), WatchError> {
+        let spec = spec.with_default_timeout(self.default_timeout);
         let saved = (spec.kind == WatchKind::Persistent)
             .then(|| SavedWatch::new(&spec, chrono::Utc::now()));
         self.launch(spec, saved.as_ref())
@@ -167,7 +170,7 @@ impl Watches {
 
     pub fn restore(&self) {
         let now = chrono::Utc::now();
-        for action in plan_restore(&self.store.load_all(), now) {
+        for action in plan_restore(&self.store.load_all(), now, self.default_timeout) {
             match action {
                 RestoreAction::Restart(spec) => {
                     let id = spec.id.clone();

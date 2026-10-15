@@ -109,7 +109,7 @@ impl SavedWatch {
         }
     }
 
-    fn restore_action(&self, now: DateTime<Utc>) -> RestoreAction {
+    fn restore_action(&self, now: DateTime<Utc>, default_timeout: Duration) -> RestoreAction {
         if self.kind != WatchKind::Persistent {
             return RestoreAction::Discard(self.id.clone());
         }
@@ -119,21 +119,29 @@ impl SavedWatch {
             (Some(wake), Some(limit)) if limit < wake => RestoreAction::TimedOutNow(self.spec()),
             (Some(_), _) => RestoreAction::FireNow(self.spec()),
             (None, Some(_)) => RestoreAction::TimedOutNow(self.spec()),
-            (None, None) => RestoreAction::Restart(self.restart_spec(now)),
+            (None, None) => {
+                RestoreAction::Restart(self.restart_spec(now).with_default_timeout(default_timeout))
+            }
         }
     }
 }
 
-pub fn plan_restore(saved: &[SavedWatch], now: DateTime<Utc>) -> Vec<RestoreAction> {
+pub fn plan_restore(
+    saved: &[SavedWatch],
+    now: DateTime<Utc>,
+    default_timeout: Duration,
+) -> Vec<RestoreAction> {
     saved
         .iter()
-        .map(|watch| watch.restore_action(now))
+        .map(|watch| watch.restore_action(now, default_timeout))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DEFAULT: Duration = Duration::from_secs(3600);
 
     fn at(secs: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_700_000_000 + secs, 0).unwrap()
@@ -152,6 +160,28 @@ mod tests {
 
     fn persistent(command: &str, timeout: Option<u64>) -> SavedWatch {
         SavedWatch::new(&spec(command, timeout, WatchKind::Persistent), at(0))
+    }
+
+    #[test]
+    fn restart_of_a_record_without_a_timeout_gets_the_default() {
+        let saved = persistent("tail -f log", None);
+        let plan = plan_restore(&[saved], at(5), DEFAULT);
+        let [RestoreAction::Restart(spec)] = plan.as_slice() else {
+            panic!("expected restart, got {plan:?}");
+        };
+        assert_eq!(spec.timeout, Some(DEFAULT));
+        assert_eq!(spec.limit, Some(DEFAULT));
+    }
+
+    #[test]
+    fn restart_keeps_the_saved_limit_and_the_time_left() {
+        let saved = persistent("tail -f log", Some(100));
+        let plan = plan_restore(&[saved], at(40), DEFAULT);
+        let [RestoreAction::Restart(spec)] = plan.as_slice() else {
+            panic!("expected restart, got {plan:?}");
+        };
+        assert_eq!(spec.timeout, Some(Duration::from_secs(60)));
+        assert_eq!(spec.limit, Some(Duration::from_secs(100)));
     }
 
     #[test]
@@ -218,18 +248,22 @@ mod tests {
     #[test]
     fn restart_rewrites_sleep_with_remaining_seconds_rounded_up() {
         let saved = persistent("sleep 10", None);
-        let plan = plan_restore(&[saved], at(0) + ChronoDuration::milliseconds(3500));
+        let plan = plan_restore(
+            &[saved],
+            at(0) + ChronoDuration::milliseconds(3500),
+            DEFAULT,
+        );
         let [RestoreAction::Restart(spec)] = plan.as_slice() else {
             panic!("{plan:?}");
         };
         assert_eq!(spec.command, "sleep 7");
-        assert_eq!(spec.timeout, None);
+        assert_eq!(spec.timeout, Some(DEFAULT));
     }
 
     #[test]
     fn restart_shrinks_the_timeout_and_keeps_other_commands() {
         let saved = persistent("gh run watch 1", Some(60));
-        let plan = plan_restore(&[saved], at(20));
+        let plan = plan_restore(&[saved], at(20), DEFAULT);
         let [RestoreAction::Restart(spec)] = plan.as_slice() else {
             panic!("{plan:?}");
         };
@@ -242,8 +276,8 @@ mod tests {
     #[test]
     fn restart_twice_uses_the_original_deadlines() {
         let saved = persistent("sleep 10", Some(100));
-        let first = plan_restore(std::slice::from_ref(&saved), at(3));
-        let second = plan_restore(std::slice::from_ref(&saved), at(6));
+        let first = plan_restore(std::slice::from_ref(&saved), at(3), DEFAULT);
+        let second = plan_restore(std::slice::from_ref(&saved), at(6), DEFAULT);
         let commands: Vec<String> = [first, second]
             .into_iter()
             .flatten()
@@ -258,14 +292,14 @@ mod tests {
     #[test]
     fn passed_wake_deadline_fires_now() {
         let saved = persistent("sleep 10", Some(100));
-        let plan = plan_restore(&[saved], at(10));
+        let plan = plan_restore(&[saved], at(10), DEFAULT);
         assert!(matches!(plan.as_slice(), [RestoreAction::FireNow(_)]));
     }
 
     #[test]
     fn passed_timeout_deadline_times_out_now() {
         let saved = persistent("gh run watch 1", Some(30));
-        let plan = plan_restore(&[saved], at(31));
+        let plan = plan_restore(&[saved], at(31), DEFAULT);
         let [RestoreAction::TimedOutNow(spec)] = plan.as_slice() else {
             panic!("{plan:?}");
         };
@@ -276,7 +310,7 @@ mod tests {
     fn earlier_passed_deadline_wins() {
         let timeout_first = persistent("sleep 50", Some(20));
         let wake_first = persistent("sleep 20", Some(50));
-        let plan = plan_restore(&[timeout_first, wake_first], at(60));
+        let plan = plan_restore(&[timeout_first, wake_first], at(60), DEFAULT);
         assert!(matches!(
             plan.as_slice(),
             [RestoreAction::TimedOutNow(_), RestoreAction::FireNow(_)]
@@ -286,19 +320,19 @@ mod tests {
     #[test]
     fn normal_records_are_discarded_never_restored() {
         let saved = SavedWatch::new(&spec("sleep 10", None, WatchKind::Normal), at(0));
-        let plan = plan_restore(&[saved], at(1));
+        let plan = plan_restore(&[saved], at(1), DEFAULT);
         assert_eq!(plan, [RestoreAction::Discard("w".to_string())]);
     }
 
     #[test]
-    fn untimed_non_sleep_watch_restarts_unchanged() {
+    fn untimed_non_sleep_watch_restarts_with_the_default_timeout() {
         let saved = persistent("tail -f log", None);
-        let plan = plan_restore(&[saved], at(1000));
+        let plan = plan_restore(&[saved], at(1000), DEFAULT);
         let [RestoreAction::Restart(spec)] = plan.as_slice() else {
             panic!("{plan:?}");
         };
         assert_eq!(spec.command, "tail -f log");
-        assert_eq!(spec.timeout, None);
+        assert_eq!(spec.timeout, Some(DEFAULT));
     }
 
     #[test]

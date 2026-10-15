@@ -154,6 +154,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub worker_check_secs: Option<u64>,
     #[serde(default)]
+    pub watch_timeout_secs: Option<u64>,
+    #[serde(default)]
     pub wrap_width: Option<usize>,
     #[serde(default)]
     pub cell_output_limit: Option<usize>,
@@ -188,6 +190,7 @@ impl Default for ChatSection {
             skills: Vec::new(),
             frozen_window: None,
             worker_check_secs: None,
+            watch_timeout_secs: None,
             wrap_width: None,
             cell_output_limit: None,
             cell_output_bytes: None,
@@ -406,6 +409,16 @@ mod tests {
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.chat.frozen_window, Some(16));
         assert_eq!(AppConfig::new().chat.frozen_window, None);
+    }
+
+    #[test]
+    fn chat_section_parses_watch_timeout_secs() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[chat]\nwatch_timeout_secs = 120\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.watch_timeout_secs, Some(120));
+        assert_eq!(AppConfig::new().chat.watch_timeout_secs, None);
     }
 
     #[test]
