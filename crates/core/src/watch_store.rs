@@ -1,4 +1,4 @@
-use crate::watch::{WatchKind, WatchSpec};
+use crate::watch::{WatchKind, WatchOutcome, WatchSpec};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,8 +21,10 @@ pub struct SavedWatch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreAction {
     Restart(WatchSpec),
-    FireNow(WatchSpec),
-    TimedOutNow(WatchSpec),
+    Report {
+        spec: WatchSpec,
+        outcome: WatchOutcome,
+    },
     Discard(String),
 }
 
@@ -109,6 +111,15 @@ impl SavedWatch {
         }
     }
 
+    fn timed_out_report(&self) -> RestoreAction {
+        let spec = self.spec();
+        let limit = spec.limit.or(spec.timeout).unwrap_or_default();
+        RestoreAction::Report {
+            spec,
+            outcome: WatchOutcome::TimedOut(limit),
+        }
+    }
+
     fn restore_action(&self, now: DateTime<Utc>, default_timeout: Duration) -> RestoreAction {
         if self.kind != WatchKind::Persistent {
             return RestoreAction::Discard(self.id.clone());
@@ -116,9 +127,12 @@ impl SavedWatch {
         let woke = self.wake_deadline.filter(|deadline| *deadline <= now);
         let timed_out = self.timeout_deadline.filter(|deadline| *deadline <= now);
         match (woke, timed_out) {
-            (Some(wake), Some(limit)) if limit < wake => RestoreAction::TimedOutNow(self.spec()),
-            (Some(_), _) => RestoreAction::FireNow(self.spec()),
-            (None, Some(_)) => RestoreAction::TimedOutNow(self.spec()),
+            (Some(wake), Some(limit)) if limit < wake => self.timed_out_report(),
+            (Some(_), _) => RestoreAction::Report {
+                spec: self.spec(),
+                outcome: WatchOutcome::Exited(0),
+            },
+            (None, Some(_)) => self.timed_out_report(),
             (None, None) => {
                 RestoreAction::Restart(self.restart_spec(now).with_default_timeout(default_timeout))
             }
@@ -293,17 +307,34 @@ mod tests {
     fn passed_wake_deadline_fires_now() {
         let saved = persistent("sleep 10", Some(100));
         let plan = plan_restore(&[saved], at(10), DEFAULT);
-        assert!(matches!(plan.as_slice(), [RestoreAction::FireNow(_)]));
+        assert!(matches!(
+            plan.as_slice(),
+            [RestoreAction::Report {
+                outcome: WatchOutcome::Exited(0),
+                ..
+            }]
+        ));
     }
 
     #[test]
     fn passed_timeout_deadline_times_out_now() {
         let saved = persistent("gh run watch 1", Some(30));
         let plan = plan_restore(&[saved], at(31), DEFAULT);
-        let [RestoreAction::TimedOutNow(spec)] = plan.as_slice() else {
+        let [RestoreAction::Report { spec, outcome }] = plan.as_slice() else {
             panic!("{plan:?}");
         };
         assert_eq!(spec.timeout, Some(Duration::from_secs(30)));
+        assert_eq!(*outcome, WatchOutcome::TimedOut(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn a_timed_out_restore_reports_the_original_limit_not_the_time_left() {
+        let saved = persistent("tail -f log", Some(100));
+        let plan = plan_restore(&[saved], at(250), DEFAULT);
+        let [RestoreAction::Report { outcome, .. }] = plan.as_slice() else {
+            panic!("{plan:?}");
+        };
+        assert_eq!(*outcome, WatchOutcome::TimedOut(Duration::from_secs(100)));
     }
 
     #[test]
@@ -313,7 +344,16 @@ mod tests {
         let plan = plan_restore(&[timeout_first, wake_first], at(60), DEFAULT);
         assert!(matches!(
             plan.as_slice(),
-            [RestoreAction::TimedOutNow(_), RestoreAction::FireNow(_)]
+            [
+                RestoreAction::Report {
+                    outcome: WatchOutcome::TimedOut(_),
+                    ..
+                },
+                RestoreAction::Report {
+                    outcome: WatchOutcome::Exited(0),
+                    ..
+                }
+            ]
         ));
     }
 

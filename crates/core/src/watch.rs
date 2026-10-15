@@ -67,6 +67,46 @@ impl WatchOutcome {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChildState {
+    Running,
+    Exited {
+        code: Option<i32>,
+        signal: Option<i32>,
+    },
+    WaitFailed(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PollDecision {
+    Wait,
+    Finish(Option<WatchOutcome>),
+}
+
+pub fn poll_decision(
+    spec: &WatchSpec,
+    elapsed: Duration,
+    stop: Option<StopReason>,
+    child: ChildState,
+) -> PollDecision {
+    if let Some(reason) = stop {
+        return PollDecision::Finish(reason.outcome());
+    }
+    if let Some(timeout) = spec.timeout.filter(|timeout| elapsed >= *timeout) {
+        let limit = spec.limit.unwrap_or(timeout);
+        return PollDecision::Finish(Some(WatchOutcome::TimedOut(limit)));
+    }
+    match child {
+        ChildState::Running => PollDecision::Wait,
+        ChildState::Exited { code, signal } => {
+            PollDecision::Finish(Some(WatchOutcome::from_exit(code, signal)))
+        }
+        ChildState::WaitFailed(error) => {
+            PollDecision::Finish(Some(WatchOutcome::WaitFailed(error)))
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopReason {
     Requested,
@@ -193,6 +233,99 @@ mod tests {
         let mut tail = Tail::new(TAIL_MAX_LINES, TAIL_MAX_BYTES);
         lines.iter().for_each(|line| tail.push_line(line));
         tail
+    }
+
+    fn timed(timeout: u64, limit: u64) -> WatchSpec {
+        let mut spec = spec(None);
+        spec.timeout = Some(Duration::from_secs(timeout));
+        spec.limit = Some(Duration::from_secs(limit));
+        spec
+    }
+
+    fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    #[test]
+    fn poll_waits_while_running_before_the_timeout() {
+        assert_eq!(
+            poll_decision(&timed(60, 60), secs(59), None, ChildState::Running),
+            PollDecision::Wait
+        );
+        assert_eq!(
+            poll_decision(&spec(None), secs(99_999), None, ChildState::Running),
+            PollDecision::Wait
+        );
+    }
+
+    #[test]
+    fn poll_times_out_at_the_timeout_and_reports_the_original_limit() {
+        assert_eq!(
+            poll_decision(&timed(10, 60), secs(10), None, ChildState::Running),
+            PollDecision::Finish(Some(WatchOutcome::TimedOut(secs(60))))
+        );
+        assert_eq!(
+            poll_decision(&timed(60, 60), secs(61), None, ChildState::Running),
+            PollDecision::Finish(Some(WatchOutcome::TimedOut(secs(60))))
+        );
+    }
+
+    #[test]
+    fn poll_stop_wins_over_timeout_and_exit() {
+        let exited = ChildState::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        assert_eq!(
+            poll_decision(
+                &timed(1, 1),
+                secs(5),
+                Some(StopReason::Requested),
+                exited.clone()
+            ),
+            PollDecision::Finish(Some(WatchOutcome::Stopped))
+        );
+        assert_eq!(
+            poll_decision(&spec(None), secs(0), Some(StopReason::Shutdown), exited),
+            PollDecision::Finish(None)
+        );
+    }
+
+    #[test]
+    fn poll_timeout_wins_over_exit() {
+        let exited = ChildState::Exited {
+            code: Some(0),
+            signal: None,
+        };
+        assert_eq!(
+            poll_decision(&timed(5, 5), secs(5), None, exited),
+            PollDecision::Finish(Some(WatchOutcome::TimedOut(secs(5))))
+        );
+    }
+
+    #[test]
+    fn poll_reports_exit_and_wait_failure() {
+        assert_eq!(
+            poll_decision(
+                &spec(None),
+                secs(1),
+                None,
+                ChildState::Exited {
+                    code: None,
+                    signal: Some(9)
+                }
+            ),
+            PollDecision::Finish(Some(WatchOutcome::Signaled(9)))
+        );
+        assert_eq!(
+            poll_decision(
+                &spec(None),
+                secs(1),
+                None,
+                ChildState::WaitFailed("x".into())
+            ),
+            PollDecision::Finish(Some(WatchOutcome::WaitFailed("x".into())))
+        );
     }
 
     #[test]

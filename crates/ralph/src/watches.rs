@@ -4,10 +4,11 @@ use crate::watch_store::WatchStore;
 use crate::worker_mcp::Inbox;
 use chrono::{DateTime, Utc};
 use ralph_core::watch::{
-    build_report, StopReason, Tail, WatchKind, WatchOutcome, WatchSpec, TAIL_MAX_BYTES,
-    TAIL_MAX_LINES,
+    build_report, poll_decision, ChildState, PollDecision, StopReason, Tail, WatchKind,
+    WatchOutcome, WatchSpec, TAIL_MAX_BYTES, TAIL_MAX_LINES,
 };
-use ralph_core::watch_command::StopResult;
+use ralph_core::watch_command::{decide_stop, StopAction, StopResult};
+use ralph_core::watch_request::watch_in_use_message;
 use ralph_core::watch_store::{plan_restore, RestoreAction, SavedWatch, WATCHES_DIR};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader};
@@ -30,7 +31,7 @@ type StopSlot = Arc<Mutex<Option<StopReason>>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WatchError {
-    #[error("a watch named `{0}` is already running")]
+    #[error("{}", watch_in_use_message(.0))]
     Duplicate(String),
     #[error("failed to start watch: {0}")]
     Spawn(#[from] io::Error),
@@ -92,27 +93,20 @@ impl Waiter {
     fn wait_for_outcome(&mut self) -> Option<WatchOutcome> {
         let started = Instant::now();
         loop {
-            if let Some(reason) = *locked(&self.stop) {
-                kill_process_group(&mut self.child);
-                return reason.outcome();
-            }
-            if let Some(limit) = self
-                .spec
-                .timeout
-                .filter(|limit| started.elapsed() >= *limit)
-            {
-                kill_process_group(&mut self.child);
-                return Some(WatchOutcome::TimedOut(self.spec.limit.unwrap_or(limit)));
-            }
-            match self.child.try_wait() {
-                Ok(Some(status)) => {
+            let stop = *locked(&self.stop);
+            let child = match self.child.try_wait() {
+                Ok(Some(status)) => ChildState::Exited {
+                    code: status.code(),
+                    signal: status.signal(),
+                },
+                Ok(None) => ChildState::Running,
+                Err(e) => ChildState::WaitFailed(e.to_string()),
+            };
+            match poll_decision(&self.spec, started.elapsed(), stop, child) {
+                PollDecision::Wait => thread::sleep(POLL),
+                PollDecision::Finish(outcome) => {
                     kill_process_group(&mut self.child);
-                    return Some(WatchOutcome::from_exit(status.code(), status.signal()));
-                }
-                Ok(None) => thread::sleep(POLL),
-                Err(e) => {
-                    kill_process_group(&mut self.child);
-                    return Some(WatchOutcome::WaitFailed(e.to_string()));
+                    return outcome;
                 }
             }
         }
@@ -176,12 +170,8 @@ impl Watches {
                     let id = spec.id.clone();
                     warn_if_err(self.launch(spec, None), format!("restoring watch {id}"));
                 }
-                RestoreAction::FireNow(spec) => {
-                    self.report_now(&spec, &WatchOutcome::Exited(0), now);
-                }
-                RestoreAction::TimedOutNow(spec) => {
-                    let limit = spec.limit.or(spec.timeout).unwrap_or_default();
-                    self.report_now(&spec, &WatchOutcome::TimedOut(limit), now);
+                RestoreAction::Report { spec, outcome } => {
+                    self.report_now(&spec, &outcome, now);
                 }
                 RestoreAction::Discard(id) => self.store.remove(&id),
             }
@@ -271,15 +261,23 @@ impl Watches {
     }
 
     pub fn stop(&self, id: &str) -> StopResult {
-        let entry = locked(&self.active).remove(id);
-        if self.end(entry, StopReason::Requested) {
-            return StopResult::Stopped;
+        let running: Vec<String> = locked(&self.active).keys().cloned().collect();
+        let saved: Vec<String> = self
+            .store
+            .load_all()
+            .into_iter()
+            .map(|saved| saved.id)
+            .collect();
+        let action = decide_stop(id, &running, &saved);
+        match action {
+            StopAction::KillRunning => {
+                let entry = locked(&self.active).remove(id);
+                self.end(entry, StopReason::Requested);
+            }
+            StopAction::RemoveSaved => self.store.remove(id),
+            StopAction::Unknown => {}
         }
-        if self.store.load_all().iter().any(|saved| saved.id == id) {
-            self.store.remove(id);
-            return StopResult::RemovedSaved;
-        }
-        StopResult::Unknown
+        action.result()
     }
 
     pub fn close_guard(&self) -> CloseGuard {

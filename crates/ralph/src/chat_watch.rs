@@ -1,8 +1,7 @@
 use crate::watches::Watches;
 use ralph_core::watch_command::{
-    list_watches, next_watch_id, start_message, stop_message, StartWatch, WatchCommand, WATCH_USAGE,
+    list_watches, plan_start, stop_message, StartWatch, WatchCommand, WATCH_USAGE,
 };
-use ralph_core::watch_request::WatchRequest;
 
 pub fn run(command: WatchCommand, watches: &Watches) {
     match command {
@@ -14,17 +13,9 @@ pub fn run(command: WatchCommand, watches: &Watches) {
 }
 
 fn start_watch(start: StartWatch, watches: &Watches) {
-    let spec = WatchRequest {
-        id: next_watch_id(&watches.used_ids()),
-        command: start.command,
-        follow_up: start.follow_up,
-        persistent: start.persistent,
-        timeout_secs: None,
-    }
-    .into_spec();
-    let confirmation = start_message(&spec.id, spec.kind);
-    match watches.start(spec) {
-        Ok(()) => println!("{confirmation}"),
+    let plan = plan_start(start, &watches.used_ids());
+    match watches.start(plan.spec) {
+        Ok(()) => println!("{}", plan.confirmation),
         Err(e) => println!("{e}"),
     }
 }

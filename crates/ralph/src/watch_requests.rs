@@ -2,8 +2,9 @@ use crate::warn::{warn, warn_if_err};
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use ralph_core::watch_request::{
-    already_queued_message, start_failure_report, WatchRequest, WATCH_REQUESTS_DIR,
+    already_queued_message, plan_queued, start_failure_report, WatchRequest, WATCH_REQUESTS_DIR,
 };
+use ralph_core::worker::Report;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -68,13 +69,23 @@ fn take(path: &Path) -> Option<WatchRequest> {
     }
 }
 
+fn post_failure(inbox: &Inbox, report: &Report) {
+    warn_if_err(
+        inbox.post(report, 0),
+        format!("posting watch {}", report.worker),
+    );
+}
+
 pub fn start_queued(watches: &Watches, inbox: &Inbox, store_dir: &Path) {
-    for request in take_all(store_dir) {
-        let id = request.id.clone();
-        if let Err(error) = watches.start(request.into_spec()) {
-            let report =
-                start_failure_report(&id, &error.to_string(), &chrono::Utc::now().to_rfc3339());
-            warn_if_err(inbox.post(&report, 0), format!("posting watch {id}"));
+    let now = chrono::Utc::now().to_rfc3339();
+    let plan = plan_queued(take_all(store_dir), &watches.used_ids(), &now);
+    for report in &plan.rejected {
+        post_failure(inbox, report);
+    }
+    for spec in plan.start {
+        let id = spec.id.clone();
+        if let Err(error) = watches.start(spec) {
+            post_failure(inbox, &start_failure_report(&id, &error.to_string(), &now));
         }
     }
 }

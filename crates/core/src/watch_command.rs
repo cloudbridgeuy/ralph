@@ -1,4 +1,5 @@
-use crate::watch::{watch_id, WatchKind};
+use crate::watch::{watch_id, WatchKind, WatchSpec};
+use crate::watch_request::WatchRequest;
 use crate::watch_store::SavedWatch;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
@@ -30,6 +31,52 @@ pub enum StopResult {
     Stopped,
     RemovedSaved,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopAction {
+    KillRunning,
+    RemoveSaved,
+    Unknown,
+}
+
+impl StopAction {
+    pub fn result(self) -> StopResult {
+        match self {
+            Self::KillRunning => StopResult::Stopped,
+            Self::RemoveSaved => StopResult::RemovedSaved,
+            Self::Unknown => StopResult::Unknown,
+        }
+    }
+}
+
+pub fn decide_stop(id: &str, running: &[String], saved: &[String]) -> StopAction {
+    if running.iter().any(|running| running == id) {
+        StopAction::KillRunning
+    } else if saved.iter().any(|saved| saved == id) {
+        StopAction::RemoveSaved
+    } else {
+        StopAction::Unknown
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartPlan {
+    pub spec: WatchSpec,
+    pub confirmation: String,
+}
+
+pub fn plan_start(start: StartWatch, used: &[String]) -> StartPlan {
+    let spec = WatchRequest {
+        id: next_watch_id(used),
+        command: start.command,
+        follow_up: start.follow_up,
+        persistent: start.persistent,
+        timeout_secs: None,
+    }
+    .into_spec();
+    let confirmation = start_message(&spec.id, spec.kind);
+    StartPlan { spec, confirmation }
 }
 
 pub fn parse_watch_args(args: &str) -> WatchCommand {
@@ -147,7 +194,6 @@ pub fn stop_message(id: &str, result: StopResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::watch::WatchSpec;
 
     fn start(persistent: bool, command: &str, follow_up: &str) -> WatchCommand {
         WatchCommand::Start(StartWatch {
@@ -229,6 +275,54 @@ mod tests {
         for args in ["", "list now", "stop", "stop a b", "nope", "peek 3"] {
             assert_eq!(parse_watch_args(args), WatchCommand::Usage, "{args}");
         }
+    }
+
+    #[test]
+    fn stop_prefers_running_then_saved_then_unknown() {
+        let ids = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let running = ids(&["watch:a"]);
+        let saved = ids(&["watch:a", "watch:b"]);
+        assert_eq!(
+            decide_stop("watch:a", &running, &saved),
+            StopAction::KillRunning
+        );
+        assert_eq!(
+            decide_stop("watch:b", &running, &saved),
+            StopAction::RemoveSaved
+        );
+        assert_eq!(
+            decide_stop("watch:c", &running, &saved),
+            StopAction::Unknown
+        );
+    }
+
+    #[test]
+    fn stop_actions_map_to_results_and_messages() {
+        assert_eq!(StopAction::KillRunning.result(), StopResult::Stopped);
+        assert_eq!(StopAction::RemoveSaved.result(), StopResult::RemovedSaved);
+        assert_eq!(StopAction::Unknown.result(), StopResult::Unknown);
+        assert_eq!(
+            stop_message("watch:a", StopAction::KillRunning.result()),
+            "Stopped watch watch:a."
+        );
+    }
+
+    #[test]
+    fn plan_start_builds_a_spec_without_its_own_timeout_and_a_confirmation() {
+        let plan = plan_start(
+            StartWatch {
+                persistent: true,
+                command: "make".into(),
+                follow_up: "report".into(),
+            },
+            &["watch:w1".to_string()],
+        );
+        assert_eq!(plan.spec.id, "watch:w2");
+        assert_eq!(plan.spec.command, "make");
+        assert_eq!(plan.spec.follow_up.as_deref(), Some("report"));
+        assert_eq!(plan.spec.kind, WatchKind::Persistent);
+        assert_eq!(plan.spec.timeout, None);
+        assert_eq!(plan.confirmation, "Started persistent watch watch:w2.");
     }
 
     #[test]

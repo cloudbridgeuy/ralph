@@ -98,6 +98,37 @@ pub fn already_queued_message(id: &str) -> String {
     format!("watch `{id}` is already queued")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueuedPlan {
+    pub start: Vec<WatchSpec>,
+    pub rejected: Vec<Report>,
+}
+
+pub fn watch_in_use_message(id: &str) -> String {
+    format!("a watch named `{id}` is already running")
+}
+
+pub fn plan_queued(requests: Vec<WatchRequest>, used: &[String], at: &str) -> QueuedPlan {
+    let mut taken: Vec<String> = used.to_vec();
+    let mut plan = QueuedPlan {
+        start: Vec::new(),
+        rejected: Vec::new(),
+    };
+    for request in requests {
+        if taken.contains(&request.id) {
+            plan.rejected.push(start_failure_report(
+                &request.id,
+                &watch_in_use_message(&request.id),
+                at,
+            ));
+        } else {
+            taken.push(request.id.clone());
+            plan.start.push(request.into_spec());
+        }
+    }
+    plan
+}
+
 pub fn start_failure_report(id: &str, error: &str, at: &str) -> Report {
     Report {
         worker: id.to_string(),
@@ -126,6 +157,55 @@ mod tests {
         let args =
             json!({"id": "ci", "command": "gh run watch 1", "follow_up": "report the result"});
         assert_eq!(parse_watch_args(&args), Ok(request()));
+    }
+
+    fn queued(id: &str) -> WatchRequest {
+        WatchRequest {
+            id: id.to_string(),
+            ..request()
+        }
+    }
+
+    #[test]
+    fn queued_requests_with_free_ids_all_start() {
+        let plan = plan_queued(vec![queued("watch:a"), queued("watch:b")], &[], "t");
+        let ids: Vec<&str> = plan.start.iter().map(|spec| spec.id.as_str()).collect();
+        assert_eq!(ids, ["watch:a", "watch:b"]);
+        assert!(plan.rejected.is_empty());
+    }
+
+    #[test]
+    fn queued_requests_for_active_or_saved_ids_are_rejected_with_a_report() {
+        let used = vec!["watch:a".to_string()];
+        let plan = plan_queued(vec![queued("watch:a"), queued("watch:b")], &used, "t1");
+        assert_eq!(plan.start.len(), 1);
+        assert_eq!(plan.start[0].id, "watch:b");
+        let [report] = plan.rejected.as_slice() else {
+            panic!("{plan:?}");
+        };
+        assert_eq!(report.worker, "watch:a");
+        assert_eq!(report.at, "t1");
+        assert_eq!(report.status, WATCH_STATUS);
+        assert!(report
+            .text
+            .contains("did not start: a watch named `watch:a` is already running."));
+    }
+
+    #[test]
+    fn a_repeated_id_in_one_batch_starts_once() {
+        let plan = plan_queued(vec![queued("watch:a"), queued("watch:a")], &[], "t");
+        assert_eq!(plan.start.len(), 1);
+        assert_eq!(plan.rejected.len(), 1);
+    }
+
+    #[test]
+    fn queued_requests_get_the_spec_of_their_request() {
+        let mut request = queued("watch:a");
+        request.persistent = true;
+        request.timeout_secs = Some(5);
+        let plan = plan_queued(vec![request], &[], "t");
+        assert_eq!(plan.start[0].kind, WatchKind::Persistent);
+        assert_eq!(plan.start[0].timeout, Some(Duration::from_secs(5)));
     }
 
     #[test]
