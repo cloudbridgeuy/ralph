@@ -119,7 +119,7 @@ Each tool has unique display requirements:
 
 - **Edit/Write**: Need before/after content for diff display
 - **Grep**: Has pattern, path, and multiple options to display
-- **Bash**: Has command and optional description. Only single-line commands wider than the terminal are pretty-printed by `ralph_core::shell_format::format_command` into a highlighted `sh` block: one statement per line on `;`, `&&`, `||`, indented loop and `if` bodies, and long pipelines broken before `|`. Long commands keep the command and subcommands on line one, then one flag group per two-space-indented line, with ` \` continuations except on the last line. Quotes are never split; indivisible values may exceed the width. Short, multi-line, or unparsable commands render unchanged.
+- **Bash**: Has command and optional description. Single-line commands are pretty-printed when wider than the terminal, or always when they chain statements with `;` (a short command with `;` also splits at `&&`, `||` and `&`), by `ralph_core::shell_format::format_command` into a highlighted `sh` block: one statement per line on `;`, `&&`, `||`, indented loop and `if` bodies, and long pipelines broken before `|`. Long commands keep the command and subcommands on line one, then one flag group per two-space-indented line, with ` \` continuations except on the last line. Quotes are never split; indivisible values may exceed the width. Short commands without `;`, multi-line commands, and unparsable commands render unchanged.
 - **TodoWrite**: Has structured todo items with status
 
 Generic storage would lose this structure.

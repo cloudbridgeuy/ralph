@@ -482,12 +482,21 @@ fn layout(segments: &[Segment], width: usize) -> Option<Vec<String>> {
     Some(state.lines)
 }
 
+fn has_sequence(segments: &[Segment]) -> bool {
+    segments
+        .split_last()
+        .is_some_and(|(_, rest)| rest.iter().any(|segment| segment.sep == Sep::Semi))
+}
+
 pub fn format_command(command: &str, width: usize) -> Option<String> {
-    if command.contains(['\n', '\r']) || command.chars().count() <= width {
+    if command.contains(['\n', '\r']) {
         return None;
     }
     let chars: Vec<char> = command.chars().collect();
     let segments = scan(&chars)?;
+    if chars.len() <= width && !has_sequence(&segments) {
+        return None;
+    }
     let lines = layout(&segments, width)?;
     if lines.len() < 2 {
         return None;
@@ -865,5 +874,43 @@ mod tests {
             format_command("echo ${#x} $# a#b; echo two", 10),
             Some("echo ${#x} $# a#b\necho two".to_string())
         );
+    }
+
+    #[test]
+    fn short_sequence_splits_on_semicolon() {
+        assert_eq!(format_command("a; b", 80), Some("a\nb".to_string()));
+    }
+
+    #[test]
+    fn short_and_chain_stays_on_one_line() {
+        assert_eq!(format_command("cd x && cargo test", 80), None);
+    }
+
+    #[test]
+    fn short_mixed_chain_splits_at_every_separator() {
+        assert_eq!(
+            format_command("cd x && make; echo done", 80),
+            Some("cd x &&\n  make\necho done".to_string())
+        );
+    }
+
+    #[test]
+    fn short_quoted_or_substituted_semicolon_does_not_split() {
+        assert_eq!(format_command("echo 'a; b'", 80), None);
+        assert_eq!(format_command("echo $(a; b)", 80), None);
+    }
+
+    #[test]
+    fn short_trailing_semicolon_adds_no_line() {
+        assert_eq!(format_command("echo one;", 80), None);
+    }
+
+    #[test]
+    fn has_sequence_requires_a_non_final_semicolon() {
+        let segments = |command: &str| scan(&command.chars().collect::<Vec<_>>()).unwrap();
+        assert!(has_sequence(&segments("a; b")));
+        assert!(!has_sequence(&segments("a && b")));
+        assert!(!has_sequence(&segments("a;")));
+        assert!(!has_sequence(&[]));
     }
 }

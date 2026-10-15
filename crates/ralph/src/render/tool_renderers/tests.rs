@@ -83,9 +83,9 @@ fn test_render_bash_invocation_short_command_fits_width_unchanged() {
     let highlighter = test_highlighter();
     let mut ctx = RenderContext::plain(&highlighter);
     ctx.width = 80;
-    let output = render_bash_invocation(&ctx, "cd x && cargo test; echo ok");
+    let output = render_bash_invocation(&ctx, "cd x && cargo test");
 
-    assert_eq!(output, "> Bash\n  cd x && cargo test; echo ok\n");
+    assert_eq!(output, "> Bash\n  cd x && cargo test\n");
 }
 
 // =========================================================================
