@@ -91,7 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn unparseable_version_is_kept_as_next() {
+    fn unparsable_version_is_kept_as_next() {
         let odd = BuildInfo {
             pkg_version: "1.0.0-beta",
             sha: Some("abc1234"),
