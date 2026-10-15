@@ -14,6 +14,8 @@ The command refuses a dirty tree, an existing tag, and a version that is not gre
 
 `.github/workflows/release.yml` runs on every pushed `v*` tag.
 
+All workflows pin Linux runners to `ubuntu-24.04` instead of `ubuntu-latest`, so GitHub image moves (Ubuntu 26 from 2026-10-19) never change CI without an explicit bump.
+
 1. Fails unless the tagged commit is on `main` and the tag equals `v` plus the workspace version.
 2. Builds `ralph` with `--release --locked` for `aarch64-apple-darwin` and `x86_64-apple-darwin`.
 3. Packages `ralph-vX.Y.Z-<target>.tar.gz` with a `.sha256` file.
