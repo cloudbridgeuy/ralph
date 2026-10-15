@@ -4,7 +4,7 @@ use crate::workers::Workers;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::mcp::tool_result;
 use ralph_core::watch_request::queued_message;
-use ralph_core::worker::{command_allowed, Command};
+use ralph_core::worker::{command_allowed, permission_reply_allowed, Command};
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 
@@ -13,6 +13,11 @@ fn run_command(store: &Store, workers: &Workers, command: &Command) -> Result<St
         .pending_turn()
         .map_err(|e| format!("Could not read chat memory: {e}"))?;
     command_allowed(command, pending)?;
+    if let Command::Reply { id, .. } = command {
+        if workers.awaits_permission(id) {
+            permission_reply_allowed(pending)?;
+        }
+    }
     match command {
         Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
         Command::Reply { id, text } => workers.reply(id, text),

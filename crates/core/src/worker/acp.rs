@@ -1,4 +1,5 @@
 use super::SERVER_NAME;
+use crate::chat_memory::Trigger;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -11,6 +12,7 @@ pub const CURSOR_SPAWN_DIR: &str = "cursor-spawn";
 pub const CURSOR_CLOSE_DIR: &str = "cursor-close";
 pub const CURSOR_ERROR_DIR: &str = "cursor-error";
 pub const CURSOR_OWNER_DIR: &str = "cursor";
+pub const CURSOR_ANSWER_DIR: &str = "cursor-answer";
 pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDOFF_POLL: Duration = Duration::from_millis(250);
 const AUTH_REQUIRED_CODE: i32 = -32000;
@@ -21,6 +23,7 @@ pub struct CursorFiles {
     pub close: PathBuf,
     pub error: PathBuf,
     pub owner: PathBuf,
+    pub answer: PathBuf,
 }
 
 impl CursorFiles {
@@ -30,11 +33,18 @@ impl CursorFiles {
             close: store.join(CURSOR_CLOSE_DIR).join(id),
             error: store.join(CURSOR_ERROR_DIR).join(id),
             owner: store.join(CURSOR_OWNER_DIR).join(id),
+            answer: store.join(CURSOR_ANSWER_DIR).join(id),
         }
     }
 
-    pub fn all(&self) -> [&Path; 4] {
-        [&self.spawn, &self.close, &self.error, &self.owner]
+    pub fn all(&self) -> [&Path; 5] {
+        [
+            &self.spawn,
+            &self.close,
+            &self.error,
+            &self.owner,
+            &self.answer,
+        ]
     }
 }
 
@@ -85,6 +95,79 @@ pub fn sweep_decision(facts: OwnerFacts) -> Sweep {
         (false, _) => Sweep::Reclaim {
             kill_group: facts.group_alive,
         },
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionOption {
+    pub option_id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BlockedContent {
+    pub tool: String,
+    pub summary: String,
+    pub options: Vec<PermissionOption>,
+}
+
+impl BlockedContent {
+    pub fn render(&self) -> String {
+        json!(self).to_string()
+    }
+}
+
+pub fn permission_content(request: &Value) -> BlockedContent {
+    let call = &request["toolCall"];
+    let text = |key: &str| call[key].as_str().filter(|text| !text.trim().is_empty());
+    let tool = text("name").or_else(|| text("kind")).unwrap_or("tool");
+    let summary = text("title").unwrap_or("permission requested");
+    let options = request
+        .get("options")
+        .and_then(|options| serde_json::from_value(options.clone()).ok())
+        .unwrap_or_default();
+    BlockedContent {
+        tool: tool.to_string(),
+        summary: summary.to_string(),
+        options,
+    }
+}
+
+pub fn match_option<'a>(
+    options: &'a [PermissionOption],
+    text: &str,
+) -> Option<&'a PermissionOption> {
+    let text = text.trim();
+    options
+        .iter()
+        .find(|option| option.option_id == text)
+        .or_else(|| {
+            options
+                .iter()
+                .find(|option| option.name.trim().eq_ignore_ascii_case(text))
+        })
+}
+
+pub fn no_option_message(options: &[PermissionOption]) -> String {
+    let ids: Vec<&str> = options
+        .iter()
+        .map(|option| option.option_id.as_str())
+        .collect();
+    format!(
+        "No permission option matches that answer. Valid optionIds: {}.",
+        ids.join(", ")
+    )
+}
+
+pub fn permission_reply_allowed(trigger: Option<Trigger>) -> Result<(), String> {
+    match trigger {
+        Some(Trigger::User) => Ok(()),
+        _ => Err(
+            "Only the person can answer a cursor permission request. Relay it to them and wait for their answer."
+                .to_string(),
+        ),
     }
 }
 
@@ -280,6 +363,70 @@ mod tests {
         };
         assert_eq!(OwnerRecord::parse(&record.render()), Some(record));
         assert_eq!(OwnerRecord::parse("4242"), None);
+    }
+
+    fn options() -> Vec<PermissionOption> {
+        vec![
+            PermissionOption {
+                option_id: "allow-once".into(),
+                name: "Allow once".into(),
+                kind: "allow_once".into(),
+            },
+            PermissionOption {
+                option_id: "reject-once".into(),
+                name: "Reject".into(),
+                kind: "reject_once".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn permission_content_reads_tool_summary_and_options() {
+        let request = json!({
+            "sessionId": "s",
+            "toolCall": {"toolCallId": "t", "name": "shell", "kind": "execute", "title": "Run ls"},
+            "options": [{"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"}]
+        });
+        let content = permission_content(&request);
+        assert_eq!(content.tool, "shell");
+        assert_eq!(content.summary, "Run ls");
+        assert_eq!(content.options[0].option_id, "allow-once");
+        let rendered: Value = serde_json::from_str(&content.render()).unwrap();
+        assert_eq!(rendered["options"][0]["optionId"], "allow-once");
+        assert_eq!(rendered["options"][0]["kind"], "allow_once");
+    }
+
+    #[test]
+    fn permission_content_falls_back_when_fields_are_missing() {
+        let content = permission_content(&json!({"toolCall": {"kind": "edit"}}));
+        assert_eq!(content.tool, "edit");
+        assert_eq!(content.summary, "permission requested");
+        assert!(content.options.is_empty());
+        assert_eq!(permission_content(&json!({})).tool, "tool");
+    }
+
+    #[test]
+    fn match_option_takes_an_exact_id_or_a_trimmed_case_insensitive_name() {
+        let options = options();
+        assert_eq!(match_option(&options, "allow-once"), Some(&options[0]));
+        assert_eq!(match_option(&options, "  reject  "), Some(&options[1]));
+        assert_eq!(match_option(&options, "ALLOW ONCE"), Some(&options[0]));
+        assert_eq!(match_option(&options, "Allow-Once"), None);
+        assert_eq!(match_option(&options, "yes"), None);
+        assert_eq!(match_option(&options, ""), None);
+    }
+
+    #[test]
+    fn no_option_message_lists_every_option_id() {
+        let message = no_option_message(&options());
+        assert!(message.contains("allow-once, reject-once"));
+    }
+
+    #[test]
+    fn only_a_user_turn_may_answer_a_permission() {
+        assert!(permission_reply_allowed(Some(Trigger::User)).is_ok());
+        assert!(permission_reply_allowed(Some(Trigger::Worker)).is_err());
+        assert!(permission_reply_allowed(None).is_err());
     }
 
     #[test]

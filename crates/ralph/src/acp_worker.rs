@@ -1,16 +1,20 @@
 use crate::warn::warn;
 use crate::watches::Watches;
-use agent_client_protocol::schema::v1::{InitializeRequest, McpServer, NewSessionRequest};
+use agent_client_protocol::schema::v1::{
+    InitializeRequest, McpServer, NewSessionRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
+};
 use agent_client_protocol::schema::ProtocolVersion;
-use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo};
+use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
 use futures::channel::oneshot;
 use futures::executor::block_on;
 use ralph_core::worker::{
-    acp_mcp_server, check_protocol, ready_path, request_stale, session_error, sweep_decision,
-    version_warning, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, CURSOR_CLOSE_DIR,
-    CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
+    acp_mcp_server, blocked_path, check_protocol, match_option, no_option_message,
+    permission_content, ready_path, request_stale, session_error, sweep_decision, version_warning,
+    BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, CURSOR_ANSWER_DIR,
+    CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io;
 use std::os::unix::process::CommandExt;
@@ -28,8 +32,86 @@ const TERM_GRACE: Duration = Duration::from_secs(3);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const TERM_POLL: Duration = Duration::from_millis(20);
 
+struct PendingPermission {
+    responder: Responder<RequestPermissionResponse>,
+    content: BlockedContent,
+}
+
+struct Permissions {
+    blocked: PathBuf,
+    queue: Mutex<VecDeque<PendingPermission>>,
+}
+
+impl Permissions {
+    fn new(blocked: PathBuf) -> Arc<Self> {
+        Arc::new(Self {
+            blocked,
+            queue: Mutex::new(VecDeque::new()),
+        })
+    }
+
+    fn queue(&self) -> MutexGuard<'_, VecDeque<PendingPermission>> {
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn publish(&self, queue: &VecDeque<PendingPermission>) {
+        match queue.front() {
+            Some(pending) => write_file(&self.blocked, &pending.content.render()).ok(),
+            None => fs::remove_file(&self.blocked).ok(),
+        };
+    }
+
+    fn push(
+        &self,
+        request: &RequestPermissionRequest,
+        responder: Responder<RequestPermissionResponse>,
+    ) {
+        let value = serde_json::to_value(request).unwrap_or_default();
+        let mut queue = self.queue();
+        queue.push_back(PendingPermission {
+            responder,
+            content: permission_content(&value),
+        });
+        self.publish(&queue);
+    }
+
+    fn answer(&self, text: &str) -> Result<(), String> {
+        let mut queue = self.queue();
+        let front = queue
+            .front()
+            .ok_or("no permission request is pending for this worker")?;
+        let option = match_option(&front.content.options, text)
+            .ok_or_else(|| no_option_message(&front.content.options))?;
+        let outcome = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
+            option.option_id.clone(),
+        ));
+        if let Some(pending) = queue.pop_front() {
+            pending
+                .responder
+                .respond(RequestPermissionResponse::new(outcome))
+                .ok();
+        }
+        self.publish(&queue);
+        Ok(())
+    }
+
+    fn cancel_all(&self) {
+        let drained: Vec<PendingPermission> = self.queue().drain(..).collect();
+        for pending in drained {
+            pending
+                .responder
+                .respond(RequestPermissionResponse::new(
+                    RequestPermissionOutcome::Cancelled,
+                ))
+                .ok();
+        }
+        fs::remove_file(&self.blocked).ok();
+    }
+}
+
 pub struct AcpWorker {
     child: Child,
+    permissions: Arc<Permissions>,
     stop: Option<oneshot::Sender<()>>,
     owner: PathBuf,
     done: bool,
@@ -40,6 +122,7 @@ impl AcpWorker {
         request: &SpawnRequest,
         id: &str,
         owner: &Path,
+        blocked: PathBuf,
         starting: &Mutex<HashMap<String, u32>>,
     ) -> Result<Self, String> {
         if let Some(warning) = agent_version_warning() {
@@ -55,8 +138,10 @@ impl AcpWorker {
             .spawn()
             .map_err(|e| format!("could not start `{AGENT_COMMAND} acp`: {e}"))?;
         let streams = child.stdin.take().zip(child.stdout.take());
+        let permissions = Permissions::new(blocked);
         let mut worker = Self {
             child,
+            permissions: Arc::clone(&permissions),
             stop: None,
             owner: owner.to_path_buf(),
             done: false,
@@ -80,35 +165,43 @@ impl AcpWorker {
                 blocking::Unblock::new(stdin),
                 blocking::Unblock::new(stdout),
             );
-            let outcome = block_on(Client.builder().connect_with(
-                transport,
-                |connection: ConnectionTo<Agent>| async move {
-                    let init = connection
-                        .send_request(InitializeRequest::new(ProtocolVersion::V1))
-                        .block_task()
-                        .await?;
-                    if let Err(message) = check_protocol(init.protocol_version.as_u16()) {
-                        ready_tx.send(Err(message)).ok();
-                        return Ok(());
-                    }
-                    let session = connection
-                        .send_request(NewSessionRequest::new(cwd).mcp_servers(vec![server]))
-                        .block_task()
-                        .await;
-                    match session {
-                        Ok(_) => {
-                            ready_tx.send(Ok(())).ok();
-                            stop_rx.await.ok();
+            let outcome = block_on(
+                Client
+                    .builder()
+                    .on_receive_request(
+                        async move |request: RequestPermissionRequest, responder, _cx| {
+                            permissions.push(&request, responder);
+                            Ok(())
+                        },
+                        agent_client_protocol::on_receive_request!(),
+                    )
+                    .connect_with(transport, |connection: ConnectionTo<Agent>| async move {
+                        let init = connection
+                            .send_request(InitializeRequest::new(ProtocolVersion::V1))
+                            .block_task()
+                            .await?;
+                        if let Err(message) = check_protocol(init.protocol_version.as_u16()) {
+                            ready_tx.send(Err(message)).ok();
+                            return Ok(());
                         }
-                        Err(e) => {
-                            ready_tx
-                                .send(Err(session_error(i32::from(e.code), &e.message)))
-                                .ok();
+                        let session = connection
+                            .send_request(NewSessionRequest::new(cwd).mcp_servers(vec![server]))
+                            .block_task()
+                            .await;
+                        match session {
+                            Ok(_) => {
+                                ready_tx.send(Ok(())).ok();
+                                stop_rx.await.ok();
+                            }
+                            Err(e) => {
+                                ready_tx
+                                    .send(Err(session_error(i32::from(e.code), &e.message)))
+                                    .ok();
+                            }
                         }
-                    }
-                    Ok(())
-                },
-            ));
+                        Ok(())
+                    }),
+            );
             if let Err(e) = outcome {
                 failed
                     .send(Err(format!("cursor agent connection failed: {e}")))
@@ -144,6 +237,7 @@ impl AcpWorker {
             return;
         }
         self.done = true;
+        self.permissions.cancel_all();
         if let Some(stop) = self.stop.take() {
             stop.send(()).ok();
         }
@@ -265,6 +359,9 @@ impl CursorHost {
         for id in request_ids(&self.store_dir, CURSOR_CLOSE_DIR) {
             self.close(&id);
         }
+        for id in request_ids(&self.store_dir, CURSOR_ANSWER_DIR) {
+            self.answer(&id);
+        }
         for id in request_ids(&self.store_dir, CURSOR_SPAWN_DIR) {
             self.spawn(&id);
         }
@@ -298,10 +395,40 @@ impl CursorHost {
     fn forget(&self, id: &str) {
         let files = self.files(id);
         fs::remove_file(&files.owner).ok();
+        fs::remove_file(&files.answer).ok();
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
     }
 
+    pub fn cancel_pending(&self, id: &str) {
+        let permissions = self
+            .workers()
+            .get(id)
+            .map(|worker| Arc::clone(&worker.permissions));
+        if let Some(permissions) = permissions {
+            permissions.cancel_all();
+        }
+    }
+
+    fn answer(&self, id: &str) {
+        let files = self.files(id);
+        let Ok(text) = fs::read_to_string(&files.answer) else {
+            return;
+        };
+        let permissions = self
+            .workers()
+            .get(id)
+            .map(|worker| Arc::clone(&worker.permissions));
+        let result = permissions
+            .ok_or_else(|| "worker has no running cursor agent".to_string())
+            .and_then(|permissions| permissions.answer(&text));
+        if let Err(message) = result {
+            write_file(&files.error, &message).ok();
+        }
+        fs::remove_file(&files.answer).ok();
+    }
+
     fn close(&self, id: &str) {
+        self.cancel_pending(id);
         let removed = self.workers().remove(id);
         if let Some(mut worker) = removed {
             worker.terminate();
@@ -323,7 +450,13 @@ impl CursorHost {
             self.fail(id, "worker is already running");
             return;
         }
-        let started = AcpWorker::start(&request, id, &files.owner, &self.starting);
+        let started = AcpWorker::start(
+            &request,
+            id,
+            &files.owner,
+            blocked_path(&self.store_dir, id),
+            &self.starting,
+        );
         self.starting
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

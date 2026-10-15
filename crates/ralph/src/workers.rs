@@ -2,15 +2,16 @@ use crate::acp_worker::{now_secs, sweep_owner, write_file};
 use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
-    base_branch, base_config_key, branch_name, claude_worker_settings, close_handoff, close_plan,
-    exclude_lines, marker_paths, opencode_command, opencode_config, opencode_session_gone,
-    opencode_session_id, opencode_worker_plugin, project_slug, resolve_worktree_dir, session_name,
-    session_owner, spawn_handoff, startup_state, tagged_sessions, worker_command,
-    worker_mcp_config, worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args,
-    CloseState, CloseStep, CursorFiles, Handoff, Harness, Owner, SpawnRequest, Startup, Sweep,
-    TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL,
-    HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
-    OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
+    base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
+    close_plan, exclude_lines, marker_paths, opencode_command, opencode_config,
+    opencode_session_gone, opencode_session_id, opencode_worker_plugin, project_slug,
+    resolve_worktree_dir, session_name, session_owner, spawn_handoff, startup_state,
+    tagged_sessions, worker_command, worker_mcp_config, worktree_add_args, worktree_for_branch,
+    worktree_path, wt_switch_args, CloseState, CloseStep, CursorFiles, Handoff, Harness, Owner,
+    SpawnRequest, Startup, Sweep, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia,
+    ATTACHMENTS_DIR, HANDOFF_POLL, HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
+    OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -137,9 +138,7 @@ impl Workers {
 
     pub fn reply(&self, id: &str, text: &str) -> io::Result<String> {
         if CursorFiles::new(&self.store_dir, id).owner.exists() {
-            return Err(io::Error::other(format!(
-                "worker {id} is a cursor worker; replies to cursor workers are not supported yet"
-            )));
+            return self.answer_permission(id, text);
         }
         let session = match self.owner(&project_slug(&repo_root()?), id) {
             Owner::Mine(session) => session.name,
@@ -344,6 +343,42 @@ impl Workers {
                 }
                 Handoff::Pending => thread::sleep(HANDOFF_POLL),
             }
+        }
+    }
+
+    pub fn awaits_permission(&self, id: &str) -> bool {
+        CursorFiles::new(&self.store_dir, id).owner.exists()
+            && blocked_path(&self.store_dir, id).exists()
+    }
+
+    fn answer_permission(&self, id: &str, text: &str) -> io::Result<String> {
+        if !self.awaits_permission(id) {
+            return Err(io::Error::other(format!(
+                "worker {id} is a cursor worker with no permission request waiting; other replies to cursor workers are not supported yet"
+            )));
+        }
+        let files = CursorFiles::new(&self.store_dir, id);
+        clear_marker(&files.error)?;
+        write_file(&files.answer, text)?;
+        let started = Instant::now();
+        loop {
+            match close_handoff(files.answer.exists(), started.elapsed()) {
+                Handoff::Done => break,
+                Handoff::TimedOut => {
+                    clear_marker(&files.answer)?;
+                    return Err(io::Error::other(
+                        "ralph chat did not pick up the permission answer in time",
+                    ));
+                }
+                Handoff::Pending | Handoff::Failed(_) => thread::sleep(HANDOFF_POLL),
+            }
+        }
+        match fs::read_to_string(&files.error) {
+            Ok(message) => {
+                clear_marker(&files.error)?;
+                Err(io::Error::other(message))
+            }
+            Err(_) => Ok(format!("Answered the permission request of worker {id}.")),
         }
     }
 
