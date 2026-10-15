@@ -1,4 +1,4 @@
-use crate::chat::screen_columns;
+use crate::chat::prompt::screen_columns;
 use crate::frame::worker_header;
 use crate::markdown::MarkdownTheme;
 use crate::render::{render_markdown, RenderContext};

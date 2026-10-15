@@ -1,0 +1,99 @@
+use crate::ansi::{DIM, RESET};
+use crate::chat::monitor::Monitor;
+use crate::chat::statusbar::StatusBar;
+use crate::clipboard::{paste_image, PASTE_IMAGE};
+use crate::render::wrap_width;
+use ralph_core::chat_status::{footer, route_input, Route};
+use ralph_core::worker::ATTACHMENTS_DIR;
+use reedline::{
+    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
+    DEFAULT_MULTILINE_INDICATOR,
+};
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::io::{self};
+use std::sync::Arc;
+
+const PROMPT: &str = ">>> ";
+const DEFAULT_TERMINAL_WIDTH: usize = 80;
+
+pub(super) struct ChatPrompt {
+    pub(super) monitor: Arc<Monitor>,
+    pub(super) color: bool,
+    pub(super) bar: StatusBar,
+    pub(super) notice: RefCell<Option<String>>,
+}
+
+impl ChatPrompt {
+    fn dim(&self, line: &str) -> String {
+        if self.color {
+            format!("{DIM}{line}{RESET}\n")
+        } else {
+            format!("{line}\n")
+        }
+    }
+}
+
+pub(super) fn screen_columns() -> usize {
+    wrap_width(
+        crossterm::terminal::size()
+            .map(|(w, _)| usize::from(w))
+            .unwrap_or(DEFAULT_TERMINAL_WIDTH),
+    )
+}
+
+impl Prompt for ChatPrompt {
+    fn render_prompt_left(&self) -> Cow<'_, str> {
+        Cow::Owned(self.bar.line(&self.monitor.status(), screen_columns()))
+    }
+
+    fn render_prompt_footer(&self) -> Cow<'_, str> {
+        if let Some(notice) = self.notice.borrow().as_deref() {
+            return Cow::Owned(self.dim(notice));
+        }
+        let hints = footer(self.monitor.status().unread, screen_columns());
+        Cow::Owned(self.dim(hints.trim_end_matches('\n')))
+    }
+
+    fn render_prompt_right(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
+
+    fn render_prompt_indicator(&self, _edit_mode: PromptEditMode) -> Cow<'_, str> {
+        Cow::Borrowed(PROMPT)
+    }
+
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+        Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
+    }
+
+    fn render_prompt_history_search_indicator(
+        &self,
+        history_search: PromptHistorySearch,
+    ) -> Cow<'_, str> {
+        let prefix = match history_search.status {
+            PromptHistorySearchStatus::Passing => "",
+            PromptHistorySearchStatus::Failing => "failing ",
+        };
+        Cow::Owned(format!(
+            "({prefix}reverse-search: {}) ",
+            history_search.term
+        ))
+    }
+}
+
+pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Result<Option<Route>> {
+    let attachments = prompt.monitor.store_dir.join(ATTACHMENTS_DIR);
+    loop {
+        match editor.read_line(prompt)? {
+            Signal::Success(line) => {
+                prompt.notice.take();
+                return Ok(Some(route_input(&line, prompt.monitor.status().unread)));
+            }
+            Signal::HostCommand(command) if command == PASTE_IMAGE => {
+                *prompt.notice.borrow_mut() = paste_image(editor, &attachments)
+            }
+            _ => return Ok(None),
+        }
+    }
+}

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-use crate::chat::TurnOutcome;
+use crate::chat::turn::TurnOutcome;
 
 const POLL: Duration = Duration::from_millis(50);
 const SHELL_RUNTIME: &str = "shell";

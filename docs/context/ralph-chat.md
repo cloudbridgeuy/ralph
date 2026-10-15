@@ -28,12 +28,16 @@ ralph                      # same as ralph chat with defaults
 - `crates/core/src/status_mode.rs`: pure mode selection for the status line mode block.
 - `crates/core/src/status_segments.rs`: status line segments, priorities, and the pure width layout.
 - `crates/ralph/src/status_theme.rs`: `[theme.status]` keys, defaults and validation.
-- `crates/ralph/src/chat_statusbar.rs`: paints the laid-out segments with the `[theme.status]` colors.
+- `crates/ralph/src/chat/statusbar.rs`: paints the laid-out segments with the `[theme.status]` colors.
 - `crates/core/src/watch_command.rs`: `/watch` argument parsing, watch ids, time-left and list formatting.
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
-- `crates/ralph/src/chat.rs`: turn loop shell, reedline input, nap spawn.
-- `crates/ralph/src/chat_memory.rs`: `Store` (files, LOCK, append, nap loop).
-- `crates/ralph/src/chat_mcp.rs`: MCP stdio loop.
+- `crates/ralph/src/chat/mod.rs`: `run` and shared setup.
+- `crates/ralph/src/chat/turn.rs`: turn shell and nap spawn.
+- `crates/ralph/src/chat/editor.rs`, `prompt.rs`: reedline input and prompt.
+- `crates/ralph/src/chat/monitor.rs`: status, watch and stdin monitors.
+- `crates/ralph/src/chat/skills.rs`: MCP config and skill plugin setup.
+- `crates/ralph/src/chat/memory.rs`: `Store` (files, LOCK, append, nap loop).
+- `crates/ralph/src/chat/mcp.rs`: MCP stdio loop.
 - `crates/ralph/src/invoke.rs`: `build_chat_command`, `build_memory_command`.
 - `crates/ralph/src/cli/mod.rs` and `main.rs`: arguments, default dispatch, `chat-mcp` and `chat-nap` handlers.
 
@@ -94,7 +98,7 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 - Every watch id is stored, reported and shown as `watch:<name>`: generated ids are `watch:w1`, `watch:w2`, ...; a `watch` tool id `foo` becomes `watch:foo`, and an id that already starts with `watch:` is not doubled (`watch_id` in `crates/core/src/watch.rs`). Worker ids allow only letters, digits and dashes, so a watch id never equals a worker id. `/watch stop` accepts `w1` or `watch:w1`.
 - Watch reports show as `[worker watch:<name> · watch]`. The system prompt says they come from a watch, not from an agent or the person.
 - Approval: the system prompt tells the model to show the person the exact command and wait for approval before it calls `watch`. The prompt enforces this, not the tool. The tool only refuses outside a user-started turn, like `spawn_worker`.
-- `/watch` is local: it never starts a turn or calls the model. The shell side is `crates/ralph/src/chat_watch.rs`; the pure parsing and formatting is `crates/core/src/watch_command.rs`.
+- `/watch` is local: it never starts a turn or calls the model. The shell side is `crates/ralph/src/chat/watch.rs`; the pure parsing and formatting is `crates/core/src/watch_command.rs`.
   - `/watch start [--persistent] <command> -- <follow-up>` starts a watch in this process (`Watches::start`). The input splits at the last ` -- `; both parts must be non-empty. The id is the lowest unused `watch:w<n>` (n from 1) among running and saved watches. It prints `Started <kind> watch <id>.`. There is no timeout flag.
   - `/watch list` prints one row per active watch: id, kind (`normal` or `persistent`), time left, command. Time left is the earlier of the wake deadline (a time-based `sleep N`) and the timeout deadline, shown as `<n>s`, `<n>m`, `<n>h` or `<n>d`, or `—` when there is none. It prints `No active watches.` when empty.
   - `/watch stop <id>` kills the watch and posts its one "stopped" report. A stopped persistent watch is removed from `<store>/watches/`, so it does not come back after a restart. This is the only way to remove a persistent watch. If the id is not running but has a saved record, the record is removed and the message says so. An unknown id prints a message, not an error.
@@ -105,9 +109,9 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 
 ## Executable cells
 
-A fenced block in a message you type whose info string is `!<runtime>` (for example ```` ```!zsh ````) is a cell. Worker reports and agent replies never run cells; a `!` fence inside another fence is not a cell. Parsing and message building are pure in `ralph_core::chat_cell`; PATH lookup, spawn and streaming are in `chat_cell.rs`.
+A fenced block in a message you type whose info string is `!<runtime>` (for example ```` ```!zsh ````) is a cell. Worker reports and agent replies never run cells; a `!` fence inside another fence is not a cell. Parsing and message building are pure in `ralph_core::chat_cell`; PATH lookup, spawn and streaming are in `crates/ralph/src/chat/cell.rs`.
 
-Shorthand: a message whose first character is `!` is the same as one `!shell` cell holding everything after the `!` (all lines; trailing newlines dropped; a longer fence when the body has backtick fences). `expand_bang_shell` in `chat_cell.rs` rewrites it before parsing. Only the very first character counts: ` !ls` or `hi !ls` is plain text, and so is `!` alone or `!` followed only by whitespace. A failed or cancelled cell restores the draft as typed (`!ls`).
+Shorthand: a message whose first character is `!` is the same as one `!shell` cell holding everything after the `!` (all lines; trailing newlines dropped; a longer fence when the body has backtick fences). `expand_bang_shell` in `crates/ralph/src/chat/cell.rs` rewrites it before parsing. Only the very first character counts: ` !ls` or `hi !ls` is plain text, and so is `!` alone or `!` followed only by whitespace. A failed or cancelled cell restores the draft as typed (`!ls`).
 
 - On Enter, cells run in order, one process each, in the chat's working directory. The runtime is found by exact name on `PATH`; the code goes to its stdin. No sandbox. Stdout and stderr share one pipe. While a cell runs the terminal shows one dim line `▸ cell N · runtime`; the output is not echoed live.
 - Claude gets the message with the `!` removed, then per cell: `[cell N · runtime · exit C]`, the code, and the output. A non-zero exit still sends. The store keeps this enriched message.

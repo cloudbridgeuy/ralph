@@ -1,4 +1,4 @@
-use crate::chat_memory::Store;
+use crate::chat::memory::Store;
 use ralph_core::worker_check::{logged_reports, CheckMemory};
 use std::collections::HashMap;
 

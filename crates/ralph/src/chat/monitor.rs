@@ -1,0 +1,280 @@
+use crate::acp_worker::ExitCleanup;
+use crate::chat::check::CheckState;
+use crate::chat::memory::Store;
+use crate::inbox_alert;
+use crate::signal;
+use crate::warn::warn_if_err;
+use crate::watch_requests;
+use crate::watches::{locked, Watches};
+use crate::worker_mcp::Inbox;
+use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
+use ralph_core::chat::VIEW_LINES;
+use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
+use ralph_core::chat_memory::{frozen_block, tail_lines};
+use ralph_core::chat_status::{
+    last_turn_cache, latest_states, memory_size, watch_states, worker_states, Memory,
+    RunningWorker, Status,
+};
+use ralph_core::inbox::Selection;
+use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
+use ralph_core::worker::{
+    blocked_path, ready_path, unreported_path, waiting_path, Report, READY_DIR,
+};
+use ralph_core::worker_check::{
+    check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
+    CHECK_STATUS, NUDGE_TEXT,
+};
+use std::collections::{HashMap, HashSet};
+use std::io::{self, IsTerminal};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+const POLL: Duration = Duration::from_millis(500);
+const MEMORY_EVERY_POLLS: u64 = 10;
+const INPUT_LOST_EXIT: i32 = 129;
+
+pub(super) fn ready_ids(store_dir: &Path) -> Vec<String> {
+    std::fs::read_dir(store_dir.join(READY_DIR))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(super) struct Monitor {
+    pub(super) inbox: Arc<Inbox>,
+    pub(super) watches: Watches,
+    pub(super) store: Store,
+    pub(super) store_dir: PathBuf,
+    pub(super) status: Mutex<Status>,
+    pub(super) seen: Mutex<HashMap<String, String>>,
+    pub(super) active: Mutex<Option<HashSet<String>>>,
+    pub(super) frozen_window: usize,
+    pub(super) worker_check_secs: Option<u64>,
+    pub(super) workers: Workers,
+    pub(super) check: Mutex<CheckState>,
+    pub(super) known: Mutex<Vec<Report>>,
+    pub(super) alert: AlertConfig,
+}
+
+impl Monitor {
+    pub(super) fn status(&self) -> Status {
+        locked(&self.status).clone()
+    }
+
+    pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
+        let reports = self.inbox.drain(selection)?;
+        locked(&self.seen).extend(latest_states(&reports));
+        locked(&self.check).reports.extend(last_reports(&reports));
+        Ok(reports)
+    }
+
+    fn observe(&self, state: &mut CheckState, worker: &RunningWorker) -> WorkerObservation {
+        let id = &worker.id;
+        let ready = ready_path(&self.store_dir, id).exists();
+        let blocked = blocked_path(&self.store_dir, id).exists();
+        let waiting = waiting_path(&self.store_dir, id).exists();
+        let unreported = unreported_path(&self.store_dir, id).exists();
+        let reported = reported_since_nudge(state.reports.get(id), state.nudges.get(id));
+        let pane = (!(worker.cursor || blocked || waiting || (ready && reported)))
+            .then(|| capture_pane(&worker.session))
+            .flatten();
+        let pane_changed = match &pane {
+            Some(pane) => state.panes.insert(id.clone(), pane.clone()).as_ref() != Some(pane),
+            None => {
+                state.panes.remove(id);
+                true
+            }
+        };
+        WorkerObservation {
+            id: id.clone(),
+            session: worker.session.clone(),
+            cursor: worker.cursor,
+            ready,
+            blocked,
+            waiting,
+            unreported,
+            reported_since_nudge: reported,
+            pane,
+            pane_changed,
+        }
+    }
+
+    fn check(&self) {
+        let running = running_workers(&self.store_dir);
+        let actions = {
+            let mut state = locked(&self.check);
+            let observations: Vec<WorkerObservation> = running
+                .iter()
+                .map(|worker| self.observe(&mut state, worker))
+                .collect();
+            state
+                .panes
+                .retain(|id, _| running.iter().any(|worker| &worker.id == id));
+            state
+                .nudges
+                .retain(|id, _| running.iter().any(|worker| &worker.id == id));
+            let (actions, memory) = plan(&state.memory, &observations);
+            state.memory = memory;
+            for action in &actions {
+                if let CheckAction::Nudge(id) = action {
+                    let last = state.reports.get(id).cloned();
+                    state.nudges.insert(id.clone(), last);
+                }
+            }
+            actions
+        };
+        for action in actions {
+            match action {
+                CheckAction::Nudge(id) => warn_if_err(
+                    self.workers.nudge(&id, NUDGE_TEXT),
+                    format!("nudging worker {id}"),
+                ),
+                CheckAction::Inbox(id, text) => {
+                    let report = Report {
+                        worker: id.clone(),
+                        at: chrono::Utc::now().to_rfc3339(),
+                        status: CHECK_STATUS.to_string(),
+                        text,
+                    };
+                    warn_if_err(
+                        self.inbox.post(&report, 0),
+                        format!("posting check for worker {id}"),
+                    );
+                }
+            }
+        }
+    }
+
+    fn measure_memory(&self) -> Option<Memory> {
+        let (entries, tree) = self.store.load().ok()?;
+        let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, None);
+        let tail = tail_lines(&entries, &tree, frozen.end);
+        Some(memory_size(entries.len(), &[frozen.lines, tail].concat()))
+    }
+
+    fn alert_fresh(&self, pending: &[Report]) {
+        let mut known = locked(&self.known);
+        let fresh = fresh_reports(&known, pending);
+        if !fresh.is_empty() && self.alert.enabled() {
+            if let Some(alert) = inbox_alert(&fresh, inbox_alert::focus(), &self.alert) {
+                inbox_alert::deliver(&alert);
+            }
+        }
+        *known = pending.to_vec();
+    }
+
+    pub(super) fn refresh(&self, with_memory: bool) -> bool {
+        let peeked = self.inbox.peek();
+        if let Ok(pending) = &peeked {
+            self.alert_fresh(pending);
+        }
+        let pending = peeked.unwrap_or_default();
+        locked(&self.check).reports.extend(last_reports(&pending));
+        let seen = {
+            let mut seen = locked(&self.seen);
+            seen.extend(latest_states(&pending));
+            seen.clone()
+        };
+        let running = running_workers(&self.store_dir);
+        let active = {
+            let mut active = locked(&self.active);
+            if with_memory {
+                *active = running
+                    .iter()
+                    .any(|worker| worker.opencode)
+                    .then(opencode_active)
+                    .flatten();
+            }
+            active.clone()
+        };
+        let workers = worker_states(&running, &seen, active.as_ref());
+        let memory = if with_memory {
+            self.measure_memory()
+        } else {
+            None
+        };
+        let turn = if with_memory {
+            self.store
+                .load_usage()
+                .ok()
+                .map(|text| last_turn_cache(&text))
+        } else {
+            None
+        };
+        let mut status = locked(&self.status);
+        let next = Status {
+            unread: pending.len(),
+            workers,
+            watches: watch_states(&self.watches.list(), chrono::Utc::now()),
+            memory: memory.unwrap_or(status.memory),
+            turn: turn.unwrap_or(status.turn),
+            napping: self.store.napping(),
+        };
+        let changed = *status != next;
+        *status = next;
+        changed
+    }
+}
+
+pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 'static) {
+    std::thread::spawn(move || {
+        let check_every = monitor
+            .worker_check_secs
+            .map(|secs| check_every_polls(secs, POLL));
+        let mut tick: u64 = 0;
+        loop {
+            std::thread::sleep(POLL);
+            tick += 1;
+            watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
+            if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
+                repaint();
+            }
+            if check_every.is_some_and(|every| tick.is_multiple_of(every)) {
+                monitor.check();
+            }
+        }
+    });
+}
+
+pub(super) fn stdin_hung_up() -> bool {
+    let mut stdin = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: ralph's direct dependencies have no safe poll wrapper, and this is
+    // the backup check for terminals that close without sending SIGHUP.
+    // `stdin` is a valid, initialized pollfd on the stack and nfds is 1, so poll
+    // only touches that one struct. fd 0 is not owned or closed here. A zero
+    // timeout means poll never blocks. revents is read only when poll returns > 0.
+    unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
+}
+
+pub(super) fn watch_input(
+    at_prompt: Arc<AtomicBool>,
+    plugin_dir: Option<PathBuf>,
+    exit: ExitCleanup,
+) {
+    let started_on_terminal = io::stdin().is_terminal();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(POLL);
+        if input_lost_at_prompt(&InputWatch {
+            hangup_signal: signal::is_terminated(),
+            started_on_terminal,
+            stdin_hung_up: stdin_hung_up(),
+            at_prompt: at_prompt.load(Ordering::SeqCst),
+        }) {
+            if let Some(dir) = &plugin_dir {
+                std::fs::remove_dir_all(dir).ok();
+            }
+            exit.run();
+            std::process::exit(INPUT_LOST_EXIT);
+        }
+    });
+}

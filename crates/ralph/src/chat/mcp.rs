@@ -1,4 +1,4 @@
-use crate::chat_memory::Store;
+use crate::chat::memory::Store;
 use crate::watch_requests;
 use crate::workers::Workers;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};

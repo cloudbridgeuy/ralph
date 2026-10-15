@@ -10,14 +10,6 @@
 mod acp_worker;
 pub mod ansi;
 mod chat;
-mod chat_cell;
-mod chat_check;
-mod chat_inbox;
-mod chat_mcp;
-mod chat_memory;
-mod chat_route;
-mod chat_statusbar;
-mod chat_watch;
 mod claude_cleanup;
 mod cli;
 mod clipboard;
@@ -218,7 +210,7 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 }
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let store = chat_memory::Store::new(args.store.clone());
+    let store = chat::memory::Store::new(args.store.clone());
     let workers = workers::Workers::new(
         args.store,
         std::env::current_exe()?,
@@ -227,7 +219,7 @@ fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>>
     );
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    chat_mcp::run_stdio_server(&store, &workers, stdin.lock(), stdout.lock())?;
+    chat::mcp::run_stdio_server(&store, &workers, stdin.lock(), stdout.lock())?;
     Ok(())
 }
 
@@ -250,7 +242,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 }
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let store = chat_memory::Store::new(args.store);
+    let store = chat::memory::Store::new(args.store);
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     store.nap(|prompt| {
         let command = invoke::build_memory_command(prompt, dirs::home_dir().as_deref());
