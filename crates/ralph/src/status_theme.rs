@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
-const SLOTS: [(&str, Shade, Color); 19] = [
+const SLOTS: [(&str, Shade, Color); 13] = [
     ("mode_idle_fg", Shade::ModeIdleFg, Color::Black),
     ("mode_idle_bg", Shade::ModeIdleBg, Color::Green),
     ("mode_nap_fg", Shade::ModeNapFg, Color::Black),
@@ -13,22 +13,16 @@ const SLOTS: [(&str, Shade, Color); 19] = [
     ("mode_inbox_bg", Shade::ModeInboxBg, Color::Yellow),
     ("mode_work_fg", Shade::ModeWorkFg, Color::White),
     ("mode_work_bg", Shade::ModeWorkBg, Color::Blue),
-    ("mail_fg", Shade::MailFg, Color::Black),
-    ("mail_bg", Shade::MailBg, Color::DarkGreen),
     ("store_fg", Shade::StoreFg, Color::Reset),
     ("workers_fg", Shade::WorkersFg, Color::Reset),
     ("watches_fg", Shade::WatchesFg, Color::Reset),
     ("memory_fg", Shade::MemoryFg, Color::Reset),
-    ("cache_fg", Shade::CacheFg, Color::Black),
-    ("cache_bg", Shade::CacheBg, Color::DarkGreen),
-    ("cost_fg", Shade::CostFg, Color::Black),
-    ("cost_bg", Shade::CostBg, Color::Green),
     ("base_bg", Shade::BaseBg, Color::AnsiValue(236)),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusColors {
-    colors: [(&'static str, Shade, Color); 19],
+    colors: [(&'static str, Shade, Color); 13],
 }
 
 impl Default for StatusColors {
@@ -94,7 +88,6 @@ mod tests {
         assert_eq!(colors.color(Shade::ModeNapBg), Color::Magenta);
         assert_eq!(colors.color(Shade::ModeInboxBg), Color::Yellow);
         assert_eq!(colors.color(Shade::ModeWorkBg), Color::Blue);
-        assert_eq!(colors.color(Shade::MailBg), Color::DarkGreen);
         assert_eq!(colors.color(Shade::BaseBg), Color::AnsiValue(236));
         assert_eq!(colors.color(Shade::ModeIdleFg), Color::Black);
         assert_eq!(colors.color(Shade::StoreFg), Color::Reset);
@@ -108,14 +101,13 @@ mod tests {
     }
 
     #[test]
-    fn mode_backgrounds_are_distinct_from_each_other_and_from_mail() {
+    fn mode_backgrounds_are_distinct_from_each_other() {
         let (colors, _) = StatusTheme::default().resolve();
         let shades = [
             Shade::ModeIdleBg,
             Shade::ModeNapBg,
             Shade::ModeInboxBg,
             Shade::ModeWorkBg,
-            Shade::MailBg,
         ];
         for (at, shade) in shades.iter().enumerate() {
             assert!(shades[..at]
@@ -127,7 +119,7 @@ mod tests {
     #[test]
     fn partial_table_overrides_only_the_given_keys() {
         let (colors, warnings) =
-            theme(&[("mode_nap_bg", "#112233"), ("cost_fg", "white")]).resolve();
+            theme(&[("mode_nap_bg", "#112233"), ("mode_work_fg", "black")]).resolve();
         assert!(warnings.is_empty());
         assert_eq!(
             colors.color(Shade::ModeNapBg),
@@ -137,8 +129,29 @@ mod tests {
                 b: 0x33
             }
         );
-        assert_eq!(colors.color(Shade::CostFg), Color::White);
-        assert_eq!(colors.color(Shade::MailBg), Color::DarkGreen);
+        assert_eq!(colors.color(Shade::ModeWorkFg), Color::Black);
+        assert_eq!(colors.color(Shade::ModeIdleBg), Color::Green);
+    }
+
+    #[test]
+    fn mode_override_recolours_the_mail_block() {
+        use ralph_core::chat_status::Status;
+        use ralph_core::status_segments::{bar, Context, Separator};
+        let (colors, _) = theme(&[("mode_inbox_bg", "#112233")]).resolve();
+        let status = Status {
+            unread: 1,
+            ..Status::default()
+        };
+        let spans = bar(&status, &Context::default(), 80, Separator::Block);
+        let mail = spans.iter().find(|s| s.text.contains("unread")).unwrap();
+        assert_eq!(
+            colors.color(mail.bg),
+            Color::Rgb {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33
+            }
+        );
     }
 
     #[test]

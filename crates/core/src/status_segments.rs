@@ -26,13 +26,13 @@ pub enum Side {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Mode(Mode),
-    Mail,
+    Mail(Mode),
     Store,
     Workers,
     Watches,
     Memory,
-    Cache,
-    Cost,
+    Cache(Mode),
+    Cost(Mode),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,16 +45,10 @@ pub enum Shade {
     ModeInboxBg,
     ModeWorkFg,
     ModeWorkBg,
-    MailFg,
-    MailBg,
     StoreFg,
     WorkersFg,
     WatchesFg,
     MemoryFg,
-    CacheFg,
-    CacheBg,
-    CostFg,
-    CostBg,
     BaseBg,
 }
 
@@ -98,38 +92,48 @@ enum Edge {
     Seg(Kind),
 }
 
+fn mode_bg(mode: Mode) -> Shade {
+    match mode {
+        Mode::Idle => Shade::ModeIdleBg,
+        Mode::Nap => Shade::ModeNapBg,
+        Mode::Inbox => Shade::ModeInboxBg,
+        Mode::Work => Shade::ModeWorkBg,
+    }
+}
+
+fn mode_fg(mode: Mode) -> Shade {
+    match mode {
+        Mode::Idle => Shade::ModeIdleFg,
+        Mode::Nap => Shade::ModeNapFg,
+        Mode::Inbox => Shade::ModeInboxFg,
+        Mode::Work => Shade::ModeWorkFg,
+    }
+}
+
 impl Kind {
     fn bg(self) -> Shade {
         match self {
-            Kind::Mode(Mode::Idle) => Shade::ModeIdleBg,
-            Kind::Mode(Mode::Nap) => Shade::ModeNapBg,
-            Kind::Mode(Mode::Inbox) => Shade::ModeInboxBg,
-            Kind::Mode(Mode::Work) => Shade::ModeWorkBg,
-            Kind::Mail => Shade::MailBg,
-            Kind::Cache => Shade::CacheBg,
-            Kind::Cost => Shade::CostBg,
+            Kind::Mode(mode) | Kind::Mail(mode) | Kind::Cache(mode) | Kind::Cost(mode) => {
+                mode_bg(mode)
+            }
             Kind::Store | Kind::Workers | Kind::Watches | Kind::Memory => Shade::BaseBg,
         }
     }
 
     fn fg(self) -> Shade {
         match self {
-            Kind::Mode(Mode::Idle) => Shade::ModeIdleFg,
-            Kind::Mode(Mode::Nap) => Shade::ModeNapFg,
-            Kind::Mode(Mode::Inbox) => Shade::ModeInboxFg,
-            Kind::Mode(Mode::Work) => Shade::ModeWorkFg,
-            Kind::Mail => Shade::MailFg,
+            Kind::Mode(mode) | Kind::Mail(mode) | Kind::Cache(mode) | Kind::Cost(mode) => {
+                mode_fg(mode)
+            }
             Kind::Store => Shade::StoreFg,
             Kind::Workers => Shade::WorkersFg,
             Kind::Watches => Shade::WatchesFg,
             Kind::Memory => Shade::MemoryFg,
-            Kind::Cache => Shade::CacheFg,
-            Kind::Cost => Shade::CostFg,
         }
     }
 
     fn bold(self) -> bool {
-        matches!(self, Kind::Mode(_) | Kind::Cost)
+        matches!(self, Kind::Mode(_) | Kind::Cost(_))
     }
 }
 
@@ -172,11 +176,11 @@ fn dedup(variants: Vec<String>) -> Vec<String> {
     seen
 }
 
-fn cache_segments(turn: &TurnCache) -> Vec<Segment> {
+fn cache_segments(turn: &TurnCache, current: Mode) -> Vec<Segment> {
     let share = turn.token_share_percent();
     let cache = Segment::new(
         Side::Right,
-        Kind::Cache,
+        Kind::Cache(current),
         CACHE_PRIORITY,
         vec![
             format!(
@@ -190,7 +194,7 @@ fn cache_segments(turn: &TurnCache) -> Vec<Segment> {
     let cost = turn.cost_usd.map(|cost| {
         Segment::new(
             Side::Right,
-            Kind::Cost,
+            Kind::Cost(current),
             COST_PRIORITY,
             vec![format!("${cost:.2}")],
         )
@@ -257,7 +261,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
     let mail = (unread > 0).then(|| {
         Segment::new(
             Side::Left,
-            Kind::Mail,
+            Kind::Mail(current),
             MAIL_PRIORITY,
             vec![format!("📬 {unread} unread"), format!("📬 {unread}")],
         )
@@ -295,7 +299,11 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             format!("{msgs}m ~{tok}"),
         ],
     );
-    let cache = status.turn.as_ref().map(cache_segments).unwrap_or_default();
+    let cache = status
+        .turn
+        .as_ref()
+        .map(|turn| cache_segments(turn, current))
+        .unwrap_or_default();
     [Some(mode), mail, store, workers, watches, Some(memory)]
         .into_iter()
         .flatten()
@@ -328,7 +336,8 @@ fn glue(separator: Separator, side: Side, from: Edge, to: Edge) -> Option<Span> 
     };
     match (from, to) {
         (Edge::Seg(a), Edge::Seg(b)) if a.bg() == b.bg() => match separator {
-            Separator::Block | Separator::Bar => span(THIN_RULE, a.fg(), a.bg()),
+            Separator::Block => None,
+            Separator::Bar => span(THIN_RULE, a.fg(), a.bg()),
             Separator::Powerline => span(thin, a.fg(), a.bg()),
         },
         (Edge::Seg(_), Edge::Seg(_)) => match separator {
@@ -731,7 +740,12 @@ mod tests {
             .collect();
         assert_eq!(
             right,
-            [Kind::Workers, Kind::Memory, Kind::Cache, Kind::Cost]
+            [
+                Kind::Workers,
+                Kind::Memory,
+                Kind::Cache(Mode::Inbox),
+                Kind::Cost(Mode::Inbox)
+            ]
         );
         assert_eq!(all[0].kind, Kind::Mode(Mode::Inbox));
         assert_eq!(all[0].priority, 0);
@@ -761,7 +775,7 @@ mod tests {
                 bold: true
             }
         );
-        assert_eq!(spans[1].bg, Shade::MailBg);
+        assert_eq!(spans[1].bg, Shade::ModeInboxBg);
         let filler = spans.iter().find(|s| s.text.trim().is_empty()).unwrap();
         assert_eq!(filler.bg, Shade::BaseBg);
     }
@@ -769,10 +783,10 @@ mod tests {
     #[test]
     fn powerline_arrow_blends_neighbouring_backgrounds() {
         let spans = bar(&status(), &context(), 80, Separator::Powerline);
-        assert_eq!(spans[1].text, LEFT_ARROW);
+        let at = spans.iter().position(|s| s.text == LEFT_ARROW).unwrap();
         assert_eq!(
-            (spans[1].fg, spans[1].bg),
-            (Shade::ModeInboxBg, Shade::MailBg)
+            (spans[at].fg, spans[at].bg),
+            (Shade::ModeInboxBg, Shade::BaseBg)
         );
     }
 
@@ -780,6 +794,48 @@ mod tests {
     fn bar_separator_puts_a_rule_between_segments() {
         let shown = text(&bar(&status(), &context(), 200, Separator::Bar));
         assert!(shown.starts_with(" INBOX │ 📬 2 unread │ "));
+    }
+
+    #[test]
+    fn mail_cache_and_cost_take_the_mode_colours() {
+        let expected = [
+            (Mode::Idle, Shade::ModeIdleBg, Shade::ModeIdleFg),
+            (Mode::Nap, Shade::ModeNapBg, Shade::ModeNapFg),
+            (Mode::Inbox, Shade::ModeInboxBg, Shade::ModeInboxFg),
+            (Mode::Work, Shade::ModeWorkBg, Shade::ModeWorkFg),
+        ];
+        for (mode, bg, fg) in expected {
+            for kind in [Kind::Mail(mode), Kind::Cache(mode), Kind::Cost(mode)] {
+                assert_eq!((kind.bg(), kind.fg()), (bg, fg));
+            }
+        }
+    }
+
+    #[test]
+    fn middle_blocks_keep_the_base_background_and_their_own_text() {
+        assert_eq!(
+            [Kind::Store, Kind::Workers, Kind::Watches, Kind::Memory].map(|k| (k.bg(), k.fg())),
+            [
+                (Shade::BaseBg, Shade::StoreFg),
+                (Shade::BaseBg, Shade::WorkersFg),
+                (Shade::BaseBg, Shade::WatchesFg),
+                (Shade::BaseBg, Shade::MemoryFg),
+            ]
+        );
+    }
+
+    #[test]
+    fn same_colour_neighbours_have_no_separator_in_block_mode() {
+        let spans = bar(&status(), &context(), 80, Separator::Block);
+        assert_eq!(spans[0].text, " INBOX ");
+        assert_eq!(spans[1].text, " 📬 2 unread ");
+        assert_eq!(spans[0].bg, spans[1].bg);
+    }
+
+    #[test]
+    fn powerline_same_colour_neighbours_use_the_thin_glyph() {
+        let spans = bar(&status(), &context(), 80, Separator::Powerline);
+        assert_eq!(spans[1].text, LEFT_THIN);
     }
 
     #[test]

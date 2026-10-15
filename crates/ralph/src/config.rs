@@ -463,7 +463,7 @@ mod tests {
     #[test]
     fn theme_status_table_loads_and_reports_warnings() {
         let config: AppConfig = toml::from_str(
-            "[theme.status]\nmode_idle_bg = \"#102030\"\ncost_bg = \"nope\"\nbranch_fg = \"red\"\n",
+            "[theme.status]\nmode_idle_bg = \"#102030\"\nmode_nap_bg = \"nope\"\nbranch_fg = \"red\"\n",
         )
         .unwrap();
         assert_eq!(config.theme.status.colors.len(), 3);
@@ -471,7 +471,7 @@ mod tests {
             config.theme.warnings(),
             [
                 "[theme.status] unknown key \"branch_fg\"; ignored",
-                "[theme.status] cost_bg = \"nope\" is not a color; using the default"
+                "[theme.status] mode_nap_bg = \"nope\" is not a color; using the default"
             ]
         );
         assert!(AppConfig::new().theme.warnings().is_empty());
