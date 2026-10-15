@@ -9,6 +9,8 @@ use std::str::FromStr;
 pub struct Position(NonZeroUsize);
 
 impl Position {
+    pub const FIRST: Position = Position(NonZeroUsize::MIN);
+
     fn index(self) -> usize {
         self.0.get() - 1
     }
@@ -95,8 +97,15 @@ impl Ledger {
         self.entries.iter().map(|e| e.report.clone()).collect()
     }
 
-    pub fn take_all(&mut self) -> Vec<Report> {
-        self.entries.drain(..).map(|e| e.report).collect()
+    pub fn take(&mut self, selection: Option<Position>) -> Vec<Report> {
+        match selection {
+            None => self.entries.drain(..).map(|e| e.report).collect(),
+            Some(position) => self
+                .remove(position)
+                .map(|e| e.report)
+                .into_iter()
+                .collect(),
+        }
     }
 }
 
@@ -234,14 +243,36 @@ mod tests {
     }
 
     #[test]
-    fn take_all_empties_the_queue_and_new_arrivals_start_at_one() {
+    fn take_none_empties_the_queue_and_new_arrivals_start_at_one() {
         let mut ledger = Ledger::default();
         ledger.ingest(vec![arrival("a"), arrival("b")]);
-        let texts: Vec<_> = ledger.take_all().into_iter().map(|r| r.text).collect();
+        let texts: Vec<_> = ledger.take(None).into_iter().map(|r| r.text).collect();
         assert_eq!(texts, ["a", "b"]);
         assert!(ledger.entries().is_empty());
         ledger.ingest(vec![arrival("c")]);
         assert_eq!(ledger.get(pos(1)).unwrap().source, "c");
+    }
+
+    #[test]
+    fn take_some_returns_that_report_and_shifts_later_positions() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a"), arrival("b"), arrival("c")]);
+        let texts: Vec<_> = ledger
+            .take(Some(pos(2)))
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(texts, ["b"]);
+        assert_eq!(sources(&ledger), ["a", "c"]);
+        assert_eq!(ledger.get(pos(2)).unwrap().source, "c");
+    }
+
+    #[test]
+    fn take_missing_position_returns_nothing_and_keeps_the_queue() {
+        let mut ledger = Ledger::default();
+        ledger.ingest(vec![arrival("a")]);
+        assert!(ledger.take(Some(pos(2))).is_empty());
+        assert_eq!(sources(&ledger), ["a"]);
     }
 
     #[test]

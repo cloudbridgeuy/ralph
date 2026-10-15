@@ -110,9 +110,9 @@ impl Inbox {
         self.sync(|ledger| (ledger.reports(), false))
     }
 
-    pub fn drain(&self) -> io::Result<Vec<Report>> {
+    pub fn drain(&self, selection: Option<Position>) -> io::Result<Vec<Report>> {
         self.sync(|ledger| {
-            let reports = ledger.take_all();
+            let reports = ledger.take(selection);
             let changed = !reports.is_empty();
             (reports, changed)
         })
@@ -320,11 +320,29 @@ mod tests {
         assert!(dir.path().join("reported").join("GUZ-1").exists());
 
         assert_eq!(inbox.peek().unwrap().len(), 1);
-        let reports = inbox.drain().unwrap();
+        let reports = inbox.drain(None).unwrap();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].worker, "GUZ-1");
         assert_eq!(reports[0].text, "hello");
         assert!(inbox.peek().unwrap().is_empty());
+    }
+
+    #[test]
+    fn drain_some_takes_only_that_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        for (seq, text) in [(1, "one"), (2, "two")] {
+            let report = Report {
+                worker: "A".to_string(),
+                at: format!("2026-01-01T00:00:0{seq}Z"),
+                status: "done".to_string(),
+                text: text.to_string(),
+            };
+            inbox.post(&report, seq).unwrap();
+        }
+        let taken = inbox.drain(Some("2".parse().unwrap())).unwrap();
+        assert_eq!(taken[0].text, "two");
+        assert_eq!(inbox.peek().unwrap().len(), 1);
     }
 
     #[test]
@@ -342,7 +360,7 @@ mod tests {
         };
         post("one", 1);
         post("two", 2);
-        assert_eq!(inbox.drain().unwrap().len(), 2);
+        assert_eq!(inbox.drain(None).unwrap().len(), 2);
         post("three", 3);
 
         let queued = inbox.peek().unwrap();

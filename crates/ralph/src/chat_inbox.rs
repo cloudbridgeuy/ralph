@@ -57,6 +57,13 @@ pub fn drop_report(inbox: &Inbox, position: Position) -> io::Result<()> {
     Ok(())
 }
 
+pub fn nothing_to_read(selection: Option<Position>) {
+    match selection {
+        None => println!("No unread reports."),
+        Some(position) => println!("No report {position}. /inbox list shows the queue."),
+    }
+}
+
 pub fn usage() {
     println!("{INBOX_USAGE}");
 }

@@ -9,7 +9,7 @@ const DEFAULT_STATE: &str = "running";
 const BUSY_STATE: &str = "busy";
 const IDLE_STATE: &str = "idle";
 const INBOX_COMMAND: &str = "/inbox";
-pub const INBOX_USAGE: &str = "Usage: /inbox [list | peek N | drop N]";
+pub const INBOX_USAGE: &str = "Usage: /inbox [next | N | list | peek N | drop N]";
 const SEPARATOR: &str = " · ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +100,7 @@ impl TurnCache {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Send(String),
-    ReadInbox,
+    ReadInbox(Option<Position>),
     ListInbox,
     PeekInbox(Position),
     DropInbox(Position),
@@ -121,15 +121,19 @@ pub fn route_input(line: &str, unread: usize) -> Route {
     let mut tokens = line.split_whitespace();
     if tokens.next() == Some(INBOX_COMMAND) {
         return match (tokens.next(), tokens.next(), tokens.next()) {
-            (None, ..) => Route::ReadInbox,
+            (None, ..) => Route::ReadInbox(None),
+            (Some("next"), None, _) => Route::ReadInbox(Some(Position::FIRST)),
             (Some("list"), None, _) => Route::ListInbox,
             (Some("peek"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
             (Some("drop"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::DropInbox),
+            (Some(n), None, _) => n
+                .parse()
+                .map_or(Route::InboxUsage, |p| Route::ReadInbox(Some(p))),
             _ => Route::InboxUsage,
         };
     }
     match line {
-        "" if unread > 0 => Route::ReadInbox,
+        "" if unread > 0 => Route::ReadInbox(None),
         "" => Route::Ignore,
         message => Route::Send(message.to_string()),
     }
@@ -551,8 +555,16 @@ mod tests {
 
     #[test]
     fn route_input_decides_from_line_and_unread() {
-        assert_eq!(route_input(" /inbox ", 0), Route::ReadInbox);
-        assert_eq!(route_input("  ", 3), Route::ReadInbox);
+        assert_eq!(route_input(" /inbox ", 0), Route::ReadInbox(None));
+        assert_eq!(route_input("  ", 3), Route::ReadInbox(None));
+        assert_eq!(
+            route_input("/inbox next", 0),
+            Route::ReadInbox(Some(Position::FIRST))
+        );
+        assert_eq!(
+            route_input("/inbox 2", 0),
+            Route::ReadInbox(Some("2".parse().unwrap()))
+        );
         assert_eq!(route_input("", 0), Route::Ignore);
         assert_eq!(route_input(" hi ", 3), Route::Send("hi".into()));
         assert_eq!(route_input("/inbox list", 0), Route::ListInbox);
@@ -573,6 +585,10 @@ mod tests {
             "/inbox foo",
             "/inbox list x",
             "/inbox peek 1 2",
+            "/inbox 0",
+            "/inbox x",
+            "/inbox 2 3",
+            "/inbox next 1",
         ] {
             assert_eq!(route_input(usage, 3), Route::InboxUsage);
         }
