@@ -383,10 +383,6 @@ impl PromptQueue {
         self.running = false;
         self.interrupted
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.pending.is_empty()
-    }
 }
 
 pub fn turn_outcome(
@@ -846,7 +842,6 @@ mod tests {
         );
         assert_eq!(queue.start().as_deref(), Some("now"));
         assert!(!queue.finish());
-        assert!(queue.is_empty());
         assert_eq!(queue.start(), None);
     }
 
