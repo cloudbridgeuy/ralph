@@ -173,6 +173,8 @@ pub struct ChatSection {
     pub inbox_alert_notification: bool,
     #[serde(default)]
     pub inbox_alert_unknown_focus: UnknownFocus,
+    #[serde(default)]
+    pub status_powerline: bool,
 }
 
 fn default_true() -> bool {
@@ -200,6 +202,7 @@ impl Default for ChatSection {
             inbox_alert_sound: true,
             inbox_alert_notification: false,
             inbox_alert_unknown_focus: UnknownFocus::Alert,
+            status_powerline: false,
         }
     }
 }
@@ -450,6 +453,16 @@ mod tests {
         assert_eq!(config.chat.inbox_alert_unknown_focus, UnknownFocus::Silent);
         fs::write(&path, "[chat]\ninbox_alert_unknown_focus = \"loud\"\n").unwrap();
         assert!(AppConfig::load_from(&path).is_err());
+    }
+
+    #[test]
+    fn chat_section_parses_status_powerline() {
+        assert!(!AppConfig::new().chat.status_powerline);
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(&path, "[chat]\nstatus_powerline = true\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert!(config.chat.status_powerline);
     }
 
     #[test]
