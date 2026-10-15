@@ -1,0 +1,218 @@
+use super::SERVER_NAME;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub const ACP_PROTOCOL_VERSION: u16 = 1;
+pub const ACP_AGENT_VERSION: &str = "2026.10.14";
+pub const CURSOR_HARNESS: &str = "cursor";
+pub const CURSOR_SPAWN_DIR: &str = "cursor-spawn";
+pub const CURSOR_CLOSE_DIR: &str = "cursor-close";
+pub const CURSOR_ERROR_DIR: &str = "cursor-error";
+pub const CURSOR_OWNER_DIR: &str = "cursor";
+pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
+pub const HANDOFF_POLL: Duration = Duration::from_millis(250);
+const AUTH_REQUIRED_CODE: i32 = -32000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CursorFiles {
+    pub spawn: PathBuf,
+    pub close: PathBuf,
+    pub error: PathBuf,
+    pub owner: PathBuf,
+}
+
+impl CursorFiles {
+    pub fn new(store: &Path, id: &str) -> Self {
+        Self {
+            spawn: store.join(CURSOR_SPAWN_DIR).join(id),
+            close: store.join(CURSOR_CLOSE_DIR).join(id),
+            error: store.join(CURSOR_ERROR_DIR).join(id),
+            owner: store.join(CURSOR_OWNER_DIR).join(id),
+        }
+    }
+
+    pub fn all(&self) -> [&Path; 4] {
+        [&self.spawn, &self.close, &self.error, &self.owner]
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnRequest {
+    pub worktree: PathBuf,
+    pub exe: PathBuf,
+    pub inbox: PathBuf,
+    pub at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Handoff {
+    Pending,
+    Done,
+    Failed(String),
+    TimedOut,
+}
+
+pub fn spawn_handoff(ready: bool, error: Option<&str>, elapsed: Duration) -> Handoff {
+    match (error, ready) {
+        (Some(error), _) => Handoff::Failed(error.trim().to_string()),
+        (None, true) => Handoff::Done,
+        (None, false) if elapsed >= HANDOFF_TIMEOUT => Handoff::TimedOut,
+        (None, false) => Handoff::Pending,
+    }
+}
+
+pub fn close_handoff(owner_exists: bool, elapsed: Duration) -> Handoff {
+    if !owner_exists {
+        Handoff::Done
+    } else if elapsed >= HANDOFF_TIMEOUT {
+        Handoff::TimedOut
+    } else {
+        Handoff::Pending
+    }
+}
+
+pub fn request_stale(requested_at: u64, now: u64) -> bool {
+    now.saturating_sub(requested_at) >= HANDOFF_TIMEOUT.as_secs()
+}
+
+pub fn parse_agent_version(output: &str) -> Option<&str> {
+    let token = output.split_whitespace().next()?;
+    let version = token.split('-').next()?;
+    version.chars().next()?.is_ascii_digit().then_some(version)
+}
+
+pub fn version_warning(output: &str) -> Option<String> {
+    match parse_agent_version(output) {
+        Some(ACP_AGENT_VERSION) => None,
+        Some(other) => Some(format!(
+            "cursor agent {other} differs from the tested {ACP_AGENT_VERSION}; the cursor worker may misbehave."
+        )),
+        None => Some(format!(
+            "could not read the cursor agent version from '{}'; tested with {ACP_AGENT_VERSION}.",
+            output.trim()
+        )),
+    }
+}
+
+pub fn check_protocol(version: u16) -> Result<(), String> {
+    if version == ACP_PROTOCOL_VERSION {
+        Ok(())
+    } else {
+        Err(format!(
+            "cursor agent speaks ACP protocol {version}; ralph supports {ACP_PROTOCOL_VERSION}."
+        ))
+    }
+}
+
+pub fn session_error(code: i32, message: &str) -> String {
+    if code == AUTH_REQUIRED_CODE {
+        "cursor agent is not logged in; run `agent login` and spawn the worker again.".to_string()
+    } else {
+        format!("cursor agent could not start a session: {message}")
+    }
+}
+
+pub fn acp_mcp_server(exe: &Path, id: &str, inbox: &Path) -> Value {
+    json!({
+        "name": SERVER_NAME,
+        "command": exe.to_string_lossy(),
+        "args": ["worker-mcp", "--id", id, "--inbox", inbox.to_string_lossy()],
+        "env": []
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_output_is_parsed_without_the_build_hash() {
+        assert_eq!(
+            parse_agent_version("2026.10.14-0f9edde\n"),
+            Some("2026.10.14")
+        );
+        assert_eq!(parse_agent_version("error: nope"), None);
+        assert_eq!(parse_agent_version(""), None);
+    }
+
+    #[test]
+    fn version_warning_only_when_the_version_differs() {
+        assert_eq!(version_warning("2026.10.14-0f9edde"), None);
+        assert!(version_warning("2026.11.01-abc")
+            .unwrap()
+            .contains("2026.11.01"));
+        assert!(version_warning("???").unwrap().contains("could not read"));
+    }
+
+    #[test]
+    fn only_protocol_one_is_accepted() {
+        assert!(check_protocol(1).is_ok());
+        assert!(check_protocol(2).unwrap_err().contains("protocol 2"));
+    }
+
+    #[test]
+    fn auth_required_tells_the_user_to_log_in() {
+        assert!(session_error(-32000, "x").contains("agent login"));
+        assert!(session_error(-32603, "boom").contains("boom"));
+    }
+
+    #[test]
+    fn mcp_server_entry_is_a_stdio_worker_mcp_command() {
+        let entry = acp_mcp_server(Path::new("/bin/ralph"), "A", Path::new("/s/inbox"));
+        assert_eq!(entry["name"], SERVER_NAME);
+        assert_eq!(entry["command"], "/bin/ralph");
+        assert_eq!(
+            entry["args"],
+            json!(["worker-mcp", "--id", "A", "--inbox", "/s/inbox"])
+        );
+        assert_eq!(entry["env"], json!([]));
+    }
+
+    #[test]
+    fn spawn_handoff_prefers_error_then_ready_then_timeout() {
+        let early = Duration::from_secs(1);
+        assert_eq!(spawn_handoff(false, None, early), Handoff::Pending);
+        assert_eq!(spawn_handoff(true, None, early), Handoff::Done);
+        assert_eq!(
+            spawn_handoff(true, Some("bad\n"), early),
+            Handoff::Failed("bad".into())
+        );
+        assert_eq!(
+            spawn_handoff(false, None, HANDOFF_TIMEOUT),
+            Handoff::TimedOut
+        );
+        assert_eq!(spawn_handoff(true, None, HANDOFF_TIMEOUT), Handoff::Done);
+    }
+
+    #[test]
+    fn close_handoff_is_done_once_the_owner_file_is_gone() {
+        let early = Duration::from_secs(1);
+        assert_eq!(close_handoff(true, early), Handoff::Pending);
+        assert_eq!(close_handoff(false, early), Handoff::Done);
+        assert_eq!(close_handoff(true, HANDOFF_TIMEOUT), Handoff::TimedOut);
+    }
+
+    #[test]
+    fn requests_older_than_the_timeout_are_stale() {
+        assert!(!request_stale(100, 129));
+        assert!(request_stale(100, 130));
+        assert!(!request_stale(100, 50));
+    }
+
+    #[test]
+    fn spawn_request_round_trips_through_json() {
+        let request = SpawnRequest {
+            worktree: "/w".into(),
+            exe: "/bin/ralph".into(),
+            inbox: "/s/inbox".into(),
+            at: 7,
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<SpawnRequest>(&text).unwrap(),
+            request
+        );
+    }
+}

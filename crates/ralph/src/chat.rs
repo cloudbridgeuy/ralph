@@ -1,3 +1,4 @@
+use crate::acp_worker::{CursorShutdown, ExitCleanup};
 use crate::ansi::{DIM, RESET};
 use crate::chat_cell;
 use crate::chat_check::CheckState;
@@ -386,7 +387,7 @@ fn stdin_hung_up() -> bool {
     unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
 }
 
-fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>, watches: Watches) {
+fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>, exit: ExitCleanup) {
     let started_on_terminal = io::stdin().is_terminal();
     std::thread::spawn(move || loop {
         std::thread::sleep(POLL);
@@ -399,7 +400,7 @@ fn watch_input(at_prompt: Arc<AtomicBool>, plugin_dir: Option<PathBuf>, watches:
             if let Some(dir) = &plugin_dir {
                 std::fs::remove_dir_all(dir).ok();
             }
-            watches.kill_all();
+            exit.run();
             std::process::exit(INPUT_LOST_EXIT);
         }
     });
@@ -908,10 +909,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!("{hint}");
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
+    let cursor = CursorShutdown::start(monitor.store_dir.clone());
     watch_input(
         Arc::clone(&at_prompt),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
-        monitor.watches.clone(),
+        ExitCleanup::new(monitor.watches.clone(), &cursor),
     );
     let mut editor = build_editor(&store_dir)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));

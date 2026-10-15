@@ -366,18 +366,13 @@ mod tests {
         let mut ledger = Ledger::default();
         ledger.ingest(vec![arrival("a"), arrival("b")]);
         let value = serde_json::to_value(&ledger).unwrap();
-        assert_eq!(
-            value.as_object().unwrap().keys().collect::<Vec<_>>(),
-            ["entries"]
-        );
-        assert_eq!(
-            value["entries"][0]
-                .as_object()
-                .unwrap()
-                .keys()
-                .collect::<Vec<_>>(),
-            ["report", "source"]
-        );
+        let sorted_keys = |value: &serde_json::Value| {
+            let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            keys
+        };
+        assert_eq!(sorted_keys(&value), ["entries"]);
+        assert_eq!(sorted_keys(&value["entries"][0]), ["report", "source"]);
         assert_eq!(serde_json::from_value::<Ledger>(value).unwrap(), ledger);
     }
 

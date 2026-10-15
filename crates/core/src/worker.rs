@@ -6,10 +6,12 @@ use serde_json::{json, Value};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
+mod acp;
 mod hooks;
 mod markers;
 mod ownership;
 mod worktree;
+pub use acp::*;
 pub use hooks::*;
 pub use markers::*;
 pub use ownership::*;
@@ -94,6 +96,7 @@ pub enum Outcome {
 pub enum Harness {
     Claude,
     Opencode { model: String },
+    Cursor,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,7 +128,7 @@ pub fn command_definitions() -> [Value; 4] {
                 "properties": {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
-                    "harness": {"type": "string", "enum": ["claude", "opencode"], "description": "Agent to run. Default claude."},
+                    "harness": {"type": "string", "enum": ["claude", "opencode", "cursor"], "description": "Agent to run. Default claude. cursor runs headless without a tmux session and does not take replies yet."},
                     "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-6.1-sol."}
                 },
                 "required": ["id", "task"]
@@ -216,8 +219,12 @@ fn harness(args: &Value) -> Result<Harness, String> {
                 _ => Err(format!("Model '{model}' must look like provider/model.")),
             }
         }
+        (Some(CURSOR_HARNESS), None) => Ok(Harness::Cursor),
+        (Some(CURSOR_HARNESS), Some(_)) => {
+            Err("A model can only be set for the opencode harness.".to_string())
+        }
         (Some(other), _) => Err(format!(
-            "Unknown harness '{other}'. Use claude or opencode."
+            "Unknown harness '{other}'. Use claude, opencode or cursor."
         )),
     }
 }

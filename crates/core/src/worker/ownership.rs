@@ -141,12 +141,14 @@ pub struct CloseState {
     pub unmerged_commits: Option<usize>,
     pub opencode: bool,
     pub markers: bool,
+    pub cursor: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseStep {
     RemoveOpencodeSession,
     KillSession(String),
+    TerminateCursor,
     RemoveWorktree { force: bool },
     DeleteBranch,
     PruneWorktrees,
@@ -195,7 +197,9 @@ pub fn close_plan(
     if state.opencode {
         steps.push(CloseStep::RemoveOpencodeSession);
     }
-    if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
+    if state.cursor {
+        steps.push(CloseStep::TerminateCursor);
+    } else if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
         steps.push(CloseStep::KillSession(session.name.clone()));
     }
     if let Some(dirty) = state.dirty_worktree {
@@ -303,6 +307,7 @@ mod tests {
             unmerged_commits: Some(0),
             opencode: false,
             markers: false,
+            cursor: false,
         }
     }
 
@@ -322,6 +327,15 @@ mod tests {
                 CloseStep::ClearMarkers,
             ])
         );
+    }
+
+    #[test]
+    fn close_plan_terminates_a_cursor_worker_instead_of_killing_a_session() {
+        let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+        state.cursor = true;
+        let steps = close_plan(&state, false, false).unwrap();
+        assert_eq!(steps[0], CloseStep::TerminateCursor);
+        assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
     }
 
     #[test]

@@ -26,6 +26,11 @@ debug = 0
 
 [workspace.dependencies]
 
+# Agent Client Protocol (cursor worker harness)
+agent-client-protocol = "=3.3.0"
+blocking = "1"
+futures = "0.3"
+
 # Output formatting
 anstream = "1.0.0"
 

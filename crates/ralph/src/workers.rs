@@ -1,12 +1,14 @@
+use crate::acp_worker::{now_secs, write_file};
 use crate::config::AppConfig;
 use ralph_core::chat_status::active_sessions;
 use ralph_core::worker::{
-    base_branch, base_config_key, branch_name, claude_worker_settings, close_plan, exclude_lines,
-    marker_paths, opencode_command, opencode_config, opencode_session_gone, opencode_session_id,
-    opencode_worker_plugin, project_slug, resolve_worktree_dir, session_name, session_owner,
-    startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
-    worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep, Harness, Owner,
-    Startup, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia, ATTACHMENTS_DIR,
+    base_branch, base_config_key, branch_name, claude_worker_settings, close_handoff, close_plan,
+    exclude_lines, marker_paths, opencode_command, opencode_config, opencode_session_gone,
+    opencode_session_id, opencode_worker_plugin, project_slug, resolve_worktree_dir, session_name,
+    session_owner, spawn_handoff, startup_state, tagged_sessions, worker_command,
+    worker_mcp_config, worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args,
+    CloseState, CloseStep, CursorFiles, Handoff, Harness, Owner, SpawnRequest, Startup,
+    TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL,
     HARNESS_OPTION, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_HARNESS,
     OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
 };
@@ -93,6 +95,13 @@ impl Workers {
                 fs::write(plugin, opencode_worker_plugin(id, &markers))?;
                 opencode_command(id, task)
             }
+            Harness::Cursor => {
+                self.spawn_cursor(id, &worktree)?;
+                let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
+                return Ok(format!(
+                    "{started} It runs headless inside ralph chat (no tmux session)."
+                ));
+            }
         };
         run(Command::new("tmux")
             .args(["new-session", "-d", "-s", &session])
@@ -114,15 +123,7 @@ impl Workers {
             ]))?;
         }
         let confirmed = await_startup(&session, &markers.ready)?;
-        let mut started = format!(
-            "Worker {id} started in {} on branch {}. {}",
-            worktree.display(),
-            branch_name(id),
-            via.note()
-        );
-        if let Some(warning) = worktree_dir.warning {
-            started = format!("{started} {warning}");
-        }
+        let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
         Ok(if confirmed {
             format!("{started} Watch it with: tmux attach -t {session}")
         } else {
@@ -134,6 +135,11 @@ impl Workers {
     }
 
     pub fn reply(&self, id: &str, text: &str) -> io::Result<String> {
+        if CursorFiles::new(&self.store_dir, id).owner.exists() {
+            return Err(io::Error::other(format!(
+                "worker {id} is a cursor worker; replies to cursor workers are not supported yet"
+            )));
+        }
         let session = match self.owner(&project_slug(&repo_root()?), id) {
             Owner::Mine(session) => session.name,
             Owner::Missing => return Err(io::Error::other(format!("worker {id} is not running"))),
@@ -215,6 +221,7 @@ impl Workers {
             markers: marker_paths(&self.store_dir, id)
                 .iter()
                 .any(|marker| marker.exists()),
+            cursor: CursorFiles::new(&self.store_dir, id).owner.exists(),
         };
         let with_warning = |text: String| {
             [&base.warning, &worktree_dir.warning]
@@ -270,6 +277,7 @@ impl Workers {
                 }
                 check(output)?;
             }
+            CloseStep::TerminateCursor => self.terminate_cursor(id)?,
             CloseStep::KillSession(session) => {
                 run(Command::new("tmux").args(["kill-session", "-t", &format!("={session}")]))?;
             }
@@ -301,7 +309,69 @@ impl Workers {
         Ok(())
     }
 
+    fn spawn_cursor(&self, id: &str, worktree: &Path) -> io::Result<()> {
+        let files = CursorFiles::new(&self.store_dir, id);
+        for path in files.all() {
+            clear_marker(path)?;
+        }
+        let request = SpawnRequest {
+            worktree: worktree.to_path_buf(),
+            exe: self.exe.clone(),
+            inbox: self.store_dir.join(INBOX_DIR),
+            at: now_secs(),
+        };
+        write_file(
+            &files.spawn,
+            &serde_json::to_string(&request).map_err(io::Error::other)?,
+        )?;
+        let ready = WorkerMarkers::new(&self.store_dir, id).ready;
+        let started = Instant::now();
+        loop {
+            let error = fs::read_to_string(&files.error).ok();
+            match spawn_handoff(ready.exists(), error.as_deref(), started.elapsed()) {
+                Handoff::Done => return Ok(()),
+                Handoff::Failed(message) => {
+                    clear_marker(&files.error)?;
+                    return Err(io::Error::other(message));
+                }
+                Handoff::TimedOut => {
+                    clear_marker(&files.spawn)?;
+                    return Err(io::Error::other(
+                        "no ralph chat picked up the cursor worker in time; cursor workers start only from a running `ralph chat` with this store",
+                    ));
+                }
+                Handoff::Pending => thread::sleep(HANDOFF_POLL),
+            }
+        }
+    }
+
+    fn terminate_cursor(&self, id: &str) -> io::Result<()> {
+        let files = CursorFiles::new(&self.store_dir, id);
+        write_file(&files.close, "")?;
+        let started = Instant::now();
+        loop {
+            match close_handoff(files.owner.exists(), started.elapsed()) {
+                Handoff::Done => return Ok(()),
+                Handoff::TimedOut => {
+                    clear_marker(&files.close)?;
+                    return Err(io::Error::other(
+                        "ralph chat did not confirm stopping the cursor worker in time",
+                    ));
+                }
+                Handoff::Pending | Handoff::Failed(_) => thread::sleep(HANDOFF_POLL),
+            }
+        }
+    }
+
     fn owner(&self, project: &str, id: &str) -> Owner {
+        if CursorFiles::new(&self.store_dir, id).owner.exists() {
+            return Owner::Mine(TaggedSession {
+                name: session_name(project, id),
+                store: self.store_dir.to_string_lossy().into_owned(),
+                opencode: false,
+                id: id.to_string(),
+            });
+        }
         let sessions: Vec<TaggedSession> = tagged_sessions(&tmux_listing())
             .into_iter()
             .map(|mut session| {
@@ -364,6 +434,19 @@ pub fn tmux_listing() -> String {
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
         .unwrap_or_default()
+}
+
+fn started_text(id: &str, worktree: &Path, via: &WorktreeVia, warning: Option<&str>) -> String {
+    let started = format!(
+        "Worker {id} started in {} on branch {}. {}",
+        worktree.display(),
+        branch_name(id),
+        via.note()
+    );
+    match warning {
+        Some(warning) => format!("{started} {warning}"),
+        None => started,
+    }
 }
 
 fn repo_root() -> io::Result<PathBuf> {
