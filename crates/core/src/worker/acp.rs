@@ -148,9 +148,10 @@ pub fn match_option<'a>(
     options.iter().find(|option| option.option_id == text)
 }
 
-/// The permission prompt of the worker's own `report` tool, as cursor names it.
+const REPORT_TOOL: &str = "report";
+
 fn report_tool_label() -> String {
-    format!("{SERVER_NAME}-report: report")
+    format!("{SERVER_NAME}-{REPORT_TOOL}: {REPORT_TOOL}")
 }
 
 /// The allow-once option to answer with, only for the ralph worker `report` tool.
@@ -299,12 +300,9 @@ pub fn turn_outcome(
 }
 
 pub fn is_report_tool_call(update: &Value) -> bool {
-    let label = report_tool_label();
-    let kind = update["sessionUpdate"].as_str();
-    matches!(kind, Some("tool_call" | "tool_call_update"))
-        && ["title", "name"]
-            .iter()
-            .any(|key| update[*key].as_str().is_some_and(|v| v.trim() == label))
+    let title = format!("{SERVER_NAME}: {REPORT_TOOL}");
+    update["sessionUpdate"] == "tool_call_update"
+        && update["title"].as_str().is_some_and(|v| v.trim() == title)
 }
 
 pub fn prompt_failure_report(id: &str, at: &str, problem: &str) -> Report {
@@ -611,21 +609,37 @@ mod tests {
     #[test]
     fn only_the_worker_report_tool_call_counts_as_reported() {
         let call = |kind: &str, title: &str| json!({"sessionUpdate": kind, "title": title});
-        assert!(is_report_tool_call(&call(
+        assert!(is_report_tool_call(&json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "t1",
+            "title": "ralph-worker: report",
+            "rawInput": {"toolName": "report", "status": "done", "text": "hi"}
+        })));
+        assert!(!is_report_tool_call(&json!({
+            "sessionUpdate": "tool_call",
+            "toolCallId": "t1",
+            "title": "MCP: tool",
+            "kind": "other"
+        })));
+        assert!(!is_report_tool_call(&call(
             "tool_call",
-            "ralph-worker-report: report"
+            "ralph-worker: report"
         )));
-        assert!(is_report_tool_call(&call(
+        assert!(!is_report_tool_call(&call(
             "tool_call_update",
             "ralph-worker-report: report"
         )));
-        assert!(is_report_tool_call(
-            &json!({"sessionUpdate": "tool_call", "name": "ralph-worker-report: report"})
-        ));
-        assert!(!is_report_tool_call(&call("tool_call", "Run ls")));
+        assert!(!is_report_tool_call(&call(
+            "tool_call_update",
+            "other-server: report"
+        )));
+        assert!(!is_report_tool_call(&call(
+            "tool_call_update",
+            "ralph-worker: spawn"
+        )));
         assert!(!is_report_tool_call(&call(
             "agent_message_chunk",
-            "ralph-worker-report: report"
+            "ralph-worker: report"
         )));
     }
 
