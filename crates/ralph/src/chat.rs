@@ -344,6 +344,7 @@ impl Monitor {
             watches: watch_states(&self.watches.list(), chrono::Utc::now()),
             memory: memory.unwrap_or(status.memory),
             turn: turn.unwrap_or(status.turn),
+            napping: self.store.napping(),
         };
         let changed = *status != next;
         *status = next;

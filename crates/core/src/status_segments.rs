@@ -1,7 +1,7 @@
 use crate::chat_status::{tokens_label, Memory, Status, TurnCache};
+use crate::status_mode::{mode, Mode};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-const MODE_LABEL: &str = "IDLE";
 const THIN_RULE: &str = "│";
 const LEFT_ARROW: &str = "\u{e0b0}";
 const LEFT_THIN: &str = "\u{e0b1}";
@@ -25,7 +25,7 @@ pub enum Side {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    Mode,
+    Mode(Mode),
     Mail,
     Store,
     Workers,
@@ -37,8 +37,14 @@ pub enum Kind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shade {
-    ModeFg,
-    ModeBg,
+    ModeIdleFg,
+    ModeIdleBg,
+    ModeNapFg,
+    ModeNapBg,
+    ModeInboxFg,
+    ModeInboxBg,
+    ModeWorkFg,
+    ModeWorkBg,
     MailFg,
     MailBg,
     StoreFg,
@@ -95,7 +101,10 @@ enum Edge {
 impl Kind {
     fn bg(self) -> Shade {
         match self {
-            Kind::Mode => Shade::ModeBg,
+            Kind::Mode(Mode::Idle) => Shade::ModeIdleBg,
+            Kind::Mode(Mode::Nap) => Shade::ModeNapBg,
+            Kind::Mode(Mode::Inbox) => Shade::ModeInboxBg,
+            Kind::Mode(Mode::Work) => Shade::ModeWorkBg,
             Kind::Mail => Shade::MailBg,
             Kind::Cache => Shade::CacheBg,
             Kind::Cost => Shade::CostBg,
@@ -105,7 +114,10 @@ impl Kind {
 
     fn fg(self) -> Shade {
         match self {
-            Kind::Mode => Shade::ModeFg,
+            Kind::Mode(Mode::Idle) => Shade::ModeIdleFg,
+            Kind::Mode(Mode::Nap) => Shade::ModeNapFg,
+            Kind::Mode(Mode::Inbox) => Shade::ModeInboxFg,
+            Kind::Mode(Mode::Work) => Shade::ModeWorkFg,
             Kind::Mail => Shade::MailFg,
             Kind::Store => Shade::StoreFg,
             Kind::Workers => Shade::WorkersFg,
@@ -117,7 +129,7 @@ impl Kind {
     }
 
     fn bold(self) -> bool {
-        matches!(self, Kind::Mode | Kind::Cost)
+        matches!(self, Kind::Mode(_) | Kind::Cost)
     }
 }
 
@@ -235,11 +247,12 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
     let Memory { msgs, tokens } = status.memory;
     let tok = tokens_label(u64::try_from(tokens).unwrap_or(u64::MAX));
     let unread = status.unread;
+    let current = mode(status);
     let mode = Segment::new(
         Side::Left,
-        Kind::Mode,
+        Kind::Mode(current),
         MODE_PRIORITY,
-        vec![MODE_LABEL.to_string()],
+        vec![current.label().to_string()],
     );
     let mail = (unread > 0).then(|| {
         Segment::new(
@@ -505,6 +518,7 @@ mod tests {
                 tokens: 4100,
             },
             turn: None,
+            napping: false,
         }
     }
 
@@ -589,7 +603,7 @@ mod tests {
     fn full_width_shows_every_segment_in_long_form() {
         let all = line(&with_turn(), 200);
         for part in [
-            "IDLE",
+            "INBOX",
             "📬 2 unread",
             ".ralph/chat",
             "workers GUZ-416 running, GUZ-417 question",
@@ -637,19 +651,19 @@ mod tests {
 
     #[test]
     fn layout_drops_the_store_then_workers_before_memory() {
-        let narrow = placed_texts(&status(), 26);
-        assert_eq!(narrow, ["IDLE", "📬 2", "132m ~4.1k"]);
-        let wide = placed_texts(&status(), 29);
-        assert_eq!(wide, ["IDLE", "📬 2", "2w", "132m ~4.1k"]);
+        let narrow = placed_texts(&status(), 27);
+        assert_eq!(narrow, ["INBOX", "📬 2", "132m ~4.1k"]);
+        let wide = placed_texts(&status(), 30);
+        assert_eq!(wide, ["INBOX", "📬 2", "2w", "132m ~4.1k"]);
     }
 
     #[test]
     fn layout_keeps_mail_then_mode_last() {
         let status = status();
-        assert_eq!(placed_texts(&status, 12), ["IDLE", "📬 2"]);
-        assert_eq!(placed_texts(&status, 11), ["IDLE"]);
-        assert_eq!(placed_texts(&status, 6), ["IDLE"]);
-        assert_eq!(placed_texts(&status, 0), ["IDLE"]);
+        assert_eq!(placed_texts(&status, 13), ["INBOX", "📬 2"]);
+        assert_eq!(placed_texts(&status, 12), ["INBOX"]);
+        assert_eq!(placed_texts(&status, 7), ["INBOX"]);
+        assert_eq!(placed_texts(&status, 0), ["INBOX"]);
     }
 
     #[test]
@@ -661,10 +675,10 @@ mod tests {
         for width in 0..200 {
             assert!(!line(&status, width).contains("📬"));
         }
-        assert!(line(&status, 200).starts_with(" IDLE "));
+        assert!(line(&status, 200).starts_with(" WORK "));
         assert_eq!(
             line(&status, 24).split_whitespace().collect::<Vec<_>>(),
-            ["IDLE", "132m", "~4.1k"]
+            ["WORK", "132m", "~4.1k"]
         );
     }
 
@@ -676,7 +690,7 @@ mod tests {
         };
         assert!(line(&status, 200).contains("📬 1 unread"));
         assert!(line(&status, 30).contains("📬 1"));
-        assert!(line(&status, 12).contains("📬 1"));
+        assert!(line(&status, 13).contains("📬 1"));
     }
 
     #[test]
@@ -719,7 +733,7 @@ mod tests {
             right,
             [Kind::Workers, Kind::Memory, Kind::Cache, Kind::Cost]
         );
-        assert_eq!(all[0].kind, Kind::Mode);
+        assert_eq!(all[0].kind, Kind::Mode(Mode::Inbox));
         assert_eq!(all[0].priority, 0);
     }
 
@@ -741,9 +755,9 @@ mod tests {
         assert_eq!(
             spans[0],
             Span {
-                text: " IDLE ".into(),
-                fg: Shade::ModeFg,
-                bg: Shade::ModeBg,
+                text: " INBOX ".into(),
+                fg: Shade::ModeInboxFg,
+                bg: Shade::ModeInboxBg,
                 bold: true
             }
         );
@@ -756,13 +770,16 @@ mod tests {
     fn powerline_arrow_blends_neighbouring_backgrounds() {
         let spans = bar(&status(), &context(), 80, Separator::Powerline);
         assert_eq!(spans[1].text, LEFT_ARROW);
-        assert_eq!((spans[1].fg, spans[1].bg), (Shade::ModeBg, Shade::MailBg));
+        assert_eq!(
+            (spans[1].fg, spans[1].bg),
+            (Shade::ModeInboxBg, Shade::MailBg)
+        );
     }
 
     #[test]
     fn bar_separator_puts_a_rule_between_segments() {
         let shown = text(&bar(&status(), &context(), 200, Separator::Bar));
-        assert!(shown.starts_with(" IDLE │ 📬 2 unread │ "));
+        assert!(shown.starts_with(" INBOX │ 📬 2 unread │ "));
     }
 
     #[test]

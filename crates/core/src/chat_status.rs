@@ -21,6 +21,12 @@ pub struct WorkerState {
     pub state: String,
 }
 
+impl WorkerState {
+    pub fn is_running(&self) -> bool {
+        self.state == DEFAULT_STATE || self.state == BUSY_STATE
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchState {
     pub id: String,
@@ -67,6 +73,7 @@ pub struct Status {
     pub watches: Vec<WatchState>,
     pub memory: Memory,
     pub turn: Option<TurnCache>,
+    pub napping: bool,
 }
 
 #[derive(Deserialize, Default)]

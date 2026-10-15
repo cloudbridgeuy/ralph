@@ -100,8 +100,8 @@ mod tests {
     fn paint_sets_background_foreground_and_weight() {
         let span = Span {
             text: " IDLE ".into(),
-            fg: Shade::ModeFg,
-            bg: Shade::ModeBg,
+            fg: Shade::ModeIdleFg,
+            bg: Shade::ModeIdleBg,
             bold: true,
         };
         assert_eq!(
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn theme_overrides_reach_the_painted_output() {
         let theme = StatusTheme {
-            colors: [("mode_bg".to_string(), "red".to_string())].into(),
+            colors: [("mode_inbox_bg".to_string(), "red".to_string())].into(),
         };
         let chat = ChatSection::default();
         let bar = StatusBar::new(&theme, Path::new("/s"), &chat, true);
@@ -125,7 +125,7 @@ mod tests {
         let shown = status_bar(false, false).line(&status(), 80);
         assert!(!shown.contains('\x1b'));
         assert!(!shown.ends_with(' '));
-        assert!(shown.starts_with(" IDLE │ 📬 1 unread │ .ralph/chat"));
+        assert!(shown.starts_with(" INBOX │ 📬 1 unread │ .ralph/chat"));
     }
 
     #[test]

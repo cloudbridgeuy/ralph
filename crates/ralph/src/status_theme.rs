@@ -4,9 +4,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
-const SLOTS: [(&str, Shade, Color); 13] = [
-    ("mode_fg", Shade::ModeFg, Color::Black),
-    ("mode_bg", Shade::ModeBg, Color::Green),
+const SLOTS: [(&str, Shade, Color); 19] = [
+    ("mode_idle_fg", Shade::ModeIdleFg, Color::Black),
+    ("mode_idle_bg", Shade::ModeIdleBg, Color::Green),
+    ("mode_nap_fg", Shade::ModeNapFg, Color::Black),
+    ("mode_nap_bg", Shade::ModeNapBg, Color::Magenta),
+    ("mode_inbox_fg", Shade::ModeInboxFg, Color::Black),
+    ("mode_inbox_bg", Shade::ModeInboxBg, Color::Yellow),
+    ("mode_work_fg", Shade::ModeWorkFg, Color::White),
+    ("mode_work_bg", Shade::ModeWorkBg, Color::Blue),
     ("mail_fg", Shade::MailFg, Color::Black),
     ("mail_bg", Shade::MailBg, Color::DarkGreen),
     ("store_fg", Shade::StoreFg, Color::Reset),
@@ -22,7 +28,7 @@ const SLOTS: [(&str, Shade, Color); 13] = [
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusColors {
-    colors: [(&'static str, Shade, Color); 13],
+    colors: [(&'static str, Shade, Color); 19],
 }
 
 impl Default for StatusColors {
@@ -84,10 +90,13 @@ mod tests {
         let (colors, warnings) = StatusTheme::default().resolve();
         assert!(warnings.is_empty());
         assert_eq!(colors, StatusColors::default());
-        assert_eq!(colors.color(Shade::ModeBg), Color::Green);
+        assert_eq!(colors.color(Shade::ModeIdleBg), Color::Green);
+        assert_eq!(colors.color(Shade::ModeNapBg), Color::Magenta);
+        assert_eq!(colors.color(Shade::ModeInboxBg), Color::Yellow);
+        assert_eq!(colors.color(Shade::ModeWorkBg), Color::Blue);
         assert_eq!(colors.color(Shade::MailBg), Color::DarkGreen);
         assert_eq!(colors.color(Shade::BaseBg), Color::AnsiValue(236));
-        assert_eq!(colors.color(Shade::ModeFg), Color::Black);
+        assert_eq!(colors.color(Shade::ModeIdleFg), Color::Black);
         assert_eq!(colors.color(Shade::StoreFg), Color::Reset);
     }
 
@@ -99,11 +108,29 @@ mod tests {
     }
 
     #[test]
+    fn mode_backgrounds_are_distinct_from_each_other_and_from_mail() {
+        let (colors, _) = StatusTheme::default().resolve();
+        let shades = [
+            Shade::ModeIdleBg,
+            Shade::ModeNapBg,
+            Shade::ModeInboxBg,
+            Shade::ModeWorkBg,
+            Shade::MailBg,
+        ];
+        for (at, shade) in shades.iter().enumerate() {
+            assert!(shades[..at]
+                .iter()
+                .all(|other| colors.color(*other) != colors.color(*shade)));
+        }
+    }
+
+    #[test]
     fn partial_table_overrides_only_the_given_keys() {
-        let (colors, warnings) = theme(&[("mode_bg", "#112233"), ("cost_fg", "white")]).resolve();
+        let (colors, warnings) =
+            theme(&[("mode_nap_bg", "#112233"), ("cost_fg", "white")]).resolve();
         assert!(warnings.is_empty());
         assert_eq!(
-            colors.color(Shade::ModeBg),
+            colors.color(Shade::ModeNapBg),
             Color::Rgb {
                 r: 0x11,
                 g: 0x22,
@@ -116,13 +143,13 @@ mod tests {
 
     #[test]
     fn bad_color_and_unknown_key_warn_and_keep_defaults() {
-        let (colors, warnings) = theme(&[("mode_bg", "nope"), ("branch_fg", "red")]).resolve();
+        let (colors, warnings) = theme(&[("mode_work_bg", "nope"), ("branch_fg", "red")]).resolve();
         assert_eq!(colors, StatusColors::default());
         assert_eq!(
             warnings,
             [
                 "[theme.status] unknown key \"branch_fg\"; ignored",
-                "[theme.status] mode_bg = \"nope\" is not a color; using the default"
+                "[theme.status] mode_work_bg = \"nope\" is not a color; using the default"
             ]
         );
     }

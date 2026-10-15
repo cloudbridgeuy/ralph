@@ -463,7 +463,7 @@ mod tests {
     #[test]
     fn theme_status_table_loads_and_reports_warnings() {
         let config: AppConfig = toml::from_str(
-            "[theme.status]\nmode_bg = \"#102030\"\ncost_bg = \"nope\"\nbranch_fg = \"red\"\n",
+            "[theme.status]\nmode_idle_bg = \"#102030\"\ncost_bg = \"nope\"\nbranch_fg = \"red\"\n",
         )
         .unwrap();
         assert_eq!(config.theme.status.colors.len(), 3);

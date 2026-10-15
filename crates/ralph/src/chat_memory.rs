@@ -93,11 +93,19 @@ impl Store {
 
     pub fn load_settled<W>(&self, on_wait: impl FnOnce() -> W) -> io::Result<(Vec<Entry>, Tree)> {
         let lock = self.open_lock()?;
-        if must_wait(lock.try_lock())? {
+        if must_wait(lock.try_lock_shared())? {
             let _waiting = on_wait();
-            lock.lock()?;
+            lock.lock_shared()?;
         }
         self.load()
+    }
+
+    /// Shared try-lock probe: reports true while any exclusive LOCK holder exists
+    /// (the nap, or an append), so another `ralph chat` on the same store mid-turn
+    /// also shows NAP.
+    pub fn napping(&self) -> bool {
+        self.open_lock()
+            .is_ok_and(|lock| matches!(lock.try_lock_shared(), Err(TryLockError::WouldBlock)))
     }
 
     pub fn append(&self, role: Role, text: &str) -> io::Result<()> {
@@ -219,6 +227,32 @@ mod tests {
         assert!(!must_wait(Ok(())).unwrap());
         assert!(must_wait(Err(TryLockError::WouldBlock)).unwrap());
         assert!(must_wait(Err(TryLockError::Error(io::Error::other("x")))).is_err());
+    }
+
+    #[test]
+    fn napping_is_true_only_while_the_lock_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        assert!(!store.napping());
+        let held = store.lock().unwrap();
+        assert!(store.napping());
+        drop(held);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while store.napping() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!store.napping());
+    }
+
+    #[test]
+    fn napping_probe_does_not_block_settled_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        let probe = store.open_lock().unwrap();
+        probe.lock_shared().unwrap();
+        let mut waited = false;
+        store.load_settled(|| waited = true).unwrap();
+        assert!(!waited);
     }
 
     #[test]
