@@ -1,4 +1,4 @@
-use super::SERVER_NAME;
+use super::{Report, ReportStatus, SERVER_NAME, WORKER_PROMPT};
 use crate::chat_memory::Trigger;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -53,6 +53,7 @@ pub struct SpawnRequest {
     pub worktree: PathBuf,
     pub exe: PathBuf,
     pub inbox: PathBuf,
+    pub task: String,
     pub at: u64,
 }
 
@@ -229,6 +230,26 @@ pub fn session_error(code: i32, message: &str) -> String {
         "cursor agent is not logged in; run `agent login` and spawn the worker again.".to_string()
     } else {
         format!("cursor agent could not start a session: {message}")
+    }
+}
+
+pub fn task_prompt(task: &str) -> String {
+    format!("{WORKER_PROMPT}\n\n{task}")
+}
+
+pub fn prompt_problem(stop_reason: &str) -> Option<String> {
+    match stop_reason {
+        "end_turn" => None,
+        other => Some(format!("the cursor agent ended its turn with `{other}`")),
+    }
+}
+
+pub fn prompt_failure_report(id: &str, at: &str, problem: &str) -> Report {
+    Report {
+        worker: id.to_string(),
+        at: at.to_string(),
+        status: ReportStatus::Blocked.as_str().to_string(),
+        text: format!("The cursor task prompt failed: {problem}."),
     }
 }
 
@@ -423,11 +444,34 @@ mod tests {
     }
 
     #[test]
+    fn task_prompt_is_the_worker_rules_then_the_task() {
+        let prompt = task_prompt("do it");
+        assert!(prompt.starts_with(WORKER_PROMPT));
+        assert!(prompt.ends_with("\n\ndo it"));
+    }
+
+    #[test]
+    fn only_end_turn_is_not_a_problem() {
+        assert_eq!(prompt_problem("end_turn"), None);
+        assert!(prompt_problem("refusal").unwrap().contains("refusal"));
+        assert!(prompt_problem("cancelled").is_some());
+    }
+
+    #[test]
+    fn prompt_failure_report_blocks_the_worker() {
+        let report = prompt_failure_report("A", "2026-01-01T00:00:00Z", "boom");
+        assert_eq!(report.worker, "A");
+        assert_eq!(report.status, "blocked");
+        assert!(report.text.contains("boom"));
+    }
+
+    #[test]
     fn spawn_request_round_trips_through_json() {
         let request = SpawnRequest {
             worktree: "/w".into(),
             exe: "/bin/ralph".into(),
             inbox: "/s/inbox".into(),
+            task: "do it".into(),
             at: 7,
         };
         let text = serde_json::to_string(&request).unwrap();

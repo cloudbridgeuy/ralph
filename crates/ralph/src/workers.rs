@@ -98,7 +98,7 @@ impl Workers {
                 opencode_command(id, task)
             }
             Harness::Cursor => {
-                self.spawn_cursor(id, &worktree)?;
+                self.spawn_cursor(id, &worktree, task)?;
                 let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
                 return Ok(format!(
                     "{started} It runs headless inside ralph chat (no tmux session)."
@@ -310,7 +310,7 @@ impl Workers {
         Ok(())
     }
 
-    fn spawn_cursor(&self, id: &str, worktree: &Path) -> io::Result<()> {
+    fn spawn_cursor(&self, id: &str, worktree: &Path, task: &str) -> io::Result<()> {
         let files = CursorFiles::new(&self.store_dir, id);
         for path in files.all() {
             clear_marker(path)?;
@@ -319,6 +319,7 @@ impl Workers {
             worktree: worktree.to_path_buf(),
             exe: self.exe.clone(),
             inbox: self.store_dir.join(INBOX_DIR),
+            task: task.to_string(),
             at: now_secs(),
         };
         write_file(

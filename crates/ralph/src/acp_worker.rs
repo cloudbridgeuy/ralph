@@ -1,18 +1,21 @@
 use crate::warn::warn;
 use crate::watches::Watches;
+use crate::worker_mcp::Inbox;
 use agent_client_protocol::schema::v1::{
-    InitializeRequest, McpServer, NewSessionRequest, RequestPermissionOutcome,
+    InitializeRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
     RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
 use futures::channel::oneshot;
 use futures::executor::block_on;
+use futures::future::Either;
 use ralph_core::worker::{
     acp_mcp_server, blocked_path, check_protocol, match_option, no_option_message,
-    permission_content, ready_path, request_stale, session_error, sweep_decision, version_warning,
-    BlockedContent, CursorFiles, OwnerFacts, OwnerRecord, SpawnRequest, Sweep, CURSOR_ANSWER_DIR,
-    CURSOR_CLOSE_DIR, CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
+    permission_content, prompt_failure_report, prompt_problem, ready_path, request_stale,
+    session_error, sweep_decision, task_prompt, version_warning, BlockedContent, CursorFiles,
+    OwnerFacts, OwnerRecord, SpawnRequest, Sweep, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_OWNER_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -159,6 +162,9 @@ impl AcpWorker {
         let (stop_tx, stop_rx) = oneshot::channel();
         worker.stop = Some(stop_tx);
         let cwd = request.worktree.clone();
+        let prompt = task_prompt(&request.task);
+        let inbox = Inbox::new(request.inbox.clone());
+        let worker_id = id.to_string();
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = ByteStreams::new(
@@ -189,9 +195,32 @@ impl AcpWorker {
                             .block_task()
                             .await;
                         match session {
-                            Ok(_) => {
+                            Ok(created) => {
                                 ready_tx.send(Ok(())).ok();
-                                stop_rx.await.ok();
+                                let sent = connection
+                                    .send_request(PromptRequest::new(
+                                        created.session_id,
+                                        vec![prompt.into()],
+                                    ))
+                                    .block_task();
+                                match futures::future::select(Box::pin(sent), stop_rx).await {
+                                    Either::Left((result, stop)) => {
+                                        let problem = match result {
+                                            Ok(done) => serde_json::to_value(done.stop_reason)
+                                                .ok()
+                                                .and_then(|v| v.as_str().and_then(prompt_problem)),
+                                            Err(e) => Some(e.message),
+                                        };
+                                        if let Some(problem) = problem {
+                                            let at = chrono::Utc::now().to_rfc3339();
+                                            let report =
+                                                prompt_failure_report(&worker_id, &at, &problem);
+                                            inbox.post(&report, 0).ok();
+                                        }
+                                        stop.await.ok();
+                                    }
+                                    Either::Right(_) => {}
+                                }
                             }
                             Err(e) => {
                                 ready_tx
