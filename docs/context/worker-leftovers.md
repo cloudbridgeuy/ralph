@@ -1,6 +1,6 @@
 # Worker leftovers
 
-A running list of things workers and smoke tests leave behind outside the repo. `close_worker` now removes both the transcript folder and the trust entry of the worker it closes, so closed Claude workers add nothing here. Cursor workers run `agent acp`, never `claude`, so they create neither and `close_worker` skips the cleanup for them. Workers append what they leave. Nobody deletes entries by hand.
+A running list of things workers and smoke tests leave behind outside the repo. `close_worker` now removes both the transcript folder and the trust entry of the worker it closes, so closed Claude workers add nothing here. Cursor workers run `agent acp`, never `claude`, so they leave `~/.cursor/projects/<slug>` (plus a hashed socket dir there when the path is long) and `~/.cursor/acp-sessions/<id>/` instead; `close_worker` removes those whose slug (of the worktree's real path) or `meta.json` `cwd` matches the worktree exactly, and lists each removed path in its result. Workers append what they leave. Nobody deletes entries by hand.
 
 Ralph itself never reads these transcript folders.
 
