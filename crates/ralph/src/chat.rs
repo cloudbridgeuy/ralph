@@ -38,7 +38,7 @@ use ralph_core::chat_status::{
     footer, last_turn_cache, latest_states, memory_size, orphan_hint, route_input, status_line,
     store_workers, worker_states, Memory, Route, RunningWorker, Status,
 };
-use ralph_core::inbox::Position;
+use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
     blocked_path, ready_path, unreported_path, waiting_path, Report, ATTACHMENTS_DIR, INBOX_DIR,
@@ -206,7 +206,7 @@ impl Monitor {
         locked(&self.status).clone()
     }
 
-    fn drain(&self, selection: Option<Position>) -> io::Result<Vec<Report>> {
+    fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
         let reports = self.inbox.drain(selection)?;
         locked(&self.seen).extend(latest_states(&reports));
         locked(&self.check).reports.extend(last_reports(&reports));
@@ -958,11 +958,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Route::ReadInbox(selection) => {
                 let reports = monitor.drain(selection)?;
                 monitor.refresh(true);
-                if reports.is_empty() {
-                    chat_inbox::nothing_to_read(selection);
+                let Some(unread) = chat_inbox::read(selection, &reports, &inbox_display(color))
+                else {
                     continue;
-                }
-                let unread = chat_inbox::show_unread(&reports, &inbox_display(color));
+                };
                 turn.run(Trigger::Worker, &unread.logged, &unread.message)?
             }
             Route::ListInbox => {

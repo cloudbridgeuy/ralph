@@ -1,4 +1,4 @@
-use crate::inbox::Position;
+use crate::inbox::{Position, Selection};
 use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
@@ -100,7 +100,7 @@ impl TurnCache {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Send(String),
-    ReadInbox(Option<Position>),
+    ReadInbox(Selection),
     ListInbox,
     PeekInbox(Position),
     DropInbox(Position),
@@ -121,19 +121,19 @@ pub fn route_input(line: &str, unread: usize) -> Route {
     let mut tokens = line.split_whitespace();
     if tokens.next() == Some(INBOX_COMMAND) {
         return match (tokens.next(), tokens.next(), tokens.next()) {
-            (None, ..) => Route::ReadInbox(None),
-            (Some("next"), None, _) => Route::ReadInbox(Some(Position::FIRST)),
+            (None, ..) => Route::ReadInbox(Selection::All),
+            (Some("next"), None, _) => Route::ReadInbox(Selection::Next),
             (Some("list"), None, _) => Route::ListInbox,
             (Some("peek"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
             (Some("drop"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::DropInbox),
             (Some(n), None, _) => n
                 .parse()
-                .map_or(Route::InboxUsage, |p| Route::ReadInbox(Some(p))),
+                .map_or(Route::InboxUsage, |p| Route::ReadInbox(Selection::At(p))),
             _ => Route::InboxUsage,
         };
     }
     match line {
-        "" if unread > 0 => Route::ReadInbox(None),
+        "" if unread > 0 => Route::ReadInbox(Selection::All),
         "" => Route::Ignore,
         message => Route::Send(message.to_string()),
     }
@@ -555,15 +555,15 @@ mod tests {
 
     #[test]
     fn route_input_decides_from_line_and_unread() {
-        assert_eq!(route_input(" /inbox ", 0), Route::ReadInbox(None));
-        assert_eq!(route_input("  ", 3), Route::ReadInbox(None));
+        assert_eq!(route_input(" /inbox ", 0), Route::ReadInbox(Selection::All));
+        assert_eq!(route_input("  ", 3), Route::ReadInbox(Selection::All));
         assert_eq!(
             route_input("/inbox next", 0),
-            Route::ReadInbox(Some(Position::FIRST))
+            Route::ReadInbox(Selection::Next)
         );
         assert_eq!(
             route_input("/inbox 2", 0),
-            Route::ReadInbox(Some("2".parse().unwrap()))
+            Route::ReadInbox(Selection::At("2".parse().unwrap()))
         );
         assert_eq!(route_input("", 0), Route::Ignore);
         assert_eq!(route_input(" hi ", 3), Route::Send("hi".into()));

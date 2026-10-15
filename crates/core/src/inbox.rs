@@ -1,4 +1,4 @@
-use crate::worker::Report;
+use crate::worker::{chat_message, Report};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -97,16 +97,48 @@ impl Ledger {
         self.entries.iter().map(|e| e.report.clone()).collect()
     }
 
-    pub fn take(&mut self, selection: Option<Position>) -> Vec<Report> {
-        match selection {
-            None => self.entries.drain(..).map(|e| e.report).collect(),
-            Some(position) => self
-                .remove(position)
-                .map(|e| e.report)
-                .into_iter()
-                .collect(),
-        }
+    pub fn take(&mut self, selection: Selection) -> Vec<Report> {
+        let position = match selection {
+            Selection::All => return self.entries.drain(..).map(|e| e.report).collect(),
+            Selection::Next => Position::FIRST,
+            Selection::At(position) => position,
+        };
+        self.remove(position)
+            .map(|e| e.report)
+            .into_iter()
+            .collect()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selection {
+    All,
+    Next,
+    At(Position),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadTurn {
+    pub logged: Vec<String>,
+    pub message: String,
+}
+
+pub fn unread_turn(selection: Selection, reports: &[Report]) -> Result<UnreadTurn, String> {
+    if reports.is_empty() {
+        return Err(match selection {
+            Selection::All | Selection::Next => "No unread reports.".to_string(),
+            Selection::At(position) => {
+                format!("No report {position}. /inbox list shows the queue.")
+            }
+        });
+    }
+    Ok(UnreadTurn {
+        logged: reports
+            .iter()
+            .map(|report| chat_message(std::slice::from_ref(report)))
+            .collect(),
+        message: chat_message(reports),
+    })
 }
 
 pub fn drop_log_line(entry: &Entry, now: DateTime<Utc>) -> String {
@@ -246,7 +278,11 @@ mod tests {
     fn take_none_empties_the_queue_and_new_arrivals_start_at_one() {
         let mut ledger = Ledger::default();
         ledger.ingest(vec![arrival("a"), arrival("b")]);
-        let texts: Vec<_> = ledger.take(None).into_iter().map(|r| r.text).collect();
+        let texts: Vec<_> = ledger
+            .take(Selection::All)
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
         assert_eq!(texts, ["a", "b"]);
         assert!(ledger.entries().is_empty());
         ledger.ingest(vec![arrival("c")]);
@@ -258,7 +294,7 @@ mod tests {
         let mut ledger = Ledger::default();
         ledger.ingest(vec![arrival("a"), arrival("b"), arrival("c")]);
         let texts: Vec<_> = ledger
-            .take(Some(pos(2)))
+            .take(Selection::At(pos(2)))
             .into_iter()
             .map(|r| r.text)
             .collect();
@@ -271,8 +307,42 @@ mod tests {
     fn take_missing_position_returns_nothing_and_keeps_the_queue() {
         let mut ledger = Ledger::default();
         ledger.ingest(vec![arrival("a")]);
-        assert!(ledger.take(Some(pos(2))).is_empty());
+        assert!(ledger.take(Selection::At(pos(2))).is_empty());
         assert_eq!(sources(&ledger), ["a"]);
+    }
+
+    #[test]
+    fn take_next_takes_the_oldest_and_tolerates_an_empty_ledger() {
+        let mut ledger = Ledger::default();
+        assert!(ledger.take(Selection::Next).is_empty());
+        ledger.ingest(vec![arrival("a"), arrival("b")]);
+        let texts: Vec<_> = ledger
+            .take(Selection::Next)
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(texts, ["a"]);
+        assert_eq!(sources(&ledger), ["b"]);
+    }
+
+    #[test]
+    fn unread_turn_of_nothing_names_the_selection() {
+        let err = |s| unread_turn(s, &[]).unwrap_err();
+        assert_eq!(err(Selection::All), "No unread reports.");
+        assert_eq!(err(Selection::Next), "No unread reports.");
+        assert_eq!(
+            err(Selection::At(pos(3))),
+            "No report 3. /inbox list shows the queue."
+        );
+    }
+
+    #[test]
+    fn unread_turn_logs_each_report_and_sends_them_together() {
+        let reports = vec![arrival("a").1, arrival("b").1];
+        let turn = unread_turn(Selection::All, &reports).unwrap();
+        assert_eq!(turn.logged.len(), 2);
+        assert_eq!(turn.logged[1], chat_message(&reports[1..]));
+        assert_eq!(turn.message, chat_message(&reports));
     }
 
     #[test]

@@ -4,8 +4,8 @@ use crate::markdown::MarkdownTheme;
 use crate::render::{render_markdown, RenderContext};
 use crate::worker_mcp::Inbox;
 use ralph_core::chat_status::INBOX_USAGE;
-use ralph_core::inbox::{self, Position};
-use ralph_core::worker::{chat_message, Report};
+use ralph_core::inbox::{self, Position, Selection, UnreadTurn};
+use ralph_core::worker::Report;
 use std::io;
 
 pub struct Display<'a> {
@@ -14,24 +14,20 @@ pub struct Display<'a> {
     pub color: bool,
 }
 
-pub struct UnreadTurn {
-    pub logged: Vec<String>,
-    pub message: String,
-}
-
-pub fn show_unread(reports: &[Report], display: &Display) -> UnreadTurn {
-    let logged = reports
-        .iter()
-        .map(|report| chat_message(std::slice::from_ref(report)))
-        .collect();
-    let shown: Vec<String> = reports
-        .iter()
-        .map(|report| render_report(report, display))
-        .collect();
-    print!("{}", shown.join("\n\n"));
-    UnreadTurn {
-        logged,
-        message: chat_message(reports),
+pub fn read(selection: Selection, reports: &[Report], display: &Display) -> Option<UnreadTurn> {
+    match inbox::unread_turn(selection, reports) {
+        Err(message) => {
+            println!("{message}");
+            None
+        }
+        Ok(turn) => {
+            let shown: Vec<String> = reports
+                .iter()
+                .map(|report| render_report(report, display))
+                .collect();
+            print!("{}", shown.join("\n\n"));
+            Some(turn)
+        }
     }
 }
 
@@ -55,13 +51,6 @@ pub fn drop_report(inbox: &Inbox, position: Position) -> io::Result<()> {
         None => println!("No report {position}. /inbox list shows the queue."),
     }
     Ok(())
-}
-
-pub fn nothing_to_read(selection: Option<Position>) {
-    match selection {
-        None => println!("No unread reports."),
-        Some(position) => println!("No report {position}. /inbox list shows the queue."),
-    }
 }
 
 pub fn usage() {

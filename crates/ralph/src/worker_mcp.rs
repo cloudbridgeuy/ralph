@@ -1,4 +1,4 @@
-use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position};
+use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     handle_request, inbox_file_name, reported_path, stop_block_output, stop_decision,
@@ -110,7 +110,7 @@ impl Inbox {
         self.sync(|ledger| (ledger.reports(), false))
     }
 
-    pub fn drain(&self, selection: Option<Position>) -> io::Result<Vec<Report>> {
+    pub fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
         self.sync(|ledger| {
             let reports = ledger.take(selection);
             let changed = !reports.is_empty();
@@ -320,7 +320,7 @@ mod tests {
         assert!(dir.path().join("reported").join("GUZ-1").exists());
 
         assert_eq!(inbox.peek().unwrap().len(), 1);
-        let reports = inbox.drain(None).unwrap();
+        let reports = inbox.drain(Selection::All).unwrap();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].worker, "GUZ-1");
         assert_eq!(reports[0].text, "hello");
@@ -340,7 +340,7 @@ mod tests {
             };
             inbox.post(&report, seq).unwrap();
         }
-        let taken = inbox.drain(Some("2".parse().unwrap())).unwrap();
+        let taken = inbox.drain(Selection::At("2".parse().unwrap())).unwrap();
         assert_eq!(taken[0].text, "two");
         assert_eq!(inbox.peek().unwrap().len(), 1);
     }
@@ -360,7 +360,7 @@ mod tests {
         };
         post("one", 1);
         post("two", 2);
-        assert_eq!(inbox.drain(None).unwrap().len(), 2);
+        assert_eq!(inbox.drain(Selection::All).unwrap().len(), 2);
         post("three", 3);
 
         let queued = inbox.peek().unwrap();
