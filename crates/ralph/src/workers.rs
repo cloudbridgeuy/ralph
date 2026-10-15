@@ -2,6 +2,7 @@ use crate::acp_worker::{caller_owns_cursor, now_secs, owned_cursor_ids, sweep_ow
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
+use crate::warn::warn_if_err;
 use ralph_core::chat_status::{active_sessions, store_workers, RunningWorker};
 use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
@@ -9,7 +10,7 @@ use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
     close_plan, exclude_lines, marker_paths, opencode_command, opencode_config,
     opencode_session_gone, opencode_session_id, opencode_worker_plugin, project_slug,
-    prompt_entry_name, resolve_worktree_dir, session_name, session_owner, spawn_handoff,
+    prompt_entry_name, resolve_worktree_dir, sent_path, session_name, session_owner, spawn_handoff,
     startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
     worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep, CursorFiles,
     Handoff, Harness, Owner, SpawnRequest, Startup, Sweep, TaggedSession, WorkerMarkers,
@@ -51,6 +52,11 @@ impl Workers {
     }
 
     pub fn spawn(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
+        let started = self.start(id, task, harness);
+        self.mark_sent(id, started)
+    }
+
+    fn start(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
         let repo = repo_root()?;
         let project = project_slug(&repo);
         self.refuse_busy_cursor(id, false)?;
@@ -140,7 +146,22 @@ impl Workers {
         })
     }
 
+    fn mark_sent(&self, id: &str, sent: io::Result<String>) -> io::Result<String> {
+        if sent.is_ok() {
+            warn_if_err(
+                write_file(&sent_path(&self.store_dir, id), ""),
+                format!("marking worker {id} as sent"),
+            );
+        }
+        sent
+    }
+
     pub fn reply(&self, id: &str, text: &str) -> io::Result<String> {
+        let delivered = self.deliver(id, text);
+        self.mark_sent(id, delivered)
+    }
+
+    fn deliver(&self, id: &str, text: &str) -> io::Result<String> {
         if CursorFiles::new(&self.store_dir, id).owner.exists() {
             if self.awaits_permission(id) {
                 return self.answer_permission(id, text);
@@ -181,7 +202,8 @@ impl Workers {
 
     pub fn nudge(&self, id: &str, text: &str) -> io::Result<String> {
         if CursorFiles::new(&self.store_dir, id).owner.exists() {
-            return self.queue_prompt(id, text, "Nudged");
+            let queued = self.queue_prompt(id, text, "Nudged");
+            return self.mark_sent(id, queued);
         }
         self.reply(id, text)
     }
@@ -801,5 +823,27 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
         assert_eq!(canonical_store(link), canonical_store(real));
+    }
+
+    fn workers_in(dir: &Path) -> Workers {
+        Workers::new(dir.to_path_buf(), "/bin/ralph".into(), "auto".into(), None)
+    }
+
+    #[test]
+    fn a_successful_send_writes_the_sent_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        let result = workers.mark_sent("A", Ok("delivered".to_string()));
+        assert_eq!(result.unwrap(), "delivered");
+        assert!(sent_path(&workers.store_dir, "A").exists());
+    }
+
+    #[test]
+    fn a_failed_send_writes_no_sent_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        let result = workers.mark_sent("A", Err(io::Error::other("no pane")));
+        assert_eq!(result.unwrap_err().to_string(), "no pane");
+        assert!(!sent_path(&workers.store_dir, "A").exists());
     }
 }

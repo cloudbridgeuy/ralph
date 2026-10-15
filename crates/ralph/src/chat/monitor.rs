@@ -18,7 +18,7 @@ use ralph_core::chat_status::{
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    blocked_path, ready_path, unreported_path, waiting_path, Report, READY_DIR,
+    blocked_path, ready_path, sent_path, unreported_path, waiting_path, Report, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -80,7 +80,8 @@ impl Monitor {
         let blocked = blocked_path(&self.store_dir, id).exists();
         let waiting = waiting_path(&self.store_dir, id).exists();
         let unreported = unreported_path(&self.store_dir, id).exists();
-        let reported = reported_since_nudge(state.reports.get(id), state.nudges.get(id));
+        let reported = !sent_path(&self.store_dir, id).exists()
+            && reported_since_nudge(state.reports.get(id), state.nudges.get(id));
         let pane = (!(worker.cursor || blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
             .flatten();
@@ -193,7 +194,12 @@ impl Monitor {
             }
             active.clone()
         };
-        let workers = worker_states(&running, &seen, active.as_ref());
+        let sent: HashSet<String> = running
+            .iter()
+            .filter(|worker| sent_path(&self.store_dir, &worker.id).exists())
+            .map(|worker| worker.id.clone())
+            .collect();
+        let workers = worker_states(&running, &seen, &sent, active.as_ref());
         let memory = if with_memory {
             self.measure_memory()
         } else {

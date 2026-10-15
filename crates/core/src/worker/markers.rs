@@ -1,4 +1,4 @@
-use super::{BLOCKED_DIR, READY_DIR, REPORTED_DIR, UNREPORTED_DIR, WAITING_DIR};
+use super::{BLOCKED_DIR, READY_DIR, REPORTED_DIR, SENT_DIR, UNREPORTED_DIR, WAITING_DIR};
 use std::path::{Path, PathBuf};
 
 pub fn ready_path(store: &Path, id: &str) -> PathBuf {
@@ -21,6 +21,10 @@ pub fn unreported_path(store: &Path, id: &str) -> PathBuf {
     store.join(UNREPORTED_DIR).join(id)
 }
 
+pub fn sent_path(store: &Path, id: &str) -> PathBuf {
+    store.join(SENT_DIR).join(id)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerMarkers {
     pub ready: PathBuf,
@@ -28,6 +32,7 @@ pub struct WorkerMarkers {
     pub blocked: PathBuf,
     pub waiting: PathBuf,
     pub unreported: PathBuf,
+    pub sent: PathBuf,
 }
 
 impl WorkerMarkers {
@@ -38,19 +43,21 @@ impl WorkerMarkers {
             blocked: blocked_path(store, id),
             waiting: waiting_path(store, id),
             unreported: unreported_path(store, id),
+            sent: sent_path(store, id),
         }
     }
 }
 
-pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 5] {
+pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 6] {
     let WorkerMarkers {
         ready,
         reported,
         blocked,
         waiting,
         unreported,
+        sent,
     } = WorkerMarkers::new(store, id);
-    [ready, reported, blocked, waiting, unreported]
+    [ready, reported, blocked, waiting, unreported, sent]
 }
 
 #[cfg(test)]
@@ -74,6 +81,11 @@ mod tests {
     }
 
     #[test]
+    fn sent_path_is_per_worker_in_the_store() {
+        assert_eq!(sent_path(Path::new("/s"), "A"), PathBuf::from("/s/sent/A"));
+    }
+
+    #[test]
     fn marker_paths_cover_every_marker_dir_for_the_worker() {
         assert_eq!(
             marker_paths(Path::new("/s"), "A"),
@@ -83,6 +95,7 @@ mod tests {
                 PathBuf::from("/s/blocked/A"),
                 PathBuf::from("/s/waiting/A"),
                 PathBuf::from("/s/unreported/A"),
+                PathBuf::from("/s/sent/A"),
             ]
         );
     }

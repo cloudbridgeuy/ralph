@@ -30,6 +30,7 @@ pub const BLOCKED_DIR: &str = "blocked";
 pub const WAITING_DIR: &str = "waiting";
 pub const ATTACHMENTS_DIR: &str = "attachments";
 pub const UNREPORTED_DIR: &str = "unreported";
+pub const SENT_DIR: &str = "sent";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-6.1-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const STORE_OPTION: &str = "@ralph_store";

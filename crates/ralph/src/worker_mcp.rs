@@ -1,7 +1,7 @@
 use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
-    accept_report, handle_request, inbox_file_name, reported_path, stop_block_output,
+    accept_report, handle_request, inbox_file_name, reported_path, sent_path, stop_block_output,
     stop_decision, unreported_path, Outcome, Report, StopDecision,
 };
 use serde_json::Value;
@@ -54,6 +54,7 @@ impl Inbox {
             fs::create_dir_all(dir)?;
         }
         fs::write(marker, "")?;
+        remove_if_present(&sent_path(store, worker))?;
         remove_if_present(&unreported_path(store, worker))
     }
 
@@ -401,5 +402,15 @@ mod tests {
         inbox.mark_reported("A").unwrap();
         assert!(!unreported.exists());
         assert!(reported_path(dir.path(), "A").exists());
+    }
+
+    #[test]
+    fn a_report_removes_the_sent_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let sent = sent_path(dir.path(), "A");
+        touch(&sent);
+        inbox.mark_reported("A").unwrap();
+        assert!(!sent.exists());
     }
 }

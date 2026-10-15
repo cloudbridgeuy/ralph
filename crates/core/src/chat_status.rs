@@ -1,7 +1,7 @@
 use crate::inbox::{Position, Selection};
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
-use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report};
+use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report, ReportStatus};
 use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -217,15 +217,27 @@ pub fn latest_states(reports: &[Report]) -> HashMap<String, String> {
 pub fn worker_states(
     workers: &[RunningWorker],
     seen: &HashMap<String, String>,
+    sent: &HashSet<String>,
     active: Option<&HashSet<String>>,
 ) -> Vec<WorkerState> {
     workers
         .iter()
         .map(|worker| WorkerState {
             id: worker.id.clone(),
-            state: worker_state(worker, seen.get(&worker.id), active),
+            state: worker_state(
+                worker,
+                seen.get(&worker.id)
+                    .filter(|status| !superseded(status, sent.contains(&worker.id))),
+                active,
+            ),
         })
         .collect()
+}
+
+fn superseded(status: &str, sent: bool) -> bool {
+    sent && ReportStatus::ALL
+        .iter()
+        .any(|reported| reported.as_str() == status)
 }
 
 fn worker_state(
@@ -502,7 +514,7 @@ mod tests {
                 text: "y".into(),
             },
         ];
-        let states = worker_states(&workers, &latest_states(&reports), None);
+        let states = worker_states(&workers, &latest_states(&reports), &HashSet::new(), None);
         assert_eq!(states[0].state, "running");
         assert_eq!(states[1].state, "done");
     }
@@ -520,7 +532,7 @@ mod tests {
             }]
         );
         let active = HashSet::from([opencode_session_id("GUZ-1")]);
-        let states = worker_states(&workers, &HashMap::new(), Some(&active));
+        let states = worker_states(&workers, &HashMap::new(), &HashSet::new(), Some(&active));
         assert_eq!(states[0].state, BUSY_STATE);
     }
 
@@ -579,7 +591,7 @@ mod tests {
         ]);
         let active = HashSet::from(["ses_ralphbusy".to_string(), "ses_ralphredo".to_string()]);
         let states = |active| -> Vec<String> {
-            worker_states(&workers, &seen, active)
+            worker_states(&workers, &seen, &HashSet::new(), active)
                 .into_iter()
                 .map(|worker| worker.state)
                 .collect()
@@ -592,6 +604,39 @@ mod tests {
             states(None),
             vec!["running", "running", "done", "done", "running"]
         );
+    }
+
+    #[test]
+    fn a_sent_message_drops_a_report_status_but_keeps_other_statuses() {
+        let worker = |id: &str, opencode| RunningWorker {
+            id: id.into(),
+            session: format!("ralph-p-{id}"),
+            opencode,
+            cursor: false,
+        };
+        let workers = [
+            worker("redone", false),
+            worker("quiet", false),
+            worker("checked", false),
+            worker("ask", false),
+            worker("busy", true),
+        ];
+        let seen = HashMap::from([
+            ("redone".to_string(), "done".to_string()),
+            ("quiet".to_string(), "done".to_string()),
+            ("checked".to_string(), "check".to_string()),
+            ("ask".to_string(), "question".to_string()),
+            ("busy".to_string(), "done".to_string()),
+        ]);
+        let sent: HashSet<String> = ["redone", "checked", "ask", "busy"]
+            .map(String::from)
+            .into();
+        let active = HashSet::from(["ses_ralphbusy".to_string()]);
+        let states: Vec<String> = worker_states(&workers, &seen, &sent, Some(&active))
+            .into_iter()
+            .map(|worker| worker.state)
+            .collect();
+        assert_eq!(states, vec!["running", "done", "check", "running", "busy"]);
     }
 
     #[test]
