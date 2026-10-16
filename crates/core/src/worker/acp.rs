@@ -392,7 +392,7 @@ impl PromptQueue {
 pub fn interrupt_reply(id: &str, running: bool) -> String {
     if running {
         format!(
-            "Interrupted worker {id}: its running turn was cancelled and this message runs next."
+            "Interrupted worker {id}: a turn was running; it is cancelled if still running, and this message runs next."
         )
     } else {
         format!("Sent to worker {id}: no turn was running, so nothing was cancelled.")
@@ -846,7 +846,7 @@ mod tests {
     fn interrupt_reply_says_cancelled_only_for_a_running_turn() {
         assert_eq!(
             interrupt_reply("GUZ-1", true),
-            "Interrupted worker GUZ-1: its running turn was cancelled and this message runs next."
+            "Interrupted worker GUZ-1: a turn was running; it is cancelled if still running, and this message runs next."
         );
         assert_eq!(
             interrupt_reply("GUZ-1", false),
