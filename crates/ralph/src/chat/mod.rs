@@ -30,6 +30,7 @@ use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::markdown::{MarkdownTheme, ThemeRole};
+use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, render_markdown, RenderContext};
 use crate::signal;
 use crate::warn::{warn, warn_if_err};
@@ -111,6 +112,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         chat_config.cell_output_limit,
         chat_config.cell_output_bytes,
     )?;
+    sweep_stale_server_records();
     let chat_socket = ChatSocket::bind(&store_dir)?;
     let socket_files = chat_socket.files().clone();
     let _socket_guard = SocketGuard(socket_files.clone());

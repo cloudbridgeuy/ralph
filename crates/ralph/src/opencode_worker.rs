@@ -1,16 +1,17 @@
-use crate::cursor_owner::write_file;
+use crate::cursor_owner::{process_start, write_file};
 use crate::warn::warn;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::HeadlessHost;
 use ralph_core::worker::{
     advance, basic_auth, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
-    reconcile, reconnect_delay, running_sessions, server_url, session_missing, session_update,
-    spawn_failure, start_failure, transient_request_error, turn_result, ApiData, Effect,
-    OpencodeFiles, OpencodeRecord, PermissionAsked, ServerEvent, ServerRecord, SessionMessage,
-    SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerMarkers, OPENCODE_OWNER_DIR,
-    OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
-    TRANSIENT_RETRIES,
+    reconcile, reconnect_delay, running_sessions, server_record_fate, server_record_pid,
+    server_record_usable, server_url, session_missing, session_update, spawn_failure,
+    start_failure, transient_request_error, turn_result, ApiData, Effect, OpencodeFiles,
+    OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord, ServerRecordFacts,
+    SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerMarkers,
+    OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
+    SILENCE_TIMEOUT, TRANSIENT_RETRIES,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -196,7 +197,8 @@ impl Server {
         };
         let ready = server
             .wait_healthy(closed)
-            .and_then(|()| write_record(&server.record, port, &password));
+            .and_then(|()| owner_record(port, &password))
+            .and_then(|record| write_record(&server.record, &record));
         match ready {
             Ok(()) => Ok(server),
             Err(message) => {
@@ -257,14 +259,21 @@ impl Server {
     }
 }
 
-fn write_record(path: &Path, port: u16, password: &str) -> Result<(), String> {
-    let record = ServerRecord {
+fn owner_record(port: u16, password: &str) -> Result<ServerRecord, String> {
+    let pid = std::process::id();
+    let start = process_start(pid).ok_or("could not read the chat start time")?;
+    Ok(ServerRecord {
         port,
         password: password.to_string(),
-    };
+        pid,
+        start,
+    })
+}
+
+fn write_record(path: &Path, record: &ServerRecord) -> Result<(), String> {
+    fs::remove_file(path).ok();
     OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
         .open(path)
@@ -273,12 +282,45 @@ fn write_record(path: &Path, port: u16, password: &str) -> Result<(), String> {
 }
 
 pub fn running_opencode_sessions() -> Option<HashSet<String>> {
-    let path = opencode_server_record_path(&std::env::temp_dir(), std::process::id());
-    let record = ServerRecord::parse(&fs::read_to_string(path).ok()?)?;
+    let pid = std::process::id();
+    let path = opencode_server_record_path(&std::env::temp_dir(), pid);
+    let record = ServerRecord::parse(&fs::read_to_string(&path).ok()?)?;
+    if !server_record_usable(&record, pid, process_start(pid).as_deref()) {
+        fs::remove_file(&path).ok();
+        return None;
+    }
     let body = Api::new(record.port, &record.password)
         .get(ACTIVE_PATH)
         .ok()?;
     running_sessions(&body).map(|running| running.into_iter().collect())
+}
+
+pub(crate) fn sweep_stale_server_records() {
+    let dir = std::env::temp_dir();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
+    let own_pid = std::process::id();
+    for name in entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+    {
+        let file_pid = server_record_pid(&name);
+        let path = dir.join(&name);
+        let record = file_pid
+            .and_then(|_| fs::read_to_string(&path).ok())
+            .and_then(|text| ServerRecord::parse(&text));
+        let start_now = file_pid.and_then(process_start);
+        let fate = server_record_fate(ServerRecordFacts {
+            file_pid,
+            own_pid,
+            record: record.as_ref(),
+            file_pid_start_now: start_now.as_deref(),
+        });
+        if fate == RecordFate::Delete {
+            fs::remove_file(&path).ok();
+        }
+    }
 }
 
 fn kill(signal: &str, target: &str) -> bool {
