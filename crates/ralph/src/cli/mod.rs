@@ -97,11 +97,8 @@ pub struct ChatMcpArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
 
-    #[arg(long, value_name = "MODE", default_value = crate::invoke::CHAT_DEFAULT_PERMISSION_MODE)]
-    pub permission_mode: String,
-
-    #[arg(long, value_name = "DIR")]
-    pub worktree_dir: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    pub socket: std::path::PathBuf,
 }
 
 #[derive(clap::Args, Debug)]

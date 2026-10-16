@@ -1,6 +1,6 @@
 use crate::chat::memory::Store;
 use crate::warn::warn;
-use ralph_core::chat::{mcp_config, select_servers, ChatMcpOptions};
+use ralph_core::chat::{mcp_config, select_servers};
 use ralph_core::chat_skills::{plan_links, plugin_manifest, ChatSkill};
 use std::io::{self};
 use std::path::{Path, PathBuf};
@@ -10,9 +10,9 @@ const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 pub(super) fn write_mcp_config(
     store: &Store,
     store_dir: &Path,
+    socket: &Path,
     exe: &Path,
     server_names: &[String],
-    options: &ChatMcpOptions,
 ) -> io::Result<PathBuf> {
     let claude_config = read_claude_config();
     let imported = select_servers(&claude_config, server_names);
@@ -21,7 +21,7 @@ pub(super) fn write_mcp_config(
             "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
         ));
     }
-    store.write_mcp_config(&mcp_config(exe, store_dir, options, &imported.servers))
+    store.write_mcp_config(&mcp_config(exe, store_dir, socket, &imported.servers))
 }
 
 pub(super) fn env_skills() -> Vec<PathBuf> {

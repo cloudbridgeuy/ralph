@@ -1,4 +1,5 @@
 use crate::acp_worker::CursorHost;
+use crate::chat::socket::SocketFiles;
 use crate::opencode_worker::OpencodeHost;
 use crate::watches::Watches;
 use std::path::PathBuf;
@@ -48,13 +49,15 @@ impl Drop for HeadlessShutdown {
 pub(crate) struct ExitCleanup {
     watches: Watches,
     hosts: Vec<Arc<dyn HeadlessHost>>,
+    socket: SocketFiles,
 }
 
 impl ExitCleanup {
-    pub(crate) fn new(watches: Watches, headless: &HeadlessShutdown) -> Self {
+    pub(crate) fn new(watches: Watches, headless: &HeadlessShutdown, socket: SocketFiles) -> Self {
         Self {
             watches,
             hosts: headless.hosts.clone(),
+            socket,
         }
     }
 
@@ -63,6 +66,7 @@ impl ExitCleanup {
         for host in &self.hosts {
             host.shutdown();
         }
+        self.socket.remove();
     }
 }
 

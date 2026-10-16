@@ -733,6 +733,37 @@ mod tests {
     }
 
     #[test]
+    fn worker_command_output_is_exactly_the_tmux_launch_vector() {
+        let args = worker_command(
+            Path::new("/s/workers/A.json"),
+            Path::new("/s/workers/A.settings.json"),
+            "auto",
+            Path::new("/s/attachments"),
+            "do it",
+        );
+        assert_eq!(
+            args,
+            vec![
+                "zsh".to_string(),
+                "-lic".to_string(),
+                r#"exec "$0" "$@""#.to_string(),
+                "claude".to_string(),
+                "--permission-mode".to_string(),
+                "auto".to_string(),
+                "--mcp-config".to_string(),
+                "/s/workers/A.json".to_string(),
+                "--settings".to_string(),
+                "/s/workers/A.settings.json".to_string(),
+                "--add-dir".to_string(),
+                "/s/attachments".to_string(),
+                "--append-system-prompt".to_string(),
+                WORKER_PROMPT.to_string(),
+                "do it".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn opencode_config_sets_model_and_worker_server() {
         let config = opencode_config(
             "openai/gpt-6.1-sol",

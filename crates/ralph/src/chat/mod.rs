@@ -8,6 +8,7 @@ mod monitor;
 mod prompt;
 mod route;
 mod skills;
+pub(crate) mod socket;
 mod statusbar;
 mod turn;
 mod watch;
@@ -22,6 +23,7 @@ use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
+use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::cli::ChatArgs;
@@ -37,7 +39,6 @@ use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
 use ralph_core::chat::{
     resolve_frozen_window, resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width,
-    ChatMcpOptions,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_memory::Trigger;
@@ -110,15 +111,15 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         chat_config.cell_output_limit,
         chat_config.cell_output_bytes,
     )?;
+    let chat_socket = ChatSocket::bind(&store_dir)?;
+    let socket_files = chat_socket.files().clone();
+    let _socket_guard = SocketGuard(socket_files.clone());
     let mcp_config_path = write_mcp_config(
         &store,
         &store_dir,
+        chat_socket.path(),
         &exe,
         &chat_config.mcp_servers,
-        &ChatMcpOptions {
-            permission_mode: &permission_mode,
-            worktree_dir: args.worktree_dir.as_deref(),
-        },
     )?;
     let skills = link_skills(usable_skills(resolve_skills(
         &SkillSources {
@@ -182,6 +183,15 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             unknown_focus: chat_config.inbox_alert_unknown_focus,
         },
     });
+    chat_socket.serve(
+        Store::new(store_dir.clone()),
+        Workers::new(
+            store_dir.clone(),
+            exe.clone(),
+            permission_mode.clone(),
+            args.worktree_dir.clone(),
+        ),
+    );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
     monitor.refresh(true);
@@ -196,7 +206,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     watch_input(
         Arc::clone(&at_prompt),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
-        ExitCleanup::new(monitor.watches.clone(), &headless),
+        ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );
     let mut editor = build_editor(&store_dir)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));

@@ -19,6 +19,7 @@ pub mod chat_cell;
 pub mod chat_input;
 pub mod chat_memory;
 pub mod chat_skills;
+pub mod chat_socket;
 pub mod chat_status;
 pub mod chunk;
 pub mod claude_leftovers;

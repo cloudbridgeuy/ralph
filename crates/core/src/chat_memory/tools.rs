@@ -1,7 +1,8 @@
 use super::tree::{recall, zoom};
 use super::{Entry, Node, Tree, RECALL_CAP_BYTES, SERVER_NAME};
+use crate::chat_socket::is_worker_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
-use crate::worker::{command_definitions, parse_command, Command};
+use crate::worker::command_definitions;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,8 +15,15 @@ pub enum Tool {
 pub enum Outcome {
     Silent,
     Respond(Value),
-    Call { id: Value, tool: Tool },
-    Command { id: Value, command: Command },
+    Call {
+        id: Value,
+        tool: Tool,
+    },
+    Worker {
+        id: Value,
+        name: String,
+        args: Value,
+    },
 }
 
 pub fn tool_definitions() -> Value {
@@ -65,13 +73,12 @@ pub fn handle_request(request: &Value) -> Outcome {
     match dispatch(SERVER_NAME, &tool_definitions(), request) {
         Dispatch::Silent => Outcome::Silent,
         Dispatch::Respond(v) => Outcome::Respond(v),
-        Dispatch::Call { id, name, args } => match parse_command(&name, &args) {
-            Some(Ok(command)) => Outcome::Command { id, command },
-            Some(Err(message)) => Outcome::Respond(tool_result(id, &message, true)),
-            None => match parse_tool_call(&name, &args) {
-                Ok(tool) => Outcome::Call { id, tool },
-                Err(message) => Outcome::Respond(tool_result(id, &message, true)),
-            },
+        Dispatch::Call { id, name, args } if is_worker_tool(&name) => {
+            Outcome::Worker { id, name, args }
+        }
+        Dispatch::Call { id, name, args } => match parse_tool_call(&name, &args) {
+            Ok(tool) => Outcome::Call { id, tool },
+            Err(message) => Outcome::Respond(tool_result(id, &message, true)),
         },
     }
 }
@@ -123,7 +130,7 @@ mod tests {
         match call(name, args) {
             Outcome::Call { id, tool } => finish_call(id, entries, tree, &tool),
             Outcome::Respond(v) => v,
-            Outcome::Silent | Outcome::Command { .. } => panic!("not a memory call"),
+            Outcome::Silent | Outcome::Worker { .. } => panic!("not a memory call"),
         }
     }
 
