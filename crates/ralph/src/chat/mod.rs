@@ -41,6 +41,7 @@ use ralph_core::chat::{
     ChatMcpOptions,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
+use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, Route, Status};
@@ -206,6 +207,16 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let (configured_editor, config_warning) = chat_config.editor_setting();
+    let (editor_cmd, editor_warning) = editor_argv(
+        configured_editor,
+        std::env::var("VISUAL").ok().as_deref(),
+        std::env::var("EDITOR").ok().as_deref(),
+    );
+    config_warning
+        .into_iter()
+        .chain(editor_warning)
+        .for_each(warn);
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
         color,
@@ -216,6 +227,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             color,
         ),
         notice: RefCell::new(None),
+        editor: editor_cmd,
     };
     let inbox_display = |color| Display {
         ctx: RenderContext::new(&agent_highlighter, color),

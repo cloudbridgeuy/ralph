@@ -176,6 +176,31 @@ pub struct ChatSection {
     pub inbox_alert_unknown_focus: UnknownFocus,
     #[serde(default)]
     pub status_powerline: bool,
+    #[serde(default)]
+    pub editor: Option<EditorSetting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EditorSetting {
+    Argv(Vec<String>),
+    Invalid(toml::Value),
+}
+
+impl ChatSection {
+    pub fn editor_setting(&self) -> (Option<&[String]>, Option<String>) {
+        match &self.editor {
+            Some(EditorSetting::Argv(argv)) => (Some(argv), None),
+            Some(EditorSetting::Invalid(_)) => (
+                None,
+                Some(
+                    "[chat] editor must be a list of strings; using $VISUAL, $EDITOR or vi"
+                        .to_string(),
+                ),
+            ),
+            None => (None, None),
+        }
+    }
 }
 
 fn default_true() -> bool {
@@ -204,6 +229,7 @@ impl Default for ChatSection {
             inbox_alert_notification: false,
             inbox_alert_unknown_focus: UnknownFocus::Alert,
             status_powerline: false,
+            editor: None,
         }
     }
 }
@@ -437,6 +463,39 @@ mod tests {
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.chat.wrap_width, Some(80));
         assert_eq!(AppConfig::new().chat.wrap_width, None);
+    }
+
+    #[test]
+    fn chat_section_parses_editor() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[chat]\neditor = [\"nvim\", \"-c\", \"startinsert\"]\n",
+        )
+        .unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        let argv = ["nvim", "-c", "startinsert"].map(String::from);
+        assert_eq!(config.chat.editor_setting(), (Some(&argv[..]), None));
+        assert_eq!(AppConfig::new().chat.editor_setting(), (None, None));
+    }
+
+    #[test]
+    fn chat_section_wrong_typed_editor_warns_and_keeps_other_keys() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        for editor in ["\"nvim\"", "[1]"] {
+            fs::write(
+                &path,
+                format!("[chat]\neditor = {editor}\nwrap_width = 80\n"),
+            )
+            .unwrap();
+            let config = AppConfig::load_from(&path).unwrap();
+            assert_eq!(config.chat.wrap_width, Some(80));
+            let (argv, warning) = config.chat.editor_setting();
+            assert_eq!(argv, None);
+            assert!(warning.is_some());
+        }
     }
 
     #[test]

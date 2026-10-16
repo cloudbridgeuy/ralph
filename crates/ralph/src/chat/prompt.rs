@@ -23,6 +23,7 @@ pub(super) struct ChatPrompt {
     pub(super) color: bool,
     pub(super) bar: StatusBar,
     pub(super) notice: RefCell<Option<String>>,
+    pub(super) editor: Vec<String>,
 }
 
 impl ChatPrompt {
@@ -95,9 +96,10 @@ pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Resu
                 *prompt.notice.borrow_mut() = paste_image(editor, &attachments)
             }
             Signal::HostCommand(command) if command == OPEN_EDITOR => {
-                *prompt.notice.borrow_mut() = edit_draft(editor, &prompt.monitor.store_dir)
-                    .err()
-                    .map(|error| format!("Editor failed: {error}"))
+                *prompt.notice.borrow_mut() =
+                    edit_draft(editor, &prompt.monitor.store_dir, &prompt.editor)
+                        .err()
+                        .map(|error| format!("Editor failed: {error}"))
             }
             _ => return Ok(None),
         }

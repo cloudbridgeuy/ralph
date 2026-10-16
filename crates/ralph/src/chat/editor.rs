@@ -78,7 +78,14 @@ pub(super) fn build_editor(store_dir: &Path) -> Result<Reedline, Box<dyn std::er
         .use_bracketed_paste(true))
 }
 
-pub(super) fn edit_draft(editor: &mut Reedline, store_dir: &Path) -> io::Result<()> {
+pub(super) fn edit_draft(
+    editor: &mut Reedline,
+    store_dir: &Path,
+    argv: &[String],
+) -> io::Result<()> {
+    let (program, args) = argv
+        .split_first()
+        .ok_or_else(|| io::Error::other("editor command is empty"))?;
     let (entries, _) = Store::new(store_dir.to_path_buf()).load()?;
     let reply = entries
         .iter()
@@ -90,11 +97,8 @@ pub(super) fn edit_draft(editor: &mut Reedline, store_dir: &Path) -> io::Result<
         &path,
         editor_prefill(reply, editor.current_buffer_contents()),
     )?;
-    let program = std::env::var("VISUAL")
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_string());
     let mut command = Command::new(program);
-    command.arg(&path);
+    command.args(args).arg(&path);
     default_sigttou_in(&mut command);
     let status = command.status()?;
     if !status.success() {
