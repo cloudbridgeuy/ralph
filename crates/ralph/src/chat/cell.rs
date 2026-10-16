@@ -122,7 +122,7 @@ fn spawn_capture(
     thread::spawn(move || capture(pipe, captured))
 }
 
-fn detach_from_terminal(command: &mut Command) {
+pub(crate) fn detach_from_terminal(command: &mut Command) {
     unsafe {
         command.pre_exec(|| {
             if libc::setsid() < 0 {

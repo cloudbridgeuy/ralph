@@ -11,7 +11,7 @@ use reedline::{
 };
 use std::borrow::Cow;
 use std::cell::RefCell;
-use std::io::{self};
+use std::io::{self, ErrorKind};
 use std::sync::Arc;
 
 const PROMPT: &str = ">>> ";
@@ -85,7 +85,7 @@ impl Prompt for ChatPrompt {
 pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Result<Option<Route>> {
     let attachments = prompt.monitor.store_dir.join(ATTACHMENTS_DIR);
     loop {
-        match editor.read_line(prompt)? {
+        match retry_interrupted(|| editor.read_line(prompt))? {
             Signal::Success(line) => {
                 prompt.notice.take();
                 return Ok(Some(route_input(&line, prompt.monitor.status().unread)));
@@ -95,5 +95,45 @@ pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Resu
             }
             _ => return Ok(None),
         }
+    }
+}
+
+/// Re-runs `read` while it fails with `Interrupted`, which a stop/`fg` resume raises.
+fn retry_interrupted<T>(mut read: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match read() {
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            outcome => return outcome,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retries_interrupted_until_success() {
+        let mut calls = 0;
+        let outcome = retry_interrupted(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(io::Error::from(ErrorKind::Interrupted))
+            } else {
+                Ok(calls)
+            }
+        });
+        assert_eq!(outcome.unwrap(), 3);
+    }
+
+    #[test]
+    fn returns_other_errors_immediately() {
+        let mut calls = 0;
+        let outcome: io::Result<()> = retry_interrupted(|| {
+            calls += 1;
+            Err(io::Error::from(ErrorKind::NotFound))
+        });
+        assert_eq!(outcome.unwrap_err().kind(), ErrorKind::NotFound);
+        assert_eq!(calls, 1);
     }
 }

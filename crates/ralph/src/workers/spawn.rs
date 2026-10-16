@@ -3,6 +3,7 @@ use super::{
     Workers,
 };
 use crate::acp_worker::AGENT_COMMAND;
+use crate::chat::cell::detach_from_terminal;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
 use ralph_core::worker::{
@@ -93,13 +94,16 @@ impl Workers {
             Harness::Claude => {
                 require_on_path("tmux")?;
                 require_on_path("zsh")?;
-                let found = Command::new("zsh")
+                // An interactive zsh takes over the terminal's foreground process
+                // group; a new session keeps ralph from being left in the background.
+                let mut check = Command::new("zsh");
+                check
                     .args(["-lic", "command -v claude"])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()?
-                    .success();
+                    .stderr(Stdio::null());
+                detach_from_terminal(&mut check);
+                let found = check.status()?.success();
                 if found {
                     Ok(())
                 } else {
