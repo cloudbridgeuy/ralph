@@ -1,5 +1,5 @@
 use super::{post_prompt, OpencodeHost, Session, Target};
-use crate::acp_worker::{now_secs, write_file};
+use crate::cursor_owner::{now_secs, write_file};
 use crate::warn::warn;
 use ralph_core::worker::{
     answer_decision, create_session_body, opencode_session_id, permission_reply_body,

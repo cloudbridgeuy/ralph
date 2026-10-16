@@ -2,8 +2,9 @@ use super::{
     branch_exists, check, clear_marker, exclude, git_value, locate_worktree, repo_root, run,
     Workers,
 };
-use crate::acp_worker::{now_secs, write_file, AGENT_COMMAND};
+use crate::acp_worker::AGENT_COMMAND;
 use crate::config::AppConfig;
+use crate::cursor_owner::{now_secs, write_file};
 use ralph_core::worker::{
     base_config_key, branch_name, claude_worker_settings, exclude_lines, marker_paths,
     opencode_config, project_slug, rollback_plan, rollback_report, session_name, spawn_handoff,

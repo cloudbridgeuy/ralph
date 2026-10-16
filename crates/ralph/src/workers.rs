@@ -1,9 +1,7 @@
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
-use crate::cursor_owner::{
-    caller_owns_cursor, now_secs, owned_cursor_ids, sweep_owner, write_file,
-};
+use crate::cursor_owner::{caller_owns_cursor, owned_cursor_ids, sweep_owner, write_file};
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
 use ralph_core::chat_status::{store_workers, RunningWorker};
