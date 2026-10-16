@@ -1,4 +1,5 @@
 use crate::ansi::{DIM, RESET};
+use crate::chat::editor::{edit_draft, OPEN_EDITOR};
 use crate::chat::monitor::Monitor;
 use crate::chat::statusbar::StatusBar;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
@@ -92,6 +93,11 @@ pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Resu
             }
             Signal::HostCommand(command) if command == PASTE_IMAGE => {
                 *prompt.notice.borrow_mut() = paste_image(editor, &attachments)
+            }
+            Signal::HostCommand(command) if command == OPEN_EDITOR => {
+                *prompt.notice.borrow_mut() = edit_draft(editor, &prompt.monitor.store_dir)
+                    .err()
+                    .map(|error| format!("Editor failed: {error}"))
             }
             _ => return Ok(None),
         }
