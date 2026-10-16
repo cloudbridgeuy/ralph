@@ -35,6 +35,7 @@ crossterm = { workspace = true }
 unicode-width = "0.2"
 unicode-linebreak = { workspace = true }
 toml = { workspace = true }
+ureq = { workspace = true }
 reedline = { workspace = true }
 
 [lints]

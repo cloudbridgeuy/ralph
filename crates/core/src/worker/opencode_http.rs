@@ -2,6 +2,12 @@ use super::{BlockedContent, PermissionOption};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+mod server;
+mod turns;
+
+pub use server::*;
+pub use turns::*;
+
 const FALLBACK_FAILURE: &str = "opencode turn failed";
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -26,8 +32,16 @@ pub fn parse_event(sse_line: &str) -> Option<ServerEvent> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnEnd {
     Succeeded,
-    Failed(String),
+    Failed { message: String, transient: bool },
     Interrupted,
+}
+
+pub fn turn_stop(end: &TurnEnd) -> Result<&str, &str> {
+    match end {
+        TurnEnd::Succeeded => Ok("end_turn"),
+        TurnEnd::Interrupted => Ok("cancelled"),
+        TurnEnd::Failed { message, .. } => Err(message),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -55,6 +69,11 @@ pub struct ApiError {
     #[serde(rename = "type")]
     pub kind: Option<String>,
     pub message: Option<String>,
+    pub status: Option<u16>,
+}
+
+fn is_transient(status: Option<u16>) -> bool {
+    matches!(status, Some(404 | 408 | 429 | 500..=599))
 }
 
 impl ApiError {
@@ -66,10 +85,15 @@ impl ApiError {
     }
 }
 
-fn failure_message(error: Option<ApiError>) -> String {
-    error
-        .map(|error| error.describe())
-        .unwrap_or_else(|| FALLBACK_FAILURE.to_string())
+fn failure(error: Option<ApiError>) -> TurnEnd {
+    TurnEnd::Failed {
+        transient: error
+            .as_ref()
+            .is_some_and(|error| is_transient(error.status)),
+        message: error
+            .map(|error| error.describe())
+            .unwrap_or_else(|| FALLBACK_FAILURE.to_string()),
+    }
 }
 
 pub fn session_update(event: &ServerEvent) -> Option<SessionUpdate> {
@@ -82,9 +106,7 @@ pub fn session_update(event: &ServerEvent) -> Option<SessionUpdate> {
                 .data
                 .get("error")
                 .and_then(|error| serde_json::from_value(error.clone()).ok());
-            Some(SessionUpdate::TurnEnded(TurnEnd::Failed(failure_message(
-                error,
-            ))))
+            Some(SessionUpdate::TurnEnded(failure(error)))
         }
         "permission.asked" => serde_json::from_value(event.data.clone())
             .ok()
@@ -199,13 +221,14 @@ fn turn_end(outcome: &str, turn: &[&SessionMessage]) -> TurnEnd {
     match outcome {
         "succeeded" => TurnEnd::Succeeded,
         "interrupted" => TurnEnd::Interrupted,
-        "failed" => TurnEnd::Failed(failure_message(turn.iter().find_map(
-            |message| match message {
-                SessionMessage::Assistant { error, .. } => error.clone(),
-                _ => None,
-            },
-        ))),
-        other => TurnEnd::Failed(format!("unknown opencode outcome: {other}")),
+        "failed" => failure(turn.iter().find_map(|message| match message {
+            SessionMessage::Assistant { error, .. } => error.clone(),
+            _ => None,
+        })),
+        other => TurnEnd::Failed {
+            message: format!("unknown opencode outcome: {other}"),
+            transient: false,
+        },
     }
 }
 
@@ -271,36 +294,64 @@ mod tests {
     use crate::worker::match_option;
 
     const SESSION: &str = "ses_ebb06fb5dffePK4O3B4WCKFy5g";
-    const PERMISSION_ID: &str = "per_144f90966001W6ctCffcyHF3La";
+
+    pub(super) const PERMISSION_ID: &str = "per_144f90966001W6ctCffcyHF3La";
+
     const STARTED: &str = r#"{"id":"evt_144f90510001tcl9eC2hYLiS5A","created":1792158532880,"type":"session.execution.started","data":{"sessionID":"ses_ebb06fb5dffePK4O3B4WCKFy5g"},"durable":{"aggregateID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","seq":2,"version":1}}"#;
+
     const SUCCEEDED: &str = r#"{"id":"evt_144f70aa6001gPnrN7oUY5oLif","created":1792158403238,"type":"session.execution.succeeded","data":{"sessionID":"ses_ralphguz581test0001"},"durable":{"aggregateID":"ses_ralphguz581test0001","seq":20,"version":1}}"#;
+
     const INTERRUPTED_USER: &str = r#"{"id":"evt_144f9d3f3002PV91BcsEi1g5Ga","created":1792158585843,"type":"session.execution.interrupted","data":{"sessionID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","reason":"user"},"durable":{"aggregateID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","seq":25,"version":1}}"#;
+
     const INTERRUPTED_SHUTDOWN: &str = r#"{"id":"evt_144f96924001JaCMQWLZT3Talc","created":1792158558500,"type":"session.execution.interrupted","data":{"sessionID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","reason":"shutdown"},"durable":{"aggregateID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","seq":13,"version":1}}"#;
+
     const ASKED: &str = r#"{"id":"evt_144f909660026JBJNG1DCSCCtm","created":1792158533990,"type":"permission.asked","location":{"directory":"/tmp/oc581/w"},"data":{"id":"per_144f90966001W6ctCffcyHF3La","sessionID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","action":"shell","resources":["touch made581.txt"],"save":["touch *"],"source":{"type":"tool","messageID":"msg_144f9051b001Ee1jNz3t6Jd7r0","id":"toolu_01RHicj7koJxfoHqi9Asz31u"}}}"#;
+
     const REPLIED: &str = r#"{"id":"evt_144f96920001k36iPL3Pf2iK2n","created":1792158558496,"type":"permission.replied","location":{"directory":"/tmp/oc581/w"},"data":{"sessionID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","requestID":"per_144f90966001W6ctCffcyHF3La","reply":"reject"}}"#;
+
     const IGNORED: &str = r#"{"id":"evt_144f90901001AaAc5p6CN2klgh","created":1792158533889,"type":"session.step.started","location":{"directory":"/tmp/oc581/w"},"data":{"sessionID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","agent":"build","model":{"id":"claude-haiku-4.5","providerID":"github-copilot","variant":"default"},"assistantMessageID":"msg_144f9051b001Ee1jNz3t6Jd7r0","started":1792158532895},"durable":{"aggregateID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","seq":6,"version":1}}"#;
+
     const PERMISSION_LIST: &str = r#"{"data":[{"id":"per_144f90966001W6ctCffcyHF3La","sessionID":"ses_ebb06fb5dffePK4O3B4WCKFy5g","action":"shell","resources":["touch made581.txt"],"save":["touch *"],"source":{"type":"tool","messageID":"msg_144f9051b001Ee1jNz3t6Jd7r0","id":"toolu_01RHicj7koJxfoHqi9Asz31u"}}]}"#;
-    const MESSAGES_OK: &str = r#"{"data":[{"id":"msg_144fa6fc6001pqJVuvucV8jwBr","type":"idle","outcome":"succeeded"},{"id":"msg_144fa6b6e0010I3ooSoYCCgDaB","type":"assistant","content":[{"type":"text","text":"DONE."}],"finish":"stop"},{"id":"msg_144fa63a1001y6GaFMDlT0tBvW","type":"assistant","content":[{"type":"text","text":"I'll call the ralph-worker report tool with the parameters you specified."},{"type":"tool","id":"toolu_01PCKXZNANSVSJkWySxuR2qf","name":"execute"}],"finish":"tool-calls"},{"id":"msg_144fa639e0013o9DVE725FraI5","metadata":{"notice":"instructions","instructionSources":["core/codemode"]},"type":"system","text":"The Code Mode tool catalog has changed. This catalog supersedes the previous Code Mode tool catalog.\n\n# Code Mode\n\nUse the `execute` tool to call the tools listed below. They cannot be called directly, and neither can `search`. Both only work inside code you pass to `execute`.\n\nThe catalog is partial. Inside `execute`, use `search(...)` to find a tool, then call it by the `path` in the result. `search` is synchronous. Call it without `await`; it does not return a Promise. Do not guess tool names.\n\n- search({\n  query?: string,\n  namespace?: string,\n  /** @integer @exclusiveMinimum 0 */\n  limit?: number,\n  /** @integer @minimum 0 */\n  offset?: number,\n}): {\n  items: Array<{\n      path: string,\n      description: string,\n      signature: string,\n    }>,\n  /** @integer @minimum 0 */\n  remaining: number,\n  next: {\n      /** @integer @minimum 0 */\n      offset: number,\n    } | null,\n}\n\n## Available tools\n\n- mcptools (85 tools, 7 shown)\n  - tools.mcptools.atlas_status(): Promise<{\n  format: string,\n  freshness?: string | null,\n  text: string,\n}> // Check Atlas readiness, structural freshness and optional enrichment before navigation. No model calls. Absent index r...\n  - tools.mcptools.jira_query_delete({\n  name: string,\n}): Promise<{\n  message: string,\n  status: string,\n}> // Delete a saved Jira query by name. Removes the query from ~/.config/mcptools/queries/\n  - tools.mcptools.jira_query_list(): Promise<{\n  queries: Array<string>,\n}> // List all saved Jira queries. Returns a list of query names stored in ~/.config/mcptools/queries/\n  - tools.mcptools.jira_query_load({\n  name: string,\n}): Promise<{\n  name: string,\n  query: string,\n}> // Load and display the contents of a saved Jira query. Returns the query name and the JQL query text.\n  - tools.mcptools.linear_auth_status(): Promise<{\n  email?: string | null,\n  id: string,\n  name: string,\n}> // Show the Linear viewer identity for LINEAR_API_KEY. Returns id, name, and email. Requires LINEAR_API_KEY environment ...\n  - tools.mcptools.ui_annotations_clear({\n  url?: string,\n}): Promise<{\n  /** @format uint64 @integer @minimum 0 */\n  cleared: number,\n}> // Clear all UI annotations from the dev server.\n  - tools.mcptools.ui_annotations_resolve({\n  id: string,\n  summary: string,\n  url?: string,\n}): Promise<{\n  id: string,\n  resolved: boolean,\n}> // Mark a UI annotation as resolved with a summary of the changes made.\n- opencode (8 tools) // Tools for managing OpenCode itself, such as working with sessions and worktrees, searching the available models, and reading MCP resources.\n  - tools.opencode.list_mcp_resources({\n  /** MCP server name as configured. Omit to list every server. */\n  server?: string,\n}): Promise<{\n  resources: Array<{\n      server: string,\n      name: string,\n      uri: string,\n      description?: string,\n      mimeType?: string,\n    }>,\n  templates: Array<{\n      server: string,\n      name: string,\n      uriTemplate: string,\n      description?: string,\n      mimeType?: string,\n    }>,\n}> // List documents, records, and other data exposed by MCP servers. Use this when the user refers to something that is no...\n  - tools.opencode.models({\n  /** Text to search for in model names and IDs. */\n  query?: string,\n  /** Provider ID or name to filter by. Try your own provider first. */\n  provider?: string,\n  /** Include older versions of each model family. By default only the newest version is listed. */\n  all?: boolean,\n  /** Maximum number of models to return. Defaults to 20. @integer @minimum 1 @maximum 100 */\n  limit?: number,\n  /** Number of models to skip, for paging through results. @integer @minimum 0 */\n  offset?: number,\n}): Promise<{\n  /** Matching models grouped by provider. Your own provider comes first. */\n  providers: Array<{\n      id: string,\n      name: string,\n      /** Newest first. */\n      models: Array<{\n          /** providerID/modelID */\n          id: string,\n          name: string,\n          /** Release date as a Unix timestamp in milliseconds, or 0 when unknown. */\n          released: number,\n          variants: Array<string>,\n          /** Pricing in USD per million tokens. */\n          cost: Array<{\n              tier?: {\n                type: \"context\",\n                /** @integer */\n                size: number,\n              },\n              input: number,\n              output: number,\n              cache: {\n                read: number,\n                write: number,\n              },\n            }>,\n          status: \"alpha\" | \"beta\" | \"deprecated\" | \"active\",\n        }>,\n    }>,\n  /** Number of matching models across all pages. @integer */\n  total: number,\n  /** Offset of the next page, or null on the last page. */\n  next: number | null,\n}> // Search the models available to use. Use this to turn a model name the user mentions into an exact reference before ru...\n  - tools.opencode.read_mcp_resource({\n  /** The server field of the discovered resource. */\n  server: string,\n  /** Exact resource URI from discovery, an expanded uriTemplate, or the user. */\n  uri: string,\n}): Promise<{\n  server: string,\n  uri: string,\n  contents: Array<{\n        type: \"text\",\n        uri: string,\n        text: string,\n        mimeType?: string,\n      } | {\n        type: \"blob\",\n        uri: string,\n        blob: string,\n        mimeType?: string,\n      }>,\n}> // Read one MCP resource by server and URI. Not for local files. Always return the full contents rather than slicing or ...\n  - tools.opencode.session_move({\n  /** Omit to move the current session. @pattern ^ses */\n  sessionID?: string,\n  /** Destination directory, relative to the target session's directory or absolute. Supports ~. @minLength 1 */\n  directory: string,\n}): Promise<{\n  /** @pattern ^ses */\n  sessionID: string,\n  directory: string,\n}> // Move a session to another directory, or omit sessionID to move the current session. The current session moves at the ...\n  - tools.opencode.session_rename({\n  /** Omit to rename the current session. @pattern ^ses */\n  sessionID?: string,\n  /** New session title. @minLength 1 */\n  title: string,\n}): Promise<{\n  /** @pattern ^ses */\n  sessionID: string,\n  title: string,\n}> // Rename a session, or omit sessionID to rename the current session. Use a short, specific title that summarizes the wo...\n  - tools.opencode.worktree_create({\n  name: string,\n}): Promise<{\n  directory: string,\n}> // Create a named worktree. Returns its directory.\n  - tools.opencode.worktree_list(): Promise<{\n  worktrees: Array<{\n      directory: string,\n      strategy?: string,\n    }>,\n}> // List a repository's worktrees.\n  - tools.opencode.worktree_remove({\n  /** Absolute path of the worktree to remove. @minLength 1 */\n  directory: string,\n  /** Discard modified and untracked files. Only set this when the user has confirmed forced removal. */\n  force?: boolean,\n}): Promise<{\n  directory: string,\n  removed: boolean,\n}> // Remove a worktree. The repository location selects configuration; directory identifies the worktree to remove.\n- playwright (25 tools, 7 shown)\n  - tools.playwright.browser_close(): Promise<unknown> // Close the page\n  - tools.playwright.browser_file_upload({\n  /**\n   * The absolute paths to the files to upload. Can be single file or multiple files. If omitted, file chooser is cancelled.\n   */\n  paths?: Array<string>,\n}): Promise<unknown> // Upload one or multiple files\n  - tools.playwright.browser_handle_dialog({\n  /** Whether to accept the dialog. */\n  accept: boolean,\n  /** The text of the prompt in case of a prompt dialog. */\n  promptText?: string,\n}): Promise<unknown> // Handle a dialog\n  - tools.playwright.browser_navigate({\n  /** The URL to navigate to */\n  url: string,\n}): Promise<unknown> // Navigate to a URL\n  - tools.playwright.browser_navigate_back(): Promise<unknown> // Go back to the previous page in the history\n  - tools.playwright.browser_press_key({\n  /** Name of the key to press or a character to generate, such as `ArrowLeft` or `a` */\n  key: string,\n}): Promise<unknown> // Press a key on the keyboard\n  - tools.playwright.browser_resize({\n  /** Width of the browser window */\n  width: number,\n  /** Height of the browser window */\n  height: number,\n}): Promise<unknown> // Resize the browser window\n- ralph-worker (1 tool)\n  - tools[\"ralph-worker\"].report({\n  /** done: task finished. blocked: you cannot go on. question: you need a decision. */\n  status: \"done\" | \"blocked\" | \"question\",\n  /** Full summary: what you did and what you found, or what blocks you, or what you need decided. */\n  text: string,\n}): Promise<unknown> // Send a message to the person who dispatched you. Call it at the end of every turn: when you finish, get blocked, or n...","description":"Instructions updated: core/codemode"},{"id":"msg_144fa5c68001776Ck54jVBMLVt","type":"assistant","content":[{"type":"text","text":"I'll call the ralph-worker report tool with the parameters you specified."},{"type":"tool","id":"toolu_01NppButZgLWQ7yPYoMP6Gmw","name":"shell"}],"finish":"tool-calls"},{"id":"msg_144fa597f001D8XmKnjlgleoYa","text":"Call the ralph-worker report tool with status done and text hello581. Then reply DONE.","type":"user"}]}"#;
+
+    pub(super) const MESSAGES_OK: &str = r#"{"data":[{"id":"msg_144fa6fc6001pqJVuvucV8jwBr","type":"idle","outcome":"succeeded"},{"id":"msg_144fa6b6e0010I3ooSoYCCgDaB","type":"assistant","content":[{"type":"text","text":"DONE."}],"finish":"stop"},{"id":"msg_144fa63a1001y6GaFMDlT0tBvW","type":"assistant","content":[{"type":"text","text":"I'll call the ralph-worker report tool with the parameters you specified."},{"type":"tool","id":"toolu_01PCKXZNANSVSJkWySxuR2qf","name":"execute"}],"finish":"tool-calls"},{"id":"msg_144fa639e0013o9DVE725FraI5","metadata":{"notice":"instructions","instructionSources":["core/codemode"]},"type":"system","text":"The Code Mode tool catalog has changed. This catalog supersedes the previous Code Mode tool catalog.\n\n# Code Mode\n\nUse the `execute` tool to call the tools listed below. They cannot be called directly, and neither can `search`. Both only work inside code you pass to `execute`.\n\nThe catalog is partial. Inside `execute`, use `search(...)` to find a tool, then call it by the `path` in the result. `search` is synchronous. Call it without `await`; it does not return a Promise. Do not guess tool names.\n\n- search({\n  query?: string,\n  namespace?: string,\n  /** @integer @exclusiveMinimum 0 */\n  limit?: number,\n  /** @integer @minimum 0 */\n  offset?: number,\n}): {\n  items: Array<{\n      path: string,\n      description: string,\n      signature: string,\n    }>,\n  /** @integer @minimum 0 */\n  remaining: number,\n  next: {\n      /** @integer @minimum 0 */\n      offset: number,\n    } | null,\n}\n\n## Available tools\n\n- mcptools (85 tools, 7 shown)\n  - tools.mcptools.atlas_status(): Promise<{\n  format: string,\n  freshness?: string | null,\n  text: string,\n}> // Check Atlas readiness, structural freshness and optional enrichment before navigation. No model calls. Absent index r...\n  - tools.mcptools.jira_query_delete({\n  name: string,\n}): Promise<{\n  message: string,\n  status: string,\n}> // Delete a saved Jira query by name. Removes the query from ~/.config/mcptools/queries/\n  - tools.mcptools.jira_query_list(): Promise<{\n  queries: Array<string>,\n}> // List all saved Jira queries. Returns a list of query names stored in ~/.config/mcptools/queries/\n  - tools.mcptools.jira_query_load({\n  name: string,\n}): Promise<{\n  name: string,\n  query: string,\n}> // Load and display the contents of a saved Jira query. Returns the query name and the JQL query text.\n  - tools.mcptools.linear_auth_status(): Promise<{\n  email?: string | null,\n  id: string,\n  name: string,\n}> // Show the Linear viewer identity for LINEAR_API_KEY. Returns id, name, and email. Requires LINEAR_API_KEY environment ...\n  - tools.mcptools.ui_annotations_clear({\n  url?: string,\n}): Promise<{\n  /** @format uint64 @integer @minimum 0 */\n  cleared: number,\n}> // Clear all UI annotations from the dev server.\n  - tools.mcptools.ui_annotations_resolve({\n  id: string,\n  summary: string,\n  url?: string,\n}): Promise<{\n  id: string,\n  resolved: boolean,\n}> // Mark a UI annotation as resolved with a summary of the changes made.\n- opencode (8 tools) // Tools for managing OpenCode itself, such as working with sessions and worktrees, searching the available models, and reading MCP resources.\n  - tools.opencode.list_mcp_resources({\n  /** MCP server name as configured. Omit to list every server. */\n  server?: string,\n}): Promise<{\n  resources: Array<{\n      server: string,\n      name: string,\n      uri: string,\n      description?: string,\n      mimeType?: string,\n    }>,\n  templates: Array<{\n      server: string,\n      name: string,\n      uriTemplate: string,\n      description?: string,\n      mimeType?: string,\n    }>,\n}> // List documents, records, and other data exposed by MCP servers. Use this when the user refers to something that is no...\n  - tools.opencode.models({\n  /** Text to search for in model names and IDs. */\n  query?: string,\n  /** Provider ID or name to filter by. Try your own provider first. */\n  provider?: string,\n  /** Include older versions of each model family. By default only the newest version is listed. */\n  all?: boolean,\n  /** Maximum number of models to return. Defaults to 20. @integer @minimum 1 @maximum 100 */\n  limit?: number,\n  /** Number of models to skip, for paging through results. @integer @minimum 0 */\n  offset?: number,\n}): Promise<{\n  /** Matching models grouped by provider. Your own provider comes first. */\n  providers: Array<{\n      id: string,\n      name: string,\n      /** Newest first. */\n      models: Array<{\n          /** providerID/modelID */\n          id: string,\n          name: string,\n          /** Release date as a Unix timestamp in milliseconds, or 0 when unknown. */\n          released: number,\n          variants: Array<string>,\n          /** Pricing in USD per million tokens. */\n          cost: Array<{\n              tier?: {\n                type: \"context\",\n                /** @integer */\n                size: number,\n              },\n              input: number,\n              output: number,\n              cache: {\n                read: number,\n                write: number,\n              },\n            }>,\n          status: \"alpha\" | \"beta\" | \"deprecated\" | \"active\",\n        }>,\n    }>,\n  /** Number of matching models across all pages. @integer */\n  total: number,\n  /** Offset of the next page, or null on the last page. */\n  next: number | null,\n}> // Search the models available to use. Use this to turn a model name the user mentions into an exact reference before ru...\n  - tools.opencode.read_mcp_resource({\n  /** The server field of the discovered resource. */\n  server: string,\n  /** Exact resource URI from discovery, an expanded uriTemplate, or the user. */\n  uri: string,\n}): Promise<{\n  server: string,\n  uri: string,\n  contents: Array<{\n        type: \"text\",\n        uri: string,\n        text: string,\n        mimeType?: string,\n      } | {\n        type: \"blob\",\n        uri: string,\n        blob: string,\n        mimeType?: string,\n      }>,\n}> // Read one MCP resource by server and URI. Not for local files. Always return the full contents rather than slicing or ...\n  - tools.opencode.session_move({\n  /** Omit to move the current session. @pattern ^ses */\n  sessionID?: string,\n  /** Destination directory, relative to the target session's directory or absolute. Supports ~. @minLength 1 */\n  directory: string,\n}): Promise<{\n  /** @pattern ^ses */\n  sessionID: string,\n  directory: string,\n}> // Move a session to another directory, or omit sessionID to move the current session. The current session moves at the ...\n  - tools.opencode.session_rename({\n  /** Omit to rename the current session. @pattern ^ses */\n  sessionID?: string,\n  /** New session title. @minLength 1 */\n  title: string,\n}): Promise<{\n  /** @pattern ^ses */\n  sessionID: string,\n  title: string,\n}> // Rename a session, or omit sessionID to rename the current session. Use a short, specific title that summarizes the wo...\n  - tools.opencode.worktree_create({\n  name: string,\n}): Promise<{\n  directory: string,\n}> // Create a named worktree. Returns its directory.\n  - tools.opencode.worktree_list(): Promise<{\n  worktrees: Array<{\n      directory: string,\n      strategy?: string,\n    }>,\n}> // List a repository's worktrees.\n  - tools.opencode.worktree_remove({\n  /** Absolute path of the worktree to remove. @minLength 1 */\n  directory: string,\n  /** Discard modified and untracked files. Only set this when the user has confirmed forced removal. */\n  force?: boolean,\n}): Promise<{\n  directory: string,\n  removed: boolean,\n}> // Remove a worktree. The repository location selects configuration; directory identifies the worktree to remove.\n- playwright (25 tools, 7 shown)\n  - tools.playwright.browser_close(): Promise<unknown> // Close the page\n  - tools.playwright.browser_file_upload({\n  /**\n   * The absolute paths to the files to upload. Can be single file or multiple files. If omitted, file chooser is cancelled.\n   */\n  paths?: Array<string>,\n}): Promise<unknown> // Upload one or multiple files\n  - tools.playwright.browser_handle_dialog({\n  /** Whether to accept the dialog. */\n  accept: boolean,\n  /** The text of the prompt in case of a prompt dialog. */\n  promptText?: string,\n}): Promise<unknown> // Handle a dialog\n  - tools.playwright.browser_navigate({\n  /** The URL to navigate to */\n  url: string,\n}): Promise<unknown> // Navigate to a URL\n  - tools.playwright.browser_navigate_back(): Promise<unknown> // Go back to the previous page in the history\n  - tools.playwright.browser_press_key({\n  /** Name of the key to press or a character to generate, such as `ArrowLeft` or `a` */\n  key: string,\n}): Promise<unknown> // Press a key on the keyboard\n  - tools.playwright.browser_resize({\n  /** Width of the browser window */\n  width: number,\n  /** Height of the browser window */\n  height: number,\n}): Promise<unknown> // Resize the browser window\n- ralph-worker (1 tool)\n  - tools[\"ralph-worker\"].report({\n  /** done: task finished. blocked: you cannot go on. question: you need a decision. */\n  status: \"done\" | \"blocked\" | \"question\",\n  /** Full summary: what you did and what you found, or what blocks you, or what you need decided. */\n  text: string,\n}): Promise<unknown> // Send a message to the person who dispatched you. Call it at the end of every turn: when you finish, get blocked, or n...","description":"Instructions updated: core/codemode"},{"id":"msg_144fa5c68001776Ck54jVBMLVt","type":"assistant","content":[{"type":"text","text":"I'll call the ralph-worker report tool with the parameters you specified."},{"type":"tool","id":"toolu_01NppButZgLWQ7yPYoMP6Gmw","name":"shell"}],"finish":"tool-calls"},{"id":"msg_144fa597f001D8XmKnjlgleoYa","text":"Call the ralph-worker report tool with status done and text hello581. Then reply DONE.","type":"user"}]}"#;
+
     const MESSAGES_INTERRUPTED: &str = r#"{"data":[{"id":"msg_144faee7b002PYDfKHvDC9Lm9p","type":"idle","outcome":"interrupted"},{"id":"msg_144fad697001mKCOIdt1BoQd0n","type":"assistant","content":[{"type":"tool","id":"toolu_01YbdNV7KVpuVgentiDLcHSY","name":"shell"}],"finish":"error","error":{"type":"aborted","message":"Step interrupted"}},{"id":"msg_144fad68e0014YEI5YyiJQYgY5","text":"Run `sleep 20` with your bash tool then reply DONE","type":"user"},{"id":"msg_144f9d3f3002PV91BcsEi1g5Ga","type":"idle","outcome":"interrupted"},{"id":"msg_144f998730016gxer0mIkK2tj6","type":"assistant","content":[{"type":"tool","id":"toolu_01Gpo3EhxgGcfJQSkmkzEWes","name":"shell"}],"finish":"error","error":{"type":"aborted","message":"Step interrupted"}},{"id":"msg_144f99866001PnvZpj7zrtXHBb","text":"Run the shell command `sleep 30 && touch late581.txt` with your bash tool, then reply DONE","type":"user"},{"id":"msg_144f9051b001Ee1jNz3t6Jd7r0","type":"assistant","content":[{"type":"tool","id":"toolu_01RHicj7koJxfoHqi9Asz31u","name":"shell"}],"finish":"error","error":{"type":"aborted","message":"Step interrupted"}},{"id":"msg_144f9050e00172FEtoa181cb7f","text":"Run the shell command `touch made581.txt` with your bash tool, then reply with exactly: DONE","type":"user"}]}"#;
+
     const FAILED_AUTH_2023: &str = r#"{"id":"evt_14156a74f0016bXIBSjFoIkf0E","created":1792097560399,"type":"session.execution.failed","data":{"sessionID":"ses_ebea95bf2ffel2McK50uE4e7nB","error":{"type":"provider.auth","message":"OAuth access token is invalid.","status":401}}}"#;
+
     const FAILED_NO_MESSAGE_2023: &str = r#"{"id":"evt_1","type":"session.execution.failed","data":{"sessionID":"ses_x","error":{"type":"provider.auth"}}}"#;
+
     const FAILED_NO_ERROR_2023: &str =
         r#"{"id":"evt_2","type":"session.execution.failed","data":{"sessionID":"ses_x"}}"#;
+
     const MESSAGES_AUTH_2023: &str = r#"{"data":[{"id":"msg_a","type":"idle","outcome":"failed"},{"id":"msg_b","type":"assistant","content":[],"finish":"error","error":{"type":"provider.auth","message":"OAuth access token is invalid.","status":401}},{"id":"msg_c","text":"Run","type":"user"}],"cursor":{}}"#;
+
     const MESSAGES_NO_ROUTE_2023: &str = r#"{"data":[{"id":"msg_a","type":"idle","outcome":"failed"},{"id":"msg_c","text":"Run","type":"user"}],"cursor":{}}"#;
+
     const MESSAGES_RUNNING: &str = r#"{"data":[{"id":"msg_5","type":"assistant","content":[{"type":"text","text":"working"}]},{"id":"msg_4","text":"go","type":"user"},{"id":"msg_1","type":"idle","outcome":"succeeded"}],"cursor":{}}"#;
+
+    const FAILED_404: &str = r#"{"id":"evt_3","type":"session.execution.failed","data":{"sessionID":"ses_x","error":{"type":"provider.http","message":"Not Found","status":404}}}"#;
+
+    const MESSAGES_503: &str = r#"{"data":[{"id":"msg_a","type":"idle","outcome":"failed"},{"id":"msg_b","type":"assistant","content":[],"finish":"error","error":{"type":"provider.http","message":"Service Unavailable","status":503}},{"id":"msg_c","text":"Run","type":"user"}]}"#;
+
+    pub(super) fn failed_end(message: &str, transient: bool) -> TurnEnd {
+        TurnEnd::Failed {
+            message: message.to_string(),
+            transient,
+        }
+    }
 
     fn event(line: &str) -> ServerEvent {
         parse_event(&format!("data: {line}")).unwrap()
     }
 
-    fn messages(body: &str) -> Vec<SessionMessage> {
+    pub(super) fn messages(body: &str) -> Vec<SessionMessage> {
         serde_json::from_str::<ApiData<Vec<SessionMessage>>>(body)
             .unwrap()
             .data
     }
 
-    fn asked() -> PermissionAsked {
+    pub(super) fn asked() -> PermissionAsked {
         match session_update(&event(ASKED)) {
             Some(SessionUpdate::Blocked(asked)) => asked,
             other => panic!("expected Blocked, got {other:?}"),
@@ -352,7 +403,7 @@ mod tests {
     #[test]
     fn session_update_failed_prefers_message_then_type_then_fallback() {
         let failed = |line| match session_update(&event(line)) {
-            Some(SessionUpdate::TurnEnded(TurnEnd::Failed(message))) => message,
+            Some(SessionUpdate::TurnEnded(TurnEnd::Failed { message, .. })) => message,
             other => panic!("expected Failed, got {other:?}"),
         };
         assert_eq!(failed(FAILED_AUTH_2023), "OAuth access token is invalid.");
@@ -474,6 +525,7 @@ mod tests {
                 error: Some(ApiError {
                     kind: Some("provider.auth".to_string()),
                     message: None,
+                    status: None,
                 }),
             },
             SessionMessage::User,
@@ -515,13 +567,13 @@ mod tests {
             turn_result(&messages(MESSAGES_AUTH_2023), false)
                 .unwrap()
                 .end,
-            TurnEnd::Failed("OAuth access token is invalid.".to_string())
+            failed_end("OAuth access token is invalid.", false)
         );
         assert_eq!(
             turn_result(&messages(MESSAGES_NO_ROUTE_2023), false)
                 .unwrap()
                 .end,
-            TurnEnd::Failed(FALLBACK_FAILURE.to_string())
+            failed_end(FALLBACK_FAILURE, false)
         );
     }
 
@@ -532,7 +584,7 @@ mod tests {
         }];
         assert_eq!(
             turn_result(&odd, false).unwrap().end,
-            TurnEnd::Failed("unknown opencode outcome: paused".to_string())
+            failed_end("unknown opencode outcome: paused", false)
         );
     }
 
@@ -578,5 +630,57 @@ mod tests {
         for bad in ["gpt", "/gpt", "openai/", ""] {
             assert!(create_session_body("/w", bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn failed_events_are_transient_by_status() {
+        let transient = |status: u16| {
+            let line = format!(
+                r#"{{"id":"e","type":"session.execution.failed","data":{{"sessionID":"s","error":{{"type":"provider.http","message":"m","status":{status}}}}}}}"#
+            );
+            match session_update(&event(&line)) {
+                Some(SessionUpdate::TurnEnded(TurnEnd::Failed { transient, .. })) => transient,
+                other => panic!("expected Failed, got {other:?}"),
+            }
+        };
+        for status in [404, 408, 429, 500, 503, 599] {
+            assert!(transient(status), "{status}");
+        }
+        for status in [400, 401, 403, 422] {
+            assert!(!transient(status), "{status}");
+        }
+        assert_eq!(
+            session_update(&event(FAILED_404)),
+            Some(SessionUpdate::TurnEnded(failed_end("Not Found", true)))
+        );
+        assert_eq!(
+            session_update(&event(FAILED_AUTH_2023)),
+            Some(SessionUpdate::TurnEnded(failed_end(
+                "OAuth access token is invalid.",
+                false
+            )))
+        );
+        assert_eq!(
+            session_update(&event(FAILED_NO_ERROR_2023)),
+            Some(SessionUpdate::TurnEnded(failed_end(
+                FALLBACK_FAILURE,
+                false
+            )))
+        );
+    }
+
+    #[test]
+    fn turn_result_failed_carries_transient_from_the_assistant_error() {
+        assert_eq!(
+            turn_result(&messages(MESSAGES_503), false).unwrap().end,
+            failed_end("Service Unavailable", true)
+        );
+    }
+
+    #[test]
+    fn turn_stop_feeds_turn_outcome() {
+        assert_eq!(turn_stop(&TurnEnd::Succeeded), Ok("end_turn"));
+        assert_eq!(turn_stop(&TurnEnd::Interrupted), Ok("cancelled"));
+        assert_eq!(turn_stop(&failed_end("boom", true)), Err("boom"));
     }
 }

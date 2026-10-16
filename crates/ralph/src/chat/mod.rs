@@ -29,6 +29,7 @@ use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::markdown::{MarkdownTheme, ThemeRole};
+use crate::opencode_worker::OpencodeShutdown;
 use crate::render::{cap_wrap_width, render_markdown, RenderContext};
 use crate::signal;
 use crate::warn::{warn, warn_if_err};
@@ -193,10 +194,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let cursor = CursorShutdown::start(monitor.store_dir.clone());
+    let opencode = OpencodeShutdown::start(monitor.store_dir.clone());
     watch_input(
         Arc::clone(&at_prompt),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
-        ExitCleanup::new(monitor.watches.clone(), &cursor),
+        ExitCleanup::new(monitor.watches.clone(), &cursor, &opencode),
     );
     let mut editor = build_editor(&store_dir)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));

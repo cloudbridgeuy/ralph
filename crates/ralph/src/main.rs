@@ -23,6 +23,7 @@ mod inbox_alert;
 mod invoke;
 pub mod markdown;
 mod mermaid_guard;
+mod opencode_worker;
 pub mod paths;
 pub mod prompt_source;
 pub mod render;

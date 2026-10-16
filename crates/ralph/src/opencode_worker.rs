@@ -1,0 +1,764 @@
+use crate::acp_worker::write_file;
+use crate::warn::warn;
+use crate::worker_mcp::Inbox;
+use ralph_core::worker::{
+    advance, basic_auth, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
+    opencode_server_log, opencode_session_path, parse_event, parse_ps, reconcile, reconnect_delay,
+    running_sessions, server_url, session_update, turn_result, ApiData, Effect, OpencodeRecord,
+    PermissionAsked, ServerEvent, SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts,
+    TurnState, WorkerMarkers, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
+    SILENCE_TIMEOUT,
+};
+use serde_json::json;
+use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Read};
+use std::net::TcpListener;
+use std::os::unix::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant};
+use ureq::Agent;
+
+const HEALTH_PATH: &str = "/api/info";
+const ACTIVE_PATH: &str = "/api/session/active";
+const EVENTS_PATH: &str = "/api/event";
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
+const HEALTH_POLL: Duration = Duration::from_millis(100);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const STREAM_LIFETIME: Duration = Duration::from_secs(900);
+const HOST_POLL: Duration = Duration::from_millis(500);
+const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(3);
+const TERM_GRACE: Duration = Duration::from_secs(3);
+const TERM_POLL: Duration = Duration::from_millis(20);
+const SWEEP_GRACE: Duration = Duration::from_millis(500);
+const MESSAGE_LIMIT: u32 = 20;
+const START_ATTEMPTS: u32 = 5;
+
+#[derive(Clone)]
+struct Api {
+    agent: Agent,
+    stream: Agent,
+    base: String,
+    auth: String,
+}
+
+impl Api {
+    fn new(port: u16, password: &str) -> Self {
+        let plain = Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(REQUEST_TIMEOUT))
+            .build();
+        let stream = Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(CONNECT_TIMEOUT))
+            .timeout_recv_body(Some(STREAM_LIFETIME))
+            .build();
+        Self {
+            agent: plain.into(),
+            stream: stream.into(),
+            base: server_url(port),
+            auth: basic_auth(password),
+        }
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base)
+    }
+
+    fn read(mut response: ureq::http::Response<ureq::Body>) -> Result<String, String> {
+        let status = response.status();
+        let body = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| e.to_string())?;
+        if status.is_success() {
+            Ok(body)
+        } else {
+            Err(format!("HTTP {}: {body}", status.as_u16()))
+        }
+    }
+
+    fn get(&self, path: &str) -> Result<String, String> {
+        let response = self
+            .agent
+            .get(self.url(path))
+            .header("Authorization", &self.auth)
+            .call()
+            .map_err(|e| e.to_string())?;
+        Self::read(response)
+    }
+
+    fn post(&self, path: &str, body: &str) -> Result<String, String> {
+        let response = self
+            .agent
+            .post(self.url(path))
+            .header("Authorization", &self.auth)
+            .header("Content-Type", "application/json")
+            .send(body)
+            .map_err(|e| e.to_string())?;
+        Self::read(response)
+    }
+
+    fn events(&self) -> Result<impl Read + Send, String> {
+        let response = self
+            .stream
+            .get(self.url(EVENTS_PATH))
+            .header("Authorization", &self.auth)
+            .header("Accept", "text/event-stream")
+            .call()
+            .map_err(|e| e.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("HTTP {}", response.status().as_u16()));
+        }
+        Ok(response.into_body().into_reader())
+    }
+}
+
+struct Server {
+    child: Child,
+    api: Api,
+    tree: Vec<u32>,
+}
+
+impl Server {
+    fn launch(store: &Path, closed: &AtomicBool) -> Result<Self, String> {
+        let port = free_port()?;
+        let password = random_password()?;
+        let log = open_log(store)?;
+        let command = opencode_serve_command(port);
+        let (program, args) = command.split_first().ok_or("empty opencode command")?;
+        let child = Command::new(program)
+            .args(args)
+            .env(OPENCODE_PASSWORD_ENV, &password)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().map_err(|e| e.to_string())?)
+            .stderr(log)
+            .process_group(0)
+            .spawn()
+            .map_err(|e| format!("could not start the opencode server: {e}"))?;
+        let mut server = Self {
+            child,
+            api: Api::new(port, &password),
+            tree: Vec::new(),
+        };
+        match server.wait_healthy(closed) {
+            Ok(()) => Ok(server),
+            Err(message) => {
+                server.stop();
+                Err(message)
+            }
+        }
+    }
+
+    fn wait_healthy(&mut self, closed: &AtomicBool) -> Result<(), String> {
+        let deadline = Instant::now() + HEALTH_TIMEOUT;
+        loop {
+            if closed.load(Ordering::SeqCst) {
+                return Err("the chat is closing".to_string());
+            }
+            if let Ok(Some(status)) = self.child.try_wait() {
+                return Err(format!("the opencode server exited at start: {status}"));
+            }
+            if self.api.get(HEALTH_PATH).is_ok() {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "the opencode server was not healthy after {}s",
+                    HEALTH_TIMEOUT.as_secs()
+                ));
+            }
+            thread::sleep(HEALTH_POLL);
+        }
+    }
+
+    fn alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    fn snapshot(&mut self) {
+        self.tree = descendants(&process_table(), self.child.id());
+    }
+
+    fn stop(mut self) {
+        let group = self.child.id();
+        let mut orphans = self.tree.clone();
+        for pid in descendants(&process_table(), group) {
+            if !orphans.contains(&pid) {
+                orphans.push(pid);
+            }
+        }
+        kill("TERM", &format!("-{group}"));
+        let deadline = Instant::now() + TERM_GRACE;
+        while Instant::now() < deadline && self.alive() {
+            thread::sleep(TERM_POLL);
+        }
+        kill("KILL", &format!("-{group}"));
+        self.child.wait().ok();
+        sweep(&orphans);
+    }
+}
+
+fn kill(signal: &str, target: &str) -> bool {
+    Command::new("kill")
+        .args([&format!("-{signal}"), "--", target])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn survivors(pids: &[u32]) -> Vec<u32> {
+    pids.iter()
+        .copied()
+        .filter(|pid| kill("0", &pid.to_string()))
+        .collect()
+}
+
+fn sweep(pids: &[u32]) {
+    let found = survivors(pids);
+    if found.is_empty() {
+        return;
+    }
+    for pid in &found {
+        kill("TERM", &pid.to_string());
+    }
+    thread::sleep(SWEEP_GRACE);
+    for pid in survivors(&found) {
+        kill("KILL", &pid.to_string());
+    }
+}
+
+fn process_table() -> Vec<(u32, u32)> {
+    Command::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|output| parse_ps(&String::from_utf8_lossy(&output.stdout)))
+        .unwrap_or_default()
+}
+
+fn free_port() -> Result<u16, String> {
+    TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map(|address| address.port())
+        .map_err(|e| format!("could not find a free port: {e}"))
+}
+
+fn random_password() -> Result<String, String> {
+    let mut bytes = [0u8; 16];
+    File::open("/dev/urandom")
+        .and_then(|mut random| random.read_exact(&mut bytes))
+        .map_err(|e| format!("could not read random bytes: {e}"))?;
+    Ok(hex_encode(&bytes))
+}
+
+fn open_log(store: &Path) -> Result<File, String> {
+    fs::create_dir_all(store).map_err(|e| e.to_string())?;
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(opencode_server_log(store))
+        .map_err(|e| format!("could not open the opencode server log: {e}"))
+}
+
+#[derive(Clone)]
+struct Target {
+    worker: String,
+    markers: WorkerMarkers,
+    inbox: PathBuf,
+}
+
+struct Session {
+    target: Target,
+    turn: TurnState,
+}
+
+enum Feed {
+    Line(String),
+    Ended,
+}
+
+struct Link {
+    feed: mpsc::Receiver<Feed>,
+    last: Instant,
+}
+
+fn read_lines(reader: impl Read, feed: &Sender<Feed>) {
+    for line in BufReader::new(reader).lines() {
+        let Ok(line) = line else { break };
+        if feed.send(Feed::Line(line)).is_err() {
+            return;
+        }
+    }
+    feed.send(Feed::Ended).ok();
+}
+
+fn load_sessions(store: &Path) -> HashMap<String, Session> {
+    let ids: Vec<String> = fs::read_dir(store.join(OPENCODE_SESSION_DIR))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| !name.starts_with('.'))
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.into_iter()
+        .filter_map(|id| {
+            let record = fs::read_to_string(opencode_session_path(store, &id))
+                .ok()
+                .and_then(|text| OpencodeRecord::parse(&text));
+            let Some(record) = record else {
+                warn(format!(
+                    "opencode session {id} not resumed: its record is unreadable"
+                ));
+                return None;
+            };
+            let session = Session {
+                target: Target {
+                    markers: WorkerMarkers::new(store, &id),
+                    worker: id,
+                    inbox: record.inbox,
+                },
+                turn: TurnState::default(),
+            };
+            Some((record.session_id, session))
+        })
+        .collect()
+}
+
+pub struct OpencodeHost {
+    store_dir: PathBuf,
+    server: Mutex<Option<Server>>,
+    sessions: Mutex<HashMap<String, Session>>,
+    closed: AtomicBool,
+}
+
+impl OpencodeHost {
+    fn new(store_dir: PathBuf) -> Arc<Self> {
+        Arc::new(Self {
+            sessions: Mutex::new(load_sessions(&store_dir)),
+            store_dir,
+            server: Mutex::new(None),
+            closed: AtomicBool::new(false),
+        })
+    }
+
+    fn server(&self) -> MutexGuard<'_, Option<Server>> {
+        self.server.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn sessions(&self) -> MutexGuard<'_, HashMap<String, Session>> {
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
+    fn api(&self) -> Option<Api> {
+        self.server().as_ref().map(|server| server.api.clone())
+    }
+
+    fn start_server(&self) -> Result<(), String> {
+        let mut guard = self.server();
+        if self.closed() {
+            return Err("the chat is closing".to_string());
+        }
+        *guard = Some(Server::launch(&self.store_dir, &self.closed)?);
+        Ok(())
+    }
+
+    fn take_dead(&self) -> Option<Server> {
+        let mut guard = self.server();
+        if guard.as_mut().is_some_and(|server| !server.alive()) {
+            guard.take()
+        } else {
+            None
+        }
+    }
+
+    fn server_alive(&self) -> bool {
+        self.server().as_mut().is_some_and(Server::alive)
+    }
+
+    fn lose_server(&self) {
+        let taken = self.server().take();
+        if let Some(server) = taken {
+            server.stop();
+            self.lose_sessions();
+        }
+    }
+
+    fn snapshot_tree(&self) {
+        if let Some(server) = self.server().as_mut() {
+            server.snapshot();
+        }
+    }
+
+    fn lose_sessions(&self) {
+        let lost: Vec<(String, Target, Vec<Effect>)> = self
+            .sessions()
+            .iter_mut()
+            .map(|(id, session)| {
+                (
+                    id.clone(),
+                    session.target.clone(),
+                    session.turn.server_lost(),
+                )
+            })
+            .collect();
+        for (id, target, effects) in lost {
+            self.run(&id, &target, effects);
+        }
+    }
+
+    fn apply(&self, session_id: &str, update: SessionUpdate) {
+        let planned = {
+            let mut sessions = self.sessions();
+            sessions.get_mut(session_id).map(|session| {
+                let facts = TurnFacts {
+                    reported: session.target.markers.reported.exists(),
+                    closing: self.closed(),
+                };
+                (
+                    session.target.clone(),
+                    advance(&mut session.turn, update, facts),
+                )
+            })
+        };
+        if let Some((target, effects)) = planned {
+            self.run(session_id, &target, effects);
+        }
+    }
+
+    fn run(&self, session_id: &str, target: &Target, effects: Vec<Effect>) {
+        let markers = &target.markers;
+        for effect in effects {
+            match effect {
+                Effect::Ready => {
+                    write_file(&markers.ready, "").ok();
+                }
+                Effect::ClearWaiting => {
+                    fs::remove_file(&markers.waiting).ok();
+                }
+                Effect::Publish(Some(content)) => {
+                    write_file(&markers.blocked, &content.render()).ok();
+                }
+                Effect::Publish(None) => {
+                    fs::remove_file(&markers.blocked).ok();
+                }
+                Effect::ClearReported => {
+                    fs::remove_file(&markers.reported).ok();
+                }
+                Effect::Unreported => {
+                    write_file(&markers.unreported, "").ok();
+                    write_file(&markers.waiting, "").ok();
+                }
+                Effect::Problem(problem) => post_problem(target, &problem),
+                Effect::Send(text) => self.send(session_id, target, &text),
+            }
+        }
+    }
+
+    fn send(&self, session_id: &str, target: &Target, text: &str) {
+        let body = json!({ "text": text }).to_string();
+        let result = self
+            .api()
+            .ok_or_else(|| "the opencode server is not running".to_string())
+            .and_then(|api| api.post(&format!("/api/session/{session_id}/prompt"), &body));
+        if let Err(message) = result {
+            if let Some(session) = self.sessions().get_mut(session_id) {
+                session.turn.in_flight = false;
+            }
+            post_problem(target, &format!("could not send the prompt: {message}"));
+        }
+    }
+
+    fn route(&self, event: &ServerEvent) {
+        if let (Some(session_id), Some(update)) = (event.session_id(), session_update(event)) {
+            self.apply(session_id, update);
+        }
+    }
+
+    fn snapshot_of(
+        api: &Api,
+        session_id: &str,
+        state: &TurnState,
+        running: &[String],
+    ) -> Result<SessionSnapshot, String> {
+        let active = running.iter().any(|id| id == session_id);
+        let pending: ApiData<Vec<PermissionAsked>> =
+            serde_json::from_str(&api.get(&format!("/api/session/{session_id}/permission"))?)
+                .map_err(|e| e.to_string())?;
+        let result = if state.in_flight && !active {
+            let messages: ApiData<Vec<SessionMessage>> = serde_json::from_str(&api.get(
+                &format!("/api/session/{session_id}/message?limit={MESSAGE_LIMIT}"),
+            )?)
+            .map_err(|e| e.to_string())?;
+            turn_result(&messages.data, active)
+        } else {
+            None
+        };
+        Ok(SessionSnapshot {
+            active,
+            pending: pending.data,
+            result,
+        })
+    }
+
+    fn reconcile_all(&self) {
+        let Some(api) = self.api() else { return };
+        let running = api
+            .get(ACTIVE_PATH)
+            .ok()
+            .and_then(|body| running_sessions(&body));
+        let Some(running) = running else {
+            warn("could not read the active opencode sessions");
+            return;
+        };
+        let known: Vec<(String, TurnState)> = self
+            .sessions()
+            .iter()
+            .map(|(id, session)| (id.clone(), session.turn.clone()))
+            .collect();
+        for (id, state) in known {
+            match Self::snapshot_of(&api, &id, &state, &running) {
+                Ok(snapshot) => {
+                    for update in reconcile(&state, &snapshot) {
+                        self.apply(&id, update);
+                    }
+                }
+                Err(message) => warn(format!(
+                    "could not rebuild opencode session {id}: {message}"
+                )),
+            }
+        }
+    }
+
+    fn connect(&self) -> Result<Link, String> {
+        let api = self
+            .api()
+            .ok_or_else(|| "the opencode server is not running".to_string())?;
+        let reader = api.events()?;
+        let (sender, feed) = mpsc::channel();
+        thread::spawn(move || read_lines(reader, &sender));
+        Ok(Link {
+            feed,
+            last: Instant::now(),
+        })
+    }
+
+    fn reconnect(&self, first: Duration) -> Option<Link> {
+        let mut attempt = 0;
+        thread::sleep(first);
+        loop {
+            if self.closed() || !self.server_alive() {
+                return None;
+            }
+            match self.connect() {
+                Ok(link) => return Some(link),
+                Err(message) => {
+                    let delay = reconnect_delay(attempt)?;
+                    warn(format!("opencode event stream unavailable: {message}"));
+                    attempt += 1;
+                    thread::sleep(delay);
+                }
+            }
+        }
+    }
+
+    fn supervise(&self) {
+        let mut link: Option<Link> = None;
+        let mut delay = Duration::ZERO;
+        let mut start_failures = 0;
+        let mut next_snapshot = Instant::now();
+        while !self.closed() {
+            if self.sessions().is_empty() && self.server().is_none() {
+                thread::sleep(HOST_POLL);
+                continue;
+            }
+            if let Some(dead) = self.take_dead() {
+                warn("the opencode server stopped; restarting it");
+                dead.stop();
+                self.lose_sessions();
+                link = None;
+            }
+            if self.server().is_none() {
+                match self.start_server() {
+                    Ok(()) => {
+                        start_failures = 0;
+                        delay = Duration::ZERO;
+                    }
+                    Err(message) => {
+                        warn(message);
+                        start_failures += 1;
+                        if start_failures >= START_ATTEMPTS {
+                            warn("giving up on the opencode server");
+                            return;
+                        }
+                        thread::sleep(RECONNECT_DELAY);
+                        continue;
+                    }
+                }
+            }
+            let Some(active) = link.as_mut() else {
+                match self.reconnect(delay) {
+                    Some(new) => {
+                        self.reconcile_all();
+                        link = Some(new);
+                        delay = RECONNECT_DELAY;
+                    }
+                    None => {
+                        if !self.closed() {
+                            warn("the opencode server is unreachable; restarting it");
+                            self.lose_server();
+                        }
+                    }
+                }
+                continue;
+            };
+            let dropped = match active.feed.recv_timeout(HOST_POLL) {
+                Ok(Feed::Line(line)) => {
+                    active.last = Instant::now();
+                    if let Some(event) = parse_event(&line) {
+                        self.route(&event);
+                    }
+                    false
+                }
+                Ok(Feed::Ended) | Err(RecvTimeoutError::Disconnected) => true,
+                Err(RecvTimeoutError::Timeout) => active.last.elapsed() >= SILENCE_TIMEOUT,
+            };
+            if dropped {
+                link = None;
+                delay = RECONNECT_DELAY;
+            }
+            if Instant::now() >= next_snapshot {
+                self.snapshot_tree();
+                next_snapshot = Instant::now() + SNAPSHOT_INTERVAL;
+            }
+        }
+    }
+
+    pub(crate) fn shutdown(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        let taken = self.server().take();
+        if let Some(server) = taken {
+            server.stop();
+        }
+    }
+}
+
+fn post_problem(target: &Target, problem: &str) {
+    let at = chrono::Utc::now().to_rfc3339();
+    let report = opencode_failure_report(&target.worker, &at, problem);
+    Inbox::new(target.inbox.clone()).post(&report, 0).ok();
+}
+
+pub struct OpencodeShutdown(pub(crate) Arc<OpencodeHost>);
+
+impl OpencodeShutdown {
+    pub fn start(store_dir: PathBuf) -> Self {
+        let host = OpencodeHost::new(store_dir);
+        let supervised = Arc::clone(&host);
+        thread::spawn(move || supervised.supervise());
+        Self(host)
+    }
+}
+
+impl Drop for OpencodeShutdown {
+    fn drop(&mut self) {
+        self.0.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn record(session_id: &str, inbox: &str) -> String {
+        OpencodeRecord {
+            session_id: session_id.to_string(),
+            cwd: PathBuf::from("/w"),
+            model: "github-copilot/claude-haiku-4.5".to_string(),
+            inbox: PathBuf::from(inbox),
+        }
+        .render()
+    }
+
+    #[test]
+    fn load_sessions_keys_by_session_id_and_skips_bad_records() {
+        let store = tempfile::tempdir().unwrap();
+        let dir = store.path().join(OPENCODE_SESSION_DIR);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("GUZ-1"), record("ses_one", "/inbox")).unwrap();
+        fs::write(dir.join("GUZ-2"), "garbage").unwrap();
+        fs::write(dir.join(".tmp"), record("ses_tmp", "/inbox")).unwrap();
+        let sessions = load_sessions(store.path());
+        assert_eq!(sessions.len(), 1);
+        let session = &sessions["ses_one"];
+        assert_eq!(session.target.worker, "GUZ-1");
+        assert_eq!(session.target.inbox, PathBuf::from("/inbox"));
+        assert_eq!(
+            session.target.markers,
+            WorkerMarkers::new(store.path(), "GUZ-1")
+        );
+        assert_eq!(session.turn, TurnState::default());
+    }
+
+    #[test]
+    fn load_sessions_is_empty_without_records() {
+        let store = tempfile::tempdir().unwrap();
+        assert!(load_sessions(store.path()).is_empty());
+    }
+
+    #[test]
+    fn free_port_returns_an_assigned_port() {
+        assert!(free_port().unwrap() > 0);
+    }
+
+    #[test]
+    fn random_password_is_32_hex_chars_and_fresh() {
+        let first = random_password().unwrap();
+        assert_eq!(first.len(), 32);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, random_password().unwrap());
+    }
+
+    #[test]
+    fn read_lines_forwards_every_line_then_ends() {
+        let (sender, feed) = mpsc::channel();
+        read_lines("data: a\n\n: heartbeat\n".as_bytes(), &sender);
+        let lines: Vec<Option<String>> = feed
+            .try_iter()
+            .map(|item| match item {
+                Feed::Line(line) => Some(line),
+                Feed::Ended => None,
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            vec![
+                Some("data: a".to_string()),
+                Some(String::new()),
+                Some(": heartbeat".to_string()),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn survivors_keep_only_live_pids() {
+        let own = std::process::id();
+        assert_eq!(survivors(&[own, u32::MAX - 1]), vec![own]);
+    }
+}

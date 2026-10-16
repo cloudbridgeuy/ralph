@@ -73,6 +73,9 @@ regex = "1.0"
 # HTTP client (for existing features)
 reqwest = { version = "0.13.2", features = ["json"] }
 
+# Blocking HTTP client for the local opencode server (no TLS, no gzip)
+ureq = { version = "3.4", default-features = false }
+
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 

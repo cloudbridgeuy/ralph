@@ -1,3 +1,4 @@
+use crate::opencode_worker::{OpencodeHost, OpencodeShutdown};
 use crate::warn::warn;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
@@ -924,19 +925,22 @@ impl CursorShutdown {
 pub struct ExitCleanup {
     watches: Watches,
     cursor: Arc<CursorHost>,
+    opencode: Arc<OpencodeHost>,
 }
 
 impl ExitCleanup {
-    pub fn new(watches: Watches, cursor: &CursorShutdown) -> Self {
+    pub fn new(watches: Watches, cursor: &CursorShutdown, opencode: &OpencodeShutdown) -> Self {
         Self {
             watches,
             cursor: Arc::clone(&cursor.0),
+            opencode: Arc::clone(&opencode.0),
         }
     }
 
     pub fn run(&self) {
         self.watches.kill_all();
         self.cursor.shutdown();
+        self.opencode.shutdown();
     }
 }
 
