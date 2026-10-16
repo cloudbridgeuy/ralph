@@ -127,14 +127,16 @@ fn run_subprocess_with_spinner(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     // Spawn subprocess with stdout/stderr captured and stdin inherited
-    let mut child = Command::new("sh")
+    let mut command = Command::new("sh");
+    command
         .arg("-c")
         .arg(&config.command)
         .stdin(Stdio::null()) // Null stdin to prevent child from racing parent for stdin
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(0) // Create new process group so we can kill grandchildren
-        .spawn()?;
+        .process_group(0); // Create new process group so we can kill grandchildren
+    signal::default_sigttou_in(&mut command);
+    let mut child = command.spawn()?;
 
     // Get handles to stdout and stderr
     // These should always be Some since we configured Stdio::piped()

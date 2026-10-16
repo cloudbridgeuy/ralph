@@ -74,20 +74,9 @@ fn resolve_store(
     }
 }
 
-/// Backstop: if ralph ends up in a background process group, the raw-mode
-/// switch would raise SIGTTOU and suspend the whole chat. Ignoring it makes
-/// the terminal write fail or succeed instead of stopping the process.
-fn ignore_sigttou() {
-    // SAFETY: setting a signal disposition to SIG_IGN is async-signal-safe and
-    // installs no handler code.
-    unsafe {
-        libc::signal(libc::SIGTTOU, libc::SIG_IGN);
-    }
-}
-
 pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
-    ignore_sigttou();
+    signal::ignore_sigttou();
     let store_dir = resolve_store(
         args.store,
         std::env::var_os(STORE_ENV).map(PathBuf::from),
