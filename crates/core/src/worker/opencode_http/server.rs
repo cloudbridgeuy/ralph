@@ -10,6 +10,7 @@ pub const SILENCE_TIMEOUT: Duration = Duration::from_secs(45);
 pub const OPENCODE_SESSION_DIR: &str = "opencode-session";
 pub const OPENCODE_SERVER_LOG: &str = "opencode-server.log";
 pub const OPENCODE_PASSWORD_ENV: &str = "OPENCODE_PASSWORD";
+const LOG_TAIL_LINES: usize = 20;
 const SERVER_HOST: &str = "127.0.0.1";
 const SERVER_USER: &str = "opencode";
 const BASE64_ALPHABET: &[u8; 64] =
@@ -34,7 +35,7 @@ pub fn server_url(port: u16) -> String {
 pub fn opencode_serve_command(port: u16) -> Vec<String> {
     [
         "zsh",
-        "-lic",
+        "-lc",
         r#"exec "$0" "$@""#,
         "opencode",
         "serve",
@@ -45,6 +46,16 @@ pub fn opencode_serve_command(port: u16) -> Vec<String> {
     ]
     .map(str::to_string)
     .to_vec()
+}
+
+pub fn start_failure(problem: &str, log: &str) -> String {
+    let lines: Vec<&str> = log.lines().collect();
+    let tail = &lines[lines.len().saturating_sub(LOG_TAIL_LINES)..];
+    if tail.iter().all(|line| line.trim().is_empty()) {
+        format!("{problem} (the server log is empty)")
+    } else {
+        format!("{problem}; last server log lines:\n{}", tail.join("\n"))
+    }
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -169,14 +180,31 @@ mod tests {
     }
 
     #[test]
-    fn serve_command_runs_opencode_through_the_login_shell() {
+    fn serve_command_runs_opencode_through_a_non_interactive_login_shell() {
         let args = opencode_serve_command(4096);
-        assert_eq!(args[..4], ["zsh", "-lic", r#"exec "$0" "$@""#, "opencode"]);
+        assert_eq!(args[..4], ["zsh", "-lc", r#"exec "$0" "$@""#, "opencode"]);
         assert_eq!(
             args[4..],
             ["serve", "--hostname", "127.0.0.1", "--port", "4096"]
         );
         assert_eq!(server_url(4096), "http://127.0.0.1:4096");
+    }
+
+    #[test]
+    fn start_failure_appends_the_last_twenty_log_lines() {
+        let log: String = (1..=30).map(|n| format!("line {n}\n")).collect();
+        let message = start_failure("not healthy", &log);
+        assert!(message.starts_with("not healthy; last server log lines:\nline 11\n"));
+        assert!(message.ends_with("line 30"));
+        assert!(!message.contains("line 10\n"));
+    }
+
+    #[test]
+    fn start_failure_says_when_the_log_is_empty() {
+        assert_eq!(
+            start_failure("exited at start: exit status: 1", " \n"),
+            "exited at start: exit status: 1 (the server log is empty)"
+        );
     }
 
     #[test]
