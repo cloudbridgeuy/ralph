@@ -1,10 +1,10 @@
-use crate::worker::{CloseState, CloseStep};
+use crate::worker::{CloseState, CloseStep, WorkerKind};
 use serde_json::Value;
 
 const PROJECTS_KEY: &str = "projects";
 
 pub fn cleans_claude_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
-    !state.cursor
+    matches!(state.kind, WorkerKind::Tmux)
         && steps
             .iter()
             .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
@@ -40,7 +40,7 @@ mod tests {
     use super::*;
     use crate::worker::Owner;
 
-    fn state(cursor: bool) -> CloseState {
+    fn state(kind: WorkerKind) -> CloseState {
         CloseState {
             id: "A".into(),
             owner: Owner::Missing,
@@ -49,26 +49,30 @@ mod tests {
             unmerged_commits: Some(0),
             opencode: false,
             markers: false,
-            cursor,
+            kind,
         }
     }
 
     #[test]
     fn claude_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
-        assert!(cleans_claude_leftovers(&state(false), &steps));
+        assert!(cleans_claude_leftovers(&state(WorkerKind::Tmux), &steps));
     }
 
     #[test]
     fn cursor_worker_is_not_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
-        assert!(!cleans_claude_leftovers(&state(true), &steps));
+        assert!(!cleans_claude_leftovers(&state(WorkerKind::Cursor), &steps));
+        assert!(!cleans_claude_leftovers(
+            &state(WorkerKind::Opencode),
+            &steps
+        ));
     }
 
     #[test]
     fn close_without_worktree_removal_is_not_cleaned() {
         let steps = [CloseStep::DeleteBranch, CloseStep::ClearMarkers];
-        assert!(!cleans_claude_leftovers(&state(false), &steps));
+        assert!(!cleans_claude_leftovers(&state(WorkerKind::Tmux), &steps));
     }
 
     #[test]

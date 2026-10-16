@@ -12,8 +12,8 @@ use ralph_core::worker::{
     interrupt_reply, marker_paths, parse_interrupt_result, project_slug, prompt_entry_name,
     resolve_worktree_dir, sent_path, session_name, session_owner, tagged_sessions,
     worktree_for_branch, worktree_path, CloseState, CloseStep, CursorFiles, Handoff, OpencodeFiles,
-    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
-    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    Owner, Sweep, TaggedSession, WorkerKind, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
+    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -237,7 +237,13 @@ impl Workers {
             markers: marker_paths(&self.store_dir, id)
                 .iter()
                 .any(|marker| marker.exists()),
-            cursor: CursorFiles::new(&self.store_dir, id).owner.exists() || self.opencode_http(id),
+            kind: if CursorFiles::new(&self.store_dir, id).owner.exists() {
+                WorkerKind::Cursor
+            } else if self.opencode_http(id) {
+                WorkerKind::Opencode
+            } else {
+                WorkerKind::Tmux
+            },
         };
         let with_warning = |text: String| {
             [&base.warning, &worktree_dir.warning]
@@ -603,7 +609,7 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
                 id,
                 session: String::new(),
                 opencode: true,
-                cursor: true,
+                kind: WorkerKind::Opencode,
             }),
     );
     workers.sort_by(|a, b| a.id.cmp(&b.id));
@@ -702,7 +708,9 @@ mod tests {
         write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
         let running = running_workers(dir.path());
         let worker = running.iter().find(|worker| worker.id == "A").unwrap();
-        assert!(worker.opencode && worker.cursor && worker.session.is_empty());
+        assert!(
+            worker.opencode && worker.kind == WorkerKind::Opencode && worker.session.is_empty()
+        );
     }
 
     #[test]

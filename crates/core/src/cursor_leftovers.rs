@@ -1,4 +1,4 @@
-use crate::worker::{CloseState, CloseStep};
+use crate::worker::{CloseState, CloseStep, WorkerKind};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -13,7 +13,8 @@ struct SessionMeta {
 }
 
 pub fn cleans_cursor_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
-    state.cursor
+    // Keep legacy headless cleanup until close dispatch is split by host.
+    matches!(state.kind, WorkerKind::Cursor | WorkerKind::Opencode)
         && steps
             .iter()
             .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
@@ -87,7 +88,7 @@ mod tests {
     use super::*;
     use crate::worker::Owner;
 
-    fn state(cursor: bool) -> CloseState {
+    fn state(kind: WorkerKind) -> CloseState {
         CloseState {
             id: "A".into(),
             owner: Owner::Missing,
@@ -96,17 +97,21 @@ mod tests {
             unmerged_commits: Some(0),
             opencode: false,
             markers: false,
-            cursor,
+            kind,
         }
     }
 
     #[test]
     fn cursor_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
-        assert!(cleans_cursor_leftovers(&state(true), &steps));
-        assert!(!cleans_cursor_leftovers(&state(false), &steps));
+        assert!(cleans_cursor_leftovers(&state(WorkerKind::Cursor), &steps));
+        assert!(cleans_cursor_leftovers(
+            &state(WorkerKind::Opencode),
+            &steps
+        ));
+        assert!(!cleans_cursor_leftovers(&state(WorkerKind::Tmux), &steps));
         assert!(!cleans_cursor_leftovers(
-            &state(true),
+            &state(WorkerKind::Cursor),
             &[CloseStep::ClearMarkers]
         ));
     }

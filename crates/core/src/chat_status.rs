@@ -1,8 +1,10 @@
 use crate::inbox::{Position, Selection};
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
-use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report, ReportStatus};
-use serde::Deserialize;
+use crate::worker::{
+    opencode_session_id, same_store, tagged_sessions, Report, ReportStatus, WorkerKind,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -32,12 +34,13 @@ pub struct WatchState {
     pub left: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunningWorker {
     pub id: String,
     pub session: String,
     pub opencode: bool,
-    pub cursor: bool,
+    #[serde(default, alias = "cursor")]
+    pub kind: WorkerKind,
 }
 
 impl RunningWorker {
@@ -46,7 +49,7 @@ impl RunningWorker {
             id: id.to_string(),
             session: String::new(),
             opencode: false,
-            cursor: true,
+            kind: WorkerKind::Cursor,
         }
     }
 }
@@ -172,7 +175,7 @@ pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
             id: session.id,
             session: session.name,
             opencode: session.opencode,
-            cursor: false,
+            kind: WorkerKind::Tmux,
         })
         .collect();
     workers.sort_by(|a, b| a.id.cmp(&b.id));
@@ -516,9 +519,45 @@ mod tests {
                 id: "GUZ-1".into(),
                 session: "ralph-my-proj-GUZ-1".into(),
                 opencode: false,
-                cursor: false
+                kind: WorkerKind::Tmux
             }]
         );
+    }
+
+    #[test]
+    fn running_worker_loads_legacy_cursor_records() {
+        for (cursor, kind) in [(true, WorkerKind::Cursor), (false, WorkerKind::Tmux)] {
+            let record = serde_json::json!({
+                "id": "A", "session": "", "opencode": false, "cursor": cursor
+            });
+            let worker: RunningWorker = serde_json::from_value(record).unwrap();
+            assert_eq!(worker.kind, kind);
+            let saved = serde_json::to_value(&worker).unwrap();
+            assert!(saved.get("cursor").is_none());
+            assert_eq!(
+                serde_json::from_value::<RunningWorker>(saved).unwrap(),
+                worker
+            );
+        }
+    }
+
+    #[test]
+    fn running_worker_loads_explicit_kinds_and_defaults_to_tmux() {
+        for (name, kind) in [
+            ("tmux", WorkerKind::Tmux),
+            ("cursor", WorkerKind::Cursor),
+            ("opencode", WorkerKind::Opencode),
+        ] {
+            let record = serde_json::json!({
+                "id": "A", "session": "", "opencode": false, "kind": name
+            });
+            let worker: RunningWorker = serde_json::from_value(record).unwrap();
+            assert_eq!(worker.kind, kind);
+            assert_eq!(serde_json::to_value(worker).unwrap()["kind"], name);
+        }
+        let worker: RunningWorker =
+            serde_json::from_str(r#"{"id":"A","session":"s","opencode":false}"#).unwrap();
+        assert_eq!(worker.kind, WorkerKind::Tmux);
     }
 
     #[test]
@@ -527,7 +566,7 @@ mod tests {
             id: "A".into(),
             session: "ralph-p-A".into(),
             opencode: false,
-            cursor: false,
+            kind: WorkerKind::Tmux,
         }];
         let ready = ["C".to_string(), "A".to_string(), "B".to_string()];
         let hint = orphan_hint(&ready, &running).unwrap();
@@ -543,7 +582,7 @@ mod tests {
             id: id.into(),
             session: format!("ralph-p-{id}"),
             opencode,
-            cursor: false,
+            kind: WorkerKind::Tmux,
         };
         let workers = [
             worker("busy", true),
@@ -579,7 +618,7 @@ mod tests {
             id: id.into(),
             session: format!("ralph-p-{id}"),
             opencode,
-            cursor: false,
+            kind: WorkerKind::Tmux,
         };
         let workers = [
             worker("redone", false),

@@ -1,4 +1,4 @@
-use super::branch_name;
+use super::{branch_name, WorkerKind};
 use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
@@ -141,7 +141,7 @@ pub struct CloseState {
     pub unmerged_commits: Option<usize>,
     pub opencode: bool,
     pub markers: bool,
-    pub cursor: bool,
+    pub kind: WorkerKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,10 +196,14 @@ pub fn close_plan(
     if state.opencode {
         steps.push(CloseStep::RemoveOpencodeSession);
     }
-    if state.cursor {
-        steps.push(CloseStep::TerminateCursor);
-    } else if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
-        steps.push(CloseStep::KillSession(session.name.clone()));
+    match state.kind {
+        // Preserve the existing headless close plan; host dispatch is separate work.
+        WorkerKind::Cursor | WorkerKind::Opencode => steps.push(CloseStep::TerminateCursor),
+        WorkerKind::Tmux => {
+            if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
+                steps.push(CloseStep::KillSession(session.name.clone()));
+            }
+        }
     }
     if let Some(dirty) = state.dirty_worktree {
         steps.push(CloseStep::RemoveWorktree { force: dirty });
@@ -299,7 +303,7 @@ mod tests {
             unmerged_commits: Some(0),
             opencode: false,
             markers: false,
-            cursor: false,
+            kind: WorkerKind::Tmux,
         }
     }
 
@@ -323,10 +327,25 @@ mod tests {
     #[test]
     fn close_plan_terminates_a_cursor_worker_instead_of_killing_a_session() {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
-        state.cursor = true;
+        state.kind = WorkerKind::Cursor;
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateCursor);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
+    }
+
+    #[test]
+    fn opencode_kind_preserves_the_existing_headless_close_plan() {
+        let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+        state.opencode = true;
+        state.kind = WorkerKind::Cursor;
+        let legacy = close_plan(&state, false, false).unwrap();
+        state.kind = WorkerKind::Opencode;
+        assert_eq!(close_plan(&state, false, false).unwrap(), legacy);
+        assert_eq!(legacy[0], CloseStep::RemoveOpencodeSession);
+        assert_eq!(legacy[1], CloseStep::TerminateCursor);
+        assert!(!legacy
+            .iter()
+            .any(|step| matches!(step, CloseStep::KillSession(_))));
     }
 
     #[test]
