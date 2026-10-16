@@ -36,6 +36,7 @@ use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
 use ralph_core::inbox_alert::UnknownFocus;
+use ralph_core::worker::CursorPermissions;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -90,6 +91,28 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub mermaid: MermaidSection,
+
+    #[serde(default)]
+    pub cursor: CursorSection,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CursorSection {
+    #[serde(default)]
+    pub permissions: Option<toml::Value>,
+}
+
+impl CursorSection {
+    pub fn permissions_setting(&self) -> (CursorPermissions, Option<String>) {
+        match self.permissions.as_ref().map(toml::Value::as_str) {
+            None | Some(Some("ask")) => (CursorPermissions::Ask, None),
+            Some(Some("yolo")) => (CursorPermissions::Yolo, None),
+            Some(_) => (
+                CursorPermissions::Ask,
+                Some("[cursor] permissions must be \"ask\" or \"yolo\"; using \"ask\"".to_string()),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -499,6 +522,42 @@ mod tests {
     }
 
     #[test]
+    fn cursor_permissions_parse_and_default_to_ask() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        for (value, mode) in [
+            ("yolo", CursorPermissions::Yolo),
+            ("ask", CursorPermissions::Ask),
+        ] {
+            fs::write(&path, format!("[cursor]\npermissions = \"{value}\"\n")).unwrap();
+            let config = AppConfig::load_from(&path).unwrap();
+            assert_eq!(config.cursor.permissions_setting(), (mode, None));
+        }
+        assert_eq!(
+            AppConfig::new().cursor.permissions_setting(),
+            (CursorPermissions::Ask, None)
+        );
+    }
+
+    #[test]
+    fn cursor_permissions_wrong_value_warns_and_keeps_other_keys() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        for value in ["\"always\"", "true", "[1]"] {
+            fs::write(
+                &path,
+                format!("[cursor]\npermissions = {value}\n[chat]\nwrap_width = 80\n"),
+            )
+            .unwrap();
+            let config = AppConfig::load_from(&path).unwrap();
+            assert_eq!(config.chat.wrap_width, Some(80));
+            let (mode, warning) = config.cursor.permissions_setting();
+            assert_eq!(mode, CursorPermissions::Ask);
+            assert!(warning.is_some());
+        }
+    }
+
+    #[test]
     fn chat_section_parses_inbox_alert() {
         let defaults = AppConfig::new().chat;
         assert!(defaults.inbox_alert_sound);
@@ -740,6 +799,7 @@ mod tests {
             ask: AskSection::default(),
             chat: ChatSection::default(),
             mermaid: MermaidSection::default(),
+            cursor: CursorSection::default(),
         };
 
         config.save_to(&path).unwrap();
@@ -798,6 +858,7 @@ mod tests {
             ask: AskSection::default(),
             chat: ChatSection::default(),
             mermaid: MermaidSection::default(),
+            cursor: CursorSection::default(),
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

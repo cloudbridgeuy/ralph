@@ -1,3 +1,4 @@
+use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, signal_group, sweep_owner, write_file};
 use crate::cursor_owner::{request_ids, TERM_GRACE, TERM_POLL};
 use crate::opencode_worker::{OpencodeHost, OpencodeShutdown};
@@ -20,10 +21,11 @@ use ralph_core::worker::{
     acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, interrupt_result_text,
     is_report_tool_call, match_option, no_option_message, permission_content,
     prompt_failure_report, ready_path, request_stale, resume_decision, session_error, task_prompt,
-    turn_outcome, version_warning, BlockedContent, CursorFiles, Inbound, OwnerRecord, PromptQueue,
-    Resume, SessionRecord, SpawnRequest, Step, TurnOutcome, WorkerMarkers, CURSOR_ANSWER_DIR,
-    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
-    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
+    turn_outcome, version_warning, BlockedContent, CursorFiles, CursorPermissions, Inbound,
+    OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest, Step, TurnOutcome,
+    WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
+    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
+    CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -40,6 +42,24 @@ pub(crate) const AGENT_COMMAND: &str = "agent";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 
+fn cursor_permissions() -> CursorPermissions {
+    match AppConfig::load() {
+        Ok(config) => {
+            let (mode, warning) = config.cursor.permissions_setting();
+            if let Some(warning) = warning {
+                warn(warning);
+            }
+            mode
+        }
+        Err(e) => {
+            warn(format!(
+                "could not read config: {e}; cursor permissions use \"ask\""
+            ));
+            CursorPermissions::Ask
+        }
+    }
+}
+
 struct PendingPermission {
     responder: Responder<RequestPermissionResponse>,
     content: BlockedContent,
@@ -47,13 +67,15 @@ struct PendingPermission {
 
 struct Permissions {
     blocked: PathBuf,
+    mode: CursorPermissions,
     queue: Mutex<VecDeque<PendingPermission>>,
 }
 
 impl Permissions {
-    fn new(blocked: PathBuf) -> Arc<Self> {
+    fn new(blocked: PathBuf, mode: CursorPermissions) -> Arc<Self> {
         Arc::new(Self {
             blocked,
+            mode,
             queue: Mutex::new(VecDeque::new()),
         })
     }
@@ -76,7 +98,7 @@ impl Permissions {
     ) -> bool {
         let value = serde_json::to_value(request).unwrap_or_default();
         let content = permission_content(&value);
-        if let Some(option) = auto_allow_option(&content) {
+        if let Some(option) = auto_allow_option(self.mode, &content) {
             let outcome = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
                 option.option_id.clone(),
             ));
@@ -225,7 +247,7 @@ impl AcpWorker {
             .spawn()
             .map_err(|e| format!("could not start `{AGENT_COMMAND} acp`: {e}"))?;
         let streams = child.stdin.take().zip(child.stdout.take());
-        let permissions = Permissions::new(markers.blocked.clone());
+        let permissions = Permissions::new(markers.blocked.clone(), cursor_permissions());
         let (prompts, prompt_rx) = queue::unbounded();
         let closing = Arc::new(AtomicBool::new(false));
         let reported = Arc::new(AtomicBool::new(false));

@@ -213,12 +213,20 @@ fn report_tool_label() -> String {
     format!("{SERVER_NAME}-{REPORT_TOOL}: {REPORT_TOOL}")
 }
 
-/// The allow-once option to answer with, only for the ralph worker `report` tool.
-/// Every other request returns `None` and waits for the person.
-pub fn auto_allow_option(content: &BlockedContent) -> Option<&PermissionOption> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorPermissions {
+    #[default]
+    Ask,
+    Yolo,
+}
+
+pub fn auto_allow_option(
+    mode: CursorPermissions,
+    content: &BlockedContent,
+) -> Option<&PermissionOption> {
     let label = report_tool_label();
     let is_report = content.tool.trim() == label || content.summary.trim() == label;
-    is_report
+    (mode == CursorPermissions::Yolo || is_report)
         .then(|| {
             content
                 .options
@@ -718,21 +726,47 @@ mod tests {
     fn only_the_worker_report_tool_is_auto_allowed() {
         let report = report_content("report", "ralph-worker-report: report");
         assert_eq!(
-            auto_allow_option(&report).map(|o| o.option_id.as_str()),
+            auto_allow_option(ASK, &report).map(|o| o.option_id.as_str()),
             Some("allow-once")
         );
         let by_tool = report_content("ralph-worker-report: report", "x");
-        assert!(auto_allow_option(&by_tool).is_some());
-        assert!(auto_allow_option(&report_content("shell", "Run ls")).is_none());
-        assert!(auto_allow_option(&report_content("x", "other-server-report: report")).is_none());
-        assert!(auto_allow_option(&report_content("x", "ralph-chat-reply: reply")).is_none());
+        assert!(auto_allow_option(ASK, &by_tool).is_some());
+        assert!(auto_allow_option(ASK, &report_content("shell", "Run ls")).is_none());
+        assert!(
+            auto_allow_option(ASK, &report_content("x", "other-server-report: report")).is_none()
+        );
+        assert!(auto_allow_option(ASK, &report_content("x", "ralph-chat-reply: reply")).is_none());
+    }
+
+    const ASK: CursorPermissions = CursorPermissions::Ask;
+    const YOLO: CursorPermissions = CursorPermissions::Yolo;
+
+    #[test]
+    fn yolo_allows_any_request_with_allow_once_only() {
+        let shell = report_content("shell", "Run ls");
+        assert_eq!(
+            auto_allow_option(YOLO, &shell).map(|o| o.option_id.as_str()),
+            Some("allow-once")
+        );
+    }
+
+    #[test]
+    fn yolo_without_allow_once_waits_and_never_picks_allow_always() {
+        let mut content = report_content("shell", "Run ls");
+        content.options.push(PermissionOption {
+            option_id: "allow-always".into(),
+            name: "Always".into(),
+            kind: "allow_always".into(),
+        });
+        content.options.retain(|o| o.kind != "allow_once");
+        assert!(auto_allow_option(YOLO, &content).is_none());
     }
 
     #[test]
     fn report_without_an_allow_once_option_still_waits() {
         let mut content = report_content("x", "ralph-worker-report: report");
         content.options.retain(|o| o.kind != "allow_once");
-        assert!(auto_allow_option(&content).is_none());
+        assert!(auto_allow_option(ASK, &content).is_none());
     }
 
     #[test]
