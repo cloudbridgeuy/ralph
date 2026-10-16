@@ -9,11 +9,12 @@ use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
-    interrupt_reply, marker_paths, opencode_close_handoff, parse_interrupt_result, project_slug,
-    prompt_entry_name, resolve_worktree_dir, sent_path, session_name, session_owner,
-    tagged_sessions, worktree_for_branch, worktree_path, CloseState, CloseStep, CursorFiles,
-    Handoff, OpencodeFiles, Owner, Sweep, TaggedSession, WorkerKind, WorktreeDir, HANDOFF_POLL,
-    HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
+    parse_interrupt_result, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path,
+    session_name, session_owner, tagged_sessions, worktree_for_branch, worktree_path, CloseState,
+    CloseStep, CursorFiles, Handoff, OpencodeFiles, Owner, Sweep, TaggedSession, WorkerKind,
+    WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR,
+    SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -213,7 +214,6 @@ impl Workers {
                 .as_ref()
                 .map(|config| config.chat.worker_base.as_deref())
                 .map_err(String::as_str),
-            git_value(&repo, &["config", "--get", &base_config_key(id)])?.as_deref(),
             git_value(&repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
         );
         let unmerged_commits = if branch_exists(&repo, &branch)? {
@@ -260,12 +260,16 @@ impl Workers {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
         }
+        let unset_warning = unset_legacy_base(&repo, id);
         let files = CursorFiles::new(&self.store_dir, id);
         clear_marker(&files.session)?;
         clear_marker(&files.interrupt_result)?;
         if steps == [CloseStep::ClearMarkers] {
-            return Ok(format!(
-                "Closed worker {id}: only its markers were left; removed them."
+            return Ok(unset_warning.into_iter().fold(
+                with_warning(format!(
+                    "Closed worker {id}: only its markers were left; removed them."
+                )),
+                |text, warning| format!("{text} {warning}"),
             ));
         }
         let note = if opencode {
@@ -293,7 +297,7 @@ impl Workers {
         } else {
             Vec::new()
         };
-        Ok(leftovers.into_iter().fold(
+        Ok(unset_warning.into_iter().chain(leftovers).fold(
             with_warning(format!(
                 "Closed worker {id}: removed its sessions, worktree and branch {branch}.{note}"
             )),
@@ -555,6 +559,18 @@ fn git_value(repo: &Path, args: &[&str]) -> io::Result<Option<String>> {
     }
     let value = stdout_line(output);
     Ok((!value.is_empty()).then_some(value))
+}
+
+fn unset_legacy_base(repo: &Path, id: &str) -> Option<String> {
+    let exit_code = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["config", "--unset", &base_config_key(id)])
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|output| output.status.code());
+    legacy_base_unset_warning(id, exit_code)
 }
 
 fn branch_exists(repo: &Path, branch: &str) -> io::Result<bool> {

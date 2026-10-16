@@ -6,12 +6,12 @@ use crate::acp_worker::AGENT_COMMAND;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
 use ralph_core::worker::{
-    base_config_key, branch_name, claude_worker_settings, exclude_lines, marker_paths,
-    opencode_config, project_slug, rollback_plan, rollback_report, session_name, spawn_handoff,
-    startup_state, worker_command, worker_mcp_config, worktree_add_args, wt_switch_args,
-    CursorFiles, Handoff, Harness, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint,
-    SpawnRequest, Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL, ID_OPTION,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
+    project_slug, rollback_plan, rollback_report, session_name, spawn_handoff, startup_state,
+    worker_command, worker_mcp_config, worktree_add_args, wt_switch_args, CursorFiles, Handoff,
+    Harness, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup,
+    WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -74,7 +74,7 @@ impl Workers {
             session: &session,
             started: started_text(id, &worktree, &via, worktree_dir.warning.as_deref()),
         };
-        self.launch(&repo, &launch).map_err(|error| {
+        self.launch(&launch).map_err(|error| {
             let footprint = SpawnFootprint {
                 created_worktree,
                 created_branch,
@@ -113,7 +113,7 @@ impl Workers {
         }
     }
 
-    fn launch(&self, repo: &Path, launch: &Launch) -> io::Result<String> {
+    fn launch(&self, launch: &Launch) -> io::Result<String> {
         let Launch {
             id,
             task,
@@ -122,7 +122,6 @@ impl Workers {
             session,
             started,
         } = launch;
-        record_base(repo, id)?;
         let inbox = self.store_dir.join(INBOX_DIR);
         let attachments = self.store_dir.join(ATTACHMENTS_DIR);
         fs::create_dir_all(&attachments)?;
@@ -424,18 +423,4 @@ fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<Wor
             branch_exists(repo, branch)?,
         )))?;
     Ok(WorktreeVia::Git { wt_error })
-}
-
-fn record_base(repo: &Path, id: &str) -> io::Result<()> {
-    let key = base_config_key(id);
-    if git_value(repo, &["config", "--get", &key])?.is_some() {
-        return Ok(());
-    }
-    if let Some(base) = git_value(repo, &["symbolic-ref", "-q", "--short", "HEAD"])? {
-        run(Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(["config", &key, &base]))?;
-    }
-    Ok(())
 }
