@@ -25,7 +25,6 @@ pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
 pub const WORKTREE_DIR_ENV: &str = "RALPH_WORKTREE_DIR";
 pub const OPENCODE_CONFIG_FILE: &str = "opencode.json";
-pub const OPENCODE_PLUGIN_FILE: &str = ".opencode/plugins/ralph-worker.ts";
 pub const READY_DIR: &str = "ready";
 pub const REPORTED_DIR: &str = "reported";
 pub const BLOCKED_DIR: &str = "blocked";
@@ -36,10 +35,8 @@ pub const SENT_DIR: &str = "sent";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-6.1-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const STORE_OPTION: &str = "@ralph_store";
-pub const HARNESS_OPTION: &str = "@ralph_harness";
 pub const ID_OPTION: &str = "@ralph_id";
-pub const SESSION_FORMAT: &str =
-    "#{session_name}\t#{@ralph_store}\t#{@ralph_harness}\t#{@ralph_id}";
+pub const SESSION_FORMAT: &str = "#{session_name}\t#{@ralph_store}\t#{@ralph_id}";
 
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
@@ -402,24 +399,6 @@ pub fn opencode_session_id(id: &str) -> String {
     format!("ses_ralph{id}")
 }
 
-pub fn opencode_command(id: &str, task: &str) -> Vec<String> {
-    let session = opencode_session_id(id);
-    let prompt = format!("{WORKER_PROMPT}\n\n{task}");
-    [
-        "zsh",
-        "-lic",
-        r#"exec "$0" "$@""#,
-        "opencode",
-        "--auto",
-        "--session",
-        &session,
-        "--prompt",
-        &prompt,
-    ]
-    .map(str::to_string)
-    .to_vec()
-}
-
 pub fn exclude_lines(harness: &Harness, repo: &Path, worktree_dir: &Path) -> Vec<String> {
     let mut lines: Vec<String> = worktree_dir
         .strip_prefix(repo)
@@ -435,7 +414,6 @@ pub fn exclude_lines(harness: &Harness, repo: &Path, worktree_dir: &Path) -> Vec
         .collect();
     if let Harness::Opencode { .. } = harness {
         lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
-        lines.push(format!("/{OPENCODE_PLUGIN_FILE}"));
     }
     lines
 }
@@ -751,25 +729,6 @@ mod tests {
     }
 
     #[test]
-    fn opencode_command_runs_the_tui_in_the_worker_session_with_rules_and_task() {
-        let args = opencode_command("GUZ-1", "do it");
-        assert_eq!(args[..2], ["zsh", "-lic"]);
-        assert_eq!(
-            args[3..8],
-            [
-                "opencode",
-                "--auto",
-                "--session",
-                "ses_ralphGUZ-1",
-                "--prompt"
-            ]
-        );
-        let prompt = args.last().unwrap();
-        assert!(prompt.starts_with(WORKER_PROMPT));
-        assert!(prompt.ends_with("\n\ndo it"));
-    }
-
-    #[test]
     fn opencode_config_sets_model_and_worker_server() {
         let config = opencode_config(
             "openai/gpt-6.1-sol",
@@ -810,11 +769,7 @@ mod tests {
                 repo,
                 &dir
             ),
-            [
-                "/.worktrees/",
-                "/opencode.json",
-                "/.opencode/plugins/ralph-worker.ts"
-            ]
+            ["/.worktrees/", "/opencode.json"]
         );
     }
 

@@ -4,19 +4,19 @@ use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
-use ralph_core::chat_status::{active_sessions, store_workers, RunningWorker};
+use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
-    close_plan, exclude_lines, marker_paths, opencode_config, opencode_session_gone,
-    opencode_session_id, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path,
-    session_name, session_owner, spawn_handoff, startup_state, tagged_sessions, worker_command,
-    worker_mcp_config, worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args,
-    CloseState, CloseStep, CursorFiles, Handoff, Harness, OpencodeFiles, OpencodeSpawn, Owner,
-    SpawnRequest, Startup, Sweep, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia,
-    ATTACHMENTS_DIR, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR,
-    SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
+    close_plan, exclude_lines, marker_paths, opencode_config, project_slug, prompt_entry_name,
+    resolve_worktree_dir, sent_path, session_name, session_owner, spawn_handoff, startup_state,
+    tagged_sessions, worker_command, worker_mcp_config, worktree_add_args, worktree_for_branch,
+    worktree_path, wt_switch_args, CloseState, CloseStep, CursorFiles, Handoff, Harness,
+    OpencodeFiles, OpencodeSpawn, Owner, SpawnRequest, Startup, Sweep, TaggedSession,
+    WorkerMarkers, WorktreeDir, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS,
+    WORKERS_DIR, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -370,21 +370,8 @@ impl Workers {
             git
         };
         match step {
-            CloseStep::RemoveOpencodeSession if self.opencode_http(id) => {
-                self.terminate_opencode(id)?;
-            }
             CloseStep::RemoveOpencodeSession => {
-                let output = Command::new("opencode")
-                    .args(["api", "session.remove", "--param"])
-                    .arg(format!("sessionID={}", opencode_session_id(id)))
-                    .stdin(Stdio::null())
-                    .output()?;
-                if output.status.success()
-                    || opencode_session_gone(&String::from_utf8_lossy(&output.stderr))
-                {
-                    return Ok(());
-                }
-                check(output)?;
+                self.terminate_opencode(id)?;
             }
             CloseStep::TerminateCursor => {
                 if CursorFiles::new(&self.store_dir, id).owner.exists() {
@@ -407,11 +394,6 @@ impl Workers {
             }
             CloseStep::PruneWorktrees => {
                 run(git().args(["worktree", "prune"]))?;
-            }
-            CloseStep::EvictOpencodeLocation => {
-                run(Command::new("opencode")
-                    .args(["api", "debug.location.evict", "--param"])
-                    .arg(format!("location[directory]={}", worktree.display())))?;
             }
             CloseStep::ClearMarkers => {
                 for marker in marker_paths(&self.store_dir, id) {
@@ -626,18 +608,7 @@ pub fn canonical_store(path: PathBuf) -> PathBuf {
 }
 
 pub fn opencode_active() -> Option<HashSet<String>> {
-    running_opencode_sessions().or_else(legacy_opencode_active)
-}
-
-fn legacy_opencode_active() -> Option<HashSet<String>> {
-    Command::new("opencode")
-        .args(["api", "session.active"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| active_sessions(&String::from_utf8_lossy(&output.stdout)))
+    running_opencode_sessions()
 }
 
 pub fn tmux_listing() -> String {

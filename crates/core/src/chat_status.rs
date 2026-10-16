@@ -2,7 +2,6 @@ use crate::inbox::{Position, Selection};
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
 use crate::worker::{opencode_session_id, same_store, tagged_sessions, Report, ReportStatus};
-use serde::de::IgnoredAny;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -193,18 +192,6 @@ pub fn orphan_hint(ready_ids: &[String], running: &[RunningWorker]) -> Option<St
             orphans.join(", ")
         )
     })
-}
-
-#[derive(Deserialize)]
-struct ActiveSessions {
-    data: HashMap<String, IgnoredAny>,
-}
-
-/// Session ids in `opencode api session.active` output; sessions absent from it are idle.
-pub fn active_sessions(json: &str) -> Option<HashSet<String>> {
-    serde_json::from_str::<ActiveSessions>(json)
-        .ok()
-        .map(|active| active.data.into_keys().collect())
 }
 
 pub fn latest_states(reports: &[Report]) -> HashMap<String, String> {
@@ -481,7 +468,8 @@ mod tests {
 
     #[test]
     fn store_workers_keep_only_this_stores_sessions() {
-        let listing = "ralph-p-A\t/s\t\tA\nralph-p-B\t/other\topencode\tB\nralph-p-C\t\t\tC\nralph-D\t/s\nmain\t/s\n";
+        let listing =
+            "ralph-p-A\t/s\tA\nralph-p-B\t/other\tB\nralph-p-C\t\tC\nralph-D\t/s\nmain\t/s\n";
         let ids = |store| -> Vec<String> {
             store_workers(listing, store)
                 .into_iter()
@@ -496,7 +484,7 @@ mod tests {
     #[test]
     fn workers_come_from_prefixed_sessions_with_last_known_state() {
         let listing =
-            "main\t/s\nralph-p-GUZ-2\t/s\t\tGUZ-2\nralph-p-GUZ-1\t/s\t\tGUZ-1\nralph-\t/s\t\t\n";
+            "main\t/s\nralph-p-GUZ-2\t/s\tGUZ-2\nralph-p-GUZ-1\t/s\tGUZ-1\nralph-\t/s\t\n";
         let workers = store_workers(listing, "/s");
         let ids: Vec<&str> = workers.iter().map(|worker| worker.id.as_str()).collect();
         assert_eq!(ids, vec!["GUZ-1", "GUZ-2"]);
@@ -521,19 +509,16 @@ mod tests {
 
     #[test]
     fn store_workers_take_the_bare_id_from_the_id_tag() {
-        let workers = store_workers("ralph-my-proj-GUZ-1\t/s\topencode\tGUZ-1\n", "/s");
+        let workers = store_workers("ralph-my-proj-GUZ-1\t/s\tGUZ-1\n", "/s");
         assert_eq!(
             workers,
             vec![RunningWorker {
                 id: "GUZ-1".into(),
                 session: "ralph-my-proj-GUZ-1".into(),
-                opencode: true,
+                opencode: false,
                 cursor: false
             }]
         );
-        let active = HashSet::from([opencode_session_id("GUZ-1")]);
-        let states = worker_states(&workers, &HashMap::new(), &HashSet::new(), Some(&active));
-        assert_eq!(states[0].state, BUSY_STATE);
     }
 
     #[test]
@@ -550,24 +535,6 @@ mod tests {
         assert!(hint.contains("nothing was removed"));
         assert_eq!(orphan_hint(&ready[1..2], &running), None);
         assert_eq!(orphan_hint(&[], &running), None);
-    }
-
-    #[test]
-    fn store_workers_read_the_harness_tag() {
-        let listing = "ralph-p-A\t/s\topencode\tA\nralph-p-B\t/s\t\tB\nralph-p-C\t/s\t\tC\n";
-        let opencode: Vec<bool> = store_workers(listing, "/s")
-            .iter()
-            .map(|worker| worker.opencode)
-            .collect();
-        assert_eq!(opencode, vec![true, false, false]);
-    }
-
-    #[test]
-    fn active_sessions_reads_the_session_keys() {
-        let active = active_sessions(r#"{"data":{"ses_ralphA":{"type":"running"}}}"#);
-        assert_eq!(active, Some(HashSet::from(["ses_ralphA".to_string()])));
-        assert_eq!(active_sessions(r#"{"data":{}}"#), Some(HashSet::new()));
-        assert_eq!(active_sessions("HTTP 500"), None);
     }
 
     #[test]

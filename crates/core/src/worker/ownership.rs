@@ -1,4 +1,4 @@
-use super::{branch_name, OPENCODE_HARNESS};
+use super::branch_name;
 use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
@@ -79,7 +79,7 @@ pub fn tagged_sessions(listing: &str) -> Vec<TaggedSession> {
             Some(TaggedSession {
                 name: name.to_string(),
                 store: fields.next().unwrap_or_default().to_string(),
-                opencode: fields.next() == Some(OPENCODE_HARNESS),
+                opencode: false,
                 id: fields.next().unwrap_or_default().to_string(),
             })
         })
@@ -152,7 +152,6 @@ pub enum CloseStep {
     RemoveWorktree { force: bool },
     DeleteBranch,
     PruneWorktrees,
-    EvictOpencodeLocation,
     ClearMarkers,
 }
 
@@ -209,15 +208,8 @@ pub fn close_plan(
         steps.push(CloseStep::DeleteBranch);
     }
     steps.push(CloseStep::PruneWorktrees);
-    if state.opencode && !state.cursor {
-        steps.push(CloseStep::EvictOpencodeLocation);
-    }
     steps.push(CloseStep::ClearMarkers);
     Ok(steps)
-}
-
-pub fn opencode_session_gone(stderr: &str) -> bool {
-    stderr.contains("HTTP 404")
 }
 
 #[cfg(test)]
@@ -252,15 +244,15 @@ mod tests {
     }
 
     #[test]
-    fn tagged_sessions_read_name_store_harness_and_id() {
-        let sessions = tagged_sessions("ralph-p-A\t/s\topencode\tA\nmain\n\n");
+    fn tagged_sessions_read_name_store_and_id() {
+        let sessions = tagged_sessions("ralph-p-A\t/s\tA\nmain\n\n");
         assert_eq!(
             sessions,
             vec![
                 TaggedSession {
                     name: "ralph-p-A".into(),
                     store: "/s".into(),
-                    opencode: true,
+                    opencode: false,
                     id: "A".into()
                 },
                 TaggedSession {
@@ -323,7 +315,6 @@ mod tests {
                 CloseStep::RemoveWorktree { force: false },
                 CloseStep::DeleteBranch,
                 CloseStep::PruneWorktrees,
-                CloseStep::EvictOpencodeLocation,
                 CloseStep::ClearMarkers,
             ])
         );
@@ -336,16 +327,6 @@ mod tests {
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateCursor);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
-    }
-
-    #[test]
-    fn close_plan_leaves_the_location_eviction_to_the_http_host() {
-        let mut state = close_state(Owner::Mine(tagged("", "/s")));
-        state.opencode = true;
-        state.cursor = true;
-        let steps = close_plan(&state, false, false).unwrap();
-        assert_eq!(steps[0], CloseStep::RemoveOpencodeSession);
-        assert!(!steps.contains(&CloseStep::EvictOpencodeLocation));
     }
 
     #[test]
@@ -521,11 +502,5 @@ mod tests {
         assert!(close_plan(&state, false, false)
             .unwrap_err()
             .contains("1 commit(s) not in develop"));
-    }
-
-    #[test]
-    fn opencode_session_gone_on_404_only() {
-        assert!(opencode_session_gone("HTTP 404 Not Found\n"));
-        assert!(!opencode_session_gone("HTTP 500 Internal Server Error"));
     }
 }
