@@ -1,7 +1,9 @@
-use crate::acp_worker::{caller_owns_cursor, owned_cursor_ids, sweep_owner, write_file};
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
+use crate::cursor_owner::{
+    caller_owns_cursor, now_secs, owned_cursor_ids, sweep_owner, write_file,
+};
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
 use ralph_core::chat_status::{store_workers, RunningWorker};
@@ -9,10 +11,11 @@ use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
-    marker_paths, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path, session_name,
-    session_owner, tagged_sessions, worktree_for_branch, worktree_path, CloseState, CloseStep,
-    CursorFiles, Handoff, OpencodeFiles, Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL,
-    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    interrupt_reply, marker_paths, project_slug, prompt_entry_name, resolve_worktree_dir,
+    sent_path, session_name, session_owner, tagged_sessions, worktree_for_branch, worktree_path,
+    CloseState, CloseStep, CursorFiles, Handoff, OpencodeFiles, Owner, Sweep, TaggedSession,
+    WorktreeDir, HANDOFF_POLL, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT,
+    WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;

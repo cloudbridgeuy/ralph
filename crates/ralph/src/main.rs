@@ -15,6 +15,7 @@ mod cli;
 mod clipboard;
 pub mod config;
 mod cursor_cleanup;
+mod cursor_owner;
 pub mod diff_highlight;
 pub mod formatting;
 mod frame;
