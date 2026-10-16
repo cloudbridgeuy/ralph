@@ -147,7 +147,7 @@ fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
         return match state {
             WorkerState::Waiting => Some(format!("Worker {id} stopped without calling report.")),
             WorkerState::BlockedPermission => Some(format!(
-                "Worker {id} is waiting for a permission answer. Ask the person and relay it with reply."
+                "Worker {id} is waiting for a permission answer. Answer it with reply and an optionId."
             )),
             _ => None,
         };
