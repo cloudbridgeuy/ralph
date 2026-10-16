@@ -1,5 +1,6 @@
 use crate::chat::memory::Store;
 use crate::clipboard::PASTE_IMAGE;
+use crate::signal::default_sigttou_in;
 use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
 use ralph_core::chat_memory::Role;
 use reedline::{
@@ -92,7 +93,10 @@ pub(super) fn edit_draft(editor: &mut Reedline, store_dir: &Path) -> io::Result<
     let program = std::env::var("VISUAL")
         .or_else(|_| std::env::var("EDITOR"))
         .unwrap_or_else(|_| "vi".to_string());
-    let status = Command::new(program).arg(&path).status()?;
+    let mut command = Command::new(program);
+    command.arg(&path);
+    default_sigttou_in(&mut command);
+    let status = command.status()?;
     if !status.success() {
         return Err(io::Error::other(format!("editor exited with {status}")));
     }
