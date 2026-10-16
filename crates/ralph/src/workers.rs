@@ -11,11 +11,11 @@ use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
-    interrupt_reply, marker_paths, project_slug, prompt_entry_name, resolve_worktree_dir,
-    sent_path, session_name, session_owner, tagged_sessions, worktree_for_branch, worktree_path,
-    CloseState, CloseStep, CursorFiles, Handoff, OpencodeFiles, Owner, Sweep, TaggedSession,
-    WorktreeDir, HANDOFF_POLL, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT,
-    WORKTREE_DIR_ENV,
+    interrupt_reply, marker_paths, parse_interrupt_result, project_slug, prompt_entry_name,
+    resolve_worktree_dir, sent_path, session_name, session_owner, tagged_sessions,
+    worktree_for_branch, worktree_path, CloseState, CloseStep, CursorFiles, Handoff, OpencodeFiles,
+    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
+    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -68,9 +68,11 @@ impl Workers {
         let files = CursorFiles::new(&self.store_dir, id);
         if files.owner.exists() {
             if interrupt {
-                let running = files.running.exists();
-                self.queue_prompt(&files.interrupt, id, text, "Interrupted")?;
-                return Ok(interrupt_reply(id, running));
+                let entry = self.queue_entry(&files.interrupt, text)?;
+                return Ok(interrupt_reply(
+                    id,
+                    self.await_interrupt_result(&files, &entry),
+                ));
             }
             if self.awaits_permission(id) {
                 return self.answer_permission(id, text);
@@ -152,7 +154,27 @@ impl Workers {
         self.queue_prompt(&files.prompt, id, text, verb)
     }
 
+    fn await_interrupt_result(&self, files: &CursorFiles, entry: &str) -> Option<bool> {
+        let result = files.interrupt_result.join(entry);
+        let started = Instant::now();
+        loop {
+            if let Ok(text) = fs::read_to_string(&result) {
+                fs::remove_file(&result).ok();
+                return parse_interrupt_result(&text);
+            }
+            if started.elapsed() >= HANDOFF_TIMEOUT {
+                return None;
+            }
+            thread::sleep(HANDOFF_POLL);
+        }
+    }
+
     fn queue_prompt(&self, dir: &Path, id: &str, text: &str, verb: &str) -> io::Result<String> {
+        self.queue_entry(dir, text)?;
+        Ok(format!("{verb} worker {id}."))
+    }
+
+    fn queue_entry(&self, dir: &Path, text: &str) -> io::Result<String> {
         let entry = prompt_entry_name(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -163,8 +185,8 @@ impl Workers {
         );
         let pending = dir.join(format!(".{entry}"));
         write_file(&pending, text)?;
-        fs::rename(&pending, dir.join(entry))?;
-        Ok(format!("{verb} worker {id}."))
+        fs::rename(&pending, dir.join(&entry))?;
+        Ok(entry)
     }
 
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
@@ -235,7 +257,7 @@ impl Workers {
         }
         let files = CursorFiles::new(&self.store_dir, id);
         clear_marker(&files.session)?;
-        clear_marker(&files.running)?;
+        clear_marker(&files.interrupt_result)?;
         if steps == [CloseStep::ClearMarkers] {
             return Ok(format!(
                 "Closed worker {id}: only its markers were left; removed them."

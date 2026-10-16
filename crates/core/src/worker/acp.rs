@@ -17,7 +17,7 @@ pub const CURSOR_ANSWER_DIR: &str = "cursor-answer";
 pub const CURSOR_PROMPT_DIR: &str = "cursor-prompt";
 pub const CURSOR_INTERRUPT_DIR: &str = "cursor-interrupt";
 pub const CURSOR_SESSION_DIR: &str = "cursor-session";
-pub const CURSOR_RUNNING_DIR: &str = "cursor-running";
+pub const CURSOR_INTERRUPT_RESULT_DIR: &str = "cursor-interrupt-result";
 pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDOFF_POLL: Duration = Duration::from_millis(250);
 const AUTH_REQUIRED_CODE: i32 = -32000;
@@ -32,7 +32,7 @@ pub struct CursorFiles {
     pub prompt: PathBuf,
     pub interrupt: PathBuf,
     pub session: PathBuf,
-    pub running: PathBuf,
+    pub interrupt_result: PathBuf,
 }
 
 impl CursorFiles {
@@ -46,7 +46,7 @@ impl CursorFiles {
             prompt: store.join(CURSOR_PROMPT_DIR).join(id),
             interrupt: store.join(CURSOR_INTERRUPT_DIR).join(id),
             session: store.join(CURSOR_SESSION_DIR).join(id),
-            running: store.join(CURSOR_RUNNING_DIR).join(id),
+            interrupt_result: store.join(CURSOR_INTERRUPT_RESULT_DIR).join(id),
         }
     }
 
@@ -59,7 +59,7 @@ impl CursorFiles {
             &self.answer,
             &self.prompt,
             &self.interrupt,
-            &self.running,
+            &self.interrupt_result,
         ]
     }
 }
@@ -341,7 +341,7 @@ pub enum TurnOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inbound {
     Prompt(String),
-    Interrupt(String),
+    Interrupt(String, String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,7 +364,7 @@ impl PromptQueue {
                 self.pending.push_back(text);
                 Vec::new()
             }
-            Inbound::Interrupt(text) => {
+            Inbound::Interrupt(text, _) => {
                 self.pending.push_front(text);
                 if self.running {
                     self.interrupted = true;
@@ -389,13 +389,37 @@ impl PromptQueue {
     }
 }
 
-pub fn interrupt_reply(id: &str, running: bool) -> String {
-    if running {
-        format!(
-            "Interrupted worker {id}: a turn was running; it is cancelled if still running, and this message runs next."
-        )
+pub fn cancels_turn(steps: &[Step]) -> bool {
+    steps.contains(&Step::CancelSession)
+}
+
+pub fn interrupt_result_text(cancelled: bool) -> &'static str {
+    if cancelled {
+        "cancelled"
     } else {
-        format!("Sent to worker {id}: no turn was running, so nothing was cancelled.")
+        "sent"
+    }
+}
+
+pub fn parse_interrupt_result(text: &str) -> Option<bool> {
+    match text.trim() {
+        "cancelled" => Some(true),
+        "sent" => Some(false),
+        _ => None,
+    }
+}
+
+pub fn interrupt_reply(id: &str, outcome: Option<bool>) -> String {
+    match outcome {
+        Some(true) => format!(
+            "Interrupted worker {id}: its running turn was cancelled and this message runs next."
+        ),
+        Some(false) => {
+            format!("Sent to worker {id}: no turn was running, so nothing was cancelled.")
+        }
+        None => format!(
+            "Interrupt queued for worker {id}, but ralph chat did not confirm within 30 s: outcome unknown."
+        ),
     }
 }
 
@@ -803,7 +827,7 @@ mod tests {
     }
 
     fn interrupt(text: &str) -> Inbound {
-        Inbound::Interrupt(text.into())
+        Inbound::Interrupt(text.into(), "entry".into())
     }
 
     #[test]
@@ -843,15 +867,41 @@ mod tests {
     }
 
     #[test]
-    fn interrupt_reply_says_cancelled_only_for_a_running_turn() {
+    fn interrupt_reply_reports_each_outcome() {
         assert_eq!(
-            interrupt_reply("GUZ-1", true),
-            "Interrupted worker GUZ-1: a turn was running; it is cancelled if still running, and this message runs next."
+            interrupt_reply("GUZ-1", Some(true)),
+            "Interrupted worker GUZ-1: its running turn was cancelled and this message runs next."
         );
         assert_eq!(
-            interrupt_reply("GUZ-1", false),
+            interrupt_reply("GUZ-1", Some(false)),
             "Sent to worker GUZ-1: no turn was running, so nothing was cancelled."
         );
+        assert_eq!(
+            interrupt_reply("GUZ-1", None),
+            "Interrupt queued for worker GUZ-1, but ralph chat did not confirm within 30 s: outcome unknown."
+        );
+    }
+
+    #[test]
+    fn cancels_turn_only_with_cancel_session() {
+        assert!(cancels_turn(&[
+            Step::CancelPermissions,
+            Step::CancelSession
+        ]));
+        assert!(!cancels_turn(&[Step::CancelPermissions]));
+    }
+
+    #[test]
+    fn interrupt_result_text_round_trips() {
+        assert_eq!(
+            parse_interrupt_result(interrupt_result_text(true)),
+            Some(true)
+        );
+        assert_eq!(
+            parse_interrupt_result(interrupt_result_text(false)),
+            Some(false)
+        );
+        assert_eq!(parse_interrupt_result(""), None);
     }
 
     #[test]

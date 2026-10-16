@@ -105,6 +105,7 @@ pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
         }
         fs::remove_dir_all(&files.prompt).ok();
         fs::remove_dir_all(&files.interrupt).ok();
+        fs::remove_dir_all(&files.interrupt_result).ok();
         fs::remove_file(ready_path(store_dir, id)).ok();
     }
     Some(decision)

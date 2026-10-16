@@ -17,13 +17,13 @@ use futures::executor::block_on;
 use futures::future::Either;
 use futures::{select, FutureExt, StreamExt};
 use ralph_core::worker::{
-    acp_mcp_server, auto_allow_option, check_protocol, is_report_tool_call, match_option,
-    no_option_message, permission_content, prompt_failure_report, ready_path, request_stale,
-    resume_decision, session_error, task_prompt, turn_outcome, version_warning, BlockedContent,
-    CursorFiles, Inbound, OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest, Step,
-    TurnOutcome, WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
-    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_RUNNING_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR,
-    HANDOFF_POLL, REPORT_REMINDER,
+    acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, interrupt_result_text,
+    is_report_tool_call, match_option, no_option_message, permission_content,
+    prompt_failure_report, ready_path, request_stale, resume_decision, session_error, task_prompt,
+    turn_outcome, version_warning, BlockedContent, CursorFiles, Inbound, OwnerRecord, PromptQueue,
+    Resume, SessionRecord, SpawnRequest, Step, TurnOutcome, WorkerMarkers, CURSOR_ANSWER_DIR,
+    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
+    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -139,7 +139,7 @@ pub enum Launch {
 pub struct Slot<'a> {
     pub id: &'a str,
     pub owner: &'a Path,
-    pub running: &'a Path,
+    pub results: &'a Path,
     pub markers: WorkerMarkers,
     pub starting: &'a Mutex<HashMap<String, u32>>,
 }
@@ -208,7 +208,7 @@ impl AcpWorker {
         let Slot {
             id,
             owner,
-            running,
+            results,
             markers,
             starting,
         } = slot;
@@ -260,7 +260,7 @@ impl AcpWorker {
         let replaying = Arc::clone(&loading);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
-        let running = running.to_path_buf();
+        let results = results.to_path_buf();
         let turns_permissions = Arc::clone(&permissions);
         let seen = Arc::clone(&reported);
         let allowed = Arc::clone(&reported);
@@ -330,7 +330,7 @@ impl AcpWorker {
                                     session,
                                     worker_id,
                                     markers,
-                                    running,
+                                    results,
                                     inbox,
                                     reported,
                                     closing,
@@ -366,9 +366,9 @@ impl AcpWorker {
             .ok();
     }
 
-    fn interrupt(&self, text: &str) {
+    fn interrupt(&self, text: &str, entry: &str) {
         self.prompts
-            .unbounded_send(Inbound::Interrupt(text.to_string()))
+            .unbounded_send(Inbound::Interrupt(text.to_string(), entry.to_string()))
             .ok();
     }
 
@@ -419,7 +419,7 @@ struct Turns {
     session: SessionId,
     worker_id: String,
     markers: WorkerMarkers,
-    running: PathBuf,
+    results: PathBuf,
     inbox: Inbox,
     reported: Arc<AtomicBool>,
     closing: Arc<AtomicBool>,
@@ -438,6 +438,27 @@ fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) 
     }
 }
 
+fn accept_inbound(
+    connection: &ConnectionTo<Agent>,
+    turns: &Turns,
+    queue: &mut PromptQueue,
+    item: Inbound,
+) {
+    let entry = match &item {
+        Inbound::Interrupt(_, entry) => Some(entry.clone()),
+        Inbound::Prompt(_) => None,
+    };
+    let steps = queue.accept(item);
+    if let Some(entry) = entry {
+        let text = interrupt_result_text(cancels_turn(&steps));
+        let pending = turns.results.join(format!(".{entry}"));
+        if write_file(&pending, text).is_ok() {
+            fs::rename(&pending, turns.results.join(&entry)).ok();
+        }
+    }
+    run_steps(connection, turns, steps);
+}
+
 async fn run_turns(
     connection: &ConnectionTo<Agent>,
     turns: &Turns,
@@ -450,14 +471,13 @@ async fn run_turns(
         let Some(text) = queue.start() else {
             match futures::future::select(inbound.next(), &mut stop).await {
                 Either::Left((Some(item), _)) => {
-                    run_steps(connection, turns, queue.accept(item));
+                    accept_inbound(connection, turns, &mut queue, item);
                     continue;
                 }
                 _ => return,
             }
         };
         fs::remove_file(&turns.markers.waiting).ok();
-        write_file(&turns.running, "").ok();
         turns.reported.store(false, Ordering::SeqCst);
         let mut sent = Box::pin(
             connection
@@ -473,12 +493,11 @@ async fn run_turns(
                 result = sent => break result,
                 _ = stop => return,
                 item = inbound.select_next_some() => {
-                    run_steps(connection, turns, queue.accept(item));
+                    accept_inbound(connection, turns, &mut queue, item);
                 }
             }
         };
         let interrupted = queue.finish();
-        fs::remove_file(&turns.running).ok();
         let reason = result.as_ref().map(|done| {
             serde_json::to_value(done.stop_reason)
                 .ok()
@@ -533,7 +552,7 @@ impl CursorHost {
         for id in request_ids(&store_dir, CURSOR_OWNER_DIR) {
             sweep_owner(&store_dir, &id);
         }
-        fs::remove_dir_all(store_dir.join(CURSOR_RUNNING_DIR)).ok();
+        fs::remove_dir_all(store_dir.join(CURSOR_INTERRUPT_RESULT_DIR)).ok();
         Arc::new(Self {
             store_dir,
             workers: Mutex::new(HashMap::new()),
@@ -558,7 +577,11 @@ impl CursorHost {
             self.answer(&id);
         }
         for id in request_ids(&self.store_dir, CURSOR_PROMPT_DIR) {
-            self.prompt(&id, |files| &files.prompt, AcpWorker::nudge);
+            self.prompt(
+                &id,
+                |files| &files.prompt,
+                |worker, text, _| worker.nudge(text),
+            );
         }
         for id in request_ids(&self.store_dir, CURSOR_INTERRUPT_DIR) {
             self.prompt(&id, |files| &files.interrupt, AcpWorker::interrupt);
@@ -599,7 +622,7 @@ impl CursorHost {
         fs::remove_file(&files.answer).ok();
         fs::remove_dir_all(&files.prompt).ok();
         fs::remove_dir_all(&files.interrupt).ok();
-        fs::remove_file(&files.running).ok();
+        fs::remove_dir_all(&files.interrupt_result).ok();
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
     }
 
@@ -631,7 +654,12 @@ impl CursorHost {
         fs::remove_file(&files.answer).ok();
     }
 
-    fn prompt(&self, id: &str, dir: fn(&CursorFiles) -> &PathBuf, deliver: fn(&AcpWorker, &str)) {
+    fn prompt(
+        &self,
+        id: &str,
+        dir: fn(&CursorFiles) -> &PathBuf,
+        deliver: fn(&AcpWorker, &str, &str),
+    ) {
         let files = self.files(id);
         let starting = self
             .starting
@@ -651,8 +679,12 @@ impl CursorHost {
             .unwrap_or_default();
         entries.sort();
         for entry in entries {
+            let name = entry
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             if let (Ok(text), Some(worker)) = (fs::read_to_string(&entry), self.workers().get(id)) {
-                deliver(worker, &text);
+                deliver(worker, &text, &name);
             }
             fs::remove_file(&entry).ok();
         }
@@ -712,7 +744,7 @@ impl CursorHost {
             Slot {
                 id,
                 owner: &self.files(id).owner,
-                running: &self.files(id).running,
+                results: &self.files(id).interrupt_result,
                 markers: WorkerMarkers::new(&self.store_dir, id),
                 starting: &self.starting,
             },
