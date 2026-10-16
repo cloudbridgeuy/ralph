@@ -12,12 +12,11 @@ mod statusbar;
 mod turn;
 mod watch;
 
-use crate::acp_worker::{CursorShutdown, ExitCleanup};
 use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
 use crate::chat::memory::Store;
-use crate::chat::monitor::{ready_ids, watch_input, watch_status, Monitor};
+use crate::chat::monitor::{ready_ids, watch_headless, watch_input, watch_status, Monitor};
 use crate::chat::prompt::{next_route, ChatPrompt};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::skills::{
@@ -29,12 +28,12 @@ use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::markdown::{MarkdownTheme, ThemeRole};
-use crate::opencode_worker::OpencodeShutdown;
 use crate::render::{cap_wrap_width, render_markdown, RenderContext};
 use crate::signal;
 use crate::warn::{warn, warn_if_err};
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
+use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
 use ralph_core::chat::{
     resolve_frozen_window, resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width,
@@ -193,12 +192,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!("{hint}");
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
-    let cursor = CursorShutdown::start(monitor.store_dir.clone());
-    let opencode = OpencodeShutdown::start(monitor.store_dir.clone());
+    let headless = watch_headless(monitor.store_dir.clone());
     watch_input(
         Arc::clone(&at_prompt),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
-        ExitCleanup::new(monitor.watches.clone(), &cursor, &opencode),
+        ExitCleanup::new(monitor.watches.clone(), &headless),
     );
     let mut editor = build_editor(&store_dir)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));

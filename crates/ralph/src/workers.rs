@@ -23,6 +23,7 @@ use std::process::{self, Command, Output, Stdio};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+pub(crate) mod headless;
 mod spawn;
 
 pub struct Workers {

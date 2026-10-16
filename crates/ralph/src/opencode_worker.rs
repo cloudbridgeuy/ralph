@@ -1,15 +1,16 @@
 use crate::cursor_owner::write_file;
 use crate::warn::warn;
 use crate::worker_mcp::Inbox;
+use crate::workers::headless::HeadlessHost;
 use ralph_core::worker::{
     advance, basic_auth, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
     reconcile, reconnect_delay, running_sessions, server_url, session_missing, session_update,
     spawn_failure, start_failure, transient_request_error, turn_result, ApiData, Effect,
     OpencodeFiles, OpencodeRecord, PermissionAsked, ServerEvent, ServerRecord, SessionMessage,
-    SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerMarkers, HANDOFF_POLL,
-    OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
-    SILENCE_TIMEOUT, TRANSIENT_RETRIES,
+    SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerMarkers, OPENCODE_OWNER_DIR,
+    OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
+    TRANSIENT_RETRIES,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -421,7 +422,7 @@ pub struct OpencodeHost {
 }
 
 impl OpencodeHost {
-    fn new(store_dir: PathBuf) -> Arc<Self> {
+    pub(crate) fn new(store_dir: PathBuf) -> Arc<Self> {
         fs::remove_dir_all(store_dir.join(OPENCODE_OWNER_DIR)).ok();
         Arc::new(Self {
             sessions: Mutex::new(load_sessions(&store_dir)),
@@ -776,14 +777,7 @@ impl OpencodeHost {
         }
     }
 
-    fn serve(&self) {
-        while !self.closed() {
-            self.poll();
-            thread::sleep(HANDOFF_POLL);
-        }
-    }
-
-    pub(crate) fn shutdown(&self) {
+    fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let taken = self.server().take();
         if let Some(server) = taken {
@@ -804,22 +798,21 @@ fn post_problem(target: &Target, problem: &str) {
     Inbox::new(target.inbox.clone()).post(&report, 0).ok();
 }
 
-pub struct OpencodeShutdown(pub(crate) Arc<OpencodeHost>);
-
-impl OpencodeShutdown {
-    pub fn start(store_dir: PathBuf) -> Self {
-        let host = OpencodeHost::new(store_dir);
-        let supervised = Arc::clone(&host);
-        thread::spawn(move || supervised.supervise());
-        let polled = Arc::clone(&host);
-        thread::spawn(move || polled.serve());
-        Self(host)
+impl HeadlessHost for OpencodeHost {
+    fn resume(&self) {
+        self.supervise();
     }
-}
 
-impl Drop for OpencodeShutdown {
-    fn drop(&mut self) {
-        self.0.shutdown();
+    fn poll(&self) -> bool {
+        if self.closed() {
+            return false;
+        }
+        OpencodeHost::poll(self);
+        true
+    }
+
+    fn shutdown(&self) {
+        OpencodeHost::shutdown(self);
     }
 }
 

@@ -1,4 +1,3 @@
-use crate::acp_worker::ExitCleanup;
 use crate::chat::check::CheckState;
 use crate::chat::memory::Store;
 use crate::inbox_alert;
@@ -7,6 +6,7 @@ use crate::warn::warn_if_err;
 use crate::watch_requests;
 use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
+use crate::workers::headless::{ExitCleanup, HeadlessShutdown};
 use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
@@ -19,7 +19,7 @@ use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
     blocked_path, ready_path, sent_path, unreported_path, waiting_path, Report, WorkerKind,
-    READY_DIR,
+    HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -248,6 +248,24 @@ pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 's
             }
         }
     });
+}
+
+pub(super) fn watch_headless(store_dir: PathBuf) -> HeadlessShutdown {
+    let headless = HeadlessShutdown::new(store_dir);
+    for host in headless.hosts() {
+        let resumed = Arc::clone(host);
+        std::thread::spawn(move || resumed.resume());
+        let polled = Arc::clone(host);
+        // Keep each host independent: HTTP and ACP handoffs can block, and neither
+        // should delay the other host or the status/check loop.
+        std::thread::spawn(move || loop {
+            std::thread::sleep(HANDOFF_POLL);
+            if !polled.poll() {
+                break;
+            }
+        });
+    }
+    headless
 }
 
 pub(super) fn stdin_hung_up() -> bool {
