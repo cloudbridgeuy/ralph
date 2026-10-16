@@ -34,9 +34,6 @@ pub fn server_url(port: u16) -> String {
 
 pub fn opencode_serve_command(port: u16) -> Vec<String> {
     [
-        "zsh",
-        "-lc",
-        r#"exec "$0" "$@""#,
         "opencode",
         "serve",
         "--hostname",
@@ -46,6 +43,14 @@ pub fn opencode_serve_command(port: u16) -> Vec<String> {
     ]
     .map(str::to_string)
     .to_vec()
+}
+
+pub fn spawn_failure(program: &str, error: &std::io::Error) -> String {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        format!("{program} not found on PATH (ralph starts it directly with its own environment)")
+    } else {
+        format!("could not start the {program} server: {error}")
+    }
 }
 
 pub fn start_failure(problem: &str, log: &str) -> String {
@@ -180,12 +185,17 @@ mod tests {
     }
 
     #[test]
-    fn serve_command_runs_opencode_through_a_non_interactive_login_shell() {
-        let args = opencode_serve_command(4096);
-        assert_eq!(args[..4], ["zsh", "-lc", r#"exec "$0" "$@""#, "opencode"]);
+    fn serve_command_runs_opencode_directly() {
         assert_eq!(
-            args[4..],
-            ["serve", "--hostname", "127.0.0.1", "--port", "4096"]
+            opencode_serve_command(4096),
+            [
+                "opencode",
+                "serve",
+                "--hostname",
+                "127.0.0.1",
+                "--port",
+                "4096"
+            ]
         );
         assert_eq!(server_url(4096), "http://127.0.0.1:4096");
     }
@@ -197,6 +207,14 @@ mod tests {
         assert!(message.starts_with("not healthy; last server log lines:\nline 11\n"));
         assert!(message.ends_with("line 30"));
         assert!(!message.contains("line 10\n"));
+    }
+
+    #[test]
+    fn spawn_failure_names_a_missing_binary() {
+        let missing = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert!(spawn_failure("opencode", &missing).starts_with("opencode not found on PATH"));
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(spawn_failure("opencode", &denied).starts_with("could not start the opencode"));
     }
 
     #[test]

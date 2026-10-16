@@ -5,11 +5,11 @@ use ralph_core::worker::{
     advance, basic_auth, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
     reconcile, reconnect_delay, running_sessions, server_url, session_missing, session_update,
-    start_failure, transient_request_error, turn_result, ApiData, Effect, OpencodeFiles,
-    OpencodeRecord, PermissionAsked, ServerEvent, ServerRecord, SessionMessage, SessionSnapshot,
-    SessionUpdate, TurnFacts, TurnState, WorkerMarkers, HANDOFF_POLL, OPENCODE_OWNER_DIR,
-    OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
-    TRANSIENT_RETRIES,
+    spawn_failure, start_failure, transient_request_error, turn_result, ApiData, Effect,
+    OpencodeFiles, OpencodeRecord, PermissionAsked, ServerEvent, ServerRecord, SessionMessage,
+    SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerMarkers, HANDOFF_POLL,
+    OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
+    SILENCE_TIMEOUT, TRANSIENT_RETRIES,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -186,7 +186,7 @@ impl Server {
             .stderr(log)
             .process_group(0)
             .spawn()
-            .map_err(|e| format!("could not start the opencode server: {e}"))?;
+            .map_err(|e| spawn_failure(program, &e))?;
         let mut server = Self {
             child,
             api: Api::new(port, &password),
