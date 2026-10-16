@@ -1,5 +1,4 @@
 use super::{Report, ReportStatus, SERVER_NAME, WORKER_PROMPT};
-use crate::chat_memory::Trigger;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -244,16 +243,6 @@ pub fn no_option_message(options: &[PermissionOption]) -> String {
         "No permission option matches that answer. Valid optionIds: {}.",
         ids.join(", ")
     )
-}
-
-pub fn permission_reply_allowed(trigger: Option<Trigger>) -> Result<(), String> {
-    match trigger {
-        Some(Trigger::User) => Ok(()),
-        _ => Err(
-            "Only the person can answer a cursor permission request. Relay it to them and wait for their answer."
-                .to_string(),
-        ),
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -757,13 +746,6 @@ mod tests {
     fn no_option_message_lists_every_option_id() {
         let message = no_option_message(&options());
         assert!(message.contains("allow-once, reject-once"));
-    }
-
-    #[test]
-    fn only_a_user_turn_may_answer_a_permission() {
-        assert!(permission_reply_allowed(Some(Trigger::User)).is_ok());
-        assert!(permission_reply_allowed(Some(Trigger::Worker)).is_err());
-        assert!(permission_reply_allowed(None).is_err());
     }
 
     #[test]
