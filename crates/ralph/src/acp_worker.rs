@@ -21,7 +21,7 @@ use ralph_core::worker::{
     version_warning, BlockedContent, CursorFiles, Inbound, OwnerFacts, OwnerRecord, PromptQueue,
     Resume, SessionRecord, SpawnRequest, Step, Sweep, TurnOutcome, WorkerMarkers,
     CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
-    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
+    CURSOR_RUNNING_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -140,6 +140,7 @@ pub enum Launch {
 pub struct Slot<'a> {
     pub id: &'a str,
     pub owner: &'a Path,
+    pub running: &'a Path,
     pub markers: WorkerMarkers,
     pub starting: &'a Mutex<HashMap<String, u32>>,
 }
@@ -208,6 +209,7 @@ impl AcpWorker {
         let Slot {
             id,
             owner,
+            running,
             markers,
             starting,
         } = slot;
@@ -259,6 +261,7 @@ impl AcpWorker {
         let replaying = Arc::clone(&loading);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
+        let running = running.to_path_buf();
         let turns_permissions = Arc::clone(&permissions);
         let seen = Arc::clone(&reported);
         let allowed = Arc::clone(&reported);
@@ -328,6 +331,7 @@ impl AcpWorker {
                                     session,
                                     worker_id,
                                     markers,
+                                    running,
                                     inbox,
                                     reported,
                                     closing,
@@ -416,6 +420,7 @@ struct Turns {
     session: SessionId,
     worker_id: String,
     markers: WorkerMarkers,
+    running: PathBuf,
     inbox: Inbox,
     reported: Arc<AtomicBool>,
     closing: Arc<AtomicBool>,
@@ -453,6 +458,7 @@ async fn run_turns(
             }
         };
         fs::remove_file(&turns.markers.waiting).ok();
+        write_file(&turns.running, "").ok();
         turns.reported.store(false, Ordering::SeqCst);
         let mut sent = Box::pin(
             connection
@@ -473,6 +479,7 @@ async fn run_turns(
             }
         };
         let interrupted = queue.finish();
+        fs::remove_file(&turns.running).ok();
         let reason = result.as_ref().map(|done| {
             serde_json::to_value(done.stop_reason)
                 .ok()
@@ -627,6 +634,7 @@ impl CursorHost {
         for id in request_ids(&store_dir, CURSOR_OWNER_DIR) {
             sweep_owner(&store_dir, &id);
         }
+        fs::remove_dir_all(store_dir.join(CURSOR_RUNNING_DIR)).ok();
         Arc::new(Self {
             store_dir,
             workers: Mutex::new(HashMap::new()),
@@ -692,6 +700,7 @@ impl CursorHost {
         fs::remove_file(&files.answer).ok();
         fs::remove_dir_all(&files.prompt).ok();
         fs::remove_dir_all(&files.interrupt).ok();
+        fs::remove_file(&files.running).ok();
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
     }
 
@@ -804,6 +813,7 @@ impl CursorHost {
             Slot {
                 id,
                 owner: &self.files(id).owner,
+                running: &self.files(id).running,
                 markers: WorkerMarkers::new(&self.store_dir, id),
                 starting: &self.starting,
             },

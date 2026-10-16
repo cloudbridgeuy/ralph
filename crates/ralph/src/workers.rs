@@ -65,7 +65,9 @@ impl Workers {
         let files = CursorFiles::new(&self.store_dir, id);
         if files.owner.exists() {
             if interrupt {
-                return self.queue_prompt(&files.interrupt, id, text, "Interrupted");
+                let running = files.running.exists();
+                self.queue_prompt(&files.interrupt, id, text, "Interrupted")?;
+                return Ok(interrupt_reply(id, running));
             }
             if self.awaits_permission(id) {
                 return self.answer_permission(id, text);
@@ -228,7 +230,9 @@ impl Workers {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
         }
-        clear_marker(&CursorFiles::new(&self.store_dir, id).session)?;
+        let files = CursorFiles::new(&self.store_dir, id);
+        clear_marker(&files.session)?;
+        clear_marker(&files.running)?;
         if steps == [CloseStep::ClearMarkers] {
             return Ok(format!(
                 "Closed worker {id}: only its markers were left; removed them."

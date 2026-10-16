@@ -145,7 +145,7 @@ pub fn command_definitions() -> [Value; 4] {
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
                     "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."},
-                    "interrupt": {"type": "boolean", "description": "cursor workers only: cancel the running turn and run this message next. Default false."}
+                    "interrupt": {"type": "boolean", "description": "cursor workers only: cancel the running turn, if any, and run this message next. Default false."}
                 },
                 "required": ["id", "text"]
             }

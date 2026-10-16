@@ -17,6 +17,7 @@ pub const CURSOR_ANSWER_DIR: &str = "cursor-answer";
 pub const CURSOR_PROMPT_DIR: &str = "cursor-prompt";
 pub const CURSOR_INTERRUPT_DIR: &str = "cursor-interrupt";
 pub const CURSOR_SESSION_DIR: &str = "cursor-session";
+pub const CURSOR_RUNNING_DIR: &str = "cursor-running";
 pub const HANDOFF_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HANDOFF_POLL: Duration = Duration::from_millis(250);
 const AUTH_REQUIRED_CODE: i32 = -32000;
@@ -31,6 +32,7 @@ pub struct CursorFiles {
     pub prompt: PathBuf,
     pub interrupt: PathBuf,
     pub session: PathBuf,
+    pub running: PathBuf,
 }
 
 impl CursorFiles {
@@ -44,10 +46,11 @@ impl CursorFiles {
             prompt: store.join(CURSOR_PROMPT_DIR).join(id),
             interrupt: store.join(CURSOR_INTERRUPT_DIR).join(id),
             session: store.join(CURSOR_SESSION_DIR).join(id),
+            running: store.join(CURSOR_RUNNING_DIR).join(id),
         }
     }
 
-    pub fn all(&self) -> [&Path; 7] {
+    pub fn all(&self) -> [&Path; 8] {
         [
             &self.spawn,
             &self.close,
@@ -56,6 +59,7 @@ impl CursorFiles {
             &self.answer,
             &self.prompt,
             &self.interrupt,
+            &self.running,
         ]
     }
 }
@@ -382,6 +386,16 @@ impl PromptQueue {
     pub fn finish(&mut self) -> bool {
         self.running = false;
         self.interrupted
+    }
+}
+
+pub fn interrupt_reply(id: &str, running: bool) -> String {
+    if running {
+        format!(
+            "Interrupted worker {id}: its running turn was cancelled and this message runs next."
+        )
+    } else {
+        format!("Sent to worker {id}: no turn was running, so nothing was cancelled.")
     }
 }
 
@@ -825,6 +839,18 @@ mod tests {
         assert_eq!(
             queue.accept(interrupt("now")),
             vec![Step::CancelPermissions, Step::CancelSession]
+        );
+    }
+
+    #[test]
+    fn interrupt_reply_says_cancelled_only_for_a_running_turn() {
+        assert_eq!(
+            interrupt_reply("GUZ-1", true),
+            "Interrupted worker GUZ-1: its running turn was cancelled and this message runs next."
+        );
+        assert_eq!(
+            interrupt_reply("GUZ-1", false),
+            "Sent to worker GUZ-1: no turn was running, so nothing was cancelled."
         );
     }
 
