@@ -5,7 +5,8 @@ use ralph_core::worker::{
     answer_decision, create_session_body, opencode_session_id, permission_reply_body,
     permission_reply_path, request_stale, session_missing, task_prompt, OpencodeFiles,
     OpencodeRecord, OpencodeSpawn, TurnState, WorkerMarkers, OPENCODE_ANSWER_DIR,
-    OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
+    OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR,
+    OPENCODE_SPAWN_DIR,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -52,6 +53,9 @@ impl OpencodeHost {
         for id in entry_ids(&self.store_dir, OPENCODE_INTERRUPT_DIR) {
             self.deliver(&id, true);
         }
+        for id in entry_ids(&self.store_dir, OPENCODE_PREFLIGHT_DIR) {
+            self.preflight(&id);
+        }
         for id in entry_ids(&self.store_dir, OPENCODE_SPAWN_DIR) {
             self.spawn(&id);
         }
@@ -66,6 +70,25 @@ impl OpencodeHost {
 
     fn fail(&self, id: &str, message: &str) {
         write_file(&self.files(id).error, message).ok();
+    }
+
+    fn preflight(&self, id: &str) {
+        let files = self.files(id);
+        let fresh = fs::read_to_string(&files.preflight)
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .is_some_and(|at| !request_stale(at, now_secs()));
+        fs::remove_file(&files.preflight).ok();
+        if !fresh {
+            return;
+        }
+        let healthy = self.start_server().and_then(|_| {
+            write_file(&files.healthy, "")
+                .map_err(|e| format!("could not write the opencode healthy marker: {e}"))
+        });
+        if let Err(message) = healthy {
+            self.fail(id, &message);
+        }
     }
 
     fn spawn(&self, id: &str) {

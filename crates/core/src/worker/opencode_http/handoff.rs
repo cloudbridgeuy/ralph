@@ -8,6 +8,8 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 pub const OPENCODE_SPAWN_DIR: &str = "opencode-spawn";
+pub const OPENCODE_PREFLIGHT_DIR: &str = "opencode-preflight";
+pub const OPENCODE_HEALTHY_DIR: &str = "opencode-healthy";
 pub const OPENCODE_CLOSE_DIR: &str = "opencode-close";
 pub const OPENCODE_ERROR_DIR: &str = "opencode-error";
 pub const OPENCODE_OWNER_DIR: &str = "opencode-owner";
@@ -17,6 +19,8 @@ pub const OPENCODE_INTERRUPT_DIR: &str = "opencode-interrupt";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpencodeFiles {
+    pub preflight: PathBuf,
+    pub healthy: PathBuf,
     pub spawn: PathBuf,
     pub close: PathBuf,
     pub error: PathBuf,
@@ -30,6 +34,8 @@ pub struct OpencodeFiles {
 impl OpencodeFiles {
     pub fn new(store: &Path, id: &str) -> Self {
         Self {
+            preflight: store.join(OPENCODE_PREFLIGHT_DIR).join(id),
+            healthy: store.join(OPENCODE_HEALTHY_DIR).join(id),
             spawn: store.join(OPENCODE_SPAWN_DIR).join(id),
             close: store.join(OPENCODE_CLOSE_DIR).join(id),
             error: store.join(OPENCODE_ERROR_DIR).join(id),
@@ -41,8 +47,10 @@ impl OpencodeFiles {
         }
     }
 
-    pub fn requests(&self) -> [&Path; 7] {
+    pub fn requests(&self) -> [&Path; 9] {
         [
+            &self.preflight,
+            &self.healthy,
             &self.spawn,
             &self.close,
             &self.error,
@@ -135,6 +143,11 @@ mod tests {
     #[test]
     fn files_live_under_their_own_directories() {
         let files = OpencodeFiles::new(Path::new("/s"), "GUZ-1");
+        assert_eq!(
+            files.preflight,
+            PathBuf::from("/s/opencode-preflight/GUZ-1")
+        );
+        assert_eq!(files.healthy, PathBuf::from("/s/opencode-healthy/GUZ-1"));
         assert_eq!(files.spawn, PathBuf::from("/s/opencode-spawn/GUZ-1"));
         assert_eq!(files.close, PathBuf::from("/s/opencode-close/GUZ-1"));
         assert_eq!(files.error, PathBuf::from("/s/opencode-error/GUZ-1"));
@@ -152,7 +165,7 @@ mod tests {
     fn requests_leave_out_the_session_record() {
         let files = OpencodeFiles::new(Path::new("/s"), "A");
         assert!(!files.requests().contains(&files.session.as_path()));
-        assert_eq!(files.requests().len(), 7);
+        assert_eq!(files.requests().len(), 9);
     }
 
     #[test]

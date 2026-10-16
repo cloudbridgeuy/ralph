@@ -1,4 +1,4 @@
-use crate::acp_worker::{caller_owns_cursor, now_secs, owned_cursor_ids, sweep_owner, write_file};
+use crate::acp_worker::{caller_owns_cursor, owned_cursor_ids, sweep_owner, write_file};
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
@@ -8,15 +8,11 @@ use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
-    base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
-    close_plan, exclude_lines, marker_paths, opencode_config, project_slug, prompt_entry_name,
-    resolve_worktree_dir, sent_path, session_name, session_owner, spawn_handoff, startup_state,
-    tagged_sessions, worker_command, worker_mcp_config, worktree_add_args, worktree_for_branch,
-    worktree_path, wt_switch_args, CloseState, CloseStep, CursorFiles, Handoff, Harness,
-    OpencodeFiles, OpencodeSpawn, Owner, SpawnRequest, Startup, Sweep, TaggedSession,
-    WorkerMarkers, WorktreeDir, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, STORE_OPTION, TRUST_KEYS,
-    WORKERS_DIR, WORKTREE_DIR_ENV,
+    base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
+    marker_paths, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path, session_name,
+    session_owner, tagged_sessions, worktree_for_branch, worktree_path, CloseState, CloseStep,
+    CursorFiles, Handoff, OpencodeFiles, Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL,
+    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -24,10 +20,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Output, Stdio};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
-const STARTUP_POLL: Duration = Duration::from_millis(250);
+mod spawn;
 
 pub struct Workers {
     store_dir: PathBuf,
@@ -49,91 +44,6 @@ impl Workers {
             permission_mode,
             worktree_dir,
         }
-    }
-
-    pub fn spawn(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
-        let started = self.start(id, task, harness);
-        self.mark_sent(id, started)
-    }
-
-    fn start(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
-        let repo = repo_root()?;
-        let project = project_slug(&repo);
-        self.refuse_busy_cursor(id, false)?;
-        match self.owner(&project, id) {
-            Owner::Missing => {}
-            Owner::Mine(_) => {
-                return Err(io::Error::other(format!("worker {id} is already running")))
-            }
-            Owner::Foreign(session) => {
-                return Err(io::Error::other(format!(
-                    "worker {id} is running for another chat (store {})",
-                    session.store
-                )))
-            }
-        }
-        let session = session_name(&project, id);
-        let config = AppConfig::load().map_err(|e| e.to_string());
-        let (worktree, worktree_dir) =
-            locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
-        exclude(&repo, &exclude_lines(harness, &repo, &worktree_dir.path))?;
-        let via = ensure_worktree(&repo, &worktree, &branch_name(id))?;
-        record_base(&repo, id)?;
-        let inbox = self.store_dir.join(INBOX_DIR);
-        let attachments = self.store_dir.join(ATTACHMENTS_DIR);
-        fs::create_dir_all(&attachments)?;
-        let markers = WorkerMarkers::new(&self.store_dir, id);
-        for marker in marker_paths(&self.store_dir, id) {
-            clear_marker(&marker)?;
-        }
-        let command = match harness {
-            Harness::Claude => {
-                let settings = self.write_settings(id, &markers)?;
-                worker_command(
-                    &self.write_config(id)?,
-                    &settings,
-                    &self.permission_mode,
-                    &attachments,
-                    task,
-                )
-            }
-            Harness::Opencode { model } => {
-                let config = opencode_config(model, &self.exe, id, &inbox, &attachments);
-                fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
-                self.spawn_opencode(id, &worktree, model, task)?;
-                let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
-                return Ok(format!(
-                    "{started} It runs headless on the shared opencode server inside ralph chat (no tmux session)."
-                ));
-            }
-            Harness::Cursor => {
-                self.spawn_cursor(id, &worktree, task)?;
-                let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
-                return Ok(format!(
-                    "{started} It runs headless inside ralph chat (no tmux session)."
-                ));
-            }
-        };
-        run(Command::new("tmux")
-            .args(["new-session", "-d", "-s", &session])
-            .arg("-c")
-            .arg(&worktree)
-            .args(command))?;
-        let target = format!("={session}:");
-        run(Command::new("tmux")
-            .args(["set-option", "-t", &target, STORE_OPTION])
-            .arg(&self.store_dir))?;
-        run(Command::new("tmux").args(["set-option", "-t", &target, ID_OPTION, id]))?;
-        let confirmed = await_startup(&session, &markers.ready)?;
-        let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
-        Ok(if confirmed {
-            format!("{started} Watch it with: tmux attach -t {session}")
-        } else {
-            format!(
-                "{started} Its ready signal is not confirmed yet after {}s; check it with: tmux attach -t {session}",
-                STARTUP_TIMEOUT.as_secs()
-            )
-        })
     }
 
     fn mark_sent(&self, id: &str, sent: io::Result<String>) -> io::Result<String> {
@@ -404,63 +314,6 @@ impl Workers {
         Ok(())
     }
 
-    fn spawn_cursor(&self, id: &str, worktree: &Path, task: &str) -> io::Result<()> {
-        let files = CursorFiles::new(&self.store_dir, id);
-        for path in files.all() {
-            clear_marker(path)?;
-        }
-        let request = SpawnRequest {
-            worktree: worktree.to_path_buf(),
-            exe: self.exe.clone(),
-            inbox: self.store_dir.join(INBOX_DIR),
-            task: task.to_string(),
-            at: now_secs(),
-        };
-        write_file(
-            &files.spawn,
-            &serde_json::to_string(&request).map_err(io::Error::other)?,
-        )?;
-        self.await_spawn(&files.spawn, &files.error, id, "cursor")
-    }
-
-    fn spawn_opencode(&self, id: &str, worktree: &Path, model: &str, task: &str) -> io::Result<()> {
-        let files = OpencodeFiles::new(&self.store_dir, id);
-        for path in files.requests() {
-            clear_marker(path)?;
-        }
-        let request = OpencodeSpawn {
-            worktree: worktree.to_path_buf(),
-            inbox: self.store_dir.join(INBOX_DIR),
-            model: model.to_string(),
-            task: task.to_string(),
-            at: now_secs(),
-        };
-        write_file(&files.spawn, &request.render())?;
-        self.await_spawn(&files.spawn, &files.error, id, "opencode")
-    }
-
-    fn await_spawn(&self, spawn: &Path, error: &Path, id: &str, harness: &str) -> io::Result<()> {
-        let ready = WorkerMarkers::new(&self.store_dir, id).ready;
-        let started = Instant::now();
-        loop {
-            let failure = fs::read_to_string(error).ok();
-            match spawn_handoff(ready.exists(), failure.as_deref(), started.elapsed()) {
-                Handoff::Done => return Ok(()),
-                Handoff::Failed(message) => {
-                    clear_marker(error)?;
-                    return Err(io::Error::other(message));
-                }
-                Handoff::TimedOut => {
-                    clear_marker(spawn)?;
-                    return Err(io::Error::other(format!(
-                        "no ralph chat picked up the {harness} worker in time; {harness} workers start only from a running `ralph chat` with this store"
-                    )));
-                }
-                Handoff::Pending => thread::sleep(HANDOFF_POLL),
-            }
-        }
-    }
-
     pub fn awaits_permission(&self, id: &str) -> bool {
         (CursorFiles::new(&self.store_dir, id).owner.exists() || self.opencode_http(id))
             && blocked_path(&self.store_dir, id).exists()
@@ -579,26 +432,6 @@ impl Workers {
             .collect();
         session_owner(&sessions, &self.store_dir.to_string_lossy(), project, id)
     }
-
-    fn write_settings(&self, id: &str, markers: &WorkerMarkers) -> io::Result<PathBuf> {
-        let dir = self.store_dir.join(WORKERS_DIR);
-        fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{id}.settings.json"));
-        fs::write(
-            &path,
-            claude_worker_settings(&self.exe, markers).to_string(),
-        )?;
-        Ok(path)
-    }
-
-    fn write_config(&self, id: &str) -> io::Result<PathBuf> {
-        let dir = self.store_dir.join(WORKERS_DIR);
-        fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{id}.json"));
-        let config = worker_mcp_config(&self.exe, id, &self.store_dir.join(INBOX_DIR));
-        fs::write(&path, config.to_string())?;
-        Ok(path)
-    }
 }
 
 pub fn canonical_store(path: PathBuf) -> PathBuf {
@@ -623,19 +456,6 @@ pub fn tmux_listing() -> String {
         .unwrap_or_default()
 }
 
-fn started_text(id: &str, worktree: &Path, via: &WorktreeVia, warning: Option<&str>) -> String {
-    let started = format!(
-        "Worker {id} started in {} on branch {}. {}",
-        worktree.display(),
-        branch_name(id),
-        via.note()
-    );
-    match warning {
-        Some(warning) => format!("{started} {warning}"),
-        None => started,
-    }
-}
-
 fn repo_root() -> io::Result<PathBuf> {
     Ok(PathBuf::from(stdout_line(run(
         Command::new("git").args(["rev-parse", "--show-toplevel"])
@@ -655,47 +475,6 @@ fn clear_marker(marker: &Path) -> io::Result<()> {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
         _ => Ok(()),
     }
-}
-
-fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
-    let target = format!("={session}:");
-    let deadline = Instant::now() + STARTUP_TIMEOUT;
-    let mut accepted = false;
-    let mut state = Startup::Starting;
-    while Instant::now() < deadline {
-        if !session_exists(session)? {
-            return Err(io::Error::other(format!(
-                "worker exited during startup; its tmux session {session} is gone"
-            )));
-        }
-        let pane = run(Command::new("tmux").args(["capture-pane", "-p", "-t", &target]))?;
-        state = startup_state(&String::from_utf8_lossy(&pane.stdout), ready.exists());
-        match state {
-            Startup::Ready => return Ok(true),
-            Startup::TrustPrompt if !accepted => {
-                run(Command::new("tmux")
-                    .args(["send-keys", "-t", &target])
-                    .args(TRUST_KEYS))?;
-                accepted = true;
-            }
-            Startup::TrustPrompt | Startup::Starting => {}
-        }
-        thread::sleep(STARTUP_POLL);
-    }
-    if state == Startup::TrustPrompt {
-        return Err(io::Error::other(format!(
-            "worker is stuck on the folder-trust prompt; answer it with: tmux attach -t {session}"
-        )));
-    }
-    Ok(false)
-}
-
-fn session_exists(session: &str) -> io::Result<bool> {
-    Ok(Command::new("tmux")
-        .args(["has-session", "-t", &format!("={session}")])
-        .stderr(Stdio::null())
-        .status()?
-        .success())
 }
 
 fn locate_worktree(
@@ -723,52 +502,6 @@ fn locate_worktree(
     let worktree = worktree_for_branch(&String::from_utf8_lossy(&listing.stdout), &branch_name(id))
         .unwrap_or_else(|| worktree_path(&dir.path, id));
     Ok((worktree, dir))
-}
-
-fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<WorktreeVia> {
-    if worktree.join(".git").exists() {
-        return Ok(WorktreeVia::Existing);
-    }
-    let wt_error = match Command::new("wt")
-        .args(wt_switch_args(
-            repo,
-            worktree,
-            branch,
-            branch_exists(repo, branch)?,
-        ))
-        .stdin(Stdio::null())
-        .output()
-    {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        output => match output.and_then(check) {
-            _ if worktree.join(".git").exists() => return Ok(WorktreeVia::Wt),
-            Ok(_) => Some(format!("it did not create {}", worktree.display())),
-            Err(e) => Some(e.to_string()),
-        },
-    };
-    run(Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(worktree_add_args(
-            worktree,
-            branch,
-            branch_exists(repo, branch)?,
-        )))?;
-    Ok(WorktreeVia::Git { wt_error })
-}
-
-fn record_base(repo: &Path, id: &str) -> io::Result<()> {
-    let key = base_config_key(id);
-    if git_value(repo, &["config", "--get", &key])?.is_some() {
-        return Ok(());
-    }
-    if let Some(base) = git_value(repo, &["symbolic-ref", "-q", "--short", "HEAD"])? {
-        run(Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(["config", &key, &base]))?;
-    }
-    Ok(())
 }
 
 fn git_value(repo: &Path, args: &[&str]) -> io::Result<Option<String>> {

@@ -11,12 +11,14 @@ mod hooks;
 mod markers;
 mod opencode_http;
 mod ownership;
+mod rollback;
 mod worktree;
 pub use acp::*;
 pub use hooks::*;
 pub use markers::*;
 pub use opencode_http::*;
 pub use ownership::*;
+pub use rollback::*;
 pub use worktree::*;
 
 pub const SERVER_NAME: &str = "ralph-worker";

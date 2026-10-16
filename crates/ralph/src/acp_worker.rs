@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const AGENT_COMMAND: &str = "agent";
+pub(crate) const AGENT_COMMAND: &str = "agent";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const TERM_GRACE: Duration = Duration::from_secs(3);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
