@@ -57,6 +57,13 @@ impl TurnState {
         self.blocked.front().map(opencode_blocked_content)
     }
 
+    pub fn prompted(&mut self, text: &str) {
+        self.in_flight = true;
+        self.reminded = false;
+        self.retries = 0;
+        self.prompt = text.to_string();
+    }
+
     pub fn server_lost(&mut self) -> Vec<Effect> {
         let was_in_flight = self.in_flight;
         let was_blocked = !self.blocked.is_empty();
@@ -203,6 +210,23 @@ mod tests {
             Some(Vec::new())
         );
         assert_eq!(running_sessions("nope"), None);
+    }
+
+    #[test]
+    fn prompted_starts_a_fresh_turn_that_can_retry_the_text() {
+        let mut state = TurnState {
+            reminded: true,
+            retries: 2,
+            prompt: "old".to_string(),
+            ..TurnState::default()
+        };
+        state.prompted("new");
+        assert!(state.in_flight);
+        assert!(!state.reminded);
+        assert_eq!(state.retries, 0);
+        assert_eq!(state.prompt, "new");
+        let effects = ended(&mut state, failed_end("503", true), facts());
+        assert_eq!(effects, vec![Effect::Send("new".to_string())]);
     }
 
     #[test]

@@ -2,9 +2,11 @@ use super::{BlockedContent, PermissionOption};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+mod handoff;
 mod server;
 mod turns;
 
+pub use handoff::*;
 pub use server::*;
 pub use turns::*;
 
@@ -277,14 +279,20 @@ pub fn turn_result(newest_first: &[SessionMessage], active: bool) -> Option<Turn
     Some(TurnResult { end, text })
 }
 
-pub fn create_session_body(directory: &str, model: &str) -> Result<Value, String> {
+pub fn create_session_body(
+    session_id: &str,
+    directory: &str,
+    model: &str,
+) -> Result<Value, String> {
     let (provider, id) = model
         .split_once('/')
         .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
         .ok_or_else(|| format!("model must look like provider/id, got: {model}"))?;
     Ok(json!({
+        "id": session_id,
         "location": { "directory": directory },
         "model": { "id": id, "providerID": provider },
+        "permissions": session_permissions(),
     }))
 }
 
@@ -613,14 +621,16 @@ mod tests {
     #[test]
     fn create_session_body_splits_model_on_first_slash() {
         assert_eq!(
-            create_session_body("/tmp/oc580/w", "openai/gpt-6.1-sol").unwrap(),
+            create_session_body("ses_x", "/tmp/oc580/w", "openai/gpt-6.1-sol").unwrap(),
             json!({
+                "id": "ses_x",
+                "permissions": session_permissions(),
                 "location": {"directory": "/tmp/oc580/w"},
                 "model": {"id": "gpt-6.1-sol", "providerID": "openai"}
             })
         );
         assert_eq!(
-            create_session_body("/w", "openrouter/meta/llama").unwrap()["model"],
+            create_session_body("ses_x", "/w", "openrouter/meta/llama").unwrap()["model"],
             json!({"id": "meta/llama", "providerID": "openrouter"})
         );
     }
@@ -628,7 +638,7 @@ mod tests {
     #[test]
     fn create_session_body_rejects_bad_models() {
         for bad in ["gpt", "/gpt", "openai/", ""] {
-            assert!(create_session_body("/w", bad).is_err(), "{bad}");
+            assert!(create_session_body("ses_x", "/w", bad).is_err(), "{bad}");
         }
     }
 

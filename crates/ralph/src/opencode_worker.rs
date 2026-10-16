@@ -3,17 +3,19 @@ use crate::warn::warn;
 use crate::worker_mcp::Inbox;
 use ralph_core::worker::{
     advance, basic_auth, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
-    opencode_server_log, opencode_session_path, parse_event, parse_ps, reconcile, reconnect_delay,
-    running_sessions, server_url, session_update, turn_result, ApiData, Effect, OpencodeRecord,
-    PermissionAsked, ServerEvent, SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts,
-    TurnState, WorkerMarkers, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
-    SILENCE_TIMEOUT,
+    opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
+    reconcile, reconnect_delay, running_sessions, server_url, session_missing, session_update,
+    transient_request_error, turn_result, ApiData, Effect, OpencodeFiles, OpencodeRecord,
+    PermissionAsked, ServerEvent, ServerRecord, SessionMessage, SessionSnapshot, SessionUpdate,
+    TurnFacts, TurnState, WorkerMarkers, HANDOFF_POLL, OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV,
+    OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT, TRANSIENT_RETRIES,
 };
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -23,6 +25,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 use ureq::Agent;
+
+mod requests;
+
+pub(crate) use requests::entry_ids;
 
 const HEALTH_PATH: &str = "/api/info";
 const ACTIVE_PATH: &str = "/api/session/active";
@@ -35,6 +41,7 @@ const STREAM_LIFETIME: Duration = Duration::from_secs(900);
 const HOST_POLL: Duration = Duration::from_millis(500);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(3);
 const TERM_GRACE: Duration = Duration::from_secs(3);
+const RETRY_DELAY: Duration = Duration::from_millis(500);
 const TERM_POLL: Duration = Duration::from_millis(20);
 const SWEEP_GRACE: Duration = Duration::from_millis(500);
 const MESSAGE_LIMIT: u32 = 20;
@@ -105,6 +112,42 @@ impl Api {
         Self::read(response)
     }
 
+    fn post_retrying(&self, path: &str, body: &str) -> Result<String, String> {
+        let mut attempt = 0;
+        loop {
+            match self.post(path, body) {
+                Err(message)
+                    if attempt < TRANSIENT_RETRIES && transient_request_error(&message) =>
+                {
+                    attempt += 1;
+                    thread::sleep(RETRY_DELAY);
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn evict_location(&self, directory: &str) -> Result<String, String> {
+        let response = self
+            .agent
+            .delete(self.url("/api/debug/location"))
+            .query("location[directory]", directory)
+            .header("Authorization", &self.auth)
+            .call()
+            .map_err(|e| e.to_string())?;
+        Self::read(response)
+    }
+
+    fn delete(&self, path: &str) -> Result<String, String> {
+        let response = self
+            .agent
+            .delete(self.url(path))
+            .header("Authorization", &self.auth)
+            .call()
+            .map_err(|e| e.to_string())?;
+        Self::read(response)
+    }
+
     fn events(&self) -> Result<impl Read + Send, String> {
         let response = self
             .stream
@@ -124,6 +167,7 @@ struct Server {
     child: Child,
     api: Api,
     tree: Vec<u32>,
+    record: PathBuf,
 }
 
 impl Server {
@@ -146,8 +190,12 @@ impl Server {
             child,
             api: Api::new(port, &password),
             tree: Vec::new(),
+            record: opencode_server_record_path(&std::env::temp_dir(), std::process::id()),
         };
-        match server.wait_healthy(closed) {
+        let ready = server
+            .wait_healthy(closed)
+            .and_then(|()| write_record(&server.record, port, &password));
+        match ready {
             Ok(()) => Ok(server),
             Err(message) => {
                 server.stop();
@@ -187,6 +235,7 @@ impl Server {
     }
 
     fn stop(mut self) {
+        fs::remove_file(&self.record).ok();
         let group = self.child.id();
         let mut orphans = self.tree.clone();
         for pid in descendants(&process_table(), group) {
@@ -203,6 +252,30 @@ impl Server {
         self.child.wait().ok();
         sweep(&orphans);
     }
+}
+
+fn write_record(path: &Path, port: u16, password: &str) -> Result<(), String> {
+    let record = ServerRecord {
+        port,
+        password: password.to_string(),
+    };
+    OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut file| file.write_all(record.render().as_bytes()))
+        .map_err(|e| format!("could not write the opencode server record: {e}"))
+}
+
+pub fn running_opencode_sessions() -> Option<HashSet<String>> {
+    let path = opencode_server_record_path(&std::env::temp_dir(), std::process::id());
+    let record = ServerRecord::parse(&fs::read_to_string(path).ok()?)?;
+    let body = Api::new(record.port, &record.password)
+        .get(ACTIVE_PATH)
+        .ok()?;
+    running_sessions(&body).map(|running| running.into_iter().collect())
 }
 
 fn kill(signal: &str, target: &str) -> bool {
@@ -280,6 +353,7 @@ struct Target {
 struct Session {
     target: Target,
     turn: TurnState,
+    verified: bool,
 }
 
 enum Feed {
@@ -330,6 +404,7 @@ fn load_sessions(store: &Path) -> HashMap<String, Session> {
                     inbox: record.inbox,
                 },
                 turn: TurnState::default(),
+                verified: false,
             };
             Some((record.session_id, session))
         })
@@ -345,6 +420,7 @@ pub struct OpencodeHost {
 
 impl OpencodeHost {
     fn new(store_dir: PathBuf) -> Arc<Self> {
+        fs::remove_dir_all(store_dir.join(OPENCODE_OWNER_DIR)).ok();
         Arc::new(Self {
             sessions: Mutex::new(load_sessions(&store_dir)),
             store_dir,
@@ -369,13 +445,22 @@ impl OpencodeHost {
         self.server().as_ref().map(|server| server.api.clone())
     }
 
-    fn start_server(&self) -> Result<(), String> {
+    fn start_server(&self) -> Result<Api, String> {
         let mut guard = self.server();
         if self.closed() {
             return Err("the chat is closing".to_string());
         }
-        *guard = Some(Server::launch(&self.store_dir, &self.closed)?);
-        Ok(())
+        if let Some(server) = guard.as_mut() {
+            return if server.alive() {
+                Ok(server.api.clone())
+            } else {
+                Err("the opencode server is restarting".to_string())
+            };
+        }
+        let server = Server::launch(&self.store_dir, &self.closed)?;
+        let api = server.api.clone();
+        *guard = Some(server);
+        Ok(api)
     }
 
     fn take_dead(&self) -> Option<Server> {
@@ -471,11 +556,10 @@ impl OpencodeHost {
     }
 
     fn send(&self, session_id: &str, target: &Target, text: &str) {
-        let body = json!({ "text": text }).to_string();
         let result = self
             .api()
             .ok_or_else(|| "the opencode server is not running".to_string())
-            .and_then(|api| api.post(&format!("/api/session/{session_id}/prompt"), &body));
+            .and_then(|api| post_prompt(&api, session_id, text));
         if let Err(message) = result {
             if let Some(session) = self.sessions().get_mut(session_id) {
                 session.turn.in_flight = false;
@@ -526,9 +610,11 @@ impl OpencodeHost {
             warn("could not read the active opencode sessions");
             return;
         };
+        self.verify_resumed(&api);
         let known: Vec<(String, TurnState)> = self
             .sessions()
             .iter()
+            .filter(|(_, session)| session.verified)
             .map(|(id, session)| (id.clone(), session.turn.clone()))
             .collect();
         for (id, state) in known {
@@ -543,6 +629,45 @@ impl OpencodeHost {
                 )),
             }
         }
+    }
+
+    fn verify_resumed(&self, api: &Api) {
+        let pending: Vec<(String, Target)> = self
+            .sessions()
+            .iter()
+            .filter(|(_, session)| !session.verified)
+            .map(|(id, session)| (id.clone(), session.target.clone()))
+            .collect();
+        for (session_id, target) in pending {
+            match api.get(&format!("/api/session/{session_id}")) {
+                Ok(_) => {
+                    if let Some(session) = self.sessions().get_mut(&session_id) {
+                        session.verified = true;
+                    }
+                    write_file(&self.files(&target.worker).owner, "").ok();
+                }
+                Err(message) if session_missing(&message) => {
+                    self.sessions().remove(&session_id);
+                    let files = self.files(&target.worker);
+                    fs::remove_file(&files.session).ok();
+                    write_file(
+                        &files.error,
+                        &format!("opencode session {session_id} is gone; the worker cannot resume"),
+                    )
+                    .ok();
+                    warn(format!(
+                        "opencode session {session_id} not resumed: it is gone"
+                    ));
+                }
+                Err(message) => warn(format!(
+                    "could not verify opencode session {session_id}: {message}"
+                )),
+            }
+        }
+    }
+
+    fn files(&self, id: &str) -> OpencodeFiles {
+        OpencodeFiles::new(&self.store_dir, id)
     }
 
     fn connect(&self) -> Result<Link, String> {
@@ -595,7 +720,7 @@ impl OpencodeHost {
             }
             if self.server().is_none() {
                 match self.start_server() {
-                    Ok(()) => {
+                    Ok(_) => {
                         start_failures = 0;
                         delay = Duration::ZERO;
                     }
@@ -649,6 +774,13 @@ impl OpencodeHost {
         }
     }
 
+    fn serve(&self) {
+        while !self.closed() {
+            self.poll();
+            thread::sleep(HANDOFF_POLL);
+        }
+    }
+
     pub(crate) fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let taken = self.server().take();
@@ -656,6 +788,12 @@ impl OpencodeHost {
             server.stop();
         }
     }
+}
+
+fn post_prompt(api: &Api, session_id: &str, text: &str) -> Result<(), String> {
+    let body = json!({ "text": text }).to_string();
+    api.post_retrying(&format!("/api/session/{session_id}/prompt"), &body)
+        .map(|_| ())
 }
 
 fn post_problem(target: &Target, problem: &str) {
@@ -671,6 +809,8 @@ impl OpencodeShutdown {
         let host = OpencodeHost::new(store_dir);
         let supervised = Arc::clone(&host);
         thread::spawn(move || supervised.supervise());
+        let polled = Arc::clone(&host);
+        thread::spawn(move || polled.serve());
         Self(host)
     }
 }

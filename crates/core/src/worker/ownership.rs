@@ -209,7 +209,7 @@ pub fn close_plan(
         steps.push(CloseStep::DeleteBranch);
     }
     steps.push(CloseStep::PruneWorktrees);
-    if state.opencode {
+    if state.opencode && !state.cursor {
         steps.push(CloseStep::EvictOpencodeLocation);
     }
     steps.push(CloseStep::ClearMarkers);
@@ -336,6 +336,16 @@ mod tests {
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateCursor);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
+    }
+
+    #[test]
+    fn close_plan_leaves_the_location_eviction_to_the_http_host() {
+        let mut state = close_state(Owner::Mine(tagged("", "/s")));
+        state.opencode = true;
+        state.cursor = true;
+        let steps = close_plan(&state, false, false).unwrap();
+        assert_eq!(steps[0], CloseStep::RemoveOpencodeSession);
+        assert!(!steps.contains(&CloseStep::EvictOpencodeLocation));
     }
 
     #[test]

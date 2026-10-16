@@ -2,21 +2,21 @@ use crate::acp_worker::{caller_owns_cursor, now_secs, owned_cursor_ids, sweep_ow
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
+use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
 use ralph_core::chat_status::{active_sessions, store_workers, RunningWorker};
 use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, claude_worker_settings, close_handoff,
-    close_plan, exclude_lines, marker_paths, opencode_command, opencode_config,
-    opencode_session_gone, opencode_session_id, opencode_worker_plugin, project_slug,
-    prompt_entry_name, resolve_worktree_dir, sent_path, session_name, session_owner, spawn_handoff,
-    startup_state, tagged_sessions, worker_command, worker_mcp_config, worktree_add_args,
-    worktree_for_branch, worktree_path, wt_switch_args, CloseState, CloseStep, CursorFiles,
-    Handoff, Harness, Owner, SpawnRequest, Startup, Sweep, TaggedSession, WorkerMarkers,
-    WorktreeDir, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL, HARNESS_OPTION, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, OPENCODE_HARNESS, OPENCODE_PLUGIN_FILE, SESSION_FORMAT, STORE_OPTION,
-    TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
+    close_plan, exclude_lines, marker_paths, opencode_config, opencode_session_gone,
+    opencode_session_id, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path,
+    session_name, session_owner, spawn_handoff, startup_state, tagged_sessions, worker_command,
+    worker_mcp_config, worktree_add_args, worktree_for_branch, worktree_path, wt_switch_args,
+    CloseState, CloseStep, CursorFiles, Handoff, Harness, OpencodeFiles, OpencodeSpawn, Owner,
+    SpawnRequest, Startup, Sweep, TaggedSession, WorkerMarkers, WorktreeDir, WorktreeVia,
+    ATTACHMENTS_DIR, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR,
+    SESSION_FORMAT, STORE_OPTION, TRUST_KEYS, WORKERS_DIR, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -100,12 +100,11 @@ impl Workers {
             Harness::Opencode { model } => {
                 let config = opencode_config(model, &self.exe, id, &inbox, &attachments);
                 fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
-                let plugin = worktree.join(OPENCODE_PLUGIN_FILE);
-                if let Some(dir) = plugin.parent() {
-                    fs::create_dir_all(dir)?;
-                }
-                fs::write(plugin, opencode_worker_plugin(id, &markers))?;
-                opencode_command(id, task)
+                self.spawn_opencode(id, &worktree, model, task)?;
+                let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
+                return Ok(format!(
+                    "{started} It runs headless on the shared opencode server inside ralph chat (no tmux session)."
+                ));
             }
             Harness::Cursor => {
                 self.spawn_cursor(id, &worktree, task)?;
@@ -125,15 +124,6 @@ impl Workers {
             .args(["set-option", "-t", &target, STORE_OPTION])
             .arg(&self.store_dir))?;
         run(Command::new("tmux").args(["set-option", "-t", &target, ID_OPTION, id]))?;
-        if let Harness::Opencode { .. } = harness {
-            run(Command::new("tmux").args([
-                "set-option",
-                "-t",
-                &target,
-                HARNESS_OPTION,
-                OPENCODE_HARNESS,
-            ]))?;
-        }
         let confirmed = await_startup(&session, &markers.ready)?;
         let started = started_text(id, &worktree, &via, worktree_dir.warning.as_deref());
         Ok(if confirmed {
@@ -172,8 +162,13 @@ impl Workers {
             }
             return self.queue_prompt(&files.prompt, id, text, "Sent to");
         }
+        if self.opencode_http(id) {
+            return self.deliver_opencode(id, text, interrupt, "Sent to");
+        }
         if interrupt {
-            return Err(io::Error::other("interrupt needs a Cursor worker"));
+            return Err(io::Error::other(
+                "interrupt needs a Cursor or opencode worker",
+            ));
         }
         let session = match self.owner(&project_slug(&repo_root()?), id) {
             Owner::Mine(session) => session.name,
@@ -213,7 +208,33 @@ impl Workers {
             let queued = self.queue_prompt(&files.prompt, id, text, "Nudged");
             return self.mark_sent(id, queued);
         }
+        if self.opencode_http(id) {
+            let queued = self.deliver_opencode(id, text, false, "Nudged");
+            return self.mark_sent(id, queued);
+        }
         self.reply(id, text, false)
+    }
+
+    fn opencode_http(&self, id: &str) -> bool {
+        let files = OpencodeFiles::new(&self.store_dir, id);
+        files.owner.exists() || files.session.exists()
+    }
+
+    fn deliver_opencode(
+        &self,
+        id: &str,
+        text: &str,
+        interrupt: bool,
+        verb: &str,
+    ) -> io::Result<String> {
+        let files = OpencodeFiles::new(&self.store_dir, id);
+        if interrupt {
+            return self.queue_prompt(&files.interrupt, id, text, "Interrupted");
+        }
+        if self.awaits_permission(id) {
+            return self.answer_permission(id, text);
+        }
+        self.queue_prompt(&files.prompt, id, text, verb)
     }
 
     fn queue_prompt(&self, dir: &Path, id: &str, text: &str, verb: &str) -> io::Result<String> {
@@ -281,7 +302,7 @@ impl Workers {
             markers: marker_paths(&self.store_dir, id)
                 .iter()
                 .any(|marker| marker.exists()),
-            cursor: CursorFiles::new(&self.store_dir, id).owner.exists(),
+            cursor: CursorFiles::new(&self.store_dir, id).owner.exists() || self.opencode_http(id),
         };
         let with_warning = |text: String| {
             [&base.warning, &worktree_dir.warning]
@@ -349,6 +370,9 @@ impl Workers {
             git
         };
         match step {
+            CloseStep::RemoveOpencodeSession if self.opencode_http(id) => {
+                self.terminate_opencode(id)?;
+            }
             CloseStep::RemoveOpencodeSession => {
                 let output = Command::new("opencode")
                     .args(["api", "session.remove", "--param"])
@@ -362,7 +386,11 @@ impl Workers {
                 }
                 check(output)?;
             }
-            CloseStep::TerminateCursor => self.terminate_cursor(id)?,
+            CloseStep::TerminateCursor => {
+                if CursorFiles::new(&self.store_dir, id).owner.exists() {
+                    self.terminate_cursor(id)?;
+                }
+            }
             CloseStep::KillSession(session) => {
                 run(Command::new("tmux").args(["kill-session", "-t", &format!("={session}")]))?;
             }
@@ -410,21 +438,41 @@ impl Workers {
             &files.spawn,
             &serde_json::to_string(&request).map_err(io::Error::other)?,
         )?;
+        self.await_spawn(&files.spawn, &files.error, id, "cursor")
+    }
+
+    fn spawn_opencode(&self, id: &str, worktree: &Path, model: &str, task: &str) -> io::Result<()> {
+        let files = OpencodeFiles::new(&self.store_dir, id);
+        for path in files.requests() {
+            clear_marker(path)?;
+        }
+        let request = OpencodeSpawn {
+            worktree: worktree.to_path_buf(),
+            inbox: self.store_dir.join(INBOX_DIR),
+            model: model.to_string(),
+            task: task.to_string(),
+            at: now_secs(),
+        };
+        write_file(&files.spawn, &request.render())?;
+        self.await_spawn(&files.spawn, &files.error, id, "opencode")
+    }
+
+    fn await_spawn(&self, spawn: &Path, error: &Path, id: &str, harness: &str) -> io::Result<()> {
         let ready = WorkerMarkers::new(&self.store_dir, id).ready;
         let started = Instant::now();
         loop {
-            let error = fs::read_to_string(&files.error).ok();
-            match spawn_handoff(ready.exists(), error.as_deref(), started.elapsed()) {
+            let failure = fs::read_to_string(error).ok();
+            match spawn_handoff(ready.exists(), failure.as_deref(), started.elapsed()) {
                 Handoff::Done => return Ok(()),
                 Handoff::Failed(message) => {
-                    clear_marker(&files.error)?;
+                    clear_marker(error)?;
                     return Err(io::Error::other(message));
                 }
                 Handoff::TimedOut => {
-                    clear_marker(&files.spawn)?;
-                    return Err(io::Error::other(
-                        "no ralph chat picked up the cursor worker in time; cursor workers start only from a running `ralph chat` with this store",
-                    ));
+                    clear_marker(spawn)?;
+                    return Err(io::Error::other(format!(
+                        "no ralph chat picked up the {harness} worker in time; {harness} workers start only from a running `ralph chat` with this store"
+                    )));
                 }
                 Handoff::Pending => thread::sleep(HANDOFF_POLL),
             }
@@ -432,20 +480,26 @@ impl Workers {
     }
 
     pub fn awaits_permission(&self, id: &str) -> bool {
-        CursorFiles::new(&self.store_dir, id).owner.exists()
+        (CursorFiles::new(&self.store_dir, id).owner.exists() || self.opencode_http(id))
             && blocked_path(&self.store_dir, id).exists()
     }
 
     fn answer_permission(&self, id: &str, text: &str) -> io::Result<String> {
-        let files = CursorFiles::new(&self.store_dir, id);
-        clear_marker(&files.error)?;
-        write_file(&files.answer, text)?;
+        let (answer, error) = if self.opencode_http(id) {
+            let files = OpencodeFiles::new(&self.store_dir, id);
+            (files.answer, files.error)
+        } else {
+            let files = CursorFiles::new(&self.store_dir, id);
+            (files.answer, files.error)
+        };
+        clear_marker(&error)?;
+        write_file(&answer, text)?;
         let started = Instant::now();
         loop {
-            match close_handoff(files.answer.exists(), started.elapsed()) {
+            match close_handoff(answer.exists(), started.elapsed()) {
                 Handoff::Done => break,
                 Handoff::TimedOut => {
-                    clear_marker(&files.answer)?;
+                    clear_marker(&answer)?;
                     return Err(io::Error::other(
                         "ralph chat did not pick up the permission answer in time",
                     ));
@@ -453,12 +507,35 @@ impl Workers {
                 Handoff::Pending | Handoff::Failed(_) => thread::sleep(HANDOFF_POLL),
             }
         }
-        match fs::read_to_string(&files.error) {
+        match fs::read_to_string(&error) {
             Ok(message) => {
-                clear_marker(&files.error)?;
+                clear_marker(&error)?;
                 Err(io::Error::other(message))
             }
             Err(_) => Ok(format!("Answered the permission request of worker {id}.")),
+        }
+    }
+
+    fn terminate_opencode(&self, id: &str) -> io::Result<()> {
+        let files = OpencodeFiles::new(&self.store_dir, id);
+        clear_marker(&files.error)?;
+        write_file(&files.close, "")?;
+        let started = Instant::now();
+        loop {
+            if let Ok(message) = fs::read_to_string(&files.error) {
+                clear_marker(&files.error)?;
+                return Err(io::Error::other(message));
+            }
+            match close_handoff(files.owner.exists(), started.elapsed()) {
+                Handoff::Done => return Ok(()),
+                Handoff::TimedOut => {
+                    clear_marker(&files.close)?;
+                    return Err(io::Error::other(
+                        "ralph chat did not confirm stopping the opencode worker in time",
+                    ));
+                }
+                Handoff::Pending | Handoff::Failed(_) => thread::sleep(HANDOFF_POLL),
+            }
         }
     }
 
@@ -496,6 +573,14 @@ impl Workers {
                 name: session_name(project, id),
                 store: self.store_dir.to_string_lossy().into_owned(),
                 opencode: false,
+                id: id.to_string(),
+            });
+        }
+        if self.opencode_http(id) {
+            return Owner::Mine(TaggedSession {
+                name: session_name(project, id),
+                store: self.store_dir.to_string_lossy().into_owned(),
+                opencode: true,
                 id: id.to_string(),
             });
         }
@@ -541,6 +626,10 @@ pub fn canonical_store(path: PathBuf) -> PathBuf {
 }
 
 pub fn opencode_active() -> Option<HashSet<String>> {
+    running_opencode_sessions().or_else(legacy_opencode_active)
+}
+
+fn legacy_opencode_active() -> Option<HashSet<String>> {
     Command::new("opencode")
         .args(["api", "session.active"])
         .stdin(Stdio::null())
@@ -776,6 +865,16 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
             .iter()
             .map(|id| RunningWorker::cursor(id)),
     );
+    workers.extend(
+        entry_ids(store_dir, OPENCODE_OWNER_DIR)
+            .into_iter()
+            .map(|id| RunningWorker {
+                id,
+                session: String::new(),
+                opencode: true,
+                cursor: true,
+            }),
+    );
     workers.sort_by(|a, b| a.id.cmp(&b.id));
     workers
 }
@@ -852,5 +951,48 @@ mod tests {
         let result = workers.mark_sent("A", Err(io::Error::other("no pane")));
         assert_eq!(result.unwrap_err().to_string(), "no pane");
         assert!(!sent_path(&workers.store_dir, "A").exists());
+    }
+
+    #[test]
+    fn opencode_http_workers_are_found_and_owned_by_this_chat() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        assert!(!workers.opencode_http("A"));
+        assert_eq!(workers.owner("p", "A"), Owner::Missing);
+        write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
+        write_file(&OpencodeFiles::new(dir.path(), "B").session, "{}").unwrap();
+        assert!(workers.opencode_http("A") && workers.opencode_http("B"));
+        assert!(matches!(workers.owner("p", "A"), Owner::Mine(s) if s.opencode));
+    }
+
+    #[test]
+    fn running_workers_list_opencode_http_workers_as_headless() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
+        let running = running_workers(dir.path());
+        let worker = running.iter().find(|worker| worker.id == "A").unwrap();
+        assert!(worker.opencode && worker.cursor && worker.session.is_empty());
+    }
+
+    #[test]
+    fn a_reply_to_an_opencode_worker_queues_a_prompt_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
+        assert_eq!(
+            workers.reply("A", "hello", false).unwrap(),
+            "Sent to worker A."
+        );
+        assert_eq!(
+            workers.reply("A", "stop", true).unwrap(),
+            "Interrupted worker A."
+        );
+        let files = OpencodeFiles::new(dir.path(), "A");
+        let only = |dir: &Path| {
+            fs::read_to_string(fs::read_dir(dir).unwrap().next().unwrap().unwrap().path())
+        };
+        assert_eq!(only(&files.prompt).unwrap(), "hello");
+        assert_eq!(only(&files.interrupt).unwrap(), "stop");
+        assert!(sent_path(dir.path(), "A").exists());
     }
 }
