@@ -30,6 +30,8 @@ ralph                      # same as ralph chat with defaults
 - `crates/ralph/src/status_theme.rs`: `[theme.status]` keys, defaults and validation.
 - `crates/ralph/src/chat/statusbar.rs`: paints the laid-out segments with the `[theme.status]` colors.
 - `crates/core/src/watch_command.rs`: `/watch` argument parsing, watch ids, time-left and list formatting.
+- `crates/core/src/diff_command.rs`: `/diff` argv (`git`, `delta`, `hunk`) and shell-word splitting.
+- `crates/ralph/src/chat/diff.rs`: spawns that argv with the terminal inherited.
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat/mod.rs`: `run` and shared setup.
 - `crates/ralph/src/chat/turn.rs`: turn shell and nap spawn.
@@ -106,6 +108,26 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 - A restarted watch that times out reports the original timeout, not the time left.
 - Status line: running watches show after the workers as `watch <id> <left>, <id>, ...` (the time left is omitted when there is none). It sheds detail as the terminal narrows: time left, then names to `<n> watches`, then `<n>wt`, then nothing. It refreshes on the same 500 ms poll, so it updates when a watch starts, ends or is stopped.
 - Every watch has a timeout. A watch without its own `timeout_secs` (from the `watch` tool, `/watch start`, or an old saved record) gets `[chat] watch_timeout_secs` (default 3600, so 1 hour; `0` is a config error, resolved by `resolve_watch_timeout` in `crates/core/src/chat.rs`, same file-then-default precedence as `worker_check_secs`). `WatchSpec::with_default_timeout` applies it at start and at restore. When it passes, ralph kills the watch and posts one report that says `timed out after <n>s and was killed`, where `<n>` is the original limit.
+
+## /diff
+
+`/diff` is local: it never starts a turn or calls the model. `/difffoo` is a normal message. `turn` and `worker` are ordinary git arguments here, not turn or worker ranges.
+
+Typed `/diff [git diff args]` runs `git diff` in the chat's working directory and waits. Words after `/diff` are split on whitespace, with quotes and backslash escapes (a trailing backslash is kept; no `$` expansion or globs), and are passed after `[changes] diff_args`. An unclosed quote prints `/diff: unclosed quote` and runs nothing.
+
+```toml
+[changes]
+pager = "git" # git | delta | hunk
+diff_args = [] # default git diff args; typed /diff args follow
+```
+
+- `pager = "git"` (default): `git diff <diff_args> <typed>`. The user's `core.pager` in git config is left untouched.
+- `pager = "delta"`: `git -c core.pager=delta diff ...` for this call only.
+- `pager = "hunk"`: `git -c core.pager=hunk pager diff ...`, with `core.pager=hunk pager` as one argument.
+- Any other pager string warns once at chat start (`[changes] pager = "..." is unknown; using git`) and uses `git`. Loading the config still succeeds.
+- ralph sets no environment variables and does not write `core.pager`.
+
+The spawn runs only after reedline `read_line` has turned raw mode off, so a full-screen pager returns to a normal prompt. `git diff` exiting 1 (there are changes) is not a chat error. A failure to start git warns and returns to the prompt.
 
 ## Executable cells
 

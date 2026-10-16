@@ -1,3 +1,4 @@
+use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
@@ -12,6 +13,7 @@ const IDLE_STATE: &str = "idle";
 const INBOX_COMMAND: &str = "/inbox";
 pub const INBOX_USAGE: &str = "Usage: /inbox [next | N | list | peek N | drop N]";
 const WATCH_COMMAND: &str = "/watch";
+const DIFF_COMMAND: &str = "/diff";
 const SEPARATOR: &str = " · ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +116,7 @@ pub enum Route {
     DropInbox(Position),
     InboxUsage,
     Watch(WatchCommand),
+    Diff(DiffArgs),
     Ignore,
 }
 
@@ -132,6 +135,12 @@ pub fn route_input(line: &str, unread: usize) -> Route {
         .filter(|args| args.is_empty() || args.starts_with(char::is_whitespace))
     {
         return Route::Watch(parse_watch_args(args));
+    }
+    if let Some(args) = line
+        .strip_prefix(DIFF_COMMAND)
+        .filter(|args| args.is_empty() || args.starts_with(char::is_whitespace))
+    {
+        return Route::Diff(parse_diff_args(args));
     }
     let mut tokens = line.split_whitespace();
     if tokens.next() == Some(INBOX_COMMAND) {
@@ -307,6 +316,7 @@ pub fn footer(unread: usize, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff_command::DiffArgs;
 
     #[test]
     fn last_turn_cache_picks_last_turn_and_ignores_the_rest() {
@@ -411,6 +421,27 @@ mod tests {
             Route::Watch(WatchCommand::Start(_))
         ));
         assert_eq!(route_input("/watchfoo", 0), Route::Send("/watchfoo".into()));
+    }
+
+    #[test]
+    fn route_input_parses_diff_commands() {
+        assert_eq!(
+            route_input("/diff -U1 -- a", 0),
+            Route::Diff(DiffArgs::Words(vec!["-U1".into(), "--".into(), "a".into()]))
+        );
+        assert_eq!(
+            route_input(" /diff -- \"a b\" ", 3),
+            Route::Diff(DiffArgs::Words(vec!["--".into(), "a b".into()]))
+        );
+        assert_eq!(
+            route_input("/diff", 0),
+            Route::Diff(DiffArgs::Words(vec![]))
+        );
+        assert_eq!(
+            route_input("/diff 'a", 0),
+            Route::Diff(DiffArgs::UnclosedQuote)
+        );
+        assert_eq!(route_input("/difffoo", 0), Route::Send("/difffoo".into()));
     }
 
     #[test]

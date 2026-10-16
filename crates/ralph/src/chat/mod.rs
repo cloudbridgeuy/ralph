@@ -1,5 +1,6 @@
 pub(crate) mod cell;
 mod check;
+mod diff;
 mod editor;
 mod inbox;
 pub(crate) mod mcp;
@@ -138,6 +139,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
     config.theme.warnings().into_iter().for_each(warn);
+    config.changes.warnings().into_iter().for_each(warn);
     let agent = config.theme.agent();
     let agent_highlighter =
         Highlighter::with_config(theme_config.clone().merge_cli(agent.code.as_deref(), false))
@@ -275,6 +277,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     inbox: &monitor.inbox,
                     watches: &monitor.watches,
                     display: &inbox_display(color),
+                    changes: &config.changes,
                 };
                 run_local(local, &ctx, || {
                     monitor.refresh(true);

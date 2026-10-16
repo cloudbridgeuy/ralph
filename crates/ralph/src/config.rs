@@ -1,33 +1,4 @@
-//! Application configuration management (Imperative Shell).
-//!
-//! This module handles loading and managing application configuration
-//! from the config file. The config file location follows platform conventions
-//! and can be overridden via the `RALPH_CONFIG_DIR` environment variable.
-//!
-//! # Configuration File Location
-//!
-//! By default:
-//! - **Linux**: `~/.config/ralph/config.toml`
-//! - **macOS**: `~/Library/Application Support/ralph/config.toml`
-//! - **Windows**: `%APPDATA%\ralph\config.toml`
-//!
-//! Override with `RALPH_CONFIG_DIR` environment variable.
-//!
-//! # Configuration Precedence
-//!
-//! Settings are resolved in this order (highest priority first):
-//! 1. CLI flags (e.g., `--theme`)
-//! 2. Environment variables (e.g., `RALPH_THEME`)
-//! 3. Config file (`config.toml` in config directory)
-//! 4. Default values
-//!
-//! # Example Config File
-//!
-//! ```toml
-//! [theme]
-//! name = "Monokai Extended"  # or path like "/path/to/theme.tmTheme"
-//! no_background = false
-//! ```
+//! Loads `config.toml`. Locations, precedence, and keys are in `docs/configuration.md`.
 
 use crate::invoke::{
     resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
@@ -35,6 +6,7 @@ use crate::invoke::{
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
+use ralph_core::diff_command::DiffPager;
 use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::worker::CursorPermissions;
 use serde::{Deserialize, Serialize};
@@ -94,6 +66,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub cursor: CursorSection,
+
+    #[serde(default)]
+    pub changes: ChangesSection,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -157,6 +132,49 @@ impl Default for MermaidSection {
             max_input_bytes: default_mermaid_max_input_bytes(),
             max_flowchart_edges: default_mermaid_max_flowchart_edges(),
             max_class_relations: default_mermaid_max_class_relations(),
+        }
+    }
+}
+
+fn default_changes_pager() -> String {
+    "git".to_string()
+}
+
+/// `[changes]` pager for `/diff`. An unknown `pager` string does not fail
+/// parsing: [`ChangesSection::warnings`] reports it and [`ChangesSection::pager`]
+/// falls back to git.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangesSection {
+    #[serde(default = "default_changes_pager")]
+    pager: String,
+    #[serde(default)]
+    pub diff_args: Vec<String>,
+}
+
+impl Default for ChangesSection {
+    fn default() -> Self {
+        Self {
+            pager: default_changes_pager(),
+            diff_args: Vec::new(),
+        }
+    }
+}
+
+impl ChangesSection {
+    pub fn pager(&self) -> DiffPager {
+        match self.pager.as_str() {
+            "delta" => DiffPager::Delta,
+            "hunk" => DiffPager::Hunk,
+            _ => DiffPager::Git,
+        }
+    }
+
+    pub fn warnings(&self) -> Vec<String> {
+        match self.pager.as_str() {
+            "git" | "delta" | "hunk" => Vec::new(),
+            other => vec![format!(
+                "[changes] pager = \"{other}\" is unknown; using git"
+            )],
         }
     }
 }
@@ -419,6 +437,7 @@ pub fn config_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::diff_command::DiffPager;
     use tempfile::TempDir;
 
     #[test]
@@ -456,6 +475,32 @@ mod tests {
         assert_eq!(config.mermaid.timeout_ms, 900);
         assert_eq!(config.mermaid.max_flowchart_edges, 10);
         assert_eq!(config.mermaid.max_rss_mb, 256);
+    }
+
+    #[test]
+    fn changes_section_defaults_unknown_pager_and_args() {
+        let defaults = AppConfig::new().changes;
+        assert_eq!(defaults.pager(), DiffPager::Git);
+        assert!(defaults.diff_args.is_empty());
+        assert!(defaults.warnings().is_empty());
+
+        let config: AppConfig =
+            toml::from_str("[changes]\npager = \"delta\"\ndiff_args = [\"--stat\", \"--\"]\n")
+                .unwrap();
+        assert_eq!(config.changes.pager(), DiffPager::Delta);
+        assert_eq!(config.changes.diff_args, ["--stat", "--"]);
+        assert!(config.changes.warnings().is_empty());
+
+        let hunk: AppConfig = toml::from_str("[changes]\npager = \"hunk\"\n").unwrap();
+        assert_eq!(hunk.changes.pager(), DiffPager::Hunk);
+        assert!(hunk.changes.warnings().is_empty());
+
+        let unknown: AppConfig = toml::from_str("[changes]\npager = \"less\"\n").unwrap();
+        assert_eq!(unknown.changes.pager(), DiffPager::Git);
+        assert_eq!(
+            unknown.changes.warnings(),
+            ["[changes] pager = \"less\" is unknown; using git"]
+        );
     }
 
     #[test]
@@ -800,6 +845,7 @@ mod tests {
             chat: ChatSection::default(),
             mermaid: MermaidSection::default(),
             cursor: CursorSection::default(),
+            changes: ChangesSection::default(),
         };
 
         config.save_to(&path).unwrap();
@@ -859,6 +905,7 @@ mod tests {
             chat: ChatSection::default(),
             mermaid: MermaidSection::default(),
             cursor: CursorSection::default(),
+            changes: ChangesSection::default(),
         };
 
         let content = toml::to_string_pretty(&config).unwrap();

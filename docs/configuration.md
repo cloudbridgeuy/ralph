@@ -248,6 +248,17 @@ In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram f
 
 Fixed limits: flowchart source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements. A config that fails to load prints a warning and uses these defaults.
 
+### `[changes]` - `/diff` pager
+
+`/diff` in chat runs `git diff`. See [ralph chat](context/ralph-chat.md#diff).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `pager` | `"git"` | `git`, `delta`, or `hunk`. An unknown string warns once at chat start and uses `git`; the config still loads |
+| `diff_args` | `[]` | `git diff` arguments placed before the ones typed after `/diff` |
+
+`delta` and `hunk` are one-off `git -c core.pager=...` (`hunk` passes `core.pager=hunk pager` as one argument). ralph sets no environment variables and does not change `core.pager` in git config. With `pager = "git"`, git uses the user's pager.
+
 ## Chat Store
 
 `ralph ask` stores nothing. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).
