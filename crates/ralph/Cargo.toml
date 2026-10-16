@@ -1,7 +1,7 @@
 [package]
 name = "ralph"
 homepage = "https://github.com/cloudbridgeuy/mcptools"
-description = "Ralph pattern implementation for LLM Vibe Coding"
+description = "Claude chat with memory, workers, and rich rendering"
 autobins = false
 
 version.workspace = true

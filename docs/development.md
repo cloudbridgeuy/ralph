@@ -4,7 +4,7 @@ This guide covers local development setup and build instructions for ralph.
 
 ## Prerequisites
 
-- **Rust toolchain**: 1.82.0 or later (MSRV)
+- **Rust toolchain**: 1.95.0 or later (MSRV)
 - **Cargo**: Included with Rust
 - **Git**: For version control and hooks
 
@@ -17,7 +17,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 Verify your installation:
 
 ```bash
-rustc --version  # Should be 1.82.0 or later
+rustc --version  # Should be 1.95.0 or later
 cargo --version
 ```
 

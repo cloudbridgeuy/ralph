@@ -10,18 +10,18 @@
 │   ██║  ██║██║  ██║███████╗██║     ██║  ██║                  │
 │   ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝                  │
 │                                                             │
-│   Chat and ask with a rich terminal experience              │
+│   Claude chat with memory, workers, and rich rendering      │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust: 1.82.0+](https://img.shields.io/badge/Rust-1.82.0+-orange.svg)](https://www.rust-lang.org/)
+[![Rust: 1.95.0+](https://img.shields.io/badge/Rust-1.95.0+-orange.svg)](https://www.rust-lang.org/)
 
 ---
 
 <!-- ANCHOR: intro -->
-**ralph** is a CLI tool for working with an LLM from the terminal. It offers a persistent chat with compressed memory and single-shot `ask` prompts, and renders rich terminal output with syntax highlighting.
+**ralph** wraps `claude -p` with rich terminal rendering. Bare `ralph` opens one persistent chat whose memory is a compressed tree of summaries. From that chat, Claude can start background workers in their own git worktrees and watch long-running commands. `ralph ask` sends one prompt and stores nothing.
 <!-- ANCHOR_END: intro -->
 
 ## Table of Contents
@@ -37,10 +37,14 @@
 <!-- ANCHOR: start -->
 ## Features
 
-- **Chat** - Persistent chat with compressed memory, run by bare `ralph`
-- **Single-shot Ask** - `ralph ask` sends one prompt and stores nothing
-- **Rich Terminal Output** - Syntax highlighting for code, diffs, and tool results
-- **Theme Support** - Multiple built-in themes or use custom `.tmTheme` files
+- **Persistent chat** - Bare `ralph` runs `ralph chat`. Each message is a fresh Claude turn over a compressed view of the whole chat, stored under `~/.ralph/chat`.
+- **Compressed memory** - The chat log is summarized into a tree by a background nap pass. Claude opens details with the `zoom` and `recall` tools.
+- **Background workers** - Claude starts, messages, and closes workers with `spawn_worker`, `reply`, and `close_worker`. Harnesses: `claude` in tmux, `cursor`, and `opencode`. Each worker gets its own git worktree. These tools come from `ralph chat-mcp`, which talks to the running chat over a Unix socket.
+- **Inbox and watches** - Worker reports and finished `watch` commands land in the chat inbox. Read them with `/inbox`.
+- **Status line** - Shows the chat mode (`NAP`, `INBOX`, `WORK`, `IDLE`); colors are set under `[theme.status]`.
+- **Chat input** - Multi-line editor with history, `$EDITOR` drafts, clipboard images, `!` shell cells, skills, and an opt-in vi mode (`[chat] edit_mode = "vi"`).
+- **Single-shot ask** - `ralph ask` sends one prompt from an argument or stdin and stores nothing.
+- **Rich terminal output** - Syntax highlighting for code, diffs, and tool results, with built-in themes or custom `.tmTheme` files (`ralph themes`).
 
 ## Installation
 
@@ -53,8 +57,10 @@ cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (bi
 
 ### Requirements
 
-- Rust 1.82.0 or later
-- An LLM CLI tool (default: [Claude CLI](https://github.com/anthropics/claude-code))
+- Rust 1.95.0 or later
+- [Claude Code](https://github.com/anthropics/claude-code) (`claude` on `PATH`)
+- git, for worker worktrees
+- Per worker harness: `tmux` for `claude` workers, the Cursor `agent` CLI for `cursor` workers, `opencode` for `opencode` workers
 
 ## Quick Start
 
@@ -68,6 +74,12 @@ ralph
 
 ```bash
 ralph ask 'Explain this codebase'
+```
+
+3. **List syntax highlighting themes**:
+
+```bash
+ralph themes
 ```
 
 <!-- ANCHOR_END: start -->
@@ -102,9 +114,10 @@ See [Configuration](docs/configuration.md) for complete documentation.
 ## Documentation
 
 - [CLI Reference](docs/cli-reference.md) - All commands, flags, and options
-- [ralph chat](docs/context/ralph-chat.md) - Persistent chat with compressed memory
+- [ralph chat](docs/context/ralph-chat.md) - Persistent chat, memory tree and nap, workers, inbox, watches, chat-mcp tools
+- [Worker leftovers](docs/context/worker-leftovers.md) - Things workers and smoke tests leave behind outside the repo
 - [ralph ask](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
-- [Configuration](docs/configuration.md) - Config file format and options
+- [Configuration](docs/configuration.md) - Config file format and options, including `[chat]` and `[theme.status]`
 - [Development Guide](docs/development.md) - Building and contributing
 - [Documentation site](https://cloudbridgeuy.github.io/ralph/) - These docs as a book
 
