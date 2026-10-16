@@ -193,12 +193,13 @@ pub fn close_plan(
         }
     }
     let mut steps = Vec::new();
-    if state.opencode {
+    if state.opencode && state.kind != WorkerKind::Opencode {
         steps.push(CloseStep::RemoveOpencodeSession);
     }
     match state.kind {
-        // Preserve the existing headless close plan; host dispatch is separate work.
-        WorkerKind::Cursor | WorkerKind::Opencode => steps.push(CloseStep::TerminateCursor),
+        WorkerKind::Cursor => steps.push(CloseStep::TerminateCursor),
+        // Opencode shares one server across workers: end only this session.
+        WorkerKind::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
         WorkerKind::Tmux => {
             if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
                 steps.push(CloseStep::KillSession(session.name.clone()));
@@ -334,18 +335,42 @@ mod tests {
     }
 
     #[test]
-    fn opencode_kind_preserves_the_existing_headless_close_plan() {
+    fn opencode_close_ends_only_its_session_without_stopping_the_shared_server() {
+        for opencode in [false, true] {
+            let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+            state.kind = WorkerKind::Opencode;
+            state.opencode = opencode;
+            // The complete plan permits only session removal, never host shutdown,
+            // Cursor child termination, or killing a tmux session.
+            assert_eq!(
+                close_plan(&state, false, false),
+                Ok(vec![
+                    CloseStep::RemoveOpencodeSession,
+                    CloseStep::RemoveWorktree { force: false },
+                    CloseStep::DeleteBranch,
+                    CloseStep::PruneWorktrees,
+                    CloseStep::ClearMarkers,
+                ])
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_close_preserves_legacy_opencode_session_cleanup() {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
-        state.opencode = true;
         state.kind = WorkerKind::Cursor;
-        let legacy = close_plan(&state, false, false).unwrap();
-        state.kind = WorkerKind::Opencode;
-        assert_eq!(close_plan(&state, false, false).unwrap(), legacy);
-        assert_eq!(legacy[0], CloseStep::RemoveOpencodeSession);
-        assert_eq!(legacy[1], CloseStep::TerminateCursor);
-        assert!(!legacy
-            .iter()
-            .any(|step| matches!(step, CloseStep::KillSession(_))));
+        state.opencode = true;
+        assert_eq!(
+            close_plan(&state, false, false),
+            Ok(vec![
+                CloseStep::RemoveOpencodeSession,
+                CloseStep::TerminateCursor,
+                CloseStep::RemoveWorktree { force: false },
+                CloseStep::DeleteBranch,
+                CloseStep::PruneWorktrees,
+                CloseStep::ClearMarkers,
+            ])
+        );
     }
 
     #[test]

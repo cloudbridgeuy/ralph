@@ -13,8 +13,7 @@ struct SessionMeta {
 }
 
 pub fn cleans_cursor_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
-    // Keep legacy headless cleanup until close dispatch is split by host.
-    matches!(state.kind, WorkerKind::Cursor | WorkerKind::Opencode)
+    matches!(state.kind, WorkerKind::Cursor)
         && steps
             .iter()
             .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
@@ -105,7 +104,7 @@ mod tests {
     fn cursor_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
         assert!(cleans_cursor_leftovers(&state(WorkerKind::Cursor), &steps));
-        assert!(cleans_cursor_leftovers(
+        assert!(!cleans_cursor_leftovers(
             &state(WorkerKind::Opencode),
             &steps
         ));
@@ -114,6 +113,16 @@ mod tests {
             &state(WorkerKind::Cursor),
             &[CloseStep::ClearMarkers]
         ));
+    }
+
+    #[test]
+    fn opencode_close_skips_cursor_and_claude_leftovers() {
+        let state = state(WorkerKind::Opencode);
+        let steps = crate::worker::close_plan(&state, false, false);
+        assert!(steps.is_ok_and(|steps| {
+            !cleans_cursor_leftovers(&state, &steps)
+                && !crate::claude_leftovers::cleans_claude_leftovers(&state, &steps)
+        }));
     }
 
     #[test]
