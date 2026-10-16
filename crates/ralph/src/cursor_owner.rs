@@ -34,11 +34,11 @@ pub(crate) fn process_start(pid: u32) -> Option<String> {
     (!start.is_empty()).then_some(start)
 }
 
-pub(crate) fn alive_since(pid: u32, start: &str) -> bool {
+fn alive_since(pid: u32, start: &str) -> bool {
     process_start(pid).is_some_and(|current| current == start)
 }
 
-pub(crate) fn own_ancestry() -> Vec<u32> {
+fn own_ancestry() -> Vec<u32> {
     let mut pids = vec![process::id()];
     while let Some(parent) = pids.last().and_then(|pid| parent_pid(*pid)) {
         if parent <= 1 || pids.contains(&parent) {
@@ -49,7 +49,7 @@ pub(crate) fn own_ancestry() -> Vec<u32> {
     pids
 }
 
-pub(crate) fn parent_pid(pid: u32) -> Option<u32> {
+fn parent_pid(pid: u32) -> Option<u32> {
     let output = Command::new("ps")
         .args(["-o", "ppid=", "-p", &pid.to_string()])
         .stdin(Stdio::null())
