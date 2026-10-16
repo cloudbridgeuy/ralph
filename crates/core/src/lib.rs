@@ -16,6 +16,7 @@
 pub mod attachment;
 pub mod chat;
 pub mod chat_cell;
+pub mod chat_edit_mode;
 pub mod chat_input;
 pub mod chat_memory;
 pub mod chat_skills;

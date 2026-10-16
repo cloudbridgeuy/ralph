@@ -176,6 +176,8 @@ pub struct ChatSection {
     pub inbox_alert_unknown_focus: UnknownFocus,
     #[serde(default)]
     pub status_powerline: bool,
+    #[serde(default)]
+    pub edit_mode: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -204,6 +206,7 @@ impl Default for ChatSection {
             inbox_alert_notification: false,
             inbox_alert_unknown_focus: UnknownFocus::Alert,
             status_powerline: false,
+            edit_mode: None,
         }
     }
 }

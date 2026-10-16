@@ -42,6 +42,7 @@ use ralph_core::chat::{
     resolve_frozen_window, resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
+use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, Route, Status};
@@ -138,6 +139,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
     config.theme.warnings().into_iter().for_each(warn);
+    let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());
+    edit_mode_warning.into_iter().for_each(warn);
     let agent = config.theme.agent();
     let agent_highlighter =
         Highlighter::with_config(theme_config.clone().merge_cli(agent.code.as_deref(), false))
@@ -210,7 +213,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );
-    let mut editor = build_editor(&store_dir)?
+    let mut editor = build_editor(&store_dir, edit_mode)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
