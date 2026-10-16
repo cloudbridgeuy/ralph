@@ -241,7 +241,11 @@ impl OpencodeHost {
     }
 
     fn delete_session(&self, id: &str) -> Result<(), String> {
-        let Some((session_id, _)) = self.find(id) else {
+        let Some(session_id) = self
+            .find(id)
+            .map(|(session_id, _)| session_id)
+            .or_else(|| self.recorded_session_id(id))
+        else {
             return Ok(());
         };
         let api = self.api().ok_or("the opencode server is not running")?;
@@ -261,6 +265,13 @@ impl OpencodeHost {
                 Ok(())
             }
         }
+    }
+
+    fn recorded_session_id(&self, id: &str) -> Option<String> {
+        fs::read_to_string(&self.files(id).session)
+            .ok()
+            .and_then(|text| OpencodeRecord::parse(&text))
+            .map(|record| record.session_id)
     }
 
     fn forget(&self, id: &str) {

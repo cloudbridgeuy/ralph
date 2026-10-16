@@ -9,11 +9,11 @@ use ralph_core::claude_leftovers::cleans_claude_leftovers;
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
-    interrupt_reply, marker_paths, parse_interrupt_result, project_slug, prompt_entry_name,
-    resolve_worktree_dir, sent_path, session_name, session_owner, tagged_sessions,
-    worktree_for_branch, worktree_path, CloseState, CloseStep, CursorFiles, Handoff, OpencodeFiles,
-    Owner, Sweep, TaggedSession, WorkerKind, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
-    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    interrupt_reply, marker_paths, opencode_close_handoff, parse_interrupt_result, project_slug,
+    prompt_entry_name, resolve_worktree_dir, sent_path, session_name, session_owner,
+    tagged_sessions, worktree_for_branch, worktree_path, CloseState, CloseStep, CursorFiles,
+    Handoff, OpencodeFiles, Owner, Sweep, TaggedSession, WorkerKind, WorktreeDir, HANDOFF_POLL,
+    HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -395,7 +395,11 @@ impl Workers {
                 clear_marker(&files.error)?;
                 return Err(io::Error::other(message));
             }
-            match close_handoff(files.owner.exists(), started.elapsed()) {
+            match opencode_close_handoff(
+                files.owner.exists(),
+                files.session.exists(),
+                started.elapsed(),
+            ) {
                 Handoff::Done => return Ok(()),
                 Handoff::TimedOut => {
                     clear_marker(&files.close)?;

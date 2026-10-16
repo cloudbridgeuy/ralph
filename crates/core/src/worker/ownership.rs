@@ -356,6 +356,23 @@ mod tests {
     }
 
     #[test]
+    fn opencode_close_without_an_owner_removes_the_session_before_the_worktree() {
+        let mut state = close_state(Owner::Missing);
+        state.kind = WorkerKind::Opencode;
+        state.opencode = true;
+        assert_eq!(
+            close_plan(&state, false, false),
+            Ok(vec![
+                CloseStep::RemoveOpencodeSession,
+                CloseStep::RemoveWorktree { force: false },
+                CloseStep::DeleteBranch,
+                CloseStep::PruneWorktrees,
+                CloseStep::ClearMarkers,
+            ])
+        );
+    }
+
+    #[test]
     fn cursor_close_preserves_legacy_opencode_session_cleanup() {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
         state.kind = WorkerKind::Cursor;

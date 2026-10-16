@@ -2,10 +2,11 @@ use super::{
     opencode_blocked_content, permission_decision, PermissionAsked, PermissionDecision,
     OPENCODE_SESSION_DIR,
 };
-use crate::worker::{match_option, no_option_message};
+use crate::worker::{close_handoff, match_option, no_option_message, Handoff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub const OPENCODE_SPAWN_DIR: &str = "opencode-spawn";
 pub const OPENCODE_PREFLIGHT_DIR: &str = "opencode-preflight";
@@ -122,6 +123,14 @@ pub fn answer_decision(
     let decision =
         permission_decision(&option.option_id).ok_or_else(|| no_option_message(&options))?;
     Ok((asked.id.clone(), decision))
+}
+
+pub fn opencode_close_handoff(
+    owner_exists: bool,
+    session_exists: bool,
+    elapsed: Duration,
+) -> Handoff {
+    close_handoff(owner_exists || session_exists, elapsed)
 }
 
 pub fn session_missing(message: &str) -> bool {
@@ -254,6 +263,23 @@ mod tests {
             answer_decision(None, "once").unwrap_err(),
             "no permission request is pending for this worker"
         );
+    }
+
+    #[test]
+    fn opencode_close_waits_for_both_owner_and_session_record() {
+        let early = Duration::from_secs(1);
+        assert_eq!(opencode_close_handoff(true, true, early), Handoff::Pending);
+        assert_eq!(opencode_close_handoff(false, true, early), Handoff::Pending);
+        assert_eq!(opencode_close_handoff(true, false, early), Handoff::Pending);
+        assert_eq!(opencode_close_handoff(false, false, early), Handoff::Done);
+    }
+
+    #[test]
+    fn opencode_close_times_out_while_either_file_remains() {
+        let late = crate::worker::HANDOFF_TIMEOUT;
+        assert_eq!(opencode_close_handoff(false, true, late), Handoff::TimedOut);
+        assert_eq!(opencode_close_handoff(true, false, late), Handoff::TimedOut);
+        assert_eq!(opencode_close_handoff(false, false, late), Handoff::Done);
     }
 
     #[test]
