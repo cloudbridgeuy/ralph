@@ -14,6 +14,8 @@ const BUSY_STATE: &str = "busy";
 const IDLE_STATE: &str = "idle";
 const INBOX_COMMAND: &str = "/inbox";
 pub const INBOX_USAGE: &str = "Usage: /inbox [next | N | list | peek N | drop N]";
+pub const PRIVATE_USAGE: &str = "Usage: /private <message>";
+const PRIVATE_COMMAND: &str = "/private";
 const WATCH_COMMAND: &str = "/watch";
 const DIFF_COMMAND: &str = "/diff";
 const SEPARATOR: &str = " · ";
@@ -113,6 +115,8 @@ impl TurnCache {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Send(String),
+    Private(String),
+    PrivateUsage,
     ReadInbox(Selection),
     ListInbox,
     PeekInbox(Position),
@@ -144,6 +148,15 @@ pub fn route_input(line: &str, unread: usize) -> Route {
         .filter(|args| args.is_empty() || args.starts_with(char::is_whitespace))
     {
         return Route::Diff(parse_diff_args(args));
+    }
+    if let Some(text) = line
+        .strip_prefix(PRIVATE_COMMAND)
+        .filter(|text| text.is_empty() || text.starts_with(char::is_whitespace))
+    {
+        return match text.trim() {
+            "" => Route::PrivateUsage,
+            message => Route::Private(message.to_string()),
+        };
     }
     let mut tokens = line.split_whitespace();
     if tokens.next() == Some(INBOX_COMMAND) {
@@ -445,6 +458,29 @@ mod tests {
             Route::Diff(DiffArgs::UnclosedQuote)
         );
         assert_eq!(route_input("/difffoo", 0), Route::Send("/difffoo".into()));
+    }
+
+    #[test]
+    fn route_input_parses_private_turns() {
+        assert_eq!(
+            route_input(" /private  what is x? ", 2),
+            Route::Private("what is x?".into())
+        );
+        assert_eq!(
+            route_input("/private\nline one\nline two", 0),
+            Route::Private("line one\nline two".into())
+        );
+        assert_eq!(
+            route_input("/privatefoo", 0),
+            Route::Send("/privatefoo".into())
+        );
+    }
+
+    #[test]
+    fn bare_private_shows_the_usage_hint_and_sends_nothing() {
+        for line in ["/private", "/private ", "  /private \t ", "/private\n"] {
+            assert_eq!(route_input(line, 3), Route::PrivateUsage);
+        }
     }
 
     #[test]

@@ -17,7 +17,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    frozen_block, tail_lines, usage_record, view_stats, CallKind, Frozen, Role, Trigger,
+    frozen_block, reply_entries, tail_lines, trigger_entries, usage_record, view_stats, CallKind,
+    Frozen, Trigger,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use std::borrow::Cow;
@@ -123,7 +124,7 @@ impl Turn<'_> {
             self.append_logged(trigger, logged)?;
         }
         let sent = match trigger {
-            Trigger::User => expand_slash_command(message, self.skills),
+            Trigger::User | Trigger::Private => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
         let command = build_chat_command(
@@ -204,11 +205,16 @@ impl Turn<'_> {
                 if !logged_before_reply(trigger) {
                     self.append_logged(trigger, logged)?;
                 }
-                self.store.append(Role::Assistant, &reply)?;
-                warn_if_err(
-                    spawn_nap(self.store_dir, self.timeout_secs),
-                    "Failed to start chat memory nap",
-                );
+                let entries = reply_entries(trigger, &reply);
+                entries
+                    .iter()
+                    .try_for_each(|(role, text)| self.store.append(*role, text))?;
+                if !entries.is_empty() {
+                    warn_if_err(
+                        spawn_nap(self.store_dir, self.timeout_secs),
+                        "Failed to start chat memory nap",
+                    );
+                }
                 Ok(TurnOutcome::Replied)
             }
             _ => {
@@ -219,8 +225,8 @@ impl Turn<'_> {
     }
 
     fn append_logged(&self, trigger: Trigger, logged: &[String]) -> io::Result<()> {
-        logged
+        trigger_entries(trigger, logged)
             .iter()
-            .try_for_each(|text| self.store.append(trigger.role(), text))
+            .try_for_each(|(role, text)| self.store.append(*role, text))
     }
 }
