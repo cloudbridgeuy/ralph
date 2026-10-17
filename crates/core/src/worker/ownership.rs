@@ -1,4 +1,4 @@
-use super::branch_name;
+use super::{branch_name, WorkerKind};
 use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
@@ -8,17 +8,23 @@ pub fn base_config_key(id: &str) -> String {
     format!("branch.{}.ralphBase", branch_name(id))
 }
 
+pub fn legacy_base_unset_warning(id: &str, exit_code: Option<i32>) -> Option<String> {
+    match exit_code {
+        Some(0) | Some(5) => None,
+        _ => Some(format!(
+            "Warning: the legacy base record for worker {id} is still in git config. Run: git config --unset {}",
+            base_config_key(id)
+        )),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Base {
     pub branch: String,
     pub warning: Option<String>,
 }
 
-pub fn base_branch(
-    configured: Result<Option<&str>, &str>,
-    recorded: Option<&str>,
-    origin_head: Option<&str>,
-) -> Base {
+pub fn base_branch(configured: Result<Option<&str>, &str>, origin_head: Option<&str>) -> Base {
     let (configured, config_error) = match configured {
         Ok(configured) => (configured, None),
         Err(error) => (None, Some(error)),
@@ -28,7 +34,7 @@ pub fn base_branch(
             .strip_prefix(ORIGIN_PREFIX)
             .unwrap_or(head.trim())
     });
-    let branch = [configured, recorded, origin_default]
+    let branch = [configured, origin_default]
         .into_iter()
         .flatten()
         .map(str::trim)
@@ -141,7 +147,7 @@ pub struct CloseState {
     pub unmerged_commits: Option<usize>,
     pub opencode: bool,
     pub markers: bool,
-    pub cursor: bool,
+    pub kind: WorkerKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,13 +199,18 @@ pub fn close_plan(
         }
     }
     let mut steps = Vec::new();
-    if state.opencode {
+    if state.opencode && state.kind != WorkerKind::Opencode {
         steps.push(CloseStep::RemoveOpencodeSession);
     }
-    if state.cursor {
-        steps.push(CloseStep::TerminateCursor);
-    } else if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
-        steps.push(CloseStep::KillSession(session.name.clone()));
+    match state.kind {
+        WorkerKind::Cursor => steps.push(CloseStep::TerminateCursor),
+        // Opencode shares one server across workers: end only this session.
+        WorkerKind::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
+        WorkerKind::Tmux => {
+            if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
+                steps.push(CloseStep::KillSession(session.name.clone()));
+            }
+        }
     }
     if let Some(dirty) = state.dirty_worktree {
         steps.push(CloseStep::RemoveWorktree { force: dirty });
@@ -299,7 +310,7 @@ mod tests {
             unmerged_commits: Some(0),
             opencode: false,
             markers: false,
-            cursor: false,
+            kind: WorkerKind::Tmux,
         }
     }
 
@@ -323,10 +334,66 @@ mod tests {
     #[test]
     fn close_plan_terminates_a_cursor_worker_instead_of_killing_a_session() {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
-        state.cursor = true;
+        state.kind = WorkerKind::Cursor;
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateCursor);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
+    }
+
+    #[test]
+    fn opencode_close_ends_only_its_session_without_stopping_the_shared_server() {
+        for opencode in [false, true] {
+            let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+            state.kind = WorkerKind::Opencode;
+            state.opencode = opencode;
+            // The complete plan permits only session removal, never host shutdown,
+            // Cursor child termination, or killing a tmux session.
+            assert_eq!(
+                close_plan(&state, false, false),
+                Ok(vec![
+                    CloseStep::RemoveOpencodeSession,
+                    CloseStep::RemoveWorktree { force: false },
+                    CloseStep::DeleteBranch,
+                    CloseStep::PruneWorktrees,
+                    CloseStep::ClearMarkers,
+                ])
+            );
+        }
+    }
+
+    #[test]
+    fn opencode_close_without_an_owner_removes_the_session_before_the_worktree() {
+        let mut state = close_state(Owner::Missing);
+        state.kind = WorkerKind::Opencode;
+        state.opencode = true;
+        assert_eq!(
+            close_plan(&state, false, false),
+            Ok(vec![
+                CloseStep::RemoveOpencodeSession,
+                CloseStep::RemoveWorktree { force: false },
+                CloseStep::DeleteBranch,
+                CloseStep::PruneWorktrees,
+                CloseStep::ClearMarkers,
+            ])
+        );
+    }
+
+    #[test]
+    fn cursor_close_preserves_legacy_opencode_session_cleanup() {
+        let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+        state.kind = WorkerKind::Cursor;
+        state.opencode = true;
+        assert_eq!(
+            close_plan(&state, false, false),
+            Ok(vec![
+                CloseStep::RemoveOpencodeSession,
+                CloseStep::TerminateCursor,
+                CloseStep::RemoveWorktree { force: false },
+                CloseStep::DeleteBranch,
+                CloseStep::PruneWorktrees,
+                CloseStep::ClearMarkers,
+            ])
+        );
     }
 
     #[test]
@@ -434,30 +501,26 @@ mod tests {
             .contains(&CloseStep::RemoveWorktree { force: true }));
     }
 
-    fn branch(
-        configured: Option<&str>,
-        recorded: Option<&str>,
-        origin_head: Option<&str>,
-    ) -> String {
-        base_branch(Ok(configured), recorded, origin_head).branch
+    fn branch(configured: Option<&str>, origin_head: Option<&str>) -> String {
+        base_branch(Ok(configured), origin_head).branch
     }
 
     #[test]
-    fn base_branch_prefers_config_then_spawn_base_then_origin_head_then_main() {
+    fn base_branch_prefers_config_then_origin_head_then_main() {
         let origin = Some("refs/remotes/origin/trunk\n");
-        assert_eq!(branch(Some("dev"), Some("feat"), origin), "dev");
-        assert_eq!(branch(None, Some("feat"), origin), "feat");
-        assert_eq!(branch(Some(" "), None, origin), "trunk");
-        assert_eq!(branch(None, None, None), "main");
-        assert_eq!(branch(None, Some(""), Some("")), "main");
+        assert_eq!(branch(Some("dev"), origin), "dev");
+        assert_eq!(branch(None, origin), "trunk");
+        assert_eq!(branch(Some(" "), origin), "trunk");
+        assert_eq!(branch(None, None), "main");
+        assert_eq!(branch(None, Some("")), "main");
     }
 
     #[test]
-    fn base_branch_without_a_config_file_does_not_warn() {
+    fn base_branch_chooses_the_default_branch_when_origin_head_is_present() {
         assert_eq!(
-            base_branch(Ok(None), Some("feat"), None),
+            base_branch(Ok(None), Some("refs/remotes/origin/main")),
             Base {
-                branch: "feat".into(),
+                branch: "main".into(),
                 warning: None
             }
         );
@@ -466,7 +529,7 @@ mod tests {
     #[test]
     fn base_branch_uses_a_valid_worker_base_without_warning() {
         assert_eq!(
-            base_branch(Ok(Some("develop")), Some("feat"), None),
+            base_branch(Ok(Some("develop")), Some("refs/remotes/origin/main")),
             Base {
                 branch: "develop".into(),
                 warning: None
@@ -475,23 +538,55 @@ mod tests {
     }
 
     #[test]
+    fn base_branch_falls_back_to_main_without_origin_head_and_does_not_warn() {
+        assert_eq!(
+            base_branch(Ok(None), None),
+            Base {
+                branch: "main".into(),
+                warning: None
+            }
+        );
+    }
+
+    #[test]
     fn base_branch_warns_and_falls_back_when_the_config_fails_to_load() {
         let error = "Failed to parse config file at /c/config.toml: expected `=`";
-        let base = base_branch(Err(error), Some("feat"), Some("refs/remotes/origin/trunk"));
-        assert_eq!(base.branch, "feat");
+        let base = base_branch(Err(error), Some("refs/remotes/origin/trunk"));
+        assert_eq!(base.branch, "trunk");
         let warning = base.warning.unwrap();
         assert!(warning.contains("worker_base was skipped"), "{warning}");
         assert!(warning.contains(error), "{warning}");
         assert!(
-            warning.ends_with("checked against feat instead."),
+            warning.ends_with("checked against trunk instead."),
             "{warning}"
         );
-        assert_eq!(base_branch(Err(error), None, None).branch, "main");
+        assert_eq!(base_branch(Err(error), None).branch, "main");
     }
 
     #[test]
     fn base_config_key_lives_under_the_worker_branch() {
         assert_eq!(base_config_key("GUZ-1"), "branch.worker/GUZ-1.ralphBase");
+    }
+
+    #[test]
+    fn legacy_base_unset_is_silent_when_removed_or_missing() {
+        assert_eq!(legacy_base_unset_warning("GUZ-1", Some(0)), None);
+        assert_eq!(legacy_base_unset_warning("GUZ-1", Some(5)), None);
+    }
+
+    #[test]
+    fn legacy_base_unset_failure_warns_with_the_exact_command() {
+        let warning = legacy_base_unset_warning("GUZ-1", Some(1)).unwrap();
+        assert!(warning.starts_with("Warning: "), "{warning}");
+        assert!(
+            warning.contains("git config --unset branch.worker/GUZ-1.ralphBase"),
+            "{warning}"
+        );
+    }
+
+    #[test]
+    fn legacy_base_unset_without_an_exit_code_warns() {
+        assert!(legacy_base_unset_warning("GUZ-1", None).is_some());
     }
 
     #[test]
@@ -502,5 +597,26 @@ mod tests {
         assert!(close_plan(&state, false, false)
             .unwrap_err()
             .contains("1 commit(s) not in develop"));
+    }
+
+    #[test]
+    fn close_plan_deletes_the_branch_when_its_commits_are_in_main() {
+        let state = close_state(Owner::Missing);
+        assert_eq!(state.base, "main");
+        assert_eq!(state.unmerged_commits, Some(0));
+        assert!(close_plan(&state, false, false)
+            .unwrap()
+            .contains(&CloseStep::DeleteBranch));
+    }
+
+    #[test]
+    fn close_plan_refuses_commits_not_in_main_unless_abandoned() {
+        let mut state = close_state(Owner::Missing);
+        state.unmerged_commits = Some(3);
+        let refusal = close_plan(&state, false, false).unwrap_err();
+        assert!(refusal.contains("3 commit(s) not in main"), "{refusal}");
+        assert!(close_plan(&state, true, false)
+            .unwrap()
+            .contains(&CloseStep::DeleteBranch));
     }
 }

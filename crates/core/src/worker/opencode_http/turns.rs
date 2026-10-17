@@ -328,6 +328,23 @@ mod tests {
     }
 
     #[test]
+    fn reported_completion_emits_only_a_worker_marker_effect() {
+        let mut worker = TurnState::default();
+        worker.prompted("task");
+        let reported = TurnFacts {
+            reported: true,
+            closing: false,
+        };
+        // A finished worker emits only its marker update. No server-lost or
+        // shutdown effect is available from the worker turn state machine.
+        assert_eq!(
+            ended(&mut worker, TurnEnd::Succeeded, reported),
+            vec![Effect::ClearReported]
+        );
+        assert!(!worker.in_flight);
+    }
+
+    #[test]
     fn closing_turn_does_nothing() {
         let mut state = TurnState::default();
         let closing = TurnFacts {

@@ -1,10 +1,9 @@
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, signal_group, sweep_owner, write_file};
 use crate::cursor_owner::{request_ids, TERM_GRACE, TERM_POLL};
-use crate::opencode_worker::{OpencodeHost, OpencodeShutdown};
 use crate::warn::warn;
-use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
+use crate::workers::headless::HeadlessHost;
 use agent_client_protocol::schema::v1::{
     CancelNotification, InitializeRequest, LoadSessionRequest, McpServer, NewSessionRequest,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
@@ -25,7 +24,7 @@ use ralph_core::worker::{
     OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest, Step, TurnOutcome,
     WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
     CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
-    CURSOR_SPAWN_DIR, HANDOFF_POLL, REPORT_REMINDER,
+    CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -591,7 +590,7 @@ impl CursorHost {
         CursorFiles::new(&self.store_dir, id)
     }
 
-    pub fn poll(&self) {
+    fn poll(&self) {
         for id in request_ids(&self.store_dir, CURSOR_CLOSE_DIR) {
             self.close(&id);
         }
@@ -613,7 +612,7 @@ impl CursorHost {
         }
     }
 
-    pub fn shutdown(&self) {
+    fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let drained: Vec<(String, AcpWorker)> = self.workers().drain().collect();
         for (id, mut worker) in drained {
@@ -778,7 +777,7 @@ impl CursorHost {
         started
     }
 
-    pub fn resume_all(&self) {
+    fn resume_all(&self) {
         for id in request_ids(&self.store_dir, CURSOR_SESSION_DIR) {
             self.resume(&id);
         }
@@ -869,46 +868,20 @@ impl CursorHost {
     }
 }
 
-pub struct CursorShutdown(Arc<CursorHost>);
-
-impl CursorShutdown {
-    pub fn start(store_dir: PathBuf) -> Self {
-        let host = CursorHost::new(store_dir);
-        let resumed = Arc::clone(&host);
-        thread::spawn(move || resumed.resume_all());
-        let polled = Arc::clone(&host);
-        thread::spawn(move || loop {
-            thread::sleep(HANDOFF_POLL);
-            polled.poll();
-        });
-        Self(host)
+impl HeadlessHost for CursorHost {
+    fn resume(&self) {
+        self.resume_all();
     }
-}
 
-pub struct ExitCleanup {
-    watches: Watches,
-    cursor: Arc<CursorHost>,
-    opencode: Arc<OpencodeHost>,
-}
-
-impl ExitCleanup {
-    pub fn new(watches: Watches, cursor: &CursorShutdown, opencode: &OpencodeShutdown) -> Self {
-        Self {
-            watches,
-            cursor: Arc::clone(&cursor.0),
-            opencode: Arc::clone(&opencode.0),
+    fn poll(&self) -> bool {
+        if self.closed.load(Ordering::SeqCst) {
+            return false;
         }
+        CursorHost::poll(self);
+        true
     }
 
-    pub fn run(&self) {
-        self.watches.kill_all();
-        self.cursor.shutdown();
-        self.opencode.shutdown();
-    }
-}
-
-impl Drop for CursorShutdown {
-    fn drop(&mut self) {
-        self.0.shutdown();
+    fn shutdown(&self) {
+        CursorHost::shutdown(self);
     }
 }

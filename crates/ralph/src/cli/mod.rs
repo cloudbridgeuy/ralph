@@ -10,9 +10,18 @@ mod tests;
 
 pub const CHAT_TIMEOUT_SECS: u64 = 600;
 
-/// Ralph - chat and single-shot Claude sessions with rich terminal rendering.
+/// Chat with Claude from the terminal: persistent memory, background workers, rich rendering.
+///
+/// Bare `ralph` runs `ralph chat`: one long-running chat whose memory is a
+/// compressed tree of summaries, kept small by a background nap pass. From
+/// chat, Claude can start workers (claude in tmux, Cursor, or opencode), each
+/// in its own git worktree, and watch long-running commands. Their reports
+/// land in the chat inbox.
+///
+/// `ralph ask` sends one prompt and stores nothing. `ralph themes` lists the
+/// syntax highlighting themes.
 #[derive(Parser, Debug)]
-#[command(author, version = crate::version::current(), about, long_about = None)]
+#[command(author, version = crate::version::current())]
 #[command(propagate_version = true)]
 pub struct Cli {
     /// Subcommand to execute
@@ -97,11 +106,8 @@ pub struct ChatMcpArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
 
-    #[arg(long, value_name = "MODE", default_value = crate::invoke::CHAT_DEFAULT_PERMISSION_MODE)]
-    pub permission_mode: String,
-
-    #[arg(long, value_name = "DIR")]
-    pub worktree_dir: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    pub socket: std::path::PathBuf,
 }
 
 #[derive(clap::Args, Debug)]

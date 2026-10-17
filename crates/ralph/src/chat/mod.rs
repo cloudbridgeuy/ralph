@@ -9,40 +9,42 @@ mod monitor;
 mod prompt;
 mod route;
 mod skills;
+pub(crate) mod socket;
 mod statusbar;
 mod turn;
 mod watch;
 
-use crate::acp_worker::{CursorShutdown, ExitCleanup};
 use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
 use crate::chat::memory::Store;
-use crate::chat::monitor::{ready_ids, watch_input, watch_status, Monitor};
+use crate::chat::monitor::{ready_ids, watch_headless, watch_input, watch_status, Monitor};
 use crate::chat::prompt::{next_route, ChatPrompt};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
+use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::markdown::{MarkdownTheme, ThemeRole};
-use crate::opencode_worker::OpencodeShutdown;
+use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, render_markdown, RenderContext};
 use crate::signal;
 use crate::warn::{warn, warn_if_err};
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
+use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
 use ralph_core::chat::{
     resolve_frozen_window, resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width,
-    ChatMcpOptions,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
+use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, Route, Status};
@@ -114,15 +116,16 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         chat_config.cell_output_limit,
         chat_config.cell_output_bytes,
     )?;
+    sweep_stale_server_records();
+    let chat_socket = ChatSocket::bind(&store_dir)?;
+    let socket_files = chat_socket.files().clone();
+    let _socket_guard = SocketGuard(socket_files.clone());
     let mcp_args = write_mcp_config(
         &store,
         &store_dir,
+        chat_socket.path(),
         &exe,
         &chat_config.mcp_servers,
-        &ChatMcpOptions {
-            permission_mode: &permission_mode,
-            worktree_dir: args.worktree_dir.as_deref(),
-        },
     )?;
     let skills = link_skills(usable_skills(resolve_skills(
         &SkillSources {
@@ -140,6 +143,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let theme_config = ThemeConfig::from_config_and_env();
     config.theme.warnings().into_iter().for_each(warn);
     config.changes.warnings().into_iter().for_each(warn);
+    let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());
+    edit_mode_warning.into_iter().for_each(warn);
     let agent = config.theme.agent();
     let agent_highlighter =
         Highlighter::with_config(theme_config.clone().merge_cli(agent.code.as_deref(), false))
@@ -187,6 +192,15 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             unknown_focus: chat_config.inbox_alert_unknown_focus,
         },
     });
+    chat_socket.serve(
+        Store::new(store_dir.clone()),
+        Workers::new(
+            store_dir.clone(),
+            exe.clone(),
+            permission_mode.clone(),
+            args.worktree_dir.clone(),
+        ),
+    );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
     monitor.refresh(true);
@@ -197,14 +211,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!("{hint}");
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
-    let cursor = CursorShutdown::start(monitor.store_dir.clone());
-    let opencode = OpencodeShutdown::start(monitor.store_dir.clone());
+    let headless = watch_headless(monitor.store_dir.clone());
     watch_input(
         Arc::clone(&at_prompt),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
-        ExitCleanup::new(monitor.watches.clone(), &cursor, &opencode),
+        ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );
-    let mut editor = build_editor(&store_dir)?
+    let mut editor = build_editor(&store_dir, edit_mode)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());

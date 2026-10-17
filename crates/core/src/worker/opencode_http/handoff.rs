@@ -2,10 +2,11 @@ use super::{
     opencode_blocked_content, permission_decision, PermissionAsked, PermissionDecision,
     OPENCODE_SESSION_DIR,
 };
-use crate::worker::{match_option, no_option_message};
+use crate::worker::{close_handoff, match_option, no_option_message, Handoff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub const OPENCODE_SPAWN_DIR: &str = "opencode-spawn";
 pub const OPENCODE_PREFLIGHT_DIR: &str = "opencode-preflight";
@@ -85,6 +86,8 @@ impl OpencodeSpawn {
 pub struct ServerRecord {
     pub port: u16,
     pub password: String,
+    pub pid: u32,
+    pub start: String,
 }
 
 impl ServerRecord {
@@ -99,6 +102,57 @@ impl ServerRecord {
 
 pub fn opencode_server_record_path(tmp: &Path, pid: u32) -> PathBuf {
     tmp.join(format!("ralph-opencode-{pid}.json"))
+}
+
+const SERVER_RECORD_PREFIX: &str = "ralph-opencode-";
+const SERVER_RECORD_SUFFIX: &str = ".json";
+
+pub fn server_record_pid(file_name: &str) -> Option<u32> {
+    file_name
+        .strip_prefix(SERVER_RECORD_PREFIX)?
+        .strip_suffix(SERVER_RECORD_SUFFIX)?
+        .parse()
+        .ok()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerRecordFacts<'a> {
+    pub file_pid: Option<u32>,
+    pub own_pid: u32,
+    pub record: Option<&'a ServerRecord>,
+    pub file_pid_start_now: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordFate {
+    Keep,
+    Delete,
+    Ignore,
+}
+
+pub fn server_record_fate(facts: ServerRecordFacts) -> RecordFate {
+    let Some(file_pid) = facts.file_pid else {
+        return RecordFate::Ignore;
+    };
+    if file_pid == facts.own_pid {
+        return RecordFate::Keep;
+    }
+    let Some(start_now) = facts.file_pid_start_now else {
+        return RecordFate::Delete;
+    };
+    match facts.record {
+        Some(record) if record.pid == file_pid && record.start == start_now => RecordFate::Keep,
+        Some(_) => RecordFate::Delete,
+        None => RecordFate::Keep,
+    }
+}
+
+pub fn server_record_usable(
+    record: &ServerRecord,
+    own_pid: u32,
+    own_start_now: Option<&str>,
+) -> bool {
+    record.pid == own_pid && own_start_now == Some(record.start.as_str())
 }
 
 pub fn session_permissions() -> Value {
@@ -122,6 +176,14 @@ pub fn answer_decision(
     let decision =
         permission_decision(&option.option_id).ok_or_else(|| no_option_message(&options))?;
     Ok((asked.id.clone(), decision))
+}
+
+pub fn opencode_close_handoff(
+    owner_exists: bool,
+    session_exists: bool,
+    elapsed: Duration,
+) -> Handoff {
+    close_handoff(owner_exists || session_exists, elapsed)
 }
 
 pub fn session_missing(message: &str) -> bool {
@@ -183,12 +245,93 @@ mod tests {
 
     #[test]
     fn server_record_round_trips_and_rejects_garbage() {
-        let record = ServerRecord {
-            port: 4096,
-            password: "abc".to_string(),
-        };
+        let record = record(7, "Mon Jan  1 00:00:00 2026");
         assert_eq!(ServerRecord::parse(&record.render()), Some(record));
         assert_eq!(ServerRecord::parse(""), None);
+    }
+
+    #[test]
+    fn server_record_without_owner_fields_fails_to_parse() {
+        assert_eq!(
+            ServerRecord::parse(r#"{"port":4096,"password":"abc"}"#),
+            None
+        );
+    }
+
+    fn record(pid: u32, start: &str) -> ServerRecord {
+        ServerRecord {
+            port: 4096,
+            password: "abc".to_string(),
+            pid,
+            start: start.to_string(),
+        }
+    }
+
+    fn fate(
+        file_pid: Option<u32>,
+        record: Option<&ServerRecord>,
+        start_now: Option<&str>,
+    ) -> RecordFate {
+        server_record_fate(ServerRecordFacts {
+            file_pid,
+            own_pid: 1,
+            record,
+            file_pid_start_now: start_now,
+        })
+    }
+
+    #[test]
+    fn server_record_pid_is_strict() {
+        assert_eq!(server_record_pid("ralph-opencode-42.json"), Some(42));
+        assert_eq!(server_record_pid("ralph-opencode-x.json"), None);
+        assert_eq!(server_record_pid("ralph-opencode-1.txt"), None);
+        assert_eq!(server_record_pid("ralph-opencode-.json"), None);
+        assert_eq!(server_record_pid("other.json"), None);
+    }
+
+    #[test]
+    fn fate_ignores_malformed_names() {
+        assert_eq!(fate(None, None, None), RecordFate::Ignore);
+    }
+
+    #[test]
+    fn fate_keeps_own_record() {
+        assert_eq!(fate(Some(1), None, None), RecordFate::Keep);
+    }
+
+    #[test]
+    fn fate_keeps_record_of_live_owner() {
+        let rec = record(5, "s");
+        assert_eq!(fate(Some(5), Some(&rec), Some("s")), RecordFate::Keep);
+    }
+
+    #[test]
+    fn fate_deletes_record_of_dead_owner() {
+        let rec = record(5, "s");
+        assert_eq!(fate(Some(5), Some(&rec), None), RecordFate::Delete);
+        assert_eq!(fate(Some(5), None, None), RecordFate::Delete);
+    }
+
+    #[test]
+    fn fate_deletes_record_of_reused_pid() {
+        let rec = record(5, "old");
+        assert_eq!(fate(Some(5), Some(&rec), Some("new")), RecordFate::Delete);
+        let other = record(6, "new");
+        assert_eq!(fate(Some(5), Some(&other), Some("new")), RecordFate::Delete);
+    }
+
+    #[test]
+    fn fate_keeps_unreadable_record_of_live_pid() {
+        assert_eq!(fate(Some(5), None, Some("s")), RecordFate::Keep);
+    }
+
+    #[test]
+    fn usable_needs_matching_pid_and_start() {
+        let rec = record(9, "s");
+        assert!(server_record_usable(&rec, 9, Some("s")));
+        assert!(!server_record_usable(&rec, 8, Some("s")));
+        assert!(!server_record_usable(&rec, 9, Some("t")));
+        assert!(!server_record_usable(&rec, 9, None));
     }
 
     #[test]
@@ -254,6 +397,23 @@ mod tests {
             answer_decision(None, "once").unwrap_err(),
             "no permission request is pending for this worker"
         );
+    }
+
+    #[test]
+    fn opencode_close_waits_for_both_owner_and_session_record() {
+        let early = Duration::from_secs(1);
+        assert_eq!(opencode_close_handoff(true, true, early), Handoff::Pending);
+        assert_eq!(opencode_close_handoff(false, true, early), Handoff::Pending);
+        assert_eq!(opencode_close_handoff(true, false, early), Handoff::Pending);
+        assert_eq!(opencode_close_handoff(false, false, early), Handoff::Done);
+    }
+
+    #[test]
+    fn opencode_close_times_out_while_either_file_remains() {
+        let late = crate::worker::HANDOFF_TIMEOUT;
+        assert_eq!(opencode_close_handoff(false, true, late), Handoff::TimedOut);
+        assert_eq!(opencode_close_handoff(true, false, late), Handoff::TimedOut);
+        assert_eq!(opencode_close_handoff(false, false, late), Handoff::Done);
     }
 
     #[test]

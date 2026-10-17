@@ -5,13 +5,15 @@ Complete reference for all ralph commands and options.
 ## Global Options
 
 ```
-ralph [OPTIONS] <COMMAND>
+ralph [COMMAND]
 ```
+
+The command is optional: bare `ralph` runs `ralph chat`.
 
 | Option | Description |
 |--------|-------------|
 | `-V`, `--version` | Print version information (see [version scheme](context/release-process.md#version-scheme)) |
-| `--help` | Print help information |
+| `-h`, `--help` | Print help (`-h` shows a summary) |
 
 ## Commands
 

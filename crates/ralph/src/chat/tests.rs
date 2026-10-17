@@ -1,9 +1,16 @@
-use super::editor::esc_esc;
+use super::editor::{
+    edit_mode, emacs_keybindings, esc_esc, vi_keybindings, visual_reset, OPEN_EDITOR,
+};
 use super::resolve_store;
 use super::turn::{draft_after, logged_before_reply, rule, shown_output, TurnOutcome};
 use crate::stream_processor::OutputBlock;
+use crossterm::event::{Event, KeyEvent};
+use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_memory::Trigger;
-use reedline::{EditCommand, ReedlineEvent};
+use reedline::{
+    EditCommand, EditMode, KeyCode, KeyModifiers, PromptEditMode, PromptViMode, ReedlineEvent,
+    ReedlineRawEvent,
+};
 use std::path::{Path, PathBuf};
 use termimad::MadSkin;
 
@@ -47,6 +54,99 @@ fn second_esc_clears_the_draft() {
 fn other_event_resets_pending_esc() {
     let (pending, event) = esc_esc(true, ReedlineEvent::Enter);
     assert!(!pending && event == ReedlineEvent::Enter);
+}
+
+#[test]
+fn emacs_keymap_keeps_chat_bindings() {
+    let keys = emacs_keybindings();
+    assert_eq!(
+        keys.find_binding(KeyModifiers::ALT, KeyCode::Enter),
+        Some(ReedlineEvent::Edit(vec![EditCommand::InsertNewline]))
+    );
+    assert_eq!(
+        keys.find_binding(KeyModifiers::CONTROL, KeyCode::Char('o')),
+        Some(ReedlineEvent::Edit(vec![EditCommand::Redo]))
+    );
+}
+
+#[test]
+fn vi_insert_keymap_carries_chat_bindings() {
+    let (insert, _) = vi_keybindings();
+    let newline = Some(ReedlineEvent::Edit(vec![EditCommand::InsertNewline]));
+    assert_eq!(
+        insert.find_binding(KeyModifiers::ALT, KeyCode::Enter),
+        newline
+    );
+    assert_eq!(
+        insert.find_binding(KeyModifiers::CONTROL, KeyCode::Char('j')),
+        newline
+    );
+    assert!(matches!(
+        insert.find_binding(KeyModifiers::CONTROL, KeyCode::Char('v')),
+        Some(ReedlineEvent::ExecuteHostCommand(_))
+    ));
+    assert_eq!(
+        insert.find_binding(KeyModifiers::CONTROL, KeyCode::Char('o')),
+        Some(ReedlineEvent::Edit(vec![EditCommand::Redo]))
+    );
+}
+
+#[test]
+fn vi_ctrl_u_clears_the_draft_in_both_modes() {
+    let (insert, normal) = vi_keybindings();
+    let clear = Some(ReedlineEvent::Edit(vec![EditCommand::Clear]));
+    assert_eq!(
+        insert.find_binding(KeyModifiers::CONTROL, KeyCode::Char('u')),
+        clear
+    );
+    assert_eq!(
+        normal.find_binding(KeyModifiers::CONTROL, KeyCode::Char('u')),
+        clear
+    );
+    assert_eq!(
+        normal.find_binding(KeyModifiers::CONTROL, KeyCode::Char('g')),
+        Some(ReedlineEvent::ExecuteHostCommand(OPEN_EDITOR.to_string()))
+    );
+}
+
+#[test]
+fn only_visual_mode_is_reset_to_normal() {
+    assert_eq!(
+        visual_reset(PromptEditMode::Vi(PromptViMode::Visual)),
+        Some(ReedlineEvent::SwitchMode(PromptEditMode::Vi(
+            PromptViMode::Normal
+        )))
+    );
+    assert_eq!(visual_reset(PromptEditMode::Vi(PromptViMode::Normal)), None);
+    assert_eq!(visual_reset(PromptEditMode::Vi(PromptViMode::Insert)), None);
+    assert_eq!(visual_reset(PromptEditMode::Emacs), None);
+}
+
+fn press(mode: &mut impl EditMode, code: KeyCode, modifiers: KeyModifiers) -> ReedlineEvent {
+    let event = ReedlineRawEvent::try_from(Event::Key(KeyEvent::new(code, modifiers))).unwrap();
+    mode.parse_event(event)
+}
+
+#[test]
+fn vi_v_and_shift_v_stay_in_normal_mode() {
+    let mut mode = edit_mode(EditModeConfig::Vi);
+    press(&mut mode, KeyCode::Esc, KeyModifiers::NONE);
+    let normal = PromptEditMode::Vi(PromptViMode::Normal);
+    assert_eq!(mode.edit_mode(), normal);
+    let v = press(&mut mode, KeyCode::Char('v'), KeyModifiers::NONE);
+    assert_eq!((v, mode.edit_mode()), (ReedlineEvent::None, normal.clone()));
+    press(&mut mode, KeyCode::Char('V'), KeyModifiers::SHIFT);
+    assert_eq!(mode.edit_mode(), normal);
+}
+
+#[test]
+fn vi_find_v_still_moves() {
+    let mut mode = edit_mode(EditModeConfig::Vi);
+    press(&mut mode, KeyCode::Esc, KeyModifiers::NONE);
+    press(&mut mode, KeyCode::Char('f'), KeyModifiers::NONE);
+    let event = press(&mut mode, KeyCode::Char('v'), KeyModifiers::NONE);
+    assert_ne!(event, ReedlineEvent::None);
+    assert_eq!(mode.edit_mode(), PromptEditMode::Vi(PromptViMode::Normal));
 }
 
 #[test]

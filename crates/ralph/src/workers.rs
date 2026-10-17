@@ -5,15 +5,16 @@ use crate::cursor_owner::{caller_owns_cursor, owned_cursor_ids, sweep_owner, wri
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
 use ralph_core::chat_status::{store_workers, RunningWorker};
-use ralph_core::claude_leftovers::cleans_claude_leftovers;
+use ralph_core::claude_leftovers::{cleans_claude_leftovers, trust_lock_path};
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
-    interrupt_reply, marker_paths, parse_interrupt_result, project_slug, prompt_entry_name,
-    resolve_worktree_dir, sent_path, session_name, session_owner, tagged_sessions,
-    worktree_for_branch, worktree_path, CloseState, CloseStep, CursorFiles, Handoff, OpencodeFiles,
-    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
-    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
+    parse_interrupt_result, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path,
+    session_name, session_owner, tagged_sessions, worktree_for_branch, worktree_path, CloseState,
+    CloseStep, CursorFiles, Handoff, OpencodeFiles, Owner, Sweep, TaggedSession, WorkerKind,
+    WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR,
+    SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -23,6 +24,7 @@ use std::process::{self, Command, Output, Stdio};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+pub(crate) mod headless;
 mod spawn;
 
 pub struct Workers {
@@ -212,7 +214,6 @@ impl Workers {
                 .as_ref()
                 .map(|config| config.chat.worker_base.as_deref())
                 .map_err(String::as_str),
-            git_value(&repo, &["config", "--get", &base_config_key(id)])?.as_deref(),
             git_value(&repo, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"])?.as_deref(),
         );
         let unmerged_commits = if branch_exists(&repo, &branch)? {
@@ -237,7 +238,13 @@ impl Workers {
             markers: marker_paths(&self.store_dir, id)
                 .iter()
                 .any(|marker| marker.exists()),
-            cursor: CursorFiles::new(&self.store_dir, id).owner.exists() || self.opencode_http(id),
+            kind: if CursorFiles::new(&self.store_dir, id).owner.exists() {
+                WorkerKind::Cursor
+            } else if self.opencode_http(id) {
+                WorkerKind::Opencode
+            } else {
+                WorkerKind::Tmux
+            },
         };
         let with_warning = |text: String| {
             [&base.warning, &worktree_dir.warning]
@@ -253,12 +260,16 @@ impl Workers {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
         }
+        let unset_warning = unset_legacy_base(&repo, id);
         let files = CursorFiles::new(&self.store_dir, id);
         clear_marker(&files.session)?;
         clear_marker(&files.interrupt_result)?;
         if steps == [CloseStep::ClearMarkers] {
-            return Ok(format!(
-                "Closed worker {id}: only its markers were left; removed them."
+            return Ok(unset_warning.into_iter().fold(
+                with_warning(format!(
+                    "Closed worker {id}: only its markers were left; removed them."
+                )),
+                |text, warning| format!("{text} {warning}"),
             ));
         }
         let note = if opencode {
@@ -268,7 +279,10 @@ impl Workers {
         };
         let leftovers = if cleans_claude_leftovers(&state, &steps) {
             dirs::home_dir()
-                .map(|home| cleanup_worktree_leftovers(&home, &worktree))
+                .map(|home| {
+                    let lock = trust_lock_path(dirs::data_dir().as_deref());
+                    cleanup_worktree_leftovers(&home, lock.as_deref(), &worktree)
+                })
                 .unwrap_or_default()
         } else if cleans_cursor_leftovers(&state, &steps) {
             let porcelain = run(Command::new("git").arg("-C").arg(&repo).args([
@@ -286,7 +300,7 @@ impl Workers {
         } else {
             Vec::new()
         };
-        Ok(leftovers.into_iter().fold(
+        Ok(unset_warning.into_iter().chain(leftovers).fold(
             with_warning(format!(
                 "Closed worker {id}: removed its sessions, worktree and branch {branch}.{note}"
             )),
@@ -388,7 +402,11 @@ impl Workers {
                 clear_marker(&files.error)?;
                 return Err(io::Error::other(message));
             }
-            match close_handoff(files.owner.exists(), started.elapsed()) {
+            match opencode_close_handoff(
+                files.owner.exists(),
+                files.session.exists(),
+                started.elapsed(),
+            ) {
                 Handoff::Done => return Ok(()),
                 Handoff::TimedOut => {
                     clear_marker(&files.close)?;
@@ -546,6 +564,18 @@ fn git_value(repo: &Path, args: &[&str]) -> io::Result<Option<String>> {
     Ok((!value.is_empty()).then_some(value))
 }
 
+fn unset_legacy_base(repo: &Path, id: &str) -> Option<String> {
+    let exit_code = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["config", "--unset", &base_config_key(id)])
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|output| output.status.code());
+    legacy_base_unset_warning(id, exit_code)
+}
+
 fn branch_exists(repo: &Path, branch: &str) -> io::Result<bool> {
     Ok(Command::new("git")
         .arg("-C")
@@ -603,7 +633,7 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
                 id,
                 session: String::new(),
                 opencode: true,
-                cursor: true,
+                kind: WorkerKind::Opencode,
             }),
     );
     workers.sort_by(|a, b| a.id.cmp(&b.id));
@@ -702,7 +732,9 @@ mod tests {
         write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
         let running = running_workers(dir.path());
         let worker = running.iter().find(|worker| worker.id == "A").unwrap();
-        assert!(worker.opencode && worker.cursor && worker.session.is_empty());
+        assert!(
+            worker.opencode && worker.kind == WorkerKind::Opencode && worker.session.is_empty()
+        );
     }
 
     #[test]

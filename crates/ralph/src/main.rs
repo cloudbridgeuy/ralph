@@ -214,15 +214,9 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
     let store = chat::memory::Store::new(args.store.clone());
-    let workers = workers::Workers::new(
-        args.store,
-        std::env::current_exe()?,
-        args.permission_mode,
-        args.worktree_dir,
-    );
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    chat::mcp::run_stdio_server(&store, &workers, stdin.lock(), stdout.lock())?;
+    chat::mcp::run_stdio_server(&store, &args.socket, stdin.lock(), stdout.lock())?;
     Ok(())
 }
 

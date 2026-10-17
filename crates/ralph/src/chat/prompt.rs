@@ -4,18 +4,18 @@ use crate::chat::monitor::Monitor;
 use crate::chat::statusbar::StatusBar;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
+use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
 use ralph_core::chat_status::{footer, route_input, Route};
 use ralph_core::worker::ATTACHMENTS_DIR;
 use reedline::{
-    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, Reedline, Signal,
-    DEFAULT_MULTILINE_INDICATOR,
+    Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, Reedline,
+    Signal, DEFAULT_MULTILINE_INDICATOR,
 };
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::io::{self, ErrorKind};
 use std::sync::Arc;
 
-const PROMPT: &str = ">>> ";
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
 pub(super) struct ChatPrompt {
@@ -61,8 +61,13 @@ impl Prompt for ChatPrompt {
         Cow::Borrowed("")
     }
 
-    fn render_prompt_indicator(&self, _edit_mode: PromptEditMode) -> Cow<'_, str> {
-        Cow::Borrowed(PROMPT)
+    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
+        let mode = match edit_mode {
+            PromptEditMode::Vi(PromptViMode::Insert) => PromptMode::ViInsert,
+            PromptEditMode::Vi(PromptViMode::Normal) => PromptMode::ViNormal,
+            _ => PromptMode::Emacs,
+        };
+        Cow::Borrowed(prompt_indicator(mode))
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {

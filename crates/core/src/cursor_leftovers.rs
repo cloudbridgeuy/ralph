@@ -1,4 +1,4 @@
-use crate::worker::{CloseState, CloseStep};
+use crate::worker::{CloseState, CloseStep, WorkerKind};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ struct SessionMeta {
 }
 
 pub fn cleans_cursor_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
-    state.cursor
+    matches!(state.kind, WorkerKind::Cursor)
         && steps
             .iter()
             .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use crate::worker::Owner;
 
-    fn state(cursor: bool) -> CloseState {
+    fn state(kind: WorkerKind) -> CloseState {
         CloseState {
             id: "A".into(),
             owner: Owner::Missing,
@@ -96,19 +96,33 @@ mod tests {
             unmerged_commits: Some(0),
             opencode: false,
             markers: false,
-            cursor,
+            kind,
         }
     }
 
     #[test]
     fn cursor_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
-        assert!(cleans_cursor_leftovers(&state(true), &steps));
-        assert!(!cleans_cursor_leftovers(&state(false), &steps));
+        assert!(cleans_cursor_leftovers(&state(WorkerKind::Cursor), &steps));
         assert!(!cleans_cursor_leftovers(
-            &state(true),
+            &state(WorkerKind::Opencode),
+            &steps
+        ));
+        assert!(!cleans_cursor_leftovers(&state(WorkerKind::Tmux), &steps));
+        assert!(!cleans_cursor_leftovers(
+            &state(WorkerKind::Cursor),
             &[CloseStep::ClearMarkers]
         ));
+    }
+
+    #[test]
+    fn opencode_close_skips_cursor_and_claude_leftovers() {
+        let state = state(WorkerKind::Opencode);
+        let steps = crate::worker::close_plan(&state, false, false);
+        assert!(steps.is_ok_and(|steps| {
+            !cleans_cursor_leftovers(&state, &steps)
+                && !crate::claude_leftovers::cleans_claude_leftovers(&state, &steps)
+        }));
     }
 
     #[test]

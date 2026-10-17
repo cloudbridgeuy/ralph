@@ -219,6 +219,8 @@ pub struct ChatSection {
     pub status_powerline: bool,
     #[serde(default)]
     pub editor: Option<EditorSetting>,
+    #[serde(default)]
+    pub edit_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -271,6 +273,7 @@ impl Default for ChatSection {
             inbox_alert_unknown_focus: UnknownFocus::Alert,
             status_powerline: false,
             editor: None,
+            edit_mode: None,
         }
     }
 }
