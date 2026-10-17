@@ -135,6 +135,15 @@ pub fn memory_size(msgs: usize, view_lines: &[String]) -> Memory {
     }
 }
 
+/// Whether a submitted prompt line may go to the input history. `/private`
+/// lines never do, with or without a message.
+pub fn keep_in_history(line: &str) -> bool {
+    !matches!(
+        route_input(line, 0),
+        Route::Private(_) | Route::PrivateUsage
+    )
+}
+
 pub fn route_input(line: &str, unread: usize) -> Route {
     let line = line.trim();
     if let Some(args) = line
@@ -474,6 +483,22 @@ mod tests {
             route_input("/privatefoo", 0),
             Route::Send("/privatefoo".into())
         );
+    }
+
+    #[test]
+    fn private_lines_stay_out_of_history() {
+        for line in [
+            "/private",
+            "/private what is x?",
+            "   /private what is x?",
+            "/private\nline one",
+            "/private \t ",
+        ] {
+            assert!(!keep_in_history(line), "{line:?}");
+        }
+        for line in ["/privatex", "hi /private", "/watch list", "plain text", ""] {
+            assert!(keep_in_history(line), "{line:?}");
+        }
     }
 
     #[test]

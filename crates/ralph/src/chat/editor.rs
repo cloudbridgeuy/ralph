@@ -4,11 +4,12 @@ use crate::signal::default_sigttou_in;
 use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
 use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
 use ralph_core::chat_memory::Role;
+use ralph_core::chat_status::keep_in_history;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    default_vi_visual_keybindings, EditCommand, EditMode, Emacs, FileBackedHistory, KeyCode,
-    KeyModifiers, Keybindings, PromptEditMode, PromptViMode, Reedline, ReedlineEvent,
-    ReedlineRawEvent, Vi,
+    default_vi_visual_keybindings, EditCommand, EditMode, Emacs, FileBackedHistory, History,
+    HistoryItem, HistoryItemId, HistorySessionId, KeyCode, KeyModifiers, Keybindings,
+    PromptEditMode, PromptViMode, Reedline, ReedlineEvent, ReedlineRawEvent, SearchQuery, Vi,
 };
 use std::io;
 use std::path::Path;
@@ -127,13 +128,63 @@ pub(super) fn edit_mode(mode: EditModeConfig) -> ChatEditMode {
     }
 }
 
+/// File-backed input history that drops lines `keep_in_history` refuses:
+/// they reach neither `history.txt` nor up-arrow recall.
+struct ChatHistory(FileBackedHistory);
+
+impl History for ChatHistory {
+    fn save(&mut self, h: HistoryItem) -> reedline::Result<HistoryItem> {
+        if keep_in_history(&h.command_line) {
+            self.0.save(h)
+        } else {
+            Ok(h)
+        }
+    }
+
+    fn load(&self, id: HistoryItemId) -> reedline::Result<HistoryItem> {
+        self.0.load(id)
+    }
+
+    fn count(&self, query: SearchQuery) -> reedline::Result<i64> {
+        self.0.count(query)
+    }
+
+    fn search(&self, query: SearchQuery) -> reedline::Result<Vec<HistoryItem>> {
+        self.0.search(query)
+    }
+
+    fn update(
+        &mut self,
+        id: HistoryItemId,
+        updater: &dyn Fn(HistoryItem) -> HistoryItem,
+    ) -> reedline::Result<()> {
+        self.0.update(id, updater)
+    }
+
+    fn clear(&mut self) -> reedline::Result<()> {
+        self.0.clear()
+    }
+
+    fn delete(&mut self, h: HistoryItemId) -> reedline::Result<()> {
+        self.0.delete(h)
+    }
+
+    fn sync(&mut self) -> io::Result<()> {
+        self.0.sync()
+    }
+
+    fn session(&self) -> Option<HistorySessionId> {
+        self.0.session()
+    }
+}
+
 pub(super) fn build_editor(
     store_dir: &Path,
     mode: EditModeConfig,
 ) -> Result<Reedline, Box<dyn std::error::Error>> {
     let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     Ok(Reedline::create()
-        .with_history(Box::new(history))
+        .with_history(Box::new(ChatHistory(history)))
         .with_edit_mode(Box::new(edit_mode(mode)))
         .use_bracketed_paste(true))
 }
