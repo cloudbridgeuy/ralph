@@ -98,19 +98,13 @@ pub enum Outcome {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Harness {
-    Claude,
-    Opencode { model: String },
-    Cursor,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Spawn {
         id: String,
         task: String,
-        harness: Harness,
+        harness: HarnessId,
+        model: Option<String>,
     },
     Reply {
         id: String,
@@ -282,7 +276,7 @@ pub fn opencode_session_id(id: &str) -> String {
     format!("ses_ralph{id}")
 }
 
-pub fn exclude_lines(harness: &Harness, repo: &Path, worktree_dir: &Path) -> Vec<String> {
+pub fn exclude_lines(harness: HarnessId, repo: &Path, worktree_dir: &Path) -> Vec<String> {
     let mut lines: Vec<String> = worktree_dir
         .strip_prefix(repo)
         .ok()
@@ -295,7 +289,7 @@ pub fn exclude_lines(harness: &Harness, repo: &Path, worktree_dir: &Path) -> Vec
         .map(|inside| format!("/{}/", inside.to_string_lossy()))
         .into_iter()
         .collect();
-    if let Harness::Opencode { .. } = harness {
+    if harness == HarnessId::Opencode {
         lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
     }
     lines
@@ -414,7 +408,8 @@ mod tests {
         let spawn = Command::Spawn {
             id: "A".into(),
             task: "t".into(),
-            harness: Harness::Claude,
+            harness: HarnessId::Claude,
+            model: None,
         };
         assert!(command_allowed(&spawn, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&spawn, Some(Trigger::Worker)).is_err());
@@ -544,17 +539,11 @@ mod tests {
         let repo = Path::new("/repo");
         let dir = repo.join(WORKTREE_DIR);
         assert_eq!(
-            exclude_lines(&Harness::Claude, repo, &dir),
+            exclude_lines(HarnessId::Claude, repo, &dir),
             ["/.worktrees/"]
         );
         assert_eq!(
-            exclude_lines(
-                &Harness::Opencode {
-                    model: "a/b".into()
-                },
-                repo,
-                &dir
-            ),
+            exclude_lines(HarnessId::Opencode, repo, &dir),
             ["/.worktrees/", "/opencode.json"]
         );
     }
@@ -563,12 +552,12 @@ mod tests {
     fn exclude_lines_cover_only_a_worktree_dir_inside_the_repo() {
         let repo = Path::new("/repo");
         assert_eq!(
-            exclude_lines(&Harness::Claude, repo, Path::new("/repo/tmp/wt")),
+            exclude_lines(HarnessId::Claude, repo, Path::new("/repo/tmp/wt")),
             ["/tmp/wt/"]
         );
-        assert!(exclude_lines(&Harness::Claude, repo, Path::new("/elsewhere/wt")).is_empty());
-        assert!(exclude_lines(&Harness::Claude, repo, Path::new("/repo/../wt")).is_empty());
-        assert!(exclude_lines(&Harness::Claude, repo, repo).is_empty());
+        assert!(exclude_lines(HarnessId::Claude, repo, Path::new("/elsewhere/wt")).is_empty());
+        assert!(exclude_lines(HarnessId::Claude, repo, Path::new("/repo/../wt")).is_empty());
+        assert!(exclude_lines(HarnessId::Claude, repo, repo).is_empty());
     }
 
     #[test]

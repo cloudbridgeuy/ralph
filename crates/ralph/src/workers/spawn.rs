@@ -10,9 +10,9 @@ use ralph_core::worker::{
     branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
     project_slug, rollback_plan, rollback_report, session_name, spawn_handoff, startup_state,
     worker_command, worker_mcp_config, worktree_add_args, wt_switch_args, CursorFiles, Handoff,
-    Harness, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup,
-    WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    HarnessId, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest,
+    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, DEFAULT_OPENCODE_MODEL, HANDOFF_POLL,
+    ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -25,12 +25,24 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STARTUP_POLL: Duration = Duration::from_millis(250);
 
 impl Workers {
-    pub fn spawn(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
-        let started = self.start(id, task, harness);
+    pub fn spawn(
+        &self,
+        id: &str,
+        task: &str,
+        harness: HarnessId,
+        model: Option<&str>,
+    ) -> io::Result<String> {
+        let started = self.start(id, task, harness, model);
         self.mark_sent(id, started)
     }
 
-    fn start(&self, id: &str, task: &str, harness: &Harness) -> io::Result<String> {
+    fn start(
+        &self,
+        id: &str,
+        task: &str,
+        harness: HarnessId,
+        model: Option<&str>,
+    ) -> io::Result<String> {
         let repo = repo_root()?;
         let project = project_slug(&repo);
         self.refuse_busy_cursor(id, false)?;
@@ -71,6 +83,7 @@ impl Workers {
             id,
             task,
             harness,
+            model,
             worktree: &worktree,
             session: &session,
             started: started_text(id, &worktree, &via, worktree_dir.warning.as_deref()),
@@ -89,9 +102,9 @@ impl Workers {
         })
     }
 
-    fn preflight(&self, id: &str, harness: &Harness) -> io::Result<()> {
+    fn preflight(&self, id: &str, harness: HarnessId) -> io::Result<()> {
         match harness {
-            Harness::Claude => {
+            HarnessId::Claude => {
                 require_on_path("tmux")?;
                 require_on_path("zsh")?;
                 // An interactive zsh takes over the terminal's foreground process
@@ -112,8 +125,8 @@ impl Workers {
                     ))
                 }
             }
-            Harness::Opencode { .. } => self.preflight_opencode(id),
-            Harness::Cursor => require_on_path(AGENT_COMMAND),
+            HarnessId::Opencode => self.preflight_opencode(id),
+            HarnessId::Cursor => require_on_path(AGENT_COMMAND),
         }
     }
 
@@ -122,6 +135,7 @@ impl Workers {
             id,
             task,
             harness,
+            model,
             worktree,
             session,
             started,
@@ -134,7 +148,7 @@ impl Workers {
             clear_marker(&marker)?;
         }
         let command = match harness {
-            Harness::Claude => {
+            HarnessId::Claude => {
                 let settings = self.write_settings(id, &markers)?;
                 worker_command(
                     &self.write_config(id)?,
@@ -144,7 +158,8 @@ impl Workers {
                     task,
                 )
             }
-            Harness::Opencode { model } => {
+            HarnessId::Opencode => {
+                let model = model.unwrap_or(DEFAULT_OPENCODE_MODEL);
                 let config = opencode_config(model, &self.exe, id, &inbox, &attachments);
                 fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
                 self.spawn_opencode(id, worktree, model, task)?;
@@ -152,7 +167,7 @@ impl Workers {
                     "{started} It runs headless on the shared opencode server inside ralph chat (no tmux session)."
                 ));
             }
-            Harness::Cursor => {
+            HarnessId::Cursor => {
                 self.spawn_cursor(id, worktree, task)?;
                 return Ok(format!(
                     "{started} It runs headless inside ralph chat (no tmux session)."
@@ -182,11 +197,11 @@ impl Workers {
 
     fn harness_running(&self, launch: &Launch) -> bool {
         match launch.harness {
-            Harness::Claude => session_exists(launch.session).unwrap_or(true),
-            Harness::Opencode { .. } => OpencodeFiles::new(&self.store_dir, launch.id)
+            HarnessId::Claude => session_exists(launch.session).unwrap_or(true),
+            HarnessId::Opencode => OpencodeFiles::new(&self.store_dir, launch.id)
                 .owner
                 .exists(),
-            Harness::Cursor => CursorFiles::new(&self.store_dir, launch.id).owner.exists(),
+            HarnessId::Cursor => CursorFiles::new(&self.store_dir, launch.id).owner.exists(),
         }
     }
 
@@ -288,7 +303,8 @@ impl Workers {
 struct Launch<'a> {
     id: &'a str,
     task: &'a str,
-    harness: &'a Harness,
+    harness: HarnessId,
+    model: Option<&'a str>,
     worktree: &'a Path,
     session: &'a str,
     started: String,

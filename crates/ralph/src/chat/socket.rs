@@ -209,7 +209,12 @@ fn run_command(
         .map_err(|e| format!("Could not read chat memory: {e}"))?;
     command_allowed(&command, pending)?;
     match &command {
-        Command::Spawn { id, task, harness } => workers.spawn(id, task, harness),
+        Command::Spawn {
+            id,
+            task,
+            harness,
+            model,
+        } => workers.spawn(id, task, *harness, model.as_deref()),
         Command::Reply {
             id,
             text,

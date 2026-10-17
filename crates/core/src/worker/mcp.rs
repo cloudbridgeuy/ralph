@@ -1,4 +1,4 @@
-use super::{Command, Harness, CURSOR_HARNESS, DEFAULT_OPENCODE_MODEL, OPENCODE_HARNESS};
+use super::{Command, HarnessId, CURSOR_HARNESS, DEFAULT_OPENCODE_MODEL, OPENCODE_HARNESS};
 use crate::mcp::string_arg;
 use crate::watch_request::parse_watch_args;
 use serde_json::{json, Value};
@@ -13,7 +13,7 @@ pub fn command_definitions() -> [Value; 4] {
                 "properties": {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
-                    "harness": {"type": "string", "enum": ["claude", "opencode", "cursor"], "description": "Agent to run. Default claude. cursor runs headless without a tmux session; a reply to it is delivered as a new prompt between its turns, or answers a waiting permission request. It resumes after a chat restart."},
+                    "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": "Agent to run. Default claude. cursor runs headless without a tmux session; a reply to it is delivered as a new prompt between its turns, or answers a waiting permission request. It resumes after a chat restart."},
                     "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-6.1-sol."}
                 },
                 "required": ["id", "task"]
@@ -53,8 +53,13 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
     let parsed = match name {
         "spawn_worker" => string_arg(args, "task").and_then(|task| {
             let id = worker_id(args)?;
-            let harness = harness(args)?;
-            Ok(Command::Spawn { id, task, harness })
+            let (harness, model) = harness(args)?;
+            Ok(Command::Spawn {
+                id,
+                task,
+                harness,
+                model,
+            })
         }),
         "reply" => string_arg(args, "text").and_then(|text| {
             let id = worker_id(args)?;
@@ -98,10 +103,10 @@ fn worker_id(args: &Value) -> Result<String, String> {
     }
 }
 
-fn harness(args: &Value) -> Result<Harness, String> {
+fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
     let model = args.get("model").and_then(Value::as_str);
     match (args.get("harness").and_then(Value::as_str), model) {
-        (None | Some("claude"), None) => Ok(Harness::Claude),
+        (None | Some("claude"), None) => Ok((HarnessId::Claude, None)),
         (None | Some("claude"), Some(_)) => {
             Err("A model can only be set for the opencode harness.".to_string())
         }
@@ -109,14 +114,12 @@ fn harness(args: &Value) -> Result<Harness, String> {
             let model = model.unwrap_or(DEFAULT_OPENCODE_MODEL);
             match model.split_once('/') {
                 Some((provider, name)) if !provider.is_empty() && !name.is_empty() => {
-                    Ok(Harness::Opencode {
-                        model: model.to_string(),
-                    })
+                    Ok((HarnessId::Opencode, Some(model.to_string())))
                 }
                 _ => Err(format!("Model '{model}' must look like provider/model.")),
             }
         }
-        (Some(CURSOR_HARNESS), None) => Ok(Harness::Cursor),
+        (Some(CURSOR_HARNESS), None) => Ok((HarnessId::Cursor, None)),
         (Some(CURSOR_HARNESS), Some(_)) => {
             Err("A model can only be set for the opencode harness.".to_string())
         }
@@ -137,7 +140,8 @@ mod tests {
             Some(Ok(Command::Spawn {
                 id: "GUZ-1".into(),
                 task: "fix it".into(),
-                harness: Harness::Claude
+                harness: HarnessId::Claude,
+                model: None
             }))
         );
         assert_eq!(
@@ -202,12 +206,12 @@ mod tests {
         ));
     }
 
-    fn spawn_harness(args: Value) -> Result<Harness, String> {
+    fn spawn_harness(args: Value) -> Result<(HarnessId, Option<String>), String> {
         let mut args = args;
         args["id"] = json!("A");
         args["task"] = json!("t");
         match parse_command("spawn_worker", &args) {
-            Some(Ok(Command::Spawn { harness, .. })) => Ok(harness),
+            Some(Ok(Command::Spawn { harness, model, .. })) => Ok((harness, model)),
             Some(Ok(other)) => panic!("unexpected {other:?}"),
             Some(Err(e)) => Err(e),
             None => panic!("not a worker command"),
@@ -216,22 +220,18 @@ mod tests {
 
     #[test]
     fn spawn_harness_defaults_to_claude_and_opencode_to_sol() {
-        assert_eq!(spawn_harness(json!({})), Ok(Harness::Claude));
+        assert_eq!(spawn_harness(json!({})), Ok((HarnessId::Claude, None)));
         assert_eq!(
             spawn_harness(json!({"harness": "claude"})),
-            Ok(Harness::Claude)
+            Ok((HarnessId::Claude, None))
         );
         assert_eq!(
             spawn_harness(json!({"harness": "opencode"})),
-            Ok(Harness::Opencode {
-                model: DEFAULT_OPENCODE_MODEL.into()
-            })
+            Ok((HarnessId::Opencode, Some(DEFAULT_OPENCODE_MODEL.into())))
         );
         assert_eq!(
             spawn_harness(json!({"harness": "opencode", "model": "openai/gpt-5.6-luna"})),
-            Ok(Harness::Opencode {
-                model: "openai/gpt-5.6-luna".into()
-            })
+            Ok((HarnessId::Opencode, Some("openai/gpt-5.6-luna".into())))
         );
     }
 
