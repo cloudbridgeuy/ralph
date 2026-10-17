@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 pub const KEEP_TURNS: usize = 20;
 pub const CHAT_OWNER: &str = "chat";
 pub const CHAT_REF_PREFIX: &str = "refs/ralph/chat/";
+const WORKER_REF_ROOT: &str = "refs/ralph/workers/";
 
 pub fn snapshots_enabled(config_enabled: Option<bool>) -> bool {
     config_enabled.unwrap_or(true)
@@ -30,6 +31,66 @@ impl Edge {
             Edge::End => "end",
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerSite {
+    pub store: PathBuf,
+    pub id: String,
+    pub worktree: PathBuf,
+}
+
+impl WorkerSite {
+    pub fn args(&self) -> Vec<String> {
+        vec![
+            "--store".to_string(),
+            self.store.to_string_lossy().into_owned(),
+            "--id".to_string(),
+            self.id.clone(),
+            "--worktree".to_string(),
+            self.worktree.to_string_lossy().into_owned(),
+        ]
+    }
+}
+
+pub fn worker_owner(id: &str) -> String {
+    format!("workers/{id}")
+}
+
+pub fn worker_ref_prefix(id: &str) -> String {
+    format!("{WORKER_REF_ROOT}{id}/")
+}
+
+pub fn worker_ref(id: &str, turn: u64) -> String {
+    format!("{}turn-{turn}", worker_ref_prefix(id))
+}
+
+pub fn parse_worker_turns(id: &str, ref_list: &str) -> Vec<u64> {
+    let prefix = worker_ref_prefix(id);
+    ref_list
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(prefix.as_str()))
+        .filter_map(|rest| rest.strip_prefix("turn-"))
+        .filter_map(|turn| turn.parse().ok())
+        .collect::<BTreeSet<u64>>()
+        .into_iter()
+        .collect()
+}
+
+pub fn next_worker_turn(turns: &[u64]) -> u64 {
+    turns.iter().max().map_or(0, |max| max + 1)
+}
+
+pub fn worker_refs(id: &str, turns: &[u64]) -> Vec<String> {
+    turns.iter().map(|turn| worker_ref(id, *turn)).collect()
+}
+
+pub fn worker_refs_to_prune(id: &str, turns: &[u64], keep: usize) -> Vec<String> {
+    let mut sorted = turns.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let pruned = sorted.len().saturating_sub(keep);
+    worker_refs(id, &sorted[..pruned])
 }
 
 pub fn side_dir(store: &Path, slug: &str) -> PathBuf {
@@ -115,12 +176,16 @@ pub fn update_ref_args(side: &Path, name: &str, commit: &str) -> Vec<OsString> {
 }
 
 pub fn list_refs_args(side: &Path) -> Vec<OsString> {
+    list_prefix_args(side, CHAT_REF_PREFIX)
+}
+
+pub fn list_prefix_args(side: &Path, prefix: &str) -> Vec<OsString> {
     vec![
         "--git-dir".into(),
         side.as_os_str().to_owned(),
         "for-each-ref".into(),
         "--format=%(refname)".into(),
-        CHAT_REF_PREFIX.into(),
+        prefix.into(),
     ]
 }
 
@@ -295,5 +360,78 @@ mod tests {
             ["--git-dir", "/s.git", "gc", "--auto", "--prune=1.hour.ago"]
         );
         assert_eq!(strings(init_args(side)), ["init", "--bare", "-q", "/s.git"]);
+    }
+
+    #[test]
+    fn worker_names_are_nested_under_workers() {
+        assert_eq!(worker_owner("GUZ-1"), "workers/GUZ-1");
+        assert_eq!(worker_ref_prefix("GUZ-1"), "refs/ralph/workers/GUZ-1/");
+        assert_eq!(worker_ref("GUZ-1", 4), "refs/ralph/workers/GUZ-1/turn-4");
+        assert_ne!(worker_owner("chat"), CHAT_OWNER);
+        assert_eq!(
+            index_path(Path::new("/s.git"), &worker_owner("A")),
+            Path::new("/s.git/index/workers/A")
+        );
+    }
+
+    #[test]
+    fn parse_worker_turns_reads_only_that_worker() {
+        let list = "refs/ralph/workers/A/turn-3\nrefs/ralph/workers/A/turn-0\nrefs/ralph/workers/A/turn-3\nrefs/ralph/workers/A/turn-x\nrefs/ralph/workers/AB/turn-9\nrefs/ralph/chat/turn-5/end\n";
+        assert_eq!(parse_worker_turns("A", list), [0, 3]);
+        assert!(parse_worker_turns("A", "").is_empty());
+    }
+
+    #[test]
+    fn next_worker_turn_starts_at_zero() {
+        assert_eq!(next_worker_turn(&[]), 0);
+        assert_eq!(next_worker_turn(&[0, 1, 4]), 5);
+    }
+
+    #[test]
+    fn worker_refs_to_prune_drops_the_oldest() {
+        assert_eq!(
+            worker_refs_to_prune("A", &[4, 0, 2, 1], 2),
+            ["refs/ralph/workers/A/turn-0", "refs/ralph/workers/A/turn-1"]
+        );
+        assert!(worker_refs_to_prune("A", &[0, 1], 2).is_empty());
+        assert!(worker_refs_to_prune("A", &[], 20).is_empty());
+    }
+
+    #[test]
+    fn worker_refs_names_every_turn() {
+        assert_eq!(
+            worker_refs("A", &[0, 2]),
+            ["refs/ralph/workers/A/turn-0", "refs/ralph/workers/A/turn-2"]
+        );
+    }
+
+    #[test]
+    fn list_prefix_args_lists_under_the_prefix() {
+        assert_eq!(
+            strings(list_prefix_args(
+                Path::new("/s.git"),
+                "refs/ralph/workers/A/"
+            )),
+            [
+                "--git-dir",
+                "/s.git",
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/ralph/workers/A/"
+            ]
+        );
+    }
+
+    #[test]
+    fn worker_site_args_name_store_id_and_worktree() {
+        let site = WorkerSite {
+            store: "/s".into(),
+            id: "A".into(),
+            worktree: "/w".into(),
+        };
+        assert_eq!(
+            site.args(),
+            ["--store", "/s", "--id", "A", "--worktree", "/w"]
+        );
     }
 }

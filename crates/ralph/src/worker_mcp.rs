@@ -10,6 +10,8 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
+use crate::worker_changes::WorkerChanges;
+
 const DROP_LOG: &str = "inbox-drops.jsonl";
 
 pub struct Inbox {
@@ -172,6 +174,7 @@ fn is_message(path: &Path) -> bool {
 pub fn run_stdio_server(
     worker: &str,
     inbox: &Inbox,
+    changes: Option<&WorkerChanges>,
     input: impl BufRead,
     mut output: impl Write,
 ) -> io::Result<()> {
@@ -203,7 +206,7 @@ pub fn run_stdio_server(
                     worker: worker.to_string(),
                     at: chrono::Utc::now().to_rfc3339(),
                     status: status.as_str().to_string(),
-                    text,
+                    text: changes.map_or(text.clone(), |changes| changes.attach_to(&text)),
                 };
                 match inbox.post(&report, seq) {
                     Ok(()) => {
@@ -236,6 +239,7 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
 pub fn run_stop_hook(
     reported: &Path,
     unreported: &Path,
+    changes: Option<&WorkerChanges>,
     mut input: impl Read,
     mut output: impl Write,
 ) -> io::Result<()> {
@@ -245,6 +249,9 @@ pub fn run_stop_hook(
             "letting the worker stop: unreadable Stop hook input: {e}"
         ));
         return Ok(());
+    }
+    if let Some(changes) = changes {
+        changes.snapshot_turn_or_warn();
     }
     match stop_decision(&payload, reported.exists()) {
         StopDecision::AllowBackground => {}
@@ -273,7 +280,7 @@ mod tests {
     fn stop_hook(reported: &Path, payload: &str) -> String {
         let unreported = reported.with_file_name("unreported");
         let mut out = Vec::new();
-        run_stop_hook(reported, &unreported, payload.as_bytes(), &mut out).unwrap();
+        run_stop_hook(reported, &unreported, None, payload.as_bytes(), &mut out).unwrap();
         String::from_utf8(out).unwrap()
     }
 
@@ -335,7 +342,14 @@ mod tests {
         let inbox = Inbox::new(dir.path().join("inbox"));
         let call = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"report","arguments":{"status":"done","text":"hello"}}}"#;
         let mut out = Vec::new();
-        run_stdio_server("GUZ-1", &inbox, format!("{call}\n").as_bytes(), &mut out).unwrap();
+        run_stdio_server(
+            "GUZ-1",
+            &inbox,
+            None,
+            format!("{call}\n").as_bytes(),
+            &mut out,
+        )
+        .unwrap();
         let reply: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(reply["result"]["isError"], false);
         assert!(dir.path().join("reported").join("GUZ-1").exists());

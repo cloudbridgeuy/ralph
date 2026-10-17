@@ -44,6 +44,33 @@ fn format_flag(format: ChangeFormat) -> &'static str {
     }
 }
 
+pub fn spawn_request(worker: &str) -> ChangeRequest {
+    stat_request(ChangeScope::Worker(worker.to_string()))
+}
+
+pub fn turn_request(worker: &str, turn: u64) -> ChangeRequest {
+    stat_request(ChangeScope::WorkerTurn {
+        worker: worker.to_string(),
+        turn: usize::try_from(turn).unwrap_or(usize::MAX),
+    })
+}
+
+fn stat_request(scope: ChangeScope) -> ChangeRequest {
+    ChangeRequest {
+        scope,
+        format: ChangeFormat::Stat,
+        paths: Vec::new(),
+        max_bytes: None,
+    }
+}
+
+pub fn append_changes(text: &str, blocks: &[String]) -> String {
+    std::iter::once(text)
+        .chain(blocks.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 pub fn scope_label(scope: &ChangeScope) -> String {
     match scope {
         ChangeScope::Worker(worker) => format!("changed in worker {worker} since spawn"),
@@ -190,5 +217,38 @@ mod tests {
         let req = request(&[], Some(2));
         let rendered = render_changes(&req, &"z".repeat(100));
         assert!(rendered.starts_with("changed in worker GUZ-1 since spawn\n"));
+    }
+
+    #[test]
+    fn spawn_and_turn_requests_are_uncapped_stats() {
+        let spawn = spawn_request("GUZ-1");
+        assert_eq!(spawn.scope, ChangeScope::Worker("GUZ-1".to_string()));
+        assert_eq!(spawn.format, ChangeFormat::Stat);
+        assert!(spawn.paths.is_empty());
+        assert_eq!(spawn.max_bytes, None);
+        let turn = turn_request("GUZ-1", 3);
+        assert_eq!(
+            turn.scope,
+            ChangeScope::WorkerTurn {
+                worker: "GUZ-1".to_string(),
+                turn: 3
+            }
+        );
+        assert_eq!(turn.format, ChangeFormat::Stat);
+        assert_eq!(turn.max_bytes, None);
+    }
+
+    #[test]
+    fn append_changes_separates_blocks_with_blank_lines() {
+        let blocks = vec!["a\n 1 file".to_string(), "b\nno changes".to_string()];
+        assert_eq!(
+            append_changes("done", &blocks),
+            "done\n\na\n 1 file\n\nb\nno changes"
+        );
+    }
+
+    #[test]
+    fn append_changes_without_blocks_keeps_the_text() {
+        assert_eq!(append_changes("done", &[]), "done");
     }
 }

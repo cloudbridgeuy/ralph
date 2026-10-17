@@ -4,6 +4,7 @@ use crate::cursor_cleanup::cleanup_cursor_leftovers;
 use crate::cursor_owner::{caller_owns_cursor, owned_cursor_ids, sweep_owner, write_file};
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
+use crate::worker_changes::WorkerChanges;
 use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::claude_leftovers::{cleans_claude_leftovers, trust_lock_path};
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
@@ -255,10 +256,14 @@ impl Workers {
         let steps = close_plan(&state, abandon, force)
             .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
         let real_worktree = fs::canonicalize(&worktree).unwrap_or_else(|_| worktree.clone());
+        let changes = WorkerChanges::open(&self.site(id, &worktree));
         for step in &steps {
             self.close_step(step, &repo, &worktree, id).map_err(|e| {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
+        }
+        if let Some(changes) = &changes {
+            warn_if_err(changes.clear(), "Failed to clear worker snapshots");
         }
         let unset_warning = unset_legacy_base(&repo, id);
         let files = CursorFiles::new(&self.store_dir, id);

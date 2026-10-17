@@ -2,6 +2,7 @@ use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, signal_group, sweep_owner, write_file};
 use crate::cursor_owner::{request_ids, TERM_GRACE, TERM_POLL};
 use crate::warn::warn;
+use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::HeadlessHost;
 use agent_client_protocol::schema::v1::{
@@ -16,6 +17,7 @@ use futures::channel::oneshot;
 use futures::executor::block_on;
 use futures::future::Either;
 use futures::{select, FutureExt, StreamExt};
+use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, interrupt_result_text,
     is_report_tool_call, match_option, no_option_message, permission_content,
@@ -270,6 +272,7 @@ impl AcpWorker {
             id,
             &request.inbox,
             owner,
+            request.snapshots.then_some(request.worktree.as_path()),
         ))
         .map_err(|e| format!("could not build the worker MCP entry: {e}"))?;
         let (ready_tx, ready_rx) = mpsc::channel();
@@ -281,6 +284,17 @@ impl AcpWorker {
         let replaying = Arc::clone(&loading);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
+        let changes = request
+            .inbox
+            .parent()
+            .filter(|_| request.snapshots)
+            .and_then(|store| {
+                WorkerChanges::open(&WorkerSite {
+                    store: store.to_path_buf(),
+                    id: id.to_string(),
+                    worktree: request.worktree.clone(),
+                })
+            });
         let results = results.to_path_buf();
         let turns_permissions = Arc::clone(&permissions);
         let seen = Arc::clone(&reported);
@@ -355,6 +369,7 @@ impl AcpWorker {
                                     inbox,
                                     reported,
                                     closing,
+                                    changes,
                                 };
                                 run_turns(&connection, &turns, prompt_rx, stop_rx).await;
                             }
@@ -444,6 +459,7 @@ struct Turns {
     inbox: Inbox,
     reported: Arc<AtomicBool>,
     closing: Arc<AtomicBool>,
+    changes: Option<WorkerChanges>,
 }
 
 fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) {
@@ -519,6 +535,13 @@ async fn run_turns(
             }
         };
         let interrupted = queue.finish();
+        if let Some(changes) = turns
+            .changes
+            .as_ref()
+            .filter(|_| !turns.closing.load(Ordering::SeqCst))
+        {
+            changes.snapshot_turn_or_warn();
+        }
         let reason = result.as_ref().map(|done| {
             serde_json::to_value(done.stop_reason)
                 .ok()
@@ -823,6 +846,9 @@ impl CursorHost {
             inbox: record.inbox.clone(),
             task: String::new(),
             at: now_secs(),
+            snapshots: snapshots_enabled(
+                AppConfig::load().ok().map(|config| config.changes.enabled),
+            ),
         };
         let launch = Launch::Resume {
             record,

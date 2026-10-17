@@ -120,6 +120,9 @@ pub struct WorkerMcpArgs {
 
     #[arg(long, value_name = "PATH")]
     pub owner: Option<std::path::PathBuf>,
+
+    #[arg(long, value_name = "DIR")]
+    pub worktree: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -129,6 +132,15 @@ pub struct WorkerStopHookArgs {
 
     #[arg(long, value_name = "PATH")]
     pub unreported: std::path::PathBuf,
+
+    #[arg(long, value_name = "DIR", requires_all = ["id", "worktree"])]
+    pub store: Option<std::path::PathBuf>,
+
+    #[arg(long, value_name = "WORKER")]
+    pub id: Option<String>,
+
+    #[arg(long, value_name = "DIR")]
+    pub worktree: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]

@@ -43,19 +43,30 @@ pub fn session_error(code: i32, message: &str) -> String {
     }
 }
 
-pub fn acp_mcp_server(exe: &Path, id: &str, inbox: &Path, owner: &Path) -> Value {
+pub fn acp_mcp_server(
+    exe: &Path,
+    id: &str,
+    inbox: &Path,
+    owner: &Path,
+    worktree: Option<&Path>,
+) -> Value {
+    let mut args = vec![
+        "worker-mcp".to_string(),
+        "--id".to_string(),
+        id.to_string(),
+        "--inbox".to_string(),
+        inbox.to_string_lossy().into_owned(),
+        "--owner".to_string(),
+        owner.to_string_lossy().into_owned(),
+    ];
+    if let Some(worktree) = worktree {
+        args.push("--worktree".to_string());
+        args.push(worktree.to_string_lossy().into_owned());
+    }
     json!({
         "name": SERVER_NAME,
         "command": exe.to_string_lossy(),
-        "args": [
-            "worker-mcp",
-            "--id",
-            id,
-            "--inbox",
-            inbox.to_string_lossy(),
-            "--owner",
-            owner.to_string_lossy()
-        ],
+        "args": args,
         "env": []
     })
 }
@@ -102,6 +113,7 @@ mod tests {
             "A",
             Path::new("/s/inbox"),
             Path::new("/s/cursor/A"),
+            Some(Path::new("/w")),
         );
         assert_eq!(entry["name"], SERVER_NAME);
         assert_eq!(entry["command"], "/bin/ralph");
@@ -114,9 +126,34 @@ mod tests {
                 "--inbox",
                 "/s/inbox",
                 "--owner",
-                "/s/cursor/A"
+                "/s/cursor/A",
+                "--worktree",
+                "/w"
             ])
         );
         assert_eq!(entry["env"], json!([]));
+    }
+
+    #[test]
+    fn mcp_server_entry_omits_the_worktree_without_one() {
+        let entry = acp_mcp_server(
+            Path::new("/bin/ralph"),
+            "A",
+            Path::new("/s/inbox"),
+            Path::new("/s/cursor/A"),
+            None,
+        );
+        assert_eq!(
+            entry["args"],
+            json!([
+                "worker-mcp",
+                "--id",
+                "A",
+                "--inbox",
+                "/s/inbox",
+                "--owner",
+                "/s/cursor/A"
+            ])
+        );
     }
 }

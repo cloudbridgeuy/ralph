@@ -40,6 +40,7 @@ pub mod warn;
 mod watch_requests;
 mod watch_store;
 mod watches;
+mod worker_changes;
 mod worker_mcp;
 mod workers;
 
@@ -222,17 +223,44 @@ fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>>
 }
 
 fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let site = args
+        .worktree
+        .zip(args.inbox.parent())
+        .map(|(worktree, store)| ralph_core::snapshot::WorkerSite {
+            store: store.to_path_buf(),
+            id: args.id.clone(),
+            worktree,
+        });
+    let changes = site.as_ref().and_then(worker_changes::WorkerChanges::open);
     let inbox = worker_mcp::Inbox::new(args.inbox).requiring_owner(args.owner);
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    worker_mcp::run_stdio_server(&args.id, &inbox, stdin.lock(), stdout.lock())?;
+    worker_mcp::run_stdio_server(
+        &args.id,
+        &inbox,
+        changes.as_ref(),
+        stdin.lock(),
+        stdout.lock(),
+    )?;
     Ok(())
 }
 
 fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let changes = args
+        .store
+        .zip(args.id)
+        .zip(args.worktree)
+        .map(|((store, id), worktree)| ralph_core::snapshot::WorkerSite {
+            store,
+            id,
+            worktree,
+        })
+        .as_ref()
+        .and_then(worker_changes::WorkerChanges::open);
     worker_mcp::run_stop_hook(
         &args.reported,
         &args.unreported,
+        changes.as_ref(),
         std::io::stdin().lock(),
         std::io::stdout().lock(),
     )?;
