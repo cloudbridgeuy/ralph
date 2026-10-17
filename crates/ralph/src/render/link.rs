@@ -260,7 +260,7 @@ fn diff_pair(chars: &[char], start: usize) -> Option<DiffStat> {
     let minus_end = signed_number_end(chars, minus)?;
     let end = match wrapped {
         true if chars.get(minus_end) == Some(&')') => minus_end + 1,
-        true => return None,
+        true => file_count_suffix_end(chars, minus_end)?,
         false => minus_end,
     };
     Some(DiffStat {
@@ -282,6 +282,25 @@ fn file_count_prefix_end(chars: &[char], at: usize) -> usize {
         None
     };
     after_word.map_or(at, |len| word + len)
+}
+
+fn file_count_suffix_end(chars: &[char], at: usize) -> Option<usize> {
+    if !chars[at..].starts_with(&[',', ' ']) {
+        return None;
+    }
+    let digits_start = at + 2;
+    let word = digits_start + digit_run(chars, digits_start);
+    if word == digits_start {
+        return None;
+    }
+    let rest = &chars[word..];
+    if rest.starts_with(&[' ', 'f', 'i', 'l', 'e', 's', ')']) {
+        Some(word + 7)
+    } else if rest.starts_with(&[' ', 'f', 'i', 'l', 'e', ')']) {
+        Some(word + 6)
+    } else {
+        None
+    }
 }
 
 fn digit_run(chars: &[char], start: usize) -> usize {
@@ -589,6 +608,30 @@ mod tests {
             paint(&mark_links("(4 files, +377/\u{2212}160) extra")),
             format!("(4 files, {pair}) extra")
         );
+    }
+
+    #[test]
+    fn paint_colors_count_last_diff_stats() {
+        let pair = format!("{GREEN}+64{COLOR_OFF}/{RED}-8{COLOR_OFF}");
+        assert_eq!(
+            paint(&mark_links("(+64/-8, 4 files)")),
+            format!("({pair}, 4 files)")
+        );
+        assert_eq!(
+            paint(&mark_links("(+1/-0, 1 file)")),
+            format!("({GREEN}+1{COLOR_OFF}/{RED}-0{COLOR_OFF}, 1 file)")
+        );
+        assert_eq!(
+            paint(&mark_links("Changed (+64/-8, 4 files) today")),
+            format!("Changed ({pair}, 4 files) today")
+        );
+        assert_eq!(
+            paint(&mark_links("Changed (+64/-8, 4 files).")),
+            format!("Changed ({pair}, 4 files).")
+        );
+        for plain in ["(+64/-8, 4 things)", "(+64/-8, files)", "(+64/-8, 4 files"] {
+            assert_eq!(paint(&mark_links(plain)), plain);
+        }
     }
 
     #[test]
