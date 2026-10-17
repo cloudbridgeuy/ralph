@@ -29,6 +29,7 @@ pub mod paths;
 pub mod prompt_source;
 pub mod render;
 pub mod signal;
+mod snapshot;
 pub mod spinner;
 pub mod startup;
 mod status_theme;

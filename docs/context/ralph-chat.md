@@ -142,6 +142,16 @@ diff_args = [] # default git diff args; typed /diff args follow
 
 The spawn runs only after reedline `read_line` has turned raw mode off, so a full-screen pager returns to a normal prompt. `git diff` exiting 1 (there are changes) is not a chat error. A failure to start git warns and returns to the prompt.
 
+## Turn snapshots
+
+Unless `[changes] enabled = false`, every turn (user, `/private`, and worker-report turns) snapshots the working tree of the repo the chat started in, before and after the model call. A chat outside a git repo does nothing and prints no warning; this is decided once at start. A snapshot failure warns and never stops the turn.
+
+- Storage: one bare git dir per repo at `<store>/snapshots/<repo-dir-name>.git`, with its own objects and no link to the repo. The repo's own refs and objects are untouched.
+- Refs: `refs/ralph/chat/turn-<n>/start` and `.../end`. `<n>` continues from the highest existing number, also across restarts.
+- Content: `git add -A` into a private index at `<side>/index/chat`, so `.gitignore` and `info/exclude` apply, then `write-tree` and `commit-tree`. Snapshot commits have no parents.
+- Pruning: after each turn the last 20 turns stay; older start and end refs are deleted, then `git gc --auto --prune=1.hour.ago` reclaims objects.
+- Code: pure logic in `crates/core/src/snapshot.rs`; git calls in `crates/ralph/src/snapshot.rs`; the turn hook in `crates/ralph/src/chat/snapshots.rs`.
+
 ## Executable cells
 
 A fenced block in a message you type whose info string is `!<runtime>` (for example ```` ```!zsh ````) is a cell. Worker reports and agent replies never run cells; a `!` fence inside another fence is not a cell. Parsing and message building are pure in `ralph_core::chat_cell`; PATH lookup, spawn and streaming are in `crates/ralph/src/chat/cell.rs`.

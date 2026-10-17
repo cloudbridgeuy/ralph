@@ -6,12 +6,14 @@ use crate::invoke::{
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
-use ralph_core::diff_command::DiffPager;
 use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::worker::CursorPermissions;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+mod changes;
+pub use changes::ChangesSection;
 
 /// Error type for configuration operations.
 #[derive(Debug, thiserror::Error)]
@@ -132,49 +134,6 @@ impl Default for MermaidSection {
             max_input_bytes: default_mermaid_max_input_bytes(),
             max_flowchart_edges: default_mermaid_max_flowchart_edges(),
             max_class_relations: default_mermaid_max_class_relations(),
-        }
-    }
-}
-
-fn default_changes_pager() -> String {
-    "git".to_string()
-}
-
-/// `[changes]` pager for `/diff`. An unknown `pager` string does not fail
-/// parsing: [`ChangesSection::warnings`] reports it and [`ChangesSection::pager`]
-/// falls back to git.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChangesSection {
-    #[serde(default = "default_changes_pager")]
-    pager: String,
-    #[serde(default)]
-    pub diff_args: Vec<String>,
-}
-
-impl Default for ChangesSection {
-    fn default() -> Self {
-        Self {
-            pager: default_changes_pager(),
-            diff_args: Vec::new(),
-        }
-    }
-}
-
-impl ChangesSection {
-    pub fn pager(&self) -> DiffPager {
-        match self.pager.as_str() {
-            "delta" => DiffPager::Delta,
-            "hunk" => DiffPager::Hunk,
-            _ => DiffPager::Git,
-        }
-    }
-
-    pub fn warnings(&self) -> Vec<String> {
-        match self.pager.as_str() {
-            "git" | "delta" | "hunk" => Vec::new(),
-            other => vec![format!(
-                "[changes] pager = \"{other}\" is unknown; using git"
-            )],
         }
     }
 }
@@ -485,6 +444,7 @@ mod tests {
         let defaults = AppConfig::new().changes;
         assert_eq!(defaults.pager(), DiffPager::Git);
         assert!(defaults.diff_args.is_empty());
+        assert!(defaults.enabled);
         assert!(defaults.warnings().is_empty());
 
         let config: AppConfig =
@@ -493,6 +453,10 @@ mod tests {
         assert_eq!(config.changes.pager(), DiffPager::Delta);
         assert_eq!(config.changes.diff_args, ["--stat", "--"]);
         assert!(config.changes.warnings().is_empty());
+
+        assert!(config.changes.enabled);
+        let off: AppConfig = toml::from_str("[changes]\nenabled = false\n").unwrap();
+        assert!(!off.changes.enabled);
 
         let hunk: AppConfig = toml::from_str("[changes]\npager = \"hunk\"\n").unwrap();
         assert_eq!(hunk.changes.pager(), DiffPager::Hunk);

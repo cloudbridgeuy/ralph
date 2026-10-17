@@ -9,6 +9,7 @@ mod monitor;
 mod prompt;
 mod route;
 mod skills;
+mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
 mod turn;
@@ -24,6 +25,7 @@ use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
+use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
@@ -49,6 +51,7 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, Route, Status};
 use ralph_core::inbox_alert::AlertConfig;
+use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use reedline::EditCommand;
 use std::cell::RefCell;
@@ -166,6 +169,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         frozen_window,
         cancel: signal::interrupt_flag(),
     };
+    let snapshots = TurnSnapshots::open(
+        snapshots_enabled(Some(config.changes.enabled)),
+        &store_dir,
+        &std::env::current_dir()?,
+    );
     let inbox = Arc::new(Inbox::new(store_dir.join(INBOX_DIR)));
     let known = inbox.peek().unwrap_or_default();
     let monitor = Arc::new(Monitor {
@@ -268,7 +276,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                             print!("{}", render_markdown(&ctx, shown, &agent_theme));
                         }
                         let sent = prepared.sent;
-                        turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)?
+                        snapshots.around(|| {
+                            turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
+                        })?
                     }
                     Err(outcome) => outcome,
                 };
@@ -278,8 +288,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 outcome
             }
             Route::Private(message) => {
-                let outcome =
-                    turn.run(Trigger::Private, std::slice::from_ref(&message), &message)?;
+                let outcome = snapshots.around(|| {
+                    turn.run(Trigger::Private, std::slice::from_ref(&message), &message)
+                })?;
                 if let Some(draft) = draft_after(outcome, format!("/private {message}")) {
                     editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
                 }
@@ -291,7 +302,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     continue;
                 };
-                turn.run(Trigger::Worker, &unread.logged, &unread.message)?
+                snapshots.around(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))?
             }
             local => {
                 let ctx = LocalRoute {

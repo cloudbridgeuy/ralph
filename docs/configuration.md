@@ -249,14 +249,15 @@ In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram f
 
 Fixed limits: flowchart source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements. A config that fails to load prints a warning and uses these defaults.
 
-### `[changes]` - `/diff` pager
+### `[changes]` - `/diff` pager and turn snapshots
 
-`/diff` in chat runs `git diff`. See [ralph chat](context/ralph-chat.md#diff).
+`/diff` in chat runs `git diff`. See [ralph chat](context/ralph-chat.md#diff). Chat also snapshots the repo around each turn. See [ralph chat](context/ralph-chat.md#turn-snapshots).
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `pager` | `"git"` | `git`, `delta`, or `hunk`. An unknown string warns once at chat start and uses `git`; the config still loads |
 | `diff_args` | `[]` | `git diff` arguments placed before the ones typed after `/diff` |
+| `enabled` | `true` | Snapshot the chat's repo at the start and end of each turn. `false` turns it off |
 
 `delta` and `hunk` are one-off `git -c core.pager=...` (`hunk` passes `core.pager=hunk pager` as one argument). ralph sets no environment variables and does not change `core.pager` in git config. With `pager = "git"`, git uses the user's pager.
 
