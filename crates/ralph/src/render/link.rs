@@ -199,15 +199,17 @@ fn diff_stat(chars: &[char], start: usize) -> Option<DiffStat> {
             end,
         })
         .or_else(|| {
-            diff_pair(chars, start).filter(|stat| {
-                let closes_paren = chars.get(stat.end) == Some(&')')
-                    && follows_file_count(chars, start)
-                    && has_open_paren(chars, start);
-                let after = stat.end + usize::from(closes_paren);
-                ends_token(after)
-                    || matches!(chars.get(after), Some('.' | ',' | ';' | ':'))
-                        && ends_token(after + 1)
-            })
+            diff_pair(chars, start)
+                .or_else(|| wrapped_signed_number(chars, start))
+                .filter(|stat| {
+                    let closes_paren = chars.get(stat.end) == Some(&')')
+                        && follows_file_count(chars, start)
+                        && has_open_paren(chars, start);
+                    let after = stat.end + usize::from(closes_paren);
+                    ends_token(after)
+                        || matches!(chars.get(after), Some('.' | ',' | ';' | ':'))
+                            && ends_token(after + 1)
+                })
         })
 }
 
@@ -266,6 +268,18 @@ fn diff_pair(chars: &[char], start: usize) -> Option<DiffStat> {
     Some(DiffStat {
         parts: vec![(plus, plus_end), (minus, minus_end)],
         end,
+    })
+}
+
+fn wrapped_signed_number(chars: &[char], open: usize) -> Option<DiffStat> {
+    if chars.get(open) != Some(&'(') {
+        return None;
+    }
+    let sign = open + 1;
+    let end = signed_number_end(chars, sign).filter(|&end| chars.get(end) == Some(&')'))?;
+    Some(DiffStat {
+        parts: vec![(sign, end)],
+        end: end + 1,
     })
 }
 
@@ -635,6 +649,18 @@ mod tests {
     }
 
     #[test]
+    fn paint_colors_parenthesized_signed_numbers() {
+        assert_eq!(
+            paint(&mark_links("(+235)")),
+            format!("({GREEN}+235{COLOR_OFF})")
+        );
+        assert_eq!(
+            paint(&mark_links("x (-12) y (\u{2212}3).")),
+            format!("x ({RED}-12{COLOR_OFF}) y ({RED}\u{2212}3{COLOR_OFF}).")
+        );
+    }
+
+    #[test]
     fn paint_colors_diff_stat_pairs_before_sentence_punctuation() {
         let pair = format!("{GREEN}+9{COLOR_OFF}/{RED}-2{COLOR_OFF}");
         assert_eq!(
@@ -705,7 +731,13 @@ mod tests {
             "-2.",
             "+204/+85",
             "-85/+204",
-            "(+204)",
+            "(+)",
+            "(-)",
+            "(+5x)",
+            "(+ 5)",
+            "(+5/-)",
+            "(+204)x",
+            "(+204))",
             "+204/-85)",
             "(+204/-85",
             "x+204/-85",
