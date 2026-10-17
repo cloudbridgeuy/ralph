@@ -3,7 +3,7 @@ use crate::inbox::{Position, Selection};
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
 use crate::worker::{
-    opencode_session_id, same_store, tagged_sessions, Report, ReportStatus, WorkerKind,
+    opencode_session_id, same_store, tagged_sessions, HarnessId, Report, ReportStatus,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -40,9 +40,8 @@ pub struct WatchState {
 pub struct RunningWorker {
     pub id: String,
     pub session: String,
-    pub opencode: bool,
     #[serde(default, alias = "cursor")]
-    pub kind: WorkerKind,
+    pub kind: HarnessId,
 }
 
 impl RunningWorker {
@@ -50,8 +49,7 @@ impl RunningWorker {
         Self {
             id: id.to_string(),
             session: String::new(),
-            opencode: false,
-            kind: WorkerKind::Cursor,
+            kind: HarnessId::Cursor,
         }
     }
 }
@@ -183,8 +181,7 @@ pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
         .map(|session| RunningWorker {
             id: session.id,
             session: session.name,
-            opencode: session.opencode,
-            kind: WorkerKind::Tmux,
+            kind: HarnessId::Claude,
         })
         .collect();
     workers.sort_by(|a, b| a.id.cmp(&b.id));
@@ -245,7 +242,7 @@ fn worker_state(
     active: Option<&HashSet<String>>,
 ) -> String {
     let session_active = active
-        .filter(|_| worker.opencode)
+        .filter(|_| worker.kind == HarnessId::Opencode)
         .map(|active| active.contains(&opencode_session_id(&worker.id)));
     match (session_active, reported) {
         (Some(true), _) => BUSY_STATE,
@@ -549,15 +546,14 @@ mod tests {
             vec![RunningWorker {
                 id: "GUZ-1".into(),
                 session: "ralph-my-proj-GUZ-1".into(),
-                opencode: false,
-                kind: WorkerKind::Tmux
+                kind: HarnessId::Claude
             }]
         );
     }
 
     #[test]
     fn running_worker_loads_legacy_cursor_records() {
-        for (cursor, kind) in [(true, WorkerKind::Cursor), (false, WorkerKind::Tmux)] {
+        for (cursor, kind) in [(true, HarnessId::Cursor), (false, HarnessId::Claude)] {
             let record = serde_json::json!({
                 "id": "A", "session": "", "opencode": false, "cursor": cursor
             });
@@ -573,22 +569,23 @@ mod tests {
     }
 
     #[test]
-    fn running_worker_loads_explicit_kinds_and_defaults_to_tmux() {
+    fn running_worker_loads_explicit_kinds_and_defaults_to_claude() {
         for (name, kind) in [
-            ("tmux", WorkerKind::Tmux),
-            ("cursor", WorkerKind::Cursor),
-            ("opencode", WorkerKind::Opencode),
+            ("tmux", HarnessId::Claude),
+            ("claude", HarnessId::Claude),
+            ("cursor", HarnessId::Cursor),
+            ("opencode", HarnessId::Opencode),
         ] {
             let record = serde_json::json!({
                 "id": "A", "session": "", "opencode": false, "kind": name
             });
             let worker: RunningWorker = serde_json::from_value(record).unwrap();
             assert_eq!(worker.kind, kind);
-            assert_eq!(serde_json::to_value(worker).unwrap()["kind"], name);
+            assert_eq!(serde_json::to_value(worker).unwrap()["kind"], kind.as_str());
         }
         let worker: RunningWorker =
             serde_json::from_str(r#"{"id":"A","session":"s","opencode":false}"#).unwrap();
-        assert_eq!(worker.kind, WorkerKind::Tmux);
+        assert_eq!(worker.kind, HarnessId::Claude);
     }
 
     #[test]
@@ -596,8 +593,7 @@ mod tests {
         let running = [RunningWorker {
             id: "A".into(),
             session: "ralph-p-A".into(),
-            opencode: false,
-            kind: WorkerKind::Tmux,
+            kind: HarnessId::Claude,
         }];
         let ready = ["C".to_string(), "A".to_string(), "B".to_string()];
         let hint = orphan_hint(&ready, &running).unwrap();
@@ -609,18 +605,17 @@ mod tests {
 
     #[test]
     fn opencode_workers_are_busy_while_their_session_is_active() {
-        let worker = |id: &str, opencode| RunningWorker {
+        let worker = |id: &str, kind| RunningWorker {
             id: id.into(),
             session: format!("ralph-p-{id}"),
-            opencode,
-            kind: WorkerKind::Tmux,
+            kind,
         };
         let workers = [
-            worker("busy", true),
-            worker("idle", true),
-            worker("done", true),
-            worker("redo", true),
-            worker("claude", false),
+            worker("busy", HarnessId::Opencode),
+            worker("idle", HarnessId::Opencode),
+            worker("done", HarnessId::Opencode),
+            worker("redo", HarnessId::Opencode),
+            worker("claude", HarnessId::Claude),
         ];
         let seen = HashMap::from([
             ("done".to_string(), "done".to_string()),
@@ -645,18 +640,17 @@ mod tests {
 
     #[test]
     fn a_sent_message_drops_a_report_status_but_keeps_other_statuses() {
-        let worker = |id: &str, opencode| RunningWorker {
+        let worker = |id: &str, kind| RunningWorker {
             id: id.into(),
             session: format!("ralph-p-{id}"),
-            opencode,
-            kind: WorkerKind::Tmux,
+            kind,
         };
         let workers = [
-            worker("redone", false),
-            worker("quiet", false),
-            worker("checked", false),
-            worker("ask", false),
-            worker("busy", true),
+            worker("redone", HarnessId::Claude),
+            worker("quiet", HarnessId::Claude),
+            worker("checked", HarnessId::Claude),
+            worker("ask", HarnessId::Claude),
+            worker("busy", HarnessId::Opencode),
         ];
         let seen = HashMap::from([
             ("redone".to_string(), "done".to_string()),

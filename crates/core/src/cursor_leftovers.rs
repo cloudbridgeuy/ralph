@@ -1,4 +1,4 @@
-use crate::worker::{CloseState, CloseStep, WorkerKind};
+use crate::worker::{CloseState, CloseStep, HarnessId};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ struct SessionMeta {
 }
 
 pub fn cleans_cursor_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
-    matches!(state.kind, WorkerKind::Cursor)
+    matches!(state.kind, HarnessId::Cursor)
         && steps
             .iter()
             .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use crate::worker::Owner;
 
-    fn state(kind: WorkerKind) -> CloseState {
+    fn state(kind: HarnessId) -> CloseState {
         CloseState {
             id: "A".into(),
             owner: Owner::Missing,
@@ -103,21 +103,21 @@ mod tests {
     #[test]
     fn cursor_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
-        assert!(cleans_cursor_leftovers(&state(WorkerKind::Cursor), &steps));
+        assert!(cleans_cursor_leftovers(&state(HarnessId::Cursor), &steps));
         assert!(!cleans_cursor_leftovers(
-            &state(WorkerKind::Opencode),
+            &state(HarnessId::Opencode),
             &steps
         ));
-        assert!(!cleans_cursor_leftovers(&state(WorkerKind::Tmux), &steps));
+        assert!(!cleans_cursor_leftovers(&state(HarnessId::Claude), &steps));
         assert!(!cleans_cursor_leftovers(
-            &state(WorkerKind::Cursor),
+            &state(HarnessId::Cursor),
             &[CloseStep::ClearMarkers]
         ));
     }
 
     #[test]
     fn opencode_close_skips_cursor_and_claude_leftovers() {
-        let state = state(WorkerKind::Opencode);
+        let state = state(HarnessId::Opencode);
         let steps = crate::worker::close_plan(&state, false, false);
         assert!(steps.is_ok_and(|steps| {
             !cleans_cursor_leftovers(&state, &steps)

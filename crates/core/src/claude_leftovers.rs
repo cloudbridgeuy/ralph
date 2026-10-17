@@ -1,4 +1,4 @@
-use crate::worker::{CloseState, CloseStep, WorkerKind};
+use crate::worker::{CloseState, CloseStep, HarnessId};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,7 @@ const TRUST_SWAP_ATTEMPTS: usize = 3;
 const TRUST_LOCK_NAME: &str = "claude-json.lock";
 
 pub fn cleans_claude_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
-    matches!(state.kind, WorkerKind::Tmux)
+    matches!(state.kind, HarnessId::Claude)
         && steps
             .iter()
             .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
@@ -101,7 +101,7 @@ mod tests {
     use super::*;
     use crate::worker::Owner;
 
-    fn state(kind: WorkerKind) -> CloseState {
+    fn state(kind: HarnessId) -> CloseState {
         CloseState {
             id: "A".into(),
             owner: Owner::Missing,
@@ -117,15 +117,15 @@ mod tests {
     #[test]
     fn claude_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
-        assert!(cleans_claude_leftovers(&state(WorkerKind::Tmux), &steps));
+        assert!(cleans_claude_leftovers(&state(HarnessId::Claude), &steps));
     }
 
     #[test]
     fn cursor_worker_is_not_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
-        assert!(!cleans_claude_leftovers(&state(WorkerKind::Cursor), &steps));
+        assert!(!cleans_claude_leftovers(&state(HarnessId::Cursor), &steps));
         assert!(!cleans_claude_leftovers(
-            &state(WorkerKind::Opencode),
+            &state(HarnessId::Opencode),
             &steps
         ));
     }
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn close_without_worktree_removal_is_not_cleaned() {
         let steps = [CloseStep::DeleteBranch, CloseStep::ClearMarkers];
-        assert!(!cleans_claude_leftovers(&state(WorkerKind::Tmux), &steps));
+        assert!(!cleans_claude_leftovers(&state(HarnessId::Claude), &steps));
     }
 
     #[test]

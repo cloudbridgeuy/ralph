@@ -18,7 +18,7 @@ use ralph_core::chat_status::{
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    blocked_path, ready_path, sent_path, unreported_path, waiting_path, Report, WorkerKind,
+    blocked_path, ready_path, sent_path, unreported_path, waiting_path, HarnessId, Report,
     HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
@@ -83,7 +83,7 @@ impl Monitor {
         let unreported = unreported_path(&self.store_dir, id).exists();
         let reported = !sent_path(&self.store_dir, id).exists()
             && reported_since_nudge(state.reports.get(id), state.nudges.get(id));
-        let pane = (matches!(worker.kind, WorkerKind::Tmux)
+        let pane = (matches!(worker.kind, HarnessId::Claude)
             && !(blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
             .flatten();
@@ -190,7 +190,7 @@ impl Monitor {
             if with_memory {
                 *active = running
                     .iter()
-                    .any(|worker| worker.opencode)
+                    .any(|worker| worker.kind == HarnessId::Opencode)
                     .then(opencode_active)
                     .flatten();
             }

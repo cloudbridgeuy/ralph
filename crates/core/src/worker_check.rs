@@ -1,5 +1,5 @@
 use crate::chat_memory::{Entry, Role};
-use crate::worker::{startup_state, Report, ReportStatus, Startup, WorkerKind};
+use crate::worker::{startup_state, HarnessId, Report, ReportStatus, Startup};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ pub const NUDGE_TEXT: &str =
 pub struct WorkerObservation {
     pub id: String,
     pub session: String,
-    pub kind: WorkerKind,
+    pub kind: HarnessId,
     pub ready: bool,
     pub blocked: bool,
     pub waiting: bool,
@@ -143,7 +143,7 @@ pub fn classify(obs: &WorkerObservation) -> WorkerState {
 fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
     let id = &obs.id;
     let session = &obs.session;
-    if matches!(obs.kind, WorkerKind::Cursor | WorkerKind::Opencode) {
+    if matches!(obs.kind, HarnessId::Cursor | HarnessId::Opencode) {
         return match state {
             WorkerState::Waiting => Some(format!("Worker {id} stopped without calling report.")),
             WorkerState::BlockedPermission => Some(format!(
@@ -215,7 +215,7 @@ mod tests {
         WorkerObservation {
             id: "w1".to_string(),
             session: "sess".to_string(),
-            kind: WorkerKind::Tmux,
+            kind: HarnessId::Claude,
             ready: true,
             blocked: false,
             waiting: false,
@@ -772,7 +772,7 @@ mod tests {
 
     #[test]
     fn headless_workers_without_a_pane_are_working_and_texts_skip_tmux() {
-        for kind in [WorkerKind::Cursor, WorkerKind::Opencode] {
+        for kind in [HarnessId::Cursor, HarnessId::Opencode] {
             let headless = WorkerObservation {
                 kind,
                 pane: None,

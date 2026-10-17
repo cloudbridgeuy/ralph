@@ -1,4 +1,4 @@
-use super::{branch_name, WorkerKind};
+use super::{branch_name, HarnessId};
 use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
@@ -72,7 +72,6 @@ pub fn session_name(project: &str, id: &str) -> String {
 pub struct TaggedSession {
     pub name: String,
     pub store: String,
-    pub opencode: bool,
     pub id: String,
 }
 
@@ -85,7 +84,6 @@ pub fn tagged_sessions(listing: &str) -> Vec<TaggedSession> {
             Some(TaggedSession {
                 name: name.to_string(),
                 store: fields.next().unwrap_or_default().to_string(),
-                opencode: false,
                 id: fields.next().unwrap_or_default().to_string(),
             })
         })
@@ -147,7 +145,7 @@ pub struct CloseState {
     pub unmerged_commits: Option<usize>,
     pub opencode: bool,
     pub markers: bool,
-    pub kind: WorkerKind,
+    pub kind: HarnessId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,14 +197,14 @@ pub fn close_plan(
         }
     }
     let mut steps = Vec::new();
-    if state.opencode && state.kind != WorkerKind::Opencode {
+    if state.opencode && state.kind != HarnessId::Opencode {
         steps.push(CloseStep::RemoveOpencodeSession);
     }
     match state.kind {
-        WorkerKind::Cursor => steps.push(CloseStep::TerminateCursor),
+        HarnessId::Cursor => steps.push(CloseStep::TerminateCursor),
         // Opencode shares one server across workers: end only this session.
-        WorkerKind::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
-        WorkerKind::Tmux => {
+        HarnessId::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
+        HarnessId::Claude => {
             if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
                 steps.push(CloseStep::KillSession(session.name.clone()));
             }
@@ -249,7 +247,6 @@ mod tests {
         TaggedSession {
             name: name.into(),
             store: store.into(),
-            opencode: false,
             id: "A".into(),
         }
     }
@@ -263,13 +260,11 @@ mod tests {
                 TaggedSession {
                     name: "ralph-p-A".into(),
                     store: "/s".into(),
-                    opencode: false,
                     id: "A".into()
                 },
                 TaggedSession {
                     name: "main".into(),
                     store: "".into(),
-                    opencode: false,
                     id: "".into()
                 }
             ]
@@ -310,7 +305,7 @@ mod tests {
             unmerged_commits: Some(0),
             opencode: false,
             markers: false,
-            kind: WorkerKind::Tmux,
+            kind: HarnessId::Claude,
         }
     }
 
@@ -334,7 +329,7 @@ mod tests {
     #[test]
     fn close_plan_terminates_a_cursor_worker_instead_of_killing_a_session() {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
-        state.kind = WorkerKind::Cursor;
+        state.kind = HarnessId::Cursor;
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateCursor);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
@@ -344,7 +339,7 @@ mod tests {
     fn opencode_close_ends_only_its_session_without_stopping_the_shared_server() {
         for opencode in [false, true] {
             let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
-            state.kind = WorkerKind::Opencode;
+            state.kind = HarnessId::Opencode;
             state.opencode = opencode;
             // The complete plan permits only session removal, never host shutdown,
             // Cursor child termination, or killing a tmux session.
@@ -364,7 +359,7 @@ mod tests {
     #[test]
     fn opencode_close_without_an_owner_removes_the_session_before_the_worktree() {
         let mut state = close_state(Owner::Missing);
-        state.kind = WorkerKind::Opencode;
+        state.kind = HarnessId::Opencode;
         state.opencode = true;
         assert_eq!(
             close_plan(&state, false, false),
@@ -381,7 +376,7 @@ mod tests {
     #[test]
     fn cursor_close_preserves_legacy_opencode_session_cleanup() {
         let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
-        state.kind = WorkerKind::Cursor;
+        state.kind = HarnessId::Cursor;
         state.opencode = true;
         assert_eq!(
             close_plan(&state, false, false),

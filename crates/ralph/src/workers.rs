@@ -12,7 +12,7 @@ use ralph_core::worker::{
     interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
     parse_interrupt_result, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path,
     session_name, session_owner, tagged_sessions, worktree_for_branch, worktree_path, CloseState,
-    CloseStep, CursorFiles, Handoff, OpencodeFiles, Owner, Sweep, TaggedSession, WorkerKind,
+    CloseStep, CursorFiles, Handoff, HarnessId, OpencodeFiles, Owner, Sweep, TaggedSession,
     WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR,
     SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
@@ -226,8 +226,14 @@ impl Workers {
         } else {
             None
         };
-        let opencode = matches!(&owner, Owner::Mine(session) | Owner::Foreign(session) if session.opencode)
-            || worktree.join(OPENCODE_CONFIG_FILE).exists();
+        let kind = if CursorFiles::new(&self.store_dir, id).owner.exists() {
+            HarnessId::Cursor
+        } else if self.opencode_http(id) {
+            HarnessId::Opencode
+        } else {
+            HarnessId::Claude
+        };
+        let opencode = kind == HarnessId::Opencode || worktree.join(OPENCODE_CONFIG_FILE).exists();
         let state = CloseState {
             id: id.to_string(),
             owner,
@@ -238,13 +244,7 @@ impl Workers {
             markers: marker_paths(&self.store_dir, id)
                 .iter()
                 .any(|marker| marker.exists()),
-            kind: if CursorFiles::new(&self.store_dir, id).owner.exists() {
-                WorkerKind::Cursor
-            } else if self.opencode_http(id) {
-                WorkerKind::Opencode
-            } else {
-                WorkerKind::Tmux
-            },
+            kind,
         };
         let with_warning = |text: String| {
             [&base.warning, &worktree_dir.warning]
@@ -452,7 +452,6 @@ impl Workers {
             return Owner::Mine(TaggedSession {
                 name: session_name(project, id),
                 store: self.store_dir.to_string_lossy().into_owned(),
-                opencode: false,
                 id: id.to_string(),
             });
         }
@@ -460,7 +459,6 @@ impl Workers {
             return Owner::Mine(TaggedSession {
                 name: session_name(project, id),
                 store: self.store_dir.to_string_lossy().into_owned(),
-                opencode: true,
                 id: id.to_string(),
             });
         }
@@ -632,8 +630,7 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
             .map(|id| RunningWorker {
                 id,
                 session: String::new(),
-                opencode: true,
-                kind: WorkerKind::Opencode,
+                kind: HarnessId::Opencode,
             }),
     );
     workers.sort_by(|a, b| a.id.cmp(&b.id));
@@ -723,7 +720,7 @@ mod tests {
         write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
         write_file(&OpencodeFiles::new(dir.path(), "B").session, "{}").unwrap();
         assert!(workers.opencode_http("A") && workers.opencode_http("B"));
-        assert!(matches!(workers.owner("p", "A"), Owner::Mine(s) if s.opencode));
+        assert!(matches!(workers.owner("p", "A"), Owner::Mine(_)));
     }
 
     #[test]
@@ -732,9 +729,7 @@ mod tests {
         write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
         let running = running_workers(dir.path());
         let worker = running.iter().find(|worker| worker.id == "A").unwrap();
-        assert!(
-            worker.opencode && worker.kind == WorkerKind::Opencode && worker.session.is_empty()
-        );
+        assert!(worker.kind == HarnessId::Opencode && worker.session.is_empty());
     }
 
     #[test]
