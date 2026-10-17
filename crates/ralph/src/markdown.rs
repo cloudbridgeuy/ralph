@@ -25,7 +25,19 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::{Attribute, Color};
+#[cfg(test)]
+use termimad::{CompoundStyle, FmtComposite, FmtLine};
 use termimad::{MadSkin, StyledChar};
+
+#[cfg(test)]
+const PAINT_ATTRS: &[Attribute] = &[
+    Attribute::Bold,
+    Attribute::Dim,
+    Attribute::Italic,
+    Attribute::Underlined,
+    Attribute::Reverse,
+    Attribute::CrossedOut,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeRole {
@@ -197,6 +209,67 @@ pub fn markdown_skin(palette: &Palette) -> MadSkin {
     skin
 }
 
+/// Paint `skin`'s styles onto parsed markdown.
+///
+/// `color` is the caller's decision. Termimad's `Display` goes through crossterm,
+/// which drops color parameters when `NO_COLOR` is set, so this writes the skin's
+/// own colors and attributes instead of formatting the skin.
+#[cfg(test)]
+fn paint_compound(style: &CompoundStyle, text: &str, color: bool) -> String {
+    if !color {
+        return text.to_string();
+    }
+    let mut open = String::new();
+    if let Some(bg) = style.get_bg() {
+        open.push_str(&crate::ansi::bg(Some(bg)));
+    }
+    if let Some(fg) = style.get_fg() {
+        open.push_str(&crate::ansi::fg(Some(fg)));
+    }
+    for attr in PAINT_ATTRS {
+        if style.has_attr(*attr) {
+            open.push_str("\x1b[");
+            open.push_str(&attr.sgr());
+            open.push('m');
+        }
+    }
+    if open.is_empty() {
+        return text.to_string();
+    }
+    open.push_str(text);
+    open.push_str(crate::ansi::RESET);
+    open
+}
+
+#[cfg(test)]
+fn paint_composite(skin: &MadSkin, composite: &FmtComposite<'_>, color: bool) -> String {
+    let line = skin.line_style(composite.kind);
+    composite
+        .compounds
+        .iter()
+        .map(|compound| paint_compound(&skin.compound_style(line, compound), compound.src, color))
+        .collect()
+}
+
+#[cfg(test)]
+fn render_skin_text(skin: &MadSkin, src: &str, color: bool) -> String {
+    skin.term_text(src)
+        .lines
+        .iter()
+        .map(|line| match line {
+            FmtLine::Normal(composite) => paint_composite(skin, composite, color),
+            _ => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+fn render_skin_inline(skin: &MadSkin, src: &str, color: bool) -> String {
+    let inline = skin.inline(src);
+    paint_composite(skin, &inline.composite, color)
+}
+
 #[derive(Clone)]
 pub struct MarkdownTheme {
     pub skin: MadSkin,
@@ -304,12 +377,12 @@ mod tests {
 
     #[test]
     fn agent_skin_differs_from_assistant_skin() {
-        let assistant = markdown_skin(&ThemeRole::Assistant.base())
-            .term_text("# Title")
-            .to_string();
-        let agent = markdown_skin(&ThemeRole::Agent.base())
-            .term_text("# Title")
-            .to_string();
+        let assistant = render_skin_text(
+            &markdown_skin(&ThemeRole::Assistant.base()),
+            "# Title",
+            true,
+        );
+        let agent = render_skin_text(&markdown_skin(&ThemeRole::Agent.base()), "# Title", true);
         assert!(agent.contains("Title"));
         assert_ne!(assistant, agent);
     }
@@ -384,7 +457,7 @@ mod tests {
             inline_code: Some(Color::Rgb { r: 1, g: 2, b: 3 }),
             ..Palette::default()
         };
-        let rendered = markdown_skin(&palette).inline("`x`").to_string();
+        let rendered = render_skin_inline(&markdown_skin(&palette), "`x`", true);
         assert!(rendered.contains("38;2;1;2;3"));
     }
 
