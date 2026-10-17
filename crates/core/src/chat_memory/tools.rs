@@ -1,5 +1,5 @@
 use super::tree::{recall, zoom};
-use super::{Entry, Node, Tree, RECALL_CAP_BYTES, SERVER_NAME};
+use super::{Entry, Node, Tree, SERVER_NAME};
 use crate::chat_socket::is_worker_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::worker::command_definitions;
@@ -49,7 +49,7 @@ fn memory_tool_definitions() -> Value {
         },
         {
             "name": "recall",
-            "description": "Search the raw chat messages with a case-insensitive regex. Returns matching lines and the hit count.",
+            "description": "Search the raw chat messages with a case-insensitive regex. Returns an index of every hit, newest first, one line each: `#<id> · <role> · <date> · <preview>`, where the preview is a short window around the match. At most 50 lines; narrow the pattern if more. Call zoom with an id for the full text.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -86,19 +86,7 @@ pub fn handle_request(request: &Value) -> Outcome {
 fn run_tool(entries: &[Entry], tree: &Tree, tool: &Tool) -> Result<String, String> {
     match tool {
         Tool::Zoom(node) => zoom(entries, tree, *node).map(|lines| lines.join("\n")),
-        Tool::Recall(pattern) => {
-            let found = recall(entries, pattern, RECALL_CAP_BYTES)?;
-            let dropped = found.hits - found.lines.len();
-            let mut text = found.lines.join("\n");
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            text.push_str(&format!("{} hits", found.hits));
-            if dropped > 0 {
-                text.push_str(&format!("; {dropped} older hits dropped to fit the cap"));
-            }
-            Ok(text)
-        }
+        Tool::Recall(pattern) => recall(entries, pattern),
     }
 }
 
@@ -179,8 +167,9 @@ mod tests {
             json!({"pattern": "M[13] "}),
         );
         let text = text_of(&v);
-        assert!(text.contains("m1 ") && text.contains("m3 ") && !text.contains("m2 "));
-        assert!(text.ends_with("2 hits"));
+        assert!(text.contains("#3 · ") && text.contains("#1 · ") && !text.contains("#2 · "));
+        assert!(text.find("#3 · ") < text.find("#1 · "));
+        assert!(text.ends_with("(zoom <id> for the full text)"));
     }
 
     #[test]

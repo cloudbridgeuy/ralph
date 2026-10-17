@@ -177,7 +177,7 @@ Worker tools run inside `ralph chat`, not in `chat-mcp`. At start the chat sweep
 | Tool | Args | Result |
 | --- | --- | --- |
 | `zoom` | `id` (string, such as `16-31` or `5`) | A block id returns its two halves (summary lines, or `#<id> not compressed yet`; halves past the log end are dropped). A single index returns the raw message. |
-| `recall` | `pattern` (string) | Case-insensitive regex over raw messages (`#<i> <role> <at> <text>` lines). Returns matching lines plus `N hits`. Output is capped at 8192 bytes, oldest hits dropped first and counted. |
+| `recall` | `pattern` (string) | Case-insensitive regex over raw messages. Returns an index, newest hit first, one `#<id> · <role> · <date> · <preview>` line per hit (preview: ~80 chars around the first match, `…` at cut ends), at most 50 lines then `N more, narrow the pattern`, and a closing `(zoom <id> for the full text)`. No hits gives `no hits for <pattern>`. No byte cap. |
 | `watch` | `id` (string, no spaces or slashes; stored as `watch:<id>`), `command` (string), `follow_up` (string), optional `persistent` (boolean, default false), optional `timeout_secs` (positive integer, default `[chat] watch_timeout_secs`, 1 hour) | Queues the watch and returns at once. The report arrives in the inbox when the command ends. Needs a user-started turn. The model must get the person's approval of the exact command first. |
 
 Invalid ids, ids beyond the log, bad regexes, and store read errors return a tool result with `isError: true`.

@@ -15,7 +15,6 @@ pub use usage::{encode_usage, usage_record, view_stats, CallKind, Trigger, Usage
 
 pub const SUMMARY_BYTES: usize = 512;
 pub const SERVER_NAME: &str = "ralph-chat";
-pub const RECALL_CAP_BYTES: usize = 8192;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -67,12 +66,6 @@ pub struct View {
 pub struct Frozen {
     pub end: usize,
     pub lines: Vec<String>,
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Recall {
-    pub lines: Vec<String>,
-    pub hits: usize,
 }
 
 impl Node {
