@@ -12,8 +12,8 @@ use crate::subprocess::{
 use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
 use ralph_core::chat::{
-    build_agents_args, build_attachments_args, build_mcp_args, build_nap_args, turn_prompt,
-    turn_system_prompt, VIEW_LINES,
+    build_agents_args, build_attachments_args, build_nap_args, turn_prompt, turn_system_prompt,
+    VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
@@ -89,7 +89,7 @@ impl Drop for PendingTurn<'_> {
 pub(super) struct Turn<'a> {
     pub(super) store: &'a Store,
     pub(super) store_dir: &'a Path,
-    pub(super) mcp_config_path: &'a Path,
+    pub(super) mcp_args: &'a [String],
     pub(super) permission_mode: &'a str,
     pub(super) plugin_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
@@ -130,7 +130,7 @@ impl Turn<'_> {
             &turn_prompt(&tail, &sent),
             &turn_system_prompt(&frozen.lines),
             &[
-                build_mcp_args(self.mcp_config_path),
+                self.mcp_args.to_vec(),
                 build_attachments_args(self.store_dir),
                 build_agents_args(),
                 self.plugin_args.to_vec(),

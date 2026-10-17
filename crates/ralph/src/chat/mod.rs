@@ -114,7 +114,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         chat_config.cell_output_limit,
         chat_config.cell_output_bytes,
     )?;
-    let mcp_config_path = write_mcp_config(
+    let mcp_args = write_mcp_config(
         &store,
         &store_dir,
         &exe,
@@ -151,7 +151,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
-        mcp_config_path: &mcp_config_path,
+        mcp_args: &mcp_args,
         permission_mode: &permission_mode,
         plugin_args: &plugin_args,
         skills: &skills,

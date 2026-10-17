@@ -139,12 +139,24 @@ pub fn mcp_config(
     json!({ "mcpServers": servers })
 }
 
-pub fn build_mcp_args(config_path: &Path) -> Vec<String> {
+pub fn build_mcp_args(config_path: &Path, config: &Value) -> Vec<String> {
     vec![
         "--mcp-config".to_string(),
         config_path.to_string_lossy().into_owned(),
+        "--allowedTools".to_string(),
+        allowed_tools(config),
         "--strict-mcp-config".to_string(),
     ]
+}
+
+fn allowed_tools(config: &Value) -> String {
+    config["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flat_map(Map::keys)
+        .map(|name| format!("mcp__{name}__*"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 pub fn build_nap_args(store: &Path, timeout_secs: u64) -> Vec<OsString> {
@@ -395,10 +407,29 @@ mod tests {
     }
 
     #[test]
-    fn build_mcp_args_passes_path_and_strict_flag() {
+    fn build_mcp_args_allows_ralph_chat_tools() {
+        let config = mcp_config(Path::new("/bin/ralph"), Path::new("/s"), &AUTO, &Map::new());
         assert_eq!(
-            build_mcp_args(Path::new("/s/mcp.json")),
-            ["--mcp-config", "/s/mcp.json", "--strict-mcp-config"]
+            build_mcp_args(Path::new("/s/mcp.json"), &config),
+            [
+                "--mcp-config",
+                "/s/mcp.json",
+                "--allowedTools",
+                "mcp__ralph-chat__*",
+                "--strict-mcp-config"
+            ]
+        );
+    }
+
+    #[test]
+    fn build_mcp_args_allows_every_imported_server() {
+        let mut imported = Map::new();
+        imported.insert("mcptools".to_string(), json!({ "command": "mcptools" }));
+        imported.insert("linear".to_string(), json!({ "command": "linear" }));
+        let config = mcp_config(Path::new("/bin/ralph"), Path::new("/s"), &AUTO, &imported);
+        assert_eq!(
+            build_mcp_args(Path::new("/s/mcp.json"), &config)[3],
+            "mcp__mcptools__*,mcp__linear__*,mcp__ralph-chat__*"
         );
     }
 
