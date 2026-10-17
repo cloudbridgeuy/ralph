@@ -1,6 +1,6 @@
 [package]
 name = "ralph"
-homepage = "https://github.com/cloudbridgeuy/mcptools"
+homepage = "https://github.com/cloudbridgeuy/ralph"
 description = "Claude chat with memory, workers, and rich rendering"
 autobins = false
 
