@@ -199,15 +199,17 @@ fn diff_stat(chars: &[char], start: usize) -> Option<DiffStat> {
             end,
         })
         .or_else(|| {
-            diff_pair(chars, start).filter(|stat| {
-                let closes_paren = chars.get(stat.end) == Some(&')')
-                    && follows_file_count(chars, start)
-                    && has_open_paren(chars, start);
-                let after = stat.end + usize::from(closes_paren);
-                ends_token(after)
-                    || matches!(chars.get(after), Some('.' | ',' | ';' | ':'))
-                        && ends_token(after + 1)
-            })
+            diff_pair(chars, start)
+                .or_else(|| wrapped_signed_number(chars, start))
+                .filter(|stat| {
+                    let closes_paren = chars.get(stat.end) == Some(&')')
+                        && follows_file_count(chars, start)
+                        && has_open_paren(chars, start);
+                    let after = stat.end + usize::from(closes_paren);
+                    ends_token(after)
+                        || matches!(chars.get(after), Some('.' | ',' | ';' | ':'))
+                            && ends_token(after + 1)
+                })
         })
 }
 
@@ -260,12 +262,24 @@ fn diff_pair(chars: &[char], start: usize) -> Option<DiffStat> {
     let minus_end = signed_number_end(chars, minus)?;
     let end = match wrapped {
         true if chars.get(minus_end) == Some(&')') => minus_end + 1,
-        true => return None,
+        true => file_count_suffix_end(chars, minus_end)?,
         false => minus_end,
     };
     Some(DiffStat {
         parts: vec![(plus, plus_end), (minus, minus_end)],
         end,
+    })
+}
+
+fn wrapped_signed_number(chars: &[char], open: usize) -> Option<DiffStat> {
+    if chars.get(open) != Some(&'(') {
+        return None;
+    }
+    let sign = open + 1;
+    let end = signed_number_end(chars, sign).filter(|&end| chars.get(end) == Some(&')'))?;
+    Some(DiffStat {
+        parts: vec![(sign, end)],
+        end: end + 1,
     })
 }
 
@@ -282,6 +296,25 @@ fn file_count_prefix_end(chars: &[char], at: usize) -> usize {
         None
     };
     after_word.map_or(at, |len| word + len)
+}
+
+fn file_count_suffix_end(chars: &[char], at: usize) -> Option<usize> {
+    if !chars[at..].starts_with(&[',', ' ']) {
+        return None;
+    }
+    let digits_start = at + 2;
+    let word = digits_start + digit_run(chars, digits_start);
+    if word == digits_start {
+        return None;
+    }
+    let rest = &chars[word..];
+    if rest.starts_with(&[' ', 'f', 'i', 'l', 'e', 's', ')']) {
+        Some(word + 7)
+    } else if rest.starts_with(&[' ', 'f', 'i', 'l', 'e', ')']) {
+        Some(word + 6)
+    } else {
+        None
+    }
 }
 
 fn digit_run(chars: &[char], start: usize) -> usize {
@@ -592,6 +625,42 @@ mod tests {
     }
 
     #[test]
+    fn paint_colors_count_last_diff_stats() {
+        let pair = format!("{GREEN}+64{COLOR_OFF}/{RED}-8{COLOR_OFF}");
+        assert_eq!(
+            paint(&mark_links("(+64/-8, 4 files)")),
+            format!("({pair}, 4 files)")
+        );
+        assert_eq!(
+            paint(&mark_links("(+1/-0, 1 file)")),
+            format!("({GREEN}+1{COLOR_OFF}/{RED}-0{COLOR_OFF}, 1 file)")
+        );
+        assert_eq!(
+            paint(&mark_links("Changed (+64/-8, 4 files) today")),
+            format!("Changed ({pair}, 4 files) today")
+        );
+        assert_eq!(
+            paint(&mark_links("Changed (+64/-8, 4 files).")),
+            format!("Changed ({pair}, 4 files).")
+        );
+        for plain in ["(+64/-8, 4 things)", "(+64/-8, files)", "(+64/-8, 4 files"] {
+            assert_eq!(paint(&mark_links(plain)), plain);
+        }
+    }
+
+    #[test]
+    fn paint_colors_parenthesized_signed_numbers() {
+        assert_eq!(
+            paint(&mark_links("(+235)")),
+            format!("({GREEN}+235{COLOR_OFF})")
+        );
+        assert_eq!(
+            paint(&mark_links("x (-12) y (\u{2212}3).")),
+            format!("x ({RED}-12{COLOR_OFF}) y ({RED}\u{2212}3{COLOR_OFF}).")
+        );
+    }
+
+    #[test]
     fn paint_colors_diff_stat_pairs_before_sentence_punctuation() {
         let pair = format!("{GREEN}+9{COLOR_OFF}/{RED}-2{COLOR_OFF}");
         assert_eq!(
@@ -662,7 +731,13 @@ mod tests {
             "-2.",
             "+204/+85",
             "-85/+204",
-            "(+204)",
+            "(+)",
+            "(-)",
+            "(+5x)",
+            "(+ 5)",
+            "(+5/-)",
+            "(+204)x",
+            "(+204))",
             "+204/-85)",
             "(+204/-85",
             "x+204/-85",

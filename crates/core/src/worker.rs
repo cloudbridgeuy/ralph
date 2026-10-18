@@ -136,6 +136,7 @@ pub fn pending_turn_marker(trigger: Trigger) -> &'static str {
     match trigger {
         Trigger::User => "user",
         Trigger::Worker => "worker",
+        Trigger::Private => "private",
     }
 }
 
@@ -143,6 +144,7 @@ pub fn parse_pending_turn(marker: &str) -> Option<Trigger> {
     match marker.trim() {
         "user" => Some(Trigger::User),
         "worker" => Some(Trigger::Worker),
+        "private" => Some(Trigger::Private),
         _ => None,
     }
 }
@@ -400,6 +402,7 @@ mod tests {
         };
         assert!(command_allowed(&close, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&close, Some(Trigger::Worker)).is_err());
+        assert!(command_allowed(&close, Some(Trigger::Private)).is_err());
         assert!(command_allowed(&close, None).is_err());
     }
 
@@ -436,12 +439,13 @@ mod tests {
         };
         assert!(command_allowed(&reply, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&reply, Some(Trigger::Worker)).is_ok());
+        assert!(command_allowed(&reply, Some(Trigger::Private)).is_err());
         assert!(command_allowed(&reply, None).is_err());
     }
 
     #[test]
     fn pending_turn_marker_round_trips() {
-        for trigger in [Trigger::User, Trigger::Worker] {
+        for trigger in [Trigger::User, Trigger::Worker, Trigger::Private] {
             assert_eq!(
                 parse_pending_turn(pending_turn_marker(trigger)),
                 Some(trigger)

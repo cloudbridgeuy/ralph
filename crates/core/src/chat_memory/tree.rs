@@ -1,6 +1,5 @@
-use super::{Entry, Frozen, Node, Recall, Tree, View, SUMMARY_BYTES};
+use super::{Entry, Frozen, Node, Tree, View, SUMMARY_BYTES};
 use regex::RegexBuilder;
-use std::collections::VecDeque;
 
 fn cover_at(t: usize, alpha: f64) -> Vec<(usize, usize)> {
     let root = t.next_power_of_two();
@@ -157,33 +156,67 @@ pub fn zoom(entries: &[Entry], tree: &Tree, node: Node) -> Result<Vec<String>, S
         .collect())
 }
 
-pub fn recall(entries: &[Entry], pattern: &str, cap_bytes: usize) -> Result<Recall, String> {
+const RECALL_MAX_LINES: usize = 50;
+const PREVIEW_CHARS: usize = 80;
+const PREVIEW_LEAD_CHARS: usize = 20;
+
+fn preview(text: &str, match_start: usize) -> String {
+    let lead = collapse(&text[..match_start]).chars().count();
+    let flat = collapse(text);
+    let total = flat.chars().count();
+    let from = lead.saturating_sub(PREVIEW_LEAD_CHARS);
+    let to = (from + PREVIEW_CHARS).min(total);
+    let from = to.saturating_sub(PREVIEW_CHARS).min(from);
+    let body: String = flat.chars().skip(from).take(to - from).collect();
+    let head = if from > 0 { "…" } else { "" };
+    let tail = if to < total { "…" } else { "" };
+    format!("{head}{body}{tail}")
+}
+
+fn date_of(at: &str) -> &str {
+    at.split('T').next().unwrap_or(at)
+}
+
+pub(super) fn format_recall(pattern: &str, hits: &[(usize, &Entry, String)]) -> String {
+    if hits.is_empty() {
+        return format!("no hits for {pattern}");
+    }
+    let mut lines: Vec<String> = hits
+        .iter()
+        .take(RECALL_MAX_LINES)
+        .map(|(i, entry, preview)| {
+            format!(
+                "#{i} · {} · {} · {preview}",
+                entry.role.as_str(),
+                date_of(&entry.at)
+            )
+        })
+        .collect();
+    if hits.len() > RECALL_MAX_LINES {
+        lines.push(format!(
+            "{} more, narrow the pattern",
+            hits.len() - RECALL_MAX_LINES
+        ));
+    }
+    lines.push("(zoom <id> for the full text)".to_string());
+    lines.join("\n")
+}
+
+pub fn recall(entries: &[Entry], pattern: &str) -> Result<String, String> {
     let re = RegexBuilder::new(pattern)
         .case_insensitive(true)
         .build()
         .map_err(|e| format!("bad regex: {e}"))?;
-    let mut hits = 0;
-    let mut size = 0;
-    let mut kept: VecDeque<String> = VecDeque::new();
-    for (i, entry) in entries.iter().enumerate() {
-        let line = entry_line(i, entry, &entry.text);
-        if !re.is_match(&line) {
-            continue;
-        }
-        hits += 1;
-        size += line.len() + 1;
-        kept.push_back(line);
-        while size > cap_bytes {
-            match kept.pop_front() {
-                Some(old) => size -= old.len() + 1,
-                None => break,
-            }
-        }
-    }
-    Ok(Recall {
-        lines: kept.into(),
-        hits,
-    })
+    let hits: Vec<(usize, &Entry, String)> = entries
+        .iter()
+        .enumerate()
+        .rev()
+        .filter_map(|(i, entry)| {
+            re.find(&entry.text)
+                .map(|m| (i, entry, preview(&entry.text, m.start())))
+        })
+        .collect();
+    Ok(format_recall(pattern, &hits))
 }
 #[cfg(test)]
 mod tests {
@@ -315,16 +348,73 @@ mod tests {
         assert!(zoom(&entries, &tree, n(3, 4)).is_err());
     }
 
+    fn texted(count: usize, text: impl Fn(usize) -> String) -> Vec<Entry> {
+        (0..count)
+            .map(|i| {
+                let mut e = entry(i, 5);
+                e.text = text(i);
+                e
+            })
+            .collect()
+    }
+
     #[test]
-    fn recall_keeps_newest_within_cap() {
-        let entries: Vec<Entry> = (0..5).map(|i| entry(i, 5)).collect();
-        let line_len = |i: usize| entry_line(i, &entries[i], &entries[i].text).len() + 1;
-        let found = recall(&entries, "XXXXX", line_len(3) + line_len(4)).unwrap();
-        assert_eq!(found.hits, 5);
-        assert_eq!(found.lines.len(), 2);
-        assert!(found.lines[0].starts_with("#3 "));
-        assert!(recall(&entries, "(", 10).is_err());
-        assert_eq!(recall(&entries, "nomatch", 100).unwrap().hits, 0);
+    fn recall_lists_newest_first_with_footer() {
+        let entries = texted(3, |i| format!("note {i} needle"));
+        let out = recall(&entries, "NEEDLE").unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0], "#2 · user · 2026-01-01 · note 2 needle");
+        assert!(lines[1].starts_with("#1 · ") && lines[2].starts_with("#0 · "));
+        assert_eq!(lines[3], "(zoom <id> for the full text)");
+    }
+
+    #[test]
+    fn recall_previews_window_around_match() {
+        let text = format!(
+            "START {} deep needle here {}",
+            "a ".repeat(100),
+            "b ".repeat(100)
+        );
+        let entries = texted(1, |_| text.clone());
+        let out = recall(&entries, "needle").unwrap();
+        let line = out.lines().next().unwrap();
+        let body = line.splitn(4, " · ").nth(3).unwrap();
+        assert!(body.contains("needle") && !body.contains("START"));
+        assert!(body.starts_with('…') && body.ends_with('…'));
+        assert!(body.chars().count() <= PREVIEW_CHARS + 2);
+    }
+
+    #[test]
+    fn recall_preview_is_char_safe_and_untruncated_when_short() {
+        let entries = texted(1, |_| "ñandú  needle\ncafé".into());
+        let out = recall(&entries, "needle").unwrap();
+        assert!(out.starts_with("#0 · user · 2026-01-01 · ñandú needle café\n"));
+    }
+
+    #[test]
+    fn recall_caps_lines_and_counts_the_rest() {
+        let entries = texted(53, |i| format!("hit {i}"));
+        let out = recall(&entries, "hit").unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 52);
+        assert!(lines[0].starts_with("#52 · "));
+        assert!(lines[49].starts_with("#3 · "));
+        assert_eq!(lines[50], "3 more, narrow the pattern");
+        assert_eq!(lines[51], "(zoom <id> for the full text)");
+    }
+
+    #[test]
+    fn recall_handles_no_hits_and_bad_regex() {
+        let entries = texted(2, |i| format!("m{i}"));
+        assert_eq!(recall(&entries, "zzz").unwrap(), "no hits for zzz");
+        assert!(recall(&entries, "(").is_err());
+    }
+
+    #[test]
+    fn date_of_cuts_at_t() {
+        assert_eq!(date_of("2026-01-01T00:00:01Z"), "2026-01-01");
+        assert_eq!(date_of("yesterday"), "yesterday");
     }
 
     #[test]
