@@ -142,6 +142,25 @@ diff_args = [] # default git diff args; typed /diff args follow
 
 The spawn runs only after reedline `read_line` has turned raw mode off, so a full-screen pager returns to a normal prompt. `git diff` exiting 1 (there are changes) is not a chat error. A failure to start git warns and returns to the prompt.
 
+## Turn snapshots
+
+Unless `[changes] enabled = false`, every turn (user, `/private`, and worker-report turns) snapshots the working tree of the repo the chat started in, before and after the model call. A chat outside a git repo does nothing and prints no warning; this is decided once at start. A snapshot failure warns and never stops the turn.
+
+- Storage: one bare git dir per repo at `<store>/snapshots/<repo-dir-name>.git`, with its own objects and no link to the repo. The repo's own refs and objects are untouched.
+- Refs: `refs/ralph/chat/turn-<n>/start` and `.../end`. `<n>` continues from the highest existing number, also across restarts.
+- Content: `git add -A` into a private index at `<side>/index/chat`, so `.gitignore` and `info/exclude` apply, then `write-tree` and `commit-tree`. Snapshot commits have no parents.
+- Pruning: after each turn the last 20 turns stay; older start and end refs are deleted, then `git gc --auto --prune=1.hour.ago` reclaims objects.
+- Code: pure logic in `crates/core/src/snapshot.rs`; git calls in `crates/ralph/src/snapshot.rs`; the turn hook in `crates/ralph/src/chat/snapshots.rs`.
+
+### Worker snapshots and report diffstats
+
+Claude and Cursor workers snapshot their worktree into the same side dir, keyed by the main repo name (from `git rev-parse --git-common-dir`). Opencode workers take no snapshots.
+
+- Refs: `refs/ralph/workers/<id>/turn-<k>`, private index at `<side>/index/workers/<id>`. Turn 0 is taken at spawn; turn `k` at the end of each turn (Claude Stop hook, Cursor `run_turns`). The last 20 stay. `close_worker` deletes the refs and the index.
+- Report: the worker MCP server (`worker-mcp --worktree`) appends two `git diff --stat` blocks to the report text, rendered by `render_changes`: since spawn (merge-base of `HEAD` and the worker base branch against a fresh tree of the worktree, so untracked files count) and since the last turn snapshot (labelled turn `latest + 1`). A block that cannot be computed is left out. Output is uncapped.
+- `[changes] enabled = false` also turns off worker snapshots and report diffstats: the spawn decides once (`snapshots_enabled`), takes no turn 0, and passes no `--worktree` to the worker hooks and MCP server. `close_worker` still clears leftover refs and index from workers spawned while it was on.
+- Code: pure helpers in `crates/core/src/snapshot.rs` and `crates/core/src/changes.rs`; git calls in `crates/ralph/src/worker_changes.rs`.
+
 ## Executable cells
 
 A fenced block in a message you type whose info string is `!<runtime>` (for example ```` ```!zsh ````) is a cell. Worker reports and agent replies never run cells; a `!` fence inside another fence is not a cell. Parsing and message building are pure in `ralph_core::chat_cell`; PATH lookup, spawn and streaming are in `crates/ralph/src/chat/cell.rs`.

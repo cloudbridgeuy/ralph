@@ -74,6 +74,7 @@ pub struct SpawnRequest {
     pub inbox: PathBuf,
     pub task: String,
     pub at: u64,
+    pub snapshots: bool,
 }
 
 #[cfg(test)]
@@ -88,6 +89,7 @@ mod tests {
             inbox: "/s/inbox".into(),
             task: "do it".into(),
             at: 7,
+            snapshots: true,
         };
         let text = serde_json::to_string(&request).unwrap();
         assert_eq!(

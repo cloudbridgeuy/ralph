@@ -211,12 +211,23 @@ impl WorktreeVia {
     }
 }
 
-pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path) -> Value {
+pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path, worktree: Option<&Path>) -> Value {
+    let mut args = vec![
+        "worker-mcp".to_string(),
+        "--id".to_string(),
+        id.to_string(),
+        "--inbox".to_string(),
+        inbox.to_string_lossy().into_owned(),
+    ];
+    if let Some(worktree) = worktree {
+        args.push("--worktree".to_string());
+        args.push(worktree.to_string_lossy().into_owned());
+    }
     json!({
         "mcpServers": {
             SERVER_NAME: {
                 "command": exe.to_string_lossy(),
-                "args": ["worker-mcp", "--id", id, "--inbox", inbox.to_string_lossy()]
+                "args": args
             }
         }
     })
@@ -660,7 +671,29 @@ mod tests {
 
     #[test]
     fn worker_mcp_config_points_at_inbox() {
-        let config = worker_mcp_config(Path::new("/bin/ralph"), "A", Path::new("/s/inbox"));
+        let config = worker_mcp_config(
+            Path::new("/bin/ralph"),
+            "A",
+            Path::new("/s/inbox"),
+            Some(Path::new("/w")),
+        );
+        assert_eq!(
+            config["mcpServers"][SERVER_NAME]["args"],
+            json!([
+                "worker-mcp",
+                "--id",
+                "A",
+                "--inbox",
+                "/s/inbox",
+                "--worktree",
+                "/w"
+            ])
+        );
+    }
+
+    #[test]
+    fn worker_mcp_config_omits_the_worktree_without_one() {
+        let config = worker_mcp_config(Path::new("/bin/ralph"), "A", Path::new("/s/inbox"), None);
         assert_eq!(
             config["mcpServers"][SERVER_NAME]["args"],
             json!(["worker-mcp", "--id", "A", "--inbox", "/s/inbox"])

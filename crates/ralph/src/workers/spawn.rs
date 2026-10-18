@@ -6,6 +6,9 @@ use crate::acp_worker::AGENT_COMMAND;
 use crate::chat::cell::detach_from_terminal;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
+use crate::warn::warn_if_err;
+use crate::worker_changes::WorkerChanges;
+use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
     project_slug, rollback_plan, rollback_report, session_name, spawn_handoff, startup_state,
@@ -79,16 +82,28 @@ impl Workers {
         )
         .ok()
         .flatten();
+        let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
+            .then(|| self.site(id, &worktree));
         let launch = Launch {
             id,
             task,
             harness,
             model,
             worktree: &worktree,
+            site: site.as_ref(),
             session: &session,
             started: started_text(id, &worktree, &via, worktree_dir.warning.as_deref()),
         };
+        if !matches!(harness, HarnessId::Opencode) {
+            if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
+                changes.snapshot_turn_or_warn();
+            }
+        }
         self.launch(&launch).map_err(|error| {
+            warn_if_err(
+                self.clear_changes(id, &worktree),
+                "Failed to clear worker snapshots",
+            );
             let footprint = SpawnFootprint {
                 created_worktree,
                 created_branch,
@@ -137,6 +152,7 @@ impl Workers {
             harness,
             model,
             worktree,
+            site,
             session,
             started,
         } = launch;
@@ -149,9 +165,9 @@ impl Workers {
         }
         let command = match harness {
             HarnessId::Claude => {
-                let settings = self.write_settings(id, &markers)?;
+                let settings = self.write_settings(id, &markers, *site)?;
                 worker_command(
-                    &self.write_config(id)?,
+                    &self.write_config(id, *site)?,
                     &settings,
                     &self.permission_mode,
                     &attachments,
@@ -168,7 +184,7 @@ impl Workers {
                 ));
             }
             HarnessId::Cursor => {
-                self.spawn_cursor(id, worktree, task)?;
+                self.spawn_cursor(id, worktree, task, site.is_some())?;
                 return Ok(format!(
                     "{started} It runs headless inside ralph chat (no tmux session)."
                 ));
@@ -205,7 +221,13 @@ impl Workers {
         }
     }
 
-    fn spawn_cursor(&self, id: &str, worktree: &Path, task: &str) -> io::Result<()> {
+    fn spawn_cursor(
+        &self,
+        id: &str,
+        worktree: &Path,
+        task: &str,
+        snapshots: bool,
+    ) -> io::Result<()> {
         let files = CursorFiles::new(&self.store_dir, id);
         for path in files.all() {
             clear_marker(path)?;
@@ -216,6 +238,7 @@ impl Workers {
             inbox: self.store_dir.join(INBOX_DIR),
             task: task.to_string(),
             at: now_secs(),
+            snapshots,
         };
         write_file(
             &files.spawn,
@@ -279,22 +302,47 @@ impl Workers {
         }
     }
 
-    fn write_settings(&self, id: &str, markers: &WorkerMarkers) -> io::Result<PathBuf> {
+    pub(super) fn clear_changes(&self, id: &str, worktree: &Path) -> io::Result<()> {
+        match WorkerChanges::open(&self.site(id, worktree)) {
+            Some(changes) => changes.clear(),
+            None => Ok(()),
+        }
+    }
+
+    pub(super) fn site(&self, id: &str, worktree: &Path) -> WorkerSite {
+        WorkerSite {
+            store: self.store_dir.clone(),
+            id: id.to_string(),
+            worktree: worktree.to_path_buf(),
+        }
+    }
+
+    fn write_settings(
+        &self,
+        id: &str,
+        markers: &WorkerMarkers,
+        site: Option<&WorkerSite>,
+    ) -> io::Result<PathBuf> {
         let dir = self.store_dir.join(WORKERS_DIR);
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{id}.settings.json"));
         fs::write(
             &path,
-            claude_worker_settings(&self.exe, markers).to_string(),
+            claude_worker_settings(&self.exe, markers, site).to_string(),
         )?;
         Ok(path)
     }
 
-    fn write_config(&self, id: &str) -> io::Result<PathBuf> {
+    fn write_config(&self, id: &str, site: Option<&WorkerSite>) -> io::Result<PathBuf> {
         let dir = self.store_dir.join(WORKERS_DIR);
         fs::create_dir_all(&dir)?;
         let path = dir.join(format!("{id}.json"));
-        let config = worker_mcp_config(&self.exe, id, &self.store_dir.join(INBOX_DIR));
+        let config = worker_mcp_config(
+            &self.exe,
+            id,
+            &self.store_dir.join(INBOX_DIR),
+            site.map(|site| site.worktree.as_path()),
+        );
         fs::write(&path, config.to_string())?;
         Ok(path)
     }
@@ -306,6 +354,7 @@ struct Launch<'a> {
     harness: HarnessId,
     model: Option<&'a str>,
     worktree: &'a Path,
+    site: Option<&'a WorkerSite>,
     session: &'a str,
     started: String,
 }

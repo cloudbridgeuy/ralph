@@ -14,6 +14,7 @@
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
 pub mod attachment;
+pub mod changes;
 pub mod chat;
 pub mod chat_cell;
 pub mod chat_draft;
@@ -33,6 +34,7 @@ pub mod inbox_alert;
 pub mod mcp;
 pub mod semver;
 pub mod shell_format;
+pub mod snapshot;
 pub mod status_mode;
 pub mod status_segments;
 pub mod stream;
