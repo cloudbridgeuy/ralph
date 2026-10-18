@@ -13,12 +13,11 @@ use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, turn_prompt, turn_system_prompt,
-    VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    frozen_block, reply_entries, tail_lines, trigger_entries, usage_record, view_stats, CallKind,
-    Frozen, Trigger,
+    history_view, reply_entries, trigger_entries, usage_record, view_stats, CallKind, Frozen,
+    HistoryPolicy, Trigger,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use std::borrow::Cow;
@@ -97,7 +96,7 @@ pub(super) struct Turn<'a> {
     pub(super) timeout_secs: u64,
     pub(super) theme_config: &'a ThemeConfig,
     pub(super) frozen: Mutex<Option<Frozen>>,
-    pub(super) frozen_window: usize,
+    pub(super) history_policy: HistoryPolicy,
     pub(super) cancel: Arc<AtomicBool>,
 }
 
@@ -117,9 +116,10 @@ impl Turn<'_> {
             spinner
         })?;
         let pinned = locked(&self.frozen).take();
-        let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, pinned);
+        let view = history_view(&entries, &tree, self.history_policy, pinned);
+        let frozen = view.frozen;
         *locked(&self.frozen) = Some(frozen.clone());
-        let tail = tail_lines(&entries, &tree, frozen.end);
+        let tail = view.tail;
         if logged_before_reply(trigger) {
             self.append_logged(trigger, logged)?;
         }
