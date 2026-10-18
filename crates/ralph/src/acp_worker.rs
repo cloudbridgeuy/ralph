@@ -23,9 +23,9 @@ use ralph_core::worker::{
     acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, interrupt_result_text,
     is_report_tool_call, match_option, no_option_message, permission_content,
     prompt_failure_report, ready_path, request_stale, resume_decision, session_error, task_prompt,
-    turn_outcome, version_warning, BlockedContent, CursorFiles, CursorPermissions, Inbound,
-    OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest, Step, TurnOutcome,
-    WorkerMarkers, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
+    turn_outcome, version_warning, AcpAgent, BlockedContent, CursorFiles, CursorPermissions,
+    Inbound, OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest, Step, TurnOutcome,
+    WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
     CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
     CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
@@ -39,7 +39,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
 
-pub(crate) const AGENT_COMMAND: &str = "agent";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 
@@ -160,6 +159,7 @@ pub enum Launch {
 }
 
 pub struct Slot<'a> {
+    pub agent: AcpAgent,
     pub id: &'a str,
     pub owner: &'a Path,
     pub results: &'a Path,
@@ -168,6 +168,7 @@ pub struct Slot<'a> {
 }
 
 struct Opening {
+    agent: AcpAgent,
     launch: Launch,
     cwd: PathBuf,
     server: McpServer,
@@ -189,11 +190,15 @@ async fn open_session(
             .block_task()
             .await
             .map(|created| created.session_id)
-            .map_err(|e| session_error(i32::from(e.code), &e.message)),
+            .map_err(|e| session_error(&opening.agent, i32::from(e.code), &e.message)),
         Launch::Resume { record, store } => {
-            if let Resume::Skip(message) =
-                resume_decision(&opening.worker_id, record, store, loads_session)
-            {
+            if let Resume::Skip(message) = resume_decision(
+                &opening.agent,
+                &opening.worker_id,
+                record,
+                store,
+                loads_session,
+            ) {
                 return Err(message);
             }
             let session = SessionId::new(record.session_id.clone());
@@ -208,8 +213,8 @@ async fn open_session(
             opening.loading.store(false, Ordering::SeqCst);
             loaded.map(|_| session).map_err(|e| {
                 format!(
-                    "cursor session {} could not be loaded: {}",
-                    opening.worker_id, e.message
+                    "{} session {} could not be loaded: {}",
+                    opening.agent.name, opening.worker_id, e.message
                 )
             })
         }
@@ -229,19 +234,20 @@ pub struct AcpWorker {
 impl AcpWorker {
     pub fn start(request: &SpawnRequest, launch: Launch, slot: Slot) -> Result<Self, String> {
         let Slot {
+            agent,
             id,
             owner,
             results,
             markers,
             starting,
         } = slot;
-        if let Some(warning) = agent_version_warning() {
+        if let Some(warning) = agent_version_warning(&agent) {
             warn(warning);
         }
-        let mut command = Command::new(AGENT_COMMAND);
+        let mut command = Command::new(agent.command);
         command.arg("acp").current_dir(&request.worktree);
         let (child, stdin, stdout) = spawn_piped(command)
-            .map_err(|e| format!("could not start `{AGENT_COMMAND} acp`: {e}"))?;
+            .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
         let permissions = Permissions::new(markers.blocked.clone(), cursor_permissions());
         let (prompts, prompt_rx) = queue::unbounded();
         let closing = Arc::new(AtomicBool::new(false));
@@ -255,7 +261,7 @@ impl AcpWorker {
             closing: Arc::clone(&closing),
             done: false,
         };
-        worker.write_owner()?;
+        worker.write_owner(&agent)?;
         starting
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -326,11 +332,13 @@ impl AcpWorker {
                             .send_request(InitializeRequest::new(ProtocolVersion::V1))
                             .block_task()
                             .await?;
-                        if let Err(message) = check_protocol(init.protocol_version.as_u16()) {
+                        if let Err(message) = check_protocol(&agent, init.protocol_version.as_u16())
+                        {
                             ready_tx.send(Err(message)).ok();
                             return Ok(());
                         }
                         let opening = Opening {
+                            agent,
                             launch,
                             cwd,
                             server,
@@ -347,7 +355,8 @@ impl AcpWorker {
                                     };
                                     if let Err(e) = write_file(path, &record.render()) {
                                         warn(format!(
-                                            "could not write the cursor session record: {e}"
+                                            "could not write the {} session record: {e}",
+                                            agent.name
                                         ));
                                     }
                                     prompts.unbounded_send(Inbound::Prompt(prompt)).ok();
@@ -355,6 +364,7 @@ impl AcpWorker {
                                 ready_tx.send(Ok(())).ok();
                                 let turns = Turns {
                                     permissions: Arc::clone(&turns_permissions),
+                                    agent,
                                     session,
                                     worker_id,
                                     markers,
@@ -375,7 +385,7 @@ impl AcpWorker {
             );
             if let Err(e) = outcome {
                 failed
-                    .send(Err(format!("cursor agent connection failed: {e}")))
+                    .send(Err(format!("{} agent connection failed: {e}", agent.name)))
                     .ok();
             }
         });
@@ -383,7 +393,8 @@ impl AcpWorker {
             Ok(Ok(())) => Ok(worker),
             Ok(Err(message)) => Err(message),
             Err(_) => Err(format!(
-                "cursor agent was not ready after {}s",
+                "{} agent was not ready after {}s",
+                agent.name,
                 READY_TIMEOUT.as_secs()
             )),
         }
@@ -401,7 +412,7 @@ impl AcpWorker {
             .ok();
     }
 
-    fn write_owner(&self) -> Result<(), String> {
+    fn write_owner(&self, agent: &AcpAgent) -> Result<(), String> {
         let chat = process::id();
         let group = self.child.id();
         let record = OwnerRecord {
@@ -409,10 +420,10 @@ impl AcpWorker {
             chat_start: process_start(chat).ok_or("could not read the chat start time")?,
             group,
             group_start: process_start(group)
-                .ok_or("could not read the cursor agent start time")?,
+                .ok_or_else(|| format!("could not read the {} agent start time", agent.name))?,
         };
         write_file(&self.owner, &record.render())
-            .map_err(|e| format!("could not write the cursor owner file: {e}"))
+            .map_err(|e| format!("could not write the {} owner file: {e}", agent.name))
     }
 
     pub fn terminate(&mut self) {
@@ -437,6 +448,7 @@ impl Drop for AcpWorker {
 }
 
 struct Turns {
+    agent: AcpAgent,
     permissions: Arc<Permissions>,
     session: SessionId,
     worker_id: String,
@@ -551,7 +563,7 @@ async fn run_turns(
             }
             TurnOutcome::Problem(problem) => {
                 let at = chrono::Utc::now().to_rfc3339();
-                let report = prompt_failure_report(&turns.worker_id, &at, &problem);
+                let report = prompt_failure_report(&turns.agent, &turns.worker_id, &at, &problem);
                 turns.inbox.post(&report, 0).ok();
             }
             TurnOutcome::Cancelled => turns.permissions.cancel_all(),
@@ -560,14 +572,14 @@ async fn run_turns(
     }
 }
 
-fn agent_version_warning() -> Option<String> {
-    let output = Command::new(AGENT_COMMAND)
+fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
+    let output = Command::new(agent.command)
         .arg("--version")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    version_warning(&String::from_utf8_lossy(&output.stdout))
+    version_warning(agent, &String::from_utf8_lossy(&output.stdout))
 }
 
 pub struct CursorHost {
@@ -674,7 +686,7 @@ impl CursorHost {
             .get(id)
             .map(|worker| Arc::clone(&worker.permissions));
         let result = permissions
-            .ok_or_else(|| "worker has no running cursor agent".to_string())
+            .ok_or_else(|| format!("worker has no running {} agent", CURSOR_AGENT.name))
             .and_then(|permissions| permissions.answer(&text));
         if let Err(message) = result {
             write_file(&files.error, &message).ok();
@@ -770,6 +782,7 @@ impl CursorHost {
             request,
             launch,
             Slot {
+                agent: CURSOR_AGENT,
                 id,
                 owner: &self.files(id).owner,
                 results: &self.files(id).interrupt_result,
@@ -794,7 +807,8 @@ impl CursorHost {
         let files = self.files(id);
         if files.owner.exists() {
             warn(format!(
-                "cursor session {id} not resumed: a running chat owns it"
+                "{} session {id} not resumed: a running chat owns it",
+                CURSOR_AGENT.name
             ));
             return;
         }
@@ -803,23 +817,28 @@ impl CursorHost {
             .and_then(|text| SessionRecord::parse(&text))
         else {
             warn(format!(
-                "cursor session {id} not resumed: its record is unreadable"
+                "{} session {id} not resumed: its record is unreadable",
+                CURSOR_AGENT.name
             ));
             return;
         };
-        if let Resume::Skip(message) = resume_decision(id, &record, &self.store_dir, true) {
+        if let Resume::Skip(message) =
+            resume_decision(&CURSOR_AGENT, id, &record, &self.store_dir, true)
+        {
             warn(message);
             return;
         }
         let Ok(exe) = std::env::current_exe() else {
             warn(format!(
-                "cursor session {id} not resumed: could not find the ralph executable"
+                "{} session {id} not resumed: could not find the ralph executable",
+                CURSOR_AGENT.name
             ));
             return;
         };
         if !record.cwd.is_dir() {
             warn(format!(
-                "cursor session {id} not resumed: its worktree {} is gone",
+                "{} session {id} not resumed: its worktree {} is gone",
+                CURSOR_AGENT.name,
                 record.cwd.display()
             ));
             return;

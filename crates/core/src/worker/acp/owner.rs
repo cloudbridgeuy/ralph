@@ -1,3 +1,4 @@
+use super::AcpAgent;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -46,12 +47,14 @@ pub enum Resume {
 }
 
 pub fn resume_decision(
+    agent: &AcpAgent,
     id: &str,
     record: &SessionRecord,
     store: &Path,
     loads_session: bool,
 ) -> Resume {
-    let skip = |why: String| Resume::Skip(format!("cursor session {id} not resumed: {why}"));
+    let skip =
+        |why: String| Resume::Skip(format!("{} session {id} not resumed: {why}", agent.name));
     match record.store.as_deref() {
         None => skip("the record has no owner".to_string()),
         Some(owner) if owner != store => skip(format!(
@@ -94,6 +97,7 @@ pub fn caller_owns_worker(owner_chat_pid: u32, caller_ancestry: &[u32]) -> bool 
 
 #[cfg(test)]
 mod tests {
+    use super::super::CURSOR_AGENT;
     use super::*;
 
     fn record(store: Option<&str>) -> SessionRecord {
@@ -118,7 +122,7 @@ mod tests {
     fn resume_requires_this_store_and_the_load_capability() {
         let store = Path::new("/store");
         assert_eq!(
-            resume_decision("a", &record(Some("/store")), store, true),
+            resume_decision(&CURSOR_AGENT, "a", &record(Some("/store")), store, true),
             Resume::Go
         );
         for (rec, loads, why) in [
@@ -126,7 +130,7 @@ mod tests {
             (record(Some("/other")), true, "/other"),
             (record(Some("/store")), false, "session/load"),
         ] {
-            match resume_decision("a", &rec, store, loads) {
+            match resume_decision(&CURSOR_AGENT, "a", &rec, store, loads) {
                 Resume::Skip(message) => {
                     assert!(message.starts_with("cursor session a not resumed: "));
                     assert!(message.contains(why), "{message}");

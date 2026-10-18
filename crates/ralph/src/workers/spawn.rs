@@ -2,7 +2,6 @@ use super::{
     branch_exists, check, clear_marker, exclude, git_value, locate_worktree, repo_root, run,
     Workers,
 };
-use crate::acp_worker::AGENT_COMMAND;
 use crate::chat::cell::detach_from_terminal;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
@@ -14,8 +13,9 @@ use ralph_core::worker::{
     project_slug, rollback_plan, rollback_report, session_name, spawn_handoff, startup_state,
     worker_command, worker_mcp_config, worktree_add_args, wt_switch_args, CursorFiles, Handoff,
     HarnessId, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest,
-    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, DEFAULT_OPENCODE_MODEL, HANDOFF_POLL,
-    ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, DEFAULT_OPENCODE_MODEL,
+    HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS,
+    WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -141,7 +141,7 @@ impl Workers {
                 }
             }
             HarnessId::Opencode => self.preflight_opencode(id),
-            HarnessId::Cursor => require_on_path(AGENT_COMMAND),
+            HarnessId::Cursor => require_on_path(CURSOR_AGENT.command),
         }
     }
 

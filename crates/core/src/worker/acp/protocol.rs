@@ -3,7 +3,19 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 pub const ACP_PROTOCOL_VERSION: u16 = 1;
-pub const ACP_AGENT_VERSION: &str = "2026.10.14";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AcpAgent {
+    pub name: &'static str,
+    pub command: &'static str,
+    pub tested_version: &'static str,
+}
+
+pub const CURSOR_AGENT: AcpAgent = AcpAgent {
+    name: "cursor",
+    command: "agent",
+    tested_version: "2026.10.14",
+};
 const AUTH_REQUIRED_CODE: i32 = -32000;
 
 pub fn parse_agent_version(output: &str) -> Option<&str> {
@@ -12,34 +24,43 @@ pub fn parse_agent_version(output: &str) -> Option<&str> {
     version.chars().next()?.is_ascii_digit().then_some(version)
 }
 
-pub fn version_warning(output: &str) -> Option<String> {
+pub fn version_warning(agent: &AcpAgent, output: &str) -> Option<String> {
+    let AcpAgent {
+        name,
+        tested_version,
+        ..
+    } = agent;
     match parse_agent_version(output) {
-        Some(ACP_AGENT_VERSION) => None,
+        Some(version) if version == *tested_version => None,
         Some(other) => Some(format!(
-            "cursor agent {other} differs from the tested {ACP_AGENT_VERSION}; the cursor worker may misbehave."
+            "{name} agent {other} differs from the tested {tested_version}; the {name} worker may misbehave."
         )),
         None => Some(format!(
-            "could not read the cursor agent version from '{}'; tested with {ACP_AGENT_VERSION}.",
+            "could not read the {name} agent version from '{}'; tested with {tested_version}.",
             output.trim()
         )),
     }
 }
 
-pub fn check_protocol(version: u16) -> Result<(), String> {
+pub fn check_protocol(agent: &AcpAgent, version: u16) -> Result<(), String> {
     if version == ACP_PROTOCOL_VERSION {
         Ok(())
     } else {
         Err(format!(
-            "cursor agent speaks ACP protocol {version}; ralph supports {ACP_PROTOCOL_VERSION}."
+            "{} agent speaks ACP protocol {version}; ralph supports {ACP_PROTOCOL_VERSION}.",
+            agent.name
         ))
     }
 }
 
-pub fn session_error(code: i32, message: &str) -> String {
+pub fn session_error(agent: &AcpAgent, code: i32, message: &str) -> String {
     if code == AUTH_REQUIRED_CODE {
-        "cursor agent is not logged in; run `agent login` and spawn the worker again.".to_string()
+        format!(
+            "{} agent is not logged in; run `{} login` and spawn the worker again.",
+            agent.name, agent.command
+        )
     } else {
-        format!("cursor agent could not start a session: {message}")
+        format!("{} agent could not start a session: {message}", agent.name)
     }
 }
 
@@ -87,23 +108,27 @@ mod tests {
 
     #[test]
     fn version_warning_only_when_the_version_differs() {
-        assert_eq!(version_warning("2026.10.14-0f9edde"), None);
-        assert!(version_warning("2026.11.01-abc")
+        assert_eq!(version_warning(&CURSOR_AGENT, "2026.10.14-0f9edde"), None);
+        assert!(version_warning(&CURSOR_AGENT, "2026.11.01-abc")
             .unwrap()
             .contains("2026.11.01"));
-        assert!(version_warning("???").unwrap().contains("could not read"));
+        assert!(version_warning(&CURSOR_AGENT, "???")
+            .unwrap()
+            .contains("could not read"));
     }
 
     #[test]
     fn only_protocol_one_is_accepted() {
-        assert!(check_protocol(1).is_ok());
-        assert!(check_protocol(2).unwrap_err().contains("protocol 2"));
+        assert!(check_protocol(&CURSOR_AGENT, 1).is_ok());
+        assert!(check_protocol(&CURSOR_AGENT, 2)
+            .unwrap_err()
+            .contains("protocol 2"));
     }
 
     #[test]
     fn auth_required_tells_the_user_to_log_in() {
-        assert!(session_error(-32000, "x").contains("agent login"));
-        assert!(session_error(-32603, "boom").contains("boom"));
+        assert!(session_error(&CURSOR_AGENT, -32000, "x").contains("agent login"));
+        assert!(session_error(&CURSOR_AGENT, -32603, "boom").contains("boom"));
     }
 
     #[test]

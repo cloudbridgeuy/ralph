@@ -1,3 +1,4 @@
+use super::AcpAgent;
 use super::REPORT_TOOL;
 use crate::worker::{Report, ReportStatus, SERVER_NAME, WORKER_PROMPT};
 use serde_json::Value;
@@ -125,9 +126,7 @@ pub fn turn_outcome(
         Ok("end_turn") if interrupted => TurnOutcome::Cancelled,
         Ok("end_turn") if reminded => TurnOutcome::Unreported,
         Ok("end_turn") => TurnOutcome::Remind,
-        Ok(other) => {
-            TurnOutcome::Problem(format!("the cursor agent ended its turn with `{other}`"))
-        }
+        Ok(other) => TurnOutcome::Problem(format!("the agent ended its turn with `{other}`")),
     }
 }
 
@@ -137,12 +136,17 @@ pub fn is_report_tool_call(update: &Value) -> bool {
         && update["title"].as_str().is_some_and(|v| v.trim() == title)
 }
 
-pub fn prompt_failure_report(id: &str, at: &str, problem: &str) -> Report {
+pub fn prompt_failure_report(agent: &AcpAgent, id: &str, at: &str, problem: &str) -> Report {
+    let name = agent.name;
+    let problem = match problem.strip_prefix("the agent ended") {
+        Some(rest) => format!("the {name} agent ended{rest}"),
+        None => problem.to_string(),
+    };
     Report {
         worker: id.to_string(),
         at: at.to_string(),
         status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!("The cursor task prompt failed: {problem}."),
+        text: format!("The {name} task prompt failed: {problem}."),
     }
 }
 
@@ -152,6 +156,7 @@ pub fn accept_report(owner_required: bool, owner_exists: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::CURSOR_AGENT;
     use super::*;
     use serde_json::json;
 
@@ -199,7 +204,7 @@ mod tests {
         );
         assert_eq!(
             turn_outcome(Ok("refusal"), false, false, false, false),
-            TurnOutcome::Problem("the cursor agent ended its turn with `refusal`".into())
+            TurnOutcome::Problem("the agent ended its turn with `refusal`".into())
         );
         assert_eq!(
             turn_outcome(Err("boom"), false, false, false, false),
@@ -361,7 +366,7 @@ mod tests {
 
     #[test]
     fn prompt_failure_report_blocks_the_worker() {
-        let report = prompt_failure_report("A", "2026-01-01T00:00:00Z", "boom");
+        let report = prompt_failure_report(&CURSOR_AGENT, "A", "2026-01-01T00:00:00Z", "boom");
         assert_eq!(report.worker, "A");
         assert_eq!(report.status, "blocked");
         assert!(report.text.contains("boom"));
