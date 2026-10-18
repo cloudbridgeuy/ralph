@@ -20,7 +20,10 @@ pub struct WorkerChanges {
     worktree: PathBuf,
 }
 
-fn run_diff(args: &[String], configure: impl FnOnce(&mut Command)) -> io::Result<String> {
+pub(crate) fn run_diff(
+    args: &[String],
+    configure: impl FnOnce(&mut Command),
+) -> io::Result<String> {
     let (program, rest) = args
         .split_first()
         .ok_or_else(|| io::Error::other("empty diff command"))?;

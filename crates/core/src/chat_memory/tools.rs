@@ -1,5 +1,6 @@
 use super::tree::{recall, zoom};
 use super::{Entry, Node, Tree, SERVER_NAME};
+use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
 use crate::chat_socket::is_worker_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::worker::command_definitions;
@@ -23,6 +24,10 @@ pub enum Outcome {
         id: Value,
         name: String,
         args: Value,
+    },
+    Changes {
+        id: Value,
+        request: ChangeRequest<ScopeQuery>,
     },
 }
 
@@ -57,7 +62,8 @@ fn memory_tool_definitions() -> Value {
                 },
                 "required": ["pattern"]
             }
-        }
+        },
+        changes_tool_definition()
     ])
 }
 
@@ -76,6 +82,10 @@ pub fn handle_request(request: &Value) -> Outcome {
         Dispatch::Call { id, name, args } if is_worker_tool(&name) => {
             Outcome::Worker { id, name, args }
         }
+        Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {
+            Ok(request) => Outcome::Changes { id, request },
+            Err(message) => Outcome::Respond(tool_result(id, &message, true)),
+        },
         Dispatch::Call { id, name, args } => match parse_tool_call(&name, &args) {
             Ok(tool) => Outcome::Call { id, tool },
             Err(message) => Outcome::Respond(tool_result(id, &message, true)),
@@ -118,7 +128,9 @@ mod tests {
         match call(name, args) {
             Outcome::Call { id, tool } => finish_call(id, entries, tree, &tool),
             Outcome::Respond(v) => v,
-            Outcome::Silent | Outcome::Worker { .. } => panic!("not a memory call"),
+            Outcome::Silent | Outcome::Worker { .. } | Outcome::Changes { .. } => {
+                panic!("not a memory call")
+            }
         }
     }
 
@@ -138,6 +150,7 @@ mod tests {
             [
                 "zoom",
                 "recall",
+                "changes",
                 "spawn_worker",
                 "reply",
                 "close_worker",
@@ -170,6 +183,23 @@ mod tests {
         assert!(text.contains("#3 · ") && text.contains("#1 · ") && !text.contains("#2 · "));
         assert!(text.find("#3 · ") < text.find("#1 · "));
         assert!(text.ends_with("(zoom <id> for the full text)"));
+    }
+
+    #[test]
+    fn changes_call_parses_into_a_request() {
+        let Outcome::Changes { id, request } = call("changes", json!({"format": "files"})) else {
+            panic!("expected changes")
+        };
+        assert_eq!(id, json!(7));
+        assert_eq!(request.format, crate::changes::ChangeFormat::Files);
+    }
+
+    #[test]
+    fn changes_with_bad_args_is_a_tool_error() {
+        let Outcome::Respond(v) = call("changes", json!({"turn": 1, "since": 2})) else {
+            panic!("expected respond")
+        };
+        assert_eq!(v["result"]["isError"], true);
     }
 
     #[test]

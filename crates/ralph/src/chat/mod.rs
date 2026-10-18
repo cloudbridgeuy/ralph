@@ -1,4 +1,5 @@
 pub(crate) mod cell;
+mod changes;
 mod check;
 mod diff;
 mod editor;
