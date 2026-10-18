@@ -32,8 +32,10 @@ pub mod signal;
 pub mod spinner;
 pub mod startup;
 mod status_theme;
+
 pub mod stream_processor;
 pub mod subprocess;
+mod transport;
 mod version;
 pub mod warn;
 mod watch_requests;

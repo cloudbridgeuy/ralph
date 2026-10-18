@@ -1,6 +1,7 @@
 use crate::config::AppConfig;
-use crate::cursor_owner::{now_secs, process_start, signal_group, sweep_owner, write_file};
-use crate::cursor_owner::{request_ids, TERM_GRACE, TERM_POLL};
+use crate::cursor_owner::request_ids;
+use crate::cursor_owner::{now_secs, process_start, sweep_owner, write_file};
+use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::HeadlessHost;
@@ -28,14 +29,13 @@ use ralph_core::worker::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{self, Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub(crate) const AGENT_COMMAND: &str = "agent";
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -236,16 +236,10 @@ impl AcpWorker {
         if let Some(warning) = agent_version_warning() {
             warn(warning);
         }
-        let mut child = Command::new(AGENT_COMMAND)
-            .arg("acp")
-            .current_dir(&request.worktree)
-            .process_group(0)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
+        let mut command = Command::new(AGENT_COMMAND);
+        command.arg("acp").current_dir(&request.worktree);
+        let (child, stdin, stdout) = spawn_piped(command)
             .map_err(|e| format!("could not start `{AGENT_COMMAND} acp`: {e}"))?;
-        let streams = child.stdin.take().zip(child.stdout.take());
         let permissions = Permissions::new(markers.blocked.clone(), cursor_permissions());
         let (prompts, prompt_rx) = queue::unbounded();
         let closing = Arc::new(AtomicBool::new(false));
@@ -264,7 +258,6 @@ impl AcpWorker {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(id.to_string(), worker.child.id());
-        let (stdin, stdout) = streams.ok_or("cursor agent has no stdio pipes")?;
         let server = serde_json::from_value::<McpServer>(acp_mcp_server(
             &request.exe,
             id,
@@ -417,14 +410,7 @@ impl AcpWorker {
         if let Some(stop) = self.stop.take() {
             stop.send(()).ok();
         }
-        let group = self.child.id();
-        signal_group(group, "TERM");
-        let deadline = Instant::now() + TERM_GRACE;
-        while Instant::now() < deadline && matches!(self.child.try_wait(), Ok(None)) {
-            thread::sleep(TERM_POLL);
-        }
-        signal_group(group, "KILL");
-        self.child.wait().ok();
+        stop_child(&mut self.child);
         fs::remove_file(&self.owner).ok();
     }
 }
@@ -625,14 +611,12 @@ impl CursorHost {
             .unwrap_or_else(PoisonError::into_inner)
             .drain()
             .collect();
-        for (_, group) in &starting {
-            signal_group(*group, "TERM");
+        if starting.is_empty() {
+            return;
         }
-        if !starting.is_empty() {
-            thread::sleep(SHUTDOWN_GRACE);
-        }
-        for (id, group) in &starting {
-            signal_group(*group, "KILL");
+        let groups: Vec<u32> = starting.iter().map(|(_, group)| *group).collect();
+        stop_groups(&groups, SHUTDOWN_GRACE, || true);
+        for (id, _) in &starting {
             self.forget(id);
         }
     }

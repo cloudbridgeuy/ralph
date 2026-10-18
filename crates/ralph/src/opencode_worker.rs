@@ -1,17 +1,18 @@
 use crate::cursor_owner::{process_start, write_file};
+use crate::transport::http::HttpSse;
+use crate::transport::stdio::stop_child;
 use crate::warn::warn;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::HeadlessHost;
 use ralph_core::worker::{
-    advance, basic_auth, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
+    advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
     reconcile, reconnect_delay, running_sessions, server_record_fate, server_record_pid,
-    server_record_usable, server_url, session_missing, session_update, spawn_failure,
-    start_failure, transient_request_error, turn_result, ApiData, Effect, OpencodeFiles,
-    OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord, ServerRecordFacts,
-    SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerMarkers,
-    OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
-    SILENCE_TIMEOUT, TRANSIENT_RETRIES,
+    server_record_usable, session_missing, session_update, spawn_failure, start_failure,
+    turn_result, ApiData, Effect, OpencodeFiles, OpencodeRecord, PermissionAsked, RecordFate,
+    ServerEvent, ServerRecord, ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate,
+    TurnFacts, TurnState, WorkerMarkers, OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV,
+    OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -27,7 +28,6 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
-use ureq::Agent;
 
 mod requests;
 
@@ -38,137 +38,15 @@ const ACTIVE_PATH: &str = "/api/session/active";
 const EVENTS_PATH: &str = "/api/event";
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(20);
 const HEALTH_POLL: Duration = Duration::from_millis(100);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const STREAM_LIFETIME: Duration = Duration::from_secs(900);
 const HOST_POLL: Duration = Duration::from_millis(500);
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(3);
-const TERM_GRACE: Duration = Duration::from_secs(3);
-const RETRY_DELAY: Duration = Duration::from_millis(500);
-const TERM_POLL: Duration = Duration::from_millis(20);
 const SWEEP_GRACE: Duration = Duration::from_millis(500);
 const MESSAGE_LIMIT: u32 = 20;
 const START_ATTEMPTS: u32 = 5;
 
-#[derive(Clone)]
-struct Api {
-    agent: Agent,
-    stream: Agent,
-    base: String,
-    auth: String,
-}
-
-impl Api {
-    fn new(port: u16, password: &str) -> Self {
-        let plain = Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(REQUEST_TIMEOUT))
-            .build();
-        let stream = Agent::config_builder()
-            .http_status_as_error(false)
-            .timeout_connect(Some(CONNECT_TIMEOUT))
-            .timeout_recv_body(Some(STREAM_LIFETIME))
-            .build();
-        Self {
-            agent: plain.into(),
-            stream: stream.into(),
-            base: server_url(port),
-            auth: basic_auth(password),
-        }
-    }
-
-    fn url(&self, path: &str) -> String {
-        format!("{}{path}", self.base)
-    }
-
-    fn read(mut response: ureq::http::Response<ureq::Body>) -> Result<String, String> {
-        let status = response.status();
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|e| e.to_string())?;
-        if status.is_success() {
-            Ok(body)
-        } else {
-            Err(format!("HTTP {}: {body}", status.as_u16()))
-        }
-    }
-
-    fn get(&self, path: &str) -> Result<String, String> {
-        let response = self
-            .agent
-            .get(self.url(path))
-            .header("Authorization", &self.auth)
-            .call()
-            .map_err(|e| e.to_string())?;
-        Self::read(response)
-    }
-
-    fn post(&self, path: &str, body: &str) -> Result<String, String> {
-        let response = self
-            .agent
-            .post(self.url(path))
-            .header("Authorization", &self.auth)
-            .header("Content-Type", "application/json")
-            .send(body)
-            .map_err(|e| e.to_string())?;
-        Self::read(response)
-    }
-
-    fn post_retrying(&self, path: &str, body: &str) -> Result<String, String> {
-        let mut attempt = 0;
-        loop {
-            match self.post(path, body) {
-                Err(message)
-                    if attempt < TRANSIENT_RETRIES && transient_request_error(&message) =>
-                {
-                    attempt += 1;
-                    thread::sleep(RETRY_DELAY);
-                }
-                result => return result,
-            }
-        }
-    }
-
-    fn evict_location(&self, directory: &str) -> Result<String, String> {
-        let response = self
-            .agent
-            .delete(self.url("/api/debug/location"))
-            .query("location[directory]", directory)
-            .header("Authorization", &self.auth)
-            .call()
-            .map_err(|e| e.to_string())?;
-        Self::read(response)
-    }
-
-    fn delete(&self, path: &str) -> Result<String, String> {
-        let response = self
-            .agent
-            .delete(self.url(path))
-            .header("Authorization", &self.auth)
-            .call()
-            .map_err(|e| e.to_string())?;
-        Self::read(response)
-    }
-
-    fn events(&self) -> Result<impl Read + Send, String> {
-        let response = self
-            .stream
-            .get(self.url(EVENTS_PATH))
-            .header("Authorization", &self.auth)
-            .header("Accept", "text/event-stream")
-            .call()
-            .map_err(|e| e.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}", response.status().as_u16()));
-        }
-        Ok(response.into_body().into_reader())
-    }
-}
-
 struct Server {
     child: Child,
-    api: Api,
+    api: HttpSse,
     tree: Vec<u32>,
     record: PathBuf,
 }
@@ -191,7 +69,7 @@ impl Server {
             .map_err(|e| spawn_failure(program, &e))?;
         let mut server = Self {
             child,
-            api: Api::new(port, &password),
+            api: HttpSse::new(port, &password),
             tree: Vec::new(),
             record: opencode_server_record_path(&std::env::temp_dir(), std::process::id()),
         };
@@ -248,13 +126,7 @@ impl Server {
                 orphans.push(pid);
             }
         }
-        kill("TERM", &format!("-{group}"));
-        let deadline = Instant::now() + TERM_GRACE;
-        while Instant::now() < deadline && self.alive() {
-            thread::sleep(TERM_POLL);
-        }
-        kill("KILL", &format!("-{group}"));
-        self.child.wait().ok();
+        stop_child(&mut self.child);
         sweep(&orphans);
     }
 }
@@ -289,7 +161,7 @@ pub fn running_opencode_sessions() -> Option<HashSet<String>> {
         fs::remove_file(&path).ok();
         return None;
     }
-    let body = Api::new(record.port, &record.password)
+    let body = HttpSse::new(record.port, &record.password)
         .get(ACTIVE_PATH)
         .ok()?;
     running_sessions(&body).map(|running| running.into_iter().collect())
@@ -486,11 +358,11 @@ impl OpencodeHost {
         self.closed.load(Ordering::SeqCst)
     }
 
-    fn api(&self) -> Option<Api> {
+    fn api(&self) -> Option<HttpSse> {
         self.server().as_ref().map(|server| server.api.clone())
     }
 
-    fn start_server(&self) -> Result<Api, String> {
+    fn start_server(&self) -> Result<HttpSse, String> {
         let mut guard = self.server();
         if self.closed() {
             return Err("the chat is closing".to_string());
@@ -620,7 +492,7 @@ impl OpencodeHost {
     }
 
     fn snapshot_of(
-        api: &Api,
+        api: &HttpSse,
         session_id: &str,
         state: &TurnState,
         running: &[String],
@@ -676,7 +548,7 @@ impl OpencodeHost {
         }
     }
 
-    fn verify_resumed(&self, api: &Api) {
+    fn verify_resumed(&self, api: &HttpSse) {
         let pending: Vec<(String, Target)> = self
             .sessions()
             .iter()
@@ -719,7 +591,7 @@ impl OpencodeHost {
         let api = self
             .api()
             .ok_or_else(|| "the opencode server is not running".to_string())?;
-        let reader = api.events()?;
+        let reader = api.events(EVENTS_PATH)?;
         let (sender, feed) = mpsc::channel();
         thread::spawn(move || read_lines(reader, &sender));
         Ok(Link {
@@ -828,7 +700,7 @@ impl OpencodeHost {
     }
 }
 
-fn post_prompt(api: &Api, session_id: &str, text: &str) -> Result<(), String> {
+fn post_prompt(api: &HttpSse, session_id: &str, text: &str) -> Result<(), String> {
     let body = json!({ "text": text }).to_string();
     api.post_retrying(&format!("/api/session/{session_id}/prompt"), &body)
         .map(|_| ())

@@ -1,3 +1,4 @@
+use crate::transport::stdio::stop_group;
 use ralph_core::worker::{
     caller_owns_worker, ready_path, sweep_decision, CursorFiles, OwnerFacts, OwnerRecord, Sweep,
     CURSOR_OWNER_DIR,
@@ -6,8 +7,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::process::{self, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const TERM_GRACE: Duration = Duration::from_secs(3);
 pub(crate) const TERM_POLL: Duration = Duration::from_millis(20);
@@ -92,12 +92,9 @@ pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
     };
     let decision = sweep_decision(facts);
     if let (Sweep::Reclaim { kill_group: true }, Some(record)) = (decision, &record) {
-        signal_group(record.group, "TERM");
-        let deadline = Instant::now() + TERM_GRACE;
-        while Instant::now() < deadline && alive_since(record.group, &record.group_start) {
-            thread::sleep(TERM_POLL);
-        }
-        signal_group(record.group, "KILL");
+        stop_group(record.group, || {
+            alive_since(record.group, &record.group_start)
+        });
     }
     if matches!(decision, Sweep::Reclaim { .. }) {
         for path in files.all() {
