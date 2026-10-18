@@ -41,13 +41,11 @@ use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
-use ralph_core::chat::{
-    resolve_frozen_window, resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width,
-};
+use ralph_core::chat::{resolve_watch_timeout, resolve_worker_check_secs, resolve_wrap_width};
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
-use ralph_core::chat_memory::Trigger;
+use ralph_core::chat_memory::{HistoryPolicy, Trigger};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, Route, Status};
 use ralph_core::inbox_alert::AlertConfig;
@@ -104,7 +102,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             .as_deref(),
     );
     let chat_config = config.chat;
-    let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
+    let history_policy = HistoryPolicy::parse(
+        args.frozen_window.or(chat_config.frozen_window),
+        args.recent_history_tokens
+            .or(chat_config.recent_history_tokens),
+    )?;
     let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
     let watch_timeout = resolve_watch_timeout(chat_config.watch_timeout_secs)?;
     let wrap_cap = resolve_wrap_width(
@@ -166,7 +168,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         timeout_secs: args.timeout,
         theme_config: &theme_config,
         frozen: Mutex::new(None),
-        frozen_window,
+        history_policy,
         cancel: signal::interrupt_flag(),
     };
     let snapshots = TurnSnapshots::open(
@@ -184,7 +186,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
-        frozen_window,
+        history_policy,
         worker_check_secs,
         workers: Workers::new(
             store_dir.clone(),

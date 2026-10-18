@@ -8,9 +8,8 @@ use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{ExitCleanup, HeadlessShutdown};
 use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
-use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
-use ralph_core::chat_memory::{frozen_block, tail_lines};
+use ralph_core::chat_memory::{history_view, HistoryPolicy};
 use ralph_core::chat_status::{
     last_turn_cache, latest_states, memory_size, watch_states, worker_states, Memory,
     RunningWorker, Status,
@@ -55,7 +54,7 @@ pub(super) struct Monitor {
     pub(super) status: Mutex<Status>,
     pub(super) seen: Mutex<HashMap<String, String>>,
     pub(super) active: Mutex<Option<HashSet<String>>>,
-    pub(super) frozen_window: usize,
+    pub(super) history_policy: HistoryPolicy,
     pub(super) worker_check_secs: Option<u64>,
     pub(super) workers: Workers,
     pub(super) check: Mutex<CheckState>,
@@ -156,9 +155,11 @@ impl Monitor {
 
     fn measure_memory(&self) -> Option<Memory> {
         let (entries, tree) = self.store.load().ok()?;
-        let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, None);
-        let tail = tail_lines(&entries, &tree, frozen.end);
-        Some(memory_size(entries.len(), &[frozen.lines, tail].concat()))
+        let view = history_view(&entries, &tree, self.history_policy, None);
+        Some(memory_size(
+            entries.len(),
+            &[view.frozen.lines, view.tail].concat(),
+        ))
     }
 
     fn alert_fresh(&self, pending: &[Report]) {

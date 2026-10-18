@@ -1,3 +1,4 @@
+mod history;
 mod log;
 mod nap;
 mod tools;
@@ -7,6 +8,7 @@ mod usage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use history::{history_view, HistoryPolicy, HistoryView, RecentHistory};
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
 pub use nap::{check_summary, nap_prompt, nap_summary, retry_prompt, MAX_NAP_ATTEMPTS};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};

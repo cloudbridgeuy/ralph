@@ -53,9 +53,9 @@ pub fn resolve_frozen_window(flag: Option<usize>, config: Option<usize>) -> Resu
 }
 
 pub const SYSTEM_PROMPT: &str = "\
-You are in a long-running chat with one person. The chat so far is compressed, oldest first. The older lines are at the end of this system prompt. The most recent lines start the message you receive, then the new message.
+You are in a long-running chat with one person. Older history is compressed, oldest first, at the end of this system prompt. The message you receive starts with recent history, including complete original messages where the budget permits, then the new message.
 
-Lines that start with #<id> are summaries of older parts of the chat. The zoom tool opens one into its two halves. The recall tool searches the full chat by regex.
+Lines that start with #<id> identify chat messages or summaries. A range id identifies a summary of older messages. The zoom tool opens a range into its two halves, or a single id into its original message. The recall tool searches the full chat by regex.
 
 Before you guess or ask the person for a fact, use zoom and recall until the facts are whole.
 

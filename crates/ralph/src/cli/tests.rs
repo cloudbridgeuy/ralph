@@ -21,6 +21,25 @@ fn test_cli_version_flags_render_the_current_version() {
 }
 
 #[test]
+fn chat_parses_recent_history_into_known_modes() {
+    for (value, expected) in [("0", 0_usize), ("8192", 8192)] {
+        let Some(Commands::Chat(chat)) =
+            Cli::try_parse_from(["ralph", "chat", "--recent-history-tokens", value])
+                .unwrap()
+                .command
+        else {
+            panic!("expected chat");
+        };
+        assert_eq!(chat.recent_history_tokens, Some(expected.into()));
+    }
+    for invalid in ["many", "1.5", "-1"] {
+        assert!(
+            Cli::try_parse_from(["ralph", "chat", "--recent-history-tokens", invalid]).is_err()
+        );
+    }
+}
+
+#[test]
 fn test_cli_chat_takes_a_wrap_width() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "--wrap-width", "80"])
         .unwrap()

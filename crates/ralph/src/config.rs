@@ -6,6 +6,7 @@ use crate::invoke::{
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
+use ralph_core::chat_memory::RecentHistory;
 use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::worker::CursorPermissions;
 use serde::{Deserialize, Serialize};
@@ -153,6 +154,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub frozen_window: Option<usize>,
     #[serde(default)]
+    pub recent_history_tokens: Option<RecentHistory>,
+    #[serde(default)]
     pub worker_check_secs: Option<u64>,
     #[serde(default)]
     pub watch_timeout_secs: Option<u64>,
@@ -219,6 +222,7 @@ impl Default for ChatSection {
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
             frozen_window: None,
+            recent_history_tokens: None,
             worker_check_secs: None,
             watch_timeout_secs: None,
             wrap_width: None,
@@ -468,6 +472,25 @@ mod tests {
             unknown.changes.warnings(),
             ["[changes] pager = \"less\" is unknown; using git"]
         );
+    }
+
+    #[test]
+    fn chat_recent_history_parses_modes_and_round_trips() {
+        assert_eq!(AppConfig::default().chat.recent_history_tokens, None);
+        for budget in [0_usize, 1, 4096, 8192] {
+            let config: AppConfig =
+                toml::from_str(&format!("[chat]\nrecent_history_tokens = {budget}\n")).unwrap();
+            assert_eq!(config.chat.recent_history_tokens, Some(budget.into()));
+            let encoded = toml::to_string(&config).unwrap();
+            let decoded: AppConfig = toml::from_str(&encoded).unwrap();
+            assert_eq!(decoded.chat.recent_history_tokens, Some(budget.into()));
+        }
+        for invalid in ["-1", "1.5", "\"many\""] {
+            assert!(toml::from_str::<AppConfig>(&format!(
+                "[chat]\nrecent_history_tokens = {invalid}\n"
+            ))
+            .is_err());
+        }
     }
 
     #[test]
