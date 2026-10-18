@@ -1,7 +1,7 @@
 use ralph_core::snapshot::{
     commit_tree_args, delete_payload, delete_refs_args, gc_args, identity_env, index_env,
-    index_path, init_args, list_prefix_args, next_turn, parse_turns, refs_to_prune, side_dir,
-    update_ref_args, CHAT_REF_PREFIX, KEEP_TURNS,
+    index_path, index_steps, init_args, list_prefix_args, next_turn, parse_turns, refs_to_prune,
+    side_dir, update_ref_args, IndexStep, CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS,
 };
 use ralph_core::worker::project_slug;
 use std::ffi::OsString;
@@ -93,20 +93,47 @@ impl Snapshotter {
         Ok(())
     }
 
-    fn repo_git(&self, args: &[&str]) -> Command {
+    fn repo_command(&self, args: &[&str]) -> Command {
         let mut command = Command::new("git");
         command
             .arg("-C")
             .arg(&self.repo)
             .args(args)
-            .envs(index_env(&self.side, &self.owner))
             .stdin(Stdio::null());
         command
     }
 
+    fn repo_git(&self, args: &[&str]) -> Command {
+        let mut command = self.repo_command(args);
+        command.envs(index_env(&self.side, &self.owner));
+        command
+    }
+
+    // HEAD's objects live in the repo, not the side dir, so read-tree swaps
+    // only the index. Stat-clean entries keep blobs an earlier add wrote to
+    // the side dir; the rest are rehashed by add -A.
+    fn step_git(&self, step: IndexStep) -> Command {
+        match step {
+            IndexStep::ReadHead => {
+                let mut command = self.repo_command(step.args());
+                command.env("GIT_INDEX_FILE", index_path(&self.side, &self.owner));
+                command
+            }
+            IndexStep::AddAll => self.repo_git(step.args()),
+        }
+    }
+
     pub fn write_tree(&self) -> io::Result<String> {
         self.ensure_side()?;
-        stdout_of(&mut self.repo_git(&["add", "-A"]))?;
+        let has_head = self
+            .repo_command(&HEAD_CHECK_ARGS)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?
+            .success();
+        for step in index_steps(has_head) {
+            stdout_of(&mut self.step_git(step))?;
+        }
         stdout_of(&mut self.repo_git(&["write-tree"]))
     }
 

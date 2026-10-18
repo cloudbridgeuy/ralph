@@ -148,7 +148,7 @@ Unless `[changes] enabled = false`, every turn (user, `/private`, and worker-rep
 
 - Storage: one bare git dir per repo at `<store>/snapshots/<repo-dir-name>.git`, with its own objects and no link to the repo. The repo's own refs and objects are untouched.
 - Refs: `refs/ralph/chat/turn-<n>/start` and `.../end`. `<n>` continues from the highest existing number, also across restarts.
-- Content: `git add -A` into a private index at `<side>/index/chat`, so `.gitignore` and `info/exclude` apply, then `write-tree` and `commit-tree`. Snapshot commits have no parents.
+- Content: `git read-tree -m -i HEAD` into a private index at `<side>/index/chat` (skipped when the branch has no commit yet), then `git add -A`, so tracked files stay even when ignored and `.gitignore` and `info/exclude` apply to untracked files, then `write-tree` and `commit-tree`. `read-tree` runs without the side object dir; stat-clean entries reuse blobs an earlier snapshot wrote there and `add -A` rehashes the rest. Snapshot commits have no parents.
 - Pruning: after each turn the last 20 turns stay; older start and end refs are deleted, then `git gc --auto --prune=1.hour.ago` reclaims objects.
 - Code: pure logic in `crates/core/src/snapshot.rs`; git calls in `crates/ralph/src/snapshot.rs`; the turn hook in `crates/ralph/src/chat/snapshots.rs`.
 

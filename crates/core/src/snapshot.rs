@@ -148,6 +148,31 @@ pub fn index_env(side: &Path, owner: &str) -> [(&'static str, OsString); 2] {
     ]
 }
 
+pub const HEAD_CHECK_ARGS: [&str; 4] = ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexStep {
+    ReadHead,
+    AddAll,
+}
+
+impl IndexStep {
+    pub fn args(self) -> &'static [&'static str] {
+        match self {
+            IndexStep::ReadHead => &["read-tree", "-m", "-i", "HEAD"],
+            IndexStep::AddAll => &["add", "-A"],
+        }
+    }
+}
+
+pub fn index_steps(has_head: bool) -> Vec<IndexStep> {
+    has_head
+        .then_some(IndexStep::ReadHead)
+        .into_iter()
+        .chain([IndexStep::AddAll])
+        .collect()
+}
+
 pub fn identity_env() -> [(&'static str, &'static str); 4] {
     IDENTITY
 }
@@ -420,6 +445,21 @@ mod tests {
                 "refs/ralph/workers/A/"
             ]
         );
+    }
+
+    #[test]
+    fn index_steps_read_head_before_adding_everything() {
+        assert_eq!(index_steps(true), [IndexStep::ReadHead, IndexStep::AddAll]);
+        assert_eq!(
+            IndexStep::ReadHead.args(),
+            ["read-tree", "-m", "-i", "HEAD"]
+        );
+        assert_eq!(IndexStep::AddAll.args(), ["add", "-A"]);
+    }
+
+    #[test]
+    fn index_steps_skip_read_head_without_head() {
+        assert_eq!(index_steps(false), [IndexStep::AddAll]);
     }
 
     #[test]
