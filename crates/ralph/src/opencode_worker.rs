@@ -1,9 +1,12 @@
+use crate::config::AppConfig;
 use crate::cursor_owner::{process_start, write_file};
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
+use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
+use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::Scope;
 use ralph_core::worker::{
     advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
@@ -270,6 +273,7 @@ struct Target {
     worker: String,
     markers: WorkerMarkers,
     inbox: PathBuf,
+    site: Option<WorkerSite>,
 }
 
 struct Session {
@@ -299,7 +303,7 @@ fn read_lines(reader: impl Read, feed: &Sender<Feed>) {
     feed.send(Feed::Ended).ok();
 }
 
-fn load_sessions(store: &Path) -> HashMap<String, Session> {
+fn load_sessions(store: &Path, snapshots: bool) -> HashMap<String, Session> {
     let ids: Vec<String> = fs::read_dir(store.join(OPENCODE_SESSION_DIR))
         .map(|entries| {
             entries
@@ -323,11 +327,17 @@ fn load_sessions(store: &Path) -> HashMap<String, Session> {
             let markers = WorkerMarkers::new(store, &id);
             let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
             heartbeat.clear();
+            let site = snapshots.then(|| WorkerSite {
+                store: store.to_path_buf(),
+                id: id.clone(),
+                worktree: record.cwd,
+            });
             let session = Session {
                 target: Target {
                     markers,
                     worker: id,
                     inbox: record.inbox,
+                    site,
                 },
                 turn: TurnState::default(),
                 verified: false,
@@ -349,7 +359,10 @@ impl OpencodeHost {
     pub(crate) fn new(store_dir: PathBuf) -> Arc<Self> {
         fs::remove_dir_all(store_dir.join(OPENCODE_OWNER_DIR)).ok();
         Arc::new(Self {
-            sessions: Mutex::new(load_sessions(&store_dir)),
+            sessions: Mutex::new(load_sessions(
+                &store_dir,
+                snapshots_enabled(AppConfig::load().ok().map(|config| config.changes.enabled)),
+            )),
             store_dir,
             server: Mutex::new(None),
             closed: AtomicBool::new(false),
@@ -496,6 +509,11 @@ impl OpencodeHost {
                 }
                 Effect::Problem(problem) => post_problem(target, &problem),
                 Effect::Send(text) => self.send(session_id, target, &text),
+                Effect::Snapshot => {
+                    if let Some(changes) = target.site.as_ref().and_then(WorkerChanges::open) {
+                        changes.snapshot_turn_or_warn();
+                    }
+                }
             }
         }
     }
@@ -797,7 +815,7 @@ mod tests {
         fs::write(dir.join("GUZ-1"), record("ses_one", "/inbox")).unwrap();
         fs::write(dir.join("GUZ-2"), "garbage").unwrap();
         fs::write(dir.join(".tmp"), record("ses_tmp", "/inbox")).unwrap();
-        let sessions = load_sessions(store.path());
+        let sessions = load_sessions(store.path(), true);
         assert_eq!(sessions.len(), 1);
         let session = &sessions["ses_one"];
         assert_eq!(session.target.worker, "GUZ-1");
@@ -806,13 +824,23 @@ mod tests {
             session.target.markers,
             WorkerMarkers::new(store.path(), "GUZ-1")
         );
+        assert_eq!(
+            session.target.site,
+            Some(WorkerSite {
+                store: store.path().to_path_buf(),
+                id: "GUZ-1".to_string(),
+                worktree: PathBuf::from("/w"),
+            })
+        );
         assert_eq!(session.turn, TurnState::default());
+        let off = load_sessions(store.path(), false);
+        assert_eq!(off["ses_one"].target.site, None);
     }
 
     #[test]
     fn load_sessions_is_empty_without_records() {
         let store = tempfile::tempdir().unwrap();
-        assert!(load_sessions(store.path()).is_empty());
+        assert!(load_sessions(store.path(), true).is_empty());
     }
 
     #[test]

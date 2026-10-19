@@ -216,7 +216,7 @@ impl WorktreeVia {
     }
 }
 
-pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path, worktree: Option<&Path>) -> Value {
+pub fn worker_mcp_args(id: &str, inbox: &Path, worktree: Option<&Path>) -> Vec<String> {
     let mut args = vec![
         "worker-mcp".to_string(),
         "--id".to_string(),
@@ -228,23 +228,24 @@ pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path, worktree: Option<&P
         args.push("--worktree".to_string());
         args.push(worktree.to_string_lossy().into_owned());
     }
+    args
+}
+
+pub fn worker_mcp_config(exe: &Path, id: &str, inbox: &Path, worktree: Option<&Path>) -> Value {
     json!({
         "mcpServers": {
             SERVER_NAME: {
                 "command": exe.to_string_lossy(),
-                "args": args
+                "args": worker_mcp_args(id, inbox, worktree)
             }
         }
     })
 }
 
-pub fn opencode_config(
-    model: &str,
-    exe: &Path,
-    id: &str,
-    inbox: &Path,
-    attachments: &Path,
-) -> Value {
+pub fn opencode_config(model: &str, exe: &Path, mcp_args: &[String], attachments: &Path) -> Value {
+    let command: Vec<String> = std::iter::once(exe.to_string_lossy().into_owned())
+        .chain(mcp_args.iter().cloned())
+        .collect();
     json!({
         "$schema": "https://opencode.ai/config.json",
         "model": model,
@@ -255,7 +256,7 @@ pub fn opencode_config(
         "mcp": {
             SERVER_NAME: {
                 "type": "local",
-                "command": [exe.to_string_lossy(), "worker-mcp", "--id", id, "--inbox", inbox.to_string_lossy()],
+                "command": command,
                 "enabled": true
             }
         }
@@ -534,8 +535,7 @@ mod tests {
         let config = opencode_config(
             "openai/gpt-6.1-sol",
             Path::new("/bin/ralph"),
-            "A",
-            Path::new("/s/inbox"),
+            &worker_mcp_args("A", Path::new("/s/inbox"), Some(Path::new("/w"))),
             Path::new("/s/attachments"),
         );
         assert_eq!(config["model"], "openai/gpt-6.1-sol");
@@ -548,7 +548,10 @@ mod tests {
             config["mcp"][SERVER_NAME],
             json!({
                 "type": "local",
-                "command": ["/bin/ralph", "worker-mcp", "--id", "A", "--inbox", "/s/inbox"],
+                "command": [
+                    "/bin/ralph", "worker-mcp", "--id", "A", "--inbox", "/s/inbox",
+                    "--worktree", "/w"
+                ],
                 "enabled": true
             })
         );

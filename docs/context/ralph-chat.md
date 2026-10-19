@@ -167,11 +167,11 @@ Unless `[changes] enabled = false`, every turn (user, `/private`, and worker-rep
 
 ### Worker snapshots and report diffstats
 
-Claude and Cursor workers snapshot their worktree into the same side dir, keyed by the main repo name (from `git rev-parse --git-common-dir`). Opencode workers take no snapshots.
+Claude, Cursor and opencode workers snapshot their worktree into the same side dir, keyed by the main repo name (from `git rev-parse --git-common-dir`). Snapshots come from ralph's own side dir, not from opencode's `/api/session/<sid>/diff`.
 
-- Refs: `refs/ralph/workers/<id>/turn-<k>`, private index at `<side>/index/workers/<id>`. Turn 0 is taken at spawn; turn `k` at the end of each turn (Claude Stop hook, Cursor `run_turns`). The last 20 stay. `close_worker` deletes the refs and the index.
+- Refs: `refs/ralph/workers/<id>/turn-<k>`, private index at `<side>/index/workers/<id>`. Turn 0 is taken at spawn; turn `k` at the end of each turn (Claude Stop hook, Cursor `run_turns`, opencode `Effect::Snapshot`, which the pure `TurnState` emits first on every `TurnEnded` from SSE or `reconcile`, resends included, but not while the chat is closing; the chat's SSE thread runs the git calls). The `/opencode.json` line that spawn adds to the repo's `info/exclude` keeps ralph's opencode config out of the snapshots unless the repo tracks that file. The last 20 stay. `close_worker` deletes the refs and the index.
 - Report: the worker MCP server (`worker-mcp --worktree`) appends two `git diff --stat` blocks to the report text, rendered by `render_changes`: since spawn (merge-base of `HEAD` and the worker base branch against a fresh tree of the worktree, so untracked files count) and since the last turn snapshot (labelled turn `latest + 1`). A block that cannot be computed is left out. Output is uncapped. The since-spawn block is already rebase-safe, because it diffs from the current merge-base. The since-last-turn block is rebase-aware (see "Reading changes").
-- `[changes] enabled = false` also turns off worker snapshots and report diffstats: the spawn decides once (`snapshots_enabled`), takes no turn 0, and passes no `--worktree` to the worker hooks and MCP server. `close_worker` still clears leftover refs and index from workers spawned while it was on.
+- `[changes] enabled = false` also turns off worker snapshots and report diffstats: the spawn decides once (`snapshots_enabled`), takes no turn 0, and passes no `--worktree` to the worker hooks and MCP server (opencode: `opencode.json`'s `worker-mcp` command, built by `worker_mcp_args`; the spawn handoff carries `snapshots`, and resumed opencode sessions read the config at chat start). `close_worker` still clears leftover refs and index from workers spawned while it was on.
 - Code: pure helpers in `crates/core/src/snapshot.rs` and `crates/core/src/changes.rs`; git calls in `crates/ralph/src/worker_changes.rs`.
 
 ### Reading changes

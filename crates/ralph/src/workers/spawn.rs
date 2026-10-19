@@ -11,11 +11,11 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
     project_slug, rollback_plan, rollback_report, session_name, spawn_handoff, startup_state,
-    worker_command, worker_mcp_config, worktree_add_args, wt_switch_args, CursorFiles, Handoff,
-    HarnessId, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest,
-    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, DEFAULT_OPENCODE_MODEL,
-    HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS,
-    WORKERS_DIR,
+    worker_command, worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args,
+    CursorFiles, Handoff, HarnessId, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint,
+    SpawnRequest, Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT,
+    DEFAULT_OPENCODE_MODEL, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
+    TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -94,10 +94,8 @@ impl Workers {
             session: &session,
             started: started_text(id, &worktree, &via, worktree_dir.warning.as_deref()),
         };
-        if !matches!(harness, HarnessId::Opencode) {
-            if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
-                changes.snapshot_turn_or_warn();
-            }
+        if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
+            changes.snapshot_turn_or_warn();
         }
         self.launch(&launch).map_err(|error| {
             warn_if_err(
@@ -176,9 +174,11 @@ impl Workers {
             }
             HarnessId::Opencode => {
                 let model = model.unwrap_or(DEFAULT_OPENCODE_MODEL);
-                let config = opencode_config(model, &self.exe, id, &inbox, &attachments);
+                let worktree_arg = site.map(|site| site.worktree.as_path());
+                let mcp_args = worker_mcp_args(id, &inbox, worktree_arg);
+                let config = opencode_config(model, &self.exe, &mcp_args, &attachments);
                 fs::write(worktree.join(OPENCODE_CONFIG_FILE), config.to_string())?;
-                self.spawn_opencode(id, worktree, model, task)?;
+                self.spawn_opencode(launch, model)?;
                 return Ok(format!(
                     "{started} It runs headless on the shared opencode server inside ralph chat (no tmux session)."
                 ));
@@ -248,17 +248,19 @@ impl Workers {
         self.await_spawn(&files.spawn, &ready, &files.error, "cursor")
     }
 
-    fn spawn_opencode(&self, id: &str, worktree: &Path, model: &str, task: &str) -> io::Result<()> {
+    fn spawn_opencode(&self, launch: &Launch, model: &str) -> io::Result<()> {
+        let id = launch.id;
         let files = OpencodeFiles::new(&self.store_dir, id);
         for path in files.requests() {
             clear_marker(path)?;
         }
         let request = OpencodeSpawn {
-            worktree: worktree.to_path_buf(),
+            worktree: launch.worktree.to_path_buf(),
             inbox: self.store_dir.join(INBOX_DIR),
             model: model.to_string(),
-            task: task.to_string(),
+            task: launch.task.to_string(),
             at: now_secs(),
+            snapshots: launch.site.is_some(),
         };
         write_file(&files.spawn, &request.render())?;
         let ready = WorkerMarkers::new(&self.store_dir, id).ready;

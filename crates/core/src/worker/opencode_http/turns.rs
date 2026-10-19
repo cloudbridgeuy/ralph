@@ -50,6 +50,7 @@ pub enum Effect {
     ClearReported,
     Unreported,
     Problem(String),
+    Snapshot,
 }
 
 impl TurnState {
@@ -79,6 +80,14 @@ impl TurnState {
     }
 
     fn end(&mut self, end: &TurnEnd, facts: TurnFacts) -> Vec<Effect> {
+        let snapshot = (!facts.closing).then_some(Effect::Snapshot);
+        snapshot
+            .into_iter()
+            .chain(self.settle(end, facts))
+            .collect()
+    }
+
+    fn settle(&mut self, end: &TurnEnd, facts: TurnFacts) -> Vec<Effect> {
         self.in_flight = false;
         let retry = matches!(
             end,
@@ -229,7 +238,10 @@ mod tests {
         assert_eq!(state.retries, 0);
         assert_eq!(state.prompt, "new");
         let effects = ended(&mut state, failed_end("503", true), facts());
-        assert_eq!(effects, vec![Effect::Send("new".to_string())]);
+        assert_eq!(
+            effects,
+            vec![Effect::Snapshot, Effect::Send("new".to_string())]
+        );
     }
 
     #[test]
@@ -298,17 +310,17 @@ mod tests {
         let mut state = TurnState::default();
         assert_eq!(
             ended(&mut state, TurnEnd::Succeeded, facts()),
-            vec![Effect::Send(REPORT_REMINDER.to_string())]
+            vec![Effect::Snapshot, Effect::Send(REPORT_REMINDER.to_string())]
         );
         assert!(state.in_flight && state.reminded);
         assert_eq!(
             ended(&mut state, TurnEnd::Succeeded, facts()),
-            vec![Effect::Unreported]
+            vec![Effect::Snapshot, Effect::Unreported]
         );
         assert!(!state.in_flight && !state.reminded);
         assert_eq!(
             ended(&mut state, TurnEnd::Succeeded, facts()).len(),
-            1,
+            2,
             "a new turn is reminded again"
         );
     }
@@ -325,7 +337,7 @@ mod tests {
         };
         assert_eq!(
             ended(&mut state, TurnEnd::Succeeded, reported),
-            vec![Effect::ClearReported]
+            vec![Effect::Snapshot, Effect::ClearReported]
         );
         assert!(!state.reminded);
     }
@@ -342,7 +354,7 @@ mod tests {
         // shutdown effect is available from the worker turn state machine.
         assert_eq!(
             ended(&mut worker, TurnEnd::Succeeded, reported),
-            vec![Effect::ClearReported]
+            vec![Effect::Snapshot, Effect::ClearReported]
         );
         assert!(!worker.in_flight);
     }
@@ -368,7 +380,7 @@ mod tests {
         advance(&mut state, SessionUpdate::Blocked(asked()), facts());
         assert_eq!(
             ended(&mut state, TurnEnd::Interrupted, facts()),
-            vec![Effect::Publish(None)]
+            vec![Effect::Snapshot, Effect::Publish(None)]
         );
         assert!(state.blocked.is_empty());
     }
@@ -378,7 +390,7 @@ mod tests {
         let mut state = TurnState::default();
         assert_eq!(
             ended(&mut state, failed_end("bad key", false), facts()),
-            vec![Effect::Problem("bad key".to_string())]
+            vec![Effect::Snapshot, Effect::Problem("bad key".to_string())]
         );
     }
 
@@ -392,14 +404,14 @@ mod tests {
         for retry in 1..=TRANSIENT_RETRIES {
             assert_eq!(
                 ended(&mut state, transient.clone(), facts()),
-                vec![Effect::Send("do it".to_string())]
+                vec![Effect::Snapshot, Effect::Send("do it".to_string())]
             );
             assert!(state.in_flight);
             assert_eq!(state.retries, retry);
         }
         assert_eq!(
             ended(&mut state, transient, facts()),
-            vec![Effect::Problem("Not Found".to_string())]
+            vec![Effect::Snapshot, Effect::Problem("Not Found".to_string())]
         );
         assert_eq!(state.retries, 0);
     }
@@ -409,7 +421,7 @@ mod tests {
         let mut state = TurnState::default();
         assert_eq!(
             ended(&mut state, failed_end("Not Found", true), facts()),
-            vec![Effect::Problem("Not Found".to_string())]
+            vec![Effect::Snapshot, Effect::Problem("Not Found".to_string())]
         );
     }
 
@@ -476,6 +488,23 @@ mod tests {
         );
         assert_eq!(reconcile(&state, &snapshot(false)), Vec::new());
         assert_eq!(reconcile(&state, &snapshot(true)), Vec::new());
+    }
+
+    #[test]
+    fn a_turn_end_found_by_reconcile_snapshots_the_worktree() {
+        let mut state = TurnState {
+            in_flight: true,
+            ..TurnState::default()
+        };
+        let done = SessionSnapshot {
+            result: turn_result(&messages(MESSAGES_OK), false),
+            ..snapshot(false)
+        };
+        let effects: Vec<Effect> = reconcile(&state, &done)
+            .into_iter()
+            .flat_map(|update| advance(&mut state, update, facts()))
+            .collect();
+        assert_eq!(effects.first(), Some(&Effect::Snapshot));
     }
 
     #[test]

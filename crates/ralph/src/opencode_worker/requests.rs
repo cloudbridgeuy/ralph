@@ -2,6 +2,7 @@ use super::{post_prompt, OpencodeHost, Session, Target};
 use crate::cursor_owner::{now_secs, write_file};
 use crate::warn::warn;
 use crate::workers::headless::Heartbeat;
+use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     answer_decision, create_session_body, opencode_session_id, permission_reply_body,
     permission_reply_path, request_stale, session_missing, task_prompt, OpencodeFiles,
@@ -142,6 +143,11 @@ impl OpencodeHost {
                     worker: id.to_string(),
                     markers: markers.clone(),
                     inbox: request.inbox.clone(),
+                    site: request.snapshots.then(|| WorkerSite {
+                        store: self.store_dir.clone(),
+                        id: id.to_string(),
+                        worktree: request.worktree.clone(),
+                    }),
                 },
                 turn,
                 verified: true,
