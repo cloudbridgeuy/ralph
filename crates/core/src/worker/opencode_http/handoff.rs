@@ -93,6 +93,10 @@ pub struct ServerRecord {
     pub password: String,
     pub pid: u32,
     pub start: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_start: Option<String>,
 }
 
 impl ServerRecord {
@@ -158,6 +162,12 @@ pub fn server_record_usable(
     own_start_now: Option<&str>,
 ) -> bool {
     record.pid == own_pid && own_start_now == Some(record.start.as_str())
+}
+
+pub fn stale_server_group(record: &ServerRecord, server_start_now: Option<&str>) -> Option<u32> {
+    let pid = record.server_pid?;
+    let start = record.server_start.as_deref()?;
+    (server_start_now == Some(start)).then_some(pid)
 }
 
 pub fn session_permissions() -> Value {
@@ -270,7 +280,33 @@ mod tests {
             password: "abc".to_string(),
             pid,
             start: start.to_string(),
+            server_pid: None,
+            server_start: None,
         }
+    }
+
+    fn with_server(pid: u32, start: &str) -> ServerRecord {
+        ServerRecord {
+            server_pid: Some(pid),
+            server_start: Some(start.to_string()),
+            ..record(1, "s")
+        }
+    }
+
+    #[test]
+    fn stale_group_needs_matching_server_start() {
+        let rec = with_server(77, "t");
+        assert_eq!(stale_server_group(&rec, Some("t")), Some(77));
+        assert_eq!(stale_server_group(&rec, Some("u")), None);
+        assert_eq!(stale_server_group(&rec, None), None);
+        assert_eq!(stale_server_group(&record(1, "s"), Some("t")), None);
+    }
+
+    #[test]
+    fn old_record_without_server_fields_parses() {
+        let text = r#"{"port":1,"password":"p","pid":2,"start":"s"}"#;
+        let rec = ServerRecord::parse(text).unwrap();
+        assert_eq!((rec.server_pid, rec.server_start), (None, None));
     }
 
     fn fate(

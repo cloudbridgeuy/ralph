@@ -14,10 +14,10 @@ use ralph_core::worker::{
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
     reconcile, reconnect_delay, reduce, running_sessions, server_record_fate, server_record_pid,
     server_record_usable, session_activity, session_missing, session_update, spawn_failure,
-    start_failure, turn_result, ApiData, Effect, HeadlessState, HeadlessWorker, OpencodeFiles,
-    OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord, ServerRecordFacts,
-    SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerCommand,
-    WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
+    stale_server_group, start_failure, turn_result, ApiData, Effect, HeadlessState, HeadlessWorker,
+    OpencodeFiles, OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord,
+    ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState,
+    WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
     OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
 };
 use serde_json::json;
@@ -83,7 +83,7 @@ impl Server {
         };
         let ready = server
             .wait_healthy(closed)
-            .and_then(|()| owner_record(port, &password))
+            .and_then(|()| owner_record(port, &password, server.child.id()))
             .and_then(|record| write_record(&server.record, &record));
         match ready {
             Ok(()) => Ok(server),
@@ -143,7 +143,7 @@ impl Server {
     }
 }
 
-fn owner_record(port: u16, password: &str) -> Result<ServerRecord, String> {
+fn owner_record(port: u16, password: &str, server_pid: u32) -> Result<ServerRecord, String> {
     let pid = std::process::id();
     let start = process_start(pid).ok_or("could not read the chat start time")?;
     Ok(ServerRecord {
@@ -151,6 +151,8 @@ fn owner_record(port: u16, password: &str) -> Result<ServerRecord, String> {
         password: password.to_string(),
         pid,
         start,
+        server_pid: Some(server_pid),
+        server_start: process_start(server_pid),
     })
 }
 
@@ -202,8 +204,25 @@ pub(crate) fn sweep_stale_server_records() {
             file_pid_start_now: start_now.as_deref(),
         });
         if fate == RecordFate::Delete {
+            if let Some(group) = record.as_ref().and_then(stale_group_now) {
+                stop_group(group);
+            }
             fs::remove_file(&path).ok();
         }
+    }
+}
+
+fn stale_group_now(record: &ServerRecord) -> Option<u32> {
+    let start = record.server_pid.and_then(process_start);
+    stale_server_group(record, start.as_deref())
+}
+
+fn stop_group(group: u32) {
+    let target = format!("-{group}");
+    kill("TERM", &target);
+    thread::sleep(SWEEP_GRACE);
+    if kill("0", &target) {
+        kill("KILL", &target);
     }
 }
 
