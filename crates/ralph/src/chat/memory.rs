@@ -393,6 +393,30 @@ mod tests {
         assert_eq!(again, 0);
     }
 
+    fn frees_soon(lock: &std::fs::File) -> bool {
+        (0..200).any(|_| {
+            lock.try_lock().is_ok() || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        })
+    }
+
+    #[test]
+    fn nap_curator_runs_without_the_store_lock() {
+        let (_dir, store) = seeded(&[0], 2);
+        let mut free = Vec::new();
+        store
+            .nap(|_| {
+                let probe = store.open_lock().unwrap();
+                free.push(frees_soon(&probe));
+                Ok("sum".into())
+            })
+            .unwrap();
+        assert_eq!(free, [true, true]);
+        assert_eq!(store.load().unwrap().1.len(), 2);
+    }
+
     #[test]
     fn nap_gives_up_after_max_attempts_and_stores_fallback() {
         let (_dir, store) = seeded(&[0], 2);
