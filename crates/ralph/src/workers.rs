@@ -674,6 +674,7 @@ fn stdout_line(output: Output) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn relative_store_becomes_absolute() {
@@ -739,5 +740,40 @@ mod tests {
         let running = running_workers(dir.path());
         let worker = running.iter().find(|worker| worker.id == "A").unwrap();
         assert!(worker.kind == HarnessId::Opencode && worker.session.is_empty());
+    }
+
+    #[test]
+    fn a_reply_to_an_opencode_worker_queues_a_prompt_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
+        assert_eq!(
+            workers.reply("A", "hello", false).unwrap(),
+            "Sent to worker A."
+        );
+        let files = OpencodeFiles::new(dir.path(), "A");
+        let only = |dir: &Path| {
+            fs::read_to_string(fs::read_dir(dir).unwrap().next().unwrap().unwrap().path())
+        };
+        assert_eq!(only(&files.prompt).unwrap(), "hello");
+        let (interrupts, results) = (files.interrupt.clone(), files.interrupt_result.clone());
+        let host = thread::spawn(move || loop {
+            if let Some(entry) = fs::read_dir(&interrupts).ok().and_then(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .find(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+            }) {
+                write_file(&results.join(entry.file_name()), "cancelled").unwrap();
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        });
+        assert_eq!(
+            workers.reply("A", "stop", true).unwrap(),
+            interrupt_reply("A", Some(true))
+        );
+        host.join().unwrap();
+        assert_eq!(only(&files.interrupt).unwrap(), "stop");
+        assert!(sent_path(dir.path(), "A").exists());
     }
 }
