@@ -11,6 +11,7 @@ use ralph_core::worker::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub(crate) fn entry_ids(store_dir: &Path, dir: &str) -> Vec<String> {
     let mut ids: Vec<String> = fs::read_dir(store_dir.join(dir))
@@ -204,13 +205,17 @@ impl OpencodeHost {
     }
 
     fn reply_permission(&self, id: &str, text: &str) -> Result<(), String> {
-        let (session_id, front) = {
+        let (session_id, front, heartbeat) = {
             let sessions = self.sessions();
             let (session_id, session) = sessions
                 .iter()
                 .find(|(_, session)| session.target.worker == id)
                 .ok_or("worker has no running opencode session")?;
-            (session_id.clone(), session.turn.blocked.front().cloned())
+            (
+                session_id.clone(),
+                session.turn.blocked.front().cloned(),
+                Arc::clone(&session.heartbeat),
+            )
         };
         let (request_id, decision) = answer_decision(front.as_ref(), text)?;
         let api = self.api().ok_or("the opencode server is not running")?;
@@ -218,7 +223,7 @@ impl OpencodeHost {
             &permission_reply_path(&session_id, &request_id),
             &permission_reply_body(decision).to_string(),
         )
-        .map(|_| ())
+        .map(|_| heartbeat.touch())
     }
 
     fn close(&self, id: &str) {

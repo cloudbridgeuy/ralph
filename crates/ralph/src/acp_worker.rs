@@ -82,21 +82,23 @@ struct Permissions {
     mode: CursorPermissions,
     worker_id: String,
     inbox: Inbox,
+    heartbeat: Arc<Heartbeat>,
     queue: Mutex<VecDeque<PendingPermission>>,
 }
 
 impl Permissions {
     fn new(
-        blocked: PathBuf,
+        markers: &WorkerMarkers,
         mode: CursorPermissions,
         worker_id: String,
         inbox: Inbox,
     ) -> Arc<Self> {
         Arc::new(Self {
-            blocked,
+            blocked: markers.blocked.clone(),
             mode,
             worker_id,
             inbox,
+            heartbeat: Heartbeat::new(markers.activity.clone(), markers.gone.clone()),
             queue: Mutex::new(VecDeque::new()),
         })
     }
@@ -152,6 +154,7 @@ impl Permissions {
             pending.responder.respond(response).ok();
         }
         self.publish(&queue);
+        self.heartbeat.touch();
         Ok(())
     }
 
@@ -281,7 +284,7 @@ impl AcpWorker {
             io::copy(&mut stderr, &mut io::sink()).ok();
         });
         let permissions = Permissions::new(
-            markers.blocked.clone(),
+            &markers,
             cursor_permissions(),
             id.to_string(),
             Inbox::new(request.inbox.clone()),
@@ -335,7 +338,7 @@ impl AcpWorker {
         let turns_permissions = Arc::clone(&permissions);
         let seen = Arc::clone(&reported);
         let allowed = Arc::clone(&reported);
-        let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
+        let heartbeat = Arc::clone(&permissions.heartbeat);
         heartbeat.clear();
         let on_request = Arc::clone(&heartbeat);
         let on_notification = Arc::clone(&heartbeat);
