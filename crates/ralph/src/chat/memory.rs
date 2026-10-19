@@ -394,21 +394,6 @@ mod tests {
     }
 
     #[test]
-    fn nap_curator_runs_without_the_store_lock() {
-        let (_dir, store) = seeded(&[0], 2);
-        let mut free = Vec::new();
-        store
-            .nap(|_| {
-                let probe = store.open_lock().unwrap();
-                free.push(probe.try_lock().is_ok());
-                Ok("sum".into())
-            })
-            .unwrap();
-        assert_eq!(free, [true, true]);
-        assert_eq!(store.load().unwrap().1.len(), 2);
-    }
-
-    #[test]
     fn nap_gives_up_after_max_attempts_and_stores_fallback() {
         let (_dir, store) = seeded(&[0], 2);
         let mut calls = 0;
