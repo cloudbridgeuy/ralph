@@ -10,6 +10,7 @@
 mod acp_log;
 mod acp_worker;
 pub mod ansi;
+mod backoff;
 mod chat;
 mod claude_cleanup;
 mod cli;
@@ -275,19 +276,28 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     store.nap(|prompt| {
         let command = invoke::build_memory_command(prompt, dirs::home_dir().as_deref());
-        let result = subprocess::invoke_subprocess_with_spinner_config(
-            &subprocess::SpinnerSubprocessConfig {
-                command,
-                timeout_secs: args.timeout,
-                theme_config: theme_config.clone(),
-                session_elapsed_ms: 0,
-                verbose_tools: stream_processor::VerboseToolsConfig::new(),
-                session_info: spinner::SpinnerSessionInfo {
-                    persona: Some("chat memory".into()),
-                },
-                pause: None,
-                cancel: None,
+        let result = backoff::retry_on_outage(
+            &backoff::BackoffConfig {
+                what: "chat memory nap",
+                policy: ralph_core::retry::RetryPolicy::Nap,
             },
+            || {
+                backoff::attempt_from(subprocess::invoke_subprocess_with_spinner_config(
+                    &subprocess::SpinnerSubprocessConfig {
+                        command: command.clone(),
+                        timeout_secs: args.timeout,
+                        theme_config: theme_config.clone(),
+                        session_elapsed_ms: 0,
+                        verbose_tools: stream_processor::VerboseToolsConfig::new(),
+                        session_info: spinner::SpinnerSessionInfo {
+                            persona: Some("chat memory".into()),
+                        },
+                        pause: None,
+                        cancel: None,
+                    },
+                ))
+            },
+            |delay| backoff::wait_unless(signal::is_terminated, delay),
         )
         .map_err(|e| e.to_string())?;
         if let Some(record) = ralph_core::chat_memory::usage_record(
