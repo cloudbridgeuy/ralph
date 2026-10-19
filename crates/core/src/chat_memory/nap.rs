@@ -283,6 +283,23 @@ mod tests {
     }
 
     #[test]
+    fn retry_prompt_carries_overflow_cut_point() {
+        let ascii = "a".repeat(600);
+        let multibyte = format!("a{}", "é".repeat(300));
+        let cases = [
+            (ascii.clone(), "600 bytes", ascii[..512].to_string()),
+            (multibyte.clone(), "601 bytes", multibyte[..511].to_string()),
+        ];
+        for (line, bytes, prefix) in cases {
+            let err = check_summary(&line).unwrap_err();
+            let out = retry_prompt("base", &err);
+            assert!(out.starts_with("base"));
+            assert!(out.contains(bytes));
+            assert!(out.contains(&format!("{prefix}| <- LIMIT")));
+        }
+    }
+
+    #[test]
     fn retry_prompt_carries_error() {
         let out = retry_prompt("base", "Too long");
         assert!(out.starts_with("base") && out.contains("Too long"));
