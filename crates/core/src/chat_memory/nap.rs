@@ -62,7 +62,9 @@ pub fn check_summary(text: &str) -> Result<String, String> {
 pub const MAX_NAP_ATTEMPTS: usize = 5;
 pub const NAP_INPUT_MARKER: &str = "<input>";
 
-pub fn nap_prompt(entries: &[Entry], tree: &Tree, node: Node) -> Result<String, String> {
+pub const FALLBACK_MARK: &str = "[raw excerpt] ";
+
+pub fn nap_source(entries: &[Entry], tree: &Tree, node: Node) -> Result<String, String> {
     let t = entries.len();
     if node.hi > t {
         return Err(format!(
@@ -70,20 +72,33 @@ pub fn nap_prompt(entries: &[Entry], tree: &Tree, node: Node) -> Result<String, 
             node.id()
         ));
     }
-    let input = if node.size() == 1 {
+    if node.size() == 1 {
         let entry = &entries[node.lo];
-        entry_line(node.lo, entry, &entry.text)
-    } else {
-        let (left, right) = node.halves();
-        [left, right]
-            .into_iter()
-            .map(|half| {
-                node_line(entries, tree, half)
-                    .ok_or_else(|| format!("#{} has no summary yet.", half.id()))
-            })
-            .collect::<Result<Vec<_>, _>>()?
-            .join("\n")
-    };
+        return Ok(entry_line(node.lo, entry, &entry.text));
+    }
+    let (left, right) = node.halves();
+    Ok([left, right]
+        .into_iter()
+        .map(|half| {
+            node_line(entries, tree, half)
+                .ok_or_else(|| format!("#{} has no summary yet.", half.id()))
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n"))
+}
+
+pub fn fallback_summary(source: &str) -> String {
+    let flat = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    let room = SUMMARY_BYTES.saturating_sub(FALLBACK_MARK.len());
+    let end = (0..=room.min(flat.len()))
+        .rev()
+        .find(|i| flat.is_char_boundary(*i))
+        .unwrap_or(0);
+    format!("{FALLBACK_MARK}{}", flat[..end].trim_end())
+}
+
+pub fn nap_prompt(entries: &[Entry], tree: &Tree, node: Node) -> Result<String, String> {
+    let input = nap_source(entries, tree, node)?;
     Ok(format!(
         "You write one line of a chat memory tree.\n\
          Summarize the input below in ONE line of at most {SUMMARY_BYTES} bytes, about 70 words. Use the space up to the limit. Non-ASCII characters cost 2-4 bytes.\n\
@@ -209,10 +224,79 @@ mod tests {
     }
 
     #[test]
+    fn fallback_summary_marks_and_keeps_short_source_whole() {
+        assert_eq!(
+            fallback_summary("#0 user t hello"),
+            format!("{FALLBACK_MARK}#0 user t hello")
+        );
+    }
+
+    #[test]
+    fn fallback_summary_collapses_whitespace() {
+        assert_eq!(
+            fallback_summary("a\n\n b\t\tc\r\nd  "),
+            format!("{FALLBACK_MARK}a b c d")
+        );
+    }
+
+    #[test]
+    fn fallback_summary_stays_within_limit() {
+        let out = fallback_summary(&"word ".repeat(400));
+        assert!(out.starts_with(FALLBACK_MARK));
+        assert!(out.len() <= SUMMARY_BYTES);
+        assert!(check_summary(&out).is_ok());
+    }
+
+    #[test]
+    fn fallback_summary_cuts_on_char_boundary() {
+        for unit in ["é", "日", "😀"] {
+            let out = fallback_summary(&unit.repeat(600));
+            assert!(out.len() <= SUMMARY_BYTES, "{unit}");
+            assert!(out.starts_with(FALLBACK_MARK));
+            assert!(out[FALLBACK_MARK.len()..]
+                .chars()
+                .all(|c| c.to_string() == unit));
+            assert!(out.len() > SUMMARY_BYTES - 4);
+        }
+    }
+
+    #[test]
+    fn nap_source_leaf_and_parent() {
+        let entries = vec![entry(0, 600), entry(1, 600)];
+        let mut tree = Tree::new();
+        assert!(nap_source(&entries, &tree, n(0, 1))
+            .unwrap()
+            .starts_with("#0 user 2026-01-01T00:00:00Z m0 xxx"));
+        assert!(nap_source(&entries, &tree, n(0, 2)).is_err());
+        tree.insert(n(0, 1), "s0".into());
+        tree.insert(n(1, 2), "s1".into());
+        let parent = nap_source(&entries, &tree, n(0, 2)).unwrap();
+        assert_eq!(parent.lines().count(), 2);
+        assert!(nap_source(&entries, &tree, n(2, 3)).is_err());
+    }
+
+    #[test]
     fn nap_summary_requires_success_and_text() {
         assert_eq!(nap_summary(0, Some(" new \n")).unwrap(), "new");
         assert!(nap_summary(1, Some("new")).is_err());
         assert!(nap_summary(0, Some(" \n")).is_err());
+    }
+
+    #[test]
+    fn retry_prompt_carries_overflow_cut_point() {
+        let ascii = "a".repeat(600);
+        let multibyte = format!("a{}", "é".repeat(300));
+        let cases = [
+            (ascii.clone(), "600 bytes", ascii[..512].to_string()),
+            (multibyte.clone(), "601 bytes", multibyte[..511].to_string()),
+        ];
+        for (line, bytes, prefix) in cases {
+            let err = check_summary(&line).unwrap_err();
+            let out = retry_prompt("base", &err);
+            assert!(out.starts_with("base"));
+            assert!(out.contains(bytes));
+            assert!(out.contains(&format!("{prefix}| <- LIMIT")));
+        }
     }
 
     #[test]

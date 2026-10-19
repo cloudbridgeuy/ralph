@@ -46,8 +46,17 @@ The shared trait unifies lifecycle orchestration only; it is not a plugin regist
 
 ## opencode probe (opencode 2.0.29, 2026-10-19)
 
-- [probed] Prompt mid-turn: HTTP 200. The server serializes; the second prompt runs after the first ends (SSE labels it `session.inbox.*` with `"delivery":"steer"`).
-- [probed] Permission ask under `allow-*` session permissions: a shell command and a file write outside the project ran, with 0 `permission.*` events.
-- [probed] Interrupt: `POST /api/session/{id}/interrupt` is synchronous. It returns 200 `{"interrupted":true}` mid-turn, `{"interrupted":false}` when idle, and 404 `SessionNotFoundError` for an unknown session. SSE then sends `session.execution.interrupted`.
-- [probed] Heartbeat: the SSE comment `: heartbeat` arrives every 15 s with no session id. One session stayed silent up to 88 s in a tool-free turn.
-- [probed] Server death (`kill -9`): SSE truncates with no close event; HTTP is refused.
+Every opencode cell of the capability matrix (`Capabilities::support` in `crates/core/src/worker/headless.rs`) is tagged `[probed]`, with its probe note, or `[unverified]`, meaning no probe backs it yet.
+
+| Feature | Matrix value | Tag | Probe note |
+| --- | --- | --- | --- |
+| `spawn` | Full | [unverified] | No probe |
+| `prompt` | Full | [probed] | Mid-turn prompt: HTTP 200. The server serializes; the second prompt runs after the first ends (SSE labels it `session.inbox.*` with `"delivery":"steer"`) |
+| `interrupt` | Full | [probed] | `POST /api/session/{id}/interrupt` is synchronous. It returns 200 `{"interrupted":true}` mid-turn, `{"interrupted":false}` when idle, and 404 `SessionNotFoundError` for an unknown session. SSE then sends `session.execution.interrupted` |
+| `perm-ask` | Partial: only prompts the server raises despite `allow-*` | [probed] | Under `allow-*` session permissions a shell command and a file write outside the project ran, with 0 `permission.*` events |
+| `perm-yolo` | Partial: always on | [unverified] | No probe |
+| `resume` | Full | [unverified] | No probe |
+| `model` | Full | [unverified] | No probe |
+| `report` | Full | [unverified] | No probe |
+| `close` | Partial: no home cleanup; shared server kept | [unverified] | No probe |
+| `heartbeat` | Partial: per-session SSE activity; one alert per shared-server death | [probed] | The SSE comment `: heartbeat` arrives every 15 s with no session id; one session stayed silent up to 88 s in a tool-free turn. Server death (`kill -9`): SSE truncates with no close event; HTTP is refused |

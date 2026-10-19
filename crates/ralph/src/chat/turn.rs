@@ -1,3 +1,4 @@
+use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt, BackoffConfig};
 use crate::chat::memory::Store;
 use crate::chat::prompt::screen_columns;
 use crate::highlight::ThemeConfig;
@@ -21,6 +22,7 @@ use ralph_core::chat_memory::{
     view_stats, CallKind, Frozen, Trigger, TurnParts,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
+use ralph_core::retry::RetryPolicy;
 use std::borrow::Cow;
 use std::io::{self};
 use std::path::Path;
@@ -152,16 +154,30 @@ impl Turn<'_> {
             dirs::home_dir().as_deref(),
         );
         print_rule();
-        let result = invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
-            command,
-            timeout_secs: self.timeout_secs,
-            theme_config: self.theme_config.clone(),
-            session_elapsed_ms: 0,
-            verbose_tools: VerboseToolsConfig::new(),
-            session_info: chat_session_info(),
-            pause: None,
-            cancel: Some(Arc::clone(&self.cancel)),
-        });
+        let result = retry_on_outage(
+            &BackoffConfig {
+                what: "chat turn",
+                policy: RetryPolicy::Turn,
+            },
+            || {
+                let result = invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
+                    command: command.clone(),
+                    timeout_secs: self.timeout_secs,
+                    theme_config: self.theme_config.clone(),
+                    session_elapsed_ms: 0,
+                    verbose_tools: VerboseToolsConfig::new(),
+                    session_info: chat_session_info(),
+                    pause: None,
+                    cancel: Some(Arc::clone(&self.cancel)),
+                });
+                if self.stopped() {
+                    Attempt::Done(result)
+                } else {
+                    attempt_from(result)
+                }
+            },
+            |delay| wait_unless(|| self.stopped(), delay),
+        );
         let end = turn_end(&TurnSignals {
             cancelled: self.cancel.swap(false, Ordering::SeqCst),
             terminated: signal::is_terminated(),
@@ -235,6 +251,10 @@ impl Turn<'_> {
                 Ok(TurnOutcome::Unanswered)
             }
         }
+    }
+
+    fn stopped(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst) || signal::is_terminated()
     }
 
     fn append_logged(&self, trigger: Trigger, logged: &[String]) -> io::Result<()> {
