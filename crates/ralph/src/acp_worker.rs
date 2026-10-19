@@ -35,7 +35,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{self, Child, Command, Stdio};
+use std::process::{self, Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -151,6 +151,7 @@ pub struct AcpWorker {
     prompts: queue::UnboundedSender<Inbound>,
     closing: Arc<AtomicBool>,
     done: bool,
+    exit_seen: bool,
 }
 
 impl AcpWorker {
@@ -197,6 +198,7 @@ impl AcpWorker {
             prompts: prompts.clone(),
             closing: Arc::clone(&closing),
             done: false,
+            exit_seen: false,
         };
         worker.write_owner(&agent)?;
         starting
@@ -392,6 +394,20 @@ impl AcpWorker {
             .map_err(|e| format!("could not write the {} owner file: {e}", agent.name))
     }
 
+    fn reap_exit(&mut self) {
+        if self.done || self.exit_seen {
+            return;
+        }
+        if let Ok(Some(status)) = self.child.try_wait() {
+            self.exit_seen = true;
+            if !self.closing.load(Ordering::SeqCst) {
+                self.permissions
+                    .heartbeat
+                    .gone(&Scope::Worker, &exit_reason(status));
+            }
+        }
+    }
+
     pub fn terminate(&mut self) {
         if self.done {
             return;
@@ -411,6 +427,10 @@ impl Drop for AcpWorker {
     fn drop(&mut self) {
         self.terminate();
     }
+}
+
+fn exit_reason(status: ExitStatus) -> String {
+    format!("{} acp exited ({status})", CURSOR_AGENT.command)
 }
 
 fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
@@ -452,7 +472,14 @@ impl CursorHost {
         CursorFiles::new(&self.store_dir, id)
     }
 
+    fn reap_exits(&self) {
+        for worker in self.workers().values_mut() {
+            worker.reap_exit();
+        }
+    }
+
     fn poll(&self) {
+        self.reap_exits();
         for id in request_ids(&self.store_dir, CURSOR_CLOSE_DIR) {
             self.close(&id);
         }
@@ -755,5 +782,19 @@ impl HeadlessHost for CursorHost {
 
     fn shutdown(&self) {
         CursorHost::shutdown(self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn exit_reason_names_the_agent_and_the_status() {
+        assert_eq!(
+            exit_reason(ExitStatus::from_raw(9)),
+            "agent acp exited (signal: 9 (SIGKILL))"
+        );
     }
 }

@@ -72,7 +72,7 @@ impl Capabilities {
             (HarnessId::Cursor, Model) => Support::None,
             (HarnessId::Cursor, Close) => Partial("cli-config.json not restored"),
             (HarnessId::Cursor, Heartbeat) => {
-                Partial("ACP traffic only; exit seen through the connection ending")
+                Partial("ACP traffic only; exit seen by polling the child every 250 ms")
             }
             (HarnessId::Opencode, Spawn | Prompt | Resume | Model | Report) => Full,
             (HarnessId::Opencode, Interrupt) => Partial("fire-and-forget, failure only warns"),
