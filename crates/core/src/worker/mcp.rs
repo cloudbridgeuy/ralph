@@ -30,7 +30,7 @@ pub fn command_definitions() -> [Value; 4] {
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
                     "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."},
-                    "interrupt": {"type": "boolean", "description": "cursor workers only: cancel the running turn, if any, and run this message next. The result says whether a running turn was cancelled, or that the outcome is unknown if ralph chat does not confirm within 30 s. Default false."}
+                    "interrupt": {"type": "boolean", "description": "cursor and opencode workers: cancel the running turn, if any, and run this message next. The result says whether a running turn was cancelled, or that the outcome is unknown if ralph chat does not confirm within 30 s. Default false."}
                 },
                 "required": ["id", "text"]
             }

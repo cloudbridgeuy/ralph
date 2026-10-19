@@ -1,4 +1,4 @@
-use super::{BlockedContent, PermissionOption};
+use super::{BlockedContent, PermissionOption, WorkerEvent};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -96,6 +96,10 @@ fn failure(error: Option<ApiError>) -> TurnEnd {
             .map(|error| error.describe())
             .unwrap_or_else(|| FALLBACK_FAILURE.to_string()),
     }
+}
+
+pub fn session_activity(event: &ServerEvent, at: u64) -> Option<WorkerEvent> {
+    event.session_id().map(|_| WorkerEvent::Activity { at })
 }
 
 pub fn session_update(event: &ServerEvent) -> Option<SessionUpdate> {
@@ -387,6 +391,15 @@ mod tests {
         );
         let other = event(r#"{"id":"evt_s","type":"server.connected","data":{}}"#);
         assert_eq!(other.session_id(), None);
+    }
+
+    #[test]
+    fn session_activity_covers_every_session_event_and_no_other() {
+        let activity = Some(WorkerEvent::Activity { at: 9 });
+        assert_eq!(session_activity(&event(IGNORED), 9), activity);
+        assert_eq!(session_activity(&event(STARTED), 9), activity);
+        let other = event(r#"{"id":"evt_s","type":"server.connected","data":{}}"#);
+        assert_eq!(session_activity(&other, 9), None);
     }
 
     #[test]

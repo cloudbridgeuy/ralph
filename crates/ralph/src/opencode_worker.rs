@@ -1,5 +1,5 @@
 use crate::config::AppConfig;
-use crate::cursor_owner::{process_start, write_file};
+use crate::cursor_owner::{now_secs, process_start, write_file};
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
@@ -12,11 +12,11 @@ use ralph_core::worker::{
     advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
     reconcile, reconnect_delay, running_sessions, server_record_fate, server_record_pid,
-    server_record_usable, session_missing, session_update, spawn_failure, start_failure,
-    turn_result, ApiData, Effect, OpencodeFiles, OpencodeRecord, PermissionAsked, RecordFate,
-    ServerEvent, ServerRecord, ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate,
-    TurnFacts, TurnState, WorkerMarkers, OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV,
-    OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
+    server_record_usable, session_activity, session_missing, session_update, spawn_failure,
+    start_failure, turn_result, ApiData, Effect, OpencodeFiles, OpencodeRecord, PermissionAsked,
+    RecordFate, ServerEvent, ServerRecord, ServerRecordFacts, SessionMessage, SessionSnapshot,
+    SessionUpdate, TurnFacts, TurnState, WorkerEvent, WorkerMarkers, OPENCODE_OWNER_DIR,
+    OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -544,7 +544,12 @@ impl OpencodeHost {
             match &update {
                 Some(SessionUpdate::TurnStarted) => heartbeat.set_running(true),
                 Some(SessionUpdate::TurnEnded(_)) => heartbeat.set_running(false),
-                _ => heartbeat.touch(),
+                _ => {
+                    if let Some(WorkerEvent::Activity { at }) = session_activity(event, now_secs())
+                    {
+                        heartbeat.touch_at(at);
+                    }
+                }
             }
         }
         if let Some(update) = update {
