@@ -1,6 +1,6 @@
 use crate::transport::stdio::stop_group;
 use ralph_core::worker::{
-    caller_owns_worker, ready_path, sweep_decision, CursorFiles, OwnerFacts, OwnerRecord, Sweep,
+    caller_owns_worker, ready_path, sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep,
     CURSOR_OWNER_DIR,
 };
 use std::fs;
@@ -61,7 +61,7 @@ fn parent_pid(pid: u32) -> Option<u32> {
 }
 
 pub fn caller_owns_cursor(store_dir: &Path, id: &str) -> bool {
-    fs::read_to_string(CursorFiles::new(store_dir, id).owner)
+    fs::read_to_string(HandoffFiles::cursor(store_dir, id).owner)
         .ok()
         .and_then(|text| OwnerRecord::parse(&text))
         .is_some_and(|record| caller_owns_worker(record.chat_pid, &own_ancestry()))
@@ -77,7 +77,7 @@ pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
 }
 
 pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
-    let files = CursorFiles::new(store_dir, id);
+    let files = HandoffFiles::cursor(store_dir, id);
     let text = fs::read_to_string(&files.owner).ok()?;
     let record = OwnerRecord::parse(&text);
     let chat_alive = record

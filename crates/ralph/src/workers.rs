@@ -13,9 +13,9 @@ use ralph_core::worker::{
     interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
     parse_interrupt_result, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path,
     session_name, session_owner, tagged_sessions, worktree_for_branch, worktree_path, CloseState,
-    CloseStep, CursorFiles, Handoff, HarnessId, OpencodeFiles, Owner, Sweep, TaggedSession,
-    WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR,
-    SESSION_FORMAT, WORKTREE_DIR_ENV,
+    CloseStep, Handoff, HandoffFiles, HarnessId, Owner, Sweep, TaggedSession, WorktreeDir,
+    HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT,
+    WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -66,7 +66,7 @@ impl Workers {
     }
 
     fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
-        let files = CursorFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::cursor(&self.store_dir, id);
         if files.owner.exists() {
             if interrupt {
                 let entry = self.queue_entry(&files.interrupt, text)?;
@@ -121,7 +121,7 @@ impl Workers {
     }
 
     pub fn nudge(&self, id: &str, text: &str) -> io::Result<String> {
-        let files = CursorFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::cursor(&self.store_dir, id);
         if files.owner.exists() {
             let queued = self.queue_prompt(&files.prompt, id, text, "Nudged");
             return self.mark_sent(id, queued);
@@ -134,7 +134,7 @@ impl Workers {
     }
 
     fn opencode_http(&self, id: &str) -> bool {
-        let files = OpencodeFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::opencode(&self.store_dir, id);
         files.owner.exists() || files.session.exists()
     }
 
@@ -145,7 +145,7 @@ impl Workers {
         interrupt: bool,
         verb: &str,
     ) -> io::Result<String> {
-        let files = OpencodeFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::opencode(&self.store_dir, id);
         if interrupt {
             let entry = self.queue_entry(&files.interrupt, text)?;
             return Ok(interrupt_reply(
@@ -231,7 +231,7 @@ impl Workers {
         } else {
             None
         };
-        let kind = if CursorFiles::new(&self.store_dir, id).owner.exists() {
+        let kind = if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
             HarnessId::Cursor
         } else if self.opencode_http(id) {
             HarnessId::Opencode
@@ -270,7 +270,7 @@ impl Workers {
             warn_if_err(changes.clear(), "Failed to clear worker snapshots");
         }
         let unset_warning = unset_legacy_base(&repo, id);
-        let files = CursorFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::cursor(&self.store_dir, id);
         clear_marker(&files.session)?;
         clear_marker(&files.interrupt_result)?;
         if steps == [CloseStep::ClearMarkers] {
@@ -334,7 +334,7 @@ impl Workers {
                 self.terminate_opencode(id)?;
             }
             CloseStep::TerminateCursor => {
-                if CursorFiles::new(&self.store_dir, id).owner.exists() {
+                if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
                     self.terminate_cursor(id)?;
                 }
             }
@@ -365,16 +365,16 @@ impl Workers {
     }
 
     pub fn awaits_permission(&self, id: &str) -> bool {
-        (CursorFiles::new(&self.store_dir, id).owner.exists() || self.opencode_http(id))
+        (HandoffFiles::cursor(&self.store_dir, id).owner.exists() || self.opencode_http(id))
             && blocked_path(&self.store_dir, id).exists()
     }
 
     fn answer_permission(&self, id: &str, text: &str) -> io::Result<String> {
         let (answer, error) = if self.opencode_http(id) {
-            let files = OpencodeFiles::new(&self.store_dir, id);
+            let files = HandoffFiles::opencode(&self.store_dir, id);
             (files.answer, files.error)
         } else {
-            let files = CursorFiles::new(&self.store_dir, id);
+            let files = HandoffFiles::cursor(&self.store_dir, id);
             (files.answer, files.error)
         };
         clear_marker(&error)?;
@@ -402,7 +402,7 @@ impl Workers {
     }
 
     fn terminate_opencode(&self, id: &str) -> io::Result<()> {
-        let files = OpencodeFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::opencode(&self.store_dir, id);
         clear_marker(&files.error)?;
         write_file(&files.close, "")?;
         let started = Instant::now();
@@ -439,7 +439,7 @@ impl Workers {
     }
 
     fn terminate_cursor(&self, id: &str) -> io::Result<()> {
-        let files = CursorFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::cursor(&self.store_dir, id);
         write_file(&files.close, "")?;
         let started = Instant::now();
         loop {
@@ -457,7 +457,7 @@ impl Workers {
     }
 
     fn owner(&self, project: &str, id: &str) -> Owner {
-        if CursorFiles::new(&self.store_dir, id).owner.exists() {
+        if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
             return Owner::Mine(TaggedSession {
                 name: session_name(project, id),
                 store: self.store_dir.to_string_lossy().into_owned(),
@@ -726,8 +726,8 @@ mod tests {
         let workers = workers_in(dir.path());
         assert!(!workers.opencode_http("A"));
         assert_eq!(workers.owner("p", "A"), Owner::Missing);
-        write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
-        write_file(&OpencodeFiles::new(dir.path(), "B").session, "{}").unwrap();
+        write_file(&HandoffFiles::opencode(dir.path(), "A").owner, "").unwrap();
+        write_file(&HandoffFiles::opencode(dir.path(), "B").session, "{}").unwrap();
         assert!(workers.opencode_http("A") && workers.opencode_http("B"));
         assert!(matches!(workers.owner("p", "A"), Owner::Mine(_)));
     }
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn running_workers_list_opencode_http_workers_as_headless() {
         let dir = tempfile::tempdir().unwrap();
-        write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
+        write_file(&HandoffFiles::opencode(dir.path(), "A").owner, "").unwrap();
         let running = running_workers(dir.path());
         let worker = running.iter().find(|worker| worker.id == "A").unwrap();
         assert!(worker.kind == HarnessId::Opencode && worker.session.is_empty());

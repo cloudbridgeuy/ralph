@@ -6,7 +6,7 @@ use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     create_session_body, interrupt_result_text, opencode_session_id, request_stale, task_prompt,
-    HeadlessState, HeadlessWorker, OpencodeFiles, OpencodeRecord, OpencodeSpawn, TurnState,
+    HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord, OpencodeSpawn, TurnState,
     WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR,
     OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
 };
@@ -76,17 +76,18 @@ impl OpencodeHost {
     }
 
     fn preflight(&self, id: &str) {
-        let files = self.files(id);
-        let fresh = fs::read_to_string(&files.preflight)
+        let preflight = HandoffFiles::opencode_preflight(&self.store_dir, id);
+        let fresh = fs::read_to_string(&preflight)
             .ok()
             .and_then(|text| text.trim().parse().ok())
             .is_some_and(|at| !request_stale(at, now_secs()));
-        fs::remove_file(&files.preflight).ok();
+        fs::remove_file(&preflight).ok();
         if !fresh {
             return;
         }
+        let healthy_path = HandoffFiles::opencode_healthy(&self.store_dir, id);
         let healthy = self.start_server().and_then(|_| {
-            write_file(&files.healthy, "")
+            write_file(&healthy_path, "")
                 .map_err(|e| format!("could not write the opencode healthy marker: {e}"))
         });
         if let Err(message) = healthy {
@@ -298,7 +299,7 @@ impl OpencodeHost {
     }
 
     fn forget(&self, id: &str) {
-        let files = OpencodeFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::opencode(&self.store_dir, id);
         fs::remove_file(&files.session).ok();
         fs::remove_file(&files.answer).ok();
         fs::remove_dir_all(&files.prompt).ok();

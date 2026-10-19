@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 mod acp;
+mod files;
 mod headless;
 mod hooks;
 mod kind;
@@ -18,6 +19,7 @@ mod ownership;
 mod rollback;
 mod worktree;
 pub use acp::*;
+pub use files::*;
 pub use headless::*;
 pub use hooks::*;
 pub use kind::*;

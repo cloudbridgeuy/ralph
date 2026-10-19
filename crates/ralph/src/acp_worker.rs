@@ -25,12 +25,12 @@ use ralph_core::worker::{
     decide, decode_update, describe, encode, gone_path, interrupt_result_text, match_option,
     no_option_message, permission_alert_report, permission_content, prompt_failure_report,
     ready_path, reduce, request_stale, resume_decision, session_error, stop_problem, task_prompt,
-    turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities, CursorFiles,
-    CursorPermissions, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker, Inbound, Marker,
-    OwnerRecord, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
-    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
-    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
-    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
+    CursorPermissions, HandoffFiles, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker,
+    Inbound, Marker, OwnerRecord, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step,
+    TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
+    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR,
+    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -552,8 +552,8 @@ impl CursorHost {
         self.workers.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn files(&self, id: &str) -> CursorFiles {
-        CursorFiles::new(&self.store_dir, id)
+    fn files(&self, id: &str) -> HandoffFiles {
+        HandoffFiles::cursor(&self.store_dir, id)
     }
 
     fn reap_exits(&self) {
@@ -658,7 +658,7 @@ impl CursorHost {
     fn prompt(
         &self,
         id: &str,
-        dir: fn(&CursorFiles) -> &PathBuf,
+        dir: fn(&HandoffFiles) -> &PathBuf,
         deliver: fn(&mut AcpWorker, &str, &str),
     ) {
         let files = self.files(id);

@@ -12,9 +12,9 @@ use ralph_core::worker::{
     branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
     project_slug, resolve_claude_model, resolve_opencode_model, rollback_plan, rollback_report,
     session_name, spawn_handoff, startup_state, worker_command, worker_mcp_args, worker_mcp_config,
-    worktree_add_args, wt_switch_args, ClaudeWorkerArgs, CursorFiles, Handoff, HarnessId,
-    OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup,
-    WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    worktree_add_args, wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId,
+    OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup, WorkerMarkers,
+    WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
     OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
@@ -237,10 +237,12 @@ impl Workers {
     fn harness_running(&self, launch: &Launch) -> bool {
         match launch.harness {
             HarnessId::Claude => session_exists(launch.session).unwrap_or(true),
-            HarnessId::Opencode => OpencodeFiles::new(&self.store_dir, launch.id)
+            HarnessId::Opencode => HandoffFiles::opencode(&self.store_dir, launch.id)
                 .owner
                 .exists(),
-            HarnessId::Cursor => CursorFiles::new(&self.store_dir, launch.id).owner.exists(),
+            HarnessId::Cursor => HandoffFiles::cursor(&self.store_dir, launch.id)
+                .owner
+                .exists(),
         }
     }
 
@@ -251,7 +253,7 @@ impl Workers {
         task: &str,
         snapshots: bool,
     ) -> io::Result<()> {
-        let files = CursorFiles::new(&self.store_dir, id);
+        let files = HandoffFiles::cursor(&self.store_dir, id);
         for path in files.all() {
             clear_marker(path)?;
         }
@@ -273,8 +275,10 @@ impl Workers {
 
     fn spawn_opencode(&self, launch: &Launch, model: &str) -> io::Result<()> {
         let id = launch.id;
-        let files = OpencodeFiles::new(&self.store_dir, id);
-        for path in files.requests() {
+        let files = HandoffFiles::opencode(&self.store_dir, id);
+        let preflight = HandoffFiles::opencode_preflight(&self.store_dir, id);
+        let healthy = HandoffFiles::opencode_healthy(&self.store_dir, id);
+        for path in files.all().into_iter().chain([&*preflight, &*healthy]) {
             clear_marker(path)?;
         }
         let request = OpencodeSpawn {
@@ -291,13 +295,15 @@ impl Workers {
     }
 
     fn preflight_opencode(&self, id: &str) -> io::Result<()> {
-        let files = OpencodeFiles::new(&self.store_dir, id);
-        for path in [&files.preflight, &files.healthy, &files.error] {
+        let files = HandoffFiles::opencode(&self.store_dir, id);
+        let preflight = HandoffFiles::opencode_preflight(&self.store_dir, id);
+        let healthy = HandoffFiles::opencode_healthy(&self.store_dir, id);
+        for path in [&preflight, &healthy, &files.error] {
             clear_marker(path)?;
         }
-        write_file(&files.preflight, &now_secs().to_string())?;
-        self.await_spawn(&files.preflight, &files.healthy, &files.error, "opencode")
-            .and_then(|()| clear_marker(&files.healthy))
+        write_file(&preflight, &now_secs().to_string())?;
+        self.await_spawn(&preflight, &healthy, &files.error, "opencode")
+            .and_then(|()| clear_marker(&healthy))
     }
 
     fn await_spawn(

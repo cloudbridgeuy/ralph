@@ -1,7 +1,4 @@
-use super::{
-    opencode_blocked_content, permission_decision, PermissionAsked, PermissionDecision,
-    OPENCODE_SESSION_DIR,
-};
+use super::{opencode_blocked_content, permission_decision, PermissionAsked, PermissionDecision};
 use crate::worker::{close_handoff, match_option, no_option_message, Handoff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -18,54 +15,6 @@ pub const OPENCODE_ANSWER_DIR: &str = "opencode-answer";
 pub const OPENCODE_PROMPT_DIR: &str = "opencode-prompt";
 pub const OPENCODE_INTERRUPT_DIR: &str = "opencode-interrupt";
 pub const OPENCODE_INTERRUPT_RESULT_DIR: &str = "opencode-interrupt-result";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OpencodeFiles {
-    pub preflight: PathBuf,
-    pub healthy: PathBuf,
-    pub spawn: PathBuf,
-    pub close: PathBuf,
-    pub error: PathBuf,
-    pub owner: PathBuf,
-    pub answer: PathBuf,
-    pub prompt: PathBuf,
-    pub interrupt: PathBuf,
-    pub interrupt_result: PathBuf,
-    pub session: PathBuf,
-}
-
-impl OpencodeFiles {
-    pub fn new(store: &Path, id: &str) -> Self {
-        Self {
-            preflight: store.join(OPENCODE_PREFLIGHT_DIR).join(id),
-            healthy: store.join(OPENCODE_HEALTHY_DIR).join(id),
-            spawn: store.join(OPENCODE_SPAWN_DIR).join(id),
-            close: store.join(OPENCODE_CLOSE_DIR).join(id),
-            error: store.join(OPENCODE_ERROR_DIR).join(id),
-            owner: store.join(OPENCODE_OWNER_DIR).join(id),
-            answer: store.join(OPENCODE_ANSWER_DIR).join(id),
-            prompt: store.join(OPENCODE_PROMPT_DIR).join(id),
-            interrupt: store.join(OPENCODE_INTERRUPT_DIR).join(id),
-            interrupt_result: store.join(OPENCODE_INTERRUPT_RESULT_DIR).join(id),
-            session: store.join(OPENCODE_SESSION_DIR).join(id),
-        }
-    }
-
-    pub fn requests(&self) -> [&Path; 10] {
-        [
-            &self.preflight,
-            &self.healthy,
-            &self.spawn,
-            &self.close,
-            &self.error,
-            &self.owner,
-            &self.answer,
-            &self.prompt,
-            &self.interrupt,
-            &self.interrupt_result,
-        ]
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpencodeSpawn {
@@ -216,34 +165,6 @@ pub fn transient_request_error(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn files_live_under_their_own_directories() {
-        let files = OpencodeFiles::new(Path::new("/s"), "GUZ-1");
-        assert_eq!(
-            files.preflight,
-            PathBuf::from("/s/opencode-preflight/GUZ-1")
-        );
-        assert_eq!(files.healthy, PathBuf::from("/s/opencode-healthy/GUZ-1"));
-        assert_eq!(files.spawn, PathBuf::from("/s/opencode-spawn/GUZ-1"));
-        assert_eq!(files.close, PathBuf::from("/s/opencode-close/GUZ-1"));
-        assert_eq!(files.error, PathBuf::from("/s/opencode-error/GUZ-1"));
-        assert_eq!(files.owner, PathBuf::from("/s/opencode-owner/GUZ-1"));
-        assert_eq!(files.answer, PathBuf::from("/s/opencode-answer/GUZ-1"));
-        assert_eq!(files.prompt, PathBuf::from("/s/opencode-prompt/GUZ-1"));
-        assert_eq!(
-            files.interrupt,
-            PathBuf::from("/s/opencode-interrupt/GUZ-1")
-        );
-        assert_eq!(files.session, PathBuf::from("/s/opencode-session/GUZ-1"));
-    }
-
-    #[test]
-    fn requests_leave_out_the_session_record() {
-        let files = OpencodeFiles::new(Path::new("/s"), "A");
-        assert!(!files.requests().contains(&files.session.as_path()));
-        assert_eq!(files.requests().len(), 10);
-    }
 
     #[test]
     fn spawn_request_round_trips_and_rejects_garbage() {

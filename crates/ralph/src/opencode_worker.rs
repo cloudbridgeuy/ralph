@@ -14,8 +14,8 @@ use ralph_core::worker::{
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
     reconcile, reconnect_delay, reduce, running_sessions, server_record_fate, server_record_pid,
     server_record_usable, session_activity, session_missing, session_update, spawn_failure,
-    stale_server_group, start_failure, turn_result, ApiData, Effect, HeadlessState, HeadlessWorker,
-    OpencodeFiles, OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord,
+    stale_server_group, start_failure, turn_result, ApiData, Effect, HandoffFiles, HeadlessState,
+    HeadlessWorker, OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord,
     ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState,
     WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
     OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
@@ -700,8 +700,8 @@ impl OpencodeHost {
         }
     }
 
-    fn files(&self, id: &str) -> OpencodeFiles {
-        OpencodeFiles::new(&self.store_dir, id)
+    fn files(&self, id: &str) -> HandoffFiles {
+        HandoffFiles::opencode(&self.store_dir, id)
     }
 
     fn connect(&self) -> Result<Link, String> {
