@@ -26,6 +26,16 @@ pub fn running_sessions(body: &str) -> Option<Vec<String>> {
     Some(running)
 }
 
+pub fn parse_interrupted(body: &str) -> Option<bool> {
+    #[derive(Deserialize)]
+    struct Interrupt {
+        interrupted: bool,
+    }
+    serde_json::from_str::<Interrupt>(body)
+        .ok()
+        .map(|reply| reply.interrupted)
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnState {
     pub in_flight: bool,
@@ -119,10 +129,9 @@ impl TurnState {
                 vec![Effect::Send(self.prompt.clone())]
             }
             TurnOutcome::Unreported => vec![Effect::Unreported],
-            TurnOutcome::Problem(problem) => vec![Effect::Problem(problem)],
-            TurnOutcome::Stopped(reason) => vec![Effect::Problem(format!(
-                "the agent ended its turn with `{reason}`"
-            ))],
+            TurnOutcome::Problem(problem) | TurnOutcome::Stopped(problem) => {
+                vec![Effect::Problem(problem)]
+            }
             TurnOutcome::Cancelled => {
                 self.blocked.clear();
                 vec![Effect::Publish(None)]
@@ -198,6 +207,13 @@ mod tests {
     use super::super::tests::{asked, failed_end, messages, MESSAGES_OK, PERMISSION_ID};
     use super::super::turn_result;
     use super::*;
+
+    #[test]
+    fn parse_interrupted_reads_the_outcome() {
+        assert_eq!(parse_interrupted(r#"{"interrupted":true}"#), Some(true));
+        assert_eq!(parse_interrupted(r#"{"interrupted":false}"#), Some(false));
+        assert_eq!(parse_interrupted("{}"), None);
+    }
 
     fn facts() -> TurnFacts {
         TurnFacts {

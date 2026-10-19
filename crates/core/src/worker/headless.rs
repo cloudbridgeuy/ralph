@@ -74,8 +74,7 @@ impl Capabilities {
             (HarnessId::Cursor, Heartbeat) => {
                 Partial("ACP traffic only; exit seen by polling the child every 250 ms")
             }
-            (HarnessId::Opencode, Spawn | Prompt | Resume | Model | Report) => Full,
-            (HarnessId::Opencode, Interrupt) => Partial("fire-and-forget, failure only warns"),
+            (HarnessId::Opencode, Spawn | Prompt | Resume | Model | Report | Interrupt) => Full,
             (HarnessId::Opencode, PermAsk) => {
                 Partial("only prompts the server raises despite allow-*")
             }
@@ -324,6 +323,12 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn opencode_interrupt_is_full() {
+        let caps = capabilities(HarnessId::Opencode);
+        assert_eq!(caps.support(Feature::Interrupt), Support::Full);
     }
 
     #[test]

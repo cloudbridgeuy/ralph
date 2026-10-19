@@ -1,14 +1,14 @@
 use super::{post_prompt, OpencodeHost, Session, Target};
+use crate::acp_worker::Events;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::warn::warn;
 use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
-    answer_decision, create_session_body, opencode_session_id, permission_reply_body,
-    permission_reply_path, request_stale, session_missing, task_prompt, OpencodeFiles,
-    OpencodeRecord, OpencodeSpawn, TurnState, WorkerMarkers, OPENCODE_ANSWER_DIR,
-    OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR,
-    OPENCODE_SPAWN_DIR,
+    create_session_body, interrupt_result_text, opencode_session_id, request_stale, task_prompt,
+    HeadlessState, HeadlessWorker, OpencodeFiles, OpencodeRecord, OpencodeSpawn, TurnState,
+    WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR,
+    OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -152,6 +152,8 @@ impl OpencodeHost {
                 turn,
                 verified: true,
                 heartbeat,
+                state: HeadlessState::default(),
+                events: Events::default(),
             },
         );
         if let Err(message) = post_prompt(&api, &session_id, &text) {
@@ -177,7 +179,8 @@ impl OpencodeHost {
                 (fs::read_to_string(&entry), self.find(id))
             {
                 if interrupt {
-                    self.interrupt(&session_id);
+                    let outcome = self.interrupt(id, &session_id, &text);
+                    self.write_interrupt_result(id, &entry, outcome);
                 }
                 if let Some(session) = self.sessions().get_mut(&session_id) {
                     session.turn.prompted(&text);
@@ -189,13 +192,26 @@ impl OpencodeHost {
         }
     }
 
-    fn interrupt(&self, session_id: &str) {
-        let result = self
-            .api()
-            .ok_or_else(|| "the opencode server is not running".to_string())
-            .and_then(|api| api.post(&format!("/api/session/{session_id}/interrupt"), ""));
-        if let Err(message) = result {
-            warn(format!("could not interrupt {session_id}: {message}"));
+    fn interrupt(&self, id: &str, session_id: &str, text: &str) -> Option<bool> {
+        self.worker(id, session_id)
+            .send(WorkerCommand::Interrupt(text.to_string()))
+            .ok();
+        self.apply_events(id, session_id)
+            .into_iter()
+            .find_map(|event| match event {
+                WorkerEvent::Interrupted { outcome, .. } => outcome,
+                _ => None,
+            })
+    }
+
+    fn write_interrupt_result(&self, id: &str, entry: &Path, outcome: Option<bool>) {
+        let (Some(cancelled), Some(name)) = (outcome, entry.file_name()) else {
+            return;
+        };
+        let results = self.files(id).interrupt_result;
+        let pending = results.join(format!(".{}", name.to_string_lossy()));
+        if write_file(&pending, interrupt_result_text(cancelled)).is_ok() {
+            fs::rename(&pending, results.join(name)).ok();
         }
     }
 
@@ -211,25 +227,19 @@ impl OpencodeHost {
     }
 
     fn reply_permission(&self, id: &str, text: &str) -> Result<(), String> {
-        let (session_id, front, heartbeat) = {
+        let (session_id, heartbeat) = {
             let sessions = self.sessions();
             let (session_id, session) = sessions
                 .iter()
                 .find(|(_, session)| session.target.worker == id)
                 .ok_or("worker has no running opencode session")?;
-            (
-                session_id.clone(),
-                session.turn.blocked.front().cloned(),
-                Arc::clone(&session.heartbeat),
-            )
+            (session_id.clone(), Arc::clone(&session.heartbeat))
         };
-        let (request_id, decision) = answer_decision(front.as_ref(), text)?;
-        let api = self.api().ok_or("the opencode server is not running")?;
-        api.post_retrying(
-            &permission_reply_path(&session_id, &request_id),
-            &permission_reply_body(decision).to_string(),
-        )
-        .map(|_| heartbeat.touch())
+        self.worker(id, &session_id)
+            .send(WorkerCommand::AnswerPermission {
+                option_id: text.to_string(),
+            })
+            .map(|()| heartbeat.touch())
     }
 
     fn close(&self, id: &str) {
@@ -265,23 +275,19 @@ impl OpencodeHost {
         else {
             return Ok(());
         };
-        let api = self.api().ok_or("the opencode server is not running")?;
         let running = self
             .sessions()
             .get(&session_id)
             .is_some_and(|session| session.turn.in_flight);
         if running {
-            self.interrupt(&session_id);
+            self.interrupt(id, &session_id, "");
         }
-        match api.delete(&format!("/api/session/{session_id}")) {
-            Err(message) if !session_missing(&message) => {
-                Err(format!("could not delete the opencode session: {message}"))
-            }
-            _ => {
+        self.worker(id, &session_id)
+            .send(WorkerCommand::Close)
+            .inspect(|()| {
+                self.apply_events(id, &session_id);
                 self.sessions().remove(&session_id);
-                Ok(())
-            }
-        }
+            })
     }
 
     fn recorded_session_id(&self, id: &str) -> Option<String> {
@@ -297,6 +303,7 @@ impl OpencodeHost {
         fs::remove_file(&files.answer).ok();
         fs::remove_dir_all(&files.prompt).ok();
         fs::remove_dir_all(&files.interrupt).ok();
+        fs::remove_dir_all(&files.interrupt_result).ok();
         fs::remove_file(&WorkerMarkers::new(&self.store_dir, id).ready).ok();
         fs::remove_file(&files.owner).ok();
     }

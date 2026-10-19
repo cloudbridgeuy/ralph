@@ -1,5 +1,6 @@
+use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::config::AppConfig;
-use crate::cursor_owner::{process_start, write_file};
+use crate::cursor_owner::{now_secs, process_start, write_file};
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
@@ -11,12 +12,13 @@ use ralph_core::worker::Scope;
 use ralph_core::worker::{
     advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
-    reconcile, reconnect_delay, running_sessions, server_record_fate, server_record_pid,
-    server_record_usable, session_missing, session_update, spawn_failure, start_failure,
-    turn_result, ApiData, Effect, OpencodeFiles, OpencodeRecord, PermissionAsked, RecordFate,
-    ServerEvent, ServerRecord, ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate,
-    TurnFacts, TurnState, WorkerMarkers, OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV,
-    OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
+    reconcile, reconnect_delay, reduce, running_sessions, server_record_fate, server_record_pid,
+    server_record_usable, session_activity, session_missing, session_update, spawn_failure,
+    start_failure, turn_result, ApiData, Effect, HeadlessState, HeadlessWorker, OpencodeFiles,
+    OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord, ServerRecordFacts,
+    SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerCommand,
+    WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
+    OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -34,8 +36,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod requests;
+mod session;
 
 pub(crate) use requests::entry_ids;
+use session::OpencodeSession;
 
 const HEALTH_PATH: &str = "/api/info";
 const ACTIVE_PATH: &str = "/api/session/active";
@@ -281,6 +285,8 @@ struct Session {
     turn: TurnState,
     verified: bool,
     heartbeat: Arc<Heartbeat>,
+    state: HeadlessState,
+    events: Events,
 }
 
 enum Feed {
@@ -342,6 +348,8 @@ fn load_sessions(store: &Path, snapshots: bool) -> HashMap<String, Session> {
                 turn: TurnState::default(),
                 verified: false,
                 heartbeat,
+                state: HeadlessState::default(),
+                events: Events::default(),
             };
             Some((record.session_id, session))
         })
@@ -358,6 +366,7 @@ pub struct OpencodeHost {
 impl OpencodeHost {
     pub(crate) fn new(store_dir: PathBuf) -> Arc<Self> {
         fs::remove_dir_all(store_dir.join(OPENCODE_OWNER_DIR)).ok();
+        fs::remove_dir_all(store_dir.join(OPENCODE_INTERRUPT_RESULT_DIR)).ok();
         Arc::new(Self {
             sessions: Mutex::new(load_sessions(
                 &store_dir,
@@ -484,22 +493,45 @@ impl OpencodeHost {
         }
     }
 
+    fn worker(&self, id: &str, session_id: &str) -> OpencodeSession {
+        let (front, events) = self
+            .sessions()
+            .get(session_id)
+            .map(|session| {
+                (
+                    session.turn.blocked.front().cloned(),
+                    session.events.clone(),
+                )
+            })
+            .unwrap_or_default();
+        OpencodeSession::new(id, session_id, self.api(), front, events)
+    }
+
+    fn apply_events(&self, id: &str, session_id: &str) -> Vec<WorkerEvent> {
+        let events = self.worker(id, session_id).poll();
+        if let Some(session) = self.sessions().get_mut(session_id) {
+            for event in &events {
+                let (state, effects) = reduce(&session.state, event);
+                session.state = state;
+                for effect in &effects {
+                    apply_effect(&session.target.markers, effect);
+                }
+            }
+        }
+        events
+    }
+
     fn run(&self, session_id: &str, target: &Target, effects: Vec<Effect>) {
         let markers = &target.markers;
+        let worker = self.worker(&target.worker, session_id);
         for effect in effects {
             match effect {
-                Effect::Ready => {
-                    write_file(&markers.ready, "").ok();
-                }
-                Effect::ClearWaiting => {
-                    fs::remove_file(&markers.waiting).ok();
-                }
+                Effect::Ready => push_event(&worker.events, WorkerEvent::Ready),
+                Effect::ClearWaiting => push_event(&worker.events, WorkerEvent::TurnStarted),
                 Effect::Publish(Some(content)) => {
-                    write_file(&markers.blocked, &content.render()).ok();
+                    push_event(&worker.events, WorkerEvent::PermissionAsked(content));
                 }
-                Effect::Publish(None) => {
-                    fs::remove_file(&markers.blocked).ok();
-                }
+                Effect::Publish(None) => push_event(&worker.events, WorkerEvent::PermissionSettled),
                 Effect::ClearReported => {
                     fs::remove_file(&markers.reported).ok();
                 }
@@ -516,13 +548,13 @@ impl OpencodeHost {
                 }
             }
         }
+        self.apply_events(&target.worker, session_id);
     }
 
     fn send(&self, session_id: &str, target: &Target, text: &str) {
         let result = self
-            .api()
-            .ok_or_else(|| "the opencode server is not running".to_string())
-            .and_then(|api| post_prompt(&api, session_id, text));
+            .worker(&target.worker, session_id)
+            .send(WorkerCommand::Prompt(text.to_string()));
         if let Err(message) = result {
             if let Some(session) = self.sessions().get_mut(session_id) {
                 session.turn.in_flight = false;
@@ -544,7 +576,12 @@ impl OpencodeHost {
             match &update {
                 Some(SessionUpdate::TurnStarted) => heartbeat.set_running(true),
                 Some(SessionUpdate::TurnEnded(_)) => heartbeat.set_running(false),
-                _ => heartbeat.touch(),
+                _ => {
+                    if let Some(WorkerEvent::Activity { at }) = session_activity(event, now_secs())
+                    {
+                        heartbeat.touch_at(at);
+                    }
+                }
             }
         }
         if let Some(update) = update {
