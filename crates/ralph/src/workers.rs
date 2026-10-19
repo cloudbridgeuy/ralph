@@ -724,12 +724,12 @@ mod tests {
     fn a_reply_to_an_opencode_worker_queues_a_prompt_entry() {
         let dir = tempfile::tempdir().unwrap();
         let workers = workers_in(dir.path());
-        write_file(&OpencodeFiles::new(dir.path(), "A").owner, "").unwrap();
+        write_file(&HandoffFiles::opencode(dir.path(), "A").owner, "").unwrap();
         assert_eq!(
             workers.reply("A", "hello", false).unwrap(),
             "Sent to worker A."
         );
-        let files = OpencodeFiles::new(dir.path(), "A");
+        let files = HandoffFiles::opencode(dir.path(), "A");
         let only = |dir: &Path| {
             fs::read_to_string(fs::read_dir(dir).unwrap().next().unwrap().unwrap().path())
         };
