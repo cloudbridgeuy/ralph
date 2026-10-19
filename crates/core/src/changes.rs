@@ -4,6 +4,10 @@ use crate::snapshot::{
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
+mod cap;
+
+use cap::cap_output;
+
 pub const DEFAULT_CHANGE_BYTES: usize = 32 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,10 +19,19 @@ pub enum ChangeScope {
     ChatSince(usize),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnWindow {
+    Last(usize),
+    Ago(usize),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScopeQuery {
-    ChatLatest,
-    Exact(ChangeScope),
+    Chat(TurnWindow),
+    Worker {
+        worker: String,
+        window: Option<TurnWindow>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,13 +120,13 @@ pub fn scope_label(scope: &ChangeScope) -> String {
 pub fn changes_tool_definition() -> Value {
     json!({
         "name": "changes",
-        "description": "Show file changes between turn snapshots as plain text. With no worker, shows the chat repo: the latest finished chat turn by default, one turn with `turn`, or everything since a turn with `since`. With `worker`, shows that worker's worktree: since spawn by default, one turn with `turn` (1 or more), or since a turn with `since`. Changes after the latest snapshot are not shown. Output is capped at max_bytes; narrow with paths or format=stat.",
+        "description": "Show file changes between turn snapshots as plain text. Turns are counted back from the latest finished turn, so you never need turn numbers. With no worker, shows the chat repo: the latest finished chat turn by default, the net changes of the last N finished turns with `last`, or one finished turn N turns back with `ago` (ago=1 is the latest finished turn, ago=2 the one before). With `worker`, shows that worker's worktree: since spawn by default, or `last`/`ago` over its finished turns. The running turn is never included. Output is capped at max_bytes; narrow with paths or format=stat.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "worker": {"type": "string", "description": "Worker id. Omit for the chat repo."},
-                "turn": {"type": "integer", "minimum": 0, "description": "Show one turn. Exclusive with since."},
-                "since": {"type": "integer", "minimum": 0, "description": "Show everything since this turn. Exclusive with turn."},
+                "last": {"type": "integer", "minimum": 1, "description": "Net changes of the last N finished turns. Default 1 without worker. Exclusive with ago."},
+                "ago": {"type": "integer", "minimum": 1, "description": "Changes of the one finished turn N turns back; 1 is the latest. Exclusive with last."},
                 "format": {"type": "string", "enum": ["stat", "files", "patch"], "description": "stat (default) is a diffstat, files is name and status, patch is the full diff."},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Limit the diff to these paths."},
                 "max_bytes": {"type": "integer", "minimum": 1, "description": "Output cap in bytes. Default 32768."}
@@ -130,6 +143,22 @@ fn optional_count(args: &Value, key: &str) -> Result<Option<usize>, String> {
             .and_then(|number| usize::try_from(number).ok())
             .map(Some)
             .ok_or_else(|| format!("Argument '{key}' must be a non-negative integer.")),
+    }
+}
+
+fn optional_turns(args: &Value, key: &str) -> Result<Option<usize>, String> {
+    match optional_count(args, key)? {
+        Some(0) => Err(format!("Argument '{key}' must be 1 or more.")),
+        count => Ok(count),
+    }
+}
+
+fn optional_window(args: &Value) -> Result<Option<TurnWindow>, String> {
+    match (optional_turns(args, "last")?, optional_turns(args, "ago")?) {
+        (Some(_), Some(_)) => Err("Arguments 'last' and 'ago' are mutually exclusive.".into()),
+        (Some(count), None) => Ok(Some(TurnWindow::Last(count))),
+        (None, Some(count)) => Ok(Some(TurnWindow::Ago(count))),
+        (None, None) => Ok(None),
     }
 }
 
@@ -179,26 +208,22 @@ fn parse_max_bytes(args: &Value) -> Result<usize, String> {
     }
 }
 
-fn parse_scope(args: &Value) -> Result<ScopeQuery, String> {
-    let worker = optional_worker(args)?;
-    let turn = optional_count(args, "turn")?;
-    let since = optional_count(args, "since")?;
-    match (worker, turn, since) {
-        (_, Some(_), Some(_)) => Err("Arguments 'turn' and 'since' are mutually exclusive.".into()),
-        (None, Some(turn), None) => Ok(ScopeQuery::Exact(ChangeScope::ChatTurn(turn))),
-        (None, None, Some(turn)) => Ok(ScopeQuery::Exact(ChangeScope::ChatSince(turn))),
-        (None, None, None) => Ok(ScopeQuery::ChatLatest),
-        (Some(worker), Some(0), None) => Err(format!(
-            "Worker {worker} turns start at 1; use since=0 for everything since turn 0."
+fn reject_removed_args(args: &Value) -> Result<(), String> {
+    match ["turn", "since"].into_iter().find(|key| args.get(key).is_some()) {
+        Some(key) => Err(format!(
+            "Argument '{key}' was removed; use 'last' (net changes of the last N finished turns) or 'ago' (one finished turn N back, 1 = newest)."
         )),
-        (Some(worker), Some(turn), None) => {
-            Ok(ScopeQuery::Exact(ChangeScope::WorkerTurn { worker, turn }))
-        }
-        (Some(worker), None, Some(turn)) => {
-            Ok(ScopeQuery::Exact(ChangeScope::WorkerSince { worker, turn }))
-        }
-        (Some(worker), None, None) => Ok(ScopeQuery::Exact(ChangeScope::Worker(worker))),
+        None => Ok(()),
     }
+}
+
+fn parse_scope(args: &Value) -> Result<ScopeQuery, String> {
+    reject_removed_args(args)?;
+    let window = optional_window(args)?;
+    Ok(match optional_worker(args)? {
+        Some(worker) => ScopeQuery::Worker { worker, window },
+        None => ScopeQuery::Chat(window.unwrap_or(TurnWindow::Last(1))),
+    })
 }
 
 pub fn parse_changes_args(args: &Value) -> Result<ChangeRequest<ScopeQuery>, String> {
@@ -212,20 +237,13 @@ pub fn parse_changes_args(args: &Value) -> Result<ChangeRequest<ScopeQuery>, Str
 
 pub fn ref_prefix(scope: &ScopeQuery) -> String {
     match scope {
-        ScopeQuery::Exact(
-            ChangeScope::Worker(worker)
-            | ChangeScope::WorkerTurn { worker, .. }
-            | ChangeScope::WorkerSince { worker, .. },
-        ) => worker_ref_prefix(worker),
-        ScopeQuery::ChatLatest
-        | ScopeQuery::Exact(ChangeScope::ChatTurn(_) | ChangeScope::ChatSince(_)) => {
-            CHAT_REF_PREFIX.to_string()
-        }
+        ScopeQuery::Worker { worker, .. } => worker_ref_prefix(worker),
+        ScopeQuery::Chat(_) => CHAT_REF_PREFIX.to_string(),
     }
 }
 
-fn turn_id(turn: usize) -> u64 {
-    u64::try_from(turn).unwrap_or(u64::MAX)
+fn turn_id(turn: u64) -> usize {
+    usize::try_from(turn).unwrap_or(usize::MAX)
 }
 
 struct RefSet<'a>(HashSet<&'a str>);
@@ -240,37 +258,54 @@ impl RefSet<'_> {
     }
 }
 
-fn latest_chat_turn(refs: &RefSet, ref_list: &str) -> Result<usize, String> {
-    parse_turns(ref_list)
-        .into_iter()
-        .rev()
-        .find(|turn| refs.0.contains(chat_ref(*turn, Edge::End).as_str()))
-        .and_then(|turn| usize::try_from(turn).ok())
-        .ok_or_else(|| "no finished chat turn snapshots yet".to_string())
+/// Picks the first and last step (oldest first, inclusive) that `window`
+/// covers out of `steps` finished steps, counted back from the newest.
+fn window_steps(window: TurnWindow, steps: usize) -> Option<(usize, usize)> {
+    match window {
+        TurnWindow::Last(count) if (1..=steps).contains(&count) => Some((steps - count, steps - 1)),
+        TurnWindow::Ago(count) if (1..=steps).contains(&count) => {
+            Some((steps - count, steps - count))
+        }
+        TurnWindow::Last(_) | TurnWindow::Ago(_) => None,
+    }
+}
+
+fn window_error(window: TurnWindow, steps: usize, owner: &str) -> String {
+    let (key, count) = match window {
+        TurnWindow::Last(count) => ("last", count),
+        TurnWindow::Ago(count) => ("ago", count),
+    };
+    format!("{key}={count} is more than the {steps} finished turns of {owner}; use {key} {steps} or less")
 }
 
 fn chat_range(
     refs: &RefSet,
     ref_list: &str,
-    from: Option<usize>,
-    to: Option<usize>,
-) -> Result<(usize, SnapshotRange), String> {
-    let last = match to {
-        Some(turn) => turn,
-        None => latest_chat_turn(refs, ref_list)?,
-    };
-    let first = from.unwrap_or(last);
-    let start = refs.require(chat_ref(turn_id(first), Edge::Start), || {
+    window: TurnWindow,
+) -> Result<(ChangeScope, SnapshotRange), String> {
+    let finished: Vec<u64> = parse_turns(ref_list)
+        .into_iter()
+        .filter(|turn| refs.0.contains(chat_ref(*turn, Edge::End).as_str()))
+        .collect();
+    if finished.is_empty() {
+        return Err("no finished chat turn snapshots yet".to_string());
+    }
+    let (first, last) = window_steps(window, finished.len())
+        .map(|(first, last)| (finished[first], finished[last]))
+        .ok_or_else(|| window_error(window, finished.len(), "the chat"))?;
+    let start = refs.require(chat_ref(first, Edge::Start), || {
         format!("chat turn {first} has no start snapshot")
     })?;
-    let end = refs.require(chat_ref(turn_id(last), Edge::End), || {
-        format!("chat turn {last} has no end snapshot yet")
-    })?;
+    let scope = if first == last {
+        ChangeScope::ChatTurn(turn_id(last))
+    } else {
+        ChangeScope::ChatSince(turn_id(first))
+    };
     Ok((
-        last,
+        scope,
         SnapshotRange {
             from: start,
-            to: Some(end),
+            to: Some(chat_ref(last, Edge::End)),
         },
     ))
 }
@@ -279,19 +314,41 @@ fn worker_range(
     refs: &RefSet,
     ref_list: &str,
     worker: &str,
-    from: usize,
-    to: Option<usize>,
-) -> Result<SnapshotRange, String> {
-    let highest = parse_worker_turns(worker, ref_list)
-        .into_iter()
-        .max()
+    window: Option<TurnWindow>,
+) -> Result<(ChangeScope, SnapshotRange), String> {
+    let turns = parse_worker_turns(worker, ref_list);
+    let highest = *turns
+        .last()
         .ok_or_else(|| format!("no snapshots for worker {worker}"))?;
-    let last = to.unwrap_or_else(|| usize::try_from(highest).unwrap_or(usize::MAX));
-    let missing = |turn: usize| move || format!("worker {worker} has no snapshot for turn {turn}");
-    Ok(SnapshotRange {
-        from: refs.require(worker_ref(worker, turn_id(from)), missing(from))?,
-        to: Some(refs.require(worker_ref(worker, turn_id(last)), missing(last))?),
-    })
+    let owner = || worker.to_string();
+    let (scope, from, to) = match window {
+        None => (ChangeScope::Worker(owner()), 0, highest),
+        Some(window) => {
+            let steps = turns.len() - 1;
+            let (first, last) = window_steps(window, steps)
+                .ok_or_else(|| window_error(window, steps, &format!("worker {worker}")))?;
+            let (from, to) = (turns[first], turns[last + 1]);
+            let scope = match window {
+                TurnWindow::Ago(_) => ChangeScope::WorkerTurn {
+                    worker: owner(),
+                    turn: turn_id(to),
+                },
+                TurnWindow::Last(_) => ChangeScope::WorkerSince {
+                    worker: owner(),
+                    turn: turn_id(from),
+                },
+            };
+            (scope, from, to)
+        }
+    };
+    let missing = |turn: u64| move || format!("worker {worker} has no snapshot for turn {turn}");
+    Ok((
+        scope,
+        SnapshotRange {
+            from: refs.require(worker_ref(worker, from), missing(from))?,
+            to: Some(refs.require(worker_ref(worker, to), missing(to))?),
+        },
+    ))
 }
 
 pub fn resolve_range(
@@ -300,11 +357,8 @@ pub fn resolve_range(
 ) -> Result<(ChangeRequest, SnapshotRange), String> {
     let refs = RefSet(ref_list.lines().map(str::trim).collect());
     let (scope, range) = match &request.scope {
-        ScopeQuery::ChatLatest => {
-            let (turn, range) = chat_range(&refs, ref_list, None, None)?;
-            (ChangeScope::ChatTurn(turn), range)
-        }
-        ScopeQuery::Exact(scope) => (scope.clone(), exact_range(scope, &refs, ref_list)?),
+        ScopeQuery::Chat(window) => chat_range(&refs, ref_list, *window)?,
+        ScopeQuery::Worker { worker, window } => worker_range(&refs, ref_list, worker, *window)?,
     };
     Ok((
         ChangeRequest {
@@ -315,86 +369,6 @@ pub fn resolve_range(
         },
         range,
     ))
-}
-
-fn exact_range(
-    scope: &ChangeScope,
-    refs: &RefSet,
-    ref_list: &str,
-) -> Result<SnapshotRange, String> {
-    match scope {
-        ChangeScope::ChatTurn(turn) => {
-            chat_range(refs, ref_list, Some(*turn), Some(*turn)).map(|(_, range)| range)
-        }
-        ChangeScope::ChatSince(turn) => {
-            chat_range(refs, ref_list, Some(*turn), None).map(|(_, range)| range)
-        }
-        ChangeScope::Worker(worker) => worker_range(refs, ref_list, worker, 0, None),
-        ChangeScope::WorkerSince { worker, turn } => {
-            worker_range(refs, ref_list, worker, *turn, None)
-        }
-        ChangeScope::WorkerTurn { worker, turn } => {
-            worker_range(refs, ref_list, worker, turn.saturating_sub(1), Some(*turn))
-        }
-    }
-}
-
-fn is_stat_summary(line: &str) -> bool {
-    line.contains(" changed") && (line.contains("file changed") || line.contains("files changed"))
-}
-
-fn omitted_files(format: ChangeFormat, omitted: &str) -> usize {
-    omitted
-        .lines()
-        .filter(|line| match format {
-            ChangeFormat::Patch => line.starts_with("diff --git "),
-            ChangeFormat::Files => !line.trim().is_empty(),
-            ChangeFormat::Stat => !line.trim().is_empty() && !is_stat_summary(line),
-        })
-        .count()
-}
-
-fn cap_footer(omitted_bytes: usize, files: usize) -> String {
-    format!(
-        "… {omitted_bytes} bytes omitted ({files} files not shown); narrow with paths or format=stat"
-    )
-}
-
-fn char_floor(text: &str, limit: usize) -> usize {
-    (0..=limit.min(text.len()))
-        .rev()
-        .find(|index| text.is_char_boundary(*index))
-        .unwrap_or(0)
-}
-
-fn kept_prefix(output: &str, budget: usize) -> usize {
-    let whole_lines = output
-        .split_inclusive('\n')
-        .scan(0usize, |used, line| {
-            *used += line.len();
-            Some(*used)
-        })
-        .take_while(|used| *used <= budget)
-        .last();
-    whole_lines.unwrap_or_else(|| {
-        let first_line = output.find('\n').unwrap_or(output.len());
-        char_floor(output, budget.min(first_line))
-    })
-}
-
-fn cap_output(format: ChangeFormat, output: &str, max_bytes: usize) -> String {
-    if output.len() <= max_bytes {
-        return output.to_string();
-    }
-    let reserve = cap_footer(output.len(), omitted_files(format, output)).len() + 1;
-    let keep = kept_prefix(output, max_bytes.saturating_sub(reserve));
-    let (kept, omitted) = output.split_at(keep);
-    let footer = cap_footer(omitted.len(), omitted_files(format, omitted));
-    if kept.is_empty() {
-        footer
-    } else {
-        format!("{}\n{footer}", kept.trim_end_matches('\n'))
-    }
 }
 
 pub fn render_changes(request: &ChangeRequest, output: &str) -> String {
@@ -600,7 +574,7 @@ mod tests {
     #[test]
     fn parse_defaults_to_latest_chat_turn_stat() {
         let request = parsed(json!({})).unwrap();
-        assert_eq!(request.scope, ScopeQuery::ChatLatest);
+        assert_eq!(request.scope, ScopeQuery::Chat(TurnWindow::Last(1)));
         assert_eq!(request.format, ChangeFormat::Stat);
         assert!(request.paths.is_empty());
         assert_eq!(request.max_bytes, Some(DEFAULT_CHANGE_BYTES));
@@ -609,28 +583,34 @@ mod tests {
 
     #[test]
     fn parse_scope_mapping() {
-        let scope = |args: Value| match parsed(args).unwrap().scope {
-            ScopeQuery::Exact(scope) => scope,
-            ScopeQuery::ChatLatest => panic!("expected an exact scope"),
-        };
-        assert_eq!(scope(json!({"turn": 3})), ChangeScope::ChatTurn(3));
-        assert_eq!(scope(json!({"since": 0})), ChangeScope::ChatSince(0));
+        let scope = |args: Value| parsed(args).unwrap().scope;
         assert_eq!(
-            scope(json!({"worker": "A"})),
-            ChangeScope::Worker("A".to_string())
+            scope(json!({"last": 3})),
+            ScopeQuery::Chat(TurnWindow::Last(3))
         );
         assert_eq!(
-            scope(json!({"worker": "A", "turn": 2})),
-            ChangeScope::WorkerTurn {
+            scope(json!({"ago": 2})),
+            ScopeQuery::Chat(TurnWindow::Ago(2))
+        );
+        assert_eq!(
+            scope(json!({"worker": "A"})),
+            ScopeQuery::Worker {
                 worker: "A".to_string(),
-                turn: 2
+                window: None
             }
         );
         assert_eq!(
-            scope(json!({"worker": "A", "since": 1})),
-            ChangeScope::WorkerSince {
+            scope(json!({"worker": "A", "ago": 1})),
+            ScopeQuery::Worker {
                 worker: "A".to_string(),
-                turn: 1
+                window: Some(TurnWindow::Ago(1))
+            }
+        );
+        assert_eq!(
+            scope(json!({"worker": "A", "last": 2})),
+            ScopeQuery::Worker {
+                worker: "A".to_string(),
+                window: Some(TurnWindow::Last(2))
             }
         );
     }
@@ -638,10 +618,12 @@ mod tests {
     #[test]
     fn parse_rejects_bad_arguments() {
         for args in [
-            json!({"turn": 1, "since": 1}),
-            json!({"worker": "A", "turn": 0}),
-            json!({"turn": -1}),
-            json!({"turn": "1"}),
+            json!({"last": 1, "ago": 1}),
+            json!({"worker": "A", "last": 2, "ago": 1}),
+            json!({"last": 0}),
+            json!({"ago": 0}),
+            json!({"ago": -1}),
+            json!({"last": "1"}),
             json!({"worker": ""}),
             json!({"worker": 5}),
             json!({"format": "diff"}),
@@ -653,6 +635,21 @@ mod tests {
         ] {
             assert!(parsed(args.clone()).is_err(), "{args}");
         }
+        assert_eq!(
+            parsed(json!({"last": 1, "ago": 1})).unwrap_err(),
+            "Arguments 'last' and 'ago' are mutually exclusive."
+        );
+        assert_eq!(
+            parsed(json!({"turn": 32})).unwrap_err(),
+            "Argument 'turn' was removed; use 'last' (net changes of the last N finished turns) or 'ago' (one finished turn N back, 1 = newest)."
+        );
+        assert!(parsed(json!({"worker": "A", "since": 0}))
+            .unwrap_err()
+            .starts_with("Argument 'since' was removed; use 'last'"));
+        assert_eq!(
+            parsed(json!({"ago": 0})).unwrap_err(),
+            "Argument 'ago' must be 1 or more."
+        );
     }
 
     #[test]
@@ -670,18 +667,32 @@ mod tests {
 
     #[test]
     fn ref_prefix_follows_scope() {
-        assert_eq!(ref_prefix(&ScopeQuery::ChatLatest), "refs/ralph/chat/");
         assert_eq!(
-            ref_prefix(&ScopeQuery::Exact(ChangeScope::ChatSince(1))),
+            ref_prefix(&ScopeQuery::Chat(TurnWindow::Last(1))),
             "refs/ralph/chat/"
         );
         assert_eq!(
-            ref_prefix(&ScopeQuery::Exact(ChangeScope::Worker("A".to_string()))),
+            ref_prefix(&ScopeQuery::Worker {
+                worker: "A".to_string(),
+                window: Some(TurnWindow::Ago(1))
+            }),
             "refs/ralph/workers/A/"
         );
     }
 
-    const CHAT_REFS: &str = "refs/ralph/chat/turn-1/start\nrefs/ralph/chat/turn-1/end\nrefs/ralph/chat/turn-2/start\nrefs/ralph/chat/turn-2/end\nrefs/ralph/chat/turn-3/start\n";
+    #[test]
+    fn window_steps_counts_back_from_the_newest() {
+        assert_eq!(window_steps(TurnWindow::Last(1), 3), Some((2, 2)));
+        assert_eq!(window_steps(TurnWindow::Last(3), 3), Some((0, 2)));
+        assert_eq!(window_steps(TurnWindow::Ago(1), 3), Some((2, 2)));
+        assert_eq!(window_steps(TurnWindow::Ago(3), 3), Some((0, 0)));
+        assert_eq!(window_steps(TurnWindow::Last(4), 3), None);
+        assert_eq!(window_steps(TurnWindow::Ago(4), 3), None);
+        assert_eq!(window_steps(TurnWindow::Last(0), 3), None);
+        assert_eq!(window_steps(TurnWindow::Ago(1), 0), None);
+    }
+
+    const CHAT_REFS: &str = "refs/ralph/chat/turn-30/start\nrefs/ralph/chat/turn-30/end\nrefs/ralph/chat/turn-31/start\nrefs/ralph/chat/turn-31/end\nrefs/ralph/chat/turn-32/start\nrefs/ralph/chat/turn-32/end\nrefs/ralph/chat/turn-33/start\n";
     const WORKER_REFS: &str = "refs/ralph/workers/A/turn-0\nrefs/ralph/workers/A/turn-1\nrefs/ralph/workers/A/turn-2\nrefs/ralph/workers/B/turn-5\n";
 
     fn resolve_query(
@@ -697,8 +708,20 @@ mod tests {
         resolve_range(&query, refs)
     }
 
-    fn resolve(scope: ChangeScope, refs: &str) -> Result<(ChangeScope, SnapshotRange), String> {
-        resolve_query(ScopeQuery::Exact(scope), refs).map(|(request, range)| (request.scope, range))
+    fn resolve_chat(window: TurnWindow) -> Result<(ChangeScope, SnapshotRange), String> {
+        resolve_query(ScopeQuery::Chat(window), CHAT_REFS)
+            .map(|(request, range)| (request.scope, range))
+    }
+
+    fn resolve_worker(
+        worker: &str,
+        window: Option<TurnWindow>,
+    ) -> Result<(ChangeScope, SnapshotRange), String> {
+        let scope = ScopeQuery::Worker {
+            worker: worker.to_string(),
+            window,
+        };
+        resolve_query(scope, WORKER_REFS).map(|(request, range)| (request.scope, range))
     }
 
     fn span(from: &str, to: &str) -> SnapshotRange {
@@ -709,16 +732,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_chat_turn_and_latest() {
-        assert_eq!(
-            resolve(ChangeScope::ChatTurn(1), CHAT_REFS).unwrap().1,
-            span("refs/ralph/chat/turn-1/start", "refs/ralph/chat/turn-1/end")
-        );
-        let (request, range) = resolve_query(ScopeQuery::ChatLatest, CHAT_REFS).unwrap();
+    fn resolve_chat_default_is_latest_finished_turn() {
+        let (request, range) =
+            resolve_query(ScopeQuery::Chat(TurnWindow::Last(1)), CHAT_REFS).unwrap();
         assert_eq!(
             request,
             ChangeRequest {
-                scope: ChangeScope::ChatTurn(2),
+                scope: ChangeScope::ChatTurn(32),
                 format: ChangeFormat::Patch,
                 paths: strings(&["src"]),
                 max_bytes: Some(10),
@@ -726,168 +746,130 @@ mod tests {
         );
         assert_eq!(
             range,
-            span("refs/ralph/chat/turn-2/start", "refs/ralph/chat/turn-2/end")
+            span(
+                "refs/ralph/chat/turn-32/start",
+                "refs/ralph/chat/turn-32/end"
+            )
         );
     }
 
     #[test]
-    fn resolve_chat_since_ends_at_highest_end_ref() {
+    fn resolve_chat_ago_picks_one_finished_turn() {
         assert_eq!(
-            resolve(ChangeScope::ChatSince(1), CHAT_REFS).unwrap().1,
-            span("refs/ralph/chat/turn-1/start", "refs/ralph/chat/turn-2/end")
+            resolve_chat(TurnWindow::Ago(1)).unwrap(),
+            (
+                ChangeScope::ChatTurn(32),
+                span(
+                    "refs/ralph/chat/turn-32/start",
+                    "refs/ralph/chat/turn-32/end"
+                )
+            )
+        );
+        assert_eq!(
+            resolve_chat(TurnWindow::Ago(3)).unwrap(),
+            (
+                ChangeScope::ChatTurn(30),
+                span(
+                    "refs/ralph/chat/turn-30/start",
+                    "refs/ralph/chat/turn-30/end"
+                )
+            )
         );
     }
 
     #[test]
-    fn resolve_chat_missing_refs_error() {
+    fn resolve_chat_last_spans_finished_turns() {
         assert_eq!(
-            resolve(ChangeScope::ChatTurn(3), CHAT_REFS).unwrap_err(),
-            "chat turn 3 has no end snapshot yet"
+            resolve_chat(TurnWindow::Last(2)).unwrap(),
+            (
+                ChangeScope::ChatSince(31),
+                span(
+                    "refs/ralph/chat/turn-31/start",
+                    "refs/ralph/chat/turn-32/end"
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_chat_window_errors() {
+        assert_eq!(
+            resolve_chat(TurnWindow::Last(4)).unwrap_err(),
+            "last=4 is more than the 3 finished turns of the chat; use last 3 or less"
         );
         assert_eq!(
-            resolve(ChangeScope::ChatTurn(9), CHAT_REFS).unwrap_err(),
-            "chat turn 9 has no start snapshot"
+            resolve_chat(TurnWindow::Ago(5)).unwrap_err(),
+            "ago=5 is more than the 3 finished turns of the chat; use ago 3 or less"
         );
-        assert!(resolve(ChangeScope::ChatSince(7), CHAT_REFS).is_err());
-        assert!(resolve_query(ScopeQuery::ChatLatest, "").is_err());
-        assert!(resolve_query(ScopeQuery::ChatLatest, "refs/ralph/chat/turn-1/start\n").is_err());
+        let unfinished = "refs/ralph/chat/turn-1/start\n";
+        assert_eq!(
+            resolve_query(ScopeQuery::Chat(TurnWindow::Last(1)), unfinished).unwrap_err(),
+            "no finished chat turn snapshots yet"
+        );
+        assert_eq!(
+            resolve_query(
+                ScopeQuery::Chat(TurnWindow::Last(1)),
+                "refs/ralph/chat/turn-4/end\n"
+            )
+            .unwrap_err(),
+            "chat turn 4 has no start snapshot"
+        );
     }
 
     #[test]
     fn resolve_worker_ranges() {
         let worker = || "A".to_string();
         assert_eq!(
-            resolve(ChangeScope::Worker(worker()), WORKER_REFS)
-                .unwrap()
-                .1,
-            span("refs/ralph/workers/A/turn-0", "refs/ralph/workers/A/turn-2")
-        );
-        assert_eq!(
-            resolve(
-                ChangeScope::WorkerSince {
-                    worker: worker(),
-                    turn: 1
-                },
-                WORKER_REFS
+            resolve_worker("A", None).unwrap(),
+            (
+                ChangeScope::Worker(worker()),
+                span("refs/ralph/workers/A/turn-0", "refs/ralph/workers/A/turn-2")
             )
-            .unwrap()
-            .1,
-            span("refs/ralph/workers/A/turn-1", "refs/ralph/workers/A/turn-2")
         );
         assert_eq!(
-            resolve(
+            resolve_worker("A", Some(TurnWindow::Ago(1))).unwrap(),
+            (
                 ChangeScope::WorkerTurn {
                     worker: worker(),
                     turn: 2
                 },
-                WORKER_REFS
+                span("refs/ralph/workers/A/turn-1", "refs/ralph/workers/A/turn-2")
             )
-            .unwrap()
-            .1,
-            span("refs/ralph/workers/A/turn-1", "refs/ralph/workers/A/turn-2")
+        );
+        assert_eq!(
+            resolve_worker("A", Some(TurnWindow::Ago(2))).unwrap().1,
+            span("refs/ralph/workers/A/turn-0", "refs/ralph/workers/A/turn-1")
+        );
+        assert_eq!(
+            resolve_worker("A", Some(TurnWindow::Last(2))).unwrap(),
+            (
+                ChangeScope::WorkerSince {
+                    worker: worker(),
+                    turn: 0
+                },
+                span("refs/ralph/workers/A/turn-0", "refs/ralph/workers/A/turn-2")
+            )
         );
     }
 
     #[test]
-    fn resolve_worker_missing_refs_error() {
+    fn resolve_worker_errors() {
         assert_eq!(
-            resolve(ChangeScope::Worker("Z".to_string()), WORKER_REFS).unwrap_err(),
+            resolve_worker("Z", None).unwrap_err(),
             "no snapshots for worker Z"
         );
-        assert!(resolve(
-            ChangeScope::WorkerTurn {
-                worker: "A".to_string(),
-                turn: 3
-            },
-            WORKER_REFS
-        )
-        .is_err());
-        assert!(resolve(
-            ChangeScope::WorkerSince {
-                worker: "B".to_string(),
-                turn: 0
-            },
-            WORKER_REFS
-        )
-        .is_err());
-    }
-
-    fn capped(format: ChangeFormat, output: &str, max_bytes: usize) -> String {
-        let rendered = render_changes(
-            &chat_req(ChangeScope::ChatTurn(1), format, Some(max_bytes)),
-            output,
-        );
-        rendered
-            .split_once('\n')
-            .map(|(_, body)| body.to_string())
-            .unwrap()
-    }
-
-    #[test]
-    fn cap_under_limit_passes_through() {
-        let output = "M\ta.rs\nM\tb.rs\n";
-        assert_eq!(capped(ChangeFormat::Files, output, output.len()), output);
-    }
-
-    #[test]
-    fn cap_keeps_whole_lines_and_counts_omitted_files() {
-        let output = "M\ta.rs\nM\tb.rs\nM\tc.rs\nM\td.rs\n".repeat(5);
-        let body = capped(ChangeFormat::Files, &output, 120);
-        assert!(body.len() <= 120, "{}", body.len());
-        let (kept, footer) = body.rsplit_once('\n').unwrap();
-        assert!(kept.lines().all(|line| line.starts_with("M\t")));
-        assert!(output.starts_with(kept));
-        let omitted = output.len() - kept.len() - 1;
-        let files = output[kept.len() + 1..].lines().count();
         assert_eq!(
-            footer,
-            format!(
-                "… {omitted} bytes omitted ({files} files not shown); narrow with paths or format=stat"
-            )
+            resolve_worker("A", Some(TurnWindow::Ago(3))).unwrap_err(),
+            "ago=3 is more than the 2 finished turns of worker A; use ago 2 or less"
         );
-    }
-
-    #[test]
-    fn cap_counts_patch_files_by_diff_headers() {
-        let file = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-old\n+new\n";
-        let output = file.repeat(6);
-        let body = capped(ChangeFormat::Patch, &output, 200);
-        assert!(body.len() <= 200);
-        let shown = body.matches("diff --git ").count();
-        let footer = body.lines().last().unwrap();
-        assert!(
-            footer.contains(&format!("({} files not shown)", 6 - shown)),
-            "{footer}"
+        assert_eq!(
+            resolve_worker("B", Some(TurnWindow::Last(1))).unwrap_err(),
+            "last=1 is more than the 0 finished turns of worker B; use last 0 or less"
         );
-    }
-
-    #[test]
-    fn cap_stat_footer_excludes_summary_line() {
-        let output = format!(
-            "{} 6 files changed, 6 insertions(+), 6 deletions(-)\n",
-            " f.rs | 2 +-\n".repeat(6)
+        assert_eq!(
+            resolve_worker("B", None).unwrap_err(),
+            "worker B has no snapshot for turn 0"
         );
-        let body = capped(ChangeFormat::Stat, &output, 125);
-        let footer = body.lines().last().unwrap();
-        assert!(footer.contains("(3 files not shown)"), "{footer}");
-        assert!(body.len() <= 125);
-        assert!(body.starts_with(" f.rs | 2 +-\n"));
-    }
-
-    #[test]
-    fn cap_cuts_oversized_first_line_at_char_boundary() {
-        let output = format!("{}\nsecond\n", "é".repeat(100));
-        let body = capped(ChangeFormat::Patch, &output, 150);
-        let kept = body.lines().next().unwrap();
-        assert!(!kept.is_empty());
-        assert!(kept.chars().all(|c| c == 'é'));
-        assert!(body.len() <= 150);
-    }
-
-    #[test]
-    fn cap_tiny_limit_returns_only_the_footer() {
-        let body = capped(ChangeFormat::Files, "M\ta.rs\nM\tb.rs\n", 5);
-        assert!(body.starts_with("… 14 bytes omitted (2 files not shown)"));
     }
 
     #[test]
@@ -895,7 +877,7 @@ mod tests {
         let definition = changes_tool_definition();
         assert_eq!(definition["name"], "changes");
         let properties = definition["inputSchema"]["properties"].as_object().unwrap();
-        for key in ["worker", "turn", "since", "format", "paths", "max_bytes"] {
+        for key in ["worker", "last", "ago", "format", "paths", "max_bytes"] {
             assert!(properties.contains_key(key), "{key}");
         }
     }
