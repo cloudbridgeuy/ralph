@@ -18,6 +18,7 @@ pub enum TurnOutcome {
     Remind,
     Unreported,
     Problem(String),
+    Stopped(String),
     Closed,
     Cancelled,
 }
@@ -126,7 +127,7 @@ pub fn turn_outcome(
         Ok("end_turn") if interrupted => TurnOutcome::Cancelled,
         Ok("end_turn") if reminded => TurnOutcome::Unreported,
         Ok("end_turn") => TurnOutcome::Remind,
-        Ok(other) => TurnOutcome::Problem(format!("the agent ended its turn with `{other}`")),
+        Ok(other) => TurnOutcome::Stopped(other.to_string()),
     }
 }
 
@@ -136,17 +137,16 @@ pub fn is_report_tool_call(update: &Value) -> bool {
         && update["title"].as_str().is_some_and(|v| v.trim() == title)
 }
 
+pub fn stop_problem(agent: &AcpAgent, reason: &str) -> String {
+    format!("the {} agent ended its turn with `{reason}`", agent.name)
+}
+
 pub fn prompt_failure_report(agent: &AcpAgent, id: &str, at: &str, problem: &str) -> Report {
-    let name = agent.name;
-    let problem = match problem.strip_prefix("the agent ended") {
-        Some(rest) => format!("the {name} agent ended{rest}"),
-        None => problem.to_string(),
-    };
     Report {
         worker: id.to_string(),
         at: at.to_string(),
         status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!("The {name} task prompt failed: {problem}."),
+        text: format!("The {} task prompt failed: {problem}.", agent.name),
     }
 }
 
@@ -204,7 +204,7 @@ mod tests {
         );
         assert_eq!(
             turn_outcome(Ok("refusal"), false, false, false, false),
-            TurnOutcome::Problem("the agent ended its turn with `refusal`".into())
+            TurnOutcome::Stopped("refusal".into())
         );
         assert_eq!(
             turn_outcome(Err("boom"), false, false, false, false),
@@ -370,5 +370,19 @@ mod tests {
         assert_eq!(report.worker, "A");
         assert_eq!(report.status, "blocked");
         assert!(report.text.contains("boom"));
+    }
+
+    #[test]
+    fn a_cursor_stop_reason_keeps_its_exact_failure_text() {
+        let report = prompt_failure_report(
+            &CURSOR_AGENT,
+            "A",
+            "2026-01-01T00:00:00Z",
+            &stop_problem(&CURSOR_AGENT, "refusal"),
+        );
+        assert_eq!(
+            report.text,
+            "The cursor task prompt failed: the cursor agent ended its turn with `refusal`."
+        );
     }
 }

@@ -111,6 +111,9 @@ impl TurnState {
             }
             TurnOutcome::Unreported => vec![Effect::Unreported],
             TurnOutcome::Problem(problem) => vec![Effect::Problem(problem)],
+            TurnOutcome::Stopped(reason) => vec![Effect::Problem(format!(
+                "the agent ended its turn with `{reason}`"
+            ))],
             TurnOutcome::Cancelled => {
                 self.blocked.clear();
                 vec![Effect::Publish(None)]

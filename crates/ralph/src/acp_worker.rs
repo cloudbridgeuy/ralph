@@ -22,12 +22,12 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, interrupt_result_text,
     is_report_tool_call, match_option, no_option_message, permission_content,
-    prompt_failure_report, ready_path, request_stale, resume_decision, session_error, task_prompt,
-    turn_outcome, version_warning, AcpAgent, BlockedContent, CursorFiles, CursorPermissions,
-    Inbound, OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest, Step, TurnOutcome,
-    WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
-    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
-    CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    prompt_failure_report, ready_path, request_stale, resume_decision, session_error, stop_problem,
+    task_prompt, turn_outcome, version_warning, AcpAgent, BlockedContent, CursorFiles,
+    CursorPermissions, Inbound, OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest,
+    Step, TurnOutcome, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
+    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -561,15 +561,20 @@ async fn run_turns(
                 write_file(&turns.markers.unreported, "").ok();
                 write_file(&turns.markers.waiting, "").ok();
             }
-            TurnOutcome::Problem(problem) => {
-                let at = chrono::Utc::now().to_rfc3339();
-                let report = prompt_failure_report(&turns.agent, &turns.worker_id, &at, &problem);
-                turns.inbox.post(&report, 0).ok();
-            }
             TurnOutcome::Cancelled => turns.permissions.cancel_all(),
+            TurnOutcome::Problem(problem) => post_prompt_failure(turns, &problem),
+            TurnOutcome::Stopped(reason) => {
+                post_prompt_failure(turns, &stop_problem(&turns.agent, &reason));
+            }
             TurnOutcome::Reported | TurnOutcome::Closed => {}
         }
     }
+}
+
+fn post_prompt_failure(turns: &Turns, problem: &str) {
+    let at = chrono::Utc::now().to_rfc3339();
+    let report = prompt_failure_report(&turns.agent, &turns.worker_id, &at, problem);
+    turns.inbox.post(&report, 0).ok();
 }
 
 fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
