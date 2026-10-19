@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+mod frames;
 mod handoff;
 mod owner;
 mod permissions;
 mod protocol;
 mod turns;
 
+pub use frames::*;
 pub use handoff::*;
 pub use owner::*;
 pub use permissions::*;

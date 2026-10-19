@@ -20,14 +20,14 @@ use futures::future::Either;
 use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, interrupt_result_text,
-    is_report_tool_call, match_option, no_option_message, permission_content,
+    acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, decode_update, encode,
+    interrupt_result_text, match_option, no_option_message, permission_content,
     prompt_failure_report, ready_path, request_stale, resume_decision, session_error, stop_problem,
-    task_prompt, turn_outcome, version_warning, AcpAgent, BlockedContent, CursorFiles,
+    task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, CursorFiles,
     CursorPermissions, Inbound, OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest,
-    Step, TurnOutcome, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
-    CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
-    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    Step, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
+    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
+    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -65,6 +65,15 @@ struct PendingPermission {
     content: BlockedContent,
 }
 
+fn selected_response(command: WorkerCommand) -> Option<RequestPermissionResponse> {
+    match encode(command)? {
+        AcpCall::PermissionResponse(option_id) => Some(RequestPermissionResponse::new(
+            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
+        )),
+        _ => None,
+    }
+}
+
 struct Permissions {
     blocked: PathBuf,
     mode: CursorPermissions,
@@ -99,12 +108,12 @@ impl Permissions {
         let value = serde_json::to_value(request).unwrap_or_default();
         let content = permission_content(&value);
         if let Some(option) = auto_allow_option(self.mode, &content) {
-            let outcome = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-                option.option_id.clone(),
-            ));
-            responder
-                .respond(RequestPermissionResponse::new(outcome))
-                .ok();
+            let command = WorkerCommand::AnswerPermission {
+                option_id: option.option_id.clone(),
+            };
+            if let Some(response) = selected_response(command) {
+                responder.respond(response).ok();
+            }
             return true;
         }
         let mut queue = self.queue();
@@ -120,14 +129,12 @@ impl Permissions {
             .ok_or("no permission request is pending for this worker")?;
         let option = match_option(&front.content.options, text)
             .ok_or_else(|| no_option_message(&front.content.options))?;
-        let outcome = RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
-            option.option_id.clone(),
-        ));
-        if let Some(pending) = queue.pop_front() {
-            pending
-                .responder
-                .respond(RequestPermissionResponse::new(outcome))
-                .ok();
+        let command = WorkerCommand::AnswerPermission {
+            option_id: option.option_id.clone(),
+        };
+        let response = selected_response(command);
+        if let (Some(pending), Some(response)) = (queue.pop_front(), response) {
+            pending.responder.respond(response).ok();
         }
         self.publish(&queue);
         Ok(())
@@ -320,7 +327,9 @@ impl AcpWorker {
                         async move |notification: SessionNotification, _cx| {
                             let update =
                                 serde_json::to_value(&notification.update).unwrap_or_default();
-                            if !replaying.load(Ordering::SeqCst) && is_report_tool_call(&update) {
+                            if !replaying.load(Ordering::SeqCst)
+                                && decode_update(&update) == Some(WorkerEvent::Reported)
+                            {
                                 seen.store(true, Ordering::SeqCst);
                             }
                             Ok(())
@@ -465,9 +474,11 @@ fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) 
         match step {
             Step::CancelPermissions => turns.permissions.cancel_all(),
             Step::CancelSession => {
-                connection
-                    .send_notification(CancelNotification::new(turns.session.clone()))
-                    .ok();
+                if let Some(AcpCall::Cancel) = encode(WorkerCommand::Interrupt(String::new())) {
+                    connection
+                        .send_notification(CancelNotification::new(turns.session.clone()))
+                        .ok();
+                }
             }
         }
     }
@@ -514,11 +525,14 @@ async fn run_turns(
         };
         fs::remove_file(&turns.markers.waiting).ok();
         turns.reported.store(false, Ordering::SeqCst);
+        let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
+            return;
+        };
         let mut sent = Box::pin(
             connection
                 .send_request(PromptRequest::new(
                     turns.session.clone(),
-                    vec![text.clone().into()],
+                    vec![prompt.into()],
                 ))
                 .block_task(),
         )
