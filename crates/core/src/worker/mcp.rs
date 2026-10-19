@@ -1,4 +1,7 @@
-use super::{Command, HarnessId, CURSOR_HARNESS, DEFAULT_OPENCODE_MODEL, OPENCODE_HARNESS};
+use super::{
+    capabilities, decide, Command, HarnessId, SpawnSpec, WorkerCommand, WorkerEvent,
+    CURSOR_HARNESS, DEFAULT_OPENCODE_MODEL, OPENCODE_HARNESS,
+};
 use crate::mcp::string_arg;
 use crate::watch_request::parse_watch_args;
 use serde_json::{json, Value};
@@ -120,8 +123,15 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
             }
         }
         (Some(CURSOR_HARNESS), None) => Ok((HarnessId::Cursor, None)),
-        (Some(CURSOR_HARNESS), Some(_)) => {
-            Err("A model can only be set for the opencode harness.".to_string())
+        (Some(CURSOR_HARNESS), Some(model)) => {
+            let spec = SpawnSpec {
+                model: Some(model.to_string()),
+            };
+            match decide(&capabilities(HarnessId::Cursor), WorkerCommand::Spawn(spec)) {
+                Err(WorkerEvent::Unsupported { reason, .. }) => Err(reason),
+                Err(other) => Err(format!("{other:?}")),
+                Ok(_) => Ok((HarnessId::Cursor, Some(model.to_string()))),
+            }
         }
         (Some(other), _) => Err(format!(
             "Unknown harness '{other}'. Use claude, opencode or cursor."
@@ -132,6 +142,7 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::{describe, Feature};
 
     #[test]
     fn parse_command_reads_spawn_and_reply() {
@@ -246,6 +257,16 @@ mod tests {
         ] {
             assert!(spawn_harness(args.clone()).is_err(), "{args}");
         }
+    }
+
+    #[test]
+    fn spawn_harness_rejects_cursor_model_through_capabilities() {
+        let result = spawn_harness(json!({"harness": "cursor", "model": "x/y"}));
+        assert_eq!(
+            result,
+            Err(describe(&capabilities(HarnessId::Cursor), Feature::Model))
+        );
+        assert_eq!(result, Err("cursor model: not supported".to_string()));
     }
 
     #[test]
