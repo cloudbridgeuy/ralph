@@ -14,8 +14,10 @@ use std::fs;
 use std::path::PathBuf;
 
 mod changes;
+mod claude;
 mod opencode;
 pub use changes::ChangesSection;
+pub use claude::ClaudeSection;
 pub use opencode::OpencodeSection;
 
 /// Error type for configuration operations.
@@ -71,6 +73,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub cursor: CursorSection,
+
+    #[serde(default)]
+    pub claude: ClaudeSection,
 
     #[serde(default)]
     pub opencode: OpencodeSection,

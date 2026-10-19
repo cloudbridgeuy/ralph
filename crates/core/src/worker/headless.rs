@@ -68,7 +68,7 @@ impl Capabilities {
         use Feature::*;
         use Support::{Full, Partial};
         match (self.harness, feature) {
-            (HarnessId::Claude, Model) => Support::None,
+            (HarnessId::Claude, Model) => Full,
             (HarnessId::Claude, _) => Support::None,
             (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report) => Full,
             (HarnessId::Cursor, Interrupt) => Partial("outcome unknown after 30 s"),
@@ -361,7 +361,7 @@ mod tests {
     fn model_refusal_names_accepting_harnesses() {
         assert_eq!(
             model_refusal(HarnessId::Cursor),
-            "cursor does not accept a model; harnesses that do: opencode"
+            "cursor does not accept a model; harnesses that do: claude, opencode"
         );
     }
 

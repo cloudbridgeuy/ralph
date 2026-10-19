@@ -10,11 +10,11 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
-    project_slug, resolve_opencode_model, rollback_plan, rollback_report, session_name,
-    spawn_handoff, startup_state, worker_command, worker_mcp_args, worker_mcp_config,
-    worktree_add_args, wt_switch_args, CursorFiles, Handoff, HarnessId, OpencodeFiles,
-    OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup, WorkerMarkers,
-    WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    project_slug, resolve_claude_model, resolve_opencode_model, rollback_plan, rollback_report,
+    session_name, spawn_handoff, startup_state, worker_command, worker_mcp_args, worker_mcp_config,
+    worktree_add_args, wt_switch_args, ClaudeWorkerArgs, CursorFiles, Handoff, HarnessId,
+    OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup,
+    WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
     OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
@@ -95,7 +95,14 @@ impl Workers {
                 );
                 (Some(model), warning)
             }
-            HarnessId::Claude | HarnessId::Cursor => (None, None),
+            HarnessId::Claude => resolve_claude_model(
+                model,
+                config
+                    .as_ref()
+                    .map(|config| config.claude.model.as_deref())
+                    .map_err(String::as_str),
+            ),
+            HarnessId::Cursor => (None, None),
         };
         let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
         let launch = Launch {
@@ -178,13 +185,14 @@ impl Workers {
         let command = match harness {
             HarnessId::Claude => {
                 let settings = self.write_settings(id, &markers, *site)?;
-                worker_command(
-                    &self.write_config(id, *site)?,
-                    &settings,
-                    &self.permission_mode,
-                    &attachments,
+                worker_command(&ClaudeWorkerArgs {
+                    mcp_config: &self.write_config(id, *site)?,
+                    settings: &settings,
+                    permission_mode: &self.permission_mode,
+                    attachments: &attachments,
                     task,
-                )
+                    model: *model,
+                })
             }
             HarnessId::Opencode => {
                 let model =
