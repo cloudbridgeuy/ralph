@@ -1,3 +1,4 @@
+use crate::chat::changes::run_changes;
 use crate::chat::memory::Store;
 use crate::chat::socket::forward;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
@@ -32,6 +33,15 @@ pub fn run_stdio_server(
                 Ok((entries, tree)) => finish_call(id, &entries, &tree, &tool),
                 Err(e) => tool_result(id, &format!("Could not read chat memory: {e}"), true),
             },
+            Outcome::Changes { id, request } => {
+                let result = std::env::current_dir()
+                    .map_err(|e| format!("Could not read the working directory: {e}"))
+                    .and_then(|cwd| run_changes(store.dir(), &cwd, &request));
+                match result {
+                    Ok(text) => tool_result(id, &text, false),
+                    Err(message) => tool_result(id, &message, true),
+                }
+            }
             Outcome::Worker { id, name, args } => {
                 match forward(socket, &SocketRequest { tool: name, args }) {
                     Ok(reply) => tool_result(id, &reply.text, reply.is_error),
