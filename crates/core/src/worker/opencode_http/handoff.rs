@@ -70,6 +70,7 @@ pub struct OpencodeSpawn {
     pub model: String,
     pub task: String,
     pub at: u64,
+    pub snapshots: bool,
 }
 
 impl OpencodeSpawn {
@@ -238,6 +239,7 @@ mod tests {
             model: "github-copilot/claude-haiku-4.5".to_string(),
             task: "do \"it\"\nnow".to_string(),
             at: 7,
+            snapshots: true,
         };
         assert_eq!(OpencodeSpawn::parse(&request.render()), Some(request));
         assert_eq!(OpencodeSpawn::parse("nope"), None);
