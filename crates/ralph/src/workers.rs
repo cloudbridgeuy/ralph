@@ -66,22 +66,8 @@ impl Workers {
     }
 
     fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
-        let files = HandoffFiles::cursor(&self.store_dir, id);
-        if files.owner.exists() {
-            if interrupt {
-                let entry = self.queue_entry(&files.interrupt, text)?;
-                return Ok(interrupt_reply(
-                    id,
-                    self.await_interrupt_result(&files.interrupt_result, &entry),
-                ));
-            }
-            if self.awaits_permission(id) {
-                return self.answer_permission(id, text);
-            }
-            return self.queue_prompt(&files.prompt, id, text, "Sent to");
-        }
-        if self.opencode_http(id) {
-            return self.deliver_opencode(id, text, interrupt, "Sent to");
+        if let Some(sent) = self.deliver_headless(id, text, interrupt, "Sent to") {
+            return sent;
         }
         if interrupt {
             return Err(io::Error::other(
@@ -121,13 +107,7 @@ impl Workers {
     }
 
     pub fn nudge(&self, id: &str, text: &str) -> io::Result<String> {
-        let files = HandoffFiles::cursor(&self.store_dir, id);
-        if files.owner.exists() {
-            let queued = self.queue_prompt(&files.prompt, id, text, "Nudged");
-            return self.mark_sent(id, queued);
-        }
-        if self.opencode_http(id) {
-            let queued = self.deliver_opencode(id, text, false, "Nudged");
+        if let Some(queued) = self.deliver_headless(id, text, false, "Nudged") {
             return self.mark_sent(id, queued);
         }
         self.reply(id, text, false)
@@ -138,25 +118,35 @@ impl Workers {
         files.owner.exists() || files.session.exists()
     }
 
-    fn deliver_opencode(
+    fn headless_files(&self, id: &str) -> Option<HandoffFiles> {
+        let cursor = HandoffFiles::cursor(&self.store_dir, id);
+        if cursor.owner.exists() {
+            return Some(cursor);
+        }
+        self.opencode_http(id)
+            .then(|| HandoffFiles::opencode(&self.store_dir, id))
+    }
+
+    fn deliver_headless(
         &self,
         id: &str,
         text: &str,
         interrupt: bool,
         verb: &str,
-    ) -> io::Result<String> {
-        let files = HandoffFiles::opencode(&self.store_dir, id);
-        if interrupt {
-            let entry = self.queue_entry(&files.interrupt, text)?;
-            return Ok(interrupt_reply(
-                id,
-                self.await_interrupt_result(&files.interrupt_result, &entry),
-            ));
-        }
-        if self.awaits_permission(id) {
-            return self.answer_permission(id, text);
-        }
-        self.queue_prompt(&files.prompt, id, text, verb)
+    ) -> Option<io::Result<String>> {
+        let files = self.headless_files(id)?;
+        Some(if interrupt {
+            self.queue_entry(&files.interrupt, text).map(|entry| {
+                interrupt_reply(
+                    id,
+                    self.await_interrupt_result(&files.interrupt_result, &entry),
+                )
+            })
+        } else if self.awaits_permission(id) {
+            self.answer_permission(id, text)
+        } else {
+            self.queue_prompt(&files.prompt, id, text, verb)
+        })
     }
 
     fn await_interrupt_result(&self, results: &Path, entry: &str) -> Option<bool> {
@@ -365,18 +355,13 @@ impl Workers {
     }
 
     pub fn awaits_permission(&self, id: &str) -> bool {
-        (HandoffFiles::cursor(&self.store_dir, id).owner.exists() || self.opencode_http(id))
-            && blocked_path(&self.store_dir, id).exists()
+        self.headless_files(id).is_some() && blocked_path(&self.store_dir, id).exists()
     }
 
     fn answer_permission(&self, id: &str, text: &str) -> io::Result<String> {
-        let (answer, error) = if self.opencode_http(id) {
-            let files = HandoffFiles::opencode(&self.store_dir, id);
-            (files.answer, files.error)
-        } else {
-            let files = HandoffFiles::cursor(&self.store_dir, id);
-            (files.answer, files.error)
-        };
+        let HandoffFiles { answer, error, .. } = self
+            .headless_files(id)
+            .ok_or_else(|| io::Error::other(format!("worker {id} is not running")))?;
         clear_marker(&error)?;
         write_file(&answer, text)?;
         let started = Instant::now();
@@ -457,14 +442,7 @@ impl Workers {
     }
 
     fn owner(&self, project: &str, id: &str) -> Owner {
-        if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
-            return Owner::Mine(TaggedSession {
-                name: session_name(project, id),
-                store: self.store_dir.to_string_lossy().into_owned(),
-                id: id.to_string(),
-            });
-        }
-        if self.opencode_http(id) {
+        if self.headless_files(id).is_some() {
             return Owner::Mine(TaggedSession {
                 name: session_name(project, id),
                 store: self.store_dir.to_string_lossy().into_owned(),

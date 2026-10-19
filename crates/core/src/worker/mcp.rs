@@ -106,6 +106,14 @@ fn worker_id(args: &Value) -> Result<String, String> {
     }
 }
 
+fn harness_choices() -> String {
+    let names = HarnessId::ALL.map(HarnessId::as_str);
+    match names.split_last() {
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
 fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
     let model = args.get("model").and_then(Value::as_str);
     match (args.get("harness").and_then(Value::as_str), model) {
@@ -140,7 +148,8 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
             }
         }
         (Some(other), _) => Err(format!(
-            "Unknown harness '{other}'. Use claude, opencode or cursor."
+            "Unknown harness '{other}'. Use {}.",
+            harness_choices()
         )),
     }
 }
