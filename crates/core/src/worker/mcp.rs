@@ -1,6 +1,6 @@
 use super::{
-    capabilities, decide, is_model_id, Command, HarnessId, SpawnSpec, WorkerCommand, WorkerEvent,
-    CURSOR_HARNESS, OPENCODE_HARNESS,
+    capabilities, decide, is_model_id, model_refusal, Command, HarnessId, SpawnSpec, WorkerCommand,
+    WorkerEvent, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
 use crate::mcp::string_arg;
 use crate::watch_request::parse_watch_args;
@@ -110,9 +110,7 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
     let model = args.get("model").and_then(Value::as_str);
     match (args.get("harness").and_then(Value::as_str), model) {
         (None | Some("claude"), None) => Ok((HarnessId::Claude, None)),
-        (None | Some("claude"), Some(_)) => {
-            Err("A model can only be set for the opencode harness.".to_string())
-        }
+        (None | Some("claude"), Some(_)) => Err(model_refusal(HarnessId::Claude)),
         (Some(OPENCODE_HARNESS), None) => Ok((HarnessId::Opencode, None)),
         (Some(OPENCODE_HARNESS), Some(model)) if is_model_id(model) => {
             Ok((HarnessId::Opencode, Some(model.to_string())))
@@ -140,7 +138,7 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::{describe, Feature};
+    use crate::worker::{Feature, Support};
 
     #[test]
     fn parse_command_reads_spawn_and_reply() {
@@ -262,9 +260,24 @@ mod tests {
         let result = spawn_harness(json!({"harness": "cursor", "model": "x/y"}));
         assert_eq!(
             result,
-            Err(describe(&capabilities(HarnessId::Cursor), Feature::Model))
+            Err("cursor does not accept a model; harnesses that do: opencode".to_string())
         );
-        assert_eq!(result, Err("cursor model: not supported".to_string()));
+    }
+
+    #[test]
+    fn spawn_harness_model_follows_capability_matrix() {
+        for harness in HarnessId::ALL {
+            let model = "openai/gpt-6.1-sol";
+            let expected = if capabilities(harness).support(Feature::Model) != Support::None {
+                Ok((harness, Some(model.to_string())))
+            } else {
+                Err(model_refusal(harness))
+            };
+            assert_eq!(
+                spawn_harness(json!({"harness": harness.as_str(), "model": model})),
+                expected
+            );
+        }
     }
 
     #[test]

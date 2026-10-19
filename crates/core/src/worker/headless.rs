@@ -60,10 +60,15 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    pub fn headless(&self) -> bool {
+        self.harness != HarnessId::Claude
+    }
+
     pub fn support(&self, feature: Feature) -> Support {
         use Feature::*;
         use Support::{Full, Partial};
         match (self.harness, feature) {
+            (HarnessId::Claude, Model) => Support::None,
             (HarnessId::Claude, _) => Support::None,
             (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report) => Full,
             (HarnessId::Cursor, Interrupt) => Partial("outcome unknown after 30 s"),
@@ -98,6 +103,19 @@ pub fn describe(caps: &Capabilities, feature: Feature) -> String {
         Support::Partial(reason) => format!("{prefix}: partial, {reason}"),
         Support::None => format!("{prefix}: not supported"),
     }
+}
+
+pub fn model_refusal(harness: HarnessId) -> String {
+    let accepting = HarnessId::ALL
+        .into_iter()
+        .filter(|candidate| capabilities(*candidate).support(Feature::Model) != Support::None)
+        .map(HarnessId::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{} does not accept a model; harnesses that do: {accepting}",
+        harness.as_str()
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -152,10 +170,20 @@ pub enum Scope {
 
 pub fn decide(caps: &Capabilities, command: WorkerCommand) -> Result<WorkerCommand, WorkerEvent> {
     let feature = command.feature();
+    if !caps.headless() {
+        return Err(WorkerEvent::Unsupported {
+            feature,
+            reason: format!("{} has no headless worker", caps.harness.as_str()),
+        });
+    }
     match caps.support(feature) {
         Support::None => Err(WorkerEvent::Unsupported {
             feature,
-            reason: describe(caps, feature),
+            reason: if feature == Feature::Model {
+                model_refusal(caps.harness)
+            } else {
+                describe(caps, feature)
+            },
         }),
         _ => Ok(command),
     }
@@ -305,8 +333,11 @@ mod tests {
 
     #[test]
     fn matrix_matches_decide_and_describe() {
-        for harness in [HarnessId::Cursor, HarnessId::Opencode] {
+        for harness in HarnessId::ALL {
             let caps = capabilities(harness);
+            if !caps.headless() {
+                continue;
+            }
             for feature in Feature::ALL {
                 match caps.support(feature) {
                     Support::None => {
@@ -332,14 +363,67 @@ mod tests {
     }
 
     #[test]
-    fn claude_rejects_every_command() {
-        let caps = capabilities(HarnessId::Claude);
-        for feature in Feature::ALL {
-            if let Some(command) = command_for(feature) {
-                assert!(matches!(
-                    decide(&caps, command),
-                    Err(WorkerEvent::Unsupported { .. })
-                ));
+    fn model_refusal_names_accepting_harnesses() {
+        assert_eq!(
+            model_refusal(HarnessId::Cursor),
+            "cursor does not accept a model; harnesses that do: opencode"
+        );
+    }
+
+    #[test]
+    fn decide_refuses_cursor_model_with_model_refusal() {
+        let spec = SpawnSpec {
+            model: Some("x/y".into()),
+        };
+        assert_eq!(
+            decide(&capabilities(HarnessId::Cursor), WorkerCommand::Spawn(spec)),
+            Err(WorkerEvent::Unsupported {
+                feature: Feature::Model,
+                reason: model_refusal(HarnessId::Cursor),
+            })
+        );
+    }
+
+    #[test]
+    fn describe_keeps_generic_wording_for_unsupported_model() {
+        assert_eq!(
+            describe(&capabilities(HarnessId::Cursor), Feature::Model),
+            "cursor model: not supported"
+        );
+    }
+
+    #[test]
+    fn non_headless_harnesses_reject_every_command() {
+        for harness in HarnessId::ALL {
+            let caps = capabilities(harness);
+            assert_eq!(caps.headless(), harness != HarnessId::Claude);
+            if caps.headless() {
+                continue;
+            }
+            for feature in Feature::ALL {
+                if let Some(command) = command_for(feature) {
+                    assert_eq!(
+                        decide(&caps, command),
+                        Err(WorkerEvent::Unsupported {
+                            feature,
+                            reason: format!("{} has no headless worker", harness.as_str()),
+                        })
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn model_refusal_follows_matrix() {
+        for harness in HarnessId::ALL {
+            let accepts = capabilities(harness).support(Feature::Model) != Support::None;
+            for asking in HarnessId::ALL {
+                let listed = model_refusal(asking)
+                    .split_once("harnesses that do: ")
+                    .map(|(_, list)| list.split(", ").any(|name| name == harness.as_str()))
+                    .unwrap_or(false);
+                assert_eq!(listed, accepts);
             }
         }
     }
