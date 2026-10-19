@@ -1,5 +1,6 @@
 use crate::chat_memory::Trigger;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
+use crate::sanitize::strip_controls;
 use crate::watch_request::WatchRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -352,7 +353,7 @@ fn parse_report(name: &str, args: &Value) -> Result<(ReportStatus, String), Stri
     match name {
         "report" => Ok((
             ReportStatus::parse(&string_arg(args, "status")?)?,
-            string_arg(args, "text")?,
+            strip_controls(&string_arg(args, "text")?).into_owned(),
         )),
         other => Err(format!("Unknown tool '{other}'.")),
     }
@@ -699,6 +700,23 @@ mod tests {
         assert_eq!(
             config["mcpServers"][SERVER_NAME]["args"],
             json!(["worker-mcp", "--id", "A", "--inbox", "/s/inbox"])
+        );
+    }
+
+    #[test]
+    fn report_text_strips_nul_and_other_controls() {
+        let request = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {"name": "report", "arguments": {
+            "status": "done",
+            "text": "a\0b\u{0001}c\n\td`e\u{007f}"
+        }}});
+        assert_eq!(
+            handle_request(&request),
+            Outcome::Report {
+                id: json!(3),
+                status: ReportStatus::Done,
+                text: "abc\n\td`e".into()
+            }
         );
     }
 

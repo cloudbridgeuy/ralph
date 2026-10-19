@@ -32,6 +32,7 @@ pub mod directive;
 pub mod inbox;
 pub mod inbox_alert;
 pub mod mcp;
+pub mod sanitize;
 pub mod semver;
 pub mod shell_format;
 pub mod snapshot;

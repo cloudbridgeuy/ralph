@@ -5,6 +5,7 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
     SubprocessError,
 };
+use ralph_core::sanitize::strip_controls;
 use std::path::Path;
 
 pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
@@ -41,6 +42,11 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", escaped)
 }
 
+/// Quote prompt text after dropping controls, so a stored NUL cannot reach `sh -c`.
+fn quote_prompt(value: &str) -> String {
+    shell_quote(&strip_controls(value))
+}
+
 fn isolation_args(home: Option<&Path>) -> String {
     let excludes = home.map(|h| {
         let settings = serde_json::json!({
@@ -58,7 +64,7 @@ pub fn build_memory_command(prompt: &str, home: Option<&Path>) -> String {
     format!(
         "claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p {}",
         isolation_args(home),
-        shell_quote(prompt)
+        quote_prompt(prompt)
     )
 }
 
@@ -77,9 +83,9 @@ pub fn build_chat_command(
         "claude --verbose --permission-mode {} {} --append-system-prompt {}{} --output-format stream-json -p {}",
         permission_mode,
         isolation_args(home),
-        shell_quote(system_prompt),
+        quote_prompt(system_prompt),
         extra,
-        shell_quote(prompt)
+        quote_prompt(prompt)
     )
 }
 
@@ -87,7 +93,7 @@ pub fn build_command(prompt: &str, permission_mode: &str) -> String {
     format!(
         "claude --verbose --permission-mode {} --output-format stream-json -p {}",
         permission_mode,
-        shell_quote(prompt)
+        quote_prompt(prompt)
     )
 }
 
@@ -160,5 +166,20 @@ mod tests {
     fn build_command_escapes_single_quotes() {
         let cmd = build_command("it's a test", "default");
         assert!(cmd.contains("'\"'\"'"));
+    }
+
+    #[test]
+    fn chat_command_strips_a_stored_nul_before_spawn() {
+        let cmd = build_chat_command(
+            "install \0`curl`\n\tkeep\u{0001}",
+            "sys\0",
+            &[],
+            "auto",
+            None,
+        );
+        assert!(std::ffi::CString::new(cmd.clone()).is_ok());
+        assert!(cmd.contains("-p 'install `curl`\n\tkeep'"));
+        assert!(cmd.contains("--append-system-prompt 'sys'"));
+        assert!(!cmd.contains('\u{0001}'));
     }
 }
