@@ -48,11 +48,15 @@ impl Heartbeat {
     }
 
     pub(crate) fn touch(&self) {
-        self.write(None);
+        self.write(now_secs(), None);
+    }
+
+    pub(crate) fn touch_at(&self, at: u64) {
+        self.write(at, None);
     }
 
     pub(crate) fn set_running(&self, running: bool) {
-        self.write(Some(running));
+        self.write(now_secs(), Some(running));
     }
 
     pub(crate) fn gone(&self, scope: &Scope, reason: &str) {
@@ -63,10 +67,10 @@ impl Heartbeat {
         fs::remove_file(&self.gone).ok();
     }
 
-    fn write(&self, running: Option<bool>) {
+    fn write(&self, at: u64, running: Option<bool>) {
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         let next = ActivityMark {
-            at: now_secs(),
+            at,
             running: running.unwrap_or(last.running),
         };
         if next != *last {

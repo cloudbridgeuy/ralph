@@ -315,13 +315,16 @@ impl AcpWorker {
                     )
                     .on_receive_notification(
                         async move |notification: SessionNotification, _cx| {
-                            on_notification.touch();
                             let update =
                                 serde_json::to_value(&notification.update).unwrap_or_default();
-                            if !replaying.load(Ordering::SeqCst)
-                                && decode_update(&update) == Some(WorkerEvent::Reported)
-                            {
-                                seen.store(true, Ordering::SeqCst);
+                            for event in decode_update(&update, now_secs()) {
+                                match event {
+                                    WorkerEvent::Activity { at } => on_notification.touch_at(at),
+                                    WorkerEvent::Reported if !replaying.load(Ordering::SeqCst) => {
+                                        seen.store(true, Ordering::SeqCst);
+                                    }
+                                    _ => {}
+                                }
                             }
                             Ok(())
                         },
