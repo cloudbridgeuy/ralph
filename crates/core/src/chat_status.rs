@@ -12,6 +12,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 const DEFAULT_STATE: &str = "running";
 const BUSY_STATE: &str = "busy";
 const IDLE_STATE: &str = "idle";
+const PERMISSION_STATE: &str = "permission";
 const INBOX_COMMAND: &str = "/inbox";
 pub const INBOX_USAGE: &str = "Usage: /inbox [next | N | list | peek N | drop N]";
 pub const PRIVATE_USAGE: &str = "Usage: /private <message>";
@@ -28,7 +29,7 @@ pub struct WorkerState {
 
 impl WorkerState {
     pub fn is_running(&self) -> bool {
-        self.state == DEFAULT_STATE || self.state == BUSY_STATE
+        [DEFAULT_STATE, BUSY_STATE, PERMISSION_STATE].contains(&self.state.as_str())
     }
 }
 
@@ -237,6 +238,7 @@ pub fn worker_states(
     seen: &HashMap<String, String>,
     sent: &HashSet<String>,
     active: Option<&HashSet<String>>,
+    blocked: &HashSet<String>,
 ) -> Vec<WorkerState> {
     workers
         .iter()
@@ -244,6 +246,7 @@ pub fn worker_states(
             id: worker.id.clone(),
             state: worker_state(
                 worker,
+                blocked.contains(&worker.id),
                 seen.get(&worker.id)
                     .filter(|status| !superseded(status, sent.contains(&worker.id))),
                 active,
@@ -260,6 +263,7 @@ fn superseded(status: &str, sent: bool) -> bool {
 
 fn worker_state(
     worker: &RunningWorker,
+    permission_pending: bool,
     reported: Option<&String>,
     active: Option<&HashSet<String>>,
 ) -> String {
@@ -267,6 +271,7 @@ fn worker_state(
         .filter(|_| worker.kind == HarnessId::Opencode)
         .map(|active| active.contains(&opencode_session_id(&worker.id)));
     match (session_active, reported) {
+        _ if permission_pending => PERMISSION_STATE,
         (Some(true), _) => BUSY_STATE,
         (_, Some(state)) => state,
         (Some(false), None) => IDLE_STATE,
@@ -607,7 +612,13 @@ mod tests {
                 text: "y".into(),
             },
         ];
-        let states = worker_states(&workers, &latest_states(&reports), &HashSet::new(), None);
+        let states = worker_states(
+            &workers,
+            &latest_states(&reports),
+            &HashSet::new(),
+            None,
+            &HashSet::new(),
+        );
         assert_eq!(states[0].state, "running");
         assert_eq!(states[1].state, "done");
     }
@@ -697,7 +708,7 @@ mod tests {
         ]);
         let active = HashSet::from(["ses_ralphbusy".to_string(), "ses_ralphredo".to_string()]);
         let states = |active| -> Vec<String> {
-            worker_states(&workers, &seen, &HashSet::new(), active)
+            worker_states(&workers, &seen, &HashSet::new(), active, &HashSet::new())
                 .into_iter()
                 .map(|worker| worker.state)
                 .collect()
@@ -737,11 +748,26 @@ mod tests {
             .map(String::from)
             .into();
         let active = HashSet::from(["ses_ralphbusy".to_string()]);
-        let states: Vec<String> = worker_states(&workers, &seen, &sent, Some(&active))
-            .into_iter()
-            .map(|worker| worker.state)
-            .collect();
+        let states: Vec<String> =
+            worker_states(&workers, &seen, &sent, Some(&active), &HashSet::new())
+                .into_iter()
+                .map(|worker| worker.state)
+                .collect();
         assert_eq!(states, vec!["running", "done", "check", "running", "busy"]);
+    }
+
+    #[test]
+    fn a_pending_permission_overrides_a_report_and_counts_as_running() {
+        let workers = [RunningWorker {
+            id: "w".into(),
+            session: "ralph-p-w".into(),
+            kind: HarnessId::Cursor,
+        }];
+        let seen = HashMap::from([("w".to_string(), "question".to_string())]);
+        let blocked = HashSet::from(["w".to_string()]);
+        let states = worker_states(&workers, &seen, &HashSet::new(), None, &blocked);
+        assert_eq!(states[0].state, "permission");
+        assert!(states[0].is_running());
     }
 
     #[test]

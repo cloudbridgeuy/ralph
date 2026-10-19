@@ -146,7 +146,7 @@ fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
     if matches!(obs.kind, HarnessId::Cursor | HarnessId::Opencode) {
         return match state {
             WorkerState::Waiting => Some(format!("Worker {id} stopped without calling report.")),
-            WorkerState::BlockedPermission => Some(format!(
+            WorkerState::BlockedPermission if obs.kind == HarnessId::Opencode => Some(format!(
                 "Worker {id} is waiting for a permission answer. Answer it with reply and an optionId."
             )),
             _ => None,
@@ -607,6 +607,17 @@ mod tests {
     }
 
     #[test]
+    fn a_cursor_permission_block_leaves_the_alert_to_the_worker() {
+        let blocked = WorkerObservation {
+            blocked: true,
+            kind: HarnessId::Cursor,
+            ..obs()
+        };
+        let (actions, _) = plan(&CheckMemory::default(), &[blocked]);
+        assert_eq!(inboxes(&actions), 0);
+    }
+
+    #[test]
     fn working_and_reported_emit_nothing() {
         let reported = WorkerObservation {
             reported_since_nudge: true,
@@ -790,7 +801,7 @@ mod tests {
                 },
             ] {
                 let state = classify(&observation);
-                let text = inbox_text(state, &observation).unwrap();
+                let text = inbox_text(state, &observation).unwrap_or_default();
                 assert!(!text.contains("tmux"));
             }
         }

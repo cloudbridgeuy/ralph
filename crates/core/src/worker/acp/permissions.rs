@@ -1,5 +1,5 @@
 use super::REPORT_TOOL;
-use crate::worker::SERVER_NAME;
+use crate::worker::{Report, ReportStatus, SERVER_NAME};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -84,6 +84,25 @@ pub fn no_option_message(options: &[PermissionOption]) -> String {
         "No permission option matches that answer. Valid optionIds: {}.",
         ids.join(", ")
     )
+}
+
+pub fn permission_alert_report(id: &str, at: &str, content: &BlockedContent) -> Report {
+    let ids: Vec<&str> = content
+        .options
+        .iter()
+        .map(|option| option.option_id.as_str())
+        .collect();
+    Report {
+        worker: id.to_string(),
+        at: at.to_string(),
+        status: ReportStatus::Blocked.as_str().to_string(),
+        text: format!(
+            "Worker {id} is waiting for a permission answer on {}: {}. Answer it with reply and one optionId: {}.",
+            content.tool,
+            content.summary,
+            ids.join(", ")
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -194,6 +213,18 @@ mod tests {
         let mut content = report_content("x", "ralph-worker-report: report");
         content.options.retain(|o| o.kind != "allow_once");
         assert!(auto_allow_option(ASK, &content).is_none());
+    }
+
+    #[test]
+    fn the_permission_alert_names_the_tool_and_every_option() {
+        let content = BlockedContent {
+            tool: "shell".into(),
+            summary: "ls".into(),
+            options: options(),
+        };
+        let report = permission_alert_report("A", "t", &content);
+        assert!(report.text.contains("shell"));
+        assert!(report.text.contains("allow-once, reject-once"));
     }
 
     #[test]

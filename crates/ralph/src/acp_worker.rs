@@ -21,13 +21,14 @@ use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_allow_option, cancels_turn, check_protocol, decode_update,
-    encode, gone_path, interrupt_result_text, match_option, no_option_message, permission_content,
-    prompt_failure_report, ready_path, request_stale, resume_decision, session_error, stop_problem,
-    task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, CursorFiles,
-    CursorPermissions, Inbound, OwnerRecord, PromptQueue, Resume, Scope, SessionRecord,
-    SpawnRequest, Step, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
-    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR,
-    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    encode, gone_path, interrupt_result_text, match_option, no_option_message,
+    permission_alert_report, permission_content, prompt_failure_report, ready_path, request_stale,
+    resume_decision, session_error, stop_problem, task_prompt, turn_outcome, version_warning,
+    AcpAgent, AcpCall, BlockedContent, CursorFiles, CursorPermissions, Inbound, OwnerRecord,
+    PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnOutcome, WorkerCommand,
+    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
+    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -77,14 +78,23 @@ fn selected_response(command: WorkerCommand) -> Option<RequestPermissionResponse
 struct Permissions {
     blocked: PathBuf,
     mode: CursorPermissions,
+    worker_id: String,
+    inbox: Inbox,
     queue: Mutex<VecDeque<PendingPermission>>,
 }
 
 impl Permissions {
-    fn new(blocked: PathBuf, mode: CursorPermissions) -> Arc<Self> {
+    fn new(
+        blocked: PathBuf,
+        mode: CursorPermissions,
+        worker_id: String,
+        inbox: Inbox,
+    ) -> Arc<Self> {
         Arc::new(Self {
             blocked,
             mode,
+            worker_id,
+            inbox,
             queue: Mutex::new(VecDeque::new()),
         })
     }
@@ -116,9 +126,12 @@ impl Permissions {
             }
             return true;
         }
+        let at = chrono::Utc::now().to_rfc3339();
+        let report = permission_alert_report(&self.worker_id, &at, &content);
         let mut queue = self.queue();
         queue.push_back(PendingPermission { responder, content });
         self.publish(&queue);
+        self.inbox.post(&report, 0).ok();
         false
     }
 
@@ -255,7 +268,12 @@ impl AcpWorker {
         command.arg("acp").current_dir(&request.worktree);
         let (child, stdin, stdout) = spawn_piped(command)
             .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
-        let permissions = Permissions::new(markers.blocked.clone(), cursor_permissions());
+        let permissions = Permissions::new(
+            markers.blocked.clone(),
+            cursor_permissions(),
+            id.to_string(),
+            Inbox::new(request.inbox.clone()),
+        );
         let (prompts, prompt_rx) = queue::unbounded();
         let closing = Arc::new(AtomicBool::new(false));
         let reported = Arc::new(AtomicBool::new(false));

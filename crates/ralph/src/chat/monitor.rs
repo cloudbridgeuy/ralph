@@ -238,7 +238,12 @@ impl Monitor {
             .filter(|worker| sent_path(&self.store_dir, &worker.id).exists())
             .map(|worker| worker.id.clone())
             .collect();
-        let workers = worker_states(&running, &seen, &sent, active.as_ref());
+        let blocked: HashSet<String> = running
+            .iter()
+            .filter(|worker| blocked_path(&self.store_dir, &worker.id).exists())
+            .map(|worker| worker.id.clone())
+            .collect();
+        let workers = worker_states(&running, &seen, &sent, active.as_ref(), &blocked);
         let memory = if with_memory {
             self.measure_memory()
         } else {
