@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn changes_with_bad_args_is_a_tool_error() {
-        let Outcome::Respond(v) = call("changes", json!({"turn": 1, "since": 2})) else {
+        let Outcome::Respond(v) = call("changes", json!({"last": 1, "ago": 2})) else {
             panic!("expected respond")
         };
         assert_eq!(v["result"]["isError"], true);
