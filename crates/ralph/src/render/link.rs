@@ -44,7 +44,7 @@ pub fn mark_links(text: &str) -> String {
                 push_marked_diffs(&chars[i..end], i, &chars, &mut out);
                 i = end;
             }
-            '+' | '-' | '\u{2212}' | '(' => match diff_stat(&chars, i) {
+            '+' | '-' | '\u{2212}' | '(' | '0'..='9' => match diff_stat(&chars, i) {
                 Some(stat) => {
                     push_diff_stat(&chars, i, &stat, DIFF_END, &mut out);
                     i = stat.end;
@@ -147,7 +147,7 @@ fn push_marked_diffs(span: &[char], offset: usize, chars: &[char], out: &mut Str
     while j < span.len() {
         let at = offset + j;
         let stat = match span[j] {
-            '+' | '-' | '\u{2212}' | '(' => {
+            '+' | '-' | '\u{2212}' | '(' | '0'..='9' => {
                 diff_stat(chars, at).filter(|stat| stat.end <= offset + span.len())
             }
             _ => None,
@@ -166,19 +166,15 @@ fn push_marked_diffs(span: &[char], offset: usize, chars: &[char], out: &mut Str
 }
 
 struct DiffStat {
-    parts: Vec<(usize, usize)>,
+    parts: Vec<(usize, usize, bool)>,
     end: usize,
 }
 
 fn push_diff_stat(chars: &[char], start: usize, stat: &DiffStat, close: char, out: &mut String) {
     let mut at = start;
-    for &(part_start, part_end) in &stat.parts {
+    for &(part_start, part_end, add) in &stat.parts {
         out.extend(&chars[at..part_start]);
-        out.push(if chars[part_start] == '+' {
-            ADD_START
-        } else {
-            DEL_START
-        });
+        out.push(if add { ADD_START } else { DEL_START });
         out.extend(&chars[part_start..part_end]);
         out.push(close);
         at = part_end;
@@ -187,17 +183,24 @@ fn push_diff_stat(chars: &[char], start: usize, stat: &DiffStat, close: char, ou
 }
 
 fn diff_stat(chars: &[char], start: usize) -> Option<DiffStat> {
+    if is_table_or_heading_line(chars, start) {
+        return None;
+    }
+    if chars.get(start).is_some_and(|ch| ch.is_ascii_digit()) {
+        return summary_count(chars, start);
+    }
     let starts_token = start == 0 || chars[start - 1].is_whitespace();
-    if !starts_token || is_table_or_heading_line(chars, start) {
+    if !starts_token {
         return None;
     }
     let ends_token = |end: usize| chars.get(end).is_none_or(|ch| ch.is_whitespace());
     signed_number_end(chars, start)
         .filter(|&end| ends_token(end))
         .map(|end| DiffStat {
-            parts: vec![(start, end)],
+            parts: vec![(start, end, chars[start] == '+')],
             end,
         })
+        .or_else(|| stat_bar(chars, start))
         .or_else(|| {
             diff_pair(chars, start)
                 .or_else(|| wrapped_signed_number(chars, start))
@@ -266,7 +269,7 @@ fn diff_pair(chars: &[char], start: usize) -> Option<DiffStat> {
         false => minus_end,
     };
     Some(DiffStat {
-        parts: vec![(plus, plus_end), (minus, minus_end)],
+        parts: vec![(plus, plus_end, true), (minus, minus_end, false)],
         end,
     })
 }
@@ -278,9 +281,107 @@ fn wrapped_signed_number(chars: &[char], open: usize) -> Option<DiffStat> {
     let sign = open + 1;
     let end = signed_number_end(chars, sign).filter(|&end| chars.get(end) == Some(&')'))?;
     Some(DiffStat {
-        parts: vec![(sign, end)],
+        parts: vec![(sign, end, chars[sign] == '+')],
         end: end + 1,
     })
+}
+
+fn summary_count(chars: &[char], start: usize) -> Option<DiffStat> {
+    if start > 0 && !chars[start - 1].is_whitespace() {
+        return None;
+    }
+    let digits = digit_run(chars, start);
+    if digits == 0 {
+        return None;
+    }
+    let (add, end) = summary_tail(chars, start + digits)?;
+    if !summary_boundary(chars, end) {
+        return None;
+    }
+    Some(DiffStat {
+        parts: vec![(start, start + digits, add), (end - 3, end, add)],
+        end,
+    })
+}
+
+fn summary_boundary(chars: &[char], end: usize) -> bool {
+    match chars.get(end) {
+        None => true,
+        Some(ch) if ch.is_whitespace() => true,
+        Some('.' | ',' | ';' | ':') => chars.get(end + 1).is_none_or(|ch| ch.is_whitespace()),
+        _ => false,
+    }
+}
+
+fn summary_tail(chars: &[char], at: usize) -> Option<(bool, usize)> {
+    let add = match (chars.get(at), chars.get(at + 1)) {
+        (Some(' '), Some('i')) => true,
+        (Some(' '), Some('d')) => false,
+        _ => return None,
+    };
+    let word: &[char] = if add {
+        &[' ', 'i', 'n', 's', 'e', 'r', 't', 'i', 'o', 'n']
+    } else {
+        &[' ', 'd', 'e', 'l', 'e', 't', 'i', 'o', 'n']
+    };
+    if !chars[at..].starts_with(word) {
+        return None;
+    }
+    let mut end = at + word.len();
+    if chars.get(end) == Some(&'s') {
+        end += 1;
+    }
+    let sign_ok = chars.get(end + 1) == Some(&if add { '+' } else { '-' });
+    (chars.get(end) == Some(&'(') && sign_ok && chars.get(end + 2) == Some(&')'))
+        .then_some((add, end + 3))
+}
+
+fn stat_bar(chars: &[char], start: usize) -> Option<DiffStat> {
+    if !bar_prefix(chars, start) {
+        return None;
+    }
+    let pluses = sign_run(chars, start, '+');
+    let minus_at = start + pluses;
+    let minuses = sign_run(chars, minus_at, '-');
+    let end = minus_at + minuses;
+    if pluses + minuses == 0 || chars.get(end).is_some_and(|ch| !ch.is_whitespace()) {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if pluses > 0 {
+        parts.push((start, minus_at, true));
+    }
+    if minuses > 0 {
+        parts.push((minus_at, end, false));
+    }
+    Some(DiffStat { parts, end })
+}
+
+fn bar_prefix(chars: &[char], start: usize) -> bool {
+    if start == 0 || !chars[start - 1].is_whitespace() {
+        return false;
+    }
+    let mut i = start;
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    if i == 0 || !chars[i - 1].is_ascii_digit() {
+        return false;
+    }
+    while i > 0 && chars[i - 1].is_ascii_digit() {
+        i -= 1;
+    }
+    if i == 0 || !chars[i - 1].is_whitespace() {
+        return false;
+    }
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    i > 0 && chars[i - 1] == '|'
+}
+
+fn sign_run(chars: &[char], start: usize, sign: char) -> usize {
+    chars[start..].iter().take_while(|&&ch| ch == sign).count()
 }
 
 fn file_count_prefix_end(chars: &[char], at: usize) -> usize {
@@ -810,6 +911,70 @@ mod tests {
         let skin = MadSkin::default();
         let rendered = skin.text(&mark_links("aa +12 -34 b"), Some(12)).to_string();
         assert_eq!(strip(&rendered).trim_end(), "aa +12 -34 b");
+    }
+
+    #[test]
+    fn paint_colors_worker_diffstat_summary_and_bars() {
+        let summary = format!(
+            " 9 files changed, {GREEN}161{COLOR_OFF} insertions{GREEN}(+){COLOR_OFF}, {RED}86{COLOR_OFF} deletions{RED}(-){COLOR_OFF}"
+        );
+        for block in [
+            "changed in worker GUZ-628 since spawn\n link.rs | 12 ++++--\n",
+            "changed in worker GUZ-628 during turn 6\n link.rs | 12 ++++--\n",
+        ] {
+            let painted = paint(&mark_links(&format!(
+                "{block}{summary_src}",
+                summary_src = " 9 files changed, 161 insertions(+), 86 deletions(-)"
+            )));
+            assert!(painted.contains("changed in worker GUZ-628"), "{painted}");
+            assert!(
+                painted.contains(&format!(
+                    "link.rs | 12 {GREEN}++++{COLOR_OFF}{RED}--{COLOR_OFF}"
+                )),
+                "{painted}"
+            );
+            assert!(painted.contains(&summary), "{painted}");
+        }
+        assert_eq!(
+            paint(&mark_links(" 1 file changed, 1 insertion(+)")),
+            format!(" 1 file changed, {GREEN}1{COLOR_OFF} insertion{GREEN}(+){COLOR_OFF}")
+        );
+    }
+
+    #[test]
+    fn git_diffstat_near_misses_stay_plain() {
+        for text in [
+            "| link.rs | 12 ++++-- |",
+            "| 9 files changed, 161 insertions(+), 86 deletions(-) |",
+            "  | a | 12 ++++--",
+            "---",
+            "   ---",
+            "foo\n---\nbar",
+            "# link.rs | 12 ++++--",
+            "## 161 insertions(+), 86 deletions(-)",
+            "`---`",
+            "`++++--`",
+            "`161 insertions(+)`",
+        ] {
+            assert_eq!(mark_links(text), text, "{text}");
+        }
+    }
+
+    #[test]
+    fn paint_restores_inline_code_color_after_git_diffstat() {
+        let palette = Palette {
+            inline_code: Some(Color::DarkCyan),
+            ..Palette::default()
+        };
+        let cyan = "\x1b[36m";
+        assert_eq!(
+            paint_links(&mark_links("`a.rs | 12 ++++-- b`"), &palette),
+            format!("`a.rs | 12 {GREEN}++++{cyan}{RED}--{cyan} b`")
+        );
+        assert_eq!(
+            paint_links(&mark_links("`seen 161 insertions(+) here`"), &palette),
+            format!("`seen {GREEN}161{cyan} insertions{GREEN}(+){cyan} here`")
+        );
     }
 
     #[test]

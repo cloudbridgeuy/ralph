@@ -250,6 +250,52 @@ mod tests {
     }
 
     #[test]
+    fn no_color_plain_render_leaves_diffstat_uncolored() {
+        // Callers set terminal=false when NO_COLOR is set or stdout is not a tty.
+        let (highlighter, skin) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let content = "\
+changed in worker GUZ-628 since spawn
+ link.rs | 12 ++++--
+ 9 files changed, 161 insertions(+), 86 deletions(-)
+";
+        let chunk = ParsedChunk {
+            chunk_type: ChunkType::Prose,
+            content: content.to_string(),
+        };
+        assert_eq!(render_text_block(&ctx, &chunk, Some(&skin)), content);
+    }
+
+    #[test]
+    fn terminal_render_colors_worker_diffstat_blocks() {
+        let (highlighter, skin) = create_test_context();
+        let ctx = RenderContext::terminal(&highlighter);
+        let content = "\
+changed in worker GUZ-628 since spawn
+ link.rs | 12 ++++--
+ 9 files changed, 161 insertions(+), 86 deletions(-)
+changed in worker GUZ-628 during turn 6
+ b.rs | 3 ---
+ 1 file changed, 1 deletion(-)
+";
+        let chunk = ParsedChunk {
+            chunk_type: ChunkType::Prose,
+            content: content.to_string(),
+        };
+        let rendered = render_text_block(&ctx, &chunk, Some(&skin));
+        assert!(rendered.contains("since spawn") && rendered.contains("during turn 6"));
+        assert!(
+            rendered.contains("\x1b[32m++++") && rendered.contains("\x1b[31m--"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("\x1b[32m161") && rendered.contains("\x1b[31m86"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("\x1b[31m---"), "{rendered}");
+    }
+
+    #[test]
     fn test_render_prose_plain() {
         let (highlighter, skin) = create_test_context();
         let ctx = RenderContext::plain(&highlighter);
