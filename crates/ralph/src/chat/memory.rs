@@ -1,8 +1,8 @@
 use crate::warn::warn;
 use ralph_core::chat_memory::{
-    check_summary, encode_entry, encode_record, encode_usage, fallback_summary, nap_prompt,
-    nap_source, parse_log, parse_tree, pending, retry_prompt, Entry, Node, Role, Tree, Trigger,
-    UsageRecord, MAX_NAP_ATTEMPTS,
+    check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
+    nap_source, nap_step, parse_log, parse_tree, pending, retry_prompt, Commit, Entry, NapStep,
+    Node, Role, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -61,13 +61,20 @@ impl Store {
 
     pub fn load(&self) -> io::Result<(Vec<Entry>, Tree)> {
         let log = read_optional(&self.dir.join("log.jsonl"))?;
-        let tree = read_optional(&self.dir.join("tree.jsonl"))?;
-        let (entries, log_warnings) = parse_log(&log);
-        let (tree, tree_warnings) = parse_tree(&tree);
-        for warning in log_warnings.iter().chain(&tree_warnings) {
+        let (entries, warnings) = parse_log(&log);
+        for warning in &warnings {
             warn(warning);
         }
-        Ok((entries, tree))
+        Ok((entries, self.load_tree()?))
+    }
+
+    fn load_tree(&self) -> io::Result<Tree> {
+        let bytes = read_optional(&self.dir.join("tree.jsonl"))?;
+        let (tree, warnings) = parse_tree(&bytes);
+        for warning in &warnings {
+            warn(warning);
+        }
+        Ok(tree)
     }
 
     pub fn load_usage(&self) -> io::Result<String> {
@@ -92,6 +99,19 @@ impl Store {
         Ok(lock)
     }
 
+    /// `NAP` serializes naps for the whole run, so two naps never pay twice for
+    /// the same node. It is separate from `LOCK`, which turns wait on.
+    fn open_nap_lock(&self) -> io::Result<File> {
+        fs::create_dir_all(&self.dir)?;
+        let path = self.dir.join("NAP");
+        check_path(&path)?;
+        OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+    }
+
     pub fn load_settled<W>(&self, on_wait: impl FnOnce() -> W) -> io::Result<(Vec<Entry>, Tree)> {
         let lock = self.open_lock()?;
         if must_wait(lock.try_lock_shared())? {
@@ -101,11 +121,10 @@ impl Store {
         self.load()
     }
 
-    /// Shared try-lock probe: reports true while any exclusive LOCK holder exists
-    /// (the nap, or an append), so another `ralph chat` on the same store mid-turn
-    /// also shows NAP.
+    /// Shared try-lock probe on `NAP`: reports true while a nap runs, so another
+    /// `ralph chat` on the same store also shows NAP.
     pub fn napping(&self) -> bool {
-        self.open_lock()
+        self.open_nap_lock()
             .is_ok_and(|lock| matches!(lock.try_lock_shared(), Err(TryLockError::WouldBlock)))
     }
 
@@ -175,55 +194,76 @@ impl Store {
         Ok(path)
     }
 
+    /// Holds `LOCK` only to snapshot and to commit; curator calls run unlocked.
     pub fn nap(&self, mut curate: impl FnMut(&str) -> Result<String, String>) -> io::Result<()> {
-        let _lock = self.lock()?;
-        let (entries, mut tree) = self.load()?;
+        let nap_lock = self.open_nap_lock()?;
+        nap_lock.lock()?;
+        let (entries, mut tree) = self.load_settled(|| ())?;
         for node in pending(&entries, &tree) {
-            let base = match nap_prompt(&entries, &tree, node) {
-                Ok(prompt) => prompt,
-                Err(e) => {
+            let base = match nap_step(&entries, &tree, node) {
+                NapStep::Done => continue,
+                NapStep::Blocked(e) => {
                     warn(format!("chat memory skipped #{}: {e}", node.id()));
                     continue;
                 }
+                NapStep::Ask(prompt) => prompt,
             };
-            let mut prompt = base.clone();
-            let mut curator_failed = false;
-            for _ in 0..MAX_NAP_ATTEMPTS {
-                let reply = match curate(&prompt) {
-                    Ok(reply) => reply,
-                    Err(e) => {
-                        warn(format!("chat memory curator failed on #{}: {e}", node.id()));
-                        curator_failed = true;
-                        break;
-                    }
-                };
-                match check_summary(&reply) {
-                    Ok(summary) => {
-                        self.put(node, &summary)?;
-                        tree.insert(node, summary);
-                        break;
-                    }
-                    Err(e) => prompt = retry_prompt(&base, &e),
-                }
-            }
-            if tree.contains_key(&node) {
-                continue;
-            }
-            match nap_source(&entries, &tree, node) {
-                Ok(source) if !curator_failed => {
-                    let summary = fallback_summary(&source);
-                    self.put(node, &summary)?;
-                    tree.insert(node, summary);
-                    warn(format!(
-                        "chat memory stored raw fallback for #{}",
-                        node.id()
-                    ));
-                }
-                _ => warn(format!("chat memory left #{} pending", node.id())),
+            match summarize(&entries, &tree, node, base, &mut curate) {
+                Some(summary) => tree = self.commit(node, &summary)?,
+                None => warn(format!("chat memory left #{} pending", node.id())),
             }
         }
         Ok(())
     }
+
+    /// Re-reads the tree under the exclusive `LOCK` and writes the summary only
+    /// when no other nap committed the node first. Returns the committed tree.
+    fn commit(&self, node: Node, summary: &str) -> io::Result<Tree> {
+        let _lock = self.lock()?;
+        let mut tree = self.load_tree()?;
+        match commit_decision(&tree, node) {
+            Commit::Write => {
+                self.put(node, summary)?;
+                tree.insert(node, summary.to_string());
+            }
+            Commit::Taken => warn(format!(
+                "chat memory kept the first summary for #{}",
+                node.id()
+            )),
+        }
+        Ok(tree)
+    }
+}
+
+/// Runs the curator with `check_summary` retries. Returns the summary, the raw
+/// fallback after `MAX_NAP_ATTEMPTS` rejections, or `None` on a curator error.
+fn summarize(
+    entries: &[Entry],
+    tree: &Tree,
+    node: Node,
+    base: String,
+    curate: &mut impl FnMut(&str) -> Result<String, String>,
+) -> Option<String> {
+    let mut prompt = base.clone();
+    for _ in 0..MAX_NAP_ATTEMPTS {
+        let reply = match curate(&prompt) {
+            Ok(reply) => reply,
+            Err(e) => {
+                warn(format!("chat memory curator failed on #{}: {e}", node.id()));
+                return None;
+            }
+        };
+        match check_summary(&reply) {
+            Ok(summary) => return Some(summary),
+            Err(e) => prompt = retry_prompt(&base, &e),
+        }
+    }
+    let source = nap_source(entries, tree, node).ok()?;
+    warn(format!(
+        "chat memory stored raw fallback for #{}",
+        node.id()
+    ));
+    Some(fallback_summary(&source))
 }
 
 #[cfg(test)]
@@ -246,11 +286,15 @@ mod tests {
     }
 
     #[test]
-    fn napping_is_true_only_while_the_lock_is_held() {
+    fn napping_is_true_only_while_the_nap_lock_is_held() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().join("s"));
         assert!(!store.napping());
-        let held = store.lock().unwrap();
+        let store_lock = store.lock().unwrap();
+        assert!(!store.napping());
+        drop(store_lock);
+        let held = store.open_nap_lock().unwrap();
+        held.lock().unwrap();
         assert!(store.napping());
         drop(held);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -347,6 +391,21 @@ mod tests {
             })
             .unwrap();
         assert_eq!(again, 0);
+    }
+
+    #[test]
+    fn nap_curator_runs_without_the_store_lock() {
+        let (_dir, store) = seeded(&[0], 2);
+        let mut free = Vec::new();
+        store
+            .nap(|_| {
+                let probe = store.open_lock().unwrap();
+                free.push(probe.try_lock().is_ok());
+                Ok("sum".into())
+            })
+            .unwrap();
+        assert_eq!(free, [true, true]);
+        assert_eq!(store.load().unwrap().1.len(), 2);
     }
 
     #[test]
