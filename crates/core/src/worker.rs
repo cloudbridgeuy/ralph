@@ -55,15 +55,21 @@ pub fn is_model_id(model: &str) -> bool {
 
 pub fn resolve_opencode_model(
     spawn: Option<&str>,
-    config: Option<&str>,
+    config: Result<Option<&str>, &str>,
 ) -> (String, Option<String>) {
     if let Some(model) = spawn {
         return (model.to_string(), None);
     }
     match config {
-        None => (DEFAULT_OPENCODE_MODEL.to_string(), None),
-        Some(model) if is_model_id(model) => (model.to_string(), None),
-        Some(model) => (
+        Err(error) => (
+            DEFAULT_OPENCODE_MODEL.to_string(),
+            Some(format!(
+                "Warning: [opencode] model was skipped because the ralph config did not load ({error}). Used \"{DEFAULT_OPENCODE_MODEL}\" instead."
+            )),
+        ),
+        Ok(None) => (DEFAULT_OPENCODE_MODEL.to_string(), None),
+        Ok(Some(model)) if is_model_id(model) => (model.to_string(), None),
+        Ok(Some(model)) => (
             DEFAULT_OPENCODE_MODEL.to_string(),
             Some(format!(
                 "[opencode] model '{model}' must look like provider/model; using \"{DEFAULT_OPENCODE_MODEL}\"."
@@ -427,15 +433,15 @@ mod tests {
     #[test]
     fn opencode_model_resolution_prefers_spawn_then_config_then_default() {
         assert_eq!(
-            resolve_opencode_model(Some("a/b"), Some("c/d")),
+            resolve_opencode_model(Some("a/b"), Ok(Some("c/d"))),
             ("a/b".to_string(), None)
         );
         assert_eq!(
-            resolve_opencode_model(None, Some("c/d")),
+            resolve_opencode_model(None, Ok(Some("c/d"))),
             ("c/d".to_string(), None)
         );
         assert_eq!(
-            resolve_opencode_model(None, None),
+            resolve_opencode_model(None, Ok(None)),
             (DEFAULT_OPENCODE_MODEL.to_string(), None)
         );
     }
@@ -443,12 +449,29 @@ mod tests {
     #[test]
     fn opencode_model_resolution_warns_on_invalid_config() {
         for bad in ["", "sol", "openai/", "/sol"] {
-            let (model, warning) = resolve_opencode_model(None, Some(bad));
+            let (model, warning) = resolve_opencode_model(None, Ok(Some(bad)));
             assert_eq!(model, DEFAULT_OPENCODE_MODEL);
             assert!(warning.unwrap().contains("[opencode] model"), "{bad}");
         }
         assert_eq!(
-            resolve_opencode_model(Some("a/b"), Some("")),
+            resolve_opencode_model(Some("a/b"), Ok(Some(""))),
+            ("a/b".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn opencode_model_resolution_warns_when_config_fails_to_load() {
+        let (model, warning) = resolve_opencode_model(None, Err("bad toml at line 3"));
+        assert_eq!(model, DEFAULT_OPENCODE_MODEL);
+        let warning = warning.unwrap();
+        assert!(warning.contains("bad toml at line 3"));
+        assert!(warning.contains(DEFAULT_OPENCODE_MODEL));
+    }
+
+    #[test]
+    fn opencode_model_resolution_ignores_config_error_when_spawn_model_given() {
+        assert_eq!(
+            resolve_opencode_model(Some("a/b"), Err("boom")),
             ("a/b".to_string(), None)
         );
     }

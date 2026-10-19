@@ -90,8 +90,8 @@ impl Workers {
                     model,
                     config
                         .as_ref()
-                        .ok()
-                        .and_then(|config| config.opencode.model.as_deref()),
+                        .map(|config| config.opencode.model.as_deref())
+                        .map_err(String::as_str),
                 );
                 (Some(model), warning)
             }
