@@ -373,9 +373,11 @@ pub fn resolve_range(
     ))
 }
 
+pub const NO_CHANGES: &str = "no changes";
+
 pub fn render_changes(request: &ChangeRequest, output: &str) -> String {
     let body = if output.trim().is_empty() {
-        "no changes".to_string()
+        NO_CHANGES.to_string()
     } else {
         match request.max_bytes {
             Some(max_bytes) => cap_output(request.format, output, max_bytes),

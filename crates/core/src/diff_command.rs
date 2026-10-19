@@ -53,6 +53,16 @@ pub fn diff_command(
     command
 }
 
+pub fn diff_quiet_command(revs: &[String], diff_args: &[String], extra: &[String]) -> Vec<String> {
+    let mut command = diff_command(DiffPager::Git, revs, diff_args, extra);
+    command.insert(2, "--quiet".to_string());
+    command
+}
+
+pub fn range_is_empty(exit_code: Option<i32>) -> bool {
+    exit_code == Some(0)
+}
+
 fn pager_config(pager: DiffPager) -> Option<&'static str> {
     match pager {
         DiffPager::Git => None,
@@ -81,7 +91,7 @@ fn parse_target(words: &[String]) -> Result<DiffTarget, &'static str> {
         Some("worker") => {
             let worker = words
                 .get(1)
-                .filter(|id| !id.starts_with('-'))
+                .filter(|id| !id.starts_with('-') && !matches!(id.as_str(), "last" | "ago" | "now"))
                 .ok_or(WORKER_USAGE)?;
             let (window, extra) = take_window(&words[2..])?;
             Ok(DiffTarget::Range {
@@ -229,6 +239,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn diff_quiet_command_puts_quiet_right_after_diff() {
+        assert_eq!(
+            diff_quiet_command(
+                &words(&["r1", "r2"]),
+                &words(&["--stat", "--"]),
+                &words(&["a"])
+            ),
+            words(&["git", "diff", "--quiet", "r1", "r2", "--stat", "--", "a"])
+        );
+        assert_eq!(
+            diff_quiet_command(&[], &[], &[]),
+            words(&["git", "diff", "--quiet"])
+        );
+    }
+
+    #[test]
+    fn range_is_empty_only_for_exit_zero() {
+        assert!(range_is_empty(Some(0)));
+        assert!(!range_is_empty(Some(1)));
+        assert!(!range_is_empty(Some(129)));
+        assert!(!range_is_empty(None));
+    }
+
     fn chat_last(count: usize, extra: &[&str]) -> DiffArgs {
         range(ScopeQuery::Chat(TurnWindow::Last(count)), extra)
     }
@@ -311,7 +345,14 @@ mod tests {
                 "{input}"
             );
         }
-        for input in ["worker", "worker --stat"] {
+        for input in [
+            "worker",
+            "worker --stat",
+            "worker last 2",
+            "worker ago 1",
+            "worker now",
+            "worker last",
+        ] {
             assert_eq!(
                 parse_diff_args(input),
                 DiffArgs::Usage(WORKER_USAGE),
