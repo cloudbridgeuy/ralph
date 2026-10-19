@@ -7,6 +7,7 @@
 // Threshold configured in clippy.toml (too-many-arguments-threshold = 5).
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
+mod acp_log;
 mod acp_worker;
 pub mod ansi;
 mod chat;

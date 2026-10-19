@@ -1,21 +1,26 @@
 use crate::cursor_owner::{signal_group, TERM_GRACE, TERM_POLL};
 use std::io;
 use std::os::unix::process::CommandExt;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
 pub(crate) fn spawn_piped(
     mut command: Command,
-) -> Result<(Child, ChildStdin, ChildStdout), io::Error> {
+) -> Result<(Child, ChildStdin, ChildStdout, ChildStderr), io::Error> {
     let mut child = command
         .process_group(0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()?;
-    match child.stdin.take().zip(child.stdout.take()) {
-        Some((stdin, stdout)) => Ok((child, stdin, stdout)),
+    match child
+        .stdin
+        .take()
+        .zip(child.stdout.take())
+        .zip(child.stderr.take())
+    {
+        Some(((stdin, stdout), stderr)) => Ok((child, stdin, stdout, stderr)),
         None => {
             stop_child(&mut child);
             Err(io::Error::other("child has no stdio pipes"))

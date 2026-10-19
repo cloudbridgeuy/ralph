@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 mod frames;
 mod handoff;
+mod log;
 mod owner;
 mod permissions;
 mod protocol;
@@ -10,6 +11,7 @@ mod turns;
 
 pub use frames::*;
 pub use handoff::*;
+pub use log::*;
 pub use owner::*;
 pub use permissions::*;
 pub use protocol::*;

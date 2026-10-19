@@ -1,3 +1,4 @@
+use crate::acp_log::{CappedLog, LoggedRead, LoggedWrite};
 use crate::config::AppConfig;
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{now_secs, process_start, sweep_owner, write_file};
@@ -32,6 +33,7 @@ use ralph_core::worker::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -266,8 +268,18 @@ impl AcpWorker {
         }
         let mut command = Command::new(agent.command);
         command.arg("acp").current_dir(&request.worktree);
-        let (child, stdin, stdout) = spawn_piped(command)
+        let (child, stdin, stdout, stderr) = spawn_piped(command)
             .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
+        let log = CappedLog::new(request.inbox.parent(), id);
+        let stderr_log = Arc::clone(&log);
+        thread::spawn(move || {
+            let mut stderr = LoggedRead {
+                inner: stderr,
+                log: stderr_log,
+                tag: "err",
+            };
+            io::copy(&mut stderr, &mut io::sink()).ok();
+        });
         let permissions = Permissions::new(
             markers.blocked.clone(),
             cursor_permissions(),
@@ -334,8 +346,16 @@ impl AcpWorker {
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = ByteStreams::new(
-                blocking::Unblock::new(stdin),
-                blocking::Unblock::new(stdout),
+                blocking::Unblock::new(LoggedWrite {
+                    inner: stdin,
+                    log: Arc::clone(&log),
+                    tag: "in",
+                }),
+                blocking::Unblock::new(LoggedRead {
+                    inner: stdout,
+                    log,
+                    tag: "out",
+                }),
             );
             let outcome = block_on(
                 Client
