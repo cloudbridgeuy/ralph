@@ -236,6 +236,14 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 
 `yolo` picks only the allow-once option, never allow-always, and writes nothing to `~/.cursor/cli-config.json`. A request with no allow-once option still waits for the person. Cursor's own rules (deny lists, sandbox) still apply. Risk: shell commands and MCP tools run without asking. A wrong value or type, or a config that fails to read, warns and uses `"ask"`. The key is read when a Cursor worker starts.
 
+### `[claude]` - Claude Workers
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | string | unset (claude's own default) | Model name or alias passed as `--model` to Claude workers that `spawn_worker` starts without a `model` |
+
+A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses claude's default. A config that fails to load warns and uses claude's default. The key is read at each spawn.
+
 ### `[opencode]` - opencode Workers
 
 | Field | Type | Default | Description |

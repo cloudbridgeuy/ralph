@@ -53,6 +53,35 @@ pub fn is_model_id(model: &str) -> bool {
     matches!(model.split_once('/'), Some((provider, name)) if !provider.is_empty() && !name.is_empty())
 }
 
+pub fn is_claude_model(model: &str) -> bool {
+    !model.is_empty() && !model.chars().any(char::is_whitespace)
+}
+
+pub fn resolve_claude_model(
+    spawn: Option<&str>,
+    config: Result<Option<&str>, &str>,
+) -> (Option<String>, Option<String>) {
+    if let Some(model) = spawn {
+        return (Some(model.to_string()), None);
+    }
+    match config {
+        Err(error) => (
+            None,
+            Some(format!(
+                "Warning: [claude] model was skipped because the ralph config did not load ({error}). Used claude's default model instead."
+            )),
+        ),
+        Ok(None) => (None, None),
+        Ok(Some(model)) if is_claude_model(model) => (Some(model.to_string()), None),
+        Ok(Some(model)) => (
+            None,
+            Some(format!(
+                "[claude] model '{model}' must be non-empty with no whitespace; using claude's default model."
+            )),
+        ),
+    }
+}
+
 pub fn resolve_opencode_model(
     spawn: Option<&str>,
     config: Result<Option<&str>, &str>,
@@ -292,32 +321,39 @@ pub fn opencode_config(model: &str, exe: &Path, mcp_args: &[String], attachments
     })
 }
 
-pub fn worker_command(
-    mcp_config: &Path,
-    settings: &Path,
-    permission_mode: &str,
-    attachments: &Path,
-    task: &str,
-) -> Vec<String> {
-    [
+pub struct ClaudeWorkerArgs<'a> {
+    pub mcp_config: &'a Path,
+    pub settings: &'a Path,
+    pub permission_mode: &'a str,
+    pub attachments: &'a Path,
+    pub task: &'a str,
+    pub model: Option<&'a str>,
+}
+
+pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
+    let mut command: Vec<String> = [
         "zsh",
         "-lic",
         r#"exec "$0" "$@""#,
         "claude",
         "--permission-mode",
-        permission_mode,
+        args.permission_mode,
         "--mcp-config",
-        &mcp_config.to_string_lossy(),
+        &args.mcp_config.to_string_lossy(),
         "--settings",
-        &settings.to_string_lossy(),
+        &args.settings.to_string_lossy(),
         "--add-dir",
-        &attachments.to_string_lossy(),
+        &args.attachments.to_string_lossy(),
         "--append-system-prompt",
         WORKER_PROMPT,
-        task,
     ]
     .map(str::to_string)
-    .to_vec()
+    .to_vec();
+    if let Some(model) = args.model {
+        command.extend(["--model".to_string(), model.to_string()]);
+    }
+    command.push(args.task.to_string());
+    command
 }
 
 pub fn opencode_session_id(id: &str) -> String {
@@ -477,6 +513,59 @@ mod tests {
     }
 
     #[test]
+    fn claude_model_resolution_prefers_spawn_then_config_then_default() {
+        assert_eq!(
+            resolve_claude_model(Some("opus"), Ok(Some("sonnet"))),
+            (Some("opus".to_string()), None)
+        );
+        assert_eq!(
+            resolve_claude_model(None, Ok(Some("sonnet"))),
+            (Some("sonnet".to_string()), None)
+        );
+        assert_eq!(resolve_claude_model(None, Ok(None)), (None, None));
+    }
+
+    #[test]
+    fn claude_model_resolution_warns_on_invalid_config() {
+        for bad in ["", "two words", " opus"] {
+            let (model, warning) = resolve_claude_model(None, Ok(Some(bad)));
+            assert_eq!(model, None);
+            assert!(warning.unwrap().contains("[claude] model"), "{bad}");
+        }
+        assert_eq!(
+            resolve_claude_model(Some("opus"), Ok(Some(""))),
+            (Some("opus".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn claude_model_resolution_warns_when_config_fails_to_load() {
+        let (model, warning) = resolve_claude_model(None, Err("bad toml at line 3"));
+        assert_eq!(model, None);
+        let warning = warning.unwrap();
+        assert!(warning.contains("bad toml at line 3"));
+        assert!(warning.contains("default model"));
+    }
+
+    #[test]
+    fn claude_model_resolution_ignores_config_error_when_spawn_model_given() {
+        assert_eq!(
+            resolve_claude_model(Some("opus"), Err("boom")),
+            (Some("opus".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn claude_model_is_non_empty_without_whitespace() {
+        for good in ["opus", "claude-opus-4", "openai/gpt-6.1-sol"] {
+            assert!(is_claude_model(good), "{good}");
+        }
+        for bad in ["", " ", "a b", "a\tb", "opus\n"] {
+            assert!(!is_claude_model(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn model_id_needs_provider_and_name() {
         assert!(is_model_id("openai/gpt-6.1-sol"));
         for bad in ["", "sol", "openai/", "/sol"] {
@@ -555,15 +644,32 @@ mod tests {
         assert_eq!(parse_pending_turn(""), None);
     }
 
+    fn claude_args(model: Option<&str>) -> ClaudeWorkerArgs<'_> {
+        ClaudeWorkerArgs {
+            mcp_config: Path::new("/s/workers/A.json"),
+            settings: Path::new("/s/workers/A.settings.json"),
+            permission_mode: "auto",
+            attachments: Path::new("/s/attachments"),
+            task: "do it",
+            model,
+        }
+    }
+
+    #[test]
+    fn worker_command_puts_model_before_the_task() {
+        let args = worker_command(&claude_args(Some("opus")));
+        assert_eq!(args[args.len() - 3..], ["--model", "opus", "do it"]);
+    }
+
+    #[test]
+    fn worker_command_omits_model_flag_when_unset() {
+        let args = worker_command(&claude_args(None));
+        assert!(!args.iter().any(|arg| arg == "--model"));
+    }
+
     #[test]
     fn worker_command_runs_claude_through_zsh_and_ends_with_the_task() {
-        let args = worker_command(
-            Path::new("/s/workers/A.json"),
-            Path::new("/s/workers/A.settings.json"),
-            "auto",
-            Path::new("/s/attachments"),
-            "do it",
-        );
+        let args = worker_command(&claude_args(None));
         assert_eq!(args[..2], ["zsh", "-lic"]);
         assert_eq!(
             args[3..12],
@@ -584,13 +690,7 @@ mod tests {
 
     #[test]
     fn worker_command_output_is_exactly_the_tmux_launch_vector() {
-        let args = worker_command(
-            Path::new("/s/workers/A.json"),
-            Path::new("/s/workers/A.settings.json"),
-            "auto",
-            Path::new("/s/attachments"),
-            "do it",
-        );
+        let args = worker_command(&claude_args(None));
         assert_eq!(
             args,
             vec![
