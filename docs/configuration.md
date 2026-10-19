@@ -211,6 +211,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
 | `frozen_window` | integer | `32` | Entries per frozen memory-view window, from 1 to 199 |
 | `worker_check_secs` | integer | `60` | Seconds between worker checks while chat is open; `0` turns the check off |
+| `worker_quiet_secs` | integer | `300` | Seconds a running Cursor worker may send no ACP traffic before one inbox alert; must be above 0, else a warning and `300`. The 300 s default is an unverified guess, to be measured by GUZ-651. Runs on the worker check, so `worker_check_secs = 0` turns it off too |
 | `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
 | `wrap_width` | integer | unset | Column cap for chat replies and the prompt area; `0` or unset wraps at the terminal width |
 | `cell_output_limit` | integer | `200` | Lines of cell output sent to Claude: first half and last half kept; `0` sends all |

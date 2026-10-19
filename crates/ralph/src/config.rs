@@ -6,6 +6,7 @@ use crate::invoke::{
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
+use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::worker::CursorPermissions;
 use serde::{Deserialize, Serialize};
@@ -155,6 +156,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub worker_check_secs: Option<u64>,
     #[serde(default)]
+    pub worker_quiet_secs: Option<toml::Value>,
+    #[serde(default)]
     pub watch_timeout_secs: Option<u64>,
     #[serde(default)]
     pub wrap_width: Option<usize>,
@@ -190,6 +193,19 @@ pub enum EditorSetting {
 }
 
 impl ChatSection {
+    pub fn worker_quiet_setting(&self) -> (u64, Option<String>) {
+        match self.worker_quiet_secs.as_ref().map(toml::Value::as_integer) {
+            None => (WORKER_QUIET_SECS, None),
+            Some(Some(secs)) if secs > 0 => (secs.unsigned_abs(), None),
+            Some(_) => (
+                WORKER_QUIET_SECS,
+                Some(format!(
+                    "[chat] worker_quiet_secs must be a positive integer; using {WORKER_QUIET_SECS}"
+                )),
+            ),
+        }
+    }
+
     pub fn editor_setting(&self) -> (Option<&[String]>, Option<String>) {
         match &self.editor {
             Some(EditorSetting::Argv(argv)) => (Some(argv), None),
@@ -220,6 +236,7 @@ impl Default for ChatSection {
             skills: Vec::new(),
             frozen_window: None,
             worker_check_secs: None,
+            worker_quiet_secs: None,
             watch_timeout_secs: None,
             wrap_width: None,
             cell_output_limit: None,
@@ -566,6 +583,23 @@ mod tests {
             let (mode, warning) = config.cursor.permissions_setting();
             assert_eq!(mode, CursorPermissions::Ask);
             assert!(warning.is_some());
+        }
+    }
+
+    #[test]
+    fn worker_quiet_secs_defaults_and_warns_on_bad_values() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("config.toml");
+        assert_eq!(AppConfig::new().chat.worker_quiet_setting(), (300, None));
+        fs::write(&path, "[chat]\nworker_quiet_secs = 45\n").unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.chat.worker_quiet_setting(), (45, None));
+        for value in ["0", "-5", "1.5", "\"x\""] {
+            fs::write(&path, format!("[chat]\nworker_quiet_secs = {value}\n")).unwrap();
+            let config = AppConfig::load_from(&path).unwrap();
+            let (secs, warning) = config.chat.worker_quiet_setting();
+            assert_eq!(secs, 300);
+            assert!(warning.is_some_and(|text| text.contains("positive integer")));
         }
     }
 

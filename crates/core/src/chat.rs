@@ -8,6 +8,7 @@ use std::time::Duration;
 pub const VIEW_LINES: usize = 200;
 pub const FROZEN_WINDOW: usize = 32;
 pub const WORKER_CHECK_SECS: u64 = 60;
+pub const WORKER_QUIET_SECS: u64 = 300;
 pub const WATCH_TIMEOUT_SECS: u64 = 3600;
 
 pub fn resolve_worker_check_secs(config: Option<u64>) -> Option<u64> {

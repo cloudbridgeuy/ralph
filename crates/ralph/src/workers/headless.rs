@@ -1,9 +1,12 @@
 use crate::acp_worker::CursorHost;
 use crate::chat::socket::SocketFiles;
+use crate::cursor_owner::{now_secs, write_file};
 use crate::opencode_worker::OpencodeHost;
 use crate::watches::Watches;
+use ralph_core::worker::ActivityMark;
+use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// A chat's host, not an individual worker. One host may own many workers.
 pub(crate) trait HeadlessHost: Send + Sync {
@@ -15,6 +18,58 @@ pub(crate) trait HeadlessHost: Send + Sync {
 
     /// Stop the entire host at chat exit, never when one worker closes or reports.
     fn shutdown(&self);
+}
+
+pub(crate) struct Heartbeat {
+    activity: PathBuf,
+    gone: PathBuf,
+    last: Mutex<ActivityMark>,
+}
+
+impl Heartbeat {
+    pub(crate) fn new(activity: PathBuf, gone: PathBuf) -> Arc<Self> {
+        Arc::new(Self {
+            activity,
+            gone,
+            last: Mutex::new(ActivityMark {
+                at: 0,
+                running: false,
+            }),
+        })
+    }
+
+    pub(crate) fn clear(&self) {
+        fs::remove_file(&self.activity).ok();
+        fs::remove_file(&self.gone).ok();
+        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = ActivityMark {
+            at: 0,
+            running: false,
+        };
+    }
+
+    pub(crate) fn touch(&self) {
+        self.write(None);
+    }
+
+    pub(crate) fn set_running(&self, running: bool) {
+        self.write(Some(running));
+    }
+
+    pub(crate) fn gone(&self, reason: &str) {
+        write_file(&self.gone, reason).ok();
+    }
+
+    fn write(&self, running: Option<bool>) {
+        let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
+        let next = ActivityMark {
+            at: now_secs(),
+            running: running.unwrap_or(last.running),
+        };
+        if next != *last {
+            write_file(&self.activity, &next.render()).ok();
+            *last = next;
+        }
+    }
 }
 
 /// Owns host lifetimes for a chat, including early returns from the chat loop.

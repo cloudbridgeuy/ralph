@@ -1,4 +1,7 @@
-use super::{BLOCKED_DIR, READY_DIR, REPORTED_DIR, SENT_DIR, UNREPORTED_DIR, WAITING_DIR};
+use super::{
+    ACTIVITY_DIR, BLOCKED_DIR, GONE_DIR, READY_DIR, REPORTED_DIR, SENT_DIR, UNREPORTED_DIR,
+    WAITING_DIR,
+};
 use std::path::{Path, PathBuf};
 
 pub fn ready_path(store: &Path, id: &str) -> PathBuf {
@@ -25,6 +28,40 @@ pub fn sent_path(store: &Path, id: &str) -> PathBuf {
     store.join(SENT_DIR).join(id)
 }
 
+pub fn activity_path(store: &Path, id: &str) -> PathBuf {
+    store.join(ACTIVITY_DIR).join(id)
+}
+
+pub fn gone_path(store: &Path, id: &str) -> PathBuf {
+    store.join(GONE_DIR).join(id)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActivityMark {
+    pub at: u64,
+    pub running: bool,
+}
+
+impl ActivityMark {
+    pub fn render(&self) -> String {
+        let flag = if self.running { "running" } else { "idle" };
+        format!("{} {flag}", self.at)
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let (at, flag) = text.trim().split_once(' ')?;
+        let running = match flag {
+            "running" => true,
+            "idle" => false,
+            _ => return None,
+        };
+        Some(Self {
+            at: at.parse().ok()?,
+            running,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerMarkers {
     pub ready: PathBuf,
@@ -33,6 +70,8 @@ pub struct WorkerMarkers {
     pub waiting: PathBuf,
     pub unreported: PathBuf,
     pub sent: PathBuf,
+    pub activity: PathBuf,
+    pub gone: PathBuf,
 }
 
 impl WorkerMarkers {
@@ -44,11 +83,13 @@ impl WorkerMarkers {
             waiting: waiting_path(store, id),
             unreported: unreported_path(store, id),
             sent: sent_path(store, id),
+            activity: activity_path(store, id),
+            gone: gone_path(store, id),
         }
     }
 }
 
-pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 6] {
+pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 8] {
     let WorkerMarkers {
         ready,
         reported,
@@ -56,8 +97,12 @@ pub fn marker_paths(store: &Path, id: &str) -> [PathBuf; 6] {
         waiting,
         unreported,
         sent,
+        activity,
+        gone,
     } = WorkerMarkers::new(store, id);
-    [ready, reported, blocked, waiting, unreported, sent]
+    [
+        ready, reported, blocked, waiting, unreported, sent, activity, gone,
+    ]
 }
 
 #[cfg(test)]
@@ -96,7 +141,20 @@ mod tests {
                 PathBuf::from("/s/waiting/A"),
                 PathBuf::from("/s/unreported/A"),
                 PathBuf::from("/s/sent/A"),
+                PathBuf::from("/s/activity/A"),
+                PathBuf::from("/s/gone/A"),
             ]
         );
+    }
+
+    #[test]
+    fn activity_mark_round_trips_and_rejects_garbage() {
+        for running in [true, false] {
+            let mark = ActivityMark { at: 42, running };
+            assert_eq!(ActivityMark::parse(&mark.render()), Some(mark));
+        }
+        assert_eq!(ActivityMark::parse("42 paused"), None);
+        assert_eq!(ActivityMark::parse("x running"), None);
+        assert_eq!(ActivityMark::parse(""), None);
     }
 }

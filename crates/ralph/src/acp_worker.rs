@@ -5,7 +5,7 @@ use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
-use crate::workers::headless::HeadlessHost;
+use crate::workers::headless::{HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
     CancelNotification, InitializeRequest, LoadSessionRequest, McpServer, NewSessionRequest,
     PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
@@ -20,8 +20,8 @@ use futures::future::Either;
 use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    acp_mcp_server, auto_allow_option, cancels_turn, check_protocol, decode_update, encode,
-    interrupt_result_text, match_option, no_option_message, permission_content,
+    acp_mcp_server, activity_path, auto_allow_option, cancels_turn, check_protocol, decode_update,
+    encode, gone_path, interrupt_result_text, match_option, no_option_message, permission_content,
     prompt_failure_report, ready_path, request_stale, resume_decision, session_error, stop_problem,
     task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, CursorFiles,
     CursorPermissions, Inbound, OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest,
@@ -305,6 +305,14 @@ impl AcpWorker {
         let turns_permissions = Arc::clone(&permissions);
         let seen = Arc::clone(&reported);
         let allowed = Arc::clone(&reported);
+        let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
+        heartbeat.clear();
+        let on_request = Arc::clone(&heartbeat);
+        let on_notification = Arc::clone(&heartbeat);
+        let in_turns = Arc::clone(&heartbeat);
+        let ended = Arc::clone(&closing);
+        let opened = Arc::new(AtomicBool::new(false));
+        let was_opened = Arc::clone(&opened);
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = ByteStreams::new(
@@ -316,6 +324,7 @@ impl AcpWorker {
                     .builder()
                     .on_receive_request(
                         async move |request: RequestPermissionRequest, responder, _cx| {
+                            on_request.touch();
                             if permissions.push(&request, responder) {
                                 allowed.store(true, Ordering::SeqCst);
                             }
@@ -325,6 +334,7 @@ impl AcpWorker {
                     )
                     .on_receive_notification(
                         async move |notification: SessionNotification, _cx| {
+                            on_notification.touch();
                             let update =
                                 serde_json::to_value(&notification.update).unwrap_or_default();
                             if !replaying.load(Ordering::SeqCst)
@@ -370,6 +380,7 @@ impl AcpWorker {
                                     }
                                     prompts.unbounded_send(Inbound::Prompt(prompt)).ok();
                                 }
+                                opened.store(true, Ordering::SeqCst);
                                 ready_tx.send(Ok(())).ok();
                                 let turns = Turns {
                                     permissions: Arc::clone(&turns_permissions),
@@ -382,6 +393,7 @@ impl AcpWorker {
                                     reported,
                                     closing,
                                     changes,
+                                    heartbeat: in_turns,
                                 };
                                 run_turns(&connection, &turns, prompt_rx, stop_rx).await;
                             }
@@ -392,6 +404,13 @@ impl AcpWorker {
                         Ok(())
                     }),
             );
+            if was_opened.load(Ordering::SeqCst) && !ended.load(Ordering::SeqCst) {
+                let reason = match &outcome {
+                    Ok(()) => format!("{} acp exited", agent.command),
+                    Err(e) => e.to_string(),
+                };
+                heartbeat.gone(&reason);
+            }
             if let Err(e) = outcome {
                 failed
                     .send(Err(format!("{} agent connection failed: {e}", agent.name)))
@@ -467,6 +486,7 @@ struct Turns {
     reported: Arc<AtomicBool>,
     closing: Arc<AtomicBool>,
     changes: Option<WorkerChanges>,
+    heartbeat: Arc<Heartbeat>,
 }
 
 fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) {
@@ -524,6 +544,7 @@ async fn run_turns(
             }
         };
         fs::remove_file(&turns.markers.waiting).ok();
+        turns.heartbeat.set_running(true);
         turns.reported.store(false, Ordering::SeqCst);
         let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
             return;
@@ -546,6 +567,7 @@ async fn run_turns(
                 }
             }
         };
+        turns.heartbeat.set_running(false);
         let interrupted = queue.finish();
         if let Some(changes) = turns
             .changes
@@ -683,6 +705,8 @@ impl CursorHost {
         fs::remove_dir_all(&files.interrupt).ok();
         fs::remove_dir_all(&files.interrupt_result).ok();
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
+        fs::remove_file(activity_path(&self.store_dir, id)).ok();
+        fs::remove_file(gone_path(&self.store_dir, id)).ok();
     }
 
     pub fn cancel_pending(&self, id: &str) {

@@ -107,6 +107,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let chat_config = config.chat;
     let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
     let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
+    let (worker_quiet_secs, quiet_warning) = chat_config.worker_quiet_setting();
     let watch_timeout = resolve_watch_timeout(chat_config.watch_timeout_secs)?;
     let wrap_cap = resolve_wrap_width(
         args.wrap_width,
@@ -187,6 +188,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         active: Mutex::new(None),
         frozen_window,
         worker_check_secs,
+        worker_quiet_secs,
         workers: Workers::new(
             store_dir.clone(),
             exe.clone(),
@@ -240,6 +242,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     config_warning
         .into_iter()
         .chain(editor_warning)
+        .chain(quiet_warning)
         .for_each(warn);
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),

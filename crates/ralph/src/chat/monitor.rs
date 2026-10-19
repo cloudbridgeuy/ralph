@@ -1,5 +1,6 @@
 use crate::chat::check::CheckState;
 use crate::chat::memory::Store;
+use crate::cursor_owner::now_secs;
 use crate::inbox_alert;
 use crate::signal;
 use crate::warn::warn_if_err;
@@ -18,8 +19,9 @@ use ralph_core::chat_status::{
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    blocked_path, ready_path, sent_path, unreported_path, waiting_path, HarnessId, Report,
-    HANDOFF_POLL, READY_DIR,
+    activity_path, blocked_path, gone_path, liveness, marker_state, ready_path, reduce, sent_path,
+    unreported_path, waiting_path, HarnessId, HeadlessState, Liveness, Report, HANDOFF_POLL,
+    READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -57,6 +59,7 @@ pub(super) struct Monitor {
     pub(super) active: Mutex<Option<HashSet<String>>>,
     pub(super) frozen_window: usize,
     pub(super) worker_check_secs: Option<u64>,
+    pub(super) worker_quiet_secs: u64,
     pub(super) workers: Workers,
     pub(super) check: Mutex<CheckState>,
     pub(super) known: Mutex<Vec<Report>>,
@@ -108,6 +111,33 @@ impl Monitor {
         }
     }
 
+    fn heartbeats(&self, state: &mut CheckState, running: &[RunningWorker]) -> Vec<CheckAction> {
+        state
+            .heartbeats
+            .retain(|id, _| running.iter().any(|worker| &worker.id == id));
+        let now = now_secs();
+        let mut actions = Vec::new();
+        for worker in running.iter().filter(|w| w.kind == HarnessId::Cursor) {
+            let read = |path: PathBuf| std::fs::read_to_string(path).ok();
+            let activity = read(activity_path(&self.store_dir, &worker.id));
+            let gone = read(gone_path(&self.store_dir, &worker.id));
+            let blocked = blocked_path(&self.store_dir, &worker.id).exists();
+            let (phase, events) = marker_state(activity.as_deref(), gone.as_deref(), blocked);
+            let mut current = state.heartbeats.remove(&worker.id).unwrap_or_default();
+            if gone.is_none() && matches!(current.liveness, Liveness::Dead { .. }) {
+                current = HeadlessState::default();
+            }
+            current.phase = phase;
+            for event in &events {
+                current = reduce(&current, event).0;
+            }
+            let (next, alert) = liveness(&current, now, self.worker_quiet_secs);
+            state.heartbeats.insert(worker.id.clone(), next);
+            actions.extend(alert.map(|text| CheckAction::Inbox(worker.id.clone(), text)));
+        }
+        actions
+    }
+
     fn check(&self) {
         let running = running_workers(&self.store_dir);
         let actions = {
@@ -122,8 +152,9 @@ impl Monitor {
             state
                 .nudges
                 .retain(|id, _| running.iter().any(|worker| &worker.id == id));
-            let (actions, memory) = plan(&state.memory, &observations);
+            let (mut actions, memory) = plan(&state.memory, &observations);
             state.memory = memory;
+            actions.extend(self.heartbeats(&mut state, &running));
             for action in &actions {
                 if let CheckAction::Nudge(id) = action {
                     let last = state.reports.get(id).cloned();

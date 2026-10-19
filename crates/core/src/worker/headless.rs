@@ -1,5 +1,8 @@
 use super::{interrupt_reply, BlockedContent, HarnessId, TurnEnd};
 
+mod liveness;
+pub use liveness::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Feature {
     Spawn,
@@ -69,7 +72,7 @@ impl Capabilities {
             (HarnessId::Cursor, Model) => Support::None,
             (HarnessId::Cursor, Close) => Partial("cli-config.json not restored"),
             (HarnessId::Cursor, Heartbeat) => {
-                Partial("activity only inside turns; child exit not polled")
+                Partial("ACP traffic only; exit seen through the connection ending")
             }
             (HarnessId::Opencode, Spawn | Prompt | Resume | Model | Report) => Full,
             (HarnessId::Opencode, Interrupt) => Partial("fire-and-forget, failure only warns"),
@@ -138,6 +141,13 @@ pub enum WorkerEvent {
     Interrupted { id: String, outcome: Option<bool> },
     Closed,
     Unsupported { feature: Feature, reason: String },
+    Activity { at: u64 },
+    ProcessGone { scope: Scope, reason: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    Worker,
 }
 
 pub fn decide(caps: &Capabilities, command: WorkerCommand) -> Result<WorkerCommand, WorkerEvent> {
@@ -164,6 +174,22 @@ pub enum Phase {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HeadlessState {
     pub phase: Phase,
+    pub last_activity: u64,
+    pub liveness: Liveness,
+    pub alerted: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Liveness {
+    #[default]
+    Live,
+    Quiet {
+        since: u64,
+    },
+    Dead {
+        scope: Scope,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,7 +210,10 @@ pub enum HeadlessEffect {
 
 pub fn reduce(state: &HeadlessState, event: &WorkerEvent) -> (HeadlessState, Vec<HeadlessEffect>) {
     use HeadlessEffect::{Clear, Publish, ReplyText, Set};
-    let at = |phase| HeadlessState { phase };
+    let at = |phase| HeadlessState {
+        phase,
+        ..state.clone()
+    };
     let same = state.clone();
     match event {
         WorkerEvent::Ready => (at(Phase::Idle), vec![Set(Marker::Ready)]),
@@ -203,6 +232,35 @@ pub fn reduce(state: &HeadlessState, event: &WorkerEvent) -> (HeadlessState, Vec
         }
         WorkerEvent::Closed => (at(Phase::Closed), Vec::new()),
         WorkerEvent::Unsupported { reason, .. } => (same, vec![ReplyText(reason.clone())]),
+        WorkerEvent::Activity { at } => {
+            let fresh =
+                *at > state.last_activity && !matches!(state.liveness, Liveness::Dead { .. });
+            let next = if fresh {
+                HeadlessState {
+                    last_activity: *at,
+                    liveness: Liveness::Live,
+                    alerted: false,
+                    ..state.clone()
+                }
+            } else {
+                same
+            };
+            (next, Vec::new())
+        }
+        WorkerEvent::ProcessGone { scope, reason } => {
+            let next = match state.liveness {
+                Liveness::Dead { .. } => same,
+                _ => HeadlessState {
+                    liveness: Liveness::Dead {
+                        scope: *scope,
+                        reason: reason.clone(),
+                    },
+                    alerted: false,
+                    ..same
+                },
+            };
+            (next, Vec::new())
+        }
     }
 }
 
@@ -279,7 +337,10 @@ mod tests {
     #[test]
     fn reduce_maps_each_event() {
         use HeadlessEffect::*;
-        let from = |phase| HeadlessState { phase };
+        let from = |phase| HeadlessState {
+            phase,
+            ..HeadlessState::default()
+        };
         let cases = vec![
             (
                 Phase::Starting,
