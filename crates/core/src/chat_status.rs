@@ -338,7 +338,8 @@ pub fn footer(unread: usize, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff_command::DiffArgs;
+    use crate::changes::{ScopeQuery, TurnWindow};
+    use crate::diff_command::{DiffArgs, DiffTarget, WINDOW_USAGE};
 
     #[test]
     fn last_turn_cache_picks_last_turn_and_ignores_the_rest() {
@@ -447,17 +448,29 @@ mod tests {
 
     #[test]
     fn route_input_parses_diff_commands() {
+        let last = |count, extra: &[&str]| {
+            Route::Diff(DiffArgs::Target(DiffTarget::Range {
+                scope: ScopeQuery::Chat(TurnWindow::Last(count)),
+                extra: extra.iter().map(|word| word.to_string()).collect(),
+            }))
+        };
         assert_eq!(
             route_input("/diff -U1 -- a", 0),
-            Route::Diff(DiffArgs::Words(vec!["-U1".into(), "--".into(), "a".into()]))
+            last(1, &["-U1", "--", "a"])
         );
         assert_eq!(
             route_input(" /diff -- \"a b\" ", 3),
-            Route::Diff(DiffArgs::Words(vec!["--".into(), "a b".into()]))
+            last(1, &["--", "a b"])
+        );
+        assert_eq!(route_input("/diff", 0), last(1, &[]));
+        assert_eq!(route_input("/diff last 2", 0), last(2, &[]));
+        assert_eq!(
+            route_input("/diff now -U1", 0),
+            Route::Diff(DiffArgs::Target(DiffTarget::Now(vec!["-U1".into()])))
         );
         assert_eq!(
-            route_input("/diff", 0),
-            Route::Diff(DiffArgs::Words(vec![]))
+            route_input("/diff last 0", 0),
+            Route::Diff(DiffArgs::Usage(WINDOW_USAGE))
         );
         assert_eq!(
             route_input("/diff 'a", 0),

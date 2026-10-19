@@ -311,6 +311,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     watches: &monitor.watches,
                     display: &inbox_display(color),
                     changes: &config.changes,
+                    store: &store_dir,
                 };
                 run_local(local, &ctx, || {
                     monitor.refresh(true);

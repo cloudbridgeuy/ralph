@@ -124,9 +124,20 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 
 ## /diff
 
-`/diff` is local: it never starts a turn or calls the model. `/difffoo` is a normal message. `turn` and `worker` are ordinary git arguments here, not turn or worker ranges.
+`/diff` is local: it never starts a turn or calls the model. `/difffoo` is a normal message.
 
-Typed `/diff [git diff args]` runs `git diff` in the chat's working directory and waits. Words after `/diff` are split on whitespace, with quotes and backslash escapes (a trailing backslash is kept; no `$` expansion or globs), and are passed after `[changes] diff_args`. An unclosed quote prints `/diff: unclosed quote` and runs nothing.
+| Input | Shows |
+| --- | --- |
+| `/diff` | the last finished chat turn (same as `/diff last 1`) |
+| `/diff last N` | net changes over the last N finished chat turns (N >= 1) |
+| `/diff ago N` | the single chat turn N back (N >= 1) |
+| `/diff worker <id>` | that worker's changes since it spawned |
+| `/diff worker <id> last N` or `ago N` | that worker's last N turns, or the turn N back |
+| `/diff now` | the working tree against the index, as plain `git diff` |
+
+The ranges use the same snapshots and rules as the `changes` tool (`last` and `ago`, rebase-aware). If snapshots are off, there is none yet, or N is larger than the finished turns, `/diff` prints one plain line and runs nothing. After an upstream change it may print the upstream note first. There are no absolute turn numbers.
+
+The words after the range keywords are git diff args: `/diff -U1 -- a` is the last chat turn with `-U1 -- a`, and `/diff worker w1 last 2 --stat` is a worker range with `--stat`. `/diff now [git diff args]` is the working-tree diff: `git diff` in the chat's working directory. Words are split on whitespace, with quotes and backslash escapes (a trailing backslash is kept; no `$` expansion or globs), and are passed after `[changes] diff_args`. In a range, the two snapshot revs come right after `diff`, before `diff_args`. An unclosed quote prints `/diff: unclosed quote` and runs nothing. A bad count or a missing worker id prints a usage line and runs nothing.
 
 ```toml
 [changes]
@@ -134,11 +145,11 @@ pager = "git" # git | delta | hunk
 diff_args = [] # default git diff args; typed /diff args follow
 ```
 
-- `pager = "git"` (default): `git diff <diff_args> <typed>`. The user's `core.pager` in git config is left untouched.
+- `pager = "git"` (default): `git diff <revs> <diff_args> <typed>`. The user's `core.pager` in git config is left untouched.
 - `pager = "delta"`: `git -c core.pager=delta diff ...` for this call only.
 - `pager = "hunk"`: `git -c core.pager=hunk pager diff ...`, with `core.pager=hunk pager` as one argument.
 - Any other pager string warns once at chat start (`[changes] pager = "..." is unknown; using git`) and uses `git`. Loading the config still succeeds.
-- ralph sets no environment variables and does not write `core.pager`.
+- ralph does not write `core.pager`. Snapshot ranges set `GIT_DIR` and the alternate object dir for the spawned git only; `/diff now` sets no environment variables.
 
 The spawn runs only after reedline `read_line` has turned raw mode off, so a full-screen pager returns to a normal prompt. `git diff` exiting 1 (there are changes) is not a chat error. A failure to start git warns and returns to the prompt.
 

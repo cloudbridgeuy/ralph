@@ -1,4 +1,4 @@
-use crate::chat::diff;
+use crate::chat::diff::{self, DiffContext};
 use crate::chat::inbox::{self, Display};
 use crate::chat::watch;
 use crate::config::ChangesSection;
@@ -7,12 +7,14 @@ use crate::worker_mcp::Inbox;
 use ralph_core::chat_status::{Route, PRIVATE_USAGE};
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use std::io;
+use std::path::Path;
 
 pub struct LocalRoute<'a> {
     pub inbox: &'a Inbox,
     pub watches: &'a Watches,
     pub display: &'a Display<'a>,
     pub changes: &'a ChangesSection,
+    pub store: &'a Path,
 }
 
 pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Result<()> {
@@ -28,7 +30,14 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
             watch::run(command, ctx.watches);
             refresh();
         }
-        Route::Diff(DiffArgs::Words(extra)) => diff::run(ctx.changes, &extra),
+        Route::Diff(DiffArgs::Target(target)) => diff::run(
+            &DiffContext {
+                changes: ctx.changes,
+                store: ctx.store,
+            },
+            target,
+        ),
+        Route::Diff(DiffArgs::Usage(usage)) => println!("{usage}"),
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::PrivateUsage => println!("{PRIVATE_USAGE}"),
         Route::Send(_) | Route::Private(_) | Route::ReadInbox(_) | Route::Ignore => {}

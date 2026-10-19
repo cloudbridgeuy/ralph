@@ -219,7 +219,7 @@ impl Snapshotter {
         parse_snapshot_base(&text)
     }
 
-    fn side_env(&self, command: &mut Command) {
+    pub(crate) fn side_env(&self, command: &mut Command) {
         command.env("GIT_DIR", &self.side).current_dir(&self.side);
         if let Some(common) = rev_parse(&self.repo, "--git-common-dir") {
             command.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", common.join("objects"));
@@ -234,12 +234,12 @@ impl Snapshotter {
         merged_tree(&output)
     }
 
-    pub fn render_diff(
+    /// Rebase-aware range for a diff, plus `UPSTREAM_NOTE` when the base is unknown.
+    pub fn adjust_range(
         &self,
-        request: &ChangeRequest,
         range: &SnapshotRange,
         to_base: Option<SnapshotBase>,
-    ) -> io::Result<String> {
+    ) -> (SnapshotRange, Option<&'static str>) {
         let from_base = self.snapshot_base(&range.from);
         let (from, note) = match diff_base(from_base.as_ref(), to_base.as_ref()) {
             DiffBase::Direct => (range.from.clone(), None),
@@ -251,10 +251,22 @@ impl Snapshotter {
                 None => (range.from.clone(), Some(UPSTREAM_NOTE)),
             },
         };
-        let range = SnapshotRange {
-            from,
-            to: range.to.clone(),
-        };
+        (
+            SnapshotRange {
+                from,
+                to: range.to.clone(),
+            },
+            note,
+        )
+    }
+
+    pub fn render_diff(
+        &self,
+        request: &ChangeRequest,
+        range: &SnapshotRange,
+        to_base: Option<SnapshotBase>,
+    ) -> io::Result<String> {
+        let (range, note) = self.adjust_range(range, to_base);
         let output = run_diff(&diff_args(request, &range), |command| {
             self.side_env(command)
         })?;
