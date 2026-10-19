@@ -1,10 +1,9 @@
 use crate::config::AppConfig;
 use crate::snapshot::Snapshotter;
-use crate::worker_changes::run_diff;
 use ralph_core::changes::{
-    diff_args, ref_prefix, render_changes, resolve_range, ChangeRequest, ScopeQuery,
+    ref_prefix, resolve_range, ChangeFormat, ChangeRequest, ScopeQuery, SnapshotRange,
 };
-use ralph_core::snapshot::{snapshots_enabled, CHAT_OWNER};
+use ralph_core::snapshot::{snapshots_enabled, SnapshotBase, CHAT_OWNER};
 use std::path::Path;
 
 const SNAPSHOTS_OFF: &str = "snapshots are off ([changes] enabled = false)";
@@ -19,11 +18,11 @@ fn changes_enabled() -> Result<(), String> {
     }
 }
 
-pub(super) fn run_changes(
+fn resolve(
     store: &Path,
     cwd: &Path,
     request: &ChangeRequest<ScopeQuery>,
-) -> Result<String, String> {
+) -> Result<(Snapshotter, ChangeRequest, SnapshotRange), String> {
     changes_enabled()?;
     let snapshotter =
         Snapshotter::open(store, cwd, CHAT_OWNER).ok_or_else(|| NO_SNAPSHOTS.to_string())?;
@@ -34,11 +33,42 @@ pub(super) fn run_changes(
         return Err(NO_SNAPSHOTS.to_string());
     }
     let (resolved, range) = resolve_range(request, &refs)?;
-    let output = run_diff(&diff_args(&resolved, &range), |command| {
-        command
-            .env("GIT_DIR", snapshotter.side())
-            .current_dir(snapshotter.side());
-    })
-    .map_err(|e| format!("Could not diff snapshots: {e}"))?;
-    Ok(render_changes(&resolved, &output))
+    Ok((snapshotter, resolved, range))
+}
+
+fn to_base(snapshotter: &Snapshotter, range: &SnapshotRange) -> Option<SnapshotBase> {
+    range
+        .to
+        .as_deref()
+        .and_then(|to| snapshotter.snapshot_base(to))
+}
+
+pub(super) fn run_changes(
+    store: &Path,
+    cwd: &Path,
+    request: &ChangeRequest<ScopeQuery>,
+) -> Result<String, String> {
+    let (snapshotter, resolved, range) = resolve(store, cwd, request)?;
+    let base = to_base(&snapshotter, &range);
+    snapshotter
+        .render_diff(&resolved, &range, base)
+        .map_err(|e| format!("Could not diff snapshots: {e}"))
+}
+
+/// Resolve a chat or worker scope to a rebase-adjusted snapshot range for `/diff`.
+pub(super) fn resolve_diff(
+    store: &Path,
+    cwd: &Path,
+    scope: ScopeQuery,
+) -> Result<(Snapshotter, SnapshotRange, Option<&'static str>), String> {
+    let request = ChangeRequest {
+        scope,
+        format: ChangeFormat::Stat,
+        paths: Vec::new(),
+        max_bytes: None,
+    };
+    let (snapshotter, _, range) = resolve(store, cwd, &request)?;
+    let base = to_base(&snapshotter, &range);
+    let (range, note) = snapshotter.adjust_range(&range, base);
+    Ok((snapshotter, range, note))
 }

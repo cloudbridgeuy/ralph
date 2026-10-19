@@ -177,6 +177,42 @@ pub fn identity_env() -> [(&'static str, &'static str); 4] {
     IDENTITY
 }
 
+pub const HEAD_TRAILER: &str = "Ralph-Head";
+pub const BASE_TRAILER: &str = "Ralph-Base";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotBase {
+    pub head: String,
+    pub base: Option<String>,
+}
+
+pub fn snapshot_message(ref_name: &str, base: Option<&SnapshotBase>) -> String {
+    let Some(base) = base else {
+        return ref_name.to_string();
+    };
+    let mut message = format!("{ref_name}\n\n{HEAD_TRAILER}: {}", base.head);
+    if let Some(merge_base) = &base.base {
+        message.push_str(&format!("\n{BASE_TRAILER}: {merge_base}"));
+    }
+    message
+}
+
+fn trailer_value<'a>(commit_text: &'a str, key: &str) -> Option<&'a str> {
+    commit_text.lines().find_map(|line| {
+        line.strip_prefix(key)
+            .and_then(|rest| rest.strip_prefix(':'))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+}
+
+pub fn parse_snapshot_base(commit_text: &str) -> Option<SnapshotBase> {
+    Some(SnapshotBase {
+        head: trailer_value(commit_text, HEAD_TRAILER)?.to_string(),
+        base: trailer_value(commit_text, BASE_TRAILER).map(str::to_string),
+    })
+}
+
 pub fn commit_tree_args(side: &Path, tree: &str, message: &str) -> Vec<OsString> {
     vec![
         "-c".into(),
@@ -340,6 +376,55 @@ mod tests {
         args.into_iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
+    }
+
+    fn base(head: &str, merge_base: Option<&str>) -> SnapshotBase {
+        SnapshotBase {
+            head: head.to_string(),
+            base: merge_base.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn message_is_the_ref_name_without_a_base() {
+        assert_eq!(snapshot_message("refs/x/1", None), "refs/x/1");
+    }
+
+    #[test]
+    fn message_carries_head_and_base_trailers() {
+        assert_eq!(
+            snapshot_message("refs/x/1", Some(&base("h1", Some("b1")))),
+            "refs/x/1\n\nRalph-Head: h1\nRalph-Base: b1"
+        );
+    }
+
+    #[test]
+    fn message_omits_the_base_trailer_when_unknown() {
+        assert_eq!(
+            snapshot_message("refs/x/1", Some(&base("h1", None))),
+            "refs/x/1\n\nRalph-Head: h1"
+        );
+    }
+
+    #[test]
+    fn parse_round_trips_through_a_commit_object() {
+        let message = snapshot_message("refs/x/1", Some(&base("h1", Some("b1"))));
+        let commit = format!("tree t\nauthor a\n\n{message}\n");
+        assert_eq!(parse_snapshot_base(&commit), Some(base("h1", Some("b1"))));
+    }
+
+    #[test]
+    fn parse_reads_a_head_without_a_base() {
+        assert_eq!(
+            parse_snapshot_base("tree t\n\nrefs/x/1\n\nRalph-Head: h1\n"),
+            Some(base("h1", None))
+        );
+    }
+
+    #[test]
+    fn parse_is_none_without_a_head_trailer() {
+        assert_eq!(parse_snapshot_base("tree t\n\nrefs/x/1\n"), None);
+        assert_eq!(parse_snapshot_base("Ralph-Head:   \n"), None);
     }
 
     #[test]

@@ -124,9 +124,20 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 
 ## /diff
 
-`/diff` is local: it never starts a turn or calls the model. `/difffoo` is a normal message. `turn` and `worker` are ordinary git arguments here, not turn or worker ranges.
+`/diff` is local: it never starts a turn or calls the model. `/difffoo` is a normal message.
 
-Typed `/diff [git diff args]` runs `git diff` in the chat's working directory and waits. Words after `/diff` are split on whitespace, with quotes and backslash escapes (a trailing backslash is kept; no `$` expansion or globs), and are passed after `[changes] diff_args`. An unclosed quote prints `/diff: unclosed quote` and runs nothing.
+| Input | Shows |
+| --- | --- |
+| `/diff` | the last finished chat turn (same as `/diff last 1`) |
+| `/diff last N` | net changes over the last N finished chat turns (N >= 1) |
+| `/diff ago N` | the single chat turn N back (N >= 1) |
+| `/diff worker <id>` | that worker's changes since it spawned |
+| `/diff worker <id> last N` or `ago N` | that worker's last N turns, or the turn N back |
+| `/diff now` | the working tree against the index, as plain `git diff` |
+
+The ranges use the same snapshots and rules as the `changes` tool (`last` and `ago`, rebase-aware). If snapshots are off, there is none yet, or N is larger than the finished turns, `/diff` prints one plain line and runs nothing. After an upstream change it may print the upstream note first. There are no absolute turn numbers.
+
+The words after the range keywords are git diff args: `/diff -U1 -- a` is the last chat turn with `-U1 -- a`, and `/diff worker w1 last 2 --stat` is a worker range with `--stat`. `/diff now [git diff args]` is the working-tree diff: `git diff` in the chat's working directory. Words are split on whitespace, with quotes and backslash escapes (a trailing backslash is kept; no `$` expansion or globs), and are passed after `[changes] diff_args`. In a range, the two snapshot revs come right after `diff`, before `diff_args`. An unclosed quote prints `/diff: unclosed quote` and runs nothing. A bad count or a missing worker id prints a usage line and runs nothing.
 
 ```toml
 [changes]
@@ -134,11 +145,11 @@ pager = "git" # git | delta | hunk
 diff_args = [] # default git diff args; typed /diff args follow
 ```
 
-- `pager = "git"` (default): `git diff <diff_args> <typed>`. The user's `core.pager` in git config is left untouched.
+- `pager = "git"` (default): `git diff <revs> <diff_args> <typed>`. The user's `core.pager` in git config is left untouched.
 - `pager = "delta"`: `git -c core.pager=delta diff ...` for this call only.
 - `pager = "hunk"`: `git -c core.pager=hunk pager diff ...`, with `core.pager=hunk pager` as one argument.
 - Any other pager string warns once at chat start (`[changes] pager = "..." is unknown; using git`) and uses `git`. Loading the config still succeeds.
-- ralph sets no environment variables and does not write `core.pager`.
+- ralph does not write `core.pager`. Snapshot ranges set `GIT_DIR` and the alternate object dir for the spawned git only; `/diff now` sets no environment variables.
 
 The spawn runs only after reedline `read_line` has turned raw mode off, so a full-screen pager returns to a normal prompt. `git diff` exiting 1 (there are changes) is not a chat error. A failure to start git warns and returns to the prompt.
 
@@ -149,6 +160,7 @@ Unless `[changes] enabled = false`, every turn (user, `/private`, and worker-rep
 - Storage: one bare git dir per repo at `<store>/snapshots/<repo-dir-name>.git`, with its own objects and no link to the repo. The repo's own refs and objects are untouched.
 - Refs: `refs/ralph/chat/turn-<n>/start` and `.../end`. `<n>` continues from the highest existing number, also across restarts.
 - Content: `git read-tree -m -i HEAD` into a private index at `<side>/index/chat` (skipped when the branch has no commit yet), then `git add -A`, so tracked files stay even when ignored and `.gitignore` and `info/exclude` apply to untracked files, then `write-tree` and `commit-tree`. `read-tree` runs without the side object dir; stat-clean entries reuse blobs an earlier snapshot wrote there and `add -A` rehashes the rest. Snapshot commits have no parents.
+- Message: the ref name, then trailers `Ralph-Head: <sha>` (HEAD at snapshot time) and `Ralph-Base: <sha>` (merge-base of HEAD and the default branch, left out when it cannot be resolved; same default-branch rule as the worker base). Older snapshots have no trailers. Built by `snapshot_message`, read by `parse_snapshot_base`.
 - Pruning: after each turn the last 20 turns stay; older start and end refs are deleted, then `git gc --auto --prune=1.hour.ago` reclaims objects.
 - Code: pure logic in `crates/core/src/snapshot.rs`; git calls in `crates/ralph/src/snapshot.rs`; the turn hook in `crates/ralph/src/chat/snapshots.rs`.
 
@@ -157,7 +169,7 @@ Unless `[changes] enabled = false`, every turn (user, `/private`, and worker-rep
 Claude and Cursor workers snapshot their worktree into the same side dir, keyed by the main repo name (from `git rev-parse --git-common-dir`). Opencode workers take no snapshots.
 
 - Refs: `refs/ralph/workers/<id>/turn-<k>`, private index at `<side>/index/workers/<id>`. Turn 0 is taken at spawn; turn `k` at the end of each turn (Claude Stop hook, Cursor `run_turns`). The last 20 stay. `close_worker` deletes the refs and the index.
-- Report: the worker MCP server (`worker-mcp --worktree`) appends two `git diff --stat` blocks to the report text, rendered by `render_changes`: since spawn (merge-base of `HEAD` and the worker base branch against a fresh tree of the worktree, so untracked files count) and since the last turn snapshot (labelled turn `latest + 1`). A block that cannot be computed is left out. Output is uncapped.
+- Report: the worker MCP server (`worker-mcp --worktree`) appends two `git diff --stat` blocks to the report text, rendered by `render_changes`: since spawn (merge-base of `HEAD` and the worker base branch against a fresh tree of the worktree, so untracked files count) and since the last turn snapshot (labelled turn `latest + 1`). A block that cannot be computed is left out. Output is uncapped. The since-spawn block is already rebase-safe, because it diffs from the current merge-base. The since-last-turn block is rebase-aware (see "Reading changes").
 - `[changes] enabled = false` also turns off worker snapshots and report diffstats: the spawn decides once (`snapshots_enabled`), takes no turn 0, and passes no `--worktree` to the worker hooks and MCP server. `close_worker` still clears leftover refs and index from workers spawned while it was on.
 - Code: pure helpers in `crates/core/src/snapshot.rs` and `crates/core/src/changes.rs`; git calls in `crates/ralph/src/worker_changes.rs`.
 
@@ -166,11 +178,12 @@ Claude and Cursor workers snapshot their worktree into the same side dir, keyed 
 The `changes` tool of `chat-mcp` lets the main thread read a diff without leaving chat. It runs `git diff` in the side dir (`--no-pager --no-color`), so the output is plain text.
 
 - Scope: turns are counted back from the newest finished turn, so the model never needs absolute turn numbers. `last=N` and `ago=N` (1 or more, not both) are resolved by the pure `resolve_range` over the listed refs. With no `worker`, the chat repo (`chat-mcp` runs in the chat's directory); finished turns are those with an end snapshot, so the running turn never counts. `last=N` (default 1) gives the start snapshot of the Nth newest finished turn to the end snapshot of the newest; `ago=N` gives one finished turn (`ago=1` is the newest, `ago=2` the one before). With `worker`, that worker's worktree, where each step between two consecutive turn snapshots is a finished turn: no `last` or `ago` gives `turn-0` to the highest turn (since spawn); `last=N` spans the last N steps; `ago=N` is the single step N back. An N larger than the finished turns is not clamped: it is an error such as `last=5 is more than the 3 finished turns of the chat; use last 3 or less`. The removed `turn` and `since` arguments are rejected with an error that names `last` and `ago`. Other errors: `no finished chat turn snapshots yet`, `no snapshots for worker X`, `no snapshots`.
+- Rebase handling: after a rebase onto a newer default branch, a plain diff would count commits pulled in from the default branch. `diff_base` compares the `Ralph-Base` of the two snapshots (the fresh `current_base` for the since-last-turn report block). Same base, or both unresolved: `Direct`, diff as is. The newer snapshot has `Ralph-Base` equal to its `Ralph-Head` (the checkout sits on the default branch, such as a chat on main): `Direct`, so a moved base is its own commits. Both bases known and different: `Rebase`, and the older snapshot is moved onto the new base with `git merge-tree --write-tree --merge-base=<old> <new> <snapshot>`, then that tree is diffed. Missing trailers or one unresolved base: `Unknown`, diff as is. Any `merge-tree` failure (git older than 2.40, a conflict, unparsable output) falls back to the unmoved diff. Every fallback and `Unknown` appends the line `note: could not separate upstream commits from these snapshots; counts may include commits pulled in by a rebase`. The rebase step never fails the call. `merge-tree` runs with `GIT_DIR` set to the side dir and the repo object dir as an alternate, so its objects land in the side dir and never in the user's repo.
 - Format: `stat` is `--stat`, `files` is `--name-status`, `patch` is `--patch`. `paths` limit the diff. The first output line says what the range is, such as `changed in chat turn 3`. No changes gives `no changes`.
 - Cap: output keeps whole lines from the start while the body fits in `max_bytes` (default 32768), never splits a UTF-8 character, and ends with `… <B> bytes omitted (<F> files not shown); narrow with paths or format=stat`. Body and footer together stay within `max_bytes`, except when `max_bytes` is smaller than the footer: then only the footer shows. The label line is not counted. Worker report diffstats stay uncapped.
 - `[changes] enabled = false` makes the tool return an error that says snapshots are off. A chat outside a git repo, or with no snapshots yet, returns `no snapshots`.
 - Limit: changes after the latest snapshot are not shown; a running turn has no end snapshot until it finishes.
-- Code: pure parsing and range resolution in `crates/core/src/changes.rs`, the cap in `crates/core/src/changes/cap.rs`; the tool call in `crates/ralph/src/chat/changes.rs`.
+- Code: pure parsing and range resolution in `crates/core/src/changes.rs`, the cap in `crates/core/src/changes/cap.rs`; rebase handling in `crates/core/src/changes/rebase.rs`; the tool call in `crates/ralph/src/chat/changes.rs`; `render_diff` and the git helpers in `crates/ralph/src/snapshot.rs`.
 
 ## Executable cells
 

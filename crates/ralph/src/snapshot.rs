@@ -1,9 +1,15 @@
+use crate::config::AppConfig;
+use ralph_core::changes::{
+    diff_args, diff_base, merge_tree_args, merged_tree, render_changes, with_note, ChangeRequest,
+    DiffBase, SnapshotRange, UPSTREAM_NOTE,
+};
 use ralph_core::snapshot::{
     commit_tree_args, delete_payload, delete_refs_args, gc_args, identity_env, index_env,
-    index_path, index_steps, init_args, list_prefix_args, next_turn, parse_turns, refs_to_prune,
-    side_dir, update_ref_args, IndexStep, CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS,
+    index_path, index_steps, init_args, list_prefix_args, next_turn, parse_snapshot_base,
+    parse_turns, refs_to_prune, side_dir, snapshot_message, update_ref_args, IndexStep,
+    SnapshotBase, CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS,
 };
-use ralph_core::worker::project_slug;
+use ralph_core::worker::{base_branch, project_slug};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
@@ -31,6 +37,55 @@ pub(crate) fn stdout_of(command: &mut Command) -> io::Result<String> {
             String::from_utf8_lossy(&output.stderr).trim().to_string(),
         ))
     }
+}
+
+pub(crate) fn run_diff(
+    args: &[String],
+    configure: impl FnOnce(&mut Command),
+) -> io::Result<String> {
+    let (program, rest) = args
+        .split_first()
+        .ok_or_else(|| io::Error::other("empty diff command"))?;
+    let mut command = Command::new(program);
+    command.args(rest).stdin(Stdio::null());
+    configure(&mut command);
+    let output = command.output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string())
+}
+
+pub(crate) fn git_line(worktree: &Path, args: &[&str]) -> Option<String> {
+    stdout_of(
+        Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(args)
+            .stdin(Stdio::null()),
+    )
+    .ok()
+    .filter(|line| !line.is_empty())
+}
+
+pub(crate) fn base_of(worktree: &Path) -> String {
+    let config = AppConfig::load().map_err(|e| e.to_string());
+    base_branch(
+        config
+            .as_ref()
+            .map(|config| config.chat.worker_base.as_deref())
+            .map_err(String::as_str),
+        git_line(
+            worktree,
+            &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
+        )
+        .as_deref(),
+    )
+    .branch
 }
 
 fn rev_parse(cwd: &Path, flag: &str) -> Option<PathBuf> {
@@ -139,10 +194,83 @@ impl Snapshotter {
 
     pub fn snapshot(&self, ref_name: &str) -> io::Result<()> {
         let tree = self.write_tree()?;
+        let message = snapshot_message(ref_name, self.current_base().as_ref());
         let commit =
-            stdout_of(git(&commit_tree_args(&self.side, &tree, ref_name)).envs(identity_env()))?;
+            stdout_of(git(&commit_tree_args(&self.side, &tree, &message)).envs(identity_env()))?;
         stdout_of(&mut git(&update_ref_args(&self.side, ref_name, &commit)))?;
         Ok(())
+    }
+
+    pub fn current_base(&self) -> Option<SnapshotBase> {
+        let head = git_line(&self.repo, &["rev-parse", "HEAD"])?;
+        let base = git_line(&self.repo, &["merge-base", "HEAD", &base_of(&self.repo)]);
+        Some(SnapshotBase { head, base })
+    }
+
+    pub fn snapshot_base(&self, rev: &str) -> Option<SnapshotBase> {
+        let text = stdout_of(
+            Command::new("git")
+                .arg("--git-dir")
+                .arg(&self.side)
+                .args(["cat-file", "commit", rev])
+                .stdin(Stdio::null()),
+        )
+        .ok()?;
+        parse_snapshot_base(&text)
+    }
+
+    pub(crate) fn side_env(&self, command: &mut Command) {
+        command.env("GIT_DIR", &self.side).current_dir(&self.side);
+        if let Some(common) = rev_parse(&self.repo, "--git-common-dir") {
+            command.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", common.join("objects"));
+        }
+    }
+
+    fn rebased_onto(&self, old: &str, new: &str, snapshot: &str) -> Option<String> {
+        let output = run_diff(&merge_tree_args(old, new, snapshot), |command| {
+            self.side_env(command)
+        })
+        .ok()?;
+        merged_tree(&output)
+    }
+
+    /// Rebase-aware range for a diff, plus `UPSTREAM_NOTE` when the base is unknown.
+    pub fn adjust_range(
+        &self,
+        range: &SnapshotRange,
+        to_base: Option<SnapshotBase>,
+    ) -> (SnapshotRange, Option<&'static str>) {
+        let from_base = self.snapshot_base(&range.from);
+        let (from, note) = match diff_base(from_base.as_ref(), to_base.as_ref()) {
+            DiffBase::Direct => (range.from.clone(), None),
+            DiffBase::Unknown => (range.from.clone(), Some(UPSTREAM_NOTE)),
+            DiffBase::Rebase { old, new } => match self.rebased_onto(&old, &new, &range.from) {
+                Some(tree) => (tree, None),
+                // git merge-tree --merge-base is missing (git < 2.40) or the
+                // merge conflicts: diff the original snapshot and add UPSTREAM_NOTE.
+                None => (range.from.clone(), Some(UPSTREAM_NOTE)),
+            },
+        };
+        (
+            SnapshotRange {
+                from,
+                to: range.to.clone(),
+            },
+            note,
+        )
+    }
+
+    pub fn render_diff(
+        &self,
+        request: &ChangeRequest,
+        range: &SnapshotRange,
+        to_base: Option<SnapshotBase>,
+    ) -> io::Result<String> {
+        let (range, note) = self.adjust_range(range, to_base);
+        let output = run_diff(&diff_args(request, &range), |command| {
+            self.side_env(command)
+        })?;
+        Ok(with_note(&render_changes(request, &output), note))
     }
 
     pub fn refs(&self, prefix: &str) -> io::Result<String> {

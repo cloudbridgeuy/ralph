@@ -1,72 +1,20 @@
-use crate::config::AppConfig;
-use crate::snapshot::{stdout_of, Snapshotter};
+use crate::snapshot::{base_of, run_diff, stdout_of, Snapshotter};
 use crate::warn::warn_if_err;
 use ralph_core::changes::{
-    append_changes, diff_args, render_changes, spawn_request, turn_request, ChangeRequest,
-    SnapshotRange,
+    append_changes, diff_args, render_changes, spawn_request, turn_request, SnapshotRange,
 };
 use ralph_core::snapshot::{
     next_worker_turn, parse_worker_turns, worker_owner, worker_ref, worker_ref_prefix, worker_refs,
     worker_refs_to_prune, WorkerSite, KEEP_TURNS,
 };
-use ralph_core::worker::base_branch;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 pub struct WorkerChanges {
     snapshotter: Snapshotter,
     id: String,
     worktree: PathBuf,
-}
-
-pub(crate) fn run_diff(
-    args: &[String],
-    configure: impl FnOnce(&mut Command),
-) -> io::Result<String> {
-    let (program, rest) = args
-        .split_first()
-        .ok_or_else(|| io::Error::other("empty diff command"))?;
-    let mut command = Command::new(program);
-    command.args(rest).stdin(Stdio::null());
-    configure(&mut command);
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(
-            String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string())
-}
-
-fn git_line(worktree: &Path, args: &[&str]) -> Option<String> {
-    stdout_of(
-        Command::new("git")
-            .arg("-C")
-            .arg(worktree)
-            .args(args)
-            .stdin(Stdio::null()),
-    )
-    .ok()
-    .filter(|line| !line.is_empty())
-}
-
-fn base_of(worktree: &Path) -> String {
-    let config = AppConfig::load().map_err(|e| e.to_string());
-    base_branch(
-        config
-            .as_ref()
-            .map(|config| config.chat.worker_base.as_deref())
-            .map_err(String::as_str),
-        git_line(
-            worktree,
-            &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
-        )
-        .as_deref(),
-    )
-    .branch
 }
 
 impl WorkerChanges {
@@ -137,22 +85,14 @@ impl WorkerChanges {
             .max()
             .ok_or_else(|| io::Error::other("no turn snapshot yet"))?;
         let request = turn_request(&self.id, latest + 1);
-        self.render_in_side(
+        self.snapshotter.render_diff(
             &request,
             &SnapshotRange {
                 from: worker_ref(&self.id, latest),
                 to: Some(tree),
             },
+            self.snapshotter.current_base(),
         )
-    }
-
-    fn render_in_side(&self, request: &ChangeRequest, range: &SnapshotRange) -> io::Result<String> {
-        let output = run_diff(&diff_args(request, range), |command| {
-            command
-                .env("GIT_DIR", self.snapshotter.side())
-                .current_dir(self.snapshotter.side());
-        })?;
-        Ok(render_changes(request, &output))
     }
 
     pub fn attach_to(&self, text: &str) -> String {
