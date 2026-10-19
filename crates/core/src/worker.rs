@@ -49,6 +49,29 @@ pub const STORE_OPTION: &str = "@ralph_store";
 pub const ID_OPTION: &str = "@ralph_id";
 pub const SESSION_FORMAT: &str = "#{session_name}\t#{@ralph_store}\t#{@ralph_id}";
 
+pub fn is_model_id(model: &str) -> bool {
+    matches!(model.split_once('/'), Some((provider, name)) if !provider.is_empty() && !name.is_empty())
+}
+
+pub fn resolve_opencode_model(
+    spawn: Option<&str>,
+    config: Option<&str>,
+) -> (String, Option<String>) {
+    if let Some(model) = spawn {
+        return (model.to_string(), None);
+    }
+    match config {
+        None => (DEFAULT_OPENCODE_MODEL.to_string(), None),
+        Some(model) if is_model_id(model) => (model.to_string(), None),
+        Some(model) => (
+            DEFAULT_OPENCODE_MODEL.to_string(),
+            Some(format!(
+                "[opencode] model '{model}' must look like provider/model; using \"{DEFAULT_OPENCODE_MODEL}\"."
+            )),
+        ),
+    }
+}
+
 pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
 
@@ -400,6 +423,43 @@ pub fn chat_message(reports: &[Report]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_model_resolution_prefers_spawn_then_config_then_default() {
+        assert_eq!(
+            resolve_opencode_model(Some("a/b"), Some("c/d")),
+            ("a/b".to_string(), None)
+        );
+        assert_eq!(
+            resolve_opencode_model(None, Some("c/d")),
+            ("c/d".to_string(), None)
+        );
+        assert_eq!(
+            resolve_opencode_model(None, None),
+            (DEFAULT_OPENCODE_MODEL.to_string(), None)
+        );
+    }
+
+    #[test]
+    fn opencode_model_resolution_warns_on_invalid_config() {
+        for bad in ["", "sol", "openai/", "/sol"] {
+            let (model, warning) = resolve_opencode_model(None, Some(bad));
+            assert_eq!(model, DEFAULT_OPENCODE_MODEL);
+            assert!(warning.unwrap().contains("[opencode] model"), "{bad}");
+        }
+        assert_eq!(
+            resolve_opencode_model(Some("a/b"), Some("")),
+            ("a/b".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn model_id_needs_provider_and_name() {
+        assert!(is_model_id("openai/gpt-6.1-sol"));
+        for bad in ["", "sol", "openai/", "/sol"] {
+            assert!(!is_model_id(bad), "{bad}");
+        }
+    }
 
     fn report(worker: &str, status: &str, text: &str) -> Report {
         Report {

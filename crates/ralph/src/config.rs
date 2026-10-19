@@ -14,7 +14,9 @@ use std::fs;
 use std::path::PathBuf;
 
 mod changes;
+mod opencode;
 pub use changes::ChangesSection;
+pub use opencode::OpencodeSection;
 
 /// Error type for configuration operations.
 #[derive(Debug, thiserror::Error)]
@@ -69,6 +71,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub cursor: CursorSection,
+
+    #[serde(default)]
+    pub opencode: OpencodeSection,
 
     #[serde(default)]
     pub changes: ChangesSection,
@@ -842,11 +847,7 @@ mod tests {
                 agent: None,
                 status: StatusTheme::default(),
             },
-            ask: AskSection::default(),
-            chat: ChatSection::default(),
-            mermaid: MermaidSection::default(),
-            cursor: CursorSection::default(),
-            changes: ChangesSection::default(),
+            ..AppConfig::new()
         };
 
         config.save_to(&path).unwrap();
@@ -902,11 +903,7 @@ mod tests {
                 agent: None,
                 status: StatusTheme::default(),
             },
-            ask: AskSection::default(),
-            chat: ChatSection::default(),
-            mermaid: MermaidSection::default(),
-            cursor: CursorSection::default(),
-            changes: ChangesSection::default(),
+            ..AppConfig::new()
         };
 
         let content = toml::to_string_pretty(&config).unwrap();
