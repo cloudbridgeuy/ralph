@@ -12,6 +12,7 @@ pub(super) struct Turns {
     pub(super) closing: Arc<AtomicBool>,
     pub(super) changes: Option<WorkerChanges>,
     pub(super) heartbeat: Arc<Heartbeat>,
+    pub(super) events: Events,
 }
 
 fn run_steps(connection: &ConnectionTo<Agent>, turns: &Turns, steps: Vec<Step>) {
@@ -68,7 +69,7 @@ pub(super) async fn run_turns(
                 _ => return,
             }
         };
-        fs::remove_file(&turns.markers.waiting).ok();
+        push_event(&turns.events, WorkerEvent::TurnStarted);
         turns.heartbeat.set_running(true);
         turns.reported.store(false, Ordering::SeqCst);
         let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
@@ -107,6 +108,10 @@ pub(super) async fn run_turns(
                 .and_then(|value| value.as_str().map(str::to_string))
                 .unwrap_or_default()
         });
+        push_event(
+            &turns.events,
+            WorkerEvent::TurnEnded(turn_end(&result, interrupted)),
+        );
         let outcome = turn_outcome(
             reason.as_deref().map_err(|e| e.message.as_str()),
             turns.reported.load(Ordering::SeqCst),
@@ -129,6 +134,17 @@ pub(super) async fn run_turns(
             }
             TurnOutcome::Reported | TurnOutcome::Closed => {}
         }
+    }
+}
+
+fn turn_end<T>(result: &Result<T, agent_client_protocol::Error>, interrupted: bool) -> TurnEnd {
+    match result {
+        _ if interrupted => TurnEnd::Interrupted,
+        Ok(_) => TurnEnd::Succeeded,
+        Err(e) => TurnEnd::Failed {
+            message: e.message.clone(),
+            transient: false,
+        },
     }
 }
 

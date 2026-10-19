@@ -15,7 +15,7 @@ fn selected_response(command: WorkerCommand) -> Option<RequestPermissionResponse
 }
 
 pub(super) struct Permissions {
-    blocked: PathBuf,
+    events: Events,
     mode: CursorPermissions,
     worker_id: String,
     inbox: Inbox,
@@ -29,9 +29,10 @@ impl Permissions {
         mode: CursorPermissions,
         worker_id: String,
         inbox: Inbox,
+        events: Events,
     ) -> Arc<Self> {
         Arc::new(Self {
-            blocked: markers.blocked.clone(),
+            events,
             mode,
             worker_id,
             inbox,
@@ -45,10 +46,11 @@ impl Permissions {
     }
 
     fn publish(&self, queue: &VecDeque<PendingPermission>) {
-        match queue.front() {
-            Some(pending) => write_file(&self.blocked, &pending.content.render()).ok(),
-            None => fs::remove_file(&self.blocked).ok(),
+        let event = match queue.front() {
+            Some(pending) => WorkerEvent::PermissionAsked(pending.content.clone()),
+            None => WorkerEvent::PermissionSettled,
         };
+        push_event(&self.events, event);
     }
 
     pub(super) fn push(
@@ -105,6 +107,6 @@ impl Permissions {
                 ))
                 .ok();
         }
-        fs::remove_file(&self.blocked).ok();
+        push_event(&self.events, WorkerEvent::PermissionSettled);
     }
 }

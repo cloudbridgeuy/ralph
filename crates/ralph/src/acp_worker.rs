@@ -21,15 +21,16 @@ use futures::future::Either;
 use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, auto_allow_option, cancels_turn, check_protocol, decode_update,
-    encode, gone_path, interrupt_result_text, match_option, no_option_message,
-    permission_alert_report, permission_content, prompt_failure_report, ready_path, request_stale,
-    resume_decision, session_error, stop_problem, task_prompt, turn_outcome, version_warning,
-    AcpAgent, AcpCall, BlockedContent, CursorFiles, CursorPermissions, Inbound, OwnerRecord,
-    PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnOutcome, WorkerCommand,
-    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
-    CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
-    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    acp_mcp_server, activity_path, auto_allow_option, cancels_turn, capabilities, check_protocol,
+    decide, decode_update, describe, encode, gone_path, interrupt_result_text, match_option,
+    no_option_message, permission_alert_report, permission_content, prompt_failure_report,
+    ready_path, reduce, request_stale, resume_decision, session_error, stop_problem, task_prompt,
+    turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities, CursorFiles,
+    CursorPermissions, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker, Inbound, Marker,
+    OwnerRecord, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
+    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
+    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
+    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -47,6 +48,36 @@ mod turns;
 
 use permissions::Permissions;
 use turns::{run_turns, Turns};
+
+type Events = Arc<Mutex<Vec<WorkerEvent>>>;
+
+fn push_event(events: &Events, event: WorkerEvent) {
+    events
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(event);
+}
+
+fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
+    let path = |marker| match marker {
+        Marker::Ready => &markers.ready,
+        Marker::Reported => &markers.reported,
+        Marker::Blocked => &markers.blocked,
+        Marker::Waiting => &markers.waiting,
+    };
+    match effect {
+        HeadlessEffect::Set(marker) => {
+            write_file(path(*marker), "").ok();
+        }
+        HeadlessEffect::Clear(marker) => {
+            fs::remove_file(path(*marker)).ok();
+        }
+        HeadlessEffect::Publish(content) => {
+            write_file(&markers.blocked, &content.render()).ok();
+        }
+        HeadlessEffect::ReplyText(_) => {}
+    }
+}
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
@@ -152,6 +183,10 @@ pub struct AcpWorker {
     closing: Arc<AtomicBool>,
     done: bool,
     exit_seen: bool,
+    caps: Capabilities,
+    markers: WorkerMarkers,
+    state: HeadlessState,
+    events: Events,
 }
 
 impl AcpWorker {
@@ -181,11 +216,13 @@ impl AcpWorker {
             };
             io::copy(&mut stderr, &mut io::sink()).ok();
         });
+        let events = Events::default();
         let permissions = Permissions::new(
             &markers,
             cursor_permissions(),
             id.to_string(),
             Inbox::new(request.inbox.clone()),
+            Arc::clone(&events),
         );
         let (prompts, prompt_rx) = queue::unbounded();
         let closing = Arc::new(AtomicBool::new(false));
@@ -199,6 +236,10 @@ impl AcpWorker {
             closing: Arc::clone(&closing),
             done: false,
             exit_seen: false,
+            caps: capabilities(HarnessId::Cursor),
+            markers: markers.clone(),
+            state: HeadlessState::default(),
+            events: Arc::clone(&events),
         };
         worker.write_owner(&agent)?;
         starting
@@ -334,6 +375,7 @@ impl AcpWorker {
                                     closing,
                                     changes,
                                     heartbeat: in_turns,
+                                    events,
                                 };
                                 run_turns(&connection, &turns, prompt_rx, stop_rx).await;
                             }
@@ -368,16 +410,20 @@ impl AcpWorker {
         }
     }
 
-    fn nudge(&self, text: &str) {
-        self.prompts
-            .unbounded_send(Inbound::Prompt(text.to_string()))
-            .ok();
-    }
-
     fn interrupt(&self, text: &str, entry: &str) {
         self.prompts
             .unbounded_send(Inbound::Interrupt(text.to_string(), entry.to_string()))
             .ok();
+    }
+
+    fn apply_events(&mut self) {
+        for event in self.poll() {
+            let (state, effects) = reduce(&self.state, &event);
+            self.state = state;
+            for effect in &effects {
+                apply_effect(&self.markers, effect);
+            }
+        }
     }
 
     fn write_owner(&self, agent: &AcpAgent) -> Result<(), String> {
@@ -420,6 +466,41 @@ impl AcpWorker {
         }
         stop_child(&mut self.child);
         fs::remove_file(&self.owner).ok();
+    }
+}
+
+impl HeadlessWorker for AcpWorker {
+    fn capabilities(&self) -> &Capabilities {
+        &self.caps
+    }
+
+    fn send(&mut self, command: WorkerCommand) -> Result<(), String> {
+        let command = decide(&self.caps, command).map_err(|event| match event {
+            WorkerEvent::Unsupported { reason, .. } => reason,
+            other => format!("{other:?}"),
+        })?;
+        match command {
+            WorkerCommand::Prompt(text) => {
+                self.prompts.unbounded_send(Inbound::Prompt(text)).ok();
+                Ok(())
+            }
+            WorkerCommand::AnswerPermission { option_id } => self.permissions.answer(&option_id),
+            WorkerCommand::Close => {
+                self.terminate();
+                push_event(&self.events, WorkerEvent::Closed);
+                Ok(())
+            }
+            WorkerCommand::Spawn(_) | WorkerCommand::Resume | WorkerCommand::Interrupt(_) => {
+                Err(format!(
+                    "not sent: the host handles it ({})",
+                    describe(&self.caps, command.feature())
+                ))
+            }
+        }
+    }
+
+    fn poll(&mut self) -> Vec<WorkerEvent> {
+        std::mem::take(&mut *self.events.lock().unwrap_or_else(PoisonError::into_inner))
     }
 }
 
@@ -475,6 +556,7 @@ impl CursorHost {
     fn reap_exits(&self) {
         for worker in self.workers().values_mut() {
             worker.reap_exit();
+            worker.apply_events();
         }
     }
 
@@ -490,11 +572,19 @@ impl CursorHost {
             self.prompt(
                 &id,
                 |files| &files.prompt,
-                |worker, text, _| worker.nudge(text),
+                |worker, text, _| {
+                    if let Err(message) = worker.send(WorkerCommand::Prompt(text.to_string())) {
+                        warn(message);
+                    }
+                },
             );
         }
         for id in request_ids(&self.store_dir, CURSOR_INTERRUPT_DIR) {
-            self.prompt(&id, |files| &files.interrupt, AcpWorker::interrupt);
+            self.prompt(
+                &id,
+                |files| &files.interrupt,
+                |worker, text, entry| worker.interrupt(text, entry),
+            );
         }
         for id in request_ids(&self.store_dir, CURSOR_SPAWN_DIR) {
             self.spawn(&id);
@@ -551,13 +641,11 @@ impl CursorHost {
         let Ok(text) = fs::read_to_string(&files.answer) else {
             return;
         };
-        let permissions = self
+        let result = self
             .workers()
-            .get(id)
-            .map(|worker| Arc::clone(&worker.permissions));
-        let result = permissions
+            .get_mut(id)
             .ok_or_else(|| format!("worker has no running {} agent", CURSOR_AGENT.name))
-            .and_then(|permissions| permissions.answer(&text));
+            .and_then(|worker| worker.send(WorkerCommand::AnswerPermission { option_id: text }));
         if let Err(message) = result {
             write_file(&files.error, &message).ok();
         }
@@ -568,7 +656,7 @@ impl CursorHost {
         &self,
         id: &str,
         dir: fn(&CursorFiles) -> &PathBuf,
-        deliver: fn(&AcpWorker, &str, &str),
+        deliver: fn(&mut AcpWorker, &str, &str),
     ) {
         let files = self.files(id);
         let starting = self
@@ -593,7 +681,9 @@ impl CursorHost {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if let (Ok(text), Some(worker)) = (fs::read_to_string(&entry), self.workers().get(id)) {
+            if let (Ok(text), Some(worker)) =
+                (fs::read_to_string(&entry), self.workers().get_mut(id))
+            {
                 deliver(worker, &text, &name);
             }
             fs::remove_file(&entry).ok();
@@ -604,7 +694,8 @@ impl CursorHost {
         self.cancel_pending(id);
         let removed = self.workers().remove(id);
         if let Some(mut worker) = removed {
-            worker.terminate();
+            worker.send(WorkerCommand::Close).ok();
+            worker.apply_events();
         }
         self.forget(id);
         fs::remove_file(&self.files(id).session).ok();

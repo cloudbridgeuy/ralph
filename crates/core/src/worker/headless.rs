@@ -218,10 +218,7 @@ pub fn reduce(state: &HeadlessState, event: &WorkerEvent) -> (HeadlessState, Vec
     let same = state.clone();
     match event {
         WorkerEvent::Ready => (at(Phase::Idle), vec![Set(Marker::Ready)]),
-        WorkerEvent::TurnStarted => (
-            at(Phase::Running),
-            vec![Set(Marker::Ready), Clear(Marker::Waiting)],
-        ),
+        WorkerEvent::TurnStarted => (at(Phase::Running), vec![Clear(Marker::Waiting)]),
         WorkerEvent::TurnEnded(_) => (at(Phase::Idle), vec![Clear(Marker::Blocked)]),
         WorkerEvent::PermissionAsked(content) => {
             (at(Phase::Blocked), vec![Publish(content.clone())])
@@ -231,7 +228,14 @@ pub fn reduce(state: &HeadlessState, event: &WorkerEvent) -> (HeadlessState, Vec
         WorkerEvent::Interrupted { id, outcome } => {
             (same, vec![ReplyText(interrupt_reply(id, *outcome))])
         }
-        WorkerEvent::Closed => (at(Phase::Closed), Vec::new()),
+        WorkerEvent::Closed => (
+            at(Phase::Closed),
+            vec![
+                Clear(Marker::Ready),
+                Clear(Marker::Blocked),
+                Clear(Marker::Waiting),
+            ],
+        ),
         WorkerEvent::Unsupported { reason, .. } => (same, vec![ReplyText(reason.clone())]),
         WorkerEvent::Activity { at } => {
             let fresh =
@@ -353,7 +357,7 @@ mod tests {
                 Phase::Idle,
                 WorkerEvent::TurnStarted,
                 Phase::Running,
-                vec![Set(Marker::Ready), Clear(Marker::Waiting)],
+                vec![Clear(Marker::Waiting)],
             ),
             (
                 Phase::Running,
@@ -388,7 +392,16 @@ mod tests {
                 Phase::Running,
                 vec![ReplyText(interrupt_reply("w", Some(true)))],
             ),
-            (Phase::Idle, WorkerEvent::Closed, Phase::Closed, Vec::new()),
+            (
+                Phase::Idle,
+                WorkerEvent::Closed,
+                Phase::Closed,
+                vec![
+                    Clear(Marker::Ready),
+                    Clear(Marker::Blocked),
+                    Clear(Marker::Waiting),
+                ],
+            ),
             (
                 Phase::Idle,
                 WorkerEvent::Unsupported {
