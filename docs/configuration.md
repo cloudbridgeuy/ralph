@@ -236,6 +236,14 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 
 `yolo` picks only the allow-once option, never allow-always, and writes nothing to `~/.cursor/cli-config.json`. A request with no allow-once option still waits for the person. Cursor's own rules (deny lists, sandbox) still apply. Risk: shell commands and MCP tools run without asking. A wrong value or type, or a config that fails to read, warns and uses `"ask"`. The key is read when a Cursor worker starts.
 
+### `[opencode]` - opencode Workers
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | string | `"openai/gpt-6.1-sol"` | `provider/model` for opencode workers that `spawn_worker` starts without a `model` |
+
+A `model` passed to `spawn_worker` wins over this key. A value that is not `provider/model` warns in the spawn result and uses the built-in default. A config that fails to load uses the built-in default. The key is read at each spawn.
+
 ### `[mermaid]` - Diagram Rendering
 
 In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, and classDiagram. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.

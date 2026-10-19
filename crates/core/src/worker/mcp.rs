@@ -1,4 +1,4 @@
-use super::{Command, HarnessId, CURSOR_HARNESS, DEFAULT_OPENCODE_MODEL, OPENCODE_HARNESS};
+use super::{is_model_id, Command, HarnessId, CURSOR_HARNESS, OPENCODE_HARNESS};
 use crate::mcp::string_arg;
 use crate::watch_request::parse_watch_args;
 use serde_json::{json, Value};
@@ -14,7 +14,7 @@ pub fn command_definitions() -> [Value; 4] {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": "Agent to run. Default claude. cursor runs headless without a tmux session; a reply to it is delivered as a new prompt between its turns, or answers a waiting permission request. It resumes after a chat restart."},
-                    "model": {"type": "string", "description": "opencode only: provider/model. Default openai/gpt-6.1-sol."}
+                    "model": {"type": "string", "description": "opencode only: provider/model. Default: [opencode] model in the ralph config, else openai/gpt-6.1-sol."}
                 },
                 "required": ["id", "task"]
             }
@@ -110,14 +110,12 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
         (None | Some("claude"), Some(_)) => {
             Err("A model can only be set for the opencode harness.".to_string())
         }
-        (Some(OPENCODE_HARNESS), model) => {
-            let model = model.unwrap_or(DEFAULT_OPENCODE_MODEL);
-            match model.split_once('/') {
-                Some((provider, name)) if !provider.is_empty() && !name.is_empty() => {
-                    Ok((HarnessId::Opencode, Some(model.to_string())))
-                }
-                _ => Err(format!("Model '{model}' must look like provider/model.")),
-            }
+        (Some(OPENCODE_HARNESS), None) => Ok((HarnessId::Opencode, None)),
+        (Some(OPENCODE_HARNESS), Some(model)) if is_model_id(model) => {
+            Ok((HarnessId::Opencode, Some(model.to_string())))
+        }
+        (Some(OPENCODE_HARNESS), Some(model)) => {
+            Err(format!("Model '{model}' must look like provider/model."))
         }
         (Some(CURSOR_HARNESS), None) => Ok((HarnessId::Cursor, None)),
         (Some(CURSOR_HARNESS), Some(_)) => {
@@ -219,7 +217,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_harness_defaults_to_claude_and_opencode_to_sol() {
+    fn spawn_harness_defaults_to_claude_and_opencode_without_model() {
         assert_eq!(spawn_harness(json!({})), Ok((HarnessId::Claude, None)));
         assert_eq!(
             spawn_harness(json!({"harness": "claude"})),
@@ -227,7 +225,7 @@ mod tests {
         );
         assert_eq!(
             spawn_harness(json!({"harness": "opencode"})),
-            Ok((HarnessId::Opencode, Some(DEFAULT_OPENCODE_MODEL.into())))
+            Ok((HarnessId::Opencode, None))
         );
         assert_eq!(
             spawn_harness(json!({"harness": "opencode", "model": "openai/gpt-5.6-luna"})),

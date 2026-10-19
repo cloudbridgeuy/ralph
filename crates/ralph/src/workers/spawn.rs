@@ -10,12 +10,12 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
-    project_slug, rollback_plan, rollback_report, session_name, spawn_handoff, startup_state,
-    worker_command, worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args,
-    CursorFiles, Handoff, HarnessId, OpencodeFiles, OpencodeSpawn, Owner, Rollback, SpawnFootprint,
-    SpawnRequest, Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT,
-    DEFAULT_OPENCODE_MODEL, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
-    TRUST_KEYS, WORKERS_DIR,
+    project_slug, resolve_opencode_model, rollback_plan, rollback_report, session_name,
+    spawn_handoff, startup_state, worker_command, worker_mcp_args, worker_mcp_config,
+    worktree_add_args, wt_switch_args, CursorFiles, Handoff, HarnessId, OpencodeFiles,
+    OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup, WorkerMarkers,
+    WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -84,15 +84,29 @@ impl Workers {
         .flatten();
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
+        let (model, model_warning) = match harness {
+            HarnessId::Opencode => {
+                let (model, warning) = resolve_opencode_model(
+                    model,
+                    config
+                        .as_ref()
+                        .ok()
+                        .and_then(|config| config.opencode.model.as_deref()),
+                );
+                (Some(model), warning)
+            }
+            HarnessId::Claude | HarnessId::Cursor => (None, None),
+        };
+        let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
         let launch = Launch {
             id,
             task,
             harness,
-            model,
+            model: model.as_deref(),
             worktree: &worktree,
             site: site.as_ref(),
             session: &session,
-            started: started_text(id, &worktree, &via, worktree_dir.warning.as_deref()),
+            started: started_text(id, &worktree, &via, &warnings),
         };
         if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
             changes.snapshot_turn_or_warn();
@@ -173,7 +187,8 @@ impl Workers {
                 )
             }
             HarnessId::Opencode => {
-                let model = model.unwrap_or(DEFAULT_OPENCODE_MODEL);
+                let model =
+                    model.ok_or_else(|| io::Error::other("opencode model was not resolved"))?;
                 let worktree_arg = site.map(|site| site.worktree.as_path());
                 let mcp_args = worker_mcp_args(id, &inbox, worktree_arg);
                 let config = opencode_config(model, &self.exe, &mcp_args, &attachments);
@@ -410,17 +425,17 @@ fn roll_back(repo: &Path, launch: &Launch, plan: &Rollback) -> Vec<String> {
     failures
 }
 
-fn started_text(id: &str, worktree: &Path, via: &WorktreeVia, warning: Option<&str>) -> String {
+fn started_text(id: &str, worktree: &Path, via: &WorktreeVia, warnings: &[Option<&str>]) -> String {
     let started = format!(
         "Worker {id} started in {} on branch {}. {}",
         worktree.display(),
         branch_name(id),
         via.note()
     );
-    match warning {
-        Some(warning) => format!("{started} {warning}"),
-        None => started,
-    }
+    warnings
+        .iter()
+        .flatten()
+        .fold(started, |text, warning| format!("{text} {warning}"))
 }
 
 fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
