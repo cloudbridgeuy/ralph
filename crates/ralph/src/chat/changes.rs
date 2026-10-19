@@ -1,9 +1,6 @@
 use crate::config::AppConfig;
 use crate::snapshot::Snapshotter;
-use crate::worker_changes::run_diff;
-use ralph_core::changes::{
-    diff_args, ref_prefix, render_changes, resolve_range, ChangeRequest, ScopeQuery,
-};
+use ralph_core::changes::{ref_prefix, resolve_range, ChangeRequest, ScopeQuery};
 use ralph_core::snapshot::{snapshots_enabled, CHAT_OWNER};
 use std::path::Path;
 
@@ -34,11 +31,11 @@ pub(super) fn run_changes(
         return Err(NO_SNAPSHOTS.to_string());
     }
     let (resolved, range) = resolve_range(request, &refs)?;
-    let output = run_diff(&diff_args(&resolved, &range), |command| {
-        command
-            .env("GIT_DIR", snapshotter.side())
-            .current_dir(snapshotter.side());
-    })
-    .map_err(|e| format!("Could not diff snapshots: {e}"))?;
-    Ok(render_changes(&resolved, &output))
+    let to_base = range
+        .to
+        .as_deref()
+        .and_then(|to| snapshotter.snapshot_base(to));
+    snapshotter
+        .render_diff(&resolved, &range, to_base)
+        .map_err(|e| format!("Could not diff snapshots: {e}"))
 }

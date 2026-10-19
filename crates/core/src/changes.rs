@@ -5,8 +5,10 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 
 mod cap;
+mod rebase;
 
 use cap::cap_output;
+pub use rebase::{diff_base, merge_tree_args, merged_tree, with_note, DiffBase, UPSTREAM_NOTE};
 
 pub const DEFAULT_CHANGE_BYTES: usize = 32 * 1024;
 
