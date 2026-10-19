@@ -17,8 +17,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    frozen_block, reply_entries, tail_lines, trigger_entries, usage_record, view_stats, CallKind,
-    Frozen, Trigger,
+    frozen_block, reply_entries, tail_lines, trigger_entries, turn_prompt_bytes, usage_record,
+    view_stats, CallKind, Frozen, Trigger, TurnParts,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use std::borrow::Cow;
@@ -127,16 +127,27 @@ impl Turn<'_> {
             Trigger::User | Trigger::Private => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
+        let prompt = turn_prompt(&tail, &sent);
+        let system = turn_system_prompt(&frozen.lines);
+        let args = [
+            self.mcp_args.to_vec(),
+            build_attachments_args(self.store_dir),
+            build_agents_args(),
+            self.plugin_args.to_vec(),
+        ]
+        .concat();
+        let prompt_bytes = turn_prompt_bytes(&TurnParts {
+            system: &system,
+            frozen: &frozen.lines,
+            tail: &tail,
+            message: &sent,
+            prompt: &prompt,
+            args: &args,
+        });
         let command = build_chat_command(
-            &turn_prompt(&tail, &sent),
-            &turn_system_prompt(&frozen.lines),
-            &[
-                self.mcp_args.to_vec(),
-                build_attachments_args(self.store_dir),
-                build_agents_args(),
-                self.plugin_args.to_vec(),
-            ]
-            .concat(),
+            &prompt,
+            &system,
+            &args,
             self.permission_mode,
             dirs::home_dir().as_deref(),
         );
@@ -190,9 +201,11 @@ impl Turn<'_> {
             &result.stream_result.costs,
         )
         .map(|record| {
-            record.with_view(view_stats(
-                &[frozen.lines.as_slice(), tail.as_slice()].concat(),
-            ))
+            record
+                .with_view(view_stats(
+                    &[frozen.lines.as_slice(), tail.as_slice()].concat(),
+                ))
+                .with_prompt(prompt_bytes)
         }) {
             warn_if_err(
                 self.store.append_usage(&record),

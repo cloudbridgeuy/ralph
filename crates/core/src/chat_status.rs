@@ -351,7 +351,7 @@ mod tests {
         let jsonl = concat!(
             r#"{"kind":"turn","input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"cost_usd":0.5}"#,
             "\n",
-            r#"{"kind":"turn","input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"cost_usd":null}"#,
+            r#"{"kind":"turn","input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"cost_usd":null,"system_bytes":5,"prompt_bytes":9,"agents_bytes":2}"#,
             "\n",
             r#"{"kind":"nap","input_tokens":99}"#,
             "\nnot json\n"

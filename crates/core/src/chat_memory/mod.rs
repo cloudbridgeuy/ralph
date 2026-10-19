@@ -12,8 +12,8 @@ pub use nap::{check_summary, nap_prompt, nap_summary, retry_prompt, MAX_NAP_ATTE
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
 pub use tree::{cover, frozen_block, pending, recall, tail_lines, zoom};
 pub use usage::{
-    encode_usage, reply_entries, trigger_entries, usage_record, view_stats, CallKind, Trigger,
-    UsageRecord,
+    encode_usage, nap_prompt_bytes, reply_entries, trigger_entries, turn_prompt_bytes,
+    usage_record, view_stats, CallKind, PromptBytes, Trigger, TurnParts, UsageRecord,
 };
 
 pub const SUMMARY_BYTES: usize = 512;
