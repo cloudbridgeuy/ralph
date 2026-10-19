@@ -72,7 +72,7 @@ impl Workers {
                 let entry = self.queue_entry(&files.interrupt, text)?;
                 return Ok(interrupt_reply(
                     id,
-                    self.await_interrupt_result(&files, &entry),
+                    self.await_interrupt_result(&files.interrupt_result, &entry),
                 ));
             }
             if self.awaits_permission(id) {
@@ -147,7 +147,11 @@ impl Workers {
     ) -> io::Result<String> {
         let files = OpencodeFiles::new(&self.store_dir, id);
         if interrupt {
-            return self.queue_prompt(&files.interrupt, id, text, "Interrupted");
+            let entry = self.queue_entry(&files.interrupt, text)?;
+            return Ok(interrupt_reply(
+                id,
+                self.await_interrupt_result(&files.interrupt_result, &entry),
+            ));
         }
         if self.awaits_permission(id) {
             return self.answer_permission(id, text);
@@ -155,8 +159,8 @@ impl Workers {
         self.queue_prompt(&files.prompt, id, text, verb)
     }
 
-    fn await_interrupt_result(&self, files: &CursorFiles, entry: &str) -> Option<bool> {
-        let result = files.interrupt_result.join(entry);
+    fn await_interrupt_result(&self, results: &Path, entry: &str) -> Option<bool> {
+        let result = results.join(entry);
         let started = Instant::now();
         loop {
             if let Ok(text) = fs::read_to_string(&result) {
@@ -670,6 +674,7 @@ fn stdout_line(output: Output) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn relative_store_becomes_absolute() {
@@ -746,15 +751,28 @@ mod tests {
             workers.reply("A", "hello", false).unwrap(),
             "Sent to worker A."
         );
-        assert_eq!(
-            workers.reply("A", "stop", true).unwrap(),
-            "Interrupted worker A."
-        );
         let files = OpencodeFiles::new(dir.path(), "A");
         let only = |dir: &Path| {
             fs::read_to_string(fs::read_dir(dir).unwrap().next().unwrap().unwrap().path())
         };
         assert_eq!(only(&files.prompt).unwrap(), "hello");
+        let (interrupts, results) = (files.interrupt.clone(), files.interrupt_result.clone());
+        let host = thread::spawn(move || loop {
+            if let Some(entry) = fs::read_dir(&interrupts)
+                .ok()
+                .and_then(|mut entries| entries.next())
+                .and_then(Result::ok)
+            {
+                write_file(&results.join(entry.file_name()), "cancelled").unwrap();
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        });
+        assert_eq!(
+            workers.reply("A", "stop", true).unwrap(),
+            interrupt_reply("A", Some(true))
+        );
+        host.join().unwrap();
         assert_eq!(only(&files.interrupt).unwrap(), "stop");
         assert!(sent_path(dir.path(), "A").exists());
     }

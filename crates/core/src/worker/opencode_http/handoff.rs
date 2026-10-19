@@ -17,6 +17,7 @@ pub const OPENCODE_OWNER_DIR: &str = "opencode-owner";
 pub const OPENCODE_ANSWER_DIR: &str = "opencode-answer";
 pub const OPENCODE_PROMPT_DIR: &str = "opencode-prompt";
 pub const OPENCODE_INTERRUPT_DIR: &str = "opencode-interrupt";
+pub const OPENCODE_INTERRUPT_RESULT_DIR: &str = "opencode-interrupt-result";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpencodeFiles {
@@ -29,6 +30,7 @@ pub struct OpencodeFiles {
     pub answer: PathBuf,
     pub prompt: PathBuf,
     pub interrupt: PathBuf,
+    pub interrupt_result: PathBuf,
     pub session: PathBuf,
 }
 
@@ -44,11 +46,12 @@ impl OpencodeFiles {
             answer: store.join(OPENCODE_ANSWER_DIR).join(id),
             prompt: store.join(OPENCODE_PROMPT_DIR).join(id),
             interrupt: store.join(OPENCODE_INTERRUPT_DIR).join(id),
+            interrupt_result: store.join(OPENCODE_INTERRUPT_RESULT_DIR).join(id),
             session: store.join(OPENCODE_SESSION_DIR).join(id),
         }
     }
 
-    pub fn requests(&self) -> [&Path; 9] {
+    pub fn requests(&self) -> [&Path; 10] {
         [
             &self.preflight,
             &self.healthy,
@@ -59,6 +62,7 @@ impl OpencodeFiles {
             &self.answer,
             &self.prompt,
             &self.interrupt,
+            &self.interrupt_result,
         ]
     }
 }
@@ -228,7 +232,7 @@ mod tests {
     fn requests_leave_out_the_session_record() {
         let files = OpencodeFiles::new(Path::new("/s"), "A");
         assert!(!files.requests().contains(&files.session.as_path()));
-        assert_eq!(files.requests().len(), 9);
+        assert_eq!(files.requests().len(), 10);
     }
 
     #[test]

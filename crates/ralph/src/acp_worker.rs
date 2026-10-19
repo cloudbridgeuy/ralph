@@ -49,16 +49,16 @@ mod turns;
 use permissions::Permissions;
 use turns::{run_turns, Turns};
 
-type Events = Arc<Mutex<Vec<WorkerEvent>>>;
+pub(crate) type Events = Arc<Mutex<Vec<WorkerEvent>>>;
 
-fn push_event(events: &Events, event: WorkerEvent) {
+pub(crate) fn push_event(events: &Events, event: WorkerEvent) {
     events
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .push(event);
 }
 
-fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
+pub(crate) fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
     let path = |marker| match marker {
         Marker::Ready => &markers.ready,
         Marker::Reported => &markers.reported,
