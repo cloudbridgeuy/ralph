@@ -1,7 +1,8 @@
 use crate::warn::warn;
 use ralph_core::chat_memory::{
-    check_summary, encode_entry, encode_record, encode_usage, nap_prompt, parse_log, parse_tree,
-    pending, retry_prompt, Entry, Node, Role, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    check_summary, encode_entry, encode_record, encode_usage, fallback_summary, nap_prompt,
+    nap_source, parse_log, parse_tree, pending, retry_prompt, Entry, Node, Role, Tree, Trigger,
+    UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -186,11 +187,13 @@ impl Store {
                 }
             };
             let mut prompt = base.clone();
+            let mut curator_failed = false;
             for _ in 0..MAX_NAP_ATTEMPTS {
                 let reply = match curate(&prompt) {
                     Ok(reply) => reply,
                     Err(e) => {
                         warn(format!("chat memory curator failed on #{}: {e}", node.id()));
+                        curator_failed = true;
                         break;
                     }
                 };
@@ -203,8 +206,20 @@ impl Store {
                     Err(e) => prompt = retry_prompt(&base, &e),
                 }
             }
-            if !tree.contains_key(&node) {
-                warn(format!("chat memory left #{} pending", node.id()));
+            if tree.contains_key(&node) {
+                continue;
+            }
+            match nap_source(&entries, &tree, node) {
+                Ok(source) if !curator_failed => {
+                    let summary = fallback_summary(&source);
+                    self.put(node, &summary)?;
+                    tree.insert(node, summary);
+                    warn(format!(
+                        "chat memory stored raw fallback for #{}",
+                        node.id()
+                    ));
+                }
+                _ => warn(format!("chat memory left #{} pending", node.id())),
             }
         }
         Ok(())
@@ -214,6 +229,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::chat_memory::{frozen_block, FALLBACK_MARK};
 
     #[test]
     fn missing_files_load_empty() {
@@ -334,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn nap_gives_up_after_max_attempts_and_skips_parent() {
+    fn nap_gives_up_after_max_attempts_and_stores_fallback() {
         let (_dir, store) = seeded(&[0], 2);
         let mut calls = 0;
         store
@@ -343,9 +359,42 @@ mod tests {
                 Ok("z".repeat(600))
             })
             .unwrap();
-        assert_eq!(calls, MAX_NAP_ATTEMPTS);
+        assert_eq!(calls, MAX_NAP_ATTEMPTS * 2);
+        let (_, tree) = store.load().unwrap();
+        assert_eq!(tree.len(), 2);
+        let leaf = &tree[&Node::new(0, 1).unwrap()];
+        assert!(leaf.starts_with(FALLBACK_MARK) && leaf.len() <= 512);
+        assert!(tree[&Node::new(0, 2).unwrap()].starts_with(FALLBACK_MARK));
+    }
+
+    #[test]
+    fn nap_curator_error_leaves_node_pending_without_fallback() {
+        let (_dir, store) = seeded(&[0], 1);
+        store.nap(|_| Err("down".into())).unwrap();
         let (_, tree) = store.load().unwrap();
         assert!(tree.is_empty());
+    }
+
+    #[test]
+    fn nap_leaves_pinned_frozen_block_byte_identical() {
+        let (_dir, store) = seeded(&[0, 1, 2, 3], 4);
+        let (entries, tree) = store.load().unwrap();
+        let before = frozen_block(&entries, &tree, 200, 4, None);
+        let mut calls = 0;
+        store
+            .nap(|_| {
+                calls += 1;
+                Ok(format!("sum{calls}"))
+            })
+            .unwrap();
+        let (entries_after, tree_after) = store.load().unwrap();
+        assert_eq!(entries_after.len(), entries.len());
+        assert!(tree.is_empty() && tree_after.len() == 7);
+        let rebuilt = frozen_block(&entries_after, &tree_after, 200, 4, None);
+        assert_ne!(rebuilt.lines, before.lines);
+        let pinned = frozen_block(&entries_after, &tree_after, 200, 4, Some(before.clone()));
+        assert_eq!(pinned.lines.join("\n"), before.lines.join("\n"));
+        assert_eq!(pinned, before);
     }
 
     #[test]

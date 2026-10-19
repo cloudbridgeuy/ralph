@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
-pub use nap::{check_summary, nap_prompt, nap_summary, retry_prompt, MAX_NAP_ATTEMPTS};
+pub use nap::{
+    check_summary, fallback_summary, nap_prompt, nap_source, nap_summary, retry_prompt,
+    FALLBACK_MARK, MAX_NAP_ATTEMPTS,
+};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
 pub use tree::{cover, frozen_block, pending, recall, tail_lines, zoom};
 pub use usage::{
