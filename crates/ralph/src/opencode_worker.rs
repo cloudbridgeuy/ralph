@@ -3,7 +3,8 @@ use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
 use crate::worker_mcp::Inbox;
-use crate::workers::headless::HeadlessHost;
+use crate::workers::headless::{HeadlessHost, Heartbeat};
+use ralph_core::worker::Scope;
 use ralph_core::worker::{
     advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
     opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
@@ -107,6 +108,10 @@ impl Server {
             }
             thread::sleep(HEALTH_POLL);
         }
+    }
+
+    fn label(&self) -> String {
+        format!("pid {}", self.child.id())
     }
 
     fn alive(&mut self) -> bool {
@@ -271,6 +276,7 @@ struct Session {
     target: Target,
     turn: TurnState,
     verified: bool,
+    heartbeat: Arc<Heartbeat>,
 }
 
 enum Feed {
@@ -314,14 +320,18 @@ fn load_sessions(store: &Path) -> HashMap<String, Session> {
                 ));
                 return None;
             };
+            let markers = WorkerMarkers::new(store, &id);
+            let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
+            heartbeat.clear();
             let session = Session {
                 target: Target {
-                    markers: WorkerMarkers::new(store, &id),
+                    markers,
                     worker: id,
                     inbox: record.inbox,
                 },
                 turn: TurnState::default(),
                 verified: false,
+                heartbeat,
             };
             Some((record.session_id, session))
         })
@@ -396,8 +406,26 @@ impl OpencodeHost {
     fn lose_server(&self) {
         let taken = self.server().take();
         if let Some(server) = taken {
+            self.mark_gone(&server.label(), "unreachable");
             server.stop();
             self.lose_sessions();
+        }
+    }
+
+    fn mark_gone(&self, label: &str, how: &str) {
+        if self.closed() {
+            return;
+        }
+        let scope = Scope::Server(label.to_string());
+        let reason = format!("{how}; see opencode-server.log");
+        for session in self.sessions().values() {
+            session.heartbeat.gone(&scope, &reason);
+        }
+    }
+
+    fn revive_all(&self) {
+        for session in self.sessions().values() {
+            session.heartbeat.revive();
         }
     }
 
@@ -486,7 +514,22 @@ impl OpencodeHost {
     }
 
     fn route(&self, event: &ServerEvent) {
-        if let (Some(session_id), Some(update)) = (event.session_id(), session_update(event)) {
+        let Some(session_id) = event.session_id() else {
+            return;
+        };
+        let update = session_update(event);
+        let heartbeat = self
+            .sessions()
+            .get(session_id)
+            .map(|session| Arc::clone(&session.heartbeat));
+        if let Some(heartbeat) = heartbeat {
+            match &update {
+                Some(SessionUpdate::TurnStarted) => heartbeat.set_running(true),
+                Some(SessionUpdate::TurnEnded(_)) => heartbeat.set_running(false),
+                _ => heartbeat.touch(),
+            }
+        }
+        if let Some(update) = update {
             self.apply(session_id, update);
         }
     }
@@ -631,6 +674,7 @@ impl OpencodeHost {
             }
             if let Some(dead) = self.take_dead() {
                 warn("the opencode server stopped; restarting it");
+                self.mark_gone(&dead.label(), "process exited");
                 dead.stop();
                 self.lose_sessions();
                 link = None;
@@ -638,6 +682,7 @@ impl OpencodeHost {
             if self.server().is_none() {
                 match self.start_server() {
                     Ok(_) => {
+                        self.revive_all();
                         start_failures = 0;
                         delay = Duration::ZERO;
                     }

@@ -1,5 +1,5 @@
 use super::{
-    ACTIVITY_DIR, BLOCKED_DIR, GONE_DIR, READY_DIR, REPORTED_DIR, SENT_DIR, UNREPORTED_DIR,
+    Scope, ACTIVITY_DIR, BLOCKED_DIR, GONE_DIR, READY_DIR, REPORTED_DIR, SENT_DIR, UNREPORTED_DIR,
     WAITING_DIR,
 };
 use std::path::{Path, PathBuf};
@@ -34,6 +34,25 @@ pub fn activity_path(store: &Path, id: &str) -> PathBuf {
 
 pub fn gone_path(store: &Path, id: &str) -> PathBuf {
     store.join(GONE_DIR).join(id)
+}
+
+const SERVER_GONE_PREFIX: &str = "scope server ";
+
+pub fn render_gone(scope: &Scope, reason: &str) -> String {
+    match scope {
+        Scope::Worker => reason.to_string(),
+        Scope::Server(name) => format!("{SERVER_GONE_PREFIX}{name}\n{reason}"),
+    }
+}
+
+pub fn parse_gone(text: &str) -> (Scope, String) {
+    let server = text
+        .split_once('\n')
+        .and_then(|(head, reason)| Some((head.strip_prefix(SERVER_GONE_PREFIX)?, reason)));
+    match server {
+        Some((name, reason)) => (Scope::Server(name.to_string()), reason.trim().to_string()),
+        None => (Scope::Worker, text.trim().to_string()),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,6 +164,20 @@ mod tests {
                 PathBuf::from("/s/gone/A"),
             ]
         );
+    }
+
+    #[test]
+    fn gone_marker_round_trips_both_scopes() {
+        let server = Scope::Server("pid 7".into());
+        assert_eq!(
+            parse_gone(&render_gone(&server, "exited")),
+            (server, "exited".into())
+        );
+        assert_eq!(
+            parse_gone(&render_gone(&Scope::Worker, "boom")),
+            (Scope::Worker, "boom".into())
+        );
+        assert_eq!(parse_gone("server x\nboom\n").0, Scope::Worker);
     }
 
     #[test]

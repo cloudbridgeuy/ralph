@@ -3,7 +3,7 @@ use crate::chat::socket::SocketFiles;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::opencode_worker::OpencodeHost;
 use crate::watches::Watches;
-use ralph_core::worker::ActivityMark;
+use ralph_core::worker::{render_gone, ActivityMark, Scope};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -55,8 +55,12 @@ impl Heartbeat {
         self.write(Some(running));
     }
 
-    pub(crate) fn gone(&self, reason: &str) {
-        write_file(&self.gone, reason).ok();
+    pub(crate) fn gone(&self, scope: &Scope, reason: &str) {
+        write_file(&self.gone, &render_gone(scope, reason)).ok();
+    }
+
+    pub(crate) fn revive(&self) {
+        fs::remove_file(&self.gone).ok();
     }
 
     fn write(&self, running: Option<bool>) {

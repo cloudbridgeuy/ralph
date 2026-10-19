@@ -82,7 +82,7 @@ impl Capabilities {
             (HarnessId::Opencode, PermYolo) => Partial("always on"),
             (HarnessId::Opencode, Close) => Partial("no home cleanup; shared server kept"),
             (HarnessId::Opencode, Heartbeat) => {
-                Partial("per-session SSE activity; one shared server")
+                Partial("per-session SSE activity; one alert per shared-server death")
             }
         }
     }
@@ -145,9 +145,10 @@ pub enum WorkerEvent {
     ProcessGone { scope: Scope, reason: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Scope {
     Worker,
+    Server(String),
 }
 
 pub fn decide(caps: &Capabilities, command: WorkerCommand) -> Result<WorkerCommand, WorkerEvent> {
@@ -252,7 +253,7 @@ pub fn reduce(state: &HeadlessState, event: &WorkerEvent) -> (HeadlessState, Vec
                 Liveness::Dead { .. } => same,
                 _ => HeadlessState {
                     liveness: Liveness::Dead {
-                        scope: *scope,
+                        scope: scope.clone(),
                         reason: reason.clone(),
                     },
                     alerted: false,

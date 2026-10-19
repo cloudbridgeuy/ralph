@@ -24,10 +24,10 @@ use ralph_core::worker::{
     encode, gone_path, interrupt_result_text, match_option, no_option_message, permission_content,
     prompt_failure_report, ready_path, request_stale, resume_decision, session_error, stop_problem,
     task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, CursorFiles,
-    CursorPermissions, Inbound, OwnerRecord, PromptQueue, Resume, SessionRecord, SpawnRequest,
-    Step, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
-    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
-    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    CursorPermissions, Inbound, OwnerRecord, PromptQueue, Resume, Scope, SessionRecord,
+    SpawnRequest, Step, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
+    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR,
+    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -409,7 +409,7 @@ impl AcpWorker {
                     Ok(()) => format!("{} acp exited", agent.command),
                     Err(e) => e.to_string(),
                 };
-                heartbeat.gone(&reason);
+                heartbeat.gone(&Scope::Worker, &reason);
             }
             if let Err(e) = outcome {
                 failed

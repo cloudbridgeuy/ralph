@@ -19,9 +19,9 @@ use ralph_core::chat_status::{
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    activity_path, blocked_path, gone_path, liveness, marker_state, ready_path, reduce, sent_path,
-    unreported_path, waiting_path, HarnessId, HeadlessState, Liveness, Report, HANDOFF_POLL,
-    READY_DIR,
+    activity_path, blocked_path, gone_path, group_alerts, liveness, marker_state, ready_path,
+    reduce, sent_path, unreported_path, waiting_path, HarnessId, HeadlessState, Liveness, Report,
+    HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -116,8 +116,11 @@ impl Monitor {
             .heartbeats
             .retain(|id, _| running.iter().any(|worker| &worker.id == id));
         let now = now_secs();
-        let mut actions = Vec::new();
-        for worker in running.iter().filter(|w| w.kind == HarnessId::Cursor) {
+        let mut alerts = Vec::new();
+        for worker in running
+            .iter()
+            .filter(|w| matches!(w.kind, HarnessId::Cursor | HarnessId::Opencode))
+        {
             let read = |path: PathBuf| std::fs::read_to_string(path).ok();
             let activity = read(activity_path(&self.store_dir, &worker.id));
             let gone = read(gone_path(&self.store_dir, &worker.id));
@@ -133,9 +136,12 @@ impl Monitor {
             }
             let (next, alert) = liveness(&current, now, self.worker_quiet_secs);
             state.heartbeats.insert(worker.id.clone(), next);
-            actions.extend(alert.map(|text| CheckAction::Inbox(worker.id.clone(), text)));
+            alerts.extend(alert.map(|alert| (worker.id.clone(), alert)));
         }
-        actions
+        group_alerts(alerts)
+            .into_iter()
+            .map(|(workers, text)| CheckAction::Inbox(workers, text))
+            .collect()
     }
 
     fn check(&self) {

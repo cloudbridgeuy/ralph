@@ -1,23 +1,75 @@
 use super::{HeadlessState, Liveness, Phase, Scope, WorkerEvent};
-use crate::worker::ActivityMark;
+use crate::worker::{parse_gone, ActivityMark};
+use std::collections::BTreeMap;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlertKind {
+    Quiet,
+    Dead { scope: Scope, reason: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alert {
+    pub kind: AlertKind,
+    pub text: String,
+}
+
+pub fn group_alerts(alerts: Vec<(String, Alert)>) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut servers: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
+    for (worker, alert) in alerts {
+        match alert.kind {
+            AlertKind::Dead {
+                scope: Scope::Server(name),
+                reason,
+            } => servers
+                .entry(name)
+                .or_insert_with(|| (reason, Vec::new()))
+                .1
+                .push(worker),
+            _ => out.push((worker, alert.text)),
+        }
+    }
+    for (name, (reason, mut workers)) in servers {
+        workers.sort();
+        let joined = workers.join(", ");
+        let text = format!(
+            "{}; affected workers: {joined}",
+            dead_text(&Scope::Server(name), &reason)
+        );
+        out.push((joined, text));
+    }
+    out
+}
+
+fn dead_text(scope: &Scope, reason: &str) -> String {
+    match scope {
+        Scope::Worker => format!("worker agent connection ended: {reason}"),
+        Scope::Server(name) => format!("opencode server {name} ended: {reason}"),
+    }
+}
 
 pub fn liveness(
     state: &HeadlessState,
     now: u64,
     quiet_after: u64,
-) -> (HeadlessState, Option<String>) {
+) -> (HeadlessState, Option<Alert>) {
     if let Liveness::Dead { scope, reason } = &state.liveness {
         if state.alerted {
             return (state.clone(), None);
         }
-        let who = match scope {
-            Scope::Worker => "worker agent",
-        };
         let next = HeadlessState {
             alerted: true,
             ..state.clone()
         };
-        return (next, Some(format!("{who} connection ended: {reason}")));
+        let alert = Alert {
+            kind: AlertKind::Dead {
+                scope: scope.clone(),
+                reason: reason.clone(),
+            },
+            text: dead_text(scope, reason),
+        };
+        return (next, Some(alert));
     }
     let quiet_for = now.saturating_sub(state.last_activity);
     if state.phase != Phase::Running || quiet_for < quiet_after {
@@ -27,7 +79,10 @@ pub fn liveness(
         };
         return (next, None);
     }
-    let alert = (!state.alerted).then(|| format!("quiet {quiet_for} s; may be stuck on a prompt"));
+    let alert = (!state.alerted).then(|| Alert {
+        kind: AlertKind::Quiet,
+        text: format!("quiet {quiet_for} s; may be stuck on a prompt"),
+    });
     let next = HeadlessState {
         liveness: Liveness::Quiet {
             since: state.last_activity,
@@ -53,9 +108,9 @@ pub fn marker_state(
     let events = mark
         .map(|mark| WorkerEvent::Activity { at: mark.at })
         .into_iter()
-        .chain(gone.map(|reason| WorkerEvent::ProcessGone {
-            scope: Scope::Worker,
-            reason: reason.trim().to_string(),
+        .chain(gone.map(|text| {
+            let (scope, reason) = parse_gone(text);
+            WorkerEvent::ProcessGone { scope, reason }
         }))
         .collect();
     (phase, events)
@@ -91,7 +146,7 @@ mod tests {
         let (quiet, alert) = liveness(&state(Phase::Running, 100), 400, 300);
         assert_eq!(quiet.liveness, Liveness::Quiet { since: 100 });
         assert_eq!(
-            alert.as_deref(),
+            alert.map(|alert| alert.text).as_deref(),
             Some("quiet 300 s; may be stuck on a prompt")
         );
         assert_eq!(liveness(&quiet, 500, 300).1, None);
@@ -115,11 +170,54 @@ mod tests {
         };
         let dead = feed(&state(Phase::Running, 5), gone.clone());
         let (alerted, alert) = liveness(&dead, 6, 300);
-        assert!(alert.is_some_and(|text| text.contains("agent acp exited")));
+        assert!(alert.is_some_and(|alert| alert.text.contains("agent acp exited")));
         let again = feed(&alerted, gone);
         assert_eq!(liveness(&again, 7, 300).1, None);
         let revived = feed(&again, WorkerEvent::Activity { at: 9 });
         assert_eq!(revived.last_activity, 5);
+    }
+
+    fn server_dead(name: &str) -> Alert {
+        let scope = Scope::Server(name.into());
+        Alert {
+            text: dead_text(&scope, "exited"),
+            kind: AlertKind::Dead {
+                scope,
+                reason: "exited".into(),
+            },
+        }
+    }
+
+    fn quiet() -> Alert {
+        Alert {
+            kind: AlertKind::Quiet,
+            text: "quiet".into(),
+        }
+    }
+
+    #[test]
+    fn one_server_death_yields_one_alert_naming_every_worker() {
+        let alerts = ["C", "A", "B"]
+            .map(|id| (id.to_string(), server_dead("pid 7")))
+            .to_vec();
+        let grouped = group_alerts(alerts);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].0, "A, B, C");
+        assert!(grouped[0].1.contains("pid 7"));
+        assert!(grouped[0].1.contains("exited"));
+        assert!(grouped[0].1.ends_with("A, B, C"));
+    }
+
+    #[test]
+    fn quiet_and_other_servers_stay_separate() {
+        let grouped = group_alerts(vec![
+            ("A".into(), quiet()),
+            ("B".into(), quiet()),
+            ("C".into(), server_dead("pid 1")),
+            ("D".into(), server_dead("pid 2")),
+        ]);
+        assert_eq!(grouped.len(), 4);
+        assert_eq!(grouped[0], ("A".to_string(), "quiet".to_string()));
     }
 
     #[test]
@@ -130,6 +228,14 @@ mod tests {
             Phase::Blocked
         );
         let (phase, events) = marker_state(Some("7 idle"), Some("boom\n"), false);
+        let server = marker_state(None, Some("scope server pid 7\ngone"), false).1;
+        assert_eq!(
+            server,
+            vec![WorkerEvent::ProcessGone {
+                scope: Scope::Server("pid 7".into()),
+                reason: "gone".into()
+            }]
+        );
         assert_eq!(phase, Phase::Idle);
         assert_eq!(
             events,

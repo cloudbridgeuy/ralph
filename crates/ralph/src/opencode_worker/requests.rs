@@ -1,6 +1,7 @@
 use super::{post_prompt, OpencodeHost, Session, Target};
 use crate::cursor_owner::{now_secs, write_file};
 use crate::warn::warn;
+use crate::workers::headless::Heartbeat;
 use ralph_core::worker::{
     answer_decision, create_session_body, opencode_session_id, permission_reply_body,
     permission_reply_path, request_stale, session_missing, task_prompt, OpencodeFiles,
@@ -127,6 +128,9 @@ impl OpencodeHost {
         write_file(&files.session, &record.render())
             .map_err(|e| format!("could not write the opencode session record: {e}"))?;
         let markers = WorkerMarkers::new(&self.store_dir, id);
+        let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
+        heartbeat.clear();
+        heartbeat.set_running(true);
         let text = task_prompt(&request.task);
         let mut turn = TurnState::default();
         turn.prompted(&text);
@@ -140,6 +144,7 @@ impl OpencodeHost {
                 },
                 turn,
                 verified: true,
+                heartbeat,
             },
         );
         if let Err(message) = post_prompt(&api, &session_id, &text) {
@@ -169,6 +174,7 @@ impl OpencodeHost {
                 }
                 if let Some(session) = self.sessions().get_mut(&session_id) {
                     session.turn.prompted(&text);
+                    session.heartbeat.set_running(true);
                 }
                 self.send(&session_id, &target, &text);
             }
