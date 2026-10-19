@@ -1,3 +1,4 @@
+use super::nap::fallback_summary;
 use super::{Entry, Frozen, Node, Tree, View, SUMMARY_BYTES};
 use regex::RegexBuilder;
 
@@ -99,13 +100,30 @@ pub(super) fn node_line(entries: &[Entry], tree: &Tree, node: Node) -> Option<St
     }
 }
 
+/// Lines for a node whose summary may still be pending: a missing parent shows
+/// its halves, a missing long leaf shows a marked raw excerpt that is never stored.
+fn settled_lines(entries: &[Entry], tree: &Tree, node: Node) -> Vec<String> {
+    if let Some(line) = node_line(entries, tree, node) {
+        return vec![line];
+    }
+    if node.size() == 1 {
+        let entry = &entries[node.lo];
+        return vec![entry_line(node.lo, entry, &fallback_summary(&entry.text))];
+    }
+    let (left, right) = node.halves();
+    [left, right]
+        .into_iter()
+        .flat_map(|half| settled_lines(entries, tree, half))
+        .collect()
+}
+
 fn view(entries: &[Entry], tree: &Tree, budget: usize) -> View {
     let mut view = View::default();
     for node in cover(entries.len(), budget) {
-        match node_line(entries, tree, node) {
-            Some(line) => view.lines.push(line),
-            None => view.missing.push(node),
+        if node_line(entries, tree, node).is_none() {
+            view.missing.push(node);
         }
+        view.lines.extend(settled_lines(entries, tree, node));
     }
     view
 }
@@ -129,7 +147,7 @@ pub fn frozen_block(
 
 pub fn tail_lines(entries: &[Entry], tree: &Tree, from: usize) -> Vec<String> {
     (from..entries.len())
-        .filter_map(|i| node_line(entries, tree, Node::leaf(i)))
+        .flat_map(|i| settled_lines(entries, tree, Node::leaf(i)))
         .collect()
 }
 
@@ -222,6 +240,7 @@ pub fn recall(entries: &[Entry], pattern: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::{entry, n};
+    use crate::chat_memory::FALLBACK_MARK;
 
     fn mixed(count: usize) -> Vec<Entry> {
         (0..count)
@@ -417,6 +436,43 @@ mod tests {
         assert_eq!(date_of("yesterday"), "yesterday");
     }
 
+    fn lines_cover(lines: &[String]) -> usize {
+        lines
+            .iter()
+            .map(|line| {
+                let id = line[1..].split(' ').next().unwrap();
+                Node::parse(id).unwrap().size()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn pending_parent_shows_committed_halves_and_raw_excerpts() {
+        let entries = vec![entry(0, 600), entry(1, 5), entry(2, 600), entry(3, 5)];
+        let mut tree = Tree::new();
+        tree.insert(n(0, 1), "leaf zero".into());
+        tree.insert(n(0, 2), "pair zero".into());
+        let lines = settled_lines(&entries, &tree, n(0, 4));
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "#0-1 pair zero");
+        assert!(lines[1].starts_with("#2 user ") && lines[1].contains(FALLBACK_MARK));
+        assert!(lines[1].len() <= SUMMARY_BYTES + 40);
+        assert!(lines[2].starts_with("#3 assistant ") && lines[2].ends_with("m3 xxxxx"));
+        assert_eq!(lines_cover(&lines), 4);
+        assert_eq!(tree.len(), 2);
+    }
+
+    #[test]
+    fn tail_shows_a_pending_long_leaf_as_raw_excerpt() {
+        let entries = vec![entry(0, 600), entry(1, 5)];
+        let lines = tail_lines(&entries, &Tree::new(), 0);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains(FALLBACK_MARK));
+        let mut tree = Tree::new();
+        tree.insert(n(0, 1), "done".into());
+        assert!(tail_lines(&entries, &tree, 0)[0].ends_with(" done"));
+    }
+
     #[test]
     fn view_missing_then_complete() {
         let entries = mixed(40);
@@ -434,6 +490,8 @@ mod tests {
         want.sort();
         assert_eq!(got, want);
         assert!(!got.is_empty());
+        assert_eq!(lines_cover(&before.lines), entries.len());
+        assert!(before.lines.iter().any(|line| line.contains(FALLBACK_MARK)));
 
         for node in pending(&entries, &tree) {
             tree.insert(node, format!("sum {}", node.id()));

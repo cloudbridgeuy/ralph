@@ -120,6 +120,43 @@ pub fn retry_prompt(prompt: &str, error: &str) -> String {
     )
 }
 
+/// What the nap does next for a pending node, given the tree it last read.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NapStep {
+    /// Another nap committed the node already.
+    Done,
+    /// The node cannot be built yet (a child has no summary).
+    Blocked(String),
+    /// Ask the curator with this prompt.
+    Ask(String),
+}
+
+pub fn nap_step(entries: &[Entry], tree: &Tree, node: Node) -> NapStep {
+    if tree.contains_key(&node) {
+        return NapStep::Done;
+    }
+    match nap_prompt(entries, tree, node) {
+        Ok(prompt) => NapStep::Ask(prompt),
+        Err(e) => NapStep::Blocked(e),
+    }
+}
+
+/// Commit decision against the tree re-read under the exclusive lock.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Commit {
+    Write,
+    /// A record for the node is already committed; the first writer wins.
+    Taken,
+}
+
+pub fn commit_decision(committed: &Tree, node: Node) -> Commit {
+    if committed.contains_key(&node) {
+        Commit::Taken
+    } else {
+        Commit::Write
+    }
+}
+
 pub fn nap_summary(exit_code: i32, response: Option<&str>) -> Result<String, String> {
     if exit_code != 0 {
         return Err(format!("memory curator exited with code {exit_code}"));
@@ -135,6 +172,7 @@ pub fn nap_summary(exit_code: i32, response: Option<&str>) -> Result<String, Str
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::{entry, n};
+    use crate::chat_memory::pending;
 
     fn leaf_prompt() -> String {
         nap_prompt(&[entry(0, 1)], &Tree::new(), n(0, 1)).unwrap()
@@ -303,5 +341,77 @@ mod tests {
     fn retry_prompt_carries_error() {
         let out = retry_prompt("base", "Too long");
         assert!(out.starts_with("base") && out.contains("Too long"));
+    }
+
+    fn leaves() -> Vec<Entry> {
+        vec![entry(0, 600), entry(1, 600)]
+    }
+
+    #[test]
+    fn nap_step_asks_for_a_ready_node() {
+        let step = nap_step(&leaves(), &Tree::new(), n(0, 1));
+        assert!(matches!(step, NapStep::Ask(p) if p.contains("#0 user")));
+    }
+
+    #[test]
+    fn nap_step_blocks_a_parent_without_child_summaries() {
+        let mut tree = Tree::new();
+        tree.insert(n(0, 1), "a".into());
+        let step = nap_step(&leaves(), &tree, n(0, 2));
+        assert_eq!(step, NapStep::Blocked("#1 has no summary yet.".into()));
+    }
+
+    #[test]
+    fn nap_step_is_done_for_a_committed_node() {
+        let mut tree = Tree::new();
+        tree.insert(n(0, 1), "a".into());
+        assert_eq!(nap_step(&leaves(), &tree, n(0, 1)), NapStep::Done);
+    }
+
+    #[test]
+    fn commit_writes_only_an_uncommitted_node() {
+        let mut tree = Tree::new();
+        assert_eq!(commit_decision(&tree, n(0, 1)), Commit::Write);
+        tree.insert(n(0, 1), "a".into());
+        assert_eq!(commit_decision(&tree, n(0, 1)), Commit::Taken);
+        assert_eq!(commit_decision(&tree, n(1, 2)), Commit::Write);
+    }
+
+    /// Two naps snapshot the same empty tree and race on the same leaf. The
+    /// first commit wins, the second is dropped, and both build the parent
+    /// from the committed child text.
+    #[test]
+    fn racing_naps_keep_the_first_commit_and_build_on_it() {
+        let entries = leaves();
+        let snapshot = Tree::new();
+        let mut store = Tree::new();
+        let leaf = n(0, 1);
+        for (nap, summary) in [("a", "first"), ("b", "second")] {
+            assert!(
+                matches!(nap_step(&entries, &snapshot, leaf), NapStep::Ask(_)),
+                "{nap}"
+            );
+            if commit_decision(&store, leaf) == Commit::Write {
+                store.insert(leaf, summary.into());
+            }
+        }
+        assert_eq!(store[&leaf], "first");
+        store.insert(n(1, 2), "other".into());
+        let NapStep::Ask(prompt) = nap_step(&entries, &store, n(0, 2)) else {
+            panic!("parent should be ready");
+        };
+        assert!(prompt.contains("first") && !prompt.contains("second"));
+        assert_eq!(nap_step(&entries, &store, leaf), NapStep::Done);
+    }
+
+    /// A nap that fails or dies before its commit writes nothing, so the node
+    /// stays pending for the next nap.
+    #[test]
+    fn uncommitted_work_stays_pending() {
+        let entries = leaves();
+        let mut store = Tree::new();
+        assert_eq!(pending(&entries, &store), [n(0, 1), n(1, 2), n(0, 2)]);
+        store.insert(n(0, 1), "a".into());
+        assert_eq!(pending(&entries, &store), [n(1, 2), n(0, 2)]);
     }
 }
