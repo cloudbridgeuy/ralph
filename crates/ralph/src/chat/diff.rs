@@ -2,7 +2,8 @@ use crate::chat::changes::resolve_diff;
 use crate::config::ChangesSection;
 use crate::signal;
 use crate::warn::warn;
-use ralph_core::diff_command::{diff_command, DiffTarget};
+use ralph_core::changes::NO_CHANGES;
+use ralph_core::diff_command::{diff_command, diff_quiet_command, range_is_empty, DiffTarget};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
@@ -31,6 +32,12 @@ pub(super) fn run(ctx: &DiffContext, target: DiffTarget) {
                         println!("{note}");
                     }
                     let revs: Vec<String> = std::iter::once(range.from).chain(range.to).collect();
+                    if probe_is_empty(ctx.changes, &revs, &extra, |command| {
+                        snapshotter.side_env(command)
+                    }) {
+                        println!("{NO_CHANGES}");
+                        return;
+                    }
                     spawn(ctx.changes, &revs, &extra, |command| {
                         snapshotter.side_env(command)
                     });
@@ -39,6 +46,26 @@ pub(super) fn run(ctx: &DiffContext, target: DiffTarget) {
             }
         }
     }
+}
+
+fn probe_is_empty(
+    changes: &ChangesSection,
+    revs: &[String],
+    extra: &[String],
+    configure: impl FnOnce(&mut Command),
+) -> bool {
+    let argv = diff_quiet_command(revs, &changes.diff_args, extra);
+    let Some((program, args)) = argv.split_first() else {
+        return false;
+    };
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    configure(&mut command);
+    range_is_empty(command.status().ok().and_then(|status| status.code()))
 }
 
 fn spawn(
