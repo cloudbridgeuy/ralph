@@ -54,14 +54,25 @@ fn is_long(entry: &Entry) -> bool {
     entry.text.len() > SUMMARY_BYTES
 }
 
+fn damaged_prefix(entries: &[Entry]) -> Vec<usize> {
+    std::iter::once(0)
+        .chain(entries.iter().scan(0, |seen, entry| {
+            *seen += usize::from(entry.is_corrupt());
+            Some(*seen)
+        }))
+        .collect()
+}
+
 pub fn pending(entries: &[Entry], tree: &Tree) -> Vec<Node> {
     let t = entries.len();
+    let damaged = damaged_prefix(entries);
+    let intact = |n: &Node| damaged[n.hi] == damaged[n.lo];
     let mut todo: Vec<Node> = entries
         .iter()
         .enumerate()
         .filter(|(_, e)| is_long(e))
         .map(|(i, _)| Node::leaf(i))
-        .filter(|n| !tree.contains_key(n))
+        .filter(|n| !tree.contains_key(n) && intact(n))
         .collect();
     let mut size = 2;
     while size <= t {
@@ -71,7 +82,7 @@ pub fn pending(entries: &[Entry], tree: &Tree) -> Vec<Node> {
                     lo: k * size,
                     hi: (k + 1) * size,
                 })
-                .filter(|n| !tree.contains_key(n)),
+                .filter(|n| !tree.contains_key(n) && intact(n)),
         );
         size *= 2;
     }
@@ -315,6 +326,43 @@ mod tests {
         tree.insert(n(0, 1), "s".into());
         tree.insert(n(2, 4), "s".into());
         assert_eq!(pending(&entries, &tree), [n(2, 3), n(0, 2), n(0, 4)]);
+    }
+
+    fn with_placeholder(mut entries: Vec<Entry>, at: usize) -> Vec<Entry> {
+        entries[at] = Entry::corrupt();
+        entries
+    }
+
+    #[test]
+    fn pending_never_offers_a_node_covering_a_placeholder() {
+        let entries = with_placeholder((0..8).map(|i| entry(i, 600)).collect(), 5);
+        let offered = pending(&entries, &Tree::new());
+        assert!(offered.iter().all(|node| !(node.lo..node.hi).contains(&5)));
+        for node in [n(5, 6), n(4, 6), n(4, 8), n(0, 8)] {
+            assert!(!offered.contains(&node), "{}", node.id());
+        }
+        for node in [n(0, 1), n(7, 8), n(0, 2), n(6, 8), n(0, 4)] {
+            assert!(offered.contains(&node), "{}", node.id());
+        }
+        assert_eq!(offered.len(), 11);
+    }
+
+    #[test]
+    fn pending_is_unchanged_when_no_entry_is_a_placeholder() {
+        let entries: Vec<Entry> = (0..5).map(|i| entry(i, 5)).collect();
+        assert_eq!(pending(&entries, &Tree::new()), [n(0, 2), n(2, 4), n(0, 4)]);
+    }
+
+    #[test]
+    fn the_view_falls_back_to_children_for_a_skipped_range() {
+        let entries = with_placeholder(short(8), 5);
+        let tree = summarized(&entries);
+        assert!(!tree.contains_key(&n(4, 6)) && !tree.contains_key(&n(0, 8)));
+        assert!(tree.contains_key(&n(0, 4)) && tree.contains_key(&n(6, 8)));
+        let lines = view(&entries, &tree, 4);
+        assert_eq!(ids(&lines), ["0-3", "4", "5", "6-7"]);
+        assert!(lines[2].contains("[corrupt entry]"), "{}", lines[2]);
+        assert_view_invariants(&lines, 8, 4);
     }
 
     fn lines_cover(lines: &[String]) -> usize {
