@@ -12,6 +12,7 @@ pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
 pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
 pub const ASK_DEFAULT_PERMISSION_MODE: &str = "bypassPermissions";
 pub const ASK_PERMISSION_MODE_ENV: &str = "RALPH_ASK_PERMISSION_MODE";
+const CHAT_DISABLE_BACKGROUND_TASKS_ENV: &str = "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1";
 
 pub fn resolve_permission_mode(
     flag: Option<&str>,
@@ -87,7 +88,8 @@ pub fn build_chat_command(
         .map(|arg| format!(" {}", shell_quote(arg)))
         .collect::<String>();
     format!(
-        "claude --verbose --permission-mode {} {} --append-system-prompt {}{} --input-format stream-json --output-format stream-json -p",
+        "{} claude --verbose --permission-mode {} {} --append-system-prompt {}{} --input-format stream-json --output-format stream-json -p",
+        CHAT_DISABLE_BACKGROUND_TASKS_ENV,
         permission_mode,
         isolation_args(home, true),
         quote_prompt(system_prompt),
@@ -148,6 +150,7 @@ mod tests {
     fn chat_command_is_fresh_and_isolated() {
         let mcp = vec!["--strict-mcp-config".to_string()];
         let cmd = build_chat_command("sys", &mcp, "plan", Some(Path::new("/home/u")));
+        assert!(cmd.starts_with("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude "));
         assert!(cmd.contains("--permission-mode plan "));
         assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
         assert!(cmd.contains("--setting-sources project,local"));
