@@ -82,7 +82,7 @@ fn memory_tool_definitions() -> Value {
         },
         {
             "name": "search",
-            "description": "Ranked search over the original chat messages. Unlike recall (a regex, every hit newest first), search scores messages by how well they match bare words, \"quoted phrases\" (the words must appear together, in order), and identifiers such as GUZ-709 or foo_bar (matched whole: GUZ-709 does not match GUZ-7090). Rarer words weigh more; ties go to the newer message. Each hit is `#<id> · <role> · <date> · <snippet>`. When more hits remain the page ends with `next cursor: <cursor>`; pass it back as cursor with the same query and filters. Call read with an id for the full text.",
+            "description": "Ranked search over the original chat messages. Unlike recall (a regex, every hit newest first), search scores messages by how well they match bare words, \"quoted phrases\" (the words must appear together, in order), and identifiers such as GUZ-709 or foo_bar (matched whole: GUZ-709 does not match GUZ-7090). A plain word also matches inside a joined one: rate finds rate-limited. Rarer words weigh more; ties go to the newer message. Each hit is `#<id> · <role> · <timestamp> · <snippet>`. When more hits remain the page ends with `next cursor: <cursor>`; pass it back as cursor with the same query and filters. Call read with an id for the full text.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

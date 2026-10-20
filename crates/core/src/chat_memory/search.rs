@@ -18,11 +18,26 @@ const B: f64 = 0.75;
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Token {
     word: String,
+    parts: Vec<String>,
     start: usize,
 }
 
 fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
+}
+
+fn is_compound(word: &str) -> bool {
+    word.chars().any(|c| !is_word(c))
+}
+
+fn parts_of(word: &str) -> Vec<String> {
+    if !is_compound(word) {
+        return Vec::new();
+    }
+    word.split(|c| !is_word(c))
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn joiner_len(chars: &[(usize, char)], at: usize) -> usize {
@@ -55,8 +70,10 @@ fn tokenize(text: &str) -> Vec<Token> {
         }
         let start = chars[i].0;
         let end = chars.get(j).map_or(text.len(), |(at, _)| *at);
+        let word = text[start..end].to_lowercase();
         tokens.push(Token {
-            word: text[start..end].to_lowercase(),
+            parts: parts_of(&word),
+            word,
             start,
         });
         i = j;
@@ -81,6 +98,11 @@ impl Unit {
     }
 
     fn matches_at(&self, tokens: &[Token], at: usize) -> bool {
+        if let [word] = self.words.as_slice() {
+            if !is_compound(word) {
+                return tokens[at].word == *word || tokens[at].parts.contains(word);
+            }
+        }
         self.words
             .iter()
             .zip(&tokens[at..])
@@ -106,6 +128,9 @@ struct Query {
 
 impl Query {
     fn parse(text: &str) -> Result<Query, String> {
+        if text.matches('"').count() % 2 == 1 {
+            return Err("unclosed quote in query.".to_string());
+        }
         let mut units: Vec<Unit> = Vec::new();
         for (i, segment) in text.split('"').enumerate() {
             let required = i % 2 == 1;
@@ -282,16 +307,29 @@ pub fn parse_search_args(args: &Value) -> Result<SearchRequest, String> {
             .transpose()?,
         fingerprint: 0,
     };
+    if request
+        .since
+        .zip(request.before)
+        .is_some_and(|(since, before)| since >= before)
+    {
+        return Err("'since' is later than 'until'.".to_string());
+    }
     request.fingerprint = fingerprint(&request.query, &request);
     Ok(request)
 }
 
 fn check_cursor(request: &SearchRequest, count: usize) -> Result<(), String> {
     match request.cursor {
+        Some(c) if c.count != count => Err("stale cursor; the log changed".to_string()),
+        _ => Ok(()),
+    }
+}
+
+fn check_fingerprint(request: &SearchRequest) -> Result<(), String> {
+    match request.cursor {
         Some(c) if c.fingerprint != request.fingerprint => {
             Err("cursor does not match this query".to_string())
         }
-        Some(c) if c.count != count => Err("stale cursor; the log changed".to_string()),
         _ => Ok(()),
     }
 }
@@ -435,18 +473,13 @@ pub fn search<B: ByteSource>(
     archive: &mut Archive<B>,
     request: &SearchRequest,
 ) -> io::Result<Result<String, String>> {
-    let count = archive.count();
-    if let Err(message) = check_cursor(request, count) {
+    if let Err(message) = check_fingerprint(request) {
         return Ok(Err(message));
     }
     let mut scan = Scan::new(request);
-    let mut from = 0;
-    while from < count {
-        let to = (from + CHUNK_ENTRIES).min(count);
-        for (id, entry) in (from..).zip(archive.entries(from, to)?) {
-            scan.push(id, &entry);
-        }
-        from = to;
+    let count = archive.scan_entries(CHUNK_ENTRIES, |id, entry| scan.push(id, entry))?;
+    if let Err(message) = check_cursor(request, count) {
+        return Ok(Err(message));
     }
     Ok(Ok(render(request, count, &scan.ranked())))
 }
@@ -541,7 +574,6 @@ mod tests {
         assert_eq!(query.normalized(), "alpha \"beta gamma\" beta");
         let merged = Query::parse("beta \"beta\"").unwrap();
         assert!(merged.units[0].required);
-        assert_eq!(Query::parse("\"open phrase").unwrap().units.len(), 1);
         assert!(Query::parse("  \"\" -- ").is_err());
     }
 
@@ -581,8 +613,96 @@ mod tests {
         assert_eq!(ids(&out), [2, 1]);
         let out = run(&entries, json!({"query": "guz-7090"})).unwrap();
         assert_eq!(ids(&out), [0]);
-        let none = run(&entries, json!({"query": "guz"})).unwrap();
-        assert_eq!(none, "no hits for guz");
+        let parts = run(&entries, json!({"query": "guz"})).unwrap();
+        assert_eq!(ids(&parts), [2, 1, 0]);
+    }
+
+    #[test]
+    fn single_words_match_parts_of_joined_tokens() {
+        let entries = [
+            user(0, "we got rate-limited again"),
+            user(1, "a follow-up is due"),
+            user(2, "see chat_memory::search for it"),
+            user(3, "nothing relevant"),
+        ];
+        for (query, expected) in [("rate", 0), ("follow", 1), ("search", 2), ("limited", 0)] {
+            let out = run(&entries, json!({"query": query})).unwrap();
+            assert_eq!(ids(&out), [expected], "{query}");
+        }
+        let whole = run(&entries, json!({"query": "rate-limited"})).unwrap();
+        assert_eq!(ids(&whole), [0]);
+        let none = run(&entries, json!({"query": "rate-lim"})).unwrap();
+        assert_eq!(none, "no hits for rate-lim");
+    }
+
+    #[test]
+    fn phrases_match_whole_tokens_not_parts() {
+        let entries = [
+            user(0, "it is rate-limited"),
+            user(1, "the rate limited it"),
+        ];
+        let out = run(&entries, json!({"query": "\"rate limited\""})).unwrap();
+        assert_eq!(ids(&out), [1]);
+    }
+
+    #[test]
+    fn tokenizer_splits_joined_tokens_into_parts() {
+        let tokens = tokenize("a-b::c plain");
+        assert_eq!(tokens[0].parts, ["a", "b", "c"]);
+        assert!(tokens[1].parts.is_empty());
+    }
+
+    #[test]
+    fn unclosed_quote_is_an_error() {
+        assert_eq!(
+            Query::parse("alpha \"beta gamma").unwrap_err(),
+            "unclosed quote in query."
+        );
+        assert!(parse_search_args(&json!({"query": "\"x\" \"y"})).is_err());
+        assert!(Query::parse("\"beta gamma\" alpha").is_ok());
+    }
+
+    #[test]
+    fn since_after_until_is_an_error() {
+        let err = parse_search_args(&json!({
+            "query": "x", "since": "2026-10-21", "until": "2026-10-20"
+        }))
+        .unwrap_err();
+        assert_eq!(err, "'since' is later than 'until'.");
+        let same = json!({"query": "x", "since": "2026-10-20", "until": "2026-10-20"});
+        assert!(parse_search_args(&same).is_ok());
+        let stamp = json!({
+            "query": "x",
+            "since": "2026-10-20T12:00:00Z",
+            "until": "2026-10-20T12:00:00Z"
+        });
+        assert!(parse_search_args(&stamp).is_ok());
+    }
+
+    #[test]
+    fn a_rebuild_mid_search_keeps_new_entries_and_the_cursor_valid() {
+        let mut entries: Vec<Entry> = (0..CHUNK_ENTRIES + 44).map(|i| user(i, "hay")).collect();
+        let mut archive = archive(&entries);
+        let extra = [user(1, "needle"), user(2, "needle")];
+        for entry in &extra {
+            archive
+                .log
+                .0
+                .extend(encode_entry(entry).unwrap().into_bytes());
+        }
+        entries.extend(extra);
+        archive.log_index.slots[CHUNK_ENTRIES + 10] += 1;
+        let request = parse_search_args(&json!({"query": "needle", "limit": 1})).unwrap();
+        let out = search(&mut archive, &request).unwrap().unwrap();
+        assert_eq!(ids(&out), [entries.len() - 1]);
+        let cursor = cursor_of(&out).unwrap();
+        assert!(cursor.contains(&format!(".{}.", entries.len())));
+        let next = run(
+            &entries,
+            json!({"query": "needle", "limit": 1, "cursor": cursor}),
+        )
+        .unwrap();
+        assert_eq!(ids(&next), [entries.len() - 2]);
     }
 
     #[test]

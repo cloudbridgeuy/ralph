@@ -111,6 +111,25 @@ impl<B: ByteSource> Archive<B> {
         self.retry(|a| load(&mut a.log, &a.log_index, from, to))
     }
 
+    /// Visits every entry in `chunk`-sized loads and returns how many it
+    /// visited. The count is read again after each load, so entries that
+    /// a mid-scan rebuild finds are visited too.
+    pub fn scan_entries(
+        &mut self,
+        chunk: usize,
+        mut visit: impl FnMut(usize, &Entry),
+    ) -> io::Result<usize> {
+        let mut from = 0;
+        while from < self.count() {
+            let to = (from + chunk).min(self.count());
+            for (id, entry) in (from..).zip(self.entries(from, to)?) {
+                visit(id, &entry);
+            }
+            from = to;
+        }
+        Ok(self.count())
+    }
+
     /// The `parse_log` and `parse_tree` warnings the files would give.
     pub fn warnings(&self) -> Vec<String> {
         [self.log_index.warning(), self.tree.index.warning()]

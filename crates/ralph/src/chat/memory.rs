@@ -17,6 +17,8 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
+const RECALL_CHUNK_ENTRIES: usize = 256;
+
 pub struct Store {
     dir: PathBuf,
 }
@@ -120,8 +122,9 @@ impl Store {
 
     pub fn recall(&self, pattern: &str) -> io::Result<Result<String, String>> {
         self.with_archive(|archive| {
-            let count = archive.count();
-            Ok(recall(&archive.entries(0, count)?, pattern))
+            let mut entries = Vec::new();
+            archive.scan_entries(RECALL_CHUNK_ENTRIES, |_, entry| entries.push(entry.clone()))?;
+            Ok(recall(&entries, pattern))
         })
     }
 
