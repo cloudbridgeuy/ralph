@@ -1,3 +1,4 @@
+use super::range::{parse_read_args, read_range, RangeRequest};
 use super::tree::{recall, zoom};
 use super::{Entry, Node, Tree, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
@@ -10,6 +11,7 @@ use serde_json::{json, Value};
 pub enum Tool {
     Zoom(Node),
     Recall(String),
+    Read(RangeRequest),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +65,20 @@ fn memory_tool_definitions() -> Value {
                 "required": ["pattern"]
             }
         },
+        {
+            "name": "read",
+            "description": "Read a flat range of the chat in order, a page at a time. Each message shows as `#<id> · <role> · <date> · <n> chars` and then its text. mode raw (default) gives the original text; summary gives the leaf summary for long messages (`[not summarized]` when none exists). A message too long for the page is split into parts marked `chars a-b`. When more remains the page ends with `next cursor: <cursor>`; pass it back as cursor, with the same id and mode, for the next page. Messages added after the first call never appear in later pages.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Inclusive range such as 16-40, or one index such as 5."},
+                    "mode": {"type": "string", "enum": ["raw", "summary"], "description": "raw (default) or summary."},
+                    "budget": {"type": "integer", "description": "Page size in tokens, 1 to 16384. Default 4096."},
+                    "cursor": {"type": "string", "description": "The `next cursor:` value from the previous page."}
+                },
+                "required": ["id"]
+            }
+        },
         changes_tool_definition()
     ])
 }
@@ -71,6 +87,7 @@ pub fn parse_tool_call(name: &str, args: &Value) -> Result<Tool, String> {
     match name {
         "zoom" => Node::parse(string_arg(args, "id")?.trim()).map(Tool::Zoom),
         "recall" => Ok(Tool::Recall(string_arg(args, "pattern")?)),
+        "read" => parse_read_args(args).map(Tool::Read),
         other => Err(format!("Unknown tool '{other}'.")),
     }
 }
@@ -97,6 +114,7 @@ fn run_tool(entries: &[Entry], tree: &Tree, tool: &Tool) -> Result<String, Strin
     match tool {
         Tool::Zoom(node) => zoom(entries, tree, *node).map(|lines| lines.join("\n")),
         Tool::Recall(pattern) => recall(entries, pattern),
+        Tool::Read(request) => read_range(entries, tree, request).map(|page| page.render()),
     }
 }
 
@@ -150,6 +168,7 @@ mod tests {
             [
                 "zoom",
                 "recall",
+                "read",
                 "changes",
                 "spawn_worker",
                 "reply",
@@ -183,6 +202,34 @@ mod tests {
         assert!(text.contains("#3 · ") && text.contains("#1 · ") && !text.contains("#2 · "));
         assert!(text.find("#3 · ") < text.find("#1 · "));
         assert!(text.ends_with("(zoom <id> for the full text)"));
+    }
+
+    #[test]
+    fn read_pages_a_range_and_reports_errors() {
+        let entries: Vec<Entry> = (0..4).map(|i| entry(i, 5)).collect();
+        let tree = Tree::new();
+        let v = finish(
+            &entries,
+            &tree,
+            "read",
+            json!({"id": "1-2", "budget": 4096}),
+        );
+        assert_eq!(v["result"]["isError"], false);
+        let text = text_of(&v);
+        assert!(text.contains("#1 · assistant") && text.contains("m2 xxxxx"));
+        assert!(text.ends_with("(end of range)"));
+        let paged = finish(&entries, &tree, "read", json!({"id": "0-3", "budget": 1}));
+        assert!(text_of(&paged).contains("next cursor: "));
+        for args in [
+            json!({"id": "3-1"}),
+            json!({"id": "9"}),
+            json!({"id": "0", "mode": "x"}),
+        ] {
+            assert_eq!(
+                finish(&entries, &tree, "read", args)["result"]["isError"],
+                true
+            );
+        }
     }
 
     #[test]

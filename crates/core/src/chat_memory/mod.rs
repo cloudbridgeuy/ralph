@@ -1,5 +1,6 @@
 mod log;
 mod nap;
+mod range;
 mod tools;
 mod tree;
 mod usage;
