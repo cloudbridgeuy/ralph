@@ -45,8 +45,9 @@ pub enum Commands {
 
     /// Chat with a persistent, compressed memory.
     ///
-    /// Runs when no subcommand is given. Each message is a fresh Claude turn
-    /// over the whole chat so far, stored under ~/.ralph/chat.
+    /// Runs when no subcommand is given. One Claude process serves the chat,
+    /// started with a compressed view of the chat so far, stored under
+    /// ~/.ralph/chat.
     Chat(ChatArgs),
 
     #[command(hide = true)]
