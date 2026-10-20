@@ -130,7 +130,24 @@ pub fn memory_size(msgs: usize, view_lines: &[String]) -> Memory {
     }
 }
 
-pub fn route_input(line: &str, unread: usize) -> Route {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum EmptySubmit {
+    #[default]
+    Inbox,
+    InboxFirst(String),
+    Phrase(String),
+}
+
+pub fn empty_route(unread: usize, empty: &EmptySubmit) -> Route {
+    match empty {
+        EmptySubmit::Phrase(phrase) => Route::Send(phrase.clone()),
+        _ if unread > 0 => Route::ReadInbox(Selection::All),
+        EmptySubmit::InboxFirst(phrase) => Route::Send(phrase.clone()),
+        EmptySubmit::Inbox => Route::Ignore,
+    }
+}
+
+pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
     let line = line.trim();
     if let Some(args) = line
         .strip_prefix(WATCH_COMMAND)
@@ -159,8 +176,7 @@ pub fn route_input(line: &str, unread: usize) -> Route {
         };
     }
     match line {
-        "" if unread > 0 => Route::ReadInbox(Selection::All),
-        "" => Route::Ignore,
+        "" => empty_route(unread, empty),
         message => Route::Send(message.to_string()),
     }
 }
@@ -414,19 +430,29 @@ mod tests {
     #[test]
     fn route_input_parses_watch_commands() {
         assert_eq!(
-            route_input("/watch list", 0),
+            route_input("/watch list", 0, &EmptySubmit::Inbox),
             Route::Watch(WatchCommand::List)
         );
-        assert_eq!(route_input("/watch", 3), Route::Watch(WatchCommand::Usage));
         assert_eq!(
-            route_input(" /watch stop w1 ", 0),
+            route_input("/watch", 3, &EmptySubmit::Inbox),
+            Route::Watch(WatchCommand::Usage)
+        );
+        assert_eq!(
+            route_input(" /watch stop w1 ", 0, &EmptySubmit::Inbox),
             Route::Watch(WatchCommand::Stop("watch:w1".into()))
         );
         assert!(matches!(
-            route_input("/watch start --persistent sleep 5 -- done", 0),
+            route_input(
+                "/watch start --persistent sleep 5 -- done",
+                0,
+                &EmptySubmit::Inbox
+            ),
             Route::Watch(WatchCommand::Start(_))
         ));
-        assert_eq!(route_input("/watchfoo", 0), Route::Send("/watchfoo".into()));
+        assert_eq!(
+            route_input("/watchfoo", 0, &EmptySubmit::Inbox),
+            Route::Send("/watchfoo".into())
+        );
     }
 
     #[test]
@@ -438,28 +464,34 @@ mod tests {
             }))
         };
         assert_eq!(
-            route_input("/diff -U1 -- a", 0),
+            route_input("/diff -U1 -- a", 0, &EmptySubmit::Inbox),
             last(1, &["-U1", "--", "a"])
         );
         assert_eq!(
-            route_input(" /diff -- \"a b\" ", 3),
+            route_input(" /diff -- \"a b\" ", 3, &EmptySubmit::Inbox),
             last(1, &["--", "a b"])
         );
-        assert_eq!(route_input("/diff", 0), last(1, &[]));
-        assert_eq!(route_input("/diff last 2", 0), last(2, &[]));
+        assert_eq!(route_input("/diff", 0, &EmptySubmit::Inbox), last(1, &[]));
         assert_eq!(
-            route_input("/diff now -U1", 0),
+            route_input("/diff last 2", 0, &EmptySubmit::Inbox),
+            last(2, &[])
+        );
+        assert_eq!(
+            route_input("/diff now -U1", 0, &EmptySubmit::Inbox),
             Route::Diff(DiffArgs::Target(DiffTarget::Now(vec!["-U1".into()])))
         );
         assert_eq!(
-            route_input("/diff last 0", 0),
+            route_input("/diff last 0", 0, &EmptySubmit::Inbox),
             Route::Diff(DiffArgs::Usage(WINDOW_USAGE))
         );
         assert_eq!(
-            route_input("/diff 'a", 0),
+            route_input("/diff 'a", 0, &EmptySubmit::Inbox),
             Route::Diff(DiffArgs::UnclosedQuote)
         );
-        assert_eq!(route_input("/difffoo", 0), Route::Send("/difffoo".into()));
+        assert_eq!(
+            route_input("/difffoo", 0, &EmptySubmit::Inbox),
+            Route::Send("/difffoo".into())
+        );
     }
 
     #[test]
@@ -474,26 +506,62 @@ mod tests {
     }
 
     #[test]
-    fn route_input_decides_from_line_and_unread() {
-        assert_eq!(route_input(" /inbox ", 0), Route::ReadInbox(Selection::All));
-        assert_eq!(route_input("  ", 3), Route::ReadInbox(Selection::All));
+    fn empty_route_decides_from_mode_and_unread() {
+        let phrase = || "continue".to_string();
+        let send = || Route::Send(phrase());
+        let read = || Route::ReadInbox(Selection::All);
+        assert_eq!(empty_route(0, &EmptySubmit::Inbox), Route::Ignore);
+        assert_eq!(empty_route(2, &EmptySubmit::Inbox), read());
+        assert_eq!(empty_route(0, &EmptySubmit::InboxFirst(phrase())), send());
+        assert_eq!(empty_route(2, &EmptySubmit::InboxFirst(phrase())), read());
+        assert_eq!(empty_route(0, &EmptySubmit::Phrase(phrase())), send());
+        assert_eq!(empty_route(2, &EmptySubmit::Phrase(phrase())), send());
+    }
+
+    #[test]
+    fn route_input_sends_phrase_only_on_empty_line() {
+        let phrase = EmptySubmit::Phrase("go".into());
+        assert_eq!(route_input("  ", 3, &phrase), Route::Send("go".into()));
+        assert_eq!(route_input("hi", 3, &phrase), Route::Send("hi".into()));
         assert_eq!(
-            route_input("/inbox next", 0),
+            route_input("/inbox", 3, &phrase),
+            Route::ReadInbox(Selection::All)
+        );
+    }
+
+    #[test]
+    fn route_input_decides_from_line_and_unread() {
+        assert_eq!(
+            route_input(" /inbox ", 0, &EmptySubmit::Inbox),
+            Route::ReadInbox(Selection::All)
+        );
+        assert_eq!(
+            route_input("  ", 3, &EmptySubmit::Inbox),
+            Route::ReadInbox(Selection::All)
+        );
+        assert_eq!(
+            route_input("/inbox next", 0, &EmptySubmit::Inbox),
             Route::ReadInbox(Selection::Next)
         );
         assert_eq!(
-            route_input("/inbox 2", 0),
+            route_input("/inbox 2", 0, &EmptySubmit::Inbox),
             Route::ReadInbox(Selection::At("2".parse().unwrap()))
         );
-        assert_eq!(route_input("", 0), Route::Ignore);
-        assert_eq!(route_input(" hi ", 3), Route::Send("hi".into()));
-        assert_eq!(route_input("/inbox list", 0), Route::ListInbox);
+        assert_eq!(route_input("", 0, &EmptySubmit::Inbox), Route::Ignore);
         assert_eq!(
-            route_input("/inbox peek 3", 0),
+            route_input(" hi ", 3, &EmptySubmit::Inbox),
+            Route::Send("hi".into())
+        );
+        assert_eq!(
+            route_input("/inbox list", 0, &EmptySubmit::Inbox),
+            Route::ListInbox
+        );
+        assert_eq!(
+            route_input("/inbox peek 3", 0, &EmptySubmit::Inbox),
             Route::PeekInbox("3".parse().unwrap())
         );
         assert_eq!(
-            route_input("/inbox drop 3", 0),
+            route_input("/inbox drop 3", 0, &EmptySubmit::Inbox),
             Route::DropInbox("3".parse().unwrap())
         );
         for usage in [
@@ -510,9 +578,15 @@ mod tests {
             "/inbox 2 3",
             "/inbox next 1",
         ] {
-            assert_eq!(route_input(usage, 3), Route::InboxUsage);
+            assert_eq!(
+                route_input(usage, 3, &EmptySubmit::Inbox),
+                Route::InboxUsage
+            );
         }
-        assert_eq!(route_input("/inboxfoo", 0), Route::Send("/inboxfoo".into()));
+        assert_eq!(
+            route_input("/inboxfoo", 0, &EmptySubmit::Inbox),
+            Route::Send("/inboxfoo".into())
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use crate::chat::statusbar::StatusBar;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
-use ralph_core::chat_status::{footer, route_input, Route};
+use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
 use ralph_core::worker::ATTACHMENTS_DIR;
 use reedline::{
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, Reedline,
@@ -24,6 +24,7 @@ pub(super) struct ChatPrompt {
     pub(super) bar: StatusBar,
     pub(super) notice: RefCell<Option<String>>,
     pub(super) editor: Vec<String>,
+    pub(super) empty_submit: EmptySubmit,
 }
 
 impl ChatPrompt {
@@ -95,7 +96,11 @@ pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Resu
         match retry_interrupted(|| editor.read_line(prompt))? {
             Signal::Success(line) => {
                 prompt.notice.take();
-                return Ok(Some(route_input(&line, prompt.monitor.status().unread)));
+                return Ok(Some(route_input(
+                    &line,
+                    prompt.monitor.status().unread,
+                    &prompt.empty_submit,
+                )));
             }
             Signal::HostCommand(command) if command == PASTE_IMAGE => {
                 *prompt.notice.borrow_mut() = paste_image(editor, &attachments)
