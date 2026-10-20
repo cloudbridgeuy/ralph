@@ -50,16 +50,15 @@ impl Session {
     fn close(&mut self) -> i32 {
         self.stdin.take();
         let deadline = Instant::now() + EXIT_GRACE;
-        loop {
+        let exit_code = loop {
             match self.child.try_wait() {
-                Ok(Some(status)) => return status.code().unwrap_or(EXIT_CODE_KILLED),
+                Ok(Some(status)) => break status.code().unwrap_or(EXIT_CODE_KILLED),
                 Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-                _ => {
-                    kill_process_group(&mut self.child);
-                    return EXIT_CODE_KILLED;
-                }
+                _ => break EXIT_CODE_KILLED,
             }
-        }
+        };
+        kill_process_group(&mut self.child);
+        exit_code
     }
 
     pub fn is_alive(&self) -> bool {
