@@ -30,6 +30,7 @@
 mod costs;
 mod events;
 mod extraction;
+mod input;
 mod metadata;
 mod parsing;
 
@@ -43,6 +44,7 @@ pub use events::{
     ToolResult, Usage, UserEvent, UserMessage,
 };
 pub use extraction::ToolInvocation;
+pub use input::{interrupt_line, user_line};
 pub use metadata::{
     extract_metadata_from_events, extract_metadata_from_events_or_default, IterationMetadata,
 };

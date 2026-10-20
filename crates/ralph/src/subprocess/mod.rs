@@ -10,11 +10,13 @@
 
 use std::process::Child;
 
+mod session;
 mod spinner;
 mod timeout;
 mod types;
 
 // Re-export public API
+pub use session::Session;
 pub use spinner::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
 pub use types::{StreamingSubprocessResult, SubprocessError};
 

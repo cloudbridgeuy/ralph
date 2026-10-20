@@ -7,9 +7,7 @@ use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
-use crate::subprocess::{
-    invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, SubprocessError,
-};
+use crate::subprocess::{Session, SpinnerSubprocessConfig, SubprocessError};
 use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
 use ralph_core::chat::{
@@ -146,7 +144,6 @@ impl Turn<'_> {
             args: &args,
         });
         let command = build_chat_command(
-            &prompt,
             &system,
             &args,
             self.permission_mode,
@@ -156,7 +153,7 @@ impl Turn<'_> {
         let result = retry_on_outage(
             "chat turn",
             || {
-                let result = invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
+                let result = Session::spawn(&SpinnerSubprocessConfig {
                     command: command.clone(),
                     timeout_secs: None,
                     theme_config: self.theme_config.clone(),
@@ -165,7 +162,8 @@ impl Turn<'_> {
                     session_info: chat_session_info(),
                     pause: None,
                     cancel: Some(Arc::clone(&self.cancel)),
-                });
+                })
+                .and_then(|mut session| session.turn(&prompt));
                 if self.stopped() {
                     Attempt::Done(result)
                 } else {

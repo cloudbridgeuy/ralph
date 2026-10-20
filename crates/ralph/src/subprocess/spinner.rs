@@ -19,7 +19,7 @@ use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -121,154 +121,185 @@ pub fn invoke_subprocess_with_spinner_config(
     run_subprocess_with_spinner(config)
 }
 
-/// Internal helper that runs the subprocess with spinner and gap detection.
-fn run_subprocess_with_spinner(
-    config: &SpinnerSubprocessConfig,
-) -> Result<StreamingSubprocessResult, SubprocessError> {
-    // Spawn subprocess with stdout/stderr captured and stdin inherited
+pub(super) fn spawn_piped(command_text: &str, stdin: Stdio) -> io::Result<Child> {
     let mut command = Command::new("sh");
     command
         .arg("-c")
-        .arg(&config.command)
-        .stdin(Stdio::null()) // Null stdin to prevent child from racing parent for stdin
+        .arg(command_text)
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .process_group(0); // Create new process group so we can kill grandchildren
+        .process_group(0);
     signal::default_sigttou_in(&mut command);
-    let mut child = command.spawn()?;
+    command.spawn()
+}
 
-    // Get handles to stdout and stderr
-    // These should always be Some since we configured Stdio::piped()
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| SubprocessError::OutputCaptureFailed("stdout not captured".to_string()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| SubprocessError::OutputCaptureFailed("stderr not captured".to_string()))?;
+pub(super) struct Pump {
+    processor: StreamProcessor,
+    spinner: Spinner,
+    spinner_active: bool,
+    last_output_time: Instant,
+    pending_tool_count: usize,
+    line_rx: mpsc::Receiver<io::Result<String>>,
+    stderr_rx: mpsc::Receiver<String>,
+    stdout_thread: thread::JoinHandle<()>,
+    stderr_thread: thread::JoinHandle<String>,
+}
 
-    // Create buffered readers
-    let stdout_reader = BufReader::new(stdout);
-    let stderr_reader = BufReader::new(stderr);
+impl Pump {
+    pub(super) fn start(
+        child: &mut Child,
+        config: &SpinnerSubprocessConfig,
+    ) -> Result<Pump, SubprocessError> {
+        let stdout = child.stdout.take().ok_or_else(|| {
+            SubprocessError::OutputCaptureFailed("stdout not captured".to_string())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            SubprocessError::OutputCaptureFailed("stderr not captured".to_string())
+        })?;
+        let stdout_is_terminal = std::io::stdout().is_terminal();
+        let processor = StreamProcessor::with_verbose_tools(
+            config.theme_config.clone(),
+            stdout_is_terminal,
+            stdout_is_terminal,
+            config.verbose_tools.clone(),
+        )?;
+        let mut spinner =
+            Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone());
+        spinner.start();
+        let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
+        let stderr_thread = thread::spawn(move || {
+            let mut captured = String::new();
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                let _ = stderr_tx.send(line.clone());
+                captured.push_str(&line);
+                captured.push('\n');
+            }
+            captured
+        });
+        let (line_tx, line_rx) = mpsc::channel::<io::Result<String>>();
+        let stdout_thread = thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if line_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Pump {
+            processor,
+            spinner,
+            spinner_active: true,
+            last_output_time: Instant::now(),
+            pending_tool_count: 0,
+            line_rx,
+            stderr_rx,
+            stdout_thread,
+            stderr_thread,
+        })
+    }
 
-    // Create stream processor with theme configuration and verbose tools.
-    // Output formatting depends on stdout being a terminal (not stdin).
-    let stdout_is_terminal = std::io::stdout().is_terminal();
-    let mut processor = StreamProcessor::with_verbose_tools(
-        config.theme_config.clone(),
-        stdout_is_terminal,
-        stdout_is_terminal,
-        config.verbose_tools.clone(),
-    )?;
-
-    // Create and start spinner with session context
-    let mut spinner =
-        Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone());
-    spinner.start();
-
-    // Track time for gap detection and spinner control
-    let mut last_output_time = Instant::now();
-    let mut spinner_active = true; // Spinner starts active
-    let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
-
-    // Track whether we're in a tool invocation (to determine spinner context)
-    let mut pending_tool_count: usize = 0;
-
-    // Create channel to receive stderr from background thread
-    let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
-
-    // Spawn thread to capture stderr in background
-    let stderr_thread = thread::spawn(move || {
-        let mut captured = String::new();
-        for line in stderr_reader.lines().map_while(Result::ok) {
-            // Send to main thread for display
-            let _ = stderr_tx.send(line.clone());
-            captured.push_str(&line);
-            captured.push('\n');
+    fn stop_spinner(&mut self) {
+        if self.spinner_active {
+            self.spinner.stop();
+            self.spinner_active = false;
         }
-        captured
-    });
+    }
 
+    pub(super) fn step(&mut self, paused: bool) -> Result<bool, SubprocessError> {
+        if paused {
+            self.stop_spinner();
+        }
+        match self.line_rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(Ok(line)) => {
+                if line.contains("\"type\":\"tool_use\"") {
+                    self.pending_tool_count += 1;
+                }
+                if line.contains("\"type\":\"user\"") && line.contains("\"type\":\"tool_result\"") {
+                    self.pending_tool_count = self.pending_tool_count.saturating_sub(1);
+                }
+                if let Some(output) = self.processor.process_line(&line) {
+                    self.stop_spinner();
+                    print!("{}", output);
+                    let _ = io::stdout().flush();
+                    self.last_output_time = Instant::now();
+                }
+                Ok(line.contains("\"type\":\"result\""))
+            }
+            Ok(Err(e)) => {
+                self.stop_spinner();
+                Err(SubprocessError::OutputCaptureFailed(format!(
+                    "Failed to read stdout: {}",
+                    e
+                )))
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                drain_stderr(&self.stderr_rx);
+                let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
+                if !paused
+                    && !self.spinner_active
+                    && self.last_output_time.elapsed() >= gap_threshold
+                {
+                    let context = if self.pending_tool_count > 0 {
+                        SpinnerContext::WaitingForTool
+                    } else {
+                        SpinnerContext::Thinking
+                    };
+                    self.spinner.start_with_context(context);
+                    self.spinner_active = true;
+                }
+                Ok(false)
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(false),
+        }
+    }
+
+    pub(super) fn finish(mut self, exit_code: i32, show_stderr: bool) -> StreamingSubprocessResult {
+        self.stop_spinner();
+        drain_stdout(&self.line_rx, &mut self.processor);
+        if show_stderr {
+            drain_stderr(&self.stderr_rx);
+        }
+        let stderr = join_output_threads(self.stdout_thread, self.stderr_thread);
+        let stream_result = self.processor.finish();
+        if let Some(ref output) = stream_result.final_output {
+            print!("{}", output);
+            let _ = io::stdout().flush();
+        }
+        StreamingSubprocessResult {
+            exit_code,
+            stderr,
+            stream_result,
+        }
+    }
+}
+
+fn run_subprocess_with_spinner(
+    config: &SpinnerSubprocessConfig,
+) -> Result<StreamingSubprocessResult, SubprocessError> {
+    let mut child = spawn_piped(&config.command, Stdio::null())?;
+    let mut pump = Pump::start(&mut child, config)?;
     let start = Instant::now();
 
-    // Process stdout line by line with timeout checking
-    // Use a separate thread to read lines so we can check timeout
-    let (line_tx, line_rx) = mpsc::channel::<io::Result<String>>();
-    let stdout_thread = thread::spawn(move || {
-        for line in stdout_reader.lines() {
-            if line_tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-
-    // Process lines with timeout
     loop {
-        // Check if process has completed
         if let Some(status) = try_wait_child(&mut child)? {
-            // Stop spinner if active
-            if spinner_active {
-                spinner.stop();
-            }
-
-            // Drain remaining output and wait for threads
-            drain_stdout(&line_rx, &mut processor);
-            drain_stderr(&stderr_rx);
-            let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
-
-            // Extract exit code
             let exit_code = status.code().ok_or(SubprocessError::Signaled)?;
-
-            let stream_result = processor.finish();
-            if let Some(ref output) = stream_result.final_output {
-                print!("{}", output);
-                let _ = io::stdout().flush();
-            }
-            return Ok(StreamingSubprocessResult {
-                exit_code,
-                stderr: stderr_captured,
-                stream_result,
-            });
+            return Ok(pump.finish(exit_code, true));
         }
 
         let paused = config
             .pause
             .as_ref()
             .is_some_and(|flag| flag.load(Ordering::SeqCst));
-        if paused && spinner_active {
-            spinner.stop();
-            spinner_active = false;
-        }
 
         if let Some(timeout_secs) = config
             .timeout_secs
             .filter(|secs| start.elapsed() >= Duration::from_secs(*secs))
         {
-            // Stop spinner if active
-            if spinner_active {
-                spinner.stop();
-            }
-
-            // Kill the subprocess and its process group
+            pump.stop_spinner();
             kill_process_group(&mut child);
-
-            // Drain remaining output and wait for threads
-            drain_stdout(&line_rx, &mut processor);
-            let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
-
-            let stream_result = processor.finish();
-            if let Some(ref output) = stream_result.final_output {
-                print!("{}", output);
-                let _ = io::stdout().flush();
-            }
             return Err(SubprocessError::Timeout {
                 timeout_secs,
-                partial_result: Box::new(StreamingSubprocessResult {
-                    exit_code: EXIT_CODE_KILLED,
-                    stderr: stderr_captured,
-                    stream_result,
-                }),
+                partial_result: Box::new(pump.finish(EXIT_CODE_KILLED, false)),
             });
         }
 
@@ -277,28 +308,9 @@ fn run_subprocess_with_spinner(
             .as_ref()
             .is_some_and(|flag| flag.load(Ordering::SeqCst));
         if cancelled || signal::is_interrupted() {
-            // Stop spinner if active
-            if spinner_active {
-                spinner.stop();
-            }
-
-            // Kill the subprocess and its process group
+            pump.stop_spinner();
             kill_process_group(&mut child);
-
-            // Drain remaining output and wait for threads
-            drain_stdout(&line_rx, &mut processor);
-            let stderr_captured = join_output_threads(stdout_thread, stderr_thread);
-
-            let stream_result = processor.finish();
-            if let Some(ref output) = stream_result.final_output {
-                print!("{}", output);
-                let _ = io::stdout().flush();
-            }
-            let partial = StreamingSubprocessResult {
-                exit_code: EXIT_CODE_INTERRUPTED,
-                stderr: stderr_captured,
-                stream_result,
-            };
+            let partial = pump.finish(EXIT_CODE_INTERRUPTED, false);
             if cancelled {
                 return Ok(partial);
             }
@@ -307,72 +319,6 @@ fn run_subprocess_with_spinner(
             });
         }
 
-        // Try to receive a line with a short timeout
-        match line_rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(line_result) => match line_result {
-                Ok(line) => {
-                    // Check for tool invocation markers in the JSON
-                    // Tool invocations come in assistant events with tool_use content
-                    if line.contains("\"type\":\"tool_use\"") {
-                        pending_tool_count += 1;
-                    }
-                    // Tool results come in user events
-                    if line.contains("\"type\":\"user\"")
-                        && line.contains("\"type\":\"tool_result\"")
-                    {
-                        pending_tool_count = pending_tool_count.saturating_sub(1);
-                    }
-
-                    if let Some(output) = processor.process_line(&line) {
-                        // Stop spinner on visible output
-                        if spinner_active {
-                            spinner.stop();
-                            spinner_active = false;
-                        }
-                        print!("{}", output);
-                        let _ = io::stdout().flush();
-                        // Update last output time
-                        last_output_time = Instant::now();
-                    }
-                }
-                Err(e) => {
-                    // Stop spinner before returning error
-                    if spinner_active {
-                        spinner.stop();
-                    }
-                    return Err(SubprocessError::OutputCaptureFailed(format!(
-                        "Failed to read stdout: {}",
-                        e
-                    )));
-                }
-            },
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Check for stderr output
-                if let Ok(line) = stderr_rx.try_recv() {
-                    eprintln!("{}", line);
-                    while let Ok(line) = stderr_rx.try_recv() {
-                        eprintln!("{}", line);
-                    }
-                }
-
-                // Gap detection: if no output for threshold duration, show spinner
-                if !paused && !spinner_active && last_output_time.elapsed() >= gap_threshold {
-                    // Determine spinner context based on state
-                    let context = if pending_tool_count > 0 {
-                        SpinnerContext::WaitingForTool
-                    } else {
-                        SpinnerContext::Thinking
-                    };
-                    spinner.start_with_context(context);
-                    spinner_active = true;
-                }
-
-                // Continue loop to check process status and timeout
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                // stdout closed, wait for process to exit
-                // Continue loop to check process status
-            }
-        }
+        pump.step(paused)?;
     }
 }

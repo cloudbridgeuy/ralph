@@ -47,29 +47,36 @@ fn quote_prompt(value: &str) -> String {
     shell_quote(&strip_controls(value))
 }
 
-fn isolation_args(home: Option<&Path>) -> String {
-    let excludes = home.map(|h| {
-        let settings = serde_json::json!({
-            "claudeMdExcludes": [h.join(".claude").join("CLAUDE.md").to_string_lossy()]
-        });
-        format!(" --settings {}", shell_quote(&settings.to_string()))
+fn isolation_args(home: Option<&Path>, auto_compact_off: bool) -> String {
+    let mut settings = serde_json::Map::new();
+    if auto_compact_off {
+        settings.insert("autoCompactEnabled".to_string(), false.into());
+    }
+    if let Some(h) = home {
+        settings.insert(
+            "claudeMdExcludes".to_string(),
+            serde_json::json!([h.join(".claude").join("CLAUDE.md").to_string_lossy()]),
+        );
+    }
+    let settings_arg = (!settings.is_empty()).then(|| {
+        let json = serde_json::Value::Object(settings).to_string();
+        format!(" --settings {}", shell_quote(&json))
     });
     format!(
         "--setting-sources project,local{}",
-        excludes.unwrap_or_default()
+        settings_arg.unwrap_or_default()
     )
 }
 
 pub fn build_memory_command(prompt: &str, home: Option<&Path>) -> String {
     format!(
         "claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p {}",
-        isolation_args(home),
+        isolation_args(home, false),
         quote_prompt(prompt)
     )
 }
 
 pub fn build_chat_command(
-    prompt: &str,
     system_prompt: &str,
     extra_args: &[String],
     permission_mode: &str,
@@ -80,12 +87,11 @@ pub fn build_chat_command(
         .map(|arg| format!(" {}", shell_quote(arg)))
         .collect::<String>();
     format!(
-        "claude --verbose --permission-mode {} {} --append-system-prompt {}{} --output-format stream-json -p {}",
+        "claude --verbose --permission-mode {} {} --append-system-prompt {}{} --input-format stream-json --output-format stream-json -p",
         permission_mode,
-        isolation_args(home),
+        isolation_args(home, true),
         quote_prompt(system_prompt),
-        extra,
-        quote_prompt(prompt)
+        extra
     )
 }
 
@@ -141,18 +147,19 @@ mod tests {
     #[test]
     fn chat_command_is_fresh_and_isolated() {
         let mcp = vec!["--strict-mcp-config".to_string()];
-        let cmd = build_chat_command("it's", "sys", &mcp, "plan", Some(Path::new("/home/u")));
+        let cmd = build_chat_command("sys", &mcp, "plan", Some(Path::new("/home/u")));
         assert!(cmd.contains("--permission-mode plan "));
         assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains("--append-system-prompt 'sys' '--strict-mcp-config'"));
-        assert!(cmd.ends_with("-p 'it'\"'\"'s'"));
+        assert!(cmd.contains("--input-format stream-json --output-format stream-json"));
+        assert!(cmd.ends_with(" -p"));
+        assert!(cmd.contains(r#"--settings '{"autoCompactEnabled":false,"#));
     }
 
     #[test]
     fn chat_command_passes_agents_and_keeps_isolation() {
         let cmd = build_chat_command(
-            "p",
             "sys",
             &ralph_core::chat::build_agents_args(),
             "auto",
@@ -170,15 +177,8 @@ mod tests {
 
     #[test]
     fn chat_command_strips_a_stored_nul_before_spawn() {
-        let cmd = build_chat_command(
-            "install \0`curl`\n\tkeep\u{0001}",
-            "sys\0",
-            &[],
-            "auto",
-            None,
-        );
+        let cmd = build_chat_command("sys\0", &[], "auto", None);
         assert!(std::ffi::CString::new(cmd.clone()).is_ok());
-        assert!(cmd.contains("-p 'install `curl`\n\tkeep'"));
         assert!(cmd.contains("--append-system-prompt 'sys'"));
         assert!(!cmd.contains('\u{0001}'));
     }
