@@ -14,7 +14,9 @@ use std::fs;
 use std::path::PathBuf;
 
 mod changes;
+mod chat_settings;
 mod claude;
+mod empty_submit;
 mod opencode;
 #[cfg(test)]
 mod recent_history_tests;
@@ -197,6 +199,10 @@ pub struct ChatSection {
     pub editor: Option<EditorSetting>,
     #[serde(default)]
     pub edit_mode: Option<String>,
+    #[serde(default)]
+    pub empty_submit: Option<String>,
+    #[serde(default)]
+    pub empty_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -204,35 +210,6 @@ pub struct ChatSection {
 pub enum EditorSetting {
     Argv(Vec<String>),
     Invalid(toml::Value),
-}
-
-impl ChatSection {
-    pub fn worker_quiet_setting(&self) -> (u64, Option<String>) {
-        match self.worker_quiet_secs.as_ref().map(toml::Value::as_integer) {
-            None => (WORKER_QUIET_SECS, None),
-            Some(Some(secs)) if secs > 0 => (secs.unsigned_abs(), None),
-            Some(_) => (
-                WORKER_QUIET_SECS,
-                Some(format!(
-                    "[chat] worker_quiet_secs must be a positive integer; using {WORKER_QUIET_SECS}"
-                )),
-            ),
-        }
-    }
-
-    pub fn editor_setting(&self) -> (Option<&[String]>, Option<String>) {
-        match &self.editor {
-            Some(EditorSetting::Argv(argv)) => (Some(argv), None),
-            Some(EditorSetting::Invalid(_)) => (
-                None,
-                Some(
-                    "[chat] editor must be a list of strings; using $VISUAL, $EDITOR or vi"
-                        .to_string(),
-                ),
-            ),
-            None => (None, None),
-        }
-    }
 }
 
 fn default_true() -> bool {
@@ -265,6 +242,8 @@ impl Default for ChatSection {
             status_powerline: false,
             editor: None,
             edit_mode: None,
+            empty_submit: None,
+            empty_prompt: None,
         }
     }
 }

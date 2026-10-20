@@ -249,10 +249,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("VISUAL").ok().as_deref(),
         std::env::var("EDITOR").ok().as_deref(),
     );
+    let (empty_submit, empty_warning) = chat_config.empty_submit_setting();
     config_warning
         .into_iter()
         .chain(editor_warning)
         .chain(quiet_warning)
+        .chain(empty_warning)
         .for_each(warn);
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
@@ -265,6 +267,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         ),
         notice: RefCell::new(None),
         editor: editor_cmd,
+        empty_submit,
     };
     let inbox_display = |color| Display {
         ctx: RenderContext::new(&agent_highlighter, color),
