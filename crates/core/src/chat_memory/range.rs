@@ -1,11 +1,11 @@
-use super::{Entry, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
+use super::{Entry, Node, Tree, Window, SUMMARY_BYTES, UNAVAILABLE_MARK};
 use crate::mcp::string_arg;
 use serde_json::Value;
 use std::ops::RangeInclusive;
 
 pub const DEFAULT_BUDGET: usize = 4096;
 pub const BUDGET_RANGE: RangeInclusive<usize> = 1..=16384;
-const BYTES_PER_TOKEN: usize = 3;
+pub(super) const BYTES_PER_TOKEN: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -33,6 +33,13 @@ pub struct RangeRequest {
 pub struct RangePage {
     pub text: String,
     pub next: Option<Cursor>,
+}
+
+/// `More`: the page needs an entry past the window; retry with a larger one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Read {
+    Page(RangePage),
+    More,
 }
 
 impl Cursor {
@@ -175,12 +182,8 @@ fn validate_cursor(cursor: &Cursor, from: usize, limit: usize, len: usize) -> Re
     Ok(())
 }
 
-pub fn read_range(
-    entries: &[Entry],
-    tree: &Tree,
-    request: &RangeRequest,
-) -> Result<RangePage, String> {
-    let len = entries.len();
+pub fn read_range(window: &Window, tree: &Tree, request: &RangeRequest) -> Result<Read, String> {
+    let len = window.total;
     if request.from > request.to {
         return Err(format!(
             "range {}-{} is backwards.",
@@ -216,7 +219,9 @@ pub fn read_range(
     let mut left = request.budget * BYTES_PER_TOKEN;
     let mut blocks: Vec<String> = Vec::new();
     while cursor.next < cursor.end {
-        let entry = &entries[cursor.next];
+        let Some(entry) = window.get(cursor.next) else {
+            return Ok(Read::More);
+        };
         let text = view_text(entry, tree, cursor.next, request.mode);
         let total = text.chars().count();
         if cursor.offset > 0 && cursor.offset >= total {
@@ -267,10 +272,10 @@ pub fn read_range(
         };
         break;
     }
-    Ok(RangePage {
+    Ok(Read::Page(RangePage {
         text: blocks.join("\n\n"),
         next: (cursor.next < cursor.end).then_some(cursor),
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -298,11 +303,22 @@ mod tests {
         }
     }
 
+    fn read_full(
+        entries: &[Entry],
+        tree: &Tree,
+        request: &RangeRequest,
+    ) -> Result<RangePage, String> {
+        match read_range(&Window::full(entries), tree, request)? {
+            Read::Page(page) => Ok(page),
+            Read::More => panic!("a full window never needs more"),
+        }
+    }
+
     fn pages(entries: &[Entry], tree: &Tree, first: RangeRequest) -> Vec<RangePage> {
         let mut out = Vec::new();
         let mut req = first;
         loop {
-            let page = read_range(entries, tree, &req).unwrap();
+            let page = read_full(entries, tree, &req).unwrap();
             let next = page.next;
             out.push(page);
             match next {
@@ -375,7 +391,7 @@ mod tests {
     #[test]
     fn reads_whole_range_in_one_page() {
         let entries: Vec<Entry> = (0..4).map(|i| entry(i, 5)).collect();
-        let page = read_range(&entries, &Tree::new(), &request(1, 2, 4096)).unwrap();
+        let page = read_full(&entries, &Tree::new(), &request(1, 2, 4096)).unwrap();
         assert_eq!(page.next, None);
         assert_eq!(
             page.text,
@@ -387,7 +403,7 @@ mod tests {
     #[test]
     fn clamps_to_to_log_length() {
         let entries: Vec<Entry> = (0..3).map(|i| entry(i, 5)).collect();
-        let page = read_range(&entries, &Tree::new(), &request(1, 99, 4096)).unwrap();
+        let page = read_full(&entries, &Tree::new(), &request(1, 99, 4096)).unwrap();
         assert_eq!(bodies(&page).len(), 2);
         assert_eq!(page.next, None);
     }
@@ -396,11 +412,11 @@ mod tests {
     fn rejects_bad_requests() {
         let entries: Vec<Entry> = (0..3).map(|i| entry(i, 5)).collect();
         let t = Tree::new();
-        assert!(read_range(&entries, &t, &request(2, 1, 100)).is_err());
-        assert!(read_range(&entries, &t, &request(3, 4, 100)).is_err());
-        assert!(read_range(&entries, &t, &request(0, 2, 0)).is_err());
-        assert!(read_range(&entries, &t, &request(0, 2, 16385)).is_err());
-        assert!(read_range(&entries, &t, &request(0, 2, 16384)).is_ok());
+        assert!(read_full(&entries, &t, &request(2, 1, 100)).is_err());
+        assert!(read_full(&entries, &t, &request(3, 4, 100)).is_err());
+        assert!(read_full(&entries, &t, &request(0, 2, 0)).is_err());
+        assert!(read_full(&entries, &t, &request(0, 2, 16385)).is_err());
+        assert!(read_full(&entries, &t, &request(0, 2, 16384)).is_ok());
     }
 
     #[test]
@@ -411,11 +427,11 @@ mod tests {
             cursor: Some(Cursor { next, offset, end }),
             ..request(1, 2, 100)
         };
-        assert!(read_range(&entries, &t, &with(1, 0, 3)).is_ok());
-        assert!(read_range(&entries, &t, &with(0, 0, 3)).is_err());
-        assert!(read_range(&entries, &t, &with(3, 0, 3)).is_err());
-        assert!(read_range(&entries, &t, &with(1, 0, 4)).is_err());
-        assert!(read_range(&entries, &t, &with(1, 8, 3)).is_err());
+        assert!(read_full(&entries, &t, &with(1, 0, 3)).is_ok());
+        assert!(read_full(&entries, &t, &with(0, 0, 3)).is_err());
+        assert!(read_full(&entries, &t, &with(3, 0, 3)).is_err());
+        assert!(read_full(&entries, &t, &with(1, 0, 4)).is_err());
+        assert!(read_full(&entries, &t, &with(1, 8, 3)).is_err());
         let narrow = RangeRequest {
             cursor: Some(Cursor {
                 next: 1,
@@ -424,7 +440,7 @@ mod tests {
             }),
             ..request(1, 1, 100)
         };
-        assert!(read_range(&entries, &t, &narrow).is_err());
+        assert!(read_full(&entries, &t, &narrow).is_err());
     }
 
     #[test]
@@ -489,7 +505,7 @@ mod tests {
     #[test]
     fn appended_messages_stay_out_of_a_snapshot() {
         let mut entries: Vec<Entry> = (0..4).map(|i| entry(i, 30)).collect();
-        let first = read_range(&entries, &Tree::new(), &request(0, 99, 15)).unwrap();
+        let first = read_full(&entries, &Tree::new(), &request(0, 99, 15)).unwrap();
         let cursor = first.next.unwrap();
         assert_eq!(cursor.end, 4);
         entries.push(entry(4, 30));
@@ -500,7 +516,7 @@ mod tests {
         };
         let mut text = first.text;
         loop {
-            let page = read_range(&entries, &Tree::new(), &req).unwrap();
+            let page = read_full(&entries, &Tree::new(), &req).unwrap();
             text.push_str(&page.text);
             match page.next {
                 Some(c) => req.cursor = Some(c),
@@ -524,12 +540,12 @@ mod tests {
             mode: Mode::Summary,
             ..request(0, 2, 4096)
         };
-        let page = read_range(&entries, &tree, &req).unwrap();
+        let page = read_full(&entries, &tree, &req).unwrap();
         let parts = bodies(&page);
         assert_eq!(parts[0].1, "the gist");
         assert_eq!(parts[1].1, "[not summarized]");
         assert_eq!(parts[2].1, "short one");
-        let raw = read_range(&entries, &tree, &request(0, 0, 4096)).unwrap();
+        let raw = read_full(&entries, &tree, &request(0, 0, 4096)).unwrap();
         assert_eq!(bodies(&raw)[0].1, long);
     }
 }

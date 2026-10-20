@@ -1,3 +1,5 @@
+mod archive;
+mod index;
 mod log;
 mod lookup;
 mod nap;
@@ -9,12 +11,17 @@ mod usage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use archive::{
+    read_page, refresh, write_plan, zoom_node, ByteSource, IndexWrite, NodeSource, Refresh,
+};
+pub use index::{LogIndex, LOG_INDEX_FILE};
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
-pub use lookup::{recall, zoom};
+pub use lookup::{recall, zoom, zoom_entries};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
     retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
 };
+pub use range::{read_range, Mode, RangeRequest, Read};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
 pub use tree::{cover, estimate_tokens, frozen_block, pending, tail_lines, verbatim_start};
 pub use usage::{
@@ -65,6 +72,28 @@ struct Record {
 }
 
 pub type Tree = HashMap<Node, String>;
+
+/// Entries `[start, start + entries.len())` of a log that holds `total`.
+#[derive(Debug, Clone, Copy)]
+pub struct Window<'a> {
+    pub start: usize,
+    pub total: usize,
+    pub entries: &'a [Entry],
+}
+
+impl<'a> Window<'a> {
+    pub fn full(entries: &'a [Entry]) -> Self {
+        Window {
+            start: 0,
+            total: entries.len(),
+            entries,
+        }
+    }
+
+    pub fn get(&self, i: usize) -> Option<&'a Entry> {
+        i.checked_sub(self.start).and_then(|k| self.entries.get(k))
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Frozen {

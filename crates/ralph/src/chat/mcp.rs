@@ -1,7 +1,7 @@
 use crate::chat::changes::run_changes;
 use crate::chat::memory::Store;
 use crate::chat::socket::forward;
-use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
+use ralph_core::chat_memory::{finish_call, handle_request, recall, Outcome, Tool};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::mcp::tool_result;
 use serde_json::Value;
@@ -29,8 +29,8 @@ pub fn run_stdio_server(
         let response = match handle_request(&request) {
             Outcome::Silent => continue,
             Outcome::Respond(v) => v,
-            Outcome::Call { id, tool } => match store.load() {
-                Ok((entries, tree)) => finish_call(id, &entries, &tree, &tool),
+            Outcome::Call { id, tool } => match memory_call(store, &tool) {
+                Ok(result) => finish_call(id, result),
                 Err(e) => tool_result(id, &format!("Could not read chat memory: {e}"), true),
             },
             Outcome::Changes { id, request } => {
@@ -53,6 +53,15 @@ pub fn run_stdio_server(
         output.flush()?;
     }
     Ok(())
+}
+
+/// `zoom` and `read` go through `log.idx`; `recall` still scans every entry.
+fn memory_call(store: &Store, tool: &Tool) -> io::Result<Result<String, String>> {
+    match tool {
+        Tool::Zoom(node) => store.zoom(*node),
+        Tool::Recall(pattern) => store.load().map(|(entries, _)| recall(&entries, pattern)),
+        Tool::Read(request) => store.read(request),
+    }
 }
 
 #[cfg(test)]

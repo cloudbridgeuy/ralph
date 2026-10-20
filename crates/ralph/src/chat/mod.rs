@@ -4,6 +4,7 @@ mod check;
 mod diff;
 mod editor;
 mod inbox;
+mod index_files;
 pub(crate) mod mcp;
 pub(crate) mod memory;
 mod monitor;

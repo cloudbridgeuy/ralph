@@ -86,16 +86,23 @@ pub(super) fn entry_line(i: usize, entry: &Entry, body: &str) -> String {
     format!("#{i} {} {} {body}", entry.role.as_str(), entry.at)
 }
 
+pub(super) fn leaf_line(i: usize, entry: &Entry, tree: &Tree) -> Option<String> {
+    if is_long(entry) {
+        tree.get(&Node::leaf(i)).map(|s| entry_line(i, entry, s))
+    } else {
+        Some(entry_line(i, entry, &collapse(&entry.text)))
+    }
+}
+
+pub(super) fn block_line(tree: &Tree, node: Node) -> Option<String> {
+    tree.get(&node).map(|s| format!("#{} {s}", node.id()))
+}
+
 pub(super) fn node_line(entries: &[Entry], tree: &Tree, node: Node) -> Option<String> {
     if node.size() == 1 {
-        let entry = &entries[node.lo];
-        if is_long(entry) {
-            tree.get(&node).map(|s| entry_line(node.lo, entry, s))
-        } else {
-            Some(entry_line(node.lo, entry, &collapse(&entry.text)))
-        }
+        leaf_line(node.lo, &entries[node.lo], tree)
     } else {
-        tree.get(&node).map(|s| format!("#{} {s}", node.id()))
+        block_line(tree, node)
     }
 }
 

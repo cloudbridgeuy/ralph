@@ -1,8 +1,10 @@
+use crate::chat::index_files::{snapshot_log, update_log_index, FileSource};
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
-    nap_source, nap_step, parse_log, parse_tree, pending, retry_prompt, Commit, Entry, NapStep,
-    Node, Role, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    nap_source, nap_step, parse_log, parse_tree, pending, read_page, retry_prompt, zoom_node,
+    Commit, Entry, LogIndex, NapStep, Node, RangeRequest, Role, Tree, Trigger, UsageRecord,
+    MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -17,7 +19,7 @@ pub struct Store {
     dir: PathBuf,
 }
 
-fn check_path(path: &Path) -> io::Result<()> {
+pub(super) fn check_path(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::other(format!(
             "chat store path is a symlink: {}",
@@ -33,7 +35,7 @@ fn check_path(path: &Path) -> io::Result<()> {
     }
 }
 
-fn read_optional(path: &Path) -> io::Result<Vec<u8>> {
+pub(super) fn read_optional(path: &Path) -> io::Result<Vec<u8>> {
     check_path(path)?;
     match fs::read(path) {
         Ok(bytes) => Ok(bytes),
@@ -75,6 +77,29 @@ impl Store {
             warn(warning);
         }
         Ok(tree)
+    }
+
+    /// Takes a shared `LOCK` only while it fixes the log length and reads
+    /// `log.idx`; entries below that length never change, so reads after the
+    /// lock is gone see the same snapshot.
+    fn snapshot(&self) -> io::Result<(FileSource, LogIndex)> {
+        let lock = self.open_lock()?;
+        lock.lock_shared()?;
+        snapshot_log(&self.dir)
+    }
+
+    pub fn read(&self, request: &RangeRequest) -> io::Result<Result<String, String>> {
+        let (mut log, index) = self.snapshot()?;
+        let mut tree = self.load_tree()?;
+        let page = read_page(&mut log, &index, &mut tree, request)?;
+        Ok(page.map(|page| page.render()))
+    }
+
+    pub fn zoom(&self, node: Node) -> io::Result<Result<String, String>> {
+        let (mut log, index) = self.snapshot()?;
+        let mut tree = self.load_tree()?;
+        let lines = zoom_node(&mut log, &index, &mut tree, node)?;
+        Ok(lines.map(|lines| lines.join("\n")))
     }
 
     pub fn load_usage(&self) -> io::Result<String> {
@@ -140,7 +165,12 @@ impl Store {
         check_path(&path)?;
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         file.write_all(line.as_bytes())?;
-        file.sync_all()
+        file.sync_all()?;
+        // The line is committed; `log.idx` is a cache the next reader rebuilds.
+        if let Err(e) = update_log_index(&self.dir) {
+            warn(format!("chat log index not updated: {e}"));
+        }
+        Ok(())
     }
 
     fn put(&self, node: Node, text: &str) -> io::Result<()> {
@@ -269,7 +299,7 @@ fn summarize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::chat_memory::{frozen_block, FALLBACK_MARK};
+    use ralph_core::chat_memory::{frozen_block, FALLBACK_MARK, LOG_INDEX_FILE};
 
     #[test]
     fn missing_files_load_empty() {
@@ -325,6 +355,72 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[1].role, Role::Assistant);
         assert_eq!(entries[1].text, "yo");
+    }
+
+    fn stored_index(store: &Store) -> Option<LogIndex> {
+        LogIndex::decode(&fs::read(store.dir().join(LOG_INDEX_FILE)).ok()?)
+    }
+
+    fn read_request(id: &str) -> RangeRequest {
+        ralph_core::chat_memory::parse_tool_call("read", &serde_json::json!({ "id": id }))
+            .map(|tool| match tool {
+                ralph_core::chat_memory::Tool::Read(request) => request,
+                _ => unreachable!(),
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn append_keeps_the_log_index_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "hi").unwrap();
+        assert_eq!(stored_index(&store).unwrap().count(), 1);
+        store.append(Role::Assistant, "yo").unwrap();
+        let index = stored_index(&store).unwrap();
+        assert_eq!(index.count(), 2);
+        let log = fs::read(store.dir().join("log.jsonl")).unwrap();
+        assert_eq!(index.covered, log.len() as u64);
+    }
+
+    #[test]
+    fn append_rebuilds_a_damaged_log_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "one").unwrap();
+        fs::write(store.dir().join(LOG_INDEX_FILE), b"junk").unwrap();
+        store.append(Role::User, "two").unwrap();
+        assert_eq!(stored_index(&store).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn reads_see_lines_the_index_has_not_caught_up_with() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "first").unwrap();
+        let mut log = OpenOptions::new()
+            .append(true)
+            .open(store.dir().join("log.jsonl"))
+            .unwrap();
+        log.write_all(b"{\"role\":\"user\",\"at\":\"t\",\"text\":\"second\"}\n")
+            .unwrap();
+        assert_eq!(stored_index(&store).unwrap().count(), 1);
+        let page = store.read(&read_request("0-9")).unwrap().unwrap();
+        assert!(page.contains("first") && page.contains("second"));
+        assert!(store
+            .zoom(Node::new(1, 2).unwrap())
+            .unwrap()
+            .unwrap()
+            .contains("second"));
+        assert_eq!(stored_index(&store).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn reads_without_a_log_report_beyond_the_chat() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        assert!(store.read(&read_request("0")).unwrap().is_err());
+        assert!(store.zoom(Node::new(0, 1).unwrap()).unwrap().is_err());
     }
 
     #[test]

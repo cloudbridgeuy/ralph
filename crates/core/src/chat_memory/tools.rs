@@ -1,6 +1,5 @@
-use super::lookup::{recall, zoom};
-use super::range::{parse_read_args, read_range, RangeRequest};
-use super::{Entry, Node, Tree, SERVER_NAME};
+use super::range::{parse_read_args, RangeRequest};
+use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
 use crate::chat_socket::is_worker_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
@@ -110,16 +109,8 @@ pub fn handle_request(request: &Value) -> Outcome {
     }
 }
 
-fn run_tool(entries: &[Entry], tree: &Tree, tool: &Tool) -> Result<String, String> {
-    match tool {
-        Tool::Zoom(node) => zoom(entries, tree, *node).map(|lines| lines.join("\n")),
-        Tool::Recall(pattern) => recall(entries, pattern),
-        Tool::Read(request) => read_range(entries, tree, request).map(|page| page.render()),
-    }
-}
-
-pub fn finish_call(id: Value, entries: &[Entry], tree: &Tree, tool: &Tool) -> Value {
-    match run_tool(entries, tree, tool) {
+pub fn finish_call(id: Value, result: Result<String, String>) -> Value {
+    match result {
         Ok(text) => tool_result(id, &text, false),
         Err(message) => tool_result(id, &message, true),
     }
@@ -128,6 +119,7 @@ pub fn finish_call(id: Value, entries: &[Entry], tree: &Tree, tool: &Tool) -> Va
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::entry;
+    use crate::chat_memory::{read_range, recall, zoom, Entry, Read, Tree, Window};
 
     fn call(name: &str, args: Value) -> Outcome {
         handle_request(
@@ -142,9 +134,21 @@ mod tests {
             .to_string()
     }
 
+    fn run(entries: &[Entry], tree: &Tree, tool: &Tool) -> Result<String, String> {
+        let window = Window::full(entries);
+        match tool {
+            Tool::Zoom(node) => zoom(&window, tree, *node).map(|lines| lines.join("\n")),
+            Tool::Recall(pattern) => recall(entries, pattern),
+            Tool::Read(request) => match read_range(&window, tree, request)? {
+                Read::Page(page) => Ok(page.render()),
+                Read::More => panic!("a full window never needs more"),
+            },
+        }
+    }
+
     fn finish(entries: &[Entry], tree: &Tree, name: &str, args: Value) -> Value {
         match call(name, args) {
-            Outcome::Call { id, tool } => finish_call(id, entries, tree, &tool),
+            Outcome::Call { id, tool } => finish_call(id, run(entries, tree, &tool)),
             Outcome::Respond(v) => v,
             Outcome::Silent | Outcome::Worker { .. } | Outcome::Changes { .. } => {
                 panic!("not a memory call")

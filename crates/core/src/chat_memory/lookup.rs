@@ -1,28 +1,45 @@
-use super::tree::{collapse, entry_line, node_line};
-use super::{Entry, Node, Tree};
+use super::tree::{block_line, collapse, entry_line, leaf_line};
+use super::{Entry, Node, Tree, Window};
 use regex::RegexBuilder;
 
-pub fn zoom(entries: &[Entry], tree: &Tree, node: Node) -> Result<Vec<String>, String> {
-    let t = entries.len();
+/// Entries that `zoom` reads: the leaf itself, or both leaves of a pair.
+/// Larger blocks show only their halves' summaries.
+pub fn zoom_entries(node: Node, total: usize) -> (usize, usize) {
+    let start = node.lo.min(total);
+    let end = if node.size() <= 2 {
+        node.hi.min(total)
+    } else {
+        start
+    };
+    (start, end)
+}
+
+pub fn zoom(window: &Window, tree: &Tree, node: Node) -> Result<Vec<String>, String> {
+    let t = window.total;
     if node.lo >= t {
         return Err(format!(
             "#{} is beyond the chat: it holds {t} entries.",
             node.id()
         ));
     }
+    let entry = |i: usize| window.get(i).ok_or_else(|| format!("#{i} is not loaded."));
     if node.size() == 1 {
-        let entry = &entries[node.lo];
+        let entry = entry(node.lo)?;
         return Ok(vec![entry_line(node.lo, entry, &entry.text)]);
     }
     let (left, right) = node.halves();
-    Ok([left, right]
+    [left, right]
         .into_iter()
         .filter(|half| half.lo < t)
         .map(|half| {
-            node_line(entries, tree, half)
-                .unwrap_or_else(|| format!("#{} not compressed yet", half.id()))
+            let line = if half.size() == 1 {
+                leaf_line(half.lo, entry(half.lo)?, tree)
+            } else {
+                block_line(tree, half)
+            };
+            Ok(line.unwrap_or_else(|| format!("#{} not compressed yet", half.id())))
         })
-        .collect())
+        .collect()
 }
 
 const RECALL_MAX_LINES: usize = 50;
@@ -94,23 +111,34 @@ mod tests {
     use crate::chat_memory::fixtures::{entry, n, texted};
 
     #[test]
+    fn zoom_entries_loads_only_leaves_and_pairs() {
+        assert_eq!(zoom_entries(n(5, 6), 9), (5, 6));
+        assert_eq!(zoom_entries(n(8, 10), 9), (8, 9));
+        assert_eq!(zoom_entries(n(0, 4), 9), (0, 0));
+        assert_eq!(zoom_entries(n(16, 17), 9), (9, 9));
+    }
+
+    #[test]
     fn zoom_leaf_halves_and_beyond() {
         let mut entries = vec![entry(0, 5), entry(1, 5), entry(2, 5)];
         entries[1].text = "a\n  b".into();
         let mut tree = Tree::new();
         assert_eq!(
-            zoom(&entries, &tree, n(1, 2)).unwrap(),
+            zoom(&Window::full(&entries), &tree, n(1, 2)).unwrap(),
             ["#1 assistant 2026-01-01T00:00:01Z a\n  b"]
         );
-        let halves = zoom(&entries, &tree, n(0, 4)).unwrap();
+        let halves = zoom(&Window::full(&entries), &tree, n(0, 4)).unwrap();
         assert_eq!(
             halves,
             ["#0-1 not compressed yet", "#2-3 not compressed yet"]
         );
         tree.insert(n(0, 2), "sum".into());
-        assert_eq!(zoom(&entries, &tree, n(0, 4)).unwrap()[0], "#0-1 sum");
-        assert!(zoom(&entries, &tree, n(4, 8)).is_err());
-        assert!(zoom(&entries, &tree, n(3, 4)).is_err());
+        assert_eq!(
+            zoom(&Window::full(&entries), &tree, n(0, 4)).unwrap()[0],
+            "#0-1 sum"
+        );
+        assert!(zoom(&Window::full(&entries), &tree, n(4, 8)).is_err());
+        assert!(zoom(&Window::full(&entries), &tree, n(3, 4)).is_err());
     }
 
     #[test]
