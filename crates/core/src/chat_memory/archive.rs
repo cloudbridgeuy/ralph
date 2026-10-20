@@ -373,10 +373,10 @@ fn zoom_node(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat_memory::fixtures::{entry, n};
+    use crate::chat_memory::fixtures::{entry, n, written};
     use crate::chat_memory::index::NodeSlot;
     use crate::chat_memory::range::Cursor;
-    use crate::chat_memory::{encode_entry, encode_record, pending};
+    use crate::chat_memory::{encode_record, pending};
 
     struct Bytes {
         data: Vec<u8>,
@@ -395,11 +395,7 @@ mod tests {
     }
 
     fn bytes(entries: &[Entry]) -> Bytes {
-        let data = entries
-            .iter()
-            .map(|e| encode_entry(e).unwrap())
-            .collect::<String>()
-            .into_bytes();
+        let data = entries.iter().map(written).collect::<String>().into_bytes();
         Bytes { data, read: 0 }
     }
 

@@ -2,7 +2,8 @@ use super::index_files::open_archive;
 use super::memory::Store;
 use super::monitor::fresh_warnings;
 use ralph_core::chat_memory::{
-    encode_entry, nap_step, pending, Entry, Mode, NapStep, Node, RangeRequest, Tree, CORRUPT_TEXT,
+    encode_entry, nap_step, pending, Entry, Mode, NapStep, NewEntry, Node, RangeRequest, Tree,
+    CORRUPT_TEXT,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -22,7 +23,13 @@ fn write_log(dir: &Path, parts: &[String]) {
 }
 
 fn line(i: usize, len: usize) -> String {
-    encode_entry(&entry(i, len)).unwrap()
+    let entry = entry(i, len);
+    encode_entry(&NewEntry {
+        role: entry.role,
+        at: entry.at,
+        text: entry.text,
+    })
+    .unwrap()
 }
 
 fn raw(from: usize, to: usize) -> RangeRequest {

@@ -348,12 +348,12 @@ fn read_u64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat_memory::fixtures::{entry, n};
-    use crate::chat_memory::{encode_entry, encode_record, parse_tree};
+    use crate::chat_memory::fixtures::{entry, n, written};
+    use crate::chat_memory::{encode_record, parse_tree};
 
     fn log(count: usize) -> Vec<u8> {
         (0..count)
-            .map(|i| encode_entry(&entry(i, 3 * i)).unwrap())
+            .map(|i| written(&entry(i, 3 * i)))
             .collect::<String>()
             .into_bytes()
     }
@@ -389,7 +389,7 @@ mod tests {
         assert_eq!(index.covered, complete);
         let (start, end) = index.span(1, 2).unwrap();
         let text = std::str::from_utf8(&data[start as usize..end as usize]).unwrap();
-        assert_eq!(text, encode_entry(&entry(1, 3)).unwrap());
+        assert_eq!(text, written(&entry(1, 3)));
     }
 
     #[test]

@@ -60,7 +60,14 @@ impl Role {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct NewEntry {
+    pub role: Role,
+    pub at: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Entry {
     pub role: Role,
     pub at: String,
@@ -192,7 +199,7 @@ impl Node {
 
 #[cfg(test)]
 mod fixtures {
-    use super::{Entry, Node, Role};
+    use super::{encode_entry, Entry, NewEntry, Node, Role};
 
     pub fn n(lo: usize, hi: usize) -> Node {
         Node { lo, hi }
@@ -209,6 +216,15 @@ mod fixtures {
             text: format!("m{i} {}", "x".repeat(len)),
             corrupt: false,
         }
+    }
+
+    pub fn written(entry: &Entry) -> String {
+        encode_entry(&NewEntry {
+            role: entry.role,
+            at: entry.at.clone(),
+            text: entry.text.clone(),
+        })
+        .unwrap()
     }
 
     pub fn texted(count: usize, text: impl Fn(usize) -> String) -> Vec<Entry> {

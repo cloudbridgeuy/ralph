@@ -1,5 +1,5 @@
 use super::index::scan_lines;
-use super::{Entry, Node, Record, Tree};
+use super::{Entry, NewEntry, Node, Record, Tree};
 
 fn complete_lines(data: &[u8]) -> Vec<&[u8]> {
     let end = data.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
@@ -68,10 +68,7 @@ pub fn parse_tree(data: &[u8]) -> (Tree, Vec<String>) {
     (tree, warnings)
 }
 
-pub fn encode_entry(entry: &Entry) -> Result<String, String> {
-    if entry.is_corrupt() {
-        return Err("a corrupt log entry placeholder cannot be written".to_string());
-    }
+pub fn encode_entry(entry: &NewEntry) -> Result<String, String> {
     let mut line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
     line.push('\n');
     Ok(line)
@@ -90,13 +87,13 @@ pub fn encode_record(node: Node, text: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat_memory::fixtures::{entry, n};
+    use crate::chat_memory::fixtures::{entry, n, written};
     use crate::chat_memory::Role;
 
     #[test]
     fn parse_ignores_a_partial_last_line() {
-        let a = encode_entry(&entry(0, 1)).unwrap();
-        let b = encode_entry(&entry(1, 1)).unwrap();
+        let a = written(&entry(0, 1));
+        let b = written(&entry(1, 1));
         let partial = format!("{a}{}", &b[..10]);
         let (entries, warnings) = parse_log(partial.as_bytes());
         assert_eq!((entries.len(), warnings.len()), (1, 0));
@@ -104,9 +101,9 @@ mod tests {
 
     #[test]
     fn parse_keeps_every_entry_after_a_bad_line_with_stable_ids() {
-        let a = encode_entry(&entry(0, 1)).unwrap();
-        let b = encode_entry(&entry(1, 1)).unwrap();
-        let c = encode_entry(&entry(2, 1)).unwrap();
+        let a = written(&entry(0, 1));
+        let b = written(&entry(1, 1));
+        let c = written(&entry(2, 1));
         let log = format!("{a}garbage\n\n{b}also bad\n{c}");
         let (entries, warnings) = parse_log(log.as_bytes());
         assert_eq!(entries.len(), 5);
@@ -133,7 +130,7 @@ mod tests {
     fn entry_or_corrupt_keeps_good_lines_and_marks_bad_ones() {
         let good = entry(0, 1);
         assert!(!good.is_corrupt());
-        let line = encode_entry(&good).unwrap();
+        let line = written(&good);
         assert_eq!(
             entry_or_corrupt(line.trim_end().as_bytes(), 4, 9),
             (good, None)
@@ -157,28 +154,14 @@ mod tests {
             corrupt: false,
         };
         assert!(!real.is_corrupt());
-        let line = encode_entry(&real).unwrap();
+        let line = written(&real);
         let (parsed, warning) = entry_or_corrupt(line.trim_end().as_bytes(), 0, 0);
         assert!(!parsed.is_corrupt());
         assert_eq!((parsed, warning), (real, None));
     }
 
     #[test]
-    fn a_placeholder_taken_from_a_loaded_log_cannot_be_encoded() {
-        let good = encode_entry(&entry(0, 1)).unwrap();
-        let log = format!("{good}garbage\n{good}");
-        let (entries, _) = parse_log(log.as_bytes());
-        let placeholder = &entries[1];
-        assert!(placeholder.is_corrupt());
-        let error = encode_entry(placeholder).unwrap_err();
-        assert_eq!(error, "a corrupt log entry placeholder cannot be written");
-        assert!(encode_entry(&entries[0]).is_ok());
-    }
-
-    #[test]
     fn the_flag_is_never_written_or_read_from_the_log() {
-        let line = serde_json::to_string(&Entry::corrupt()).unwrap();
-        assert!(!line.contains("corrupt\":"), "{line}");
         let forged = r#"{"role":"worker","at":"","text":"x","corrupt":true}"#;
         let (entry, warning) = entry_or_corrupt(forged.as_bytes(), 0, 0);
         assert_eq!((entry.is_corrupt(), warning), (false, None));

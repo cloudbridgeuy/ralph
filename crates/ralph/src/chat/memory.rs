@@ -5,8 +5,8 @@ use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
     log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall, retry_prompt, search,
-    Archive, Commit, Entry, LogTail, NapStep, Node, NodeSlot, RangeRequest, Role, SearchRequest,
-    Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, RangeRequest, Role,
+    SearchRequest, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -200,11 +200,10 @@ impl Store {
 
     pub fn append(&self, role: Role, text: &str) -> io::Result<()> {
         let _lock = self.lock()?;
-        let entry = Entry {
+        let entry = NewEntry {
             role,
             at: chrono::Utc::now().to_rfc3339(),
             text: text.to_string(),
-            corrupt: false,
         };
         let line = encode_entry(&entry).map_err(io::Error::other)?;
         let path = self.dir.join("log.jsonl");

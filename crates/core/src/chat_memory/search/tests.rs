@@ -2,7 +2,8 @@ use super::query::{tokenize, Query};
 use super::scan::{CHUNK_ENTRIES, SNIPPET_CHARS};
 use super::{parse_search_args, search};
 use crate::chat_memory::archive::{Archive, ByteSource};
-use crate::chat_memory::{encode_entry, Entry, Role};
+use crate::chat_memory::fixtures::written;
+use crate::chat_memory::{Entry, Role};
 use serde_json::{json, Value};
 use std::io;
 
@@ -41,7 +42,7 @@ fn timed(role: Role, at: &str, text: &str) -> Entry {
 }
 
 fn archive(entries: &[Entry]) -> Archive<Bytes> {
-    let log: String = entries.iter().map(|e| encode_entry(e).unwrap()).collect();
+    let log: String = entries.iter().map(written).collect();
     Archive::open(Bytes(log.into_bytes()), None, Bytes(Vec::new()), None).unwrap()
 }
 
@@ -203,10 +204,7 @@ fn a_rebuild_mid_search_keeps_new_entries_and_the_cursor_valid() {
     let mut archive = archive(&entries);
     let extra = [user(1, "needle"), user(2, "needle")];
     for entry in &extra {
-        archive
-            .log
-            .0
-            .extend(encode_entry(entry).unwrap().into_bytes());
+        archive.log.0.extend(written(entry).into_bytes());
     }
     entries.extend(extra);
     archive.log_index.slots[CHUNK_ENTRIES + 10] += 1;
@@ -285,8 +283,8 @@ fn since_and_until_accept_timestamps_and_dates() {
 fn corrupt_placeholders_keep_their_ids_and_never_match() {
     let log = format!(
         "{}garbage\n{}",
-        encode_entry(&user(0, "corrupt needle")).unwrap(),
-        encode_entry(&user(2, "needle after")).unwrap()
+        written(&user(0, "corrupt needle")),
+        written(&user(2, "needle after"))
     );
     let mut archive =
         Archive::open(Bytes(log.into_bytes()), None, Bytes(Vec::new()), None).unwrap();

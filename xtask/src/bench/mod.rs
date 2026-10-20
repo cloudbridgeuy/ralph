@@ -7,7 +7,7 @@ use crate::prelude::*;
 use alloc::Allocs;
 use ralph_core::chat_memory::{
     encode_entry, encode_record, parse_log, parse_search_args, parse_tree, pending, read_range,
-    search, zoom, Archive, ByteSource, Entry, LogIndex, Mode, Node, RangeRequest, Read, Role,
+    search, zoom, Archive, ByteSource, LogIndex, Mode, NewEntry, Node, RangeRequest, Read, Role,
     SearchRequest, Tree, TreeIndex, Window, LOG_INDEX_FILE, TREE_INDEX_FILE,
 };
 use std::fs::{self, File};
@@ -79,8 +79,8 @@ fn text(i: usize) -> String {
 /// `log.jsonl` and `tree.jsonl` for `n` entries, with every node `pending`
 /// offers summarized.
 fn fixture(n: usize) -> Result<(String, String), String> {
-    let entries: Vec<Entry> = (0..n)
-        .map(|i| Entry {
+    let entries: Vec<NewEntry> = (0..n)
+        .map(|i| NewEntry {
             role: if i.is_multiple_of(2) {
                 Role::User
             } else {
@@ -88,17 +88,17 @@ fn fixture(n: usize) -> Result<(String, String), String> {
             },
             at: "2026-10-20T00:00:00+00:00".to_string(),
             text: text(i),
-            corrupt: false,
         })
         .collect();
     let log = entries
         .iter()
         .map(encode_entry)
         .collect::<Result<String, String>>()?;
+    let (loaded, _) = parse_log(log.as_bytes());
     let mut tree = Tree::new();
     let mut records = String::new();
     for _ in 0..64 {
-        let nodes = pending(&entries, &tree);
+        let nodes = pending(&loaded, &tree);
         if nodes.is_empty() {
             break;
         }
