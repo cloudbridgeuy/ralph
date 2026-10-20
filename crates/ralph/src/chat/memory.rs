@@ -529,6 +529,32 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_load_keeps_entries_after_a_mid_log_bad_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "zero").unwrap();
+        let mut log = OpenOptions::new()
+            .append(true)
+            .open(store.dir().join("log.jsonl"))
+            .unwrap();
+        log.write_all(b"not an entry\n").unwrap();
+        store.append(Role::Assistant, "two").unwrap();
+        store.append(Role::User, "three").unwrap();
+        let (entries, tree) = store.load_settled(|| ()).unwrap();
+        let texts: Vec<_> = entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, ["zero", "[corrupt entry]", "two", "three"]);
+        let flags: Vec<_> = entries.iter().map(|e| e.is_corrupt()).collect();
+        assert_eq!(flags, [false, true, false, false]);
+        let lines = frozen_block(&entries, &tree, 10, 1, None).lines;
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(
+            lines[1].starts_with("#1 worker  [corrupt entry]"),
+            "{lines:?}"
+        );
+        assert!(lines[3].starts_with("#3 user "), "{lines:?}");
+    }
+
+    #[test]
     fn append_removes_orphaned_index_temps_and_keeps_other_files() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().join("s"));

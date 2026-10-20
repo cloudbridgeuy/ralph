@@ -1,3 +1,4 @@
+use super::index::scan_lines;
 use super::{Entry, Node, Record, Tree};
 
 fn complete_lines(data: &[u8]) -> Vec<&[u8]> {
@@ -40,21 +41,14 @@ pub fn entry_or_corrupt(bytes: &[u8], id: usize, offset: u64) -> (Entry, Option<
 
 pub fn parse_log(data: &[u8]) -> (Vec<Entry>, Vec<String>) {
     let mut entries = Vec::new();
-    for line in complete_lines(data) {
-        match serde_json::from_slice::<Entry>(line) {
-            Ok(entry) => entries.push(entry),
-            Err(e) => {
-                return (
-                    entries.clone(),
-                    vec![format!(
-                        "chat log entry {} is corrupt; later entries ignored: {e}",
-                        entries.len()
-                    )],
-                )
-            }
-        }
+    let mut warnings = Vec::new();
+    for (id, line) in scan_lines(data, 0).into_iter().enumerate() {
+        let bytes = &data[line.start as usize..line.end as usize];
+        let (entry, warning) = entry_or_corrupt(bytes, id, line.start);
+        entries.push(entry);
+        warnings.extend(warning);
     }
-    (entries, Vec::new())
+    (entries, warnings)
 }
 
 pub fn parse_tree(data: &[u8]) -> (Tree, Vec<String>) {
@@ -97,15 +91,39 @@ mod tests {
     use crate::chat_memory::Role;
 
     #[test]
-    fn parse_ignores_partial_and_stops_at_corrupt() {
+    fn parse_ignores_a_partial_last_line() {
         let a = encode_entry(&entry(0, 1)).unwrap();
         let b = encode_entry(&entry(1, 1)).unwrap();
         let partial = format!("{a}{}", &b[..10]);
         let (entries, warnings) = parse_log(partial.as_bytes());
         assert_eq!((entries.len(), warnings.len()), (1, 0));
-        let corrupt = format!("{a}garbage\n{b}");
-        let (entries, warnings) = parse_log(corrupt.as_bytes());
-        assert_eq!((entries.len(), warnings.len()), (1, 1));
+    }
+
+    #[test]
+    fn parse_keeps_every_entry_after_a_bad_line_with_stable_ids() {
+        let a = encode_entry(&entry(0, 1)).unwrap();
+        let b = encode_entry(&entry(1, 1)).unwrap();
+        let c = encode_entry(&entry(2, 1)).unwrap();
+        let log = format!("{a}garbage\n\n{b}also bad\n{c}");
+        let (entries, warnings) = parse_log(log.as_bytes());
+        assert_eq!(entries.len(), 5);
+        let bad: Vec<bool> = entries.iter().map(Entry::is_corrupt).collect();
+        assert_eq!(bad, [false, true, false, true, false]);
+        assert_eq!(entries[2], entry(1, 1));
+        assert_eq!(entries[4], entry(2, 1));
+        let first = a.len();
+        assert_eq!(warnings.len(), 2);
+        assert!(
+            warnings[0].starts_with(&format!("chat log entry 1 at byte {first} is corrupt")),
+            "{}",
+            warnings[0]
+        );
+        let second = first + "garbage\n\n".len() + b.len();
+        assert!(
+            warnings[1].starts_with(&format!("chat log entry 3 at byte {second} is corrupt")),
+            "{}",
+            warnings[1]
+        );
     }
 
     #[test]
