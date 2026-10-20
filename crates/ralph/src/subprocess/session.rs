@@ -1,5 +1,5 @@
 use super::kill_process_group;
-use super::spinner::{spawn_piped, Pump, SpinnerSubprocessConfig};
+use super::spinner::{spawn_piped, Pump, Readers, SpinnerSubprocessConfig, Step};
 use super::timeout::try_wait_child;
 use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
@@ -19,6 +19,8 @@ const INTERRUPT_REQUEST_ID: &str = "int-1";
 pub struct Session {
     child: Child,
     stdin: Option<ChildStdin>,
+    readers: Readers,
+    alive: bool,
     config: SpinnerSubprocessConfig,
 }
 
@@ -26,9 +28,12 @@ impl Session {
     pub fn spawn(config: &SpinnerSubprocessConfig) -> Result<Session, SubprocessError> {
         let mut child = spawn_piped(&config.command, Stdio::piped())?;
         let stdin = child.stdin.take();
+        let readers = Readers::start(&mut child)?;
         Ok(Session {
             child,
             stdin,
+            readers,
+            alive: true,
             config: config.clone(),
         })
     }
@@ -57,14 +62,27 @@ impl Session {
         }
     }
 
+    pub fn is_alive(&self) -> bool {
+        self.alive
+    }
+
     pub fn turn(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
-        let mut pump = Pump::start(&mut self.child, &self.config)?;
+        let result = self.drive(prompt);
+        if matches!(&result, Err(e) if !matches!(e, SubprocessError::Interrupted { .. })) {
+            self.alive = false;
+        }
+        result
+    }
+
+    fn drive(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
+        let mut pump = Pump::start(&self.config)?;
         self.send(&user_line(prompt))?;
         let mut interrupt: Option<(Instant, bool)> = None;
         let outcome = loop {
             if let Some(status) = try_wait_child(&mut self.child)? {
+                self.alive = false;
                 let exit_code = status.code().ok_or(SubprocessError::Signaled)?;
-                break pump.finish(exit_code, true);
+                break pump.finish(&self.readers, exit_code, true);
             }
             let cancelled = self
                 .config
@@ -77,16 +95,24 @@ impl Session {
             }
             if interrupt.is_some_and(|(sent, _)| sent.elapsed() >= INTERRUPT_GRACE) {
                 kill_process_group(&mut self.child);
-                break pump.finish(EXIT_CODE_KILLED, false);
+                self.alive = false;
+                break pump.finish(&self.readers, EXIT_CODE_KILLED, false);
             }
             let paused = self
                 .config
                 .pause
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::SeqCst));
-            if pump.step(paused)? {
-                let exit_code = self.close();
-                break pump.finish(exit_code, true);
+            match pump.step(&self.readers, paused)? {
+                Step::Pending => {}
+                Step::Result { is_error } => {
+                    break pump.finish(&self.readers, i32::from(is_error), true);
+                }
+                Step::Closed => {
+                    self.alive = false;
+                    let exit_code = self.close();
+                    break pump.finish(&self.readers, exit_code, true);
+                }
             }
         };
         match interrupt {

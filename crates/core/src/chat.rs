@@ -6,8 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 pub const VIEW_LINES: usize = 200;
-pub const FROZEN_WINDOW: usize = 32;
-pub const RECENT_HISTORY_TOKENS: usize = 4096;
+pub const RECENT_HISTORY_TOKENS: usize = 8192;
 pub const WORKER_CHECK_SECS: u64 = 60;
 pub const WORKER_QUIET_SECS: u64 = 300;
 pub const WATCH_TIMEOUT_SECS: u64 = 3600;
@@ -42,18 +41,6 @@ pub fn resolve_wrap_width(
     Ok(flag.or(env).or(config).filter(|&width| width > 0))
 }
 
-pub fn resolve_frozen_window(flag: Option<usize>, config: Option<usize>) -> Result<usize, String> {
-    let window = flag.or(config).unwrap_or(FROZEN_WINDOW);
-    if (1..VIEW_LINES).contains(&window) {
-        Ok(window)
-    } else {
-        Err(format!(
-            "frozen window {window} is out of range: use a value from 1 to {}.",
-            VIEW_LINES - 1
-        ))
-    }
-}
-
 pub fn resolve_recent_history_tokens(flag: Option<usize>, config: Option<usize>) -> usize {
     flag.or(config).unwrap_or(RECENT_HISTORY_TOKENS)
 }
@@ -83,13 +70,13 @@ Forget requests: you have no erase tool. Say so plainly; never summarize the ite
 
 The chat is logged automatically. Never claim to save, store, or remember anything manually.";
 
-pub fn turn_system_prompt(frozen: &[String]) -> String {
-    if frozen.is_empty() {
+pub fn turn_system_prompt(older: &[String]) -> String {
+    if older.is_empty() {
         return SYSTEM_PROMPT.to_string();
     }
     format!(
         "{SYSTEM_PROMPT}\n\nOlder chat, compressed, oldest first:\n{}",
-        frozen.join("\n")
+        older.join("\n")
     )
 }
 
@@ -258,30 +245,16 @@ mod tests {
     fn recent_history_tokens_resolution() {
         assert_eq!(resolve_recent_history_tokens(Some(5), Some(9)), 5);
         assert_eq!(resolve_recent_history_tokens(None, Some(9)), 9);
-        assert_eq!(resolve_recent_history_tokens(None, None), 4096);
+        assert_eq!(resolve_recent_history_tokens(None, None), 8192);
         assert_eq!(resolve_recent_history_tokens(Some(0), Some(9)), 0);
         assert_eq!(resolve_recent_history_tokens(None, Some(0)), 0);
     }
 
     #[test]
-    fn frozen_window_resolution() {
-        assert_eq!(resolve_frozen_window(Some(5), Some(9)), Ok(5));
-        assert_eq!(resolve_frozen_window(None, Some(9)), Ok(9));
-        assert_eq!(resolve_frozen_window(None, None), Ok(32));
-        assert_eq!(resolve_frozen_window(Some(199), None), Ok(199));
-        assert!(resolve_frozen_window(Some(0), None)
-            .unwrap_err()
-            .contains("1 to 199"));
-        assert!(resolve_frozen_window(None, Some(200))
-            .unwrap_err()
-            .contains("200"));
-    }
-
-    #[test]
-    fn turn_system_prompt_appends_frozen_lines() {
+    fn turn_system_prompt_appends_older_lines() {
         assert_eq!(turn_system_prompt(&[]), SYSTEM_PROMPT);
-        let frozen = vec!["#0 a".to_string(), "#1 b".to_string()];
-        let prompt = turn_system_prompt(&frozen);
+        let older = vec!["#0 a".to_string(), "#1 b".to_string()];
+        let prompt = turn_system_prompt(&older);
         assert!(prompt.starts_with(SYSTEM_PROMPT));
         assert!(prompt.ends_with("#0 a\n#1 b"));
     }

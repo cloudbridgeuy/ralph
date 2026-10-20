@@ -46,12 +46,8 @@ pub struct SpinnerSubprocessConfig {
     pub cancel: Option<Arc<AtomicBool>>,
 }
 
-/// Drains remaining stdout lines from the channel and processes them.
-///
-/// Called during exit handling to ensure all buffered output is displayed
-/// before the subprocess result is returned.
-fn drain_stdout(line_rx: &mpsc::Receiver<io::Result<String>>, processor: &mut StreamProcessor) {
-    while let Ok(line_result) = line_rx.try_recv() {
+fn drain_stdout(readers: &Readers, processor: &mut StreamProcessor) {
+    while let Ok(line_result) = readers.line_rx.try_recv() {
         if let Ok(line) = line_result {
             if let Some(output) = processor.process_line(&line) {
                 print!("{}", output);
@@ -61,20 +57,21 @@ fn drain_stdout(line_rx: &mpsc::Receiver<io::Result<String>>, processor: &mut St
     }
 }
 
-/// Drains remaining stderr lines from the channel.
-fn drain_stderr(stderr_rx: &mpsc::Receiver<String>) {
-    while let Ok(line) = stderr_rx.try_recv() {
-        eprintln!("{}", line);
+fn drain_stderr(readers: &Readers, captured: &mut String, show: bool) {
+    while let Ok(line) = readers.stderr_rx.try_recv() {
+        if show {
+            eprintln!("{}", line);
+        }
+        captured.push_str(&line);
+        captured.push('\n');
     }
 }
 
-/// Waits for output threads to finish and returns the captured stderr.
-fn join_output_threads(
-    stdout_thread: thread::JoinHandle<()>,
-    stderr_thread: thread::JoinHandle<String>,
-) -> String {
-    let _ = stdout_thread.join();
-    stderr_thread.join().unwrap_or_default()
+fn result_is_error(line: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|value| value.get("is_error")?.as_bool())
+        .unwrap_or(false)
 }
 
 /// Invokes a command with stream processing, theme configuration, and spinner display.
@@ -134,29 +131,67 @@ pub(super) fn spawn_piped(command_text: &str, stdin: Stdio) -> io::Result<Child>
     command.spawn()
 }
 
-pub(super) struct Pump {
-    processor: StreamProcessor,
-    spinner: Spinner,
-    spinner_active: bool,
-    last_output_time: Instant,
-    pending_tool_count: usize,
+pub(super) struct Readers {
     line_rx: mpsc::Receiver<io::Result<String>>,
     stderr_rx: mpsc::Receiver<String>,
-    stdout_thread: thread::JoinHandle<()>,
-    stderr_thread: thread::JoinHandle<String>,
+    threads: Vec<thread::JoinHandle<()>>,
 }
 
-impl Pump {
-    pub(super) fn start(
-        child: &mut Child,
-        config: &SpinnerSubprocessConfig,
-    ) -> Result<Pump, SubprocessError> {
+impl Readers {
+    pub(super) fn start(child: &mut Child) -> Result<Readers, SubprocessError> {
         let stdout = child.stdout.take().ok_or_else(|| {
             SubprocessError::OutputCaptureFailed("stdout not captured".to_string())
         })?;
         let stderr = child.stderr.take().ok_or_else(|| {
             SubprocessError::OutputCaptureFailed("stderr not captured".to_string())
         })?;
+        let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
+        let stderr_thread = thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                if stderr_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let (line_tx, line_rx) = mpsc::channel::<io::Result<String>>();
+        let stdout_thread = thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if line_tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Readers {
+            line_rx,
+            stderr_rx,
+            threads: vec![stdout_thread, stderr_thread],
+        })
+    }
+
+    fn join(&mut self) {
+        self.threads.drain(..).for_each(|handle| {
+            let _ = handle.join();
+        });
+    }
+}
+
+pub(super) enum Step {
+    Pending,
+    Result { is_error: bool },
+    Closed,
+}
+
+pub(super) struct Pump {
+    processor: StreamProcessor,
+    spinner: Spinner,
+    spinner_active: bool,
+    last_output_time: Instant,
+    pending_tool_count: usize,
+    stderr: String,
+}
+
+impl Pump {
+    pub(super) fn start(config: &SpinnerSubprocessConfig) -> Result<Pump, SubprocessError> {
         let stdout_is_terminal = std::io::stdout().is_terminal();
         let processor = StreamProcessor::with_verbose_tools(
             config.theme_config.clone(),
@@ -167,34 +202,13 @@ impl Pump {
         let mut spinner =
             Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone());
         spinner.start();
-        let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
-        let stderr_thread = thread::spawn(move || {
-            let mut captured = String::new();
-            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                let _ = stderr_tx.send(line.clone());
-                captured.push_str(&line);
-                captured.push('\n');
-            }
-            captured
-        });
-        let (line_tx, line_rx) = mpsc::channel::<io::Result<String>>();
-        let stdout_thread = thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                if line_tx.send(line).is_err() {
-                    break;
-                }
-            }
-        });
         Ok(Pump {
             processor,
             spinner,
             spinner_active: true,
             last_output_time: Instant::now(),
             pending_tool_count: 0,
-            line_rx,
-            stderr_rx,
-            stdout_thread,
-            stderr_thread,
+            stderr: String::new(),
         })
     }
 
@@ -205,11 +219,15 @@ impl Pump {
         }
     }
 
-    pub(super) fn step(&mut self, paused: bool) -> Result<bool, SubprocessError> {
+    pub(super) fn step(
+        &mut self,
+        readers: &Readers,
+        paused: bool,
+    ) -> Result<Step, SubprocessError> {
         if paused {
             self.stop_spinner();
         }
-        match self.line_rx.recv_timeout(Duration::from_millis(100)) {
+        match readers.line_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok(line)) => {
                 if line.contains("\"type\":\"tool_use\"") {
                     self.pending_tool_count += 1;
@@ -223,7 +241,12 @@ impl Pump {
                     let _ = io::stdout().flush();
                     self.last_output_time = Instant::now();
                 }
-                Ok(line.contains("\"type\":\"result\""))
+                if line.contains("\"type\":\"result\"") {
+                    return Ok(Step::Result {
+                        is_error: result_is_error(&line),
+                    });
+                }
+                Ok(Step::Pending)
             }
             Ok(Err(e)) => {
                 self.stop_spinner();
@@ -233,7 +256,7 @@ impl Pump {
                 )))
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                drain_stderr(&self.stderr_rx);
+                drain_stderr(readers, &mut self.stderr, true);
                 let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
                 if !paused
                     && !self.spinner_active
@@ -247,19 +270,21 @@ impl Pump {
                     self.spinner.start_with_context(context);
                     self.spinner_active = true;
                 }
-                Ok(false)
+                Ok(Step::Pending)
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(false),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(Step::Closed),
         }
     }
 
-    pub(super) fn finish(mut self, exit_code: i32, show_stderr: bool) -> StreamingSubprocessResult {
+    pub(super) fn finish(
+        mut self,
+        readers: &Readers,
+        exit_code: i32,
+        show_stderr: bool,
+    ) -> StreamingSubprocessResult {
         self.stop_spinner();
-        drain_stdout(&self.line_rx, &mut self.processor);
-        if show_stderr {
-            drain_stderr(&self.stderr_rx);
-        }
-        let stderr = join_output_threads(self.stdout_thread, self.stderr_thread);
+        drain_stdout(readers, &mut self.processor);
+        drain_stderr(readers, &mut self.stderr, show_stderr);
         let stream_result = self.processor.finish();
         if let Some(ref output) = stream_result.final_output {
             print!("{}", output);
@@ -267,7 +292,7 @@ impl Pump {
         }
         StreamingSubprocessResult {
             exit_code,
-            stderr,
+            stderr: self.stderr,
             stream_result,
         }
     }
@@ -277,13 +302,15 @@ fn run_subprocess_with_spinner(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     let mut child = spawn_piped(&config.command, Stdio::null())?;
-    let mut pump = Pump::start(&mut child, config)?;
+    let mut readers = Readers::start(&mut child)?;
+    let mut pump = Pump::start(config)?;
     let start = Instant::now();
 
     loop {
         if let Some(status) = try_wait_child(&mut child)? {
             let exit_code = status.code().ok_or(SubprocessError::Signaled)?;
-            return Ok(pump.finish(exit_code, true));
+            readers.join();
+            return Ok(pump.finish(&readers, exit_code, true));
         }
 
         let paused = config
@@ -297,9 +324,10 @@ fn run_subprocess_with_spinner(
         {
             pump.stop_spinner();
             kill_process_group(&mut child);
+            readers.join();
             return Err(SubprocessError::Timeout {
                 timeout_secs,
-                partial_result: Box::new(pump.finish(EXIT_CODE_KILLED, false)),
+                partial_result: Box::new(pump.finish(&readers, EXIT_CODE_KILLED, false)),
             });
         }
 
@@ -310,7 +338,8 @@ fn run_subprocess_with_spinner(
         if cancelled || signal::is_interrupted() {
             pump.stop_spinner();
             kill_process_group(&mut child);
-            let partial = pump.finish(EXIT_CODE_INTERRUPTED, false);
+            readers.join();
+            let partial = pump.finish(&readers, EXIT_CODE_INTERRUPTED, false);
             if cancelled {
                 return Ok(partial);
             }
@@ -319,6 +348,6 @@ fn run_subprocess_with_spinner(
             });
         }
 
-        pump.step(paused)?;
+        pump.step(&readers, paused)?;
     }
 }

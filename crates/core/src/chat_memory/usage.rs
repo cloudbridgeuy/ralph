@@ -74,7 +74,7 @@ pub struct PromptBytes {
 
 pub struct TurnParts<'a> {
     pub system: &'a str,
-    pub frozen: &'a [String],
+    pub older: &'a [String],
     pub tail: &'a [String],
     pub message: &'a str,
     pub prompt: &'a str,
@@ -84,7 +84,7 @@ pub struct TurnParts<'a> {
 pub fn turn_prompt_bytes(parts: &TurnParts) -> PromptBytes {
     PromptBytes {
         system_bytes: Some(parts.system.len()),
-        frozen_bytes: Some(parts.frozen.join("\n").len()),
+        frozen_bytes: Some(parts.older.join("\n").len()),
         tail_bytes: Some(parts.tail.join("\n").len()),
         message_bytes: Some(parts.message.len()),
         prompt_bytes: parts.prompt.len(),
@@ -321,11 +321,11 @@ mod tests {
 
     #[test]
     fn turn_record_logs_prompt_parts_and_agents_only_when_present() {
-        let frozen = vec!["ab".to_string(), "cd".to_string()];
+        let older = vec!["ab".to_string(), "cd".to_string()];
         let tail = vec!["xyz".to_string()];
         let mut parts = TurnParts {
             system: "sys",
-            frozen: &frozen,
+            older: &older,
             tail: &tail,
             message: "hello",
             prompt: "the whole prompt",

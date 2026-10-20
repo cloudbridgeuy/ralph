@@ -46,8 +46,8 @@ use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
 use ralph_core::chat::{
-    resolve_frozen_window, resolve_recent_history_tokens, resolve_watch_timeout,
-    resolve_worker_check_secs, resolve_wrap_width,
+    resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
+    resolve_wrap_width,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
@@ -109,7 +109,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             .as_deref(),
     );
     let chat_config = config.chat;
-    let frozen_window = resolve_frozen_window(args.frozen_window, chat_config.frozen_window)?;
     let recent_history_tokens = resolve_recent_history_tokens(
         args.recent_history_tokens,
         chat_config.recent_history_tokens,
@@ -174,8 +173,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin_args: &plugin_args,
         skills: &skills,
         theme_config: &theme_config,
-        frozen: Mutex::new(None),
-        frozen_window,
+        session: Mutex::new(None),
         recent_history_tokens,
         cancel: signal::interrupt_flag(),
     };
@@ -194,7 +192,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
-        frozen_window,
         recent_history_tokens,
         worker_check_secs,
         worker_quiet_secs,

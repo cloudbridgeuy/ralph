@@ -11,7 +11,7 @@ use crate::workers::headless::{ExitCleanup, HeadlessShutdown};
 use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
-use ralph_core::chat_memory::{frozen_block, tail_lines};
+use ralph_core::chat_memory::split_view;
 use ralph_core::chat_status::{
     last_turn_cache, latest_states, memory_size, watch_states, worker_states, Memory,
     RunningWorker, Status,
@@ -64,7 +64,6 @@ pub(super) struct Monitor {
     pub(super) status: Mutex<Status>,
     pub(super) seen: Mutex<HashMap<String, String>>,
     pub(super) active: Mutex<Option<HashSet<String>>>,
-    pub(super) frozen_window: usize,
     pub(super) recent_history_tokens: usize,
     pub(super) worker_check_secs: Option<u64>,
     pub(super) worker_quiet_secs: u64,
@@ -205,9 +204,11 @@ impl Monitor {
         for warning in fresh_warnings(&mut locked(&self.warned), warnings) {
             warn(warning);
         }
-        let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, None);
-        let tail = tail_lines(&entries, &tree, frozen.end, self.recent_history_tokens);
-        Some(memory_size(entries.len(), &[frozen.lines, tail].concat()))
+        let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
+        Some(memory_size(
+            entries.len(),
+            &[split.older, split.tail].concat(),
+        ))
     }
 
     fn alert_fresh(&self, pending: &[Report]) {

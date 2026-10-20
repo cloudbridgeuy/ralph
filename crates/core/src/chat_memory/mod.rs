@@ -32,7 +32,9 @@ pub use nap::{
 pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search, SearchRequest};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
-pub use tree::{cover, estimate_tokens, frozen_block, pending, tail_lines, verbatim_start};
+pub use tree::{
+    cover, estimate_tokens, pending, split_view, tail_lines, verbatim_start, ViewSplit,
+};
 pub use usage::{
     encode_usage, nap_prompt_bytes, reply_entries, trigger_entries, turn_prompt_bytes,
     usage_record, view_stats, CallKind, PromptBytes, Trigger, TurnParts, UsageRecord,
@@ -126,12 +128,6 @@ impl<'a> Window<'a> {
     pub fn get(&self, i: usize) -> Option<&'a Entry> {
         i.checked_sub(self.start).and_then(|k| self.entries.get(k))
     }
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Frozen {
-    pub end: usize,
-    pub lines: Vec<String>,
 }
 
 impl Node {

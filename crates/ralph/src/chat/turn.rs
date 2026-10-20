@@ -16,8 +16,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    frozen_block, reply_entries, tail_lines, trigger_entries, turn_prompt_bytes, usage_record,
-    view_stats, CallKind, Frozen, Trigger, TurnParts,
+    reply_entries, split_view, trigger_entries, turn_prompt_bytes, usage_record, view_stats,
+    CallKind, Trigger, TurnParts,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use std::borrow::Cow;
@@ -94,8 +94,7 @@ pub(super) struct Turn<'a> {
     pub(super) plugin_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
     pub(super) theme_config: &'a ThemeConfig,
-    pub(super) frozen: Mutex<Option<Frozen>>,
-    pub(super) frozen_window: usize,
+    pub(super) session: Mutex<Option<Session>>,
     pub(super) recent_history_tokens: usize,
     pub(super) cancel: Arc<AtomicBool>,
 }
@@ -115,10 +114,7 @@ impl Turn<'_> {
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
             spinner
         })?;
-        let pinned = locked(&self.frozen).take();
-        let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, pinned);
-        *locked(&self.frozen) = Some(frozen.clone());
-        let tail = tail_lines(&entries, &tree, frozen.end, self.recent_history_tokens);
+        let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
         if logged_before_reply(trigger) {
             self.append_logged(trigger, logged)?;
         }
@@ -126,8 +122,8 @@ impl Turn<'_> {
             Trigger::User => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
-        let prompt = turn_prompt(&tail, &sent);
-        let system = turn_system_prompt(&frozen.lines);
+        let first_prompt = turn_prompt(&split.tail, &sent);
+        let system = turn_system_prompt(&split.older);
         let args = [
             self.mcp_args.to_vec(),
             build_attachments_args(self.store_dir),
@@ -135,43 +131,50 @@ impl Turn<'_> {
             self.plugin_args.to_vec(),
         ]
         .concat();
-        let prompt_bytes = turn_prompt_bytes(&TurnParts {
-            system: &system,
-            frozen: &frozen.lines,
-            tail: &tail,
-            message: &sent,
-            prompt: &prompt,
-            args: &args,
-        });
-        let command = build_chat_command(
-            &system,
-            &args,
-            self.permission_mode,
-            dirs::home_dir().as_deref(),
-        );
+        let config = SpinnerSubprocessConfig {
+            command: build_chat_command(
+                &system,
+                &args,
+                self.permission_mode,
+                dirs::home_dir().as_deref(),
+            ),
+            timeout_secs: None,
+            theme_config: self.theme_config.clone(),
+            session_elapsed_ms: 0,
+            verbose_tools: VerboseToolsConfig::new(),
+            session_info: chat_session_info(),
+            pause: None,
+            cancel: Some(Arc::clone(&self.cancel)),
+        };
+        let mut session = locked(&self.session).take().filter(Session::is_alive);
+        let mut first = false;
         print_rule();
         let result = retry_on_outage(
             "chat turn",
             || {
-                let result = Session::spawn(&SpinnerSubprocessConfig {
-                    command: command.clone(),
-                    timeout_secs: None,
-                    theme_config: self.theme_config.clone(),
-                    session_elapsed_ms: 0,
-                    verbose_tools: VerboseToolsConfig::new(),
-                    session_info: chat_session_info(),
-                    pause: None,
-                    cancel: Some(Arc::clone(&self.cancel)),
-                })
-                .and_then(|mut session| session.turn(&prompt));
+                first = session.is_none();
+                let result = match session.take() {
+                    Some(live) => Ok(live),
+                    None => Session::spawn(&config),
+                }
+                .and_then(|mut live| {
+                    let result = live.turn(if first { &first_prompt } else { &sent });
+                    session = Some(live);
+                    result
+                });
                 if self.stopped() {
                     Attempt::Done(result)
                 } else {
-                    attempt_from(result)
+                    let attempt = attempt_from(result);
+                    if matches!(attempt, Attempt::Failed(..)) {
+                        session = None;
+                    }
+                    attempt
                 }
             },
             |delay| wait_unless(|| self.stopped(), delay),
         );
+        *locked(&self.session) = session.filter(Session::is_alive);
         let end = turn_end(&TurnSignals {
             cancelled: self.cancel.swap(false, Ordering::SeqCst),
             terminated: signal::is_terminated(),
@@ -201,11 +204,21 @@ impl Turn<'_> {
             &result.stream_result.costs,
         )
         .map(|record| {
+            if !first {
+                return record;
+            }
             record
                 .with_view(view_stats(
-                    &[frozen.lines.as_slice(), tail.as_slice()].concat(),
+                    &[split.older.as_slice(), split.tail.as_slice()].concat(),
                 ))
-                .with_prompt(prompt_bytes)
+                .with_prompt(turn_prompt_bytes(&TurnParts {
+                    system: &system,
+                    older: &split.older,
+                    tail: &split.tail,
+                    message: &sent,
+                    prompt: &first_prompt,
+                    args: &args,
+                }))
         }) {
             warn_if_err(
                 self.store.append_usage(&record),
@@ -225,6 +238,7 @@ impl Turn<'_> {
                 Ok(TurnOutcome::Replied)
             }
             _ => {
+                locked(&self.session).take();
                 warn(format!("chat turn failed (exit {})", result.exit_code));
                 Ok(TurnOutcome::Unanswered)
             }

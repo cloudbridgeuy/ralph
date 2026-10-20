@@ -63,7 +63,6 @@ fn main() -> ExitCode {
 
     let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {
         store: None,
-        frozen_window: None,
         recent_history_tokens: None,
         wrap_width: None,
         skills: Vec::new(),

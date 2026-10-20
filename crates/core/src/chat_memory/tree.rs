@@ -1,6 +1,6 @@
 use super::nap::fallback_summary;
 use super::notice::{merge_notices, Shown};
-use super::{Entry, Frozen, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
+use super::{Entry, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
 
 fn cover_at(t: usize, alpha: f64) -> Vec<(usize, usize)> {
     let root = t.next_power_of_two();
@@ -187,20 +187,22 @@ fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
     )
 }
 
-pub fn frozen_block(
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ViewSplit {
+    pub older: Vec<String>,
+    pub tail: Vec<String>,
+}
+
+pub fn split_view(
     entries: &[Entry],
     tree: &Tree,
     budget: usize,
-    window: usize,
-    pinned: Option<Frozen>,
-) -> Frozen {
-    let end = entries.len() / window * window;
-    match pinned {
-        Some(pinned) if pinned.end == end => pinned,
-        _ => Frozen {
-            end,
-            lines: view(&entries[..end], tree, budget.saturating_sub(window)),
-        },
+    recent_tokens: usize,
+) -> ViewSplit {
+    let start = verbatim_start(entries, 0, recent_tokens);
+    ViewSplit {
+        older: view(&entries[..start], tree, budget),
+        tail: tail_lines(entries, tree, start, recent_tokens),
     }
 }
 

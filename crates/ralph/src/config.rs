@@ -164,8 +164,6 @@ pub struct ChatSection {
     #[serde(default)]
     pub skills: Vec<PathBuf>,
     #[serde(default)]
-    pub frozen_window: Option<usize>,
-    #[serde(default)]
     pub recent_history_tokens: Option<usize>,
     #[serde(default)]
     pub worker_check_secs: Option<u64>,
@@ -248,7 +246,6 @@ impl Default for ChatSection {
         Self {
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
-            frozen_window: None,
             recent_history_tokens: None,
             worker_check_secs: None,
             worker_quiet_secs: None,

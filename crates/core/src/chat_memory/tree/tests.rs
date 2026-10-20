@@ -369,153 +369,38 @@ fn view_opening_after_one_append() {
     }
 }
 
-struct Split {
-    frozen: Vec<String>,
-    tail: Vec<String>,
-}
-
-fn split(entries: &[Entry], tree: &Tree, window: usize) -> Split {
-    let frozen = frozen_block(entries, tree, 200, window, None);
-    Split {
-        tail: tail_lines(entries, tree, frozen.end, 0),
-        frozen: frozen.lines,
-    }
-}
-
-const WINDOWS: [usize; 2] = [32, 7];
-
 #[test]
-fn split_edges() {
-    for w in WINDOWS {
-        let tree = Tree::new();
-        let none = split(&[], &tree, w);
-        assert!(none.frozen.is_empty() && none.tail.is_empty());
-        let few: Vec<Entry> = (0..w - 1).map(|i| entry(i, 5)).collect();
-        let s = split(&few, &tree, w);
-        assert!(s.frozen.is_empty());
-        assert_eq!(s.tail.len(), w - 1);
-        let exact: Vec<Entry> = (0..w * 2).map(|i| entry(i, 5)).collect();
-        let s = split(&exact, &summarized(&exact), w);
-        assert!(s.tail.is_empty());
-        assert!(!s.frozen.is_empty());
-    }
-}
-
-#[test]
-fn split_fits_budget_on_long_history() {
-    let entries: Vec<Entry> = (0..1000).map(|i| entry(i, 5)).collect();
+fn split_view_covers_every_entry_once() {
+    let entries: Vec<Entry> = (0..300).map(|i| entry(i, 5)).collect();
     let tree = summarized(&entries);
-    for w in WINDOWS {
-        let s = split(&entries, &tree, w);
-        assert!(s.frozen.len() + s.tail.len() <= 200, "w={w}");
-        let h = 1000 / w * w;
-        assert_eq!(s.frozen, view(&entries[..h], &tree, 200 - w));
-        assert_eq!(s.tail.len(), 1000 - h);
-        assert!(s.frozen[0].starts_with("#0-"));
-    }
-}
-
-#[test]
-fn frozen_changes_only_at_window_boundaries() {
-    let entries: Vec<Entry> = (0..1201).map(|i| entry(i, 5)).collect();
-    let tree = summarized(&entries);
-    for w in WINDOWS {
-        let mut unchanged_past_200 = 0;
-        for t in 1..=1200 {
-            let a = split(&entries[..t], &tree, w);
-            let b = split(&entries[..t + 1], &tree, w);
-            if a.frozen == b.frozen {
-                assert_ne!((t + 1) % w, 0, "w={w} t={t}");
-                assert_eq!(b.tail[..a.tail.len()], a.tail[..], "w={w} t={t}");
-                if t >= 200 {
-                    unchanged_past_200 += 1;
-                }
-            } else {
-                assert_eq!((t + 1) % w, 0, "w={w} t={t}");
-            }
-        }
-        let boundaries = (201..=1201).filter(|n| n % w == 0).count();
-        assert_eq!(unchanged_past_200, 1001 - boundaries, "w={w}");
-    }
-}
-
-#[test]
-fn frozen_block_rolls_over_at_every_window() {
-    let entries: Vec<Entry> = (0..301).map(|i| entry(i, 5)).collect();
-    let tree = summarized(&entries);
-    for w in [1, 32, 7] {
-        let mut pinned: Option<Frozen> = None;
-        for t in 0..=300 {
-            let block = frozen_block(&entries[..t], &tree, 200, w, pinned.take());
-            assert_eq!(block.end, t / w * w, "w={w} t={t}");
-            if let Some(previous) = &pinned {
-                assert_eq!(previous.end, block.end);
-            }
-            pinned = Some(block);
-        }
-        for t in 0..=300 - w {
-            let end = t / w * w;
-            let first = frozen_block(&entries[..end], &tree, 200, w, None);
-            let mut pin = first.clone();
-            for u in end..end + w {
-                pin = frozen_block(&entries[..u], &tree, 200, w, Some(pin));
-                assert_eq!(pin, first, "w={w} u={u}");
-            }
-            let rolled = frozen_block(&entries[..end + w], &tree, 200, w, Some(pin));
-            assert_eq!(rolled.end, end + w, "w={w} t={t}");
-        }
-    }
-}
-
-#[test]
-fn pinned_block_survives_summaries_landing_mid_window() {
-    let entries: Vec<Entry> = (0..400).map(|i| entry(i, 5)).collect();
-    let landed = summarized(&entries);
-    for w in WINDOWS {
-        let h = 256 / w * w;
-        let first = frozen_block(&entries[..h], &Tree::new(), 200, w, None);
-        let mut pinned = first.clone();
-        for t in h..h + w {
-            pinned = frozen_block(&entries[..t], &landed, 200, w, Some(pinned));
-            assert_eq!(pinned, first, "w={w} t={t}");
-        }
-        let unpinned = frozen_block(&entries[..h + 1], &landed, 200, w, None);
-        assert_ne!(unpinned.lines, first.lines, "w={w}");
-        let rolled = frozen_block(&entries[..h + w], &landed, 200, w, Some(pinned));
-        assert_eq!(rolled.end, h + w);
-        assert_ne!(rolled.lines, first.lines);
-    }
-}
-
-#[test]
-fn frozen_prompt_is_byte_stable_inside_window() {
-    let entries: Vec<Entry> = (0..700).map(|i| entry(i, 5)).collect();
-    let napped = summarized(&entries);
-    for w in [1, 32, 199] {
-        let h = 400 / w * w;
-        let before_nap = summarized(&entries[..h / 2]);
-        let first = frozen_block(&entries[..h], &before_nap, 200, w, None);
-        assert!(!first.lines.is_empty(), "w={w}");
-        let prompt = crate::chat::turn_system_prompt(&first.lines);
-        let nap_at = h + w / 2;
-        let mut pinned = first;
-        for t in h..h + w {
-            let tree = if t < nap_at { &before_nap } else { &napped };
-            pinned = frozen_block(&entries[..t], tree, 200, w, Some(pinned));
-            assert_eq!(pinned.end, h, "w={w} t={t}");
-            assert_eq!(
-                crate::chat::turn_system_prompt(&pinned.lines),
-                prompt,
-                "w={w} t={t}"
-            );
-        }
-        let unpinned = frozen_block(&entries[..nap_at], &napped, 200, w, None);
-        assert_ne!(
-            crate::chat::turn_system_prompt(&unpinned.lines),
-            prompt,
-            "w={w}"
+    for recent in [0, 30, 300, 100_000] {
+        let start = verbatim_start(&entries, 0, recent);
+        let split = split_view(&entries, &tree, 200, recent);
+        assert_eq!(
+            split.older,
+            view(&entries[..start], &tree, 200),
+            "r={recent}"
         );
+        assert_eq!(split.tail.len(), 300 - start, "r={recent}");
+        assert!(split.older.len() <= 200, "r={recent}");
     }
+}
+
+#[test]
+fn split_view_tail_respects_token_budget() {
+    let entries: Vec<Entry> = (0..50).map(|i| entry(i, 30)).collect();
+    let split = split_view(&entries, &Tree::new(), 200, 100);
+    let used: usize = split.tail.len() * estimate_tokens(&entries[0].text);
+    assert!(!split.tail.is_empty() && used <= 100);
+    assert_eq!(split.older.len(), 50 - split.tail.len());
+}
+
+#[test]
+fn split_view_of_empty_store_is_empty() {
+    assert_eq!(
+        split_view(&[], &Tree::new(), 200, 8192),
+        ViewSplit::default()
+    );
 }
 
 fn line_node(line: &str) -> Node {
@@ -677,24 +562,5 @@ fn view_keeps_markers_older_than_every_split_under_tight_budgets() {
         let lines = view(&entries, &tree, budget);
         assert!(lines.iter().any(|line| is_marker(line)), "b={budget}");
         assert!(assert_markers_older_than_splits(&lines, 100, budget) > 0);
-    }
-}
-
-#[test]
-fn frozen_block_with_markers_stays_pinned_while_summaries_land() {
-    let entries = mixed(400);
-    let landed = summarized(&entries);
-    for w in WINDOWS {
-        let h = 256 / w * w;
-        let first = frozen_block(&entries[..h], &Tree::new(), 200, w, None);
-        assert!(first.lines.iter().any(|line| is_marker(line)), "w={w}");
-        let mut pinned = first.clone();
-        for t in h..h + w {
-            pinned = frozen_block(&entries[..t], &landed, 200, w, Some(pinned));
-            assert_eq!(pinned, first, "w={w} t={t}");
-        }
-        let rolled = frozen_block(&entries[..h + w], &landed, 200, w, Some(pinned));
-        assert_eq!(rolled.end, h + w);
-        assert!(rolled.lines.iter().all(|line| !is_marker(line)), "w={w}");
     }
 }

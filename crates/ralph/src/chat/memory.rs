@@ -384,7 +384,7 @@ fn summarize(
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
-        frozen_block, parse_search_args, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE,
+        parse_search_args, split_view, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE,
         TREE_INDEX_FILE,
     };
 
@@ -555,7 +555,7 @@ mod tests {
         assert_eq!(texts, ["zero", "[corrupt entry]", "two", "three"]);
         let flags: Vec<_> = entries.iter().map(|e| e.is_corrupt()).collect();
         assert_eq!(flags, [false, true, false, false]);
-        let lines = frozen_block(&entries, &tree, 10, 1, None).lines;
+        let lines = split_view(&entries, &tree, 10, 0).older;
         assert_eq!(lines.len(), 4, "{lines:?}");
         assert_eq!(lines[1], "[#1: unreadable log line, skipped]");
         assert!(lines[3].starts_with("#3 user "), "{lines:?}");
@@ -797,28 +797,6 @@ mod tests {
         store.nap(|_| Err("down".into())).unwrap();
         let (_, tree) = store.load().unwrap();
         assert!(tree.is_empty());
-    }
-
-    #[test]
-    fn nap_leaves_pinned_frozen_block_byte_identical() {
-        let (_dir, store) = seeded(&[0, 1, 2, 3], 4);
-        let (entries, tree) = store.load().unwrap();
-        let before = frozen_block(&entries, &tree, 200, 4, None);
-        let mut calls = 0;
-        store
-            .nap(|_| {
-                calls += 1;
-                Ok(format!("sum{calls}"))
-            })
-            .unwrap();
-        let (entries_after, tree_after) = store.load().unwrap();
-        assert_eq!(entries_after.len(), entries.len());
-        assert!(tree.is_empty() && tree_after.len() == 7);
-        let rebuilt = frozen_block(&entries_after, &tree_after, 200, 4, None);
-        assert_ne!(rebuilt.lines, before.lines);
-        let pinned = frozen_block(&entries_after, &tree_after, 200, 4, Some(before.clone()));
-        assert_eq!(pinned.lines.join("\n"), before.lines.join("\n"));
-        assert_eq!(pinned, before);
     }
 
     #[test]
