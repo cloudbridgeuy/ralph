@@ -99,7 +99,7 @@ impl Unit {
 
     fn matches_at(&self, tokens: &[Token], at: usize) -> bool {
         if let [word] = self.words.as_slice() {
-            if !is_compound(word) {
+            if !is_compound(word) && !self.required {
                 return tokens[at].word == *word || tokens[at].parts.contains(word);
             }
         }
@@ -703,6 +703,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ids(&next), [entries.len() - 2]);
+    }
+
+    #[test]
+    fn a_quoted_single_word_matches_whole_words_only() {
+        let entries = [user(0, "the rate-limited queue"), user(1, "a fixed rate")];
+        let bare = run(&entries, json!({"query": "rate"})).unwrap();
+        assert_eq!(ids(&bare).len(), 2);
+        let quoted = run(&entries, json!({"query": "\"rate\""})).unwrap();
+        assert_eq!(ids(&quoted), [1]);
     }
 
     #[test]

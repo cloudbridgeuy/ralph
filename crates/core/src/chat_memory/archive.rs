@@ -119,10 +119,14 @@ impl<B: ByteSource> Archive<B> {
         chunk: usize,
         mut visit: impl FnMut(usize, &Entry),
     ) -> io::Result<usize> {
+        let chunk = chunk.max(1);
         let mut from = 0;
         while from < self.count() {
-            let to = (from + chunk).min(self.count());
-            for (id, entry) in (from..).zip(self.entries(from, to)?) {
+            let (to, loaded) = self.retry(|a| {
+                let to = (from + chunk).min(a.count());
+                load(&mut a.log, &a.log_index, from, to).map(|loaded| (to, loaded))
+            })?;
+            for (id, entry) in (from..).zip(loaded) {
                 visit(id, &entry);
             }
             from = to;
@@ -405,6 +409,57 @@ mod tests {
             Read::Page(page) => Ok(page),
             Read::More => panic!("a full window never needs more"),
         }
+    }
+
+    fn scanned(archive: &mut Archive<Bytes>, chunk: usize) -> (Vec<usize>, usize) {
+        let mut seen = Vec::new();
+        let count = archive.scan_entries(chunk, |id, _| seen.push(id)).unwrap();
+        (seen, count)
+    }
+
+    #[test]
+    fn a_scan_after_a_shrinking_rebuild_visits_every_remaining_entry() {
+        let entries = mixed(6);
+        let mut archive = Archive::open(
+            bytes(&entries),
+            None,
+            Bytes {
+                data: Vec::new(),
+                read: 0,
+            },
+            None,
+        )
+        .unwrap();
+        let damaged: String = entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                if i == 5 {
+                    format!("{}\n", "x".repeat(encode_entry(e).unwrap().len() - 1))
+                } else {
+                    encode_entry(e).unwrap()
+                }
+            })
+            .collect();
+        archive.log.data = damaged.into_bytes();
+        let (seen, count) = scanned(&mut archive, 6);
+        assert_eq!((seen, count), (vec![0, 1, 2, 3, 4], 5));
+    }
+
+    #[test]
+    fn a_zero_chunk_scan_ends_and_visits_every_entry() {
+        let entries = mixed(3);
+        let mut archive = Archive::open(
+            bytes(&entries),
+            None,
+            Bytes {
+                data: Vec::new(),
+                read: 0,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(scanned(&mut archive, 0), (vec![0, 1, 2], 3));
     }
 
     #[test]
