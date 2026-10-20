@@ -101,6 +101,7 @@ pub fn recall(entries: &[Entry], pattern: &str) -> Result<String, String> {
         .iter()
         .enumerate()
         .rev()
+        .filter(|(_, entry)| !entry.is_corrupt())
         .filter_map(|(i, entry)| {
             re.find(&entry.text)
                 .map(|m| (i, entry, preview(&entry.text, m.start())))
@@ -196,6 +197,19 @@ mod tests {
         let entries = texted(2, |i| format!("m{i}"));
         assert_eq!(recall(&entries, "zzz").unwrap(), "no hits for zzz");
         assert!(recall(&entries, "(").is_err());
+    }
+
+    #[test]
+    fn recall_skips_corrupt_placeholders_and_keeps_ids() {
+        let mut entries = texted(3, |i| format!("needle {i}"));
+        entries[1] = Entry::corrupt();
+        let out = recall(&entries, "needle|corrupt").unwrap();
+        assert!(out.starts_with("#2 · "), "{out}");
+        assert!(out.contains("#0 · ") && !out.contains("#1 · "), "{out}");
+        assert_eq!(
+            recall(&entries[1..2], "corrupt").unwrap(),
+            "no hits for corrupt"
+        );
     }
 
     #[test]

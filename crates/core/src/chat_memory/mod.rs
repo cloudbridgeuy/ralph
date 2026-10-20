@@ -17,7 +17,10 @@ pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
     INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,
 };
-pub use log::{encode_entry, encode_record, log_tail, parse_log, parse_tree, LogTail};
+pub use log::{
+    encode_entry, encode_record, entry_or_corrupt, log_tail, parse_log, parse_tree, LogTail,
+    CORRUPT_TEXT,
+};
 pub use lookup::{recall, zoom};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
@@ -59,6 +62,20 @@ pub struct Entry {
     pub role: Role,
     pub at: String,
     pub text: String,
+}
+
+impl Entry {
+    pub fn corrupt() -> Entry {
+        Entry {
+            role: Role::Worker,
+            at: String::new(),
+            text: CORRUPT_TEXT.to_string(),
+        }
+    }
+
+    pub fn is_corrupt(&self) -> bool {
+        self.at.is_empty() && self.text == CORRUPT_TEXT
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

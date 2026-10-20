@@ -373,7 +373,8 @@ fn summarize(
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
-        frozen_block, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE, TREE_INDEX_FILE,
+        frozen_block, parse_search_args, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE,
+        TREE_INDEX_FILE,
     };
 
     #[test]
@@ -486,6 +487,44 @@ mod tests {
         assert_eq!(stored_index(&store).unwrap().count(), 2);
         let page = store.read(&read_request("0-1")).unwrap().unwrap();
         assert!(page.contains("one"), "{page}");
+    }
+
+    #[test]
+    fn readers_keep_entries_after_a_corrupt_line_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "needle zero").unwrap();
+        let mut log = OpenOptions::new()
+            .append(true)
+            .open(store.dir().join("log.jsonl"))
+            .unwrap();
+        log.write_all(b"not an entry needle\n").unwrap();
+        store.append(Role::Assistant, "needle two").unwrap();
+        store.append(Role::User, "needle three").unwrap();
+        let page = store.read(&read_request("0-3")).unwrap().unwrap();
+        assert!(
+            page.contains("#1 · worker ·  · 15 chars\n[corrupt entry]"),
+            "{page}"
+        );
+        assert!(
+            page.contains("needle two") && page.contains("needle three"),
+            "{page}"
+        );
+        let zoomed = store.zoom(Node::new(3, 4).unwrap()).unwrap().unwrap();
+        assert!(zoomed.starts_with("#3 user "), "{zoomed}");
+        let recalled = store.recall("needle").unwrap().unwrap();
+        let hits: Vec<_> = recalled.lines().filter(|l| l.starts_with('#')).collect();
+        assert_eq!(hits.len(), 3, "{recalled}");
+        assert!(
+            hits[0].starts_with("#3 ") && hits[2].starts_with("#0 "),
+            "{recalled}"
+        );
+        let request = parse_search_args(&serde_json::json!({ "query": "needle corrupt" })).unwrap();
+        let found = store.search(&request).unwrap().unwrap();
+        let ids: Vec<_> = found.lines().filter(|l| l.starts_with('#')).collect();
+        assert_eq!(ids.len(), 3, "{found}");
+        assert!(!found.contains("#1 "), "{found}");
+        assert_eq!(stored_index(&store).unwrap().count(), 4);
     }
 
     #[test]

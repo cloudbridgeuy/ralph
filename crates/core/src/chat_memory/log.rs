@@ -24,6 +24,20 @@ pub fn log_tail(chunk: &[u8], chunk_start: u64) -> LogTail {
     }
 }
 
+pub const CORRUPT_TEXT: &str = "[corrupt entry]";
+
+pub fn entry_or_corrupt(bytes: &[u8], id: usize, offset: u64) -> (Entry, Option<String>) {
+    match serde_json::from_slice::<Entry>(bytes) {
+        Ok(entry) => (entry, None),
+        Err(e) => (
+            Entry::corrupt(),
+            Some(format!(
+                "chat log entry {id} at byte {offset} is corrupt and shows as {CORRUPT_TEXT}: {e}"
+            )),
+        ),
+    }
+}
+
 pub fn parse_log(data: &[u8]) -> (Vec<Entry>, Vec<String>) {
     let mut entries = Vec::new();
     for line in complete_lines(data) {
@@ -91,6 +105,25 @@ mod tests {
         let corrupt = format!("{a}garbage\n{b}");
         let (entries, warnings) = parse_log(corrupt.as_bytes());
         assert_eq!((entries.len(), warnings.len()), (1, 1));
+    }
+
+    #[test]
+    fn entry_or_corrupt_keeps_good_lines_and_marks_bad_ones() {
+        let good = entry(0, 1);
+        assert!(!good.is_corrupt());
+        let line = encode_entry(&good).unwrap();
+        assert_eq!(
+            entry_or_corrupt(line.trim_end().as_bytes(), 4, 9),
+            (good, None)
+        );
+        let (placeholder, warning) = entry_or_corrupt(b"garbage", 4, 9);
+        assert!(placeholder.is_corrupt());
+        assert_eq!(placeholder, Entry::corrupt());
+        let warning = warning.unwrap();
+        assert!(
+            warning.starts_with("chat log entry 4 at byte 9 is corrupt"),
+            "{warning}"
+        );
     }
 
     #[test]

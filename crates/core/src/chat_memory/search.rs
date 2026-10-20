@@ -377,7 +377,7 @@ impl<'a> Scan<'a> {
     }
 
     fn push(&mut self, id: usize, entry: &Entry) {
-        if !passes(self.request, entry) {
+        if entry.is_corrupt() || !passes(self.request, entry) {
             return;
         }
         let tokens = tokenize(&entry.text);
@@ -761,6 +761,17 @@ mod tests {
         assert_eq!(ids(&run(&entries, open).unwrap()), [0]);
         let zoned = json!({"query": "note", "since": "2026-10-20T14:00:00+02:00"});
         assert_eq!(ids(&run(&entries, zoned).unwrap()), [3, 2, 1]);
+    }
+
+    #[test]
+    fn corrupt_placeholders_keep_their_ids_and_never_match() {
+        let entries = [
+            user(0, "corrupt needle"),
+            Entry::corrupt(),
+            user(2, "needle after"),
+        ];
+        let out = run(&entries, json!({"query": "corrupt entry needle"})).unwrap();
+        assert_eq!(ids(&out), [0, 2]);
     }
 
     #[test]
