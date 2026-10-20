@@ -1,7 +1,7 @@
 use crate::stream_processor::extract_response_text;
 use crate::subprocess::{StreamingSubprocessResult, SubprocessError};
 use crate::warn::warn;
-use ralph_core::retry::{classify, retry_delay, FailureInput, RetryPolicy, OUTAGE_BACKOFF_SECS};
+use ralph_core::retry::{classify, retry_delay, FailureInput, OUTAGE_BACKOFF_SECS};
 use std::time::{Duration, Instant};
 
 const WAIT_SLICE: Duration = Duration::from_millis(100);
@@ -15,11 +15,6 @@ pub struct FailureText {
     pub timed_out: bool,
     pub exit_code: i32,
     pub text: String,
-}
-
-pub struct BackoffConfig<'a> {
-    pub what: &'a str,
-    pub policy: RetryPolicy,
 }
 
 pub type SubprocessOutcome = Result<StreamingSubprocessResult, SubprocessError>;
@@ -50,7 +45,7 @@ fn failure_text(result: &StreamingSubprocessResult) -> String {
 }
 
 pub fn retry_on_outage<T>(
-    config: &BackoffConfig,
+    what: &str,
     mut attempt: impl FnMut() -> Attempt<T>,
     mut wait: impl FnMut(Duration) -> bool,
 ) -> T {
@@ -65,12 +60,12 @@ pub fn retry_on_outage<T>(
             exit_code: failure.exit_code,
             text: &failure.text,
         });
-        let Some(delay) = retry_delay(kind, config.policy, retries) else {
+        let Some(delay) = retry_delay(kind, retries) else {
             return value;
         };
         warn(format!(
             "{} hit an outage ({}); retrying in {}s ({}/{})",
-            config.what,
+            what,
             kind.label(),
             delay.as_secs(),
             retries + 1,
@@ -132,18 +127,11 @@ mod tests {
         )
     }
 
-    fn run(
-        policy: RetryPolicy,
-        script: Vec<Attempt<u32>>,
-        keep_waiting: bool,
-    ) -> (u32, Vec<Duration>) {
+    fn run(script: Vec<Attempt<u32>>, keep_waiting: bool) -> (u32, Vec<Duration>) {
         let script = RefCell::new(script.into_iter());
         let waits = RefCell::new(Vec::new());
         let value = retry_on_outage(
-            &BackoffConfig {
-                what: "test",
-                policy,
-            },
+            "test",
             || script.borrow_mut().next().expect("scripted attempt"),
             |delay| {
                 waits.borrow_mut().push(delay);
@@ -155,48 +143,38 @@ mod tests {
 
     #[test]
     fn success_runs_once_without_waiting() {
-        let (value, waits) = run(RetryPolicy::Turn, vec![Attempt::Done(1)], true);
+        let (value, waits) = run(vec![Attempt::Done(1)], true);
         assert_eq!((value, waits.len()), (1, 0));
     }
 
     #[test]
     fn outage_retries_then_succeeds() {
-        let (value, waits) = run(
-            RetryPolicy::Turn,
-            vec![outage(1), outage(2), Attempt::Done(3)],
-            true,
-        );
+        let (value, waits) = run(vec![outage(1), outage(2), Attempt::Done(3)], true);
         assert_eq!(value, 3);
         assert_eq!(waits, [Duration::from_secs(2), Duration::from_secs(8)]);
     }
 
     #[test]
     fn outage_stops_after_the_schedule() {
-        let (value, waits) = run(
-            RetryPolicy::Nap,
-            vec![outage(1), outage(2), outage(3)],
-            true,
-        );
+        let (value, waits) = run(vec![outage(1), outage(2), outage(3)], true);
         assert_eq!((value, waits.len()), (3, 2));
     }
 
     #[test]
     fn refusal_is_not_retried() {
-        let (value, waits) = run(RetryPolicy::Turn, vec![refusal(1)], true);
+        let (value, waits) = run(vec![refusal(1)], true);
         assert_eq!((value, waits.len()), (1, 0));
     }
 
     #[test]
-    fn timeout_retries_only_for_turns() {
-        let (value, waits) = run(RetryPolicy::Turn, vec![timeout(1), Attempt::Done(2)], true);
-        assert_eq!((value, waits.len()), (2, 1));
-        let (value, waits) = run(RetryPolicy::Nap, vec![timeout(1)], true);
+    fn timeout_is_not_retried() {
+        let (value, waits) = run(vec![timeout(1)], true);
         assert_eq!((value, waits.len()), (1, 0));
     }
 
     #[test]
     fn stopped_wait_returns_the_failed_value() {
-        let (value, waits) = run(RetryPolicy::Turn, vec![outage(1)], false);
+        let (value, waits) = run(vec![outage(1)], false);
         assert_eq!((value, waits.len()), (1, 1));
     }
 

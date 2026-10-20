@@ -152,13 +152,11 @@ fn allowed_tools(config: &Value) -> String {
         .join(",")
 }
 
-pub fn build_nap_args(store: &Path, timeout_secs: u64) -> Vec<OsString> {
+pub fn build_nap_args(store: &Path) -> Vec<OsString> {
     vec![
         "chat-nap".into(),
         "--store".into(),
         store.as_os_str().to_owned(),
-        "--timeout".into(),
-        timeout_secs.to_string().into(),
     ]
 }
 
@@ -425,10 +423,10 @@ mod tests {
     }
 
     #[test]
-    fn build_nap_args_forwards_non_default_timeout() {
+    fn build_nap_args_passes_the_store() {
         assert_eq!(
-            build_nap_args(Path::new("/chat store"), 1234),
-            ["chat-nap", "--store", "/chat store", "--timeout", "1234"].map(OsString::from)
+            build_nap_args(Path::new("/chat store")),
+            ["chat-nap", "--store", "/chat store"].map(OsString::from)
         );
     }
 

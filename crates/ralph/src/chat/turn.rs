@@ -1,4 +1,4 @@
-use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt, BackoffConfig};
+use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::memory::Store;
 use crate::chat::prompt::screen_columns;
 use crate::highlight::ThemeConfig;
@@ -22,7 +22,6 @@ use ralph_core::chat_memory::{
     view_stats, CallKind, Frozen, Trigger, TurnParts,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
-use ralph_core::retry::RetryPolicy;
 use std::borrow::Cow;
 use std::io::{self};
 use std::path::Path;
@@ -49,9 +48,9 @@ pub(super) fn print_rule_after(blocks: &[OutputBlock]) {
     }
 }
 
-pub(super) fn spawn_nap(store: &Path, timeout_secs: u64) -> io::Result<()> {
+pub(super) fn spawn_nap(store: &Path) -> io::Result<()> {
     Command::new(std::env::current_exe()?)
-        .args(build_nap_args(store, timeout_secs))
+        .args(build_nap_args(store))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -80,7 +79,7 @@ pub(super) fn draft_after(outcome: TurnOutcome, message: String) -> Option<Strin
     (outcome == TurnOutcome::Unanswered).then_some(message)
 }
 
-/// Clears the in-flight turn marker on every exit path (reply, cancel, timeout, error).
+/// Clears the in-flight turn marker on every exit path (reply, cancel, error).
 struct PendingTurn<'a>(&'a Store);
 
 impl Drop for PendingTurn<'_> {
@@ -96,7 +95,6 @@ pub(super) struct Turn<'a> {
     pub(super) permission_mode: &'a str,
     pub(super) plugin_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
-    pub(super) timeout_secs: u64,
     pub(super) theme_config: &'a ThemeConfig,
     pub(super) frozen: Mutex<Option<Frozen>>,
     pub(super) frozen_window: usize,
@@ -156,14 +154,11 @@ impl Turn<'_> {
         );
         print_rule();
         let result = retry_on_outage(
-            &BackoffConfig {
-                what: "chat turn",
-                policy: RetryPolicy::Turn,
-            },
+            "chat turn",
             || {
                 let result = invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
                     command: command.clone(),
-                    timeout_secs: self.timeout_secs,
+                    timeout_secs: None,
                     theme_config: self.theme_config.clone(),
                     session_elapsed_ms: 0,
                     verbose_tools: VerboseToolsConfig::new(),
@@ -197,16 +192,6 @@ impl Turn<'_> {
         let result = match result {
             Ok(result) => result,
             Err(SubprocessError::Interrupted { .. }) => return Ok(TurnOutcome::Exit),
-            Err(SubprocessError::Timeout {
-                timeout_secs,
-                partial_result,
-            }) => {
-                print_rule_after(&partial_result.stream_result.output_blocks);
-                warn(format!(
-                    "chat turn timed out after {timeout_secs}s; restart with a larger --timeout for long work"
-                ));
-                return Ok(TurnOutcome::Unanswered);
-            }
             Err(e) => {
                 warn(format!("chat turn failed: {e}"));
                 return Ok(TurnOutcome::Unanswered);
@@ -240,10 +225,7 @@ impl Turn<'_> {
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
                 if !entries.is_empty() {
-                    warn_if_err(
-                        spawn_nap(self.store_dir, self.timeout_secs),
-                        "Failed to start chat memory nap",
-                    );
+                    warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
                 }
                 Ok(TurnOutcome::Replied)
             }

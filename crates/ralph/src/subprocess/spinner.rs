@@ -33,8 +33,7 @@ use std::time::{Duration, Instant};
 pub struct SpinnerSubprocessConfig {
     /// The command string to execute.
     pub command: String,
-    /// Maximum duration in seconds before killing the subprocess.
-    pub timeout_secs: u64,
+    pub timeout_secs: Option<u64>,
     /// Configuration for syntax highlighting theme.
     pub theme_config: ThemeConfig,
     /// Accumulated time from previous iterations in this session.
@@ -105,7 +104,7 @@ fn join_output_threads(
 ///
 /// let config = SpinnerSubprocessConfig {
 ///     command: "claude --output-format stream-json -p 'hello'".to_string(),
-///     timeout_secs: 300,
+///     timeout_secs: Some(300),
 ///     theme_config: ThemeConfig::new().with_theme("Monokai Extended"),
 ///     session_elapsed_ms: 0,
 ///     verbose_tools: VerboseToolsConfig::new(),
@@ -191,9 +190,7 @@ fn run_subprocess_with_spinner(
         captured
     });
 
-    // Track timeout
     let start = Instant::now();
-    let timeout = Duration::from_secs(config.timeout_secs);
 
     // Process stdout line by line with timeout checking
     // Use a separate thread to read lines so we can check timeout
@@ -244,8 +241,10 @@ fn run_subprocess_with_spinner(
             spinner_active = false;
         }
 
-        // Check timeout
-        if start.elapsed() >= timeout {
+        if let Some(timeout_secs) = config
+            .timeout_secs
+            .filter(|secs| start.elapsed() >= Duration::from_secs(*secs))
+        {
             // Stop spinner if active
             if spinner_active {
                 spinner.stop();
@@ -264,7 +263,7 @@ fn run_subprocess_with_spinner(
                 let _ = io::stdout().flush();
             }
             return Err(SubprocessError::Timeout {
-                timeout_secs: config.timeout_secs,
+                timeout_secs,
                 partial_result: Box::new(StreamingSubprocessResult {
                     exit_code: EXIT_CODE_KILLED,
                     stderr: stderr_captured,

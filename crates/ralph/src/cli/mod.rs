@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 #[cfg(test)]
 mod tests;
 
-pub const CHAT_TIMEOUT_SECS: u64 = 600;
+pub const NAP_TIMEOUT_SECS: u64 = 600;
 
 /// Chat with Claude from the terminal: persistent memory, background workers, rich rendering.
 ///
@@ -75,9 +75,6 @@ pub struct MermaidArgs {
 pub struct ChatArgs {
     #[arg(long, value_name = "DIR")]
     pub store: Option<std::path::PathBuf>,
-
-    #[arg(long, default_value_t = CHAT_TIMEOUT_SECS)]
-    pub timeout: u64,
 
     #[arg(long)]
     pub frozen_window: Option<usize>,
@@ -151,7 +148,7 @@ pub struct ChatNapArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
 
-    #[arg(long, default_value_t = CHAT_TIMEOUT_SECS)]
+    #[arg(long, default_value_t = NAP_TIMEOUT_SECS)]
     pub timeout: u64,
 }
 

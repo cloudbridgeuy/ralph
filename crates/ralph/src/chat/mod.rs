@@ -171,7 +171,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         permission_mode: &permission_mode,
         plugin_args: &plugin_args,
         skills: &skills,
-        timeout_secs: args.timeout,
         theme_config: &theme_config,
         frozen: Mutex::new(None),
         frozen_window,

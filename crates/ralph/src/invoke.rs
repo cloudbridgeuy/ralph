@@ -100,7 +100,7 @@ pub fn build_command(prompt: &str, permission_mode: &str) -> String {
 pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, SubprocessError> {
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
         command: build_command(&config.prompt, &config.permission_mode),
-        timeout_secs: config.timeout_secs,
+        timeout_secs: Some(config.timeout_secs),
         theme_config: config.theme_config,
         session_elapsed_ms: 0,
         verbose_tools: config.verbose_tools,

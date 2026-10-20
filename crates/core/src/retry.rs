@@ -38,22 +38,6 @@ impl FailureKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RetryPolicy {
-    Turn,
-    Nap,
-}
-
-impl RetryPolicy {
-    fn retries(self, kind: FailureKind) -> bool {
-        match kind {
-            FailureKind::Outage => true,
-            FailureKind::Timeout => self == RetryPolicy::Turn,
-            FailureKind::Refusal => false,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct FailureInput<'a> {
     pub timed_out: bool,
@@ -83,8 +67,10 @@ pub fn backoff(attempt: usize) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-pub fn retry_delay(kind: FailureKind, policy: RetryPolicy, attempt: usize) -> Option<Duration> {
-    policy.retries(kind).then(|| backoff(attempt)).flatten()
+pub fn retry_delay(kind: FailureKind, attempt: usize) -> Option<Duration> {
+    (kind == FailureKind::Outage)
+        .then(|| backoff(attempt))
+        .flatten()
 }
 
 #[cfg(test)]
@@ -154,31 +140,18 @@ mod tests {
     }
 
     #[test]
-    fn turn_policy_retries_timeouts_and_outages() {
-        let turn = RetryPolicy::Turn;
+    fn only_outages_are_retried() {
         assert_eq!(
-            retry_delay(FailureKind::Timeout, turn, 0),
+            retry_delay(FailureKind::Outage, 0),
             Some(Duration::from_secs(2))
         );
         assert_eq!(
-            retry_delay(FailureKind::Outage, turn, 1),
+            retry_delay(FailureKind::Outage, 1),
             Some(Duration::from_secs(8))
         );
-        assert_eq!(retry_delay(FailureKind::Outage, turn, 2), None);
-        assert_eq!(retry_delay(FailureKind::Timeout, turn, 2), None);
-        assert_eq!(retry_delay(FailureKind::Refusal, turn, 0), None);
-    }
-
-    #[test]
-    fn nap_policy_retries_outages_only() {
-        let nap = RetryPolicy::Nap;
-        assert_eq!(
-            retry_delay(FailureKind::Outage, nap, 0),
-            Some(Duration::from_secs(2))
-        );
-        assert_eq!(retry_delay(FailureKind::Outage, nap, 2), None);
-        assert_eq!(retry_delay(FailureKind::Timeout, nap, 0), None);
-        assert_eq!(retry_delay(FailureKind::Refusal, nap, 0), None);
+        assert_eq!(retry_delay(FailureKind::Outage, 2), None);
+        assert_eq!(retry_delay(FailureKind::Timeout, 0), None);
+        assert_eq!(retry_delay(FailureKind::Refusal, 0), None);
     }
 
     #[test]

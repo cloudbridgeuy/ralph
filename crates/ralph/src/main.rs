@@ -63,7 +63,6 @@ fn main() -> ExitCode {
 
     let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {
         store: None,
-        timeout: cli::CHAT_TIMEOUT_SECS,
         frozen_window: None,
         recent_history_tokens: None,
         wrap_width: None,
@@ -278,15 +277,12 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
     store.nap(|prompt| {
         let command = invoke::build_memory_command(prompt, dirs::home_dir().as_deref());
         let result = backoff::retry_on_outage(
-            &backoff::BackoffConfig {
-                what: "chat memory nap",
-                policy: ralph_core::retry::RetryPolicy::Nap,
-            },
+            "chat memory nap",
             || {
                 backoff::attempt_from(subprocess::invoke_subprocess_with_spinner_config(
                     &subprocess::SpinnerSubprocessConfig {
                         command: command.clone(),
-                        timeout_secs: args.timeout,
+                        timeout_secs: Some(args.timeout),
                         theme_config: theme_config.clone(),
                         session_elapsed_ms: 0,
                         verbose_tools: stream_processor::VerboseToolsConfig::new(),
