@@ -4,17 +4,20 @@ use crate::chat::index_files::{
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
-    nap_source, nap_step, parse_log, parse_tree, pending, retry_prompt, Archive, Commit, Entry,
-    NapStep, Node, NodeSlot, RangeRequest, Role, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall, retry_prompt, search,
+    Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, RangeRequest, Role,
+    SearchRequest, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+
+const RECALL_CHUNK_ENTRIES: usize = 256;
 
 pub struct Store {
     dir: PathBuf,
@@ -63,17 +66,28 @@ impl Store {
     }
 
     pub fn load(&self) -> io::Result<(Vec<Entry>, Tree)> {
-        let log = read_optional(&self.dir.join("log.jsonl"))?;
-        let (entries, warnings) = parse_log(&log);
+        let (entries, tree, warnings) = self.load_quiet()?;
         for warning in &warnings {
             warn(warning);
         }
-        Ok((entries, self.load_tree()?))
+        Ok((entries, tree))
+    }
+
+    pub fn load_quiet(&self) -> io::Result<(Vec<Entry>, Tree, Vec<String>)> {
+        let log = read_optional(&self.dir.join("log.jsonl"))?;
+        let (entries, mut warnings) = parse_log(&log);
+        let (tree, tree_warnings) = self.read_tree()?;
+        warnings.extend(tree_warnings);
+        Ok((entries, tree, warnings))
+    }
+
+    fn read_tree(&self) -> io::Result<(Tree, Vec<String>)> {
+        let bytes = read_optional(&self.dir.join("tree.jsonl"))?;
+        Ok(parse_tree(&bytes))
     }
 
     fn load_tree(&self) -> io::Result<Tree> {
-        let bytes = read_optional(&self.dir.join("tree.jsonl"))?;
-        let (tree, warnings) = parse_tree(&bytes);
+        let (tree, warnings) = self.read_tree()?;
         for warning in &warnings {
             warn(warning);
         }
@@ -115,6 +129,18 @@ impl Store {
     pub fn zoom(&self, node: Node) -> io::Result<Result<String, String>> {
         let lines = self.with_archive(|archive| archive.zoom(node))?;
         Ok(lines.map(|lines| lines.join("\n")))
+    }
+
+    pub fn recall(&self, pattern: &str) -> io::Result<Result<String, String>> {
+        self.with_archive(|archive| {
+            let mut entries = Vec::new();
+            archive.scan_entries(RECALL_CHUNK_ENTRIES, |_, entry| entries.push(entry.clone()))?;
+            Ok(recall(&entries, pattern))
+        })
+    }
+
+    pub fn search(&self, request: &SearchRequest) -> io::Result<Result<String, String>> {
+        self.with_archive(|archive| search(archive, request))
     }
 
     pub fn load_usage(&self) -> io::Result<String> {
@@ -174,7 +200,7 @@ impl Store {
 
     pub fn append(&self, role: Role, text: &str) -> io::Result<()> {
         let _lock = self.lock()?;
-        let entry = Entry {
+        let entry = NewEntry {
             role,
             at: chrono::Utc::now().to_rfc3339(),
             text: text.to_string(),
@@ -182,7 +208,12 @@ impl Store {
         let line = encode_entry(&entry).map_err(io::Error::other)?;
         let path = self.dir.join("log.jsonl");
         check_path(&path)?;
-        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(path)?;
+        trim_torn_tail(&mut file)?;
         file.write_all(line.as_bytes())?;
         file.sync_all()?;
         // The line is committed; `log.idx` is a cache the next reader rebuilds.
@@ -293,6 +324,31 @@ impl Store {
     }
 }
 
+const TAIL_PROBE_BYTES: u64 = 4096;
+
+fn trim_torn_tail(file: &mut File) -> io::Result<()> {
+    let len = file.metadata()?.len();
+    let mut window = TAIL_PROBE_BYTES;
+    loop {
+        let start = len.saturating_sub(window);
+        let mut chunk = vec![0; usize::try_from(len - start).map_err(io::Error::other)?];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut chunk)?;
+        match log_tail(&chunk, start) {
+            LogTail::Whole => return Ok(()),
+            LogTail::Torn(at) => {
+                warn(format!(
+                    "chat log dropped a torn last line of {} bytes at byte {at}",
+                    len - at
+                ));
+                file.set_len(at)?;
+                return file.sync_all();
+            }
+            LogTail::NeedMore => window = window.saturating_mul(2),
+        }
+    }
+}
+
 /// Runs the curator with `check_summary` retries. Returns the summary, the raw
 /// fallback after `MAX_NAP_ATTEMPTS` rejections, or `None` on a curator error.
 fn summarize(
@@ -328,7 +384,8 @@ fn summarize(
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
-        frozen_block, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE, TREE_INDEX_FILE,
+        frozen_block, parse_search_args, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE,
+        TREE_INDEX_FILE,
     };
 
     #[test]
@@ -421,6 +478,87 @@ mod tests {
         fs::write(store.dir().join(LOG_INDEX_FILE), b"junk").unwrap();
         store.append(Role::User, "two").unwrap();
         assert_eq!(stored_index(&store).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn append_after_a_torn_line_keeps_the_new_entry_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "zero").unwrap();
+        let mut log = OpenOptions::new()
+            .append(true)
+            .open(store.dir().join("log.jsonl"))
+            .unwrap();
+        log.write_all(b"{\"role\":\"user\",\"at\":\"t\",\"te")
+            .unwrap();
+        store.append(Role::Assistant, "one").unwrap();
+        let (entries, _) = store.load().unwrap();
+        let texts: Vec<_> = entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, ["zero", "one"]);
+        assert_eq!(stored_index(&store).unwrap().count(), 2);
+        let page = store.read(&read_request("0-1")).unwrap().unwrap();
+        assert!(page.contains("one"), "{page}");
+    }
+
+    #[test]
+    fn readers_keep_entries_after_a_corrupt_line_visible() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "needle zero").unwrap();
+        let mut log = OpenOptions::new()
+            .append(true)
+            .open(store.dir().join("log.jsonl"))
+            .unwrap();
+        log.write_all(b"not an entry needle\n").unwrap();
+        store.append(Role::Assistant, "needle two").unwrap();
+        store.append(Role::User, "needle three").unwrap();
+        let page = store.read(&read_request("0-3")).unwrap().unwrap();
+        assert!(
+            page.contains("#1 · worker ·  · 15 chars\n[corrupt entry]"),
+            "{page}"
+        );
+        assert!(
+            page.contains("needle two") && page.contains("needle three"),
+            "{page}"
+        );
+        let zoomed = store.zoom(Node::new(3, 4).unwrap()).unwrap().unwrap();
+        assert!(zoomed.starts_with("#3 user "), "{zoomed}");
+        let recalled = store.recall("needle").unwrap().unwrap();
+        let hits: Vec<_> = recalled.lines().filter(|l| l.starts_with('#')).collect();
+        assert_eq!(hits.len(), 3, "{recalled}");
+        assert!(
+            hits[0].starts_with("#3 ") && hits[2].starts_with("#0 "),
+            "{recalled}"
+        );
+        let request = parse_search_args(&serde_json::json!({ "query": "needle corrupt" })).unwrap();
+        let found = store.search(&request).unwrap().unwrap();
+        let ids: Vec<_> = found.lines().filter(|l| l.starts_with('#')).collect();
+        assert_eq!(ids.len(), 3, "{found}");
+        assert!(!found.contains("#1 "), "{found}");
+        assert_eq!(stored_index(&store).unwrap().count(), 4);
+    }
+
+    #[test]
+    fn a_turn_load_keeps_entries_after_a_mid_log_bad_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "zero").unwrap();
+        let mut log = OpenOptions::new()
+            .append(true)
+            .open(store.dir().join("log.jsonl"))
+            .unwrap();
+        log.write_all(b"not an entry\n").unwrap();
+        store.append(Role::Assistant, "two").unwrap();
+        store.append(Role::User, "three").unwrap();
+        let (entries, tree) = store.load_settled(|| ()).unwrap();
+        let texts: Vec<_> = entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(texts, ["zero", "[corrupt entry]", "two", "three"]);
+        let flags: Vec<_> = entries.iter().map(|e| e.is_corrupt()).collect();
+        assert_eq!(flags, [false, true, false, false]);
+        let lines = frozen_block(&entries, &tree, 10, 1, None).lines;
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert_eq!(lines[1], "[#1: unreadable log line, skipped]");
+        assert!(lines[3].starts_with("#3 user "), "{lines:?}");
     }
 
     #[test]

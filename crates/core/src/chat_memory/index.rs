@@ -1,12 +1,11 @@
-use super::{Entry, Node, Record};
+use super::{Node, Record};
 use std::collections::HashSet;
 
 pub const LOG_INDEX_FILE: &str = "log.idx";
 pub const TREE_INDEX_FILE: &str = "tree.idx";
 
-const VERSION: u32 = 2;
-const HEADER_BYTES: usize = 56;
-const STOPPED: u32 = 1;
+const VERSION: u32 = 3;
+const HEADER_BYTES: usize = 52;
 
 /// Random characters in the name of the temp file an index is saved through.
 pub const INDEX_TEMP_RAND: usize = 6;
@@ -41,7 +40,6 @@ pub struct Line {
 pub enum Scan<S> {
     Add(S),
     Skip,
-    Stop,
 }
 
 /// One fixed-size record of an index over a JSONL file.
@@ -56,19 +54,16 @@ pub trait Slot: Copy {
     fn read(bytes: &[u8]) -> Option<Self>;
 }
 
-/// The start of a `log.jsonl` entry. A line that is not an entry stops the
-/// index, as it stops `parse_log`.
+/// The start of a `log.jsonl` line. Every complete line holds an id, a corrupt
+/// one too, so ids are line positions.
 impl Slot for u64 {
     const FILE: &'static str = "log.jsonl";
     const INDEX_FILE: &'static str = LOG_INDEX_FILE;
     const MAGIC: [u8; 8] = *b"RLPHLOGX";
     const BYTES: usize = 8;
 
-    fn scan(bytes: &[u8], line: Line) -> Scan<u64> {
-        match serde_json::from_slice::<Entry>(bytes) {
-            Ok(_) => Scan::Add(line.start),
-            Err(_) => Scan::Stop,
-        }
+    fn scan(_bytes: &[u8], line: Line) -> Scan<u64> {
+        Scan::Add(line.start)
     }
 
     fn start(&self) -> u64 {
@@ -145,8 +140,7 @@ impl Slot for NodeSlot {
 /// Slots for the lines of a JSONL file in `[0, covered)`. `covered` ends on
 /// the newline of the last scanned line, which starts at `tail`; `hash` is the
 /// FNV-1a hash of the bytes `[tail, covered)`, so a rewritten file shows as
-/// stale. `stopped` means a line that stops the scan follows `covered`;
-/// `skipped` counts the lines the scan skipped.
+/// stale. `skipped` counts the lines the scan skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Index<S> {
     pub slots: Vec<S>,
@@ -154,7 +148,6 @@ pub struct Index<S> {
     pub tail: u64,
     pub hash: u64,
     pub skipped: u64,
-    pub stopped: bool,
 }
 
 pub type LogIndex = Index<u64>;
@@ -201,7 +194,6 @@ impl<S> Default for Index<S> {
             tail: 0,
             hash: fnv1a(&[]),
             skipped: 0,
-            stopped: false,
         }
     }
 }
@@ -211,12 +203,8 @@ impl<S: Slot> Index<S> {
         self.slots.len()
     }
 
-    /// Scans `data`, the file bytes from `covered` on. A line that stops the
-    /// scan stops the index for good.
+    /// Scans `data`, the file bytes from `covered` on.
     pub fn extend(&mut self, data: &[u8]) {
-        if self.stopped {
-            return;
-        }
         let base = self.covered;
         let mut last = None;
         for line in scan_lines(data, base) {
@@ -224,10 +212,6 @@ impl<S: Slot> Index<S> {
             match S::scan(bytes, line) {
                 Scan::Add(slot) => self.slots.push(slot),
                 Scan::Skip => self.skipped += 1,
-                Scan::Stop => {
-                    self.stopped = true;
-                    break;
-                }
             }
             last = Some(line);
         }
@@ -243,7 +227,7 @@ impl<S: Slot> Index<S> {
     pub fn freshness(&self, len: u64, tail: &[u8]) -> Freshness {
         if len < self.covered || fnv1a(tail) != self.hash {
             Freshness::Rebuild
-        } else if self.stopped || len == self.covered {
+        } else if len == self.covered {
             Freshness::Fresh
         } else {
             Freshness::Extend
@@ -258,11 +242,9 @@ impl<S: Slot> Index<S> {
 
     /// The header alone, for an in-place extend: slots first, then this.
     pub fn encode_header(&self) -> Vec<u8> {
-        let flags = if self.stopped { STOPPED } else { 0 };
         let mut out = Vec::with_capacity(HEADER_BYTES);
         out.extend_from_slice(&S::MAGIC);
         out.extend_from_slice(&VERSION.to_le_bytes());
-        out.extend_from_slice(&flags.to_le_bytes());
         let count = self.count() as u64;
         for word in [self.covered, self.tail, self.hash, self.skipped, count] {
             out.extend_from_slice(&word.to_le_bytes());
@@ -293,8 +275,7 @@ impl<S: Slot> Index<S> {
         if read_u32(&bytes[8..]) != VERSION {
             return None;
         }
-        let stopped = read_u32(&bytes[12..]) & STOPPED != 0;
-        let word = |k: usize| read_u64(&bytes[16 + 8 * k..]);
+        let word = |k: usize| read_u64(&bytes[12 + 8 * k..]);
         let (covered, tail, hash, skipped) = (word(0), word(1), word(2), word(3));
         let count = usize::try_from(word(4)).ok()?;
         let body = &bytes[HEADER_BYTES..];
@@ -314,22 +295,11 @@ impl<S: Slot> Index<S> {
             tail,
             hash,
             skipped,
-            stopped,
         })
     }
 }
 
 impl LogIndex {
-    /// The `parse_log` warning for a stopped log.
-    pub fn warning(&self) -> Option<String> {
-        self.stopped.then(|| {
-            format!(
-                "chat log entry {} is corrupt; later entries ignored",
-                self.count()
-            )
-        })
-    }
-
     /// Byte span of entries `[from, to)`; `None` when the range is empty or
     /// past the index.
     pub fn span(&self, from: usize, to: usize) -> Option<(u64, u64)> {
@@ -378,12 +348,12 @@ fn read_u64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat_memory::fixtures::{entry, n};
-    use crate::chat_memory::{encode_entry, encode_record, parse_log, parse_tree};
+    use crate::chat_memory::fixtures::{entry, n, written};
+    use crate::chat_memory::{encode_record, parse_tree};
 
     fn log(count: usize) -> Vec<u8> {
         (0..count)
-            .map(|i| encode_entry(&entry(i, 3 * i)).unwrap())
+            .map(|i| written(&entry(i, 3 * i)))
             .collect::<String>()
             .into_bytes()
     }
@@ -417,26 +387,26 @@ mod tests {
         let index = built(&data);
         assert_eq!(index.count(), 3);
         assert_eq!(index.covered, complete);
-        assert!(!index.stopped);
         let (start, end) = index.span(1, 2).unwrap();
         let text = std::str::from_utf8(&data[start as usize..end as usize]).unwrap();
-        assert_eq!(text, encode_entry(&entry(1, 3)).unwrap());
+        assert_eq!(text, written(&entry(1, 3)));
     }
 
     #[test]
-    fn extend_stops_at_a_corrupt_line_like_parse_log() {
+    fn extend_gives_a_corrupt_line_an_id_and_goes_on() {
         let mut data = log(2);
-        let good = data.len() as u64;
+        let bad = data.len() as u64;
         data.extend_from_slice(b"not json\n");
         data.extend_from_slice(&log(1));
         let index = built(&data);
-        assert_eq!(
-            (index.count(), index.covered, index.stopped),
-            (2, good, true)
-        );
+        assert_eq!(index.count(), 4);
+        assert_eq!(index.slots[2], bad);
+        assert_eq!((index.covered, index.skipped), (data.len() as u64, 0));
+        let (start, end) = index.span(2, 3).unwrap();
+        assert_eq!(&data[start as usize..end as usize], b"not json\n");
         let mut more = index.clone();
         more.extend(&log(1));
-        assert_eq!(more, index);
+        assert_eq!(more.count(), 5);
     }
 
     #[test]
@@ -479,13 +449,14 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_the_version_1_layout() {
-        let index = built(&log(3));
-        let mut old = index.encode();
-        old.drain(40..48);
-        old[8..12].copy_from_slice(&1u32.to_le_bytes());
-        assert_eq!(old.len(), 48 + 3 * 8);
-        assert!(LogIndex::decode(&old).is_none());
+    fn decode_rejects_older_versions() {
+        let good = built(&log(3)).encode();
+        assert!(LogIndex::decode(&good).is_some());
+        for version in [1u32, 2] {
+            let mut old = good.clone();
+            old[8..12].copy_from_slice(&version.to_le_bytes());
+            assert!(LogIndex::decode(&old).is_none(), "{version}");
+        }
     }
 
     #[test]
@@ -540,18 +511,18 @@ mod tests {
     }
 
     #[test]
-    fn a_stopped_index_stays_fresh_while_the_log_grows() {
+    fn a_corrupt_line_does_not_stop_the_index_growing() {
         let mut data = log(1);
         data.extend_from_slice(b"bad\n");
-        let index = built(&data);
-        let (_, warnings) = parse_log(&data);
-        assert!(warnings[0].starts_with(&index.warning().unwrap()));
-        assert_eq!(built(&log(2)).warning(), None);
+        let mut index = built(&data);
         data.extend_from_slice(&log(2));
         assert_eq!(
             index.freshness(data.len() as u64, tail(&index, &data)),
-            Freshness::Fresh
+            Freshness::Extend
         );
+        index.extend(&data[index.covered as usize..]);
+        assert_eq!(index, built(&data));
+        assert_eq!(index.count(), 4);
     }
 
     #[test]
@@ -582,7 +553,6 @@ mod tests {
         let mut index = TreeIndex::default();
         index.extend(&data);
         assert_eq!(index.count(), 3);
-        assert!(!index.stopped);
         assert_eq!(index.covered, data.len() as u64 - 1);
         let (tree, warnings) = parse_tree(&data);
         assert_eq!(index.skipped, warnings.len() as u64);

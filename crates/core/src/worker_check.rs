@@ -698,6 +698,7 @@ mod tests {
             role: Role::Worker,
             at: at.to_string(),
             text: text.to_string(),
+            corrupt: false,
         }
     }
 
@@ -732,6 +733,7 @@ mod tests {
             role: Role::User,
             at: "t1".to_string(),
             text: "[worker w1 · done]".to_string(),
+            corrupt: false,
         };
         let inline = worker_entry("t2", "see [worker w2 · done] above");
         assert!(logged_reports(&[user, inline]).is_empty());

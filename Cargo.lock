@@ -2448,6 +2448,7 @@ dependencies = [
  "chrono",
  "clap",
  "ralph_core",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",

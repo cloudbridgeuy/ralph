@@ -1,4 +1,5 @@
 use super::range::{parse_read_args, RangeRequest};
+use super::search::{parse_search_args, SearchRequest};
 use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
 use crate::chat_socket::is_worker_tool;
@@ -11,6 +12,7 @@ pub enum Tool {
     Zoom(Node),
     Recall(String),
     Read(RangeRequest),
+    Search(SearchRequest),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -78,6 +80,22 @@ fn memory_tool_definitions() -> Value {
                 "required": ["id"]
             }
         },
+        {
+            "name": "search",
+            "description": "Ranked search over the original chat messages. Unlike recall (a regex, every hit newest first), search scores messages by how well they match bare words, \"quoted phrases\" (the words must appear together, in order), and identifiers such as GUZ-709 or foo_bar (matched whole: GUZ-709 does not match GUZ-7090). A plain word also matches inside a joined one: rate finds rate-limited. Rarer words weigh more; ties go to the newer message. Each hit is `#<id> · <role> · <timestamp> · <snippet>`. When more hits remain the page ends with `next cursor: <cursor>`; pass it back as cursor with the same query and filters. Call read with an id for the full text.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Words, \"quoted phrases\", and identifiers. A message needs every phrase and at least one word or phrase."},
+                    "role": {"type": "string", "enum": ["user", "assistant", "worker"], "description": "Only messages from this role."},
+                    "since": {"type": "string", "description": "Earliest time: an RFC 3339 timestamp or a date like 2026-10-20."},
+                    "until": {"type": "string", "description": "Latest time: an RFC 3339 timestamp or a date like 2026-10-20 (the whole day counts)."},
+                    "limit": {"type": "integer", "description": "Hits per page, 1 to 50. Default 20."},
+                    "cursor": {"type": "string", "description": "The `next cursor:` value from the previous page."}
+                },
+                "required": ["query"]
+            }
+        },
         changes_tool_definition()
     ])
 }
@@ -87,6 +105,7 @@ pub fn parse_tool_call(name: &str, args: &Value) -> Result<Tool, String> {
         "zoom" => Node::parse(string_arg(args, "id")?.trim()).map(Tool::Zoom),
         "recall" => Ok(Tool::Recall(string_arg(args, "pattern")?)),
         "read" => parse_read_args(args).map(Tool::Read),
+        "search" => parse_search_args(args).map(Tool::Search),
         other => Err(format!("Unknown tool '{other}'.")),
     }
 }
@@ -143,6 +162,7 @@ mod tests {
                 Read::Page(page) => Ok(page.render()),
                 Read::More => panic!("a full window never needs more"),
             },
+            Tool::Search(_) => panic!("search runs over an archive"),
         }
     }
 
@@ -173,6 +193,7 @@ mod tests {
                 "zoom",
                 "recall",
                 "read",
+                "search",
                 "changes",
                 "spawn_worker",
                 "reply",
@@ -234,6 +255,19 @@ mod tests {
                 true
             );
         }
+    }
+
+    #[test]
+    fn search_call_parses_or_reports_a_tool_error() {
+        let Outcome::Call { tool, .. } = call("search", json!({"query": "GUZ-709", "limit": 5}))
+        else {
+            panic!("expected call")
+        };
+        assert!(matches!(tool, Tool::Search(_)));
+        let Outcome::Respond(v) = call("search", json!({"query": "x", "since": "soon"})) else {
+            panic!("expected respond")
+        };
+        assert_eq!(v["result"]["isError"], true);
     }
 
     #[test]

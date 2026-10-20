@@ -47,12 +47,16 @@ const PREVIEW_CHARS: usize = 80;
 const PREVIEW_LEAD_CHARS: usize = 20;
 
 fn preview(text: &str, match_start: usize) -> String {
+    excerpt(text, match_start, PREVIEW_LEAD_CHARS, PREVIEW_CHARS)
+}
+
+pub(super) fn excerpt(text: &str, match_start: usize, lead_chars: usize, width: usize) -> String {
     let lead = collapse(&text[..match_start]).chars().count();
     let flat = collapse(text);
     let total = flat.chars().count();
-    let from = lead.saturating_sub(PREVIEW_LEAD_CHARS);
-    let to = (from + PREVIEW_CHARS).min(total);
-    let from = to.saturating_sub(PREVIEW_CHARS).min(from);
+    let from = lead.saturating_sub(lead_chars);
+    let to = (from + width).min(total);
+    let from = to.saturating_sub(width).min(from);
     let body: String = flat.chars().skip(from).take(to - from).collect();
     let head = if from > 0 { "…" } else { "" };
     let tail = if to < total { "…" } else { "" };
@@ -97,6 +101,7 @@ pub fn recall(entries: &[Entry], pattern: &str) -> Result<String, String> {
         .iter()
         .enumerate()
         .rev()
+        .filter(|(_, entry)| !entry.is_corrupt())
         .filter_map(|(i, entry)| {
             re.find(&entry.text)
                 .map(|m| (i, entry, preview(&entry.text, m.start())))
@@ -192,6 +197,19 @@ mod tests {
         let entries = texted(2, |i| format!("m{i}"));
         assert_eq!(recall(&entries, "zzz").unwrap(), "no hits for zzz");
         assert!(recall(&entries, "(").is_err());
+    }
+
+    #[test]
+    fn recall_skips_corrupt_placeholders_and_keeps_ids() {
+        let mut entries = texted(3, |i| format!("needle {i}"));
+        entries[1] = Entry::corrupt();
+        let out = recall(&entries, "needle|corrupt").unwrap();
+        assert!(out.starts_with("#2 · "), "{out}");
+        assert!(out.contains("#0 · ") && !out.contains("#1 · "), "{out}");
+        assert_eq!(
+            recall(&entries[1..2], "corrupt").unwrap(),
+            "no hits for corrupt"
+        );
     }
 
     #[test]
