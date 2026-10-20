@@ -13,11 +13,36 @@ pub enum Mode {
     Summary,
 }
 
+impl Mode {
+    fn marker(self) -> char {
+        match self {
+            Mode::Raw => 'r',
+            Mode::Summary => 's',
+        }
+    }
+
+    fn from_marker(marker: char) -> Option<Mode> {
+        match marker {
+            'r' => Some(Mode::Raw),
+            's' => Some(Mode::Summary),
+            _ => None,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Mode::Raw => "raw",
+            Mode::Summary => "summary",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cursor {
     pub next: usize,
     pub offset: usize,
     pub end: usize,
+    pub mode: Mode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,15 +79,37 @@ impl Cursor {
         };
         let (position, end) = s.split_once('@').ok_or_else(bad)?;
         let (next, offset) = position.split_once('.').ok_or_else(bad)?;
+        let split = end
+            .char_indices()
+            .next_back()
+            .filter(|(_, c)| !c.is_ascii_digit())
+            .map_or((end, None), |(i, c)| (&end[..i], Some(c)));
+        let (end, marker) = split;
+        let (next, offset, end) = (number(next)?, number(offset)?, number(end)?);
+        let marker = marker.ok_or_else(|| {
+            format!(
+                "cursor '{s}' has no mode marker: it is from an older format. Restart the read without a cursor, then copy the `next cursor:` value from each page."
+            )
+        })?;
+        let mode = Mode::from_marker(marker).ok_or_else(|| {
+            format!("cursor '{s}' has an unknown mode marker '{marker}'. Use r or s, or copy the `next cursor:` value from the last page.")
+        })?;
         Ok(Cursor {
-            next: number(next)?,
-            offset: number(offset)?,
-            end: number(end)?,
+            next,
+            offset,
+            end,
+            mode,
         })
     }
 
     pub fn encode(&self) -> String {
-        format!("{}.{}@{}", self.next, self.offset, self.end)
+        format!(
+            "{}.{}@{}{}",
+            self.next,
+            self.offset,
+            self.end,
+            self.mode.marker()
+        )
     }
 }
 
@@ -165,7 +212,29 @@ impl Slice<'_> {
     }
 }
 
-fn validate_cursor(cursor: &Cursor, from: usize, limit: usize, len: usize) -> Result<(), String> {
+struct CursorBounds {
+    from: usize,
+    limit: usize,
+    len: usize,
+    mode: Mode,
+}
+
+fn validate_cursor(cursor: &Cursor, bounds: &CursorBounds) -> Result<(), String> {
+    let CursorBounds {
+        from,
+        limit,
+        len,
+        mode,
+    } = *bounds;
+    if cursor.mode != mode {
+        return Err(format!(
+            "cursor {} was issued in {} mode but this read uses {} mode. Pass mode {}, or restart without a cursor.",
+            cursor.encode(),
+            cursor.mode.name(),
+            mode.name(),
+            cursor.mode.name()
+        ));
+    }
     if cursor.end > len || cursor.end > limit {
         return Err(format!(
             "cursor {} is stale: its end is past the requested range or the chat.",
@@ -210,9 +279,16 @@ pub fn read_range(window: &Window, tree: &Tree, request: &RangeRequest) -> Resul
             next: request.from,
             offset: 0,
             end: limit,
+            mode: request.mode,
         },
         Some(c) => {
-            validate_cursor(&c, request.from, limit, len)?;
+            let bounds = CursorBounds {
+                from: request.from,
+                limit,
+                len,
+                mode: request.mode,
+            };
+            validate_cursor(&c, &bounds)?;
             c
         }
     };
@@ -348,13 +424,18 @@ mod tests {
         assert!(parse_range("a").is_err());
         assert!(parse_range("1-").is_err());
         assert!(parse_range("-1").is_err());
-        let c = Cursor {
-            next: 3,
-            offset: 7,
-            end: 9,
-        };
-        assert_eq!(Cursor::parse(&c.encode()), Ok(c));
-        for bad in ["", "3", "3.7", "3@9", "a.1@2", "3.-1@9", "3.1@"] {
+        for mode in [Mode::Raw, Mode::Summary] {
+            let c = Cursor {
+                next: 3,
+                offset: 7,
+                end: 9,
+                mode,
+            };
+            assert_eq!(Cursor::parse(&c.encode()), Ok(c));
+        }
+        for bad in [
+            "", "3", "3.7", "3@9", "a.1@2", "3.-1@9", "3.1@", "3.1@r", "3.1@9rs",
+        ] {
             assert!(Cursor::parse(bad).is_err(), "{bad}");
         }
     }
@@ -364,7 +445,7 @@ mod tests {
         let r = parse_read_args(&json!({"id": "2-4"})).unwrap();
         assert_eq!(r, request(2, 4, DEFAULT_BUDGET));
         let r = parse_read_args(
-            &json!({"id": "3", "mode": "summary", "budget": 10, "cursor": "3.2@4"}),
+            &json!({"id": "3", "mode": "summary", "budget": 10, "cursor": "3.2@4s"}),
         )
         .unwrap();
         assert_eq!(r.mode, Mode::Summary);
@@ -374,7 +455,8 @@ mod tests {
             Some(Cursor {
                 next: 3,
                 offset: 2,
-                end: 4
+                end: 4,
+                mode: Mode::Summary
             })
         );
         for bad in [
@@ -425,7 +507,12 @@ mod tests {
         let entries: Vec<Entry> = (0..3).map(|i| entry(i, 5)).collect();
         let t = Tree::new();
         let with = |next, offset, end| RangeRequest {
-            cursor: Some(Cursor { next, offset, end }),
+            cursor: Some(Cursor {
+                next,
+                offset,
+                end,
+                mode: Mode::Raw,
+            }),
             ..request(1, 2, 100)
         };
         assert!(read_full(&entries, &t, &with(1, 0, 3)).is_ok());
@@ -438,10 +525,97 @@ mod tests {
                 next: 1,
                 offset: 0,
                 end: 3,
+                mode: Mode::Raw,
             }),
             ..request(1, 1, 100)
         };
         assert!(read_full(&entries, &t, &narrow).is_err());
+    }
+
+    #[test]
+    fn rejects_cursors_without_or_with_unknown_marker() {
+        let old = Cursor::parse("3.7@9").unwrap_err();
+        assert!(
+            old.contains("no mode marker") && old.contains("without a cursor"),
+            "{old}"
+        );
+        let unknown = Cursor::parse("3.7@9x").unwrap_err();
+        assert!(unknown.contains("unknown mode marker 'x'"), "{unknown}");
+    }
+
+    #[test]
+    fn encodes_mode_marker_after_snapshot() {
+        let c = Cursor {
+            next: 1099,
+            offset: 9,
+            end: 1111,
+            mode: Mode::Summary,
+        };
+        assert_eq!(c.encode(), "1099.9@1111s");
+        assert_eq!(Cursor::parse("1099.9@1111r").unwrap().mode, Mode::Raw);
+    }
+
+    #[test]
+    fn rejects_cursor_from_the_other_mode() {
+        let entries: Vec<Entry> = (0..3).map(|i| entry(i, 5)).collect();
+        let t = Tree::new();
+        for (issued, used, message) in [
+            (
+                Mode::Summary,
+                Mode::Raw,
+                "cursor 1.0@3s was issued in summary mode but this read uses raw mode. Pass mode summary, or restart without a cursor.",
+            ),
+            (
+                Mode::Raw,
+                Mode::Summary,
+                "cursor 1.0@3r was issued in raw mode but this read uses summary mode. Pass mode raw, or restart without a cursor.",
+            ),
+        ] {
+            let req = RangeRequest {
+                mode: used,
+                cursor: Some(Cursor {
+                    next: 1,
+                    offset: 0,
+                    end: 3,
+                    mode: issued,
+                }),
+                ..request(1, 2, 100)
+            };
+            assert_eq!(read_full(&entries, &t, &req).unwrap_err(), message);
+        }
+    }
+
+    #[test]
+    fn summary_traversal_reassembles_the_summary() {
+        let long = "z".repeat(SUMMARY_BYTES + 1);
+        let entries = vec![text_entry(&long), text_entry("short one")];
+        let summary = "the gist of a long message, told at some length. ".repeat(6);
+        let mut tree = Tree::new();
+        tree.insert(Node::leaf(0), summary.clone());
+        for budget in [3, 10, 40] {
+            let req = RangeRequest {
+                mode: Mode::Summary,
+                ..request(0, 1, budget)
+            };
+            let all = pages(&entries, &tree, req);
+            assert!(all.len() > 2, "budget {budget}");
+            let mut joined: Vec<(String, String)> = Vec::new();
+            for (header, text) in all.iter().flat_map(bodies) {
+                let id = header[1..].split(' ').next().unwrap().to_string();
+                match joined.last_mut() {
+                    Some((last, acc)) if *last == id => acc.push_str(&text),
+                    _ => joined.push((id, text)),
+                }
+            }
+            assert_eq!(
+                joined,
+                vec![
+                    ("0".to_string(), summary.clone()),
+                    ("1".to_string(), "short one".to_string())
+                ],
+                "budget {budget}"
+            );
+        }
     }
 
     #[test]

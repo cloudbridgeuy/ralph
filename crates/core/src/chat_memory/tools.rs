@@ -68,7 +68,7 @@ fn memory_tool_definitions() -> Value {
         },
         {
             "name": "read",
-            "description": "Read a flat range of the chat in order, a page at a time. Each message shows as `#<id> · <role> · <date> · <n> chars` and then its text. mode raw (default) gives the original text; summary gives the leaf summary for long messages (`[not summarized]` when none exists). A message too long for the page is split into parts marked `chars a-b`. When more remains the page ends with `next cursor: <cursor>`; pass it back as cursor, with the same id and mode, for the next page. Messages added after the first call never appear in later pages.",
+            "description": "Read a flat range of the chat in order, a page at a time. Each message shows as `#<id> · <role> · <date> · <n> chars` and then its text. mode raw (default) gives the original text; summary gives the leaf summary for long messages (`[not summarized]` when none exists). A message too long for the page is split into parts marked `chars a-b`. When more remains the page ends with `next cursor: <cursor>`; pass it back as cursor, with the same id and mode, for the next page. A cursor only works in the mode that issued it. Messages added after the first call never appear in later pages.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
