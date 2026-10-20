@@ -77,7 +77,7 @@ impl Session {
             }
             if interrupt.is_some_and(|(sent, _)| sent.elapsed() >= INTERRUPT_GRACE) {
                 kill_process_group(&mut self.child);
-                break pump.finish(EXIT_CODE_KILLED, false);
+                break pump.finish(turn_exit_code(false, EXIT_CODE_KILLED), false);
             }
             let paused = self
                 .config
@@ -85,7 +85,7 @@ impl Session {
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::SeqCst));
             if pump.step(paused)? {
-                let exit_code = self.close();
+                let exit_code = turn_exit_code(true, self.close());
                 break pump.finish(exit_code, true);
             }
         };
@@ -108,8 +108,41 @@ impl Session {
     }
 }
 
+fn turn_exit_code(result_received: bool, exit_code: i32) -> i32 {
+    if result_received && exit_code == EXIT_CODE_KILLED {
+        0
+    } else {
+        exit_code
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kill_after_result_counts_as_success() {
+        assert_eq!(turn_exit_code(true, EXIT_CODE_KILLED), 0);
+    }
+
+    #[test]
+    fn clean_exit_after_result_stays_zero() {
+        assert_eq!(turn_exit_code(true, 0), 0);
+    }
+
+    #[test]
+    fn failing_exit_after_result_stays_failing() {
+        assert_eq!(turn_exit_code(true, 1), 1);
+    }
+
+    #[test]
+    fn no_result_kill_stays_failure() {
+        assert_eq!(turn_exit_code(false, EXIT_CODE_KILLED), EXIT_CODE_KILLED);
     }
 }
