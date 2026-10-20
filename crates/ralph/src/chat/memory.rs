@@ -547,10 +547,7 @@ mod tests {
         assert_eq!(flags, [false, true, false, false]);
         let lines = frozen_block(&entries, &tree, 10, 1, None).lines;
         assert_eq!(lines.len(), 4, "{lines:?}");
-        assert!(
-            lines[1].starts_with("#1 worker  [corrupt entry]"),
-            "{lines:?}"
-        );
+        assert_eq!(lines[1], "[#1: unreadable log line, skipped]");
         assert!(lines[3].starts_with("#3 user "), "{lines:?}");
     }
 

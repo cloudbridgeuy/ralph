@@ -1,4 +1,5 @@
 use super::nap::fallback_summary;
+use super::notice::{merge_notices, Shown};
 use super::{Entry, Frozen, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
 
 fn cover_at(t: usize, alpha: f64) -> Vec<(usize, usize)> {
@@ -129,6 +130,14 @@ fn display_line(entries: &[Entry], tree: &Tree, node: Node) -> String {
     })
 }
 
+fn shown_node(entries: &[Entry], tree: &Tree, node: Node) -> Shown {
+    if node.size() == 1 && entries[node.lo].is_corrupt() {
+        Shown::Unreadable(node.lo)
+    } else {
+        Shown::Line(display_line(entries, tree, node))
+    }
+}
+
 fn split_target(entries: &[Entry], tree: &Tree, nodes: &[Node]) -> Option<Node> {
     nodes
         .iter()
@@ -171,10 +180,11 @@ fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
         let (left, right) = target.halves();
         nodes.splice(i..=i, [left, right]);
     }
-    nodes
-        .into_iter()
-        .map(|node| display_line(entries, tree, node))
-        .collect()
+    merge_notices(
+        nodes
+            .into_iter()
+            .map(|node| shown_node(entries, tree, node)),
+    )
 }
 
 pub fn frozen_block(
@@ -213,9 +223,12 @@ pub fn verbatim_start(entries: &[Entry], from: usize, budget: usize) -> usize {
 
 pub fn tail_lines(entries: &[Entry], tree: &Tree, from: usize, budget: usize) -> Vec<String> {
     let start = verbatim_start(entries, from, budget);
-    let settled = (from..start).map(|i| display_line(entries, tree, Node::leaf(i)));
-    let verbatim = (start..entries.len()).map(|i| entry_line(i, &entries[i], &entries[i].text));
-    settled.chain(verbatim).collect()
+    let settled = (from..start).map(|i| shown_node(entries, tree, Node::leaf(i)));
+    let verbatim = (start..entries.len()).map(|i| match &entries[i] {
+        entry if entry.is_corrupt() => Shown::Unreadable(i),
+        entry => Shown::Line(entry_line(i, entry, &entry.text)),
+    });
+    merge_notices(settled.chain(verbatim))
 }
 #[cfg(test)]
 mod tests {
@@ -360,9 +373,55 @@ mod tests {
         assert!(!tree.contains_key(&n(4, 6)) && !tree.contains_key(&n(0, 8)));
         assert!(tree.contains_key(&n(0, 4)) && tree.contains_key(&n(6, 8)));
         let lines = view(&entries, &tree, 4);
-        assert_eq!(ids(&lines), ["0-3", "4", "5", "6-7"]);
-        assert!(lines[2].contains("[corrupt entry]"), "{}", lines[2]);
-        assert_view_invariants(&lines, 8, 4);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines[0].starts_with("#0-3 ") && lines[1].starts_with("#4 "));
+        assert_eq!(lines[2], "[#5: unreadable log line, skipped]");
+        assert!(lines[3].starts_with("#6-7 "));
+    }
+
+    fn marked(count: usize, at: &[usize]) -> Vec<Entry> {
+        at.iter()
+            .fold(short(count), |entries, i| with_placeholder(entries, *i))
+    }
+
+    #[test]
+    fn the_view_collapses_a_run_of_placeholders_into_one_notice() {
+        let entries = marked(8, &[5, 6]);
+        let lines = view(&entries, &summarized(&entries), 8);
+        assert_eq!(lines.len(), 7, "{lines:?}");
+        assert!(lines[4].starts_with("#4 "));
+        assert_eq!(lines[5], "[#5-6: unreadable log lines, skipped]");
+        assert!(lines[6].starts_with("#7 "));
+        let lines = view(&marked(8, &[5, 6, 7]), &Tree::new(), 8);
+        assert_eq!(lines.len(), 6, "{lines:?}");
+        assert!(lines[4].starts_with("#4 "));
+        assert_eq!(lines[5], "[#5-7: unreadable log lines, skipped]");
+    }
+
+    #[test]
+    fn the_view_shows_a_placeholder_at_the_start_as_a_notice() {
+        let entries = marked(4, &[0, 1]);
+        let lines = view(&entries, &Tree::new(), 4);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert_eq!(lines[0], "[#0-1: unreadable log lines, skipped]");
+        assert!(lines[1].starts_with("#2 ") && lines[2].starts_with("#3 "));
+    }
+
+    #[test]
+    fn the_tail_collapses_placeholders_and_keeps_other_ids() {
+        let entries = marked(6, &[0, 3, 4]);
+        for budget in [0, 100] {
+            let lines = tail_lines(&entries, &Tree::new(), 0, budget);
+            assert_eq!(lines.len(), 5, "{lines:?}");
+            assert_eq!(lines[0], "[#0: unreadable log line, skipped]");
+            assert!(lines[1].starts_with("#1 ") && lines[2].starts_with("#2 "));
+            assert_eq!(lines[3], "[#3-4: unreadable log lines, skipped]");
+            assert!(lines[4].starts_with("#5 "));
+        }
+        let at_end = tail_lines(&marked(3, &[2]), &Tree::new(), 1, 100);
+        assert_eq!(at_end.len(), 2, "{at_end:?}");
+        assert!(at_end[0].starts_with("#1 "));
+        assert_eq!(at_end[1], "[#2: unreadable log line, skipped]");
     }
 
     fn lines_cover(lines: &[String]) -> usize {

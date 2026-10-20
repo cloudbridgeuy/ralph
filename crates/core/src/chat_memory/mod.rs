@@ -3,6 +3,7 @@ mod index;
 mod log;
 mod lookup;
 mod nap;
+mod notice;
 mod range;
 mod search;
 mod tools;
