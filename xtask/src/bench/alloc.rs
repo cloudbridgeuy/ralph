@@ -1,11 +1,14 @@
 //! A global allocator that counts allocations, so the benchmark can report
-//! what one call allocates.
+//! what one call allocates. A global allocator serves the whole binary, so it
+//! cannot be set per command; it counts only after `start_counting`, which
+//! only `bench-memory` calls. Other commands pay one relaxed load per call.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 struct Counting;
 
+static ON: AtomicBool = AtomicBool::new(false);
 static COUNT: AtomicU64 = AtomicU64::new(0);
 static BYTES: AtomicU64 = AtomicU64::new(0);
 
@@ -16,8 +19,7 @@ static GLOBAL: Counting = Counting;
 // counters only add to atomics.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        COUNT.fetch_add(1, Ordering::Relaxed);
-        BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        count(layout.size());
         unsafe { System.alloc(layout) }
     }
 
@@ -26,13 +28,23 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        COUNT.fetch_add(1, Ordering::Relaxed);
-        BYTES.fetch_add(new_size as u64, Ordering::Relaxed);
+        count(new_size);
         unsafe { System.realloc(ptr, layout, new_size) }
     }
 }
 
-/// Allocations and allocated bytes since the process started.
+fn count(size: usize) {
+    if ON.load(Ordering::Relaxed) {
+        COUNT.fetch_add(1, Ordering::Relaxed);
+        BYTES.fetch_add(size as u64, Ordering::Relaxed);
+    }
+}
+
+pub fn start_counting() {
+    ON.store(true, Ordering::Relaxed);
+}
+
+/// Allocations and allocated bytes since `start_counting`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Allocs {
     pub count: u64,

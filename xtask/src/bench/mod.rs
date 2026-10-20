@@ -6,9 +6,9 @@
 use crate::prelude::*;
 use alloc::Allocs;
 use ralph_core::chat_memory::{
-    encode_entry, encode_record, parse_log, parse_tree, pending, read_page, read_range, refresh,
-    zoom, zoom_node, ByteSource, Entry, IndexedTree, LogIndex, Mode, Node, RangeRequest, Read,
-    Role, Tree, TreeIndex, Window, LOG_INDEX_FILE, TREE_INDEX_FILE,
+    encode_entry, encode_record, parse_log, parse_tree, pending, read_range, zoom, Archive,
+    ByteSource, Entry, LogIndex, Mode, Node, RangeRequest, Read, Role, Tree, TreeIndex, Window,
+    LOG_INDEX_FILE, TREE_INDEX_FILE,
 };
 use std::fs::{self, File};
 use std::io::{self, Read as _, Seek, SeekFrom};
@@ -191,20 +191,15 @@ fn full(dir: &Path, case: &Case) -> io::Result<Answer> {
 
 /// The path after GUZ-709: decode both indexes, then load only what shows.
 fn indexed(dir: &Path, case: &Case) -> io::Result<Answer> {
-    let mut log = Counted::open(&dir.join("log.jsonl"))?;
-    let stored = LogIndex::decode(&read_counted(&dir.join(LOG_INDEX_FILE))?);
-    let (log_index, _) = refresh(stored, &mut log)?;
-    let mut file = Counted::open(&dir.join("tree.jsonl"))?;
-    let stored = TreeIndex::decode(&read_counted(&dir.join(TREE_INDEX_FILE))?);
-    let (index, _) = refresh(stored, &mut file)?;
-    let mut tree = IndexedTree { file, index };
+    let mut archive = Archive::open(
+        Counted::open(&dir.join("log.jsonl"))?,
+        LogIndex::decode(&read_counted(&dir.join(LOG_INDEX_FILE))?),
+        Counted::open(&dir.join("tree.jsonl"))?,
+        TreeIndex::decode(&read_counted(&dir.join(TREE_INDEX_FILE))?),
+    )?;
     Ok(match case {
-        Case::Read(request) => {
-            read_page(&mut log, &log_index, &mut tree, request)?.map(|page| page.render())
-        }
-        Case::Zoom(node) => {
-            zoom_node(&mut log, &log_index, &mut tree, *node)?.map(|lines| lines.join("\n"))
-        }
+        Case::Read(request) => archive.read(request)?.map(|page| page.render()),
+        Case::Zoom(node) => archive.zoom(*node)?.map(|lines| lines.join("\n")),
     })
 }
 
@@ -243,6 +238,7 @@ fn write_store(dir: &Path, n: usize) -> io::Result<()> {
 }
 
 pub fn run(command: BenchMemoryCommand) -> Result<(), Box<dyn std::error::Error>> {
+    alloc::start_counting();
     let mut rows = Vec::new();
     for n in command.sizes.iter().copied().filter(|n| *n > 0) {
         let dir = tempfile::tempdir()?;

@@ -39,11 +39,91 @@ impl<B: ByteSource> NodeSource for IndexedTree<B> {
             .find(wanted)
             .into_iter()
             .map(|slot| {
+                if slot.end >= self.index.covered {
+                    return Err(stale("a tree slot ends past the index"));
+                }
                 let bytes = self.file.read(slot.start, slot.end)?;
-                let record: Record = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+                let record: Record = serde_json::from_slice(&bytes).map_err(stale)?;
+                if (record.lo, record.hi) != (slot.node.lo, slot.node.hi) {
+                    return Err(stale("a tree slot points at another node"));
+                }
                 Ok((slot.node, record.text))
             })
             .collect()
+    }
+}
+
+/// An index that does not match its file: `Archive` rebuilds and retries.
+fn stale(e: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e)
+}
+
+/// Which indexes of an `Archive` differ from the files on disk.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Stale {
+    pub log: bool,
+    pub tree: bool,
+}
+
+/// The log, the tree and their indexes for one `read` or `zoom`. A call that
+/// finds an index wrong rebuilds both from their files and runs once more.
+pub struct Archive<B> {
+    pub log: B,
+    pub log_index: LogIndex,
+    pub tree: IndexedTree<B>,
+    pub stale: Stale,
+}
+
+impl<B: ByteSource> Archive<B> {
+    /// Brings the stored indexes up to date in memory.
+    pub fn open(
+        mut log: B,
+        stored_log: Option<LogIndex>,
+        mut tree: B,
+        stored_tree: Option<TreeIndex>,
+    ) -> io::Result<Archive<B>> {
+        let (log_index, log_how) = refresh(stored_log, &mut log)?;
+        let (index, tree_how) = refresh(stored_tree, &mut tree)?;
+        Ok(Archive {
+            log,
+            log_index,
+            tree: IndexedTree { file: tree, index },
+            stale: Stale {
+                log: log_how != Refresh::Fresh,
+                tree: tree_how != Refresh::Fresh,
+            },
+        })
+    }
+
+    pub fn read(&mut self, request: &RangeRequest) -> io::Result<Result<RangePage, String>> {
+        self.retry(|a| read_page(&mut a.log, &a.log_index, &mut a.tree, request))
+    }
+
+    pub fn zoom(&mut self, node: Node) -> io::Result<Result<Vec<String>, String>> {
+        self.retry(|a| zoom_node(&mut a.log, &a.log_index, &mut a.tree, node))
+    }
+
+    /// The `parse_log` and `parse_tree` warnings the files would give.
+    pub fn warnings(&self) -> Vec<String> {
+        [self.log_index.warning(), self.tree.index.warning()]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    fn retry<T>(&mut self, call: impl Fn(&mut Self) -> io::Result<T>) -> io::Result<T> {
+        match call(self) {
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => {
+                self.log_index = refresh(None, &mut self.log)?.0;
+                self.tree.index = refresh(None, &mut self.tree.file)?.0;
+                self.stale = Stale {
+                    log: true,
+                    tree: true,
+                };
+                call(self)
+            }
+            other => other,
+        }
     }
 }
 
@@ -125,12 +205,20 @@ fn load(
     let Some((start, end)) = index.span(from, to) else {
         return Ok(Vec::new());
     };
-    let data = log.read(start, end)?;
-    scan_lines(&data, start)
+    // One byte early, so an offset into the middle of a line scans as a
+    // line that starts elsewhere.
+    let before = start.saturating_sub(1);
+    let data = log.read(before, end)?;
+    let lines = scan_lines(&data, before);
+    let starts = lines.iter().map(|line| line.start);
+    if !starts.eq(index.slots[from..to].iter().copied()) {
+        return Err(stale("log offsets do not match the line starts"));
+    }
+    lines
         .iter()
         .map(|line| {
-            let bytes = &data[(line.start - start) as usize..(line.end - start) as usize];
-            serde_json::from_slice(bytes).map_err(io::Error::other)
+            let bytes = &data[(line.start - before) as usize..(line.end - before) as usize];
+            serde_json::from_slice(bytes).map_err(stale)
         })
         .collect()
 }
@@ -160,7 +248,7 @@ fn long_leaves(start: usize, entries: &[Entry]) -> Vec<Node> {
 
 /// One `read` page, loading only a window of entries from the cursor on. The
 /// window doubles while the page runs past it before the budget is spent.
-pub fn read_page(
+fn read_page(
     log: &mut impl ByteSource,
     index: &LogIndex,
     nodes: &mut impl NodeSource,
@@ -192,7 +280,7 @@ pub fn read_page(
 }
 
 /// `zoom` reading at most two entries and the two half summaries.
-pub fn zoom_node(
+fn zoom_node(
     log: &mut impl ByteSource,
     index: &LogIndex,
     nodes: &mut impl NodeSource,
@@ -495,6 +583,96 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// An archive over `entries` and `tree` whose stored indexes `damage`
+    /// may break, as a decode that still passes would leave them.
+    fn damaged(
+        entries: &[Entry],
+        tree: &Tree,
+        damage: impl FnOnce(&mut LogIndex, &mut TreeIndex),
+    ) -> Archive<Bytes> {
+        let mut log = bytes(entries);
+        let (mut log_index, _) = refresh::<u64>(None, &mut log).unwrap();
+        let IndexedTree { file, mut index } = indexed(tree);
+        damage(&mut log_index, &mut index);
+        let log_index = LogIndex::decode(&log_index.encode());
+        let index = TreeIndex::decode(&index.encode());
+        assert!(log_index.is_some() && index.is_some(), "damage must decode");
+        Archive::open(log, log_index, file, index).unwrap()
+    }
+
+    #[test]
+    fn an_intact_archive_answers_without_rebuilding() {
+        let entries = mixed(12);
+        let tree = summarized(&entries, 2);
+        let mut archive = damaged(&entries, &tree, |_, _| {});
+        assert_eq!(archive.stale, Stale::default());
+        let node = n(0, 8);
+        let want = zoom(&Window::full(&entries), &tree, node);
+        assert_eq!(archive.zoom(node).unwrap(), want);
+        assert_eq!(archive.stale, Stale::default());
+        assert!(archive.warnings().is_empty());
+    }
+
+    #[test]
+    fn a_shifted_log_slot_rebuilds_and_answers_right() {
+        let entries = mixed(12);
+        let tree = summarized(&entries, 2);
+        for shift in [1, 3] {
+            let mut archive = damaged(&entries, &tree, |log, _| log.slots[5] += shift);
+            let request = RangeRequest {
+                from: 2,
+                to: 9,
+                mode: Mode::Raw,
+                budget: 16384,
+                cursor: None,
+            };
+            let page = archive.read(&request).unwrap();
+            assert_eq!(page, full_page(&entries, &tree, &request));
+            assert_eq!(
+                archive.stale,
+                Stale {
+                    log: true,
+                    tree: true
+                }
+            );
+            let mut archive = damaged(&entries, &tree, |log, _| log.slots[5] += shift);
+            let want = zoom(&Window::full(&entries), &tree, n(5, 6));
+            assert_eq!(archive.zoom(n(5, 6)).unwrap(), want);
+        }
+    }
+
+    #[test]
+    fn a_relabeled_tree_slot_rebuilds_and_answers_right() {
+        let entries = mixed(12);
+        let tree = summarized(&entries, 100);
+        let node = n(0, 8);
+        let (left, right) = node.halves();
+        assert!(tree.contains_key(&left) && tree.contains_key(&right));
+        let mut archive = damaged(&entries, &tree, |_, index| {
+            let slot = index.slots.iter_mut().find(|s| s.node != left).unwrap();
+            slot.node = left;
+        });
+        let want = zoom(&Window::full(&entries), &tree, node);
+        assert_eq!(archive.zoom(node).unwrap(), want);
+        assert!(archive.stale.tree);
+    }
+
+    #[test]
+    fn archive_warnings_match_the_parsers() {
+        let tree = |data: &[u8]| Bytes {
+            data: data.to_vec(),
+            read: 0,
+        };
+        let mut log = bytes(&mixed(2));
+        log.data.extend_from_slice(b"oops\n");
+        let archive = Archive::open(log, None, tree(b""), None).unwrap();
+        let warnings = archive.warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("chat log entry 2 is corrupt"));
+        let archive = Archive::open(bytes(&mixed(2)), None, tree(b"junk\n"), None).unwrap();
+        assert_eq!(archive.warnings(), ["chat tree: 1 records skipped"]);
     }
 
     #[test]

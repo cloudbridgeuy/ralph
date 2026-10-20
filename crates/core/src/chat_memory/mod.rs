@@ -11,13 +11,10 @@ mod usage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use archive::{
-    read_page, refresh, write_plan, zoom_node, ByteSource, IndexWrite, IndexedTree, NodeSource,
-    Refresh,
-};
+pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite};
 pub use index::{Index, LogIndex, NodeSlot, Slot, TreeIndex, LOG_INDEX_FILE, TREE_INDEX_FILE};
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
-pub use lookup::{recall, zoom, zoom_entries};
+pub use lookup::{recall, zoom};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
     retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,

@@ -5,7 +5,7 @@ pub const LOG_INDEX_FILE: &str = "log.idx";
 pub const TREE_INDEX_FILE: &str = "tree.idx";
 
 const VERSION: u32 = 1;
-const HEADER_BYTES: usize = 48;
+const HEADER_BYTES: usize = 56;
 const STOPPED: u32 = 1;
 
 /// Byte span of one complete, non-blank line, newline excluded.
@@ -123,13 +123,15 @@ impl Slot for NodeSlot {
 /// Slots for the lines of a JSONL file in `[0, covered)`. `covered` ends on
 /// the newline of the last scanned line, which starts at `tail`; `hash` is the
 /// FNV-1a hash of the bytes `[tail, covered)`, so a rewritten file shows as
-/// stale. `stopped` means a line that stops the scan follows `covered`.
+/// stale. `stopped` means a line that stops the scan follows `covered`;
+/// `skipped` counts the lines the scan skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Index<S> {
     pub slots: Vec<S>,
     pub covered: u64,
     pub tail: u64,
     pub hash: u64,
+    pub skipped: u64,
     pub stopped: bool,
 }
 
@@ -176,6 +178,7 @@ impl<S> Default for Index<S> {
             covered: 0,
             tail: 0,
             hash: fnv1a(&[]),
+            skipped: 0,
             stopped: false,
         }
     }
@@ -198,7 +201,7 @@ impl<S: Slot> Index<S> {
             let bytes = &data[(line.start - base) as usize..(line.end - base) as usize];
             match S::scan(bytes, line) {
                 Scan::Add(slot) => self.slots.push(slot),
-                Scan::Skip => {}
+                Scan::Skip => self.skipped += 1,
                 Scan::Stop => {
                     self.stopped = true;
                     break;
@@ -238,7 +241,8 @@ impl<S: Slot> Index<S> {
         out.extend_from_slice(&S::MAGIC);
         out.extend_from_slice(&VERSION.to_le_bytes());
         out.extend_from_slice(&flags.to_le_bytes());
-        for word in [self.covered, self.tail, self.hash, self.count() as u64] {
+        let count = self.count() as u64;
+        for word in [self.covered, self.tail, self.hash, self.skipped, count] {
             out.extend_from_slice(&word.to_le_bytes());
         }
         out
@@ -269,8 +273,8 @@ impl<S: Slot> Index<S> {
         }
         let stopped = read_u32(&bytes[12..]) & STOPPED != 0;
         let word = |k: usize| read_u64(&bytes[16 + 8 * k..]);
-        let (covered, tail, hash) = (word(0), word(1), word(2));
-        let count = usize::try_from(word(3)).ok()?;
+        let (covered, tail, hash, skipped) = (word(0), word(1), word(2), word(3));
+        let count = usize::try_from(word(4)).ok()?;
         let body = &bytes[HEADER_BYTES..];
         if body.len() != count.checked_mul(S::BYTES)? {
             return None;
@@ -287,12 +291,23 @@ impl<S: Slot> Index<S> {
             covered,
             tail,
             hash,
+            skipped,
             stopped,
         })
     }
 }
 
 impl LogIndex {
+    /// The `parse_log` warning for a stopped log.
+    pub fn warning(&self) -> Option<String> {
+        self.stopped.then(|| {
+            format!(
+                "chat log entry {} is corrupt; later entries ignored",
+                self.count()
+            )
+        })
+    }
+
     /// Byte span of entries `[from, to)`; `None` when the range is empty or
     /// past the index.
     pub fn span(&self, from: usize, to: usize) -> Option<(u64, u64)> {
@@ -305,6 +320,11 @@ impl LogIndex {
 }
 
 impl TreeIndex {
+    /// The `parse_tree` warning for skipped records, as one line.
+    pub fn warning(&self) -> Option<String> {
+        (self.skipped > 0).then(|| format!("chat tree: {} records skipped", self.skipped))
+    }
+
     /// The first record of each wanted node, as `parse_tree` keeps it.
     pub fn find(&self, wanted: &[Node]) -> Vec<NodeSlot> {
         let mut left: HashSet<Node> = wanted.iter().copied().collect();
@@ -337,7 +357,7 @@ fn read_u64(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::{entry, n};
-    use crate::chat_memory::{encode_entry, encode_record, parse_tree};
+    use crate::chat_memory::{encode_entry, encode_record, parse_log, parse_tree};
 
     fn log(count: usize) -> Vec<u8> {
         (0..count)
@@ -469,6 +489,9 @@ mod tests {
         let mut data = log(1);
         data.extend_from_slice(b"bad\n");
         let index = built(&data);
+        let (_, warnings) = parse_log(&data);
+        assert!(warnings[0].starts_with(&index.warning().unwrap()));
+        assert_eq!(built(&log(2)).warning(), None);
         data.extend_from_slice(&log(2));
         assert_eq!(
             index.freshness(data.len() as u64, tail(&index, &data)),
@@ -506,7 +529,11 @@ mod tests {
         assert_eq!(index.count(), 3);
         assert!(!index.stopped);
         assert_eq!(index.covered, data.len() as u64 - 1);
-        let (tree, _) = parse_tree(&data);
+        let (tree, warnings) = parse_tree(&data);
+        assert_eq!(index.skipped, warnings.len() as u64);
+        let warning = index.warning().unwrap();
+        assert_eq!(warning, "chat tree: 2 records skipped");
+        assert_eq!(TreeIndex::default().warning(), None);
         let found = index.find(&[n(0, 2), n(2, 3), n(4, 8)]);
         assert_eq!(found.len(), 2);
         for slot in found {

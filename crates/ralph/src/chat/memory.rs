@@ -1,10 +1,9 @@
-use crate::chat::index_files::{snapshot, update_index, Snapshot};
+use crate::chat::index_files::{open_archive, save_stale, update_index, FileSource};
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
-    nap_source, nap_step, parse_log, parse_tree, pending, read_page, retry_prompt, zoom_node,
-    Commit, Entry, NapStep, Node, NodeSlot, RangeRequest, Role, Tree, Trigger, UsageRecord,
-    MAX_NAP_ATTEMPTS,
+    nap_source, nap_step, parse_log, parse_tree, pending, retry_prompt, Archive, Commit, Entry,
+    NapStep, Node, NodeSlot, RangeRequest, Role, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -79,24 +78,40 @@ impl Store {
         Ok(tree)
     }
 
-    /// Takes a shared `LOCK` only while it fixes the log and tree lengths and
-    /// reads their indexes; bytes below those lengths never change, so reads
-    /// after the lock is gone see the same snapshot.
-    fn snapshot(&self) -> io::Result<Snapshot> {
-        let lock = self.open_lock()?;
-        lock.lock_shared()?;
-        snapshot(&self.dir)
+    /// Runs `call` over the indexed archive under a shared `LOCK`, then saves
+    /// the indexes it had to extend or rebuild. A missing store reads as
+    /// empty and nothing is created.
+    fn with_archive<T>(
+        &self,
+        call: impl FnOnce(&mut Archive<FileSource>) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let lock = if self.dir.is_dir() {
+            let lock = self.lock_file()?;
+            lock.lock_shared()?;
+            Some(lock)
+        } else {
+            None
+        };
+        let mut archive = open_archive(&self.dir)?;
+        let answer = call(&mut archive)?;
+        for warning in archive.warnings() {
+            warn(warning);
+        }
+        if lock.is_some() {
+            if let Err(e) = save_stale(&self.dir, &archive) {
+                warn(format!("chat memory index not saved: {e}"));
+            }
+        }
+        Ok(answer)
     }
 
     pub fn read(&self, request: &RangeRequest) -> io::Result<Result<String, String>> {
-        let mut at = self.snapshot()?;
-        let page = read_page(&mut at.log, &at.log_index, &mut at.tree, request)?;
+        let page = self.with_archive(|archive| archive.read(request))?;
         Ok(page.map(|page| page.render()))
     }
 
     pub fn zoom(&self, node: Node) -> io::Result<Result<String, String>> {
-        let mut at = self.snapshot()?;
-        let lines = zoom_node(&mut at.log, &at.log_index, &mut at.tree, node)?;
+        let lines = self.with_archive(|archive| archive.zoom(node))?;
         Ok(lines.map(|lines| lines.join("\n")))
     }
 
@@ -107,6 +122,10 @@ impl Store {
 
     fn open_lock(&self) -> io::Result<File> {
         fs::create_dir_all(&self.dir)?;
+        self.lock_file()
+    }
+
+    fn lock_file(&self) -> io::Result<File> {
         let path = self.dir.join("LOCK");
         check_path(&path)?;
         OpenOptions::new()
@@ -416,7 +435,27 @@ mod tests {
             .unwrap()
             .unwrap()
             .contains("second"));
-        assert_eq!(stored_index(&store).unwrap().count(), 1);
+        assert_eq!(stored_index(&store).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn reads_heal_a_damaged_log_index_that_still_decodes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        for text in ["zero", "one", "two"] {
+            store.append(Role::User, text).unwrap();
+        }
+        let mut index = stored_index(&store).unwrap();
+        index.slots[1] += 2;
+        fs::write(store.dir().join(LOG_INDEX_FILE), index.encode()).unwrap();
+        let zoomed = store.zoom(Node::new(1, 2).unwrap()).unwrap().unwrap();
+        assert!(zoomed.contains("one"), "{zoomed}");
+        let page = store.read(&read_request("0-2")).unwrap().unwrap();
+        assert!(page.contains("zero") && page.contains("two"), "{page}");
+        let log = fs::read(store.dir().join("log.jsonl")).unwrap();
+        let mut built = LogIndex::default();
+        built.extend(&log);
+        assert_eq!(stored_index(&store), Some(built));
     }
 
     #[test]
@@ -425,6 +464,14 @@ mod tests {
         let store = Store::new(dir.path().join("s"));
         assert!(store.read(&read_request("0")).unwrap().is_err());
         assert!(store.zoom(Node::new(0, 1).unwrap()).unwrap().is_err());
+        assert!(!store.dir().exists());
+        fs::create_dir(store.dir()).unwrap();
+        assert!(store.read(&read_request("0")).unwrap().is_err());
+        let names: Vec<_> = fs::read_dir(store.dir())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["LOCK"]);
     }
 
     #[test]
@@ -526,10 +573,12 @@ mod tests {
             zoomed.contains("first") && !zoomed.contains("loser"),
             "{zoomed}"
         );
-        assert_eq!(
-            fs::read(store.dir().join(TREE_INDEX_FILE)).unwrap(),
-            b"junk"
-        );
+        let saved = fs::read(store.dir().join(TREE_INDEX_FILE)).unwrap();
+        assert_eq!(TreeIndex::decode(&saved).unwrap().count(), 2);
+        fs::remove_file(store.dir().join(TREE_INDEX_FILE)).unwrap();
+        store.read(&read_request("0-3")).unwrap().unwrap();
+        let again = fs::read(store.dir().join(TREE_INDEX_FILE)).unwrap();
+        assert_eq!(again, saved);
     }
 
     fn frees_soon(lock: &std::fs::File) -> bool {
