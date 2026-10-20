@@ -1,5 +1,5 @@
+use super::lookup::{recall, zoom};
 use super::range::{parse_read_args, read_range, RangeRequest};
-use super::tree::{recall, zoom};
 use super::{Entry, Node, Tree, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
 use crate::chat_socket::is_worker_tool;

@@ -1,4 +1,5 @@
 mod log;
+mod lookup;
 mod nap;
 mod range;
 mod tools;
@@ -9,14 +10,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
+pub use lookup::{recall, zoom};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,
     retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
 };
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
-pub use tree::{
-    cover, estimate_tokens, frozen_block, pending, recall, tail_lines, verbatim_start, zoom,
-};
+pub use tree::{cover, estimate_tokens, frozen_block, pending, tail_lines, verbatim_start};
 pub use usage::{
     encode_usage, nap_prompt_bytes, reply_entries, trigger_entries, turn_prompt_bytes,
     usage_record, view_stats, CallKind, PromptBytes, Trigger, TurnParts, UsageRecord,
@@ -153,5 +153,15 @@ mod fixtures {
             at: format!("2026-01-01T00:00:{:02}Z", i % 60),
             text: format!("m{i} {}", "x".repeat(len)),
         }
+    }
+
+    pub fn texted(count: usize, text: impl Fn(usize) -> String) -> Vec<Entry> {
+        (0..count)
+            .map(|i| {
+                let mut e = entry(i, 5);
+                e.text = text(i);
+                e
+            })
+            .collect()
     }
 }

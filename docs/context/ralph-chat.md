@@ -22,7 +22,7 @@ ralph                      # same as ralph chat with defaults
 
 ## Layout
 
-- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `frozen_block`, `tail_lines`, `verbatim_start`, `estimate_tokens`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts, `nap_source`, `check_summary`, `fallback_summary`, and the nap scheduling and commit decisions `nap_step` and `commit_decision`; `usage.rs` has the per-call usage records.
+- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `frozen_block`, `tail_lines`, `verbatim_start`, `estimate_tokens`; `lookup.rs` has `zoom` and `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts, `nap_source`, `check_summary`, `fallback_summary`, and the nap scheduling and commit decisions `nap_step` and `commit_decision`; `usage.rs` has the per-call usage records.
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `FROZEN_WINDOW`, `RECENT_HISTORY_TOKENS`, `SYSTEM_PROMPT`, `turn_system_prompt`, `turn_prompt`, `build_mcp_args`.
 - `crates/core/src/chat_status.rs`: footer hints, input routing, worker state parsing, memory size.
 - `crates/core/src/status_mode.rs`: pure mode selection for the status line mode block.
