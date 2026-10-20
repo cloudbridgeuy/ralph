@@ -22,6 +22,7 @@ pub use usage::{
 };
 
 pub const SUMMARY_BYTES: usize = 512;
+pub const UNAVAILABLE_MARK: &str = "[not summarized] ";
 pub const SERVER_NAME: &str = "ralph-chat";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,12 +64,6 @@ struct Record {
 }
 
 pub type Tree = HashMap<Node, String>;
-
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct View {
-    pub lines: Vec<String>,
-    pub missing: Vec<Node>,
-}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Frozen {

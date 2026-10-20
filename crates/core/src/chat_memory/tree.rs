@@ -1,5 +1,5 @@
 use super::nap::fallback_summary;
-use super::{Entry, Frozen, Node, Tree, View, SUMMARY_BYTES};
+use super::{Entry, Frozen, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
 use regex::RegexBuilder;
 
 fn cover_at(t: usize, alpha: f64) -> Vec<(usize, usize)> {
@@ -100,32 +100,64 @@ pub(super) fn node_line(entries: &[Entry], tree: &Tree, node: Node) -> Option<St
     }
 }
 
-/// Lines for a node whose summary may still be pending: a missing parent shows
-/// its halves, a missing long leaf shows a marked raw excerpt that is never stored.
-fn settled_lines(entries: &[Entry], tree: &Tree, node: Node) -> Vec<String> {
-    if let Some(line) = node_line(entries, tree, node) {
-        return vec![line];
-    }
-    if node.size() == 1 {
-        let entry = &entries[node.lo];
-        return vec![entry_line(node.lo, entry, &fallback_summary(&entry.text))];
-    }
-    let (left, right) = node.halves();
-    [left, right]
-        .into_iter()
-        .flat_map(|half| settled_lines(entries, tree, half))
-        .collect()
+fn display_line(entries: &[Entry], tree: &Tree, node: Node) -> String {
+    node_line(entries, tree, node).unwrap_or_else(|| {
+        if node.size() == 1 {
+            let entry = &entries[node.lo];
+            entry_line(node.lo, entry, &fallback_summary(&entry.text))
+        } else {
+            let id = node.id();
+            format!("#{id} {UNAVAILABLE_MARK}zoom {id} for its parts")
+        }
+    })
 }
 
-fn view(entries: &[Entry], tree: &Tree, budget: usize) -> View {
-    let mut view = View::default();
-    for node in cover(entries.len(), budget) {
-        if node_line(entries, tree, node).is_none() {
-            view.missing.push(node);
+fn split_target(entries: &[Entry], tree: &Tree, nodes: &[Node]) -> Option<Node> {
+    nodes
+        .iter()
+        .filter(|node| node.size() > 1 && node_line(entries, tree, **node).is_none())
+        .max_by_key(|node| node.lo)
+        .copied()
+}
+
+fn mergeable_pair(tree: &Tree, nodes: &[Node], target: Node) -> Option<usize> {
+    nodes.windows(2).position(|pair| {
+        let (left, right) = (pair[0], pair[1]);
+        left.size() == right.size()
+            && left.lo % (2 * left.size()) == 0
+            && left.hi == right.lo
+            && left != target
+            && right != target
+            && tree.contains_key(&Node {
+                lo: left.lo,
+                hi: right.hi,
+            })
+    })
+}
+
+fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
+    let mut nodes = cover(entries.len(), budget);
+    while let Some(target) = split_target(entries, tree, &nodes) {
+        if nodes.len() >= budget {
+            let Some(i) = mergeable_pair(tree, &nodes, target) else {
+                break;
+            };
+            let parent = Node {
+                lo: nodes[i].lo,
+                hi: nodes[i + 1].hi,
+            };
+            nodes.splice(i..i + 2, [parent]);
         }
-        view.lines.extend(settled_lines(entries, tree, node));
+        let Some(i) = nodes.iter().position(|node| *node == target) else {
+            break;
+        };
+        let (left, right) = target.halves();
+        nodes.splice(i..=i, [left, right]);
     }
-    view
+    nodes
+        .into_iter()
+        .map(|node| display_line(entries, tree, node))
+        .collect()
 }
 
 pub fn frozen_block(
@@ -140,7 +172,7 @@ pub fn frozen_block(
         Some(pinned) if pinned.end == end => pinned,
         _ => Frozen {
             end,
-            lines: view(&entries[..end], tree, budget.saturating_sub(window)).lines,
+            lines: view(&entries[..end], tree, budget.saturating_sub(window)),
         },
     }
 }
@@ -164,7 +196,7 @@ pub fn verbatim_start(entries: &[Entry], from: usize, budget: usize) -> usize {
 
 pub fn tail_lines(entries: &[Entry], tree: &Tree, from: usize, budget: usize) -> Vec<String> {
     let start = verbatim_start(entries, from, budget);
-    let settled = (from..start).flat_map(|i| settled_lines(entries, tree, Node::leaf(i)));
+    let settled = (from..start).map(|i| display_line(entries, tree, Node::leaf(i)));
     let verbatim = (start..entries.len()).map(|i| entry_line(i, &entries[i], &entries[i].text));
     settled.chain(verbatim).collect()
 }
@@ -470,7 +502,7 @@ mod tests {
         let mut tree = Tree::new();
         tree.insert(n(0, 1), "leaf zero".into());
         tree.insert(n(0, 2), "pair zero".into());
-        let lines = settled_lines(&entries, &tree, n(0, 4));
+        let lines = view(&entries, &tree, 3);
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0], "#0-1 pair zero");
         assert!(lines[1].starts_with("#2 user ") && lines[1].contains(FALLBACK_MARK));
@@ -549,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn tail_with_zero_budget_matches_settled_lines() {
+    fn tail_with_zero_budget_settles_every_message() {
         let entries = texted(4, |i| format!("a\nb {i}"));
         let lines = tail_lines(&entries, &Tree::new(), 1, 0);
         assert_eq!(lines.len(), 3);
@@ -568,42 +600,6 @@ mod tests {
                 .collect();
             assert_eq!(ids, (2..9).collect::<Vec<_>>(), "budget {budget}");
         }
-    }
-
-    #[test]
-    fn view_missing_then_complete() {
-        let entries = mixed(40);
-        let budget = 10;
-        let mut tree = Tree::new();
-        let before = view(&entries, &tree, budget);
-        let cov = cover(entries.len(), budget);
-        let expected: Vec<Node> = pending(&entries, &tree)
-            .into_iter()
-            .filter(|p| cov.contains(p))
-            .collect();
-        let mut got = before.missing.clone();
-        got.sort();
-        let mut want = expected;
-        want.sort();
-        assert_eq!(got, want);
-        assert!(!got.is_empty());
-        assert_eq!(lines_cover(&before.lines), entries.len());
-        assert!(before.lines.iter().any(|line| line.contains(FALLBACK_MARK)));
-
-        for node in pending(&entries, &tree) {
-            tree.insert(node, format!("sum {}", node.id()));
-        }
-        assert!(pending(&entries, &tree).is_empty());
-        let after = view(&entries, &tree, budget);
-        assert!(after.missing.is_empty());
-        assert!(after.lines.len() <= budget);
-        let mut next = 0;
-        for node in &cov {
-            assert_eq!(node.lo, next);
-            next = node.hi;
-        }
-        assert_eq!(next, entries.len());
-        assert_eq!(after.lines.len(), cov.len());
     }
 
     fn shared_prefix(a: &[Node], b: &[Node]) -> usize {
@@ -661,8 +657,8 @@ mod tests {
             for node in pending(&entries, &tree) {
                 tree.insert(node, format!("sum {}", node.id()));
             }
-            let before = view(&entries[..count], &tree, VIEW_BUDGET).lines;
-            let after = view(&entries, &tree, VIEW_BUDGET).lines;
+            let before = view(&entries[..count], &tree, VIEW_BUDGET);
+            let after = view(&entries, &tree, VIEW_BUDGET);
             let same = |k: usize| before.iter().take(k).eq(after.iter().take(k));
             assert_eq!(same(1), first_same, "first line at {count}");
             assert_eq!(same(10), ten_same, "first 10 lines at {count}");
@@ -709,7 +705,7 @@ mod tests {
             let s = split(&entries, &tree, w);
             assert!(s.frozen.len() + s.tail.len() <= 200, "w={w}");
             let h = 1000 / w * w;
-            assert_eq!(s.frozen, view(&entries[..h], &tree, 200 - w).lines);
+            assert_eq!(s.frozen, view(&entries[..h], &tree, 200 - w));
             assert_eq!(s.tail.len(), 1000 - h);
             assert!(s.frozen[0].starts_with("#0-"));
         }
@@ -815,6 +811,187 @@ mod tests {
                 prompt,
                 "w={w}"
             );
+        }
+    }
+
+    fn line_node(line: &str) -> Node {
+        Node::parse(line[1..].split(' ').next().unwrap()).unwrap()
+    }
+
+    fn is_marker(line: &str) -> bool {
+        line.contains(UNAVAILABLE_MARK)
+    }
+
+    fn ids(lines: &[String]) -> Vec<String> {
+        lines.iter().map(|l| line_node(l).id()).collect()
+    }
+
+    fn assert_view_invariants(lines: &[String], t: usize, budget: usize) {
+        let cover_len = cover(t, budget).len();
+        assert!(lines.len() <= budget.max(cover_len), "t={t} b={budget}");
+        assert_eq!(lines_cover(lines), t, "t={t} b={budget}");
+        let mut next = 0;
+        for line in lines {
+            let node = line_node(line);
+            assert_eq!(node.lo, next, "t={t} b={budget}");
+            next = node.hi;
+        }
+        assert_eq!(next, t, "t={t} b={budget}");
+    }
+
+    fn short(count: usize) -> Vec<Entry> {
+        (0..count).map(|i| entry(i, 5)).collect()
+    }
+
+    fn tree_of(nodes: &[Node]) -> Tree {
+        nodes.iter().map(|n| (*n, format!("s{}", n.id()))).collect()
+    }
+
+    #[test]
+    fn view_merges_an_older_summarized_pair_to_expand_a_missing_parent() {
+        let entries = short(9);
+        let tree = tree_of(&[n(0, 2), n(2, 4), n(0, 4)]);
+        let lines = view(&entries, &tree, 6);
+        assert_eq!(ids(&lines), ["0-3", "4", "5", "6", "7", "8"]);
+        assert_eq!(lines[0], "#0-3 s0-3");
+        assert!(lines.iter().all(|line| !is_marker(line)));
+        assert_view_invariants(&lines, 9, 6);
+    }
+
+    #[test]
+    fn view_with_nothing_mergeable_shows_a_marker_for_a_missing_parent() {
+        let entries = short(9);
+        let lines = view(&entries, &Tree::new(), 4);
+        assert_eq!(ids(&lines), ["0-3", "4-5", "6-7", "8"]);
+        assert_eq!(lines[0], "#0-3 [not summarized] zoom 0-3 for its parts");
+        assert_eq!(lines.iter().filter(|l| is_marker(l)).count(), 3);
+        assert_view_invariants(&lines, 9, 4);
+    }
+
+    #[test]
+    fn view_shows_a_raw_excerpt_for_a_missing_long_leaf_summary() {
+        let entries: Vec<Entry> = (0..3).map(|i| entry(i, 600)).collect();
+        let lines = view(&entries, &Tree::new(), 3);
+        assert!(lines.iter().all(|line| line.contains(FALLBACK_MARK)));
+        assert_view_invariants(&lines, 3, 3);
+    }
+
+    #[test]
+    fn view_expands_a_missing_node_with_one_summarized_half() {
+        let entries = short(9);
+        let tree = tree_of(&[n(0, 2), n(6, 8)]);
+        let lines = view(&entries, &tree, 5);
+        assert_eq!(ids(&lines), ["0-3", "4", "5", "6-7", "8"]);
+        assert!(is_marker(&lines[0]));
+        assert_eq!(lines[3], "#6-7 s6-7");
+        assert_view_invariants(&lines, 9, 5);
+
+        let full = tree_of(&[n(0, 2), n(2, 4), n(4, 6), n(6, 8)]);
+        let lines = view(&entries, &full, 5);
+        assert_eq!(ids(&lines), ["0-1", "2-3", "4-5", "6-7", "8"]);
+        assert!(lines.iter().all(|line| !is_marker(line)));
+    }
+
+    #[test]
+    fn view_of_a_fully_summarized_tree_is_one_line_per_cover_node() {
+        let entries = mixed(40);
+        let lines = view(&entries, &summarized(&entries), 10);
+        assert_eq!(lines.len(), cover(40, 10).len());
+        assert!(lines
+            .iter()
+            .all(|line| !is_marker(line) && !line.contains(FALLBACK_MARK)));
+        assert_view_invariants(&lines, 40, 10);
+    }
+
+    #[test]
+    fn view_keeps_invariants_when_every_kth_summary_is_dropped() {
+        let entries = mixed(100);
+        let full = summarized(&entries);
+        for k in 2..=5 {
+            let tree = drop_every(&full, k);
+            for budget in [1, 5, 10, 40, 200] {
+                let lines = view(&entries, &tree, budget);
+                assert_view_invariants(&lines, 100, budget);
+                assert_markers_older_than_splits(&lines, 100, budget);
+            }
+        }
+    }
+
+    #[test]
+    fn view_under_a_tight_budget_marks_old_ranges_and_keeps_new_messages() {
+        let entries = short(16);
+        let lines = view(&entries, &Tree::new(), 3);
+        assert_eq!(ids(&lines), ["0-7", "8-11", "12-13", "14", "15"]);
+        assert!(lines[..3].iter().all(|line| is_marker(line)));
+        assert!(lines[3].ends_with("m14 xxxxx") && lines[4].ends_with("m15 xxxxx"));
+    }
+
+    #[test]
+    fn view_splits_the_newest_missing_node_first() {
+        let entries = short(10);
+        let tree = tree_of(&[n(8, 10)]);
+        let lines = view(&entries, &tree, 5);
+        assert_eq!(ids(&lines), ["0-3", "4-5", "6", "7", "8-9"]);
+        assert!(is_marker(&lines[0]) && is_marker(&lines[1]));
+        assert!(!is_marker(&lines[2]) && !is_marker(&lines[3]));
+    }
+
+    fn assert_markers_older_than_splits(lines: &[String], t: usize, budget: usize) -> usize {
+        let nodes: Vec<Node> = lines.iter().map(|l| line_node(l)).collect();
+        let inside = |o: &Node, c: &Node| o.size() < c.size() && c.lo <= o.lo && o.hi <= c.hi;
+        let splits: Vec<Node> = cover(t, budget)
+            .into_iter()
+            .filter(|c| nodes.iter().any(|o| inside(o, c)))
+            .collect();
+        for (line, marker) in lines.iter().zip(&nodes) {
+            if is_marker(line) && !splits.iter().any(|c| inside(marker, c)) {
+                assert!(
+                    splits.iter().all(|c| marker.hi <= c.lo),
+                    "marker {} newer than a split, t={t} b={budget}",
+                    marker.id()
+                );
+            }
+        }
+        splits.len()
+    }
+
+    fn drop_every(full: &Tree, k: usize) -> Tree {
+        let mut keys: Vec<Node> = full.keys().copied().collect();
+        keys.sort();
+        let mut tree = full.clone();
+        for node in keys.iter().step_by(k) {
+            tree.remove(node);
+        }
+        tree
+    }
+
+    #[test]
+    fn view_keeps_markers_older_than_every_split_under_tight_budgets() {
+        let entries = mixed(100);
+        let tree = drop_every(&summarized(&entries), 2);
+        for budget in [1, 5] {
+            let lines = view(&entries, &tree, budget);
+            assert!(lines.iter().any(|line| is_marker(line)), "b={budget}");
+            assert!(assert_markers_older_than_splits(&lines, 100, budget) > 0);
+        }
+    }
+
+    #[test]
+    fn frozen_block_with_markers_stays_pinned_while_summaries_land() {
+        let entries = mixed(400);
+        let landed = summarized(&entries);
+        for w in WINDOWS {
+            let h = 256 / w * w;
+            let first = frozen_block(&entries[..h], &Tree::new(), 200, w, None);
+            assert!(first.lines.iter().any(|line| is_marker(line)), "w={w}");
+            let mut pinned = first.clone();
+            for t in h..h + w {
+                pinned = frozen_block(&entries[..t], &landed, 200, w, Some(pinned));
+                assert_eq!(pinned, first, "w={w} t={t}");
+            }
+            let rolled = frozen_block(&entries[..h + w], &landed, 200, w, Some(pinned));
+            assert_eq!(rolled.end, h + w);
+            assert!(rolled.lines.iter().all(|line| !is_marker(line)), "w={w}");
         }
     }
 }

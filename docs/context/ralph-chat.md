@@ -208,7 +208,7 @@ Shorthand: a message whose first character is `!` is the same as one `!shell` ce
 - Log: `log.jsonl`, append-only, one `{role, at, text}` per line (`role` is `user`, `assistant` or `worker`, `at` is RFC 3339). Each append is fsynced under `LOCK`. A corrupt entry warns and ignores that entry and all later ones; a trailing line without newline is ignored.
 - Tree: `tree.jsonl`, one `{lo, hi, text}` record per line. Nodes are aligned power-of-two blocks `[lo, hi)` over log indexes, ids print as `5` or `4-7`. First record wins for a duplicate node; invalid records warn and are skipped. Summaries are at most `SUMMARY_BYTES` = 512 bytes, one line.
 - Leaves are single messages. Outside the verbatim run (see [Recent history](#recent-history)), messages of 512 bytes or fewer stay in the view with whitespace collapsed and need no node. Longer ones get a leaf summary node. Parent nodes merge two children and exist only for complete blocks. A node is written once and never rebuilt.
-- `cover(t, budget)` picks the nodes for the view: all leaves if the log fits the budget, otherwise a cover of the whole log, oldest first, tuned to use the budget. A cover node with no summary yet is shown through its halves (see [Pending summaries](#pending-summaries)).
+- `cover(t, budget)` picks the nodes for the view: all leaves if the log fits the budget, otherwise a cover of the whole log, oldest first, tuned to use the budget. A cover node with no summary yet is shown through its halves or a marker (see [Pending summaries](#pending-summaries)).
 - View line formats: message `#<i> <role> <at> <text>`; summary `#<id> <summary>`.
 - `zoom` leaf lines already carry the full timestamp (`entry_line`), while range lines are summaries with no single time, so no zoom change was made for timestamps.
 - This is a port of the OptMem cover, pending and tree_put design. There is no runtime dependency on `~/.optmem`.
@@ -250,9 +250,10 @@ The newest live-tail messages show their full raw text, newlines kept, within a 
 
 While a nap runs, a turn can load a tree with pending nodes. `view` and `tail_lines` never drop them:
 
-- A cover node with no summary is shown through its halves, down to single messages (`settled_lines`). Halves with committed summaries show those summaries.
+- A cover node with no summary is shown through its halves when the line budget allows, down to single messages; otherwise as a marker (see below). Halves with committed summaries show those summaries.
 - A long message with no leaf summary shows `fallback_summary` of its text, marked `[raw excerpt] `. This excerpt exists only in the view; it is never written to `tree.jsonl`.
-- The view can be longer than its line budget while nodes are pending. A frozen block built then stays pinned until the next window (`FROZEN_WINDOW` entries), and the next rebuild uses the committed summaries.
+- The view stays within its line budget (200 lines), or the cover length if that is larger. To show a missing node through its halves, the view first merges the oldest sibling pair whose parent has a summary (one line freed), then splits the newest missing node (one line spent). A missing node that cannot be shown this way is one line `#<id> [not summarized] zoom <id> for its parts` (`UNAVAILABLE_MARK`). `zoom` on it lists its halves (summary or `not compressed yet`), down to full messages.
+- Tradeoff: under a tight budget with nothing to merge, old ranges that the previous rule expanded in full now show as a marker, so the model sees less until it zooms. Only older ranges become markers; newer ranges stay expanded. A frozen block built then stays pinned until the next window (`FROZEN_WINDOW` entries), and the next rebuild uses the committed summaries.
 
 ## MCP tools
 
