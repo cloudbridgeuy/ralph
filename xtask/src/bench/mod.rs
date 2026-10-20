@@ -6,9 +6,9 @@
 use crate::prelude::*;
 use alloc::Allocs;
 use ralph_core::chat_memory::{
-    encode_entry, encode_record, parse_log, parse_tree, pending, read_range, zoom, Archive,
-    ByteSource, Entry, LogIndex, Mode, Node, RangeRequest, Read, Role, Tree, TreeIndex, Window,
-    LOG_INDEX_FILE, TREE_INDEX_FILE,
+    encode_entry, encode_record, parse_log, parse_search_args, parse_tree, pending, read_range,
+    search, zoom, Archive, ByteSource, Entry, LogIndex, Mode, Node, RangeRequest, Read, Role,
+    SearchRequest, Tree, TreeIndex, Window, LOG_INDEX_FILE, TREE_INDEX_FILE,
 };
 use std::fs::{self, File};
 use std::io::{self, Read as _, Seek, SeekFrom};
@@ -35,10 +35,12 @@ type Answer = Result<String, String>;
 enum Case {
     Read(RangeRequest),
     Zoom(Node),
+    Search(SearchRequest),
 }
 
 /// The cases for an archive of `n` entries: the last 64 entries raw, the
-/// whole archive in summary mode, and an 8-entry block in the middle.
+/// whole archive in summary mode, an 8-entry block in the middle, and two
+/// searches over every entry (one rare phrase, one word in every entry).
 fn cases(n: usize) -> Vec<(&'static str, Case)> {
     let request = |from, mode| RangeRequest {
         from,
@@ -57,6 +59,14 @@ fn cases(n: usize) -> Vec<(&'static str, Case)> {
     ];
     if let Ok(node) = Node::new(mid, mid + 8) {
         cases.push(("zoom 8 mid", Case::Zoom(node)));
+    }
+    for (name, query) in [
+        ("search phrase", format!("\"entry {mid}\"")),
+        ("search common word", "entry".to_string()),
+    ] {
+        if let Ok(request) = parse_search_args(&serde_json::json!({"query": query})) {
+            cases.push((name, Case::Search(request)));
+        }
     }
     cases
 }
@@ -174,8 +184,18 @@ impl ByteSource for Counted {
     }
 }
 
-/// The path before GUZ-709: parse both files whole, then slice.
+/// The path before GUZ-709: parse both files whole, then slice. Search has
+/// no such path; it scans an archive whose indexes are rebuilt from the files.
 fn full(dir: &Path, case: &Case) -> io::Result<Answer> {
+    if let Case::Search(request) = case {
+        let mut archive = Archive::open(
+            Counted::open(&dir.join("log.jsonl"))?,
+            None,
+            Counted::open(&dir.join("tree.jsonl"))?,
+            None,
+        )?;
+        return search(&mut archive, request);
+    }
     let (entries, _) = parse_log(&read_counted(&dir.join("log.jsonl"))?);
     let (tree, _) = parse_tree(&read_counted(&dir.join("tree.jsonl"))?);
     let window = Window::full(&entries);
@@ -186,6 +206,7 @@ fn full(dir: &Path, case: &Case) -> io::Result<Answer> {
             Err(e) => Err(e),
         },
         Case::Zoom(node) => zoom(&window, &tree, *node).map(|lines| lines.join("\n")),
+        Case::Search(_) => return Err(io::Error::other("search has no full path")),
     })
 }
 
@@ -200,6 +221,7 @@ fn indexed(dir: &Path, case: &Case) -> io::Result<Answer> {
     Ok(match case {
         Case::Read(request) => archive.read(request)?.map(|page| page.render()),
         Case::Zoom(node) => archive.zoom(*node)?.map(|lines| lines.join("\n")),
+        Case::Search(request) => search(&mut archive, request)?,
     })
 }
 
@@ -274,7 +296,7 @@ mod tests {
         assert_eq!((entries.len(), warnings.len()), (40, 0));
         let (tree, _) = parse_tree(tree.as_bytes());
         assert!(tree.len() > 20);
-        assert_eq!(cases(40).len(), 3);
+        assert_eq!(cases(40).len(), 5);
         assert_eq!(text(3).len(), 700);
     }
 

@@ -4,8 +4,9 @@ use crate::chat::index_files::{
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
-    nap_source, nap_step, parse_log, parse_tree, pending, retry_prompt, Archive, Commit, Entry,
-    NapStep, Node, NodeSlot, RangeRequest, Role, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    nap_source, nap_step, parse_log, parse_tree, pending, recall, retry_prompt, search, Archive,
+    Commit, Entry, NapStep, Node, NodeSlot, RangeRequest, Role, SearchRequest, Tree, Trigger,
+    UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
@@ -115,6 +116,17 @@ impl Store {
     pub fn zoom(&self, node: Node) -> io::Result<Result<String, String>> {
         let lines = self.with_archive(|archive| archive.zoom(node))?;
         Ok(lines.map(|lines| lines.join("\n")))
+    }
+
+    pub fn recall(&self, pattern: &str) -> io::Result<Result<String, String>> {
+        self.with_archive(|archive| {
+            let count = archive.count();
+            Ok(recall(&archive.entries(0, count)?, pattern))
+        })
+    }
+
+    pub fn search(&self, request: &SearchRequest) -> io::Result<Result<String, String>> {
+        self.with_archive(|archive| search(archive, request))
     }
 
     pub fn load_usage(&self) -> io::Result<String> {

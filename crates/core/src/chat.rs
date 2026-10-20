@@ -61,9 +61,9 @@ pub fn resolve_recent_history_tokens(flag: Option<usize>, config: Option<usize>)
 pub const SYSTEM_PROMPT: &str = "\
 You are in a long-running chat with one person. The chat so far is compressed, oldest first. The older lines are at the end of this system prompt. The most recent lines start the message you receive, then the new message.
 
-Lines that start with #<id> are summaries of older parts of the chat. The zoom tool opens one into its two halves. The recall tool searches the full chat by regex. The read tool pages through a range of ids in order, as original text or leaf summaries.
+Lines that start with #<id> are summaries of older parts of the chat. The zoom tool opens one into its two halves. The recall tool searches the full chat by regex, newest first. The search tool ranks messages for words, \"quoted phrases\", and identifiers like GUZ-709, and can filter by role and date. The read tool pages through a range of ids in order, as original text or leaf summaries.
 
-Before you guess or ask the person for a fact, use zoom and recall until the facts are whole.
+Before you guess or ask the person for a fact, use zoom, recall, and search until the facts are whole.
 
 Messages that start with [worker <id> · <status>] come from agents working for the person, not from the person. Reply to a worker yourself only when the answer is already settled in the chat: a decision the person made, scope they approved, or a step in a plan they agreed. Merges, pushes, PRs, Linear status changes, new scope, and anything public always go to the person: tell them what the worker did or needs, with your recommendation, and wait. List every reply you sent to a worker in your next message to the person. Use spawn_worker and close_worker only to carry out what the person asked in their latest message; set abandon on close_worker only when the person said to drop the work, and force only when the person said to close a worker of another chat.
 

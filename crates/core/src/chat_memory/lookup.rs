@@ -47,12 +47,16 @@ const PREVIEW_CHARS: usize = 80;
 const PREVIEW_LEAD_CHARS: usize = 20;
 
 fn preview(text: &str, match_start: usize) -> String {
+    excerpt(text, match_start, PREVIEW_LEAD_CHARS, PREVIEW_CHARS)
+}
+
+pub(super) fn excerpt(text: &str, match_start: usize, lead_chars: usize, width: usize) -> String {
     let lead = collapse(&text[..match_start]).chars().count();
     let flat = collapse(text);
     let total = flat.chars().count();
-    let from = lead.saturating_sub(PREVIEW_LEAD_CHARS);
-    let to = (from + PREVIEW_CHARS).min(total);
-    let from = to.saturating_sub(PREVIEW_CHARS).min(from);
+    let from = lead.saturating_sub(lead_chars);
+    let to = (from + width).min(total);
+    let from = to.saturating_sub(width).min(from);
     let body: String = flat.chars().skip(from).take(to - from).collect();
     let head = if from > 0 { "…" } else { "" };
     let tail = if to < total { "…" } else { "" };

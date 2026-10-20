@@ -103,6 +103,14 @@ impl<B: ByteSource> Archive<B> {
         self.retry(|a| zoom_node(&mut a.log, &a.log_index, &mut a.tree, node))
     }
 
+    pub fn count(&self) -> usize {
+        self.log_index.count()
+    }
+
+    pub fn entries(&mut self, from: usize, to: usize) -> io::Result<Vec<Entry>> {
+        self.retry(|a| load(&mut a.log, &a.log_index, from, to))
+    }
+
     /// The `parse_log` and `parse_tree` warnings the files would give.
     pub fn warnings(&self) -> Vec<String> {
         [self.log_index.warning(), self.tree.index.warning()]

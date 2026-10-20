@@ -4,6 +4,7 @@ mod log;
 mod lookup;
 mod nap;
 mod range;
+mod search;
 mod tools;
 mod tree;
 mod usage;
@@ -23,6 +24,7 @@ pub use nap::{
     retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
 };
 pub use range::{read_range, Mode, RangeRequest, Read};
+pub use search::{parse_search_args, search, SearchRequest};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
 pub use tree::{cover, estimate_tokens, frozen_block, pending, tail_lines, verbatim_start};
 pub use usage::{
