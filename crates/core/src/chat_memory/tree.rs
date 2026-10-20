@@ -145,10 +145,28 @@ pub fn frozen_block(
     }
 }
 
-pub fn tail_lines(entries: &[Entry], tree: &Tree, from: usize) -> Vec<String> {
-    (from..entries.len())
-        .flat_map(|i| settled_lines(entries, tree, Node::leaf(i)))
-        .collect()
+pub fn estimate_tokens(text: &str) -> usize {
+    text.len().div_ceil(3)
+}
+
+pub fn verbatim_start(entries: &[Entry], from: usize, budget: usize) -> usize {
+    let mut used = 0;
+    let mut start = entries.len();
+    for i in (from..entries.len()).rev() {
+        used += estimate_tokens(&entries[i].text);
+        if used > budget {
+            break;
+        }
+        start = i;
+    }
+    start
+}
+
+pub fn tail_lines(entries: &[Entry], tree: &Tree, from: usize, budget: usize) -> Vec<String> {
+    let start = verbatim_start(entries, from, budget);
+    let settled = (from..start).flat_map(|i| settled_lines(entries, tree, Node::leaf(i)));
+    let verbatim = (start..entries.len()).map(|i| entry_line(i, &entries[i], &entries[i].text));
+    settled.chain(verbatim).collect()
 }
 
 pub fn zoom(entries: &[Entry], tree: &Tree, node: Node) -> Result<Vec<String>, String> {
@@ -465,12 +483,91 @@ mod tests {
     #[test]
     fn tail_shows_a_pending_long_leaf_as_raw_excerpt() {
         let entries = vec![entry(0, 600), entry(1, 5)];
-        let lines = tail_lines(&entries, &Tree::new(), 0);
+        let lines = tail_lines(&entries, &Tree::new(), 0, 0);
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains(FALLBACK_MARK));
         let mut tree = Tree::new();
         tree.insert(n(0, 1), "done".into());
-        assert!(tail_lines(&entries, &tree, 0)[0].ends_with(" done"));
+        assert!(tail_lines(&entries, &tree, 0, 0)[0].ends_with(" done"));
+    }
+
+    #[test]
+    fn estimate_rounds_bytes_up_by_three() {
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("a"), 1);
+        assert_eq!(estimate_tokens("abc"), 1);
+        assert_eq!(estimate_tokens("abcd"), 2);
+        assert_eq!(estimate_tokens("ñ"), 1);
+    }
+
+    #[test]
+    fn verbatim_start_takes_a_contiguous_newest_suffix() {
+        let entries = texted(5, |_| "abcdef".into());
+        assert_eq!(verbatim_start(&[], 0, 100), 0);
+        assert_eq!(verbatim_start(&entries, 0, 0), 5);
+        assert_eq!(verbatim_start(&entries, 0, 1), 5);
+        assert_eq!(verbatim_start(&entries, 0, 4), 3);
+        assert_eq!(verbatim_start(&entries, 0, 100), 0);
+        assert_eq!(verbatim_start(&entries, 3, 100), 3);
+    }
+
+    #[test]
+    fn verbatim_start_stops_at_the_first_entry_that_does_not_fit() {
+        let mut entries = texted(4, |_| "ab".into());
+        entries[1].text = "x".repeat(300);
+        assert_eq!(verbatim_start(&entries, 0, 50), 2);
+    }
+
+    #[test]
+    fn tail_keeps_multiline_messages_verbatim_within_budget() {
+        let entries = texted(2, |i| format!("line one\n\n  line two {i}"));
+        let lines = tail_lines(&entries, &Tree::new(), 0, 100);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("#0 user ") && lines[0].ends_with("line one\n\n  line two 0"));
+        assert!(lines[1].ends_with("line one\n\n  line two 1"));
+    }
+
+    #[test]
+    fn tail_rolls_older_messages_into_settled_form() {
+        let entries = texted(4, |i| format!("a\nb {i}"));
+        let lines = tail_lines(&entries, &Tree::new(), 0, 4);
+        assert_eq!(lines[0], entry_line(0, &entries[0], "a b 0"));
+        assert_eq!(lines[1], entry_line(1, &entries[1], "a b 1"));
+        assert_eq!(lines[2], entry_line(2, &entries[2], "a\nb 2"));
+        assert_eq!(lines[3], entry_line(3, &entries[3], "a\nb 3"));
+    }
+
+    #[test]
+    fn tail_settles_an_oversized_newest_message() {
+        let entries = vec![entry(0, 5), entry(1, 600)];
+        let lines = tail_lines(&entries, &Tree::new(), 0, 10);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].contains(FALLBACK_MARK));
+        let mut tree = Tree::new();
+        tree.insert(n(1, 2), "short summary".into());
+        assert!(tail_lines(&entries, &tree, 0, 10)[1].ends_with(" short summary"));
+    }
+
+    #[test]
+    fn tail_with_zero_budget_matches_settled_lines() {
+        let entries = texted(4, |i| format!("a\nb {i}"));
+        let lines = tail_lines(&entries, &Tree::new(), 1, 0);
+        assert_eq!(lines.len(), 3);
+        assert!(lines.iter().all(|line| !line.contains('\n')));
+        assert!(tail_lines(&[], &Tree::new(), 0, 100).is_empty());
+    }
+
+    #[test]
+    fn tail_shows_each_entry_once_in_order() {
+        let entries = mixed(9);
+        for budget in [0, 5, 60, 400, 10_000] {
+            let lines = tail_lines(&entries, &Tree::new(), 2, budget);
+            let ids: Vec<usize> = lines
+                .iter()
+                .map(|line| line[1..line.find(' ').unwrap()].parse().unwrap())
+                .collect();
+            assert_eq!(ids, (2..9).collect::<Vec<_>>(), "budget {budget}");
+        }
     }
 
     #[test]
@@ -580,7 +677,7 @@ mod tests {
     fn split(entries: &[Entry], tree: &Tree, window: usize) -> Split {
         let frozen = frozen_block(entries, tree, 200, window, None);
         Split {
-            tail: tail_lines(entries, tree, frozen.end),
+            tail: tail_lines(entries, tree, frozen.end, 0),
             frozen: frozen.lines,
         }
     }

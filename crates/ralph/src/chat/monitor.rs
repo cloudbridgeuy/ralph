@@ -58,6 +58,7 @@ pub(super) struct Monitor {
     pub(super) seen: Mutex<HashMap<String, String>>,
     pub(super) active: Mutex<Option<HashSet<String>>>,
     pub(super) frozen_window: usize,
+    pub(super) recent_history_tokens: usize,
     pub(super) worker_check_secs: Option<u64>,
     pub(super) worker_quiet_secs: u64,
     pub(super) workers: Workers,
@@ -194,7 +195,7 @@ impl Monitor {
     fn measure_memory(&self) -> Option<Memory> {
         let (entries, tree) = self.store.load().ok()?;
         let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, None);
-        let tail = tail_lines(&entries, &tree, frozen.end);
+        let tail = tail_lines(&entries, &tree, frozen.end, self.recent_history_tokens);
         Some(memory_size(entries.len(), &[frozen.lines, tail].concat()))
     }
 

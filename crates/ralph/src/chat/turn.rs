@@ -100,6 +100,7 @@ pub(super) struct Turn<'a> {
     pub(super) theme_config: &'a ThemeConfig,
     pub(super) frozen: Mutex<Option<Frozen>>,
     pub(super) frozen_window: usize,
+    pub(super) recent_history_tokens: usize,
     pub(super) cancel: Arc<AtomicBool>,
 }
 
@@ -121,7 +122,7 @@ impl Turn<'_> {
         let pinned = locked(&self.frozen).take();
         let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, pinned);
         *locked(&self.frozen) = Some(frozen.clone());
-        let tail = tail_lines(&entries, &tree, frozen.end);
+        let tail = tail_lines(&entries, &tree, frozen.end, self.recent_history_tokens);
         if logged_before_reply(trigger) {
             self.append_logged(trigger, logged)?;
         }

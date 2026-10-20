@@ -16,6 +16,8 @@ use std::path::PathBuf;
 mod changes;
 mod claude;
 mod opencode;
+#[cfg(test)]
+mod recent_history_tests;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
 pub use opencode::OpencodeSection;
@@ -164,6 +166,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub frozen_window: Option<usize>,
     #[serde(default)]
+    pub recent_history_tokens: Option<usize>,
+    #[serde(default)]
     pub worker_check_secs: Option<u64>,
     #[serde(default)]
     pub worker_quiet_secs: Option<toml::Value>,
@@ -245,6 +249,7 @@ impl Default for ChatSection {
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
             frozen_window: None,
+            recent_history_tokens: None,
             worker_check_secs: None,
             worker_quiet_secs: None,
             watch_timeout_secs: None,
@@ -495,16 +500,6 @@ mod tests {
             unknown.changes.warnings(),
             ["[changes] pager = \"less\" is unknown; using git"]
         );
-    }
-
-    #[test]
-    fn chat_section_parses_frozen_window() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("config.toml");
-        fs::write(&path, "[chat]\nfrozen_window = 16\n").unwrap();
-        let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.chat.frozen_window, Some(16));
-        assert_eq!(AppConfig::new().chat.frozen_window, None);
     }
 
     #[test]

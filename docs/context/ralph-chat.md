@@ -22,8 +22,8 @@ ralph                      # same as ralph chat with defaults
 
 ## Layout
 
-- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `frozen_block`, `tail_lines`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts, `nap_source`, `check_summary`, `fallback_summary`, and the nap scheduling and commit decisions `nap_step` and `commit_decision`; `usage.rs` has the per-call usage records.
-- `crates/core/src/chat.rs`: `VIEW_LINES`, `FROZEN_WINDOW`, `SYSTEM_PROMPT`, `turn_system_prompt`, `turn_prompt`, `build_mcp_args`.
+- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `frozen_block`, `tail_lines`, `verbatim_start`, `estimate_tokens`, `zoom`, `recall`; `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts, `nap_source`, `check_summary`, `fallback_summary`, and the nap scheduling and commit decisions `nap_step` and `commit_decision`; `usage.rs` has the per-call usage records.
+- `crates/core/src/chat.rs`: `VIEW_LINES`, `FROZEN_WINDOW`, `RECENT_HISTORY_TOKENS`, `SYSTEM_PROMPT`, `turn_system_prompt`, `turn_prompt`, `build_mcp_args`.
 - `crates/core/src/chat_status.rs`: footer hints, input routing, worker state parsing, memory size.
 - `crates/core/src/status_mode.rs`: pure mode selection for the status line mode block.
 - `crates/core/src/status_segments.rs`: status line segments, priorities, and the pure width layout.
@@ -50,7 +50,7 @@ ralph                      # same as ralph chat with defaults
 ## Turn loop
 
 1. `Store::load_settled` takes a shared `LOCK`, then reads log and tree. It waits only while an append or a nap commit holds `LOCK` (one fsynced line each), not for curator calls. Nodes that are still pending show as described in [Pending summaries](#pending-summaries).
-2. `frozen_block(entries, tree, VIEW_LINES, FROZEN_WINDOW, pinned)` and `tail_lines` build the memory view in two parts. `VIEW_LINES` is 200 lines total; `FROZEN_WINDOW` is 32 entries by default. The frozen part is the view of the first `entries / window * window` entries with budget `200 - window`; the chat process pins it and rebuilds only when the entry count crosses a multiple of the window, even if nap summaries land mid-window, so it stays byte-identical for the whole window (default 32 entries) and the prompt cache hits it. The tail is one line per entry after that point. The window comes from `--frozen-window <N>`, else `[chat] frozen_window` in the ralph config, else 32; valid values are 1 to 199, anything else fails chat start with an error.
+2. `frozen_block(entries, tree, VIEW_LINES, FROZEN_WINDOW, pinned)` and `tail_lines` build the memory view in two parts. `VIEW_LINES` is 200 lines total; `FROZEN_WINDOW` is 32 entries by default. The frozen part is the view of the first `entries / window * window` entries with budget `200 - window`; the chat process pins it and rebuilds only when the entry count crosses a multiple of the window, even if nap summaries land mid-window, so it stays byte-identical for the whole window (default 32 entries) and the prompt cache hits it. The tail covers the entries after that point: the newest ones within the recent-history budget appear verbatim, the rest one line each (see [Recent history](#recent-history)). The window comes from `--frozen-window <N>`, else `[chat] frozen_window` in the ralph config, else 32; valid values are 1 to 199, anything else fails chat start with an error.
 3. For a worker turn, one `worker` entry per report is appended to the log. The user message waits for step 6.
 4. `build_chat_command` runs a fresh `claude --verbose --permission-mode <MODE>` (the chat's resolved mode) with isolation args, `--append-system-prompt <SYSTEM_PROMPT + frozen block>` (`turn_system_prompt`; just `SYSTEM_PROMPT` while the frozen part is empty), the MCP args, `--output-format stream-json`, and `-p <prompt>`. There is no `--resume` and no `--agent`. The prompt is the tail lines, a blank line, `New message:`, then the message. Only tail lines precede the message; no task text follows it.
 5. Output goes through the spinner subprocess runner and `StreamProcessor`, as in `ralph ask`.
@@ -207,7 +207,7 @@ Shorthand: a message whose first character is `!` is the same as one `!shell` ce
 
 - Log: `log.jsonl`, append-only, one `{role, at, text}` per line (`role` is `user`, `assistant` or `worker`, `at` is RFC 3339). Each append is fsynced under `LOCK`. A corrupt entry warns and ignores that entry and all later ones; a trailing line without newline is ignored.
 - Tree: `tree.jsonl`, one `{lo, hi, text}` record per line. Nodes are aligned power-of-two blocks `[lo, hi)` over log indexes, ids print as `5` or `4-7`. First record wins for a duplicate node; invalid records warn and are skipped. Summaries are at most `SUMMARY_BYTES` = 512 bytes, one line.
-- Leaves are single messages. Messages of 512 bytes or fewer stay verbatim in the view (whitespace collapsed) and need no node. Longer ones get a leaf summary node. Parent nodes merge two children and exist only for complete blocks. A node is written once and never rebuilt.
+- Leaves are single messages. Outside the verbatim run (see [Recent history](#recent-history)), messages of 512 bytes or fewer stay in the view with whitespace collapsed and need no node. Longer ones get a leaf summary node. Parent nodes merge two children and exist only for complete blocks. A node is written once and never rebuilt.
 - `cover(t, budget)` picks the nodes for the view: all leaves if the log fits the budget, otherwise a cover of the whole log, oldest first, tuned to use the budget. A cover node with no summary yet is shown through its halves (see [Pending summaries](#pending-summaries)).
 - View line formats: message `#<i> <role> <at> <text>`; summary `#<id> <summary>`.
 - `zoom` leaf lines already carry the full timestamp (`entry_line`), while range lines are summaries with no single time, so no zoom change was made for timestamps.
@@ -233,6 +233,18 @@ Shorthand: a message whose first character is `!` is the same as one `!shell` ce
 - Racing naps: `NAP` makes naps run one at a time. If two naps still overlap (for example an older binary without `NAP`), first-writer-wins at commit plus first-record-wins in `parse_tree` keep one summary per node. Records are written whole under the exclusive `LOCK`, so naps never interleave lines.
 - Failure: a curator error, a timeout, or a nap that is killed before its commit writes nothing for that node. The node stays in `pending` and the next nap retries it. Nodes committed before the failure stay.
 - Tests: pure unit tests in `nap.rs` cover `nap_step`, `commit_decision`, a race of two naps on one node, and uncommitted work staying pending. The shell test `nap_curator_runs_without_the_store_lock` checks that `LOCK` is free during curator calls.
+
+### Recent history
+
+The newest live-tail messages show their full raw text, newlines kept, within a token budget.
+
+- Budget: `--recent-history-tokens <TOKENS>`, else `[chat] recent_history_tokens`, else 4096 (`RECENT_HISTORY_TOKENS`). `0` turns it off: the tail is then settled lines only. There is no env var.
+- Estimate: `ceil(bytes / 3)` of the message text (`estimate_tokens`). This is more conservative than the `chars / 4` used by the status line, so the verbatim run stays under the budget.
+- Run: `verbatim_start` walks from the newest message back to the start of the tail and adds each estimate. It stops at the first message that does not fit, so the run is one contiguous suffix with no gaps.
+- Oversized: a newest message above the budget gives an empty run. It and all older tail messages use the settled rule (summary, or the `[raw excerpt]` fallback while the summary is pending).
+- `zoom` on a message still returns its full raw text.
+- Rollover: only the live tail is verbatim. When the entry count crosses a window multiple, those messages enter the frozen block in compressed form. The frozen block stays stable for the prompt cache, and the verbatim text sits in the uncached live part of the prompt.
+- The turn and the status size (`measure_memory`) use the same budget.
 
 ### Pending summaries
 

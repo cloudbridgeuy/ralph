@@ -13,7 +13,9 @@ pub use nap::{
     retry_prompt, Commit, NapStep, FALLBACK_MARK, MAX_NAP_ATTEMPTS,
 };
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
-pub use tree::{cover, frozen_block, pending, recall, tail_lines, zoom};
+pub use tree::{
+    cover, estimate_tokens, frozen_block, pending, recall, tail_lines, verbatim_start, zoom,
+};
 pub use usage::{
     encode_usage, nap_prompt_bytes, reply_entries, trigger_entries, turn_prompt_bytes,
     usage_record, view_stats, CallKind, PromptBytes, Trigger, TurnParts, UsageRecord,

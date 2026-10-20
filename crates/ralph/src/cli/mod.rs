@@ -82,6 +82,9 @@ pub struct ChatArgs {
     #[arg(long)]
     pub frozen_window: Option<usize>,
 
+    #[arg(long, value_name = "TOKENS")]
+    pub recent_history_tokens: Option<usize>,
+
     #[arg(long, value_name = "COLUMNS")]
     pub wrap_width: Option<usize>,
 

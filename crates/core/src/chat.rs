@@ -7,6 +7,7 @@ use std::time::Duration;
 
 pub const VIEW_LINES: usize = 200;
 pub const FROZEN_WINDOW: usize = 32;
+pub const RECENT_HISTORY_TOKENS: usize = 4096;
 pub const WORKER_CHECK_SECS: u64 = 60;
 pub const WORKER_QUIET_SECS: u64 = 300;
 pub const WATCH_TIMEOUT_SECS: u64 = 3600;
@@ -51,6 +52,10 @@ pub fn resolve_frozen_window(flag: Option<usize>, config: Option<usize>) -> Resu
             VIEW_LINES - 1
         ))
     }
+}
+
+pub fn resolve_recent_history_tokens(flag: Option<usize>, config: Option<usize>) -> usize {
+    flag.or(config).unwrap_or(RECENT_HISTORY_TOKENS)
 }
 
 pub const SYSTEM_PROMPT: &str = "\
@@ -249,6 +254,15 @@ mod tests {
         assert!(resolve_wrap_width(None, Some("wide"), None)
             .unwrap_err()
             .contains("\"wide\""));
+    }
+
+    #[test]
+    fn recent_history_tokens_resolution() {
+        assert_eq!(resolve_recent_history_tokens(Some(5), Some(9)), 5);
+        assert_eq!(resolve_recent_history_tokens(None, Some(9)), 9);
+        assert_eq!(resolve_recent_history_tokens(None, None), 4096);
+        assert_eq!(resolve_recent_history_tokens(Some(0), Some(9)), 0);
+        assert_eq!(resolve_recent_history_tokens(None, Some(0)), 0);
     }
 
     #[test]
