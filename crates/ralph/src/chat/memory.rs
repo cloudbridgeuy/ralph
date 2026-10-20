@@ -1,4 +1,6 @@
-use crate::chat::index_files::{open_archive, save_stale, update_index, FileSource};
+use crate::chat::index_files::{
+    open_archive, save_stale, sweep_index_temps, update_index, FileSource,
+};
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
@@ -186,6 +188,11 @@ impl Store {
         // The line is committed; `log.idx` is a cache the next reader rebuilds.
         if let Err(e) = update_index::<u64>(&self.dir) {
             warn(format!("chat log index not updated: {e}"));
+        }
+        // No save runs under the exclusive lock, so any index temp file left
+        // here is from a killed save.
+        if let Err(e) = sweep_index_temps(&self.dir) {
+            warn(format!("chat index temp files not removed: {e}"));
         }
         Ok(())
     }
@@ -413,6 +420,29 @@ mod tests {
         store.append(Role::User, "one").unwrap();
         fs::write(store.dir().join(LOG_INDEX_FILE), b"junk").unwrap();
         store.append(Role::User, "two").unwrap();
+        assert_eq!(stored_index(&store).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn append_removes_orphaned_index_temps_and_keeps_other_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "one").unwrap();
+        let index = store.dir().join(LOG_INDEX_FILE);
+        let (_, orphan) = crate::chat::index_files::index_temp(store.dir(), &index)
+            .unwrap()
+            .keep()
+            .unwrap();
+        let unrelated = [".tmpAb3dE9", ".log.idx.abc.tmp", "notes.tmp"];
+        for name in unrelated {
+            fs::write(store.dir().join(name), "keep").unwrap();
+        }
+        assert!(orphan.exists());
+        store.append(Role::User, "two").unwrap();
+        assert!(!orphan.exists());
+        for name in unrelated {
+            assert!(store.dir().join(name).exists(), "{name}");
+        }
         assert_eq!(stored_index(&store).unwrap().count(), 2);
     }
 

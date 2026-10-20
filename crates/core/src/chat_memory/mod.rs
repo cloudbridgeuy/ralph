@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite};
-pub use index::{Index, LogIndex, NodeSlot, Slot, TreeIndex, LOG_INDEX_FILE, TREE_INDEX_FILE};
+pub use index::{
+    index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
+    INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,
+};
 pub use log::{encode_entry, encode_record, parse_log, parse_tree};
 pub use lookup::{recall, zoom};
 pub use nap::{

@@ -1,9 +1,9 @@
 use crate::chat::memory::{check_path, read_optional};
 use ralph_core::chat_memory::{
-    refresh, write_plan, Archive, ByteSource, Index, IndexWrite, NodeSlot, Slot, LOG_INDEX_FILE,
-    TREE_INDEX_FILE,
+    index_temp_prefix, is_index_temp, refresh, write_plan, Archive, ByteSource, Index, IndexWrite,
+    NodeSlot, Slot, INDEX_TEMP_RAND, INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,
 };
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -103,6 +103,32 @@ pub fn update_index<S: Slot>(dir: &Path) -> io::Result<()> {
     persist(dir, &dir.join(S::INDEX_FILE), write_plan(&index, how))
 }
 
+/// Deletes the index temp files a killed save left behind. The caller holds
+/// the exclusive `LOCK`, so no save is running and every match is orphaned.
+pub fn sweep_index_temps(dir: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let temp = entry.file_name().to_str().is_some_and(is_index_temp);
+        if temp && entry.file_type()?.is_file() {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
+}
+
+/// The temp file `path` is saved through, named so `is_index_temp` matches it.
+pub fn index_temp(dir: &Path, path: &Path) -> io::Result<tempfile::NamedTempFile> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::other("chat index path has no file name"))?;
+    tempfile::Builder::new()
+        .prefix(&index_temp_prefix(name))
+        .suffix(INDEX_TEMP_SUFFIX)
+        .rand_bytes(INDEX_TEMP_RAND)
+        .tempfile_in(dir)
+}
+
 fn persist(dir: &Path, path: &Path, write: IndexWrite) -> io::Result<()> {
     check_path(path)?;
     match write {
@@ -115,7 +141,7 @@ fn persist(dir: &Path, path: &Path, write: IndexWrite) -> io::Result<()> {
             file.write_all(&header)
         }
         IndexWrite::Replace(bytes) => {
-            let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+            let mut temp = index_temp(dir, path)?;
             temp.write_all(&bytes)?;
             temp.persist(path).map_err(|e| e.error)?;
             Ok(())
@@ -126,7 +152,6 @@ fn persist(dir: &Path, path: &Path, write: IndexWrite) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     #[test]
     fn file_source_keeps_its_open_length_and_reads_missing_as_empty() {

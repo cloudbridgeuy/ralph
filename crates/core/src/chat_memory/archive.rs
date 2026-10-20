@@ -439,6 +439,23 @@ mod tests {
     }
 
     #[test]
+    fn a_version_1_index_is_rebuilt_and_replaced() {
+        let entries = mixed(5);
+        let mut log = bytes(&entries);
+        let (current, _) = refresh::<u64>(None, &mut log).unwrap();
+        let mut old = current.encode();
+        old.drain(40..48);
+        old[8..12].copy_from_slice(&1u32.to_le_bytes());
+        let (index, how) = refresh(LogIndex::decode(&old), &mut log).unwrap();
+        assert_eq!(how, Refresh::Rebuilt);
+        assert_eq!(index, current);
+        assert_eq!(
+            write_plan(&index, how),
+            IndexWrite::Replace(current.encode())
+        );
+    }
+
+    #[test]
     fn tree_index_refreshes_like_a_full_build() {
         let tree = summarized(&mixed(20), 2);
         let whole = indexed(&tree).file.data;

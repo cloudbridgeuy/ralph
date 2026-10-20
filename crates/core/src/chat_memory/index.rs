@@ -4,9 +4,31 @@ use std::collections::HashSet;
 pub const LOG_INDEX_FILE: &str = "log.idx";
 pub const TREE_INDEX_FILE: &str = "tree.idx";
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const HEADER_BYTES: usize = 56;
 const STOPPED: u32 = 1;
+
+/// Random characters in the name of the temp file an index is saved through.
+pub const INDEX_TEMP_RAND: usize = 6;
+pub const INDEX_TEMP_SUFFIX: &str = ".tmp";
+
+/// Prefix of the temp file `index_file` is saved through before it is renamed
+/// into place: `.log.idx.` for `log.idx`.
+pub fn index_temp_prefix(index_file: &str) -> String {
+    format!(".{index_file}.")
+}
+
+/// True only for the name of an index temp file: an index prefix,
+/// `INDEX_TEMP_RAND` ASCII letters or digits, then `INDEX_TEMP_SUFFIX`.
+pub fn is_index_temp(name: &str) -> bool {
+    [LOG_INDEX_FILE, TREE_INDEX_FILE].iter().any(|file| {
+        name.strip_prefix(&index_temp_prefix(file))
+            .and_then(|rest| rest.strip_suffix(INDEX_TEMP_SUFFIX))
+            .is_some_and(|middle| {
+                middle.len() == INDEX_TEMP_RAND && middle.bytes().all(|b| b.is_ascii_alphanumeric())
+            })
+    })
+}
 
 /// Byte span of one complete, non-blank line, newline excluded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,6 +476,39 @@ mod tests {
         let mut torn = good.clone();
         torn.extend_from_slice(&[0; 8]);
         assert!(LogIndex::decode(&torn).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_the_version_1_layout() {
+        let index = built(&log(3));
+        let mut old = index.encode();
+        old.drain(40..48);
+        old[8..12].copy_from_slice(&1u32.to_le_bytes());
+        assert_eq!(old.len(), 48 + 3 * 8);
+        assert!(LogIndex::decode(&old).is_none());
+    }
+
+    #[test]
+    fn index_temp_names_match_only_the_save_pattern() {
+        for name in [".log.idx.Ab3dE9.tmp", ".tree.idx.000000.tmp"] {
+            assert!(is_index_temp(name), "{name}");
+        }
+        for name in [
+            "log.idx",
+            "tree.idx",
+            "LOCK",
+            ".tmpAb3dE9",
+            ".log.idx.Ab3dE.tmp",
+            ".log.idx.Ab3dE9x.tmp",
+            ".log.idx.Ab-dE9.tmp",
+            ".log.idx.Ab3dE9.tmp.bak",
+            ".log.idx.Ab3dE9",
+            "log.idx.Ab3dE9.tmp",
+            ".usage.idx.Ab3dE9.tmp",
+            ".log.idx.Ab3dé.tmp",
+        ] {
+            assert!(!is_index_temp(name), "{name}");
+        }
     }
 
     #[test]
