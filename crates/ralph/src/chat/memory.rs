@@ -126,6 +126,10 @@ impl Store {
         Ok(page.map(|page| page.render()))
     }
 
+    pub fn log_len(&self) -> io::Result<usize> {
+        self.with_archive(|archive| Ok(archive.count()))
+    }
+
     pub fn zoom(&self, node: Node) -> io::Result<Result<String, String>> {
         let lines = self.with_archive(|archive| archive.zoom(node))?;
         Ok(lines.map(|lines| lines.join("\n")))
@@ -442,6 +446,16 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[1].role, Role::Assistant);
         assert_eq!(entries[1].text, "yo");
+    }
+
+    #[test]
+    fn log_len_counts_entries_and_reads_a_missing_store_as_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("new"));
+        assert_eq!(store.log_len().unwrap(), 0);
+        store.append(Role::User, "hi").unwrap();
+        store.append(Role::Assistant, "yo").unwrap();
+        assert_eq!(store.log_len().unwrap(), 2);
     }
 
     fn stored_index(store: &Store) -> Option<LogIndex> {

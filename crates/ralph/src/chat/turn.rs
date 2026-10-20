@@ -117,6 +117,9 @@ impl Turn<'_> {
         self.cancel.store(false, Ordering::SeqCst);
         self.store.set_pending_turn(trigger)?;
         let _pending = PendingTurn(self.store);
+        let pre_log_len = logged_before_reply(trigger)
+            .then(|| self.store.log_len())
+            .transpose()?;
         if logged_before_reply(trigger) {
             self.append_logged(trigger, logged)?;
         }
@@ -133,7 +136,7 @@ impl Turn<'_> {
                 launch = None;
                 let result = match session.take() {
                     Some(live) => Ok(live),
-                    None => self.launch(trigger, logged, &sent).and_then(|spawned| {
+                    None => self.launch(pre_log_len, &sent).and_then(|spawned| {
                         let live = Session::spawn(&spawned.config)?;
                         launch = Some(spawned);
                         Ok(live)
@@ -234,19 +237,14 @@ impl Turn<'_> {
         }
     }
 
-    fn launch(
-        &self,
-        trigger: Trigger,
-        logged: &[String],
-        sent: &str,
-    ) -> Result<Launch, SubprocessError> {
+    fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
         let (mut entries, tree) = self.store.load_settled(|| {
             let mut spinner = Spinner::with_session_context(0, chat_session_info());
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
             spinner
         })?;
-        if logged_before_reply(trigger) {
-            entries.truncate(entries.len().saturating_sub(logged.len()));
+        if let Some(len) = pre_log_len {
+            entries.truncate(len);
         }
         let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
         let first_prompt = turn_prompt(&split.tail, sent);
