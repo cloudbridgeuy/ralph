@@ -66,14 +66,6 @@ impl IterationCosts {
     pub fn new() -> Self {
         Self::default()
     }
-
-    /// Check if any cost/usage fields are populated.
-    pub fn is_empty(&self) -> bool {
-        self.cost_usd.is_none()
-            && self.duration_ms.is_none()
-            && self.usage.is_none()
-            && self.context_tokens.is_none()
-    }
 }
 
 impl ResultEvent {
@@ -224,7 +216,7 @@ fn context_tokens_from_events(events: &[StreamEvent]) -> Option<u64> {
 /// ```
 /// use ralph_core::stream::{
 ///     extract_costs_from_events_or_default, StreamEvent, AssistantEvent,
-///     AssistantMessage, ContentBlock,
+///     AssistantMessage, ContentBlock, IterationCosts,
 /// };
 ///
 /// // No result event present - returns default
@@ -241,7 +233,7 @@ fn context_tokens_from_events(events: &[StreamEvent]) -> Option<u64> {
 /// ];
 ///
 /// let costs = extract_costs_from_events_or_default(&events);
-/// assert!(costs.is_empty());
+/// assert_eq!(costs, IterationCosts::default());
 /// assert_eq!(costs.cost_usd, None);
 /// assert_eq!(costs.duration_ms, None);
 /// assert!(costs.usage.is_none());

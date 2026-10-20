@@ -3,43 +3,10 @@ use crate::stream::*;
 #[test]
 fn test_iteration_costs_new_is_empty() {
     let costs = IterationCosts::new();
-    assert!(costs.is_empty());
+    assert_eq!(costs, IterationCosts::default());
     assert_eq!(costs.cost_usd, None);
     assert_eq!(costs.duration_ms, None);
     assert!(costs.usage.is_none());
-}
-
-#[test]
-fn test_iteration_costs_is_empty_with_cost() {
-    let costs = IterationCosts {
-        cost_usd: Some(0.05),
-        duration_ms: None,
-        usage: None,
-        context_tokens: None,
-    };
-    assert!(!costs.is_empty());
-}
-
-#[test]
-fn test_iteration_costs_is_empty_with_duration() {
-    let costs = IterationCosts {
-        cost_usd: None,
-        duration_ms: Some(5000),
-        usage: None,
-        context_tokens: None,
-    };
-    assert!(!costs.is_empty());
-}
-
-#[test]
-fn test_iteration_costs_is_empty_with_usage() {
-    let costs = IterationCosts {
-        cost_usd: None,
-        duration_ms: None,
-        usage: Some(Usage::default()),
-        context_tokens: None,
-    };
-    assert!(!costs.is_empty());
 }
 
 #[test]
@@ -127,7 +94,7 @@ fn test_result_event_extract_costs_empty() {
     };
 
     let costs = event.extract_costs();
-    assert!(costs.is_empty());
+    assert_eq!(costs, IterationCosts::default());
 }
 
 #[test]
@@ -252,7 +219,6 @@ fn test_extract_costs_from_events_or_default_with_result() {
     })];
 
     let costs = extract_costs_from_events_or_default(&events);
-    assert!(!costs.is_empty());
     assert_eq!(costs.cost_usd, Some(0.15));
     assert_eq!(costs.duration_ms, Some(3000));
 }
@@ -272,7 +238,7 @@ fn test_extract_costs_from_events_or_default_no_result() {
     })];
 
     let costs = extract_costs_from_events_or_default(&events);
-    assert!(costs.is_empty());
+    assert_eq!(costs, IterationCosts::default());
     assert_eq!(costs.cost_usd, None);
     assert_eq!(costs.duration_ms, None);
     assert!(costs.usage.is_none());

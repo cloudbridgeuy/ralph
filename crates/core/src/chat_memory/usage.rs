@@ -16,10 +16,8 @@ pub fn trigger_entries(trigger: Trigger, texts: &[String]) -> Vec<(super::Role, 
     texts.iter().map(|text| (role, text.clone())).collect()
 }
 
-pub fn reply_entries(trigger: Trigger, reply: &str) -> Vec<(super::Role, String)> {
-    match trigger {
-        Trigger::User | Trigger::Worker => vec![(super::Role::Assistant, reply.to_string())],
-    }
+pub fn reply_entries(reply: &str) -> Vec<(super::Role, String)> {
+    vec![(super::Role::Assistant, reply.to_string())]
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -200,7 +198,7 @@ mod tests {
             vec![(crate::chat_memory::Role::Worker, "a".into())]
         );
         assert_eq!(
-            reply_entries(Trigger::User, "r"),
+            reply_entries("r"),
             vec![(crate::chat_memory::Role::Assistant, "r".into())]
         );
     }
