@@ -69,6 +69,9 @@ pub fn parse_tree(data: &[u8]) -> (Tree, Vec<String>) {
 }
 
 pub fn encode_entry(entry: &Entry) -> Result<String, String> {
+    if entry.is_corrupt() {
+        return Err("a corrupt log entry placeholder cannot be written".to_string());
+    }
     let mut line = serde_json::to_string(entry).map_err(|e| e.to_string())?;
     line.push('\n');
     Ok(line)
@@ -161,8 +164,20 @@ mod tests {
     }
 
     #[test]
+    fn a_placeholder_taken_from_a_loaded_log_cannot_be_encoded() {
+        let good = encode_entry(&entry(0, 1)).unwrap();
+        let log = format!("{good}garbage\n{good}");
+        let (entries, _) = parse_log(log.as_bytes());
+        let placeholder = &entries[1];
+        assert!(placeholder.is_corrupt());
+        let error = encode_entry(placeholder).unwrap_err();
+        assert_eq!(error, "a corrupt log entry placeholder cannot be written");
+        assert!(encode_entry(&entries[0]).is_ok());
+    }
+
+    #[test]
     fn the_flag_is_never_written_or_read_from_the_log() {
-        let line = encode_entry(&Entry::corrupt()).unwrap();
+        let line = serde_json::to_string(&Entry::corrupt()).unwrap();
         assert!(!line.contains("corrupt\":"), "{line}");
         let forged = r#"{"role":"worker","at":"","text":"x","corrupt":true}"#;
         let (entry, warning) = entry_or_corrupt(forged.as_bytes(), 0, 0);
