@@ -56,6 +56,9 @@ pub struct IterationCosts {
     /// Token usage statistics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
 }
 
 impl IterationCosts {
@@ -66,7 +69,10 @@ impl IterationCosts {
 
     /// Check if any cost/usage fields are populated.
     pub fn is_empty(&self) -> bool {
-        self.cost_usd.is_none() && self.duration_ms.is_none() && self.usage.is_none()
+        self.cost_usd.is_none()
+            && self.duration_ms.is_none()
+            && self.usage.is_none()
+            && self.context_tokens.is_none()
     }
 }
 
@@ -117,6 +123,7 @@ impl ResultEvent {
             cost_usd: self.get_cost_usd(),
             duration_ms: self.duration_ms,
             usage: self.usage.clone(),
+            context_tokens: None,
         }
     }
 }
@@ -149,6 +156,7 @@ impl ResultEvent {
 ///             content: vec![ContentBlock::Text { text: "Hello!".to_string() }],
 ///             model: None,
 ///             stop_reason: None,
+///             usage: None,
 ///         },
 ///     }),
 ///     StreamEvent::Result(ResultEvent {
@@ -176,11 +184,24 @@ impl ResultEvent {
 /// assert_eq!(c.duration_ms, Some(5000));
 /// ```
 pub fn extract_costs_from_events(events: &[StreamEvent]) -> Option<IterationCosts> {
+    let context_tokens = context_tokens_from_events(events);
     events.iter().find_map(|event| {
         if let StreamEvent::Result(res) = event {
-            return Some(res.extract_costs());
+            return Some(IterationCosts {
+                context_tokens,
+                ..res.extract_costs()
+            });
         }
         None
+    })
+}
+
+fn context_tokens_from_events(events: &[StreamEvent]) -> Option<u64> {
+    events.iter().rev().find_map(|event| match event {
+        StreamEvent::Assistant(assistant) => {
+            assistant.message.usage.as_ref().map(Usage::context_tokens)
+        }
+        _ => None,
     })
 }
 
@@ -214,6 +235,7 @@ pub fn extract_costs_from_events(events: &[StreamEvent]) -> Option<IterationCost
 ///             content: vec![ContentBlock::Text { text: "Hello!".to_string() }],
 ///             model: None,
 ///             stop_reason: None,
+///             usage: None,
 ///         },
 ///     }),
 /// ];
@@ -225,5 +247,8 @@ pub fn extract_costs_from_events(events: &[StreamEvent]) -> Option<IterationCost
 /// assert!(costs.usage.is_none());
 /// ```
 pub fn extract_costs_from_events_or_default(events: &[StreamEvent]) -> IterationCosts {
-    extract_costs_from_events(events).unwrap_or_default()
+    extract_costs_from_events(events).unwrap_or_else(|| IterationCosts {
+        context_tokens: context_tokens_from_events(events),
+        ..IterationCosts::default()
+    })
 }

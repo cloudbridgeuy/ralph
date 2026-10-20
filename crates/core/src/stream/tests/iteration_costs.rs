@@ -15,6 +15,7 @@ fn test_iteration_costs_is_empty_with_cost() {
         cost_usd: Some(0.05),
         duration_ms: None,
         usage: None,
+        context_tokens: None,
     };
     assert!(!costs.is_empty());
 }
@@ -25,6 +26,7 @@ fn test_iteration_costs_is_empty_with_duration() {
         cost_usd: None,
         duration_ms: Some(5000),
         usage: None,
+        context_tokens: None,
     };
     assert!(!costs.is_empty());
 }
@@ -35,6 +37,7 @@ fn test_iteration_costs_is_empty_with_usage() {
         cost_usd: None,
         duration_ms: None,
         usage: Some(Usage::default()),
+        context_tokens: None,
     };
     assert!(!costs.is_empty());
 }
@@ -138,6 +141,7 @@ fn test_extract_costs_from_events_with_result() {
                 }],
                 model: None,
                 stop_reason: None,
+                usage: None,
             },
         }),
         StreamEvent::Result(ResultEvent {
@@ -183,6 +187,7 @@ fn test_extract_costs_from_events_no_result() {
                 }],
                 model: None,
                 stop_reason: None,
+                usage: None,
             },
         }),
     ];
@@ -262,6 +267,7 @@ fn test_extract_costs_from_events_or_default_no_result() {
             }],
             model: None,
             stop_reason: None,
+            usage: None,
         },
     })];
 
@@ -283,6 +289,7 @@ fn test_iteration_costs_serialization_round_trip() {
             cache_read_input_tokens: Some(107476),
             cache_creation_input_tokens: Some(12504),
         }),
+        context_tokens: None,
     };
 
     let json = serde_json::to_string(&costs).unwrap();
@@ -296,6 +303,7 @@ fn test_iteration_costs_empty_fields_skip_serialization() {
         cost_usd: Some(0.05),
         duration_ms: None,
         usage: None,
+        context_tokens: None,
     };
 
     let json = serde_json::to_string(&costs).unwrap();
@@ -323,6 +331,7 @@ fn test_extract_costs_result_at_end() {
                 }],
                 model: None,
                 stop_reason: None,
+                usage: None,
             },
         }),
         StreamEvent::User(UserEvent {
@@ -364,4 +373,59 @@ fn test_extract_costs_result_at_end() {
     assert_eq!(usage.output_tokens, 5000);
     assert_eq!(usage.cache_read_input_tokens, Some(50000));
     assert_eq!(usage.cache_creation_input_tokens, None);
+}
+
+fn assistant_line(usage: &str) -> StreamEvent {
+    let line = format!(r#"{{"type":"assistant","message":{{"id":"m","content":[]{usage}}}}}"#);
+    match parse_stream_line(&line) {
+        ParsedLine::Event(event) => event,
+        _ => panic!("not an event"),
+    }
+}
+
+#[test]
+fn test_assistant_usage_parses_and_sums_context_tokens() {
+    let StreamEvent::Assistant(event) = assistant_line(
+        r#","usage":{"input_tokens":3,"output_tokens":9,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}"#,
+    ) else {
+        panic!("not assistant");
+    };
+    assert_eq!(event.message.usage.unwrap().context_tokens(), 123);
+    let StreamEvent::Assistant(bare) = assistant_line("") else {
+        panic!("not assistant");
+    };
+    assert!(bare.message.usage.is_none());
+}
+
+#[test]
+fn test_context_tokens_uses_last_assistant_usage_not_result_usage() {
+    let usage = |n: u64| format!(r#","usage":{{"input_tokens":{n},"output_tokens":1}}"#);
+    let mut events = vec![
+        assistant_line(&usage(10)),
+        assistant_line(&usage(20)),
+        assistant_line(""),
+    ];
+    assert_eq!(
+        extract_costs_from_events_or_default(&events).context_tokens,
+        Some(20)
+    );
+    events.push(StreamEvent::Result(ResultEvent {
+        subtype: None,
+        total_cost_usd: Some(1.0),
+        cost_usd: None,
+        duration_ms: None,
+        duration_api_ms: None,
+        usage: Some(Usage {
+            input_tokens: 999,
+            output_tokens: 1,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+        }),
+        session_id: None,
+        num_turns: None,
+        result: None,
+    }));
+    let costs = extract_costs_from_events(&events).unwrap();
+    assert_eq!(costs.context_tokens, Some(20));
+    assert_eq!(costs.usage.unwrap().input_tokens, 999);
 }

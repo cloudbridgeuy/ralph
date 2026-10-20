@@ -11,6 +11,7 @@ fn test_assistant_message_extract_tool_invocations_single() {
         }],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     let invocations = message.extract_tool_invocations();
@@ -38,6 +39,7 @@ fn test_assistant_message_extract_tool_invocations_multiple() {
         ],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     let invocations = message.extract_tool_invocations();
@@ -72,6 +74,7 @@ fn test_assistant_message_extract_tool_invocations_mixed_content() {
         ],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     let invocations = message.extract_tool_invocations();
@@ -94,6 +97,7 @@ fn test_assistant_message_extract_tool_invocations_text_only() {
         ],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     let invocations = message.extract_tool_invocations();
@@ -107,6 +111,7 @@ fn test_assistant_message_extract_tool_invocations_empty_content() {
         content: vec![],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     let invocations = message.extract_tool_invocations();
@@ -134,6 +139,7 @@ fn test_assistant_message_extract_tool_invocations_preserves_input() {
         }],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     let invocations = message.extract_tool_invocations();
@@ -154,6 +160,7 @@ fn test_assistant_event_extract_tool_invocations() {
             }],
             model: None,
             stop_reason: None,
+            usage: None,
         },
     };
 

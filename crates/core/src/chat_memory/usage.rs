@@ -120,6 +120,8 @@ pub struct UsageRecord {
     pub output_tokens: u64,
     pub cost_usd: Option<f64>,
     pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u64>,
     #[serde(flatten)]
     pub view: Option<ViewStats>,
     #[serde(flatten)]
@@ -153,6 +155,7 @@ pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Optio
         output_tokens: usage.output_tokens,
         cost_usd: costs.cost_usd,
         duration_ms: costs.duration_ms,
+        context_tokens: costs.context_tokens,
         view: None,
         prompt: None,
     })
@@ -178,6 +181,7 @@ mod tests {
                 cache_read_input_tokens: cache,
                 cache_creation_input_tokens: cache.map(|c| c + 1),
             }),
+            context_tokens: None,
         }
     }
 
@@ -241,6 +245,17 @@ mod tests {
             ),
             (0, 0)
         );
+    }
+
+    #[test]
+    fn context_tokens_serialized_only_when_present() {
+        let kind = CallKind::Nap;
+        let mut with = costs(None);
+        with.context_tokens = Some(42);
+        let value = line(usage_record(kind, "t".into(), &with).unwrap());
+        assert_eq!(value["context_tokens"], 42);
+        let value = line(usage_record(kind, "t".into(), &costs(None)).unwrap());
+        assert!(value.get("context_tokens").is_none());
     }
 
     #[test]

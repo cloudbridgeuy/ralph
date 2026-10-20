@@ -51,6 +51,7 @@ impl AssistantMessage {
     ///     ],
     ///     model: None,
     ///     stop_reason: None,
+    ///     usage: None,
     /// };
     ///
     /// assert_eq!(message.extract_text(), "Hello, world!");
@@ -94,6 +95,7 @@ impl AssistantMessage {
     ///     ],
     ///     model: None,
     ///     stop_reason: None,
+    ///     usage: None,
     /// };
     ///
     /// let invocations = message.extract_tool_invocations();
@@ -134,6 +136,7 @@ impl AssistantEvent {
     ///         ],
     ///         model: None,
     ///         stop_reason: None,
+    ///         usage: None,
     ///     },
     /// };
     ///
@@ -165,6 +168,7 @@ impl AssistantEvent {
     ///         ],
     ///         model: None,
     ///         stop_reason: None,
+    ///         usage: None,
     ///     },
     /// };
     ///

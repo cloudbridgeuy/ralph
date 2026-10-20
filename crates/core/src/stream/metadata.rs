@@ -138,6 +138,7 @@ impl SystemEvent {
 ///             content: vec![ContentBlock::Text { text: "Hello!".to_string() }],
 ///             model: None,
 ///             stop_reason: None,
+///             usage: None,
 ///         },
 ///     }),
 /// ];
@@ -192,6 +193,7 @@ pub fn extract_metadata_from_events(events: &[StreamEvent]) -> Option<IterationM
 ///             content: vec![ContentBlock::Text { text: "Hello!".to_string() }],
 ///             model: None,
 ///             stop_reason: None,
+///             usage: None,
 ///         },
 ///     }),
 /// ];

@@ -9,6 +9,7 @@ fn test_assistant_message_extract_text_single_content() {
         }],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     assert_eq!(message.extract_text(), "Hello, world!");
@@ -33,6 +34,7 @@ fn test_assistant_message_extract_text_multi_content() {
         ],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     assert_eq!(message.extract_text(), "First part. Second part.");
@@ -56,6 +58,7 @@ fn test_assistant_message_extract_text_tool_only() {
         ],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     assert_eq!(message.extract_text(), "");
@@ -68,6 +71,7 @@ fn test_assistant_message_extract_text_empty_content() {
         content: vec![],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     assert_eq!(message.extract_text(), "");
@@ -90,6 +94,7 @@ fn test_assistant_message_extract_text_preserves_ordering() {
         ],
         model: None,
         stop_reason: None,
+        usage: None,
     };
 
     assert_eq!(message.extract_text(), "ABC");
@@ -105,6 +110,7 @@ fn test_assistant_event_extract_text() {
             }],
             model: None,
             stop_reason: None,
+            usage: None,
         },
     };
 
@@ -251,6 +257,7 @@ fn test_extract_metadata_from_events_init_present() {
                 }],
                 model: None,
                 stop_reason: None,
+                usage: None,
             },
         }),
     ];
@@ -275,6 +282,7 @@ fn test_extract_metadata_from_events_no_system_event() {
             }],
             model: None,
             stop_reason: None,
+            usage: None,
         },
     })];
 
@@ -407,6 +415,7 @@ fn test_extract_metadata_init_at_end() {
                 }],
                 model: None,
                 stop_reason: None,
+                usage: None,
             },
         }),
         StreamEvent::Result(ResultEvent {

@@ -85,6 +85,9 @@ pub struct AssistantMessage {
     /// Stop reason for the message (e.g., "end_turn", "tool_use").
     #[serde(default)]
     pub stop_reason: Option<String>,
+
+    #[serde(default)]
+    pub usage: Option<Usage>,
 }
 
 /// A content block within an assistant message.
@@ -222,4 +225,12 @@ pub struct Usage {
     /// Number of tokens written to cache (prompt caching).
     #[serde(default)]
     pub cache_creation_input_tokens: Option<u64>,
+}
+
+impl Usage {
+    pub fn context_tokens(&self) -> u64 {
+        self.input_tokens
+            + self.cache_read_input_tokens.unwrap_or(0)
+            + self.cache_creation_input_tokens.unwrap_or(0)
+    }
 }
