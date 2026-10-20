@@ -8,6 +8,7 @@
 
 use clap::Parser;
 
+mod bench;
 mod lint;
 mod prelude;
 mod release;
@@ -47,6 +48,9 @@ impl Global {
 
 #[derive(Debug, clap::Subcommand)]
 enum Commands {
+    /// Benchmark chat-memory reads with and without the archive indexes
+    BenchMemory(bench::BenchMemoryCommand),
+
     /// Code quality checks and git hooks management
     Lint(lint::LintCommand),
 
@@ -59,6 +63,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::BenchMemory(bench_cmd) => {
+            bench::run(bench_cmd)?;
+        }
         Commands::Lint(lint_cmd) => {
             lint::run(lint_cmd, cli.global).await?;
         }

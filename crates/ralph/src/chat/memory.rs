@@ -1,9 +1,9 @@
-use crate::chat::index_files::{snapshot_log, update_log_index, FileSource};
+use crate::chat::index_files::{snapshot, update_index, Snapshot};
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
     nap_source, nap_step, parse_log, parse_tree, pending, read_page, retry_prompt, zoom_node,
-    Commit, Entry, LogIndex, NapStep, Node, RangeRequest, Role, Tree, Trigger, UsageRecord,
+    Commit, Entry, NapStep, Node, NodeSlot, RangeRequest, Role, Tree, Trigger, UsageRecord,
     MAX_NAP_ATTEMPTS,
 };
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
@@ -79,26 +79,24 @@ impl Store {
         Ok(tree)
     }
 
-    /// Takes a shared `LOCK` only while it fixes the log length and reads
-    /// `log.idx`; entries below that length never change, so reads after the
-    /// lock is gone see the same snapshot.
-    fn snapshot(&self) -> io::Result<(FileSource, LogIndex)> {
+    /// Takes a shared `LOCK` only while it fixes the log and tree lengths and
+    /// reads their indexes; bytes below those lengths never change, so reads
+    /// after the lock is gone see the same snapshot.
+    fn snapshot(&self) -> io::Result<Snapshot> {
         let lock = self.open_lock()?;
         lock.lock_shared()?;
-        snapshot_log(&self.dir)
+        snapshot(&self.dir)
     }
 
     pub fn read(&self, request: &RangeRequest) -> io::Result<Result<String, String>> {
-        let (mut log, index) = self.snapshot()?;
-        let mut tree = self.load_tree()?;
-        let page = read_page(&mut log, &index, &mut tree, request)?;
+        let mut at = self.snapshot()?;
+        let page = read_page(&mut at.log, &at.log_index, &mut at.tree, request)?;
         Ok(page.map(|page| page.render()))
     }
 
     pub fn zoom(&self, node: Node) -> io::Result<Result<String, String>> {
-        let (mut log, index) = self.snapshot()?;
-        let mut tree = self.load_tree()?;
-        let lines = zoom_node(&mut log, &index, &mut tree, node)?;
+        let mut at = self.snapshot()?;
+        let lines = zoom_node(&mut at.log, &at.log_index, &mut at.tree, node)?;
         Ok(lines.map(|lines| lines.join("\n")))
     }
 
@@ -167,7 +165,7 @@ impl Store {
         file.write_all(line.as_bytes())?;
         file.sync_all()?;
         // The line is committed; `log.idx` is a cache the next reader rebuilds.
-        if let Err(e) = update_log_index(&self.dir) {
+        if let Err(e) = update_index::<u64>(&self.dir) {
             warn(format!("chat log index not updated: {e}"));
         }
         Ok(())
@@ -254,6 +252,10 @@ impl Store {
         match commit_decision(&tree, node) {
             Commit::Write => {
                 self.put(node, summary)?;
+                // The record is committed; `tree.idx` is a cache like `log.idx`.
+                if let Err(e) = update_index::<NodeSlot>(&self.dir) {
+                    warn(format!("chat tree index not updated: {e}"));
+                }
                 tree.insert(node, summary.to_string());
             }
             Commit::Taken => warn(format!(
@@ -299,7 +301,9 @@ fn summarize(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::chat_memory::{frozen_block, FALLBACK_MARK, LOG_INDEX_FILE};
+    use ralph_core::chat_memory::{
+        frozen_block, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE, TREE_INDEX_FILE,
+    };
 
     #[test]
     fn missing_files_load_empty() {
@@ -487,6 +491,45 @@ mod tests {
             })
             .unwrap();
         assert_eq!(again, 0);
+    }
+
+    #[test]
+    fn nap_keeps_the_tree_index_current_and_zoom_reads_through_it() {
+        let (_dir, store) = seeded(&[1], 4);
+        let mut calls = 0;
+        store
+            .nap(|_| {
+                calls += 1;
+                Ok(format!("sum{calls}"))
+            })
+            .unwrap();
+        let bytes = fs::read(store.dir().join(TREE_INDEX_FILE)).unwrap();
+        let index = TreeIndex::decode(&bytes).unwrap();
+        let tree = fs::read(store.dir().join("tree.jsonl")).unwrap();
+        assert_eq!((index.count(), index.covered), (4, tree.len() as u64));
+        let zoomed = store.zoom(Node::new(0, 4).unwrap()).unwrap().unwrap();
+        assert!(
+            zoomed.contains("sum2") && zoomed.contains("sum3"),
+            "{zoomed}"
+        );
+    }
+
+    #[test]
+    fn reads_see_tree_records_without_a_usable_tree_index() {
+        let (_dir, store) = seeded(&[], 4);
+        let first = encode_record(Node::new(0, 2).unwrap(), "first").unwrap();
+        let loser = encode_record(Node::new(0, 2).unwrap(), "loser").unwrap();
+        fs::write(store.dir().join("tree.jsonl"), first + &loser).unwrap();
+        fs::write(store.dir().join(TREE_INDEX_FILE), b"junk").unwrap();
+        let zoomed = store.zoom(Node::new(0, 4).unwrap()).unwrap().unwrap();
+        assert!(
+            zoomed.contains("first") && !zoomed.contains("loser"),
+            "{zoomed}"
+        );
+        assert_eq!(
+            fs::read(store.dir().join(TREE_INDEX_FILE)).unwrap(),
+            b"junk"
+        );
     }
 
     fn frees_soon(lock: &std::fs::File) -> bool {

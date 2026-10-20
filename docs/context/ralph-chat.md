@@ -22,7 +22,7 @@ ralph                      # same as ralph chat with defaults
 
 ## Layout
 
-- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `frozen_block`, `tail_lines`, `verbatim_start`, `estimate_tokens`; `lookup.rs` has `zoom` and `recall`; `index.rs` and `archive.rs` hold the log index and the windowed `read_page` and `zoom_node` (see [Index](#index)); `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts, `nap_source`, `check_summary`, `fallback_summary`, and the nap scheduling and commit decisions `nap_step` and `commit_decision`; `usage.rs` has the per-call usage records.
+- `crates/core/src/chat_memory/`: pure chat memory, split by concern. `mod.rs` holds the types (`Entry`, `Node`, `Tree`) and re-exports; `log.rs` parses and encodes the log and tree files; `tree.rs` has `cover`, `pending`, `frozen_block`, `tail_lines`, `verbatim_start`, `estimate_tokens`; `lookup.rs` has `zoom` and `recall`; `index.rs` and `archive.rs` hold the log and tree indexes, `IndexedTree`, and the windowed `read_page` and `zoom_node` (see [Index](#index)); `tools.rs` has the MCP tool schemas, `handle_request` and `finish_call`; `nap.rs` has the nap and retry prompts, `nap_source`, `check_summary`, `fallback_summary`, and the nap scheduling and commit decisions `nap_step` and `commit_decision`; `usage.rs` has the per-call usage records.
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `FROZEN_WINDOW`, `RECENT_HISTORY_TOKENS`, `SYSTEM_PROMPT`, `turn_system_prompt`, `turn_prompt`, `build_mcp_args`.
 - `crates/core/src/chat_status.rs`: footer hints, input routing, worker state parsing, memory size.
 - `crates/core/src/status_mode.rs`: pure mode selection for the status line mode block.
@@ -39,7 +39,7 @@ ralph                      # same as ralph chat with defaults
 - `crates/ralph/src/chat/monitor.rs`: status, watch and stdin monitors.
 - `crates/ralph/src/chat/skills.rs`: MCP config and skill plugin setup.
 - `crates/ralph/src/chat/memory.rs`: `Store` (files, `LOCK`, `NAP`, append, nap loop and commit, indexed `read` and `zoom`).
-- `crates/ralph/src/chat/index_files.rs`: `FileSource` and the `log.idx` writes.
+- `crates/ralph/src/chat/index_files.rs`: `FileSource`, the read `Snapshot`, and the `log.idx` and `tree.idx` writes.
 - `crates/ralph/src/chat/mcp.rs`: `chat-mcp` stdio loop; answers `zoom`, `recall` and `read`, forwards worker tools to the chat socket.
 - `crates/ralph/src/chat/socket.rs`: chat socket bind, sweep, server and `forward` client.
 - `crates/core/src/retry.rs`: pure retry rules: `classify`, `FailureKind`, `RetryPolicy`, `OUTAGE_MARKERS`, `OUTAGE_BACKOFF_SECS`, `backoff`, `retry_delay`.
@@ -207,7 +207,7 @@ Shorthand: a message whose first character is `!` is the same as one `!shell` ce
 ## Memory
 
 - Log: `log.jsonl`, append-only, one `{role, at, text}` per line (`role` is `user`, `assistant` or `worker`, `at` is RFC 3339). Each append is fsynced under `LOCK`, then `log.idx` is brought up to date under the same lock (see [Index](#index)). A corrupt entry warns and ignores that entry and all later ones; a trailing line without newline is ignored.
-- Tree: `tree.jsonl`, one `{lo, hi, text}` record per line. Nodes are aligned power-of-two blocks `[lo, hi)` over log indexes, ids print as `5` or `4-7`. First record wins for a duplicate node; invalid records warn and are skipped. Summaries are at most `SUMMARY_BYTES` = 512 bytes, one line.
+- Tree: `tree.jsonl`, one `{lo, hi, text}` record per line, indexed by `tree.idx` (see [Index](#index)). Nodes are aligned power-of-two blocks `[lo, hi)` over log indexes, ids print as `5` or `4-7`. First record wins for a duplicate node; invalid records warn and are skipped. Summaries are at most `SUMMARY_BYTES` = 512 bytes, one line.
 - Leaves are single messages. Outside the verbatim run (see [Recent history](#recent-history)), messages of 512 bytes or fewer stay in the view with whitespace collapsed and need no node. Longer ones get a leaf summary node. Parent nodes merge two children and exist only for complete blocks. A node is written once and never rebuilt.
 - `cover(t, budget)` picks the nodes for the view: all leaves if the log fits the budget, otherwise a cover of the whole log, oldest first, tuned to use the budget. A cover node with no summary yet is shown through its halves or a marker (see [Pending summaries](#pending-summaries)).
 - View line formats: message `#<i> <role> <at> <text>`; summary `#<id> <summary>`.
@@ -216,16 +216,18 @@ Shorthand: a message whose first character is `!` is the same as one `!shell` ce
 
 ### Index
 
-`log.idx` lets `read` and `zoom` load only the entries they show. `log.jsonl` stays the record; the index is a cache that is always safe to delete.
+`log.idx` and `tree.idx` let `read` and `zoom` load only the entries and summaries they show. `log.jsonl` and `tree.jsonl` stay the record; each index is a cache that is always safe to delete.
 
-- Format (`chat_memory/index.rs`): a 40-byte header (magic `RLPHLOGX`, version 1, flags with bit 0 `stopped`, `covered`, `hash`, entry count, all little-endian), then one `u64` start offset per entry. `covered` ends on the newline of the last indexed entry. `hash` is the FNV-1a hash of the bytes from the last entry's start to `covered`.
-- Same visible entries as `parse_log`: only complete, non-blank lines are indexed, each new line must parse as an entry, and the first one that does not sets `stopped`, so nothing after it is visible. Entry ids are line ordinals, so `#<id>` does not change.
-- Freshness (`LogIndex::freshness`, pure): a log shorter than `covered` or a tail whose hash differs means `Rebuild`; a `stopped` index or a log that ends at `covered` is `Fresh`; a longer log is `Extend`, which scans only the bytes past `covered`. A file with a bad magic, version, length or offset order decodes as missing, which also means a full rebuild.
-- Writes: only `Store::append`, under the exclusive `LOCK` after the log fsync. `refresh` and `write_plan` decide: nothing, an in-place extend (new offsets at the end, then the header at 0; a crash in between leaves a length the header does not match, so the next load rebuilds), or a full file written to a temp file and renamed over `log.idx`. `check_path` rejects a symlinked or hard-linked `log.idx`. A failed index write only warns: the log line is already committed.
-- Readers (`read`, `zoom`) never write `log.idx`. They take a shared `LOCK`, open the log and fix its length, read `log.idx` and extend or rebuild it in memory, then drop the lock. Entries below that length never change, so the reads that follow see one snapshot.
-- Visibility rule: a `read` or `zoom` call sees every complete line that was in the log when it took its shared `LOCK`. A line appended later is visible from the next call. A torn last line (no newline) is never visible.
-- Store without `log.idx` (older binaries, deleted file): each reader rebuilds in memory, the cost of a full log read, until the next append writes the file.
-- `recall`, the turn view, the status bar and the nap still read the whole log (`Store::load`).
+- Format (`chat_memory/index.rs`, one generic `Index<S: Slot>`): a 48-byte header (magic `RLPHLOGX` or `RLPHTREX`, version 1, flags with bit 0 `stopped`, `covered`, `tail`, `hash`, slot count, all little-endian), then fixed-size slots. `log.idx` has one `u64` start offset per entry; `tree.idx` has one `{lo, hi, start, end}` slot of four `u64` per valid record, in file order. `covered` ends on the newline of the last scanned line, `tail` is that line's start, and `hash` is the FNV-1a hash of the bytes `[tail, covered)`.
+- Same visible content as the parsers: only complete, non-blank lines are scanned. In `log.idx` each line must parse as an entry, and the first one that does not sets `stopped`, so nothing after it is visible (`parse_log`). Entry ids are line ordinals, so `#<id>` does not change. In `tree.idx` an invalid record is skipped (`parse_tree`), and `TreeIndex::find` returns the first slot of each node, so the first record wins.
+- Freshness (`Index::freshness`, pure): a file shorter than `covered` or a tail whose hash differs means `Rebuild`; a `stopped` index or a file that ends at `covered` is `Fresh`; a longer file is `Extend`, which scans only the bytes past `covered`. A file with a bad magic, version, length, slot or offset order decodes as missing, which also means a full rebuild.
+- Writes: `Store::append` updates `log.idx` under the exclusive `LOCK` after the log fsync; the nap commit updates `tree.idx` under the same lock after the record is written. `refresh` and `write_plan` decide: nothing, an in-place extend (new slots at the end, then the header at 0; a crash in between leaves a length the header does not match, so the next load rebuilds), or a full file written to a temp file and renamed over the index. `check_path` rejects a symlinked or hard-linked index. A failed index write only warns: the line is already committed.
+- Readers (`read`, `zoom`) never write an index. They take a shared `LOCK`, open the log and the tree and fix their lengths, read both indexes and extend or rebuild them in memory, then drop the lock. Bytes below those lengths never change, so the reads that follow see one snapshot. Summaries come from `IndexedTree`, one read per wanted node.
+- Visibility rule: a `read` or `zoom` call sees every complete line that was in the log and the tree when it took its shared `LOCK`. A line appended later is visible from the next call. A torn last line (no newline) is never visible.
+- Store without an index (older binaries, deleted file): each reader rebuilds it in memory, the cost of a full file read, until the next append (log) or nap commit (tree) writes the file.
+- Each call still reads both index files whole: about 8 bytes per entry and 32 per summary.
+- `recall`, the turn view, the status bar and the nap still read the whole log and tree (`Store::load`).
+- Benchmark: `cargo xtask bench-memory [--sizes 1000,10000,100000] [--runs 9]` builds a store per size in a temp dir and prints, per case, the median latency, bytes read and allocations of the whole-file path and the indexed path. It fails when the two answers differ. It calls the `ralph_core` functions with its own file reader, not `Store`.
 
 ## Nap
 
@@ -242,7 +244,7 @@ Shorthand: a message whose first character is `!` is the same as one `!shell` ce
 
 - Snapshot: under a shared `LOCK` the nap reads log and tree once. `log.jsonl` is append-only, so the entries under any pending node never change after the snapshot.
 - Curator calls, `check_summary` retries and outage backoff run with no `LOCK` held.
-- Commit: for each summary (or raw fallback) the nap takes the exclusive `LOCK`, re-reads `tree.jsonl`, and asks `commit_decision`. `Write` appends one fsynced record. `Taken` means another nap committed the node first: the nap drops its own text, warns `chat memory kept the first summary for #<id>`, and keeps the committed text. Either way the nap continues from the re-read tree.
+- Commit: for each summary (or raw fallback) the nap takes the exclusive `LOCK`, re-reads `tree.jsonl`, and asks `commit_decision`. `Write` appends one fsynced record, then updates `tree.idx`. `Taken` means another nap committed the node first: the nap drops its own text, warns `chat memory kept the first summary for #<id>`, and keeps the committed text. Either way the nap continues from the re-read tree.
 - Order: `nap_step` returns `Done` for a node already in the tree, `Blocked` for a parent whose child has no committed summary, else `Ask` with the prompt. A parent prompt is always built from committed child text, so a parent never summarizes a dropped child.
 - Racing naps: `NAP` makes naps run one at a time. If two naps still overlap (for example an older binary without `NAP`), first-writer-wins at commit plus first-record-wins in `parse_tree` keep one summary per node. Records are written whole under the exclusive `LOCK`, so naps never interleave lines.
 - Failure: a curator error, a timeout, or a nap that is killed before its commit writes nothing for that node. The node stays in `pending` and the next nap retries it. Nodes committed before the failure stay.
@@ -299,7 +301,7 @@ Invalid ids, ids beyond the log, bad regexes, and store read errors return a too
 - A record that does not fit is split at a character boundary, never inside a UTF-8 character, and its header gains `chars a-b` (1-based, inclusive). A page always carries at least one character, so paging always advances.
 - When more remains the page ends with `next cursor: <next>.<offset>@<end>`. Pass it back as `cursor` with the same `id` and `mode`. `<offset>` is the character offset inside record `<next>`. Otherwise the page ends with `(end of range)`.
 - Snapshot: the first call fixes `end` as `min(b + 1, log length)` and the cursor carries it, so messages appended between pages never appear, and a full traversal has no gaps or duplicates.
-- Loading (`archive::read_page`): each call loads a window of entries from the cursor (or `a`) through `log.idx`, never the whole log. The first window holds entries whose JSON lines add up to the page budget in bytes; when the page needs an entry past the window before the budget is spent (`Read::More`), the window doubles. The page is the same as one built from the whole log (tested).
+- Loading (`archive::read_page`): each call loads a window of entries from the cursor (or `a`) through `log.idx`, never the whole log; in `summary` mode it reads only the leaf summaries of long entries in the window, through `tree.idx`. The first window holds entries whose JSON lines add up to the page budget in bytes; when the page needs an entry past the window before the budget is spent (`Read::More`), the window doubles. The page is the same as one built from the whole log (tested).
 
 Workers can be tmux-hosted or headless (Cursor and opencode). See [Headless workers](headless-workers.md) for `HarnessId`, old `cursor: true/false` record compatibility, the chat-owned `HeadlessHost` lifecycle and how to add another headless harness.
 
@@ -368,7 +370,7 @@ Turns run with `--setting-sources project,local`, so `~/.claude/skills` does not
 
 ## Storage and isolation
 
-- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `LOCK`, `NAP`, `history.txt`, `editor.md`, `mcp.json`, `usage.jsonl`, `attachments/`. It is not project-scoped.
+- Global store `~/.ralph/chat`: `log.jsonl`, `tree.jsonl`, `log.idx`, `tree.idx`, `LOCK`, `NAP`, `history.txt`, `editor.md`, `mcp.json`, `usage.jsonl`, `attachments/`. It is not project-scoped.
 - `LOCK` is a file lock: exclusive for append and for each nap commit, shared for settled load and the nap snapshot. `NAP` is an exclusive file lock held for the whole nap; `napping()` probes it. Store paths that are symlinks or multiply-linked files are rejected.
 - Isolation: `--setting-sources project,local` plus a `claudeMdExcludes` entry for `~/.claude/CLAUDE.md` when the home directory is known. Project and local settings stay active; this is context isolation, not a sandbox.
 - User agents in `~/.claude/agents` do not load, so `build_agents_args` passes the bundled `SUBAGENTS` (`evidence-collector` haiku, `implementer` sonnet, `reviser` opus) as `--agents <json>`. These copies may drift from `~/.claude/agents`.

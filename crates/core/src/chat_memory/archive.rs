@@ -1,9 +1,9 @@
-use super::index::{scan_lines, Freshness, LogIndex};
+use super::index::{scan_lines, Freshness, Index, LogIndex, Slot, TreeIndex};
 use super::lookup::{zoom, zoom_entries};
 use super::range::{
     read_range, Mode, RangePage, RangeRequest, Read, BUDGET_RANGE, BYTES_PER_TOKEN,
 };
-use super::{Entry, Node, Tree, Window, SUMMARY_BYTES};
+use super::{Entry, Node, Record, Tree, Window, SUMMARY_BYTES};
 use std::io;
 
 /// Random reads over a file snapshot of `size` bytes.
@@ -17,6 +17,7 @@ pub trait NodeSource {
     fn nodes(&mut self, wanted: &[Node]) -> io::Result<Tree>;
 }
 
+#[cfg(test)]
 impl NodeSource for Tree {
     fn nodes(&mut self, wanted: &[Node]) -> io::Result<Tree> {
         Ok(wanted
@@ -26,8 +27,28 @@ impl NodeSource for Tree {
     }
 }
 
+/// Summaries read from `tree.jsonl` through its index, one read per node.
+pub struct IndexedTree<B> {
+    pub file: B,
+    pub index: TreeIndex,
+}
+
+impl<B: ByteSource> NodeSource for IndexedTree<B> {
+    fn nodes(&mut self, wanted: &[Node]) -> io::Result<Tree> {
+        self.index
+            .find(wanted)
+            .into_iter()
+            .map(|slot| {
+                let bytes = self.file.read(slot.start, slot.end)?;
+                let record: Record = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+                Ok((slot.node, record.text))
+            })
+            .collect()
+    }
+}
+
 /// What `refresh` did, so a writer knows what to persist: nothing, the
-/// offsets from the given count on plus the header, or the whole file.
+/// slots from the given count on plus the header, or the whole file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Refresh {
     Fresh,
@@ -35,27 +56,26 @@ pub enum Refresh {
     Rebuilt,
 }
 
-/// Brings `stored` up to date with `log`. Reads only the hashed tail and the
+/// Brings `stored` up to date with `file`. Reads only the hashed tail and the
 /// bytes past `covered`, unless the index is missing or stale.
-pub fn refresh(
-    stored: Option<LogIndex>,
-    log: &mut impl ByteSource,
-) -> io::Result<(LogIndex, Refresh)> {
-    let size = log.size();
+pub fn refresh<S: Slot>(
+    stored: Option<Index<S>>,
+    file: &mut impl ByteSource,
+) -> io::Result<(Index<S>, Refresh)> {
+    let size = file.size();
     let Some(mut index) = stored else {
-        return rebuild(log, size);
+        return rebuild(file, size);
     };
     let end = index.covered.min(size);
-    let tail = log.read(index.last_start().min(end), end)?;
+    let tail = file.read(index.tail.min(end), end)?;
     match index.freshness(size, &tail) {
         Freshness::Fresh => Ok((index, Refresh::Fresh)),
-        Freshness::Rebuild => rebuild(log, size),
+        Freshness::Rebuild => rebuild(file, size),
         Freshness::Extend => {
-            let before = (index.count(), index.covered, index.stopped);
-            index.extend(&log.read(index.covered, size)?);
-            let changed = (index.count(), index.covered, index.stopped) != before;
-            let refresh = if changed {
-                Refresh::Extended(before.0)
+            let (count, header) = (index.count(), index.encode_header());
+            index.extend(&file.read(index.covered, size)?);
+            let refresh = if index.encode_header() != header {
+                Refresh::Extended(count)
             } else {
                 Refresh::Fresh
             };
@@ -78,24 +98,21 @@ pub enum IndexWrite {
     Replace(Vec<u8>),
 }
 
-pub fn write_plan(index: &LogIndex, refresh: Refresh) -> IndexWrite {
+pub fn write_plan<S: Slot>(index: &Index<S>, refresh: Refresh) -> IndexWrite {
     match refresh {
         Refresh::Fresh => IndexWrite::Keep,
         Refresh::Extended(from) => IndexWrite::InPlace {
-            at: LogIndex::body_offset(from),
-            body: index.offsets[from..]
-                .iter()
-                .flat_map(|offset| offset.to_le_bytes())
-                .collect(),
+            at: Index::<S>::slot_offset(from),
+            body: index.encode_slots(from),
             header: index.encode_header(),
         },
         Refresh::Rebuilt => IndexWrite::Replace(index.encode()),
     }
 }
 
-fn rebuild(log: &mut impl ByteSource, size: u64) -> io::Result<(LogIndex, Refresh)> {
-    let mut index = LogIndex::default();
-    index.extend(&log.read(0, size)?);
+fn rebuild<S: Slot>(file: &mut impl ByteSource, size: u64) -> io::Result<(Index<S>, Refresh)> {
+    let mut index = Index::default();
+    index.extend(&file.read(0, size)?);
     Ok((index, Refresh::Rebuilt))
 }
 
@@ -202,8 +219,9 @@ pub fn zoom_node(
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::{entry, n};
+    use crate::chat_memory::index::NodeSlot;
     use crate::chat_memory::range::Cursor;
-    use crate::chat_memory::{encode_entry, pending};
+    use crate::chat_memory::{encode_entry, encode_record, pending};
 
     struct Bytes {
         data: Vec<u8>,
@@ -246,6 +264,23 @@ mod tests {
         tree
     }
 
+    /// `tree` as `tree.jsonl` with a losing duplicate after each record.
+    fn indexed(tree: &Tree) -> IndexedTree<Bytes> {
+        let mut nodes: Vec<_> = tree.iter().collect();
+        nodes.sort();
+        let data = nodes
+            .into_iter()
+            .map(|(node, text)| {
+                let first = encode_record(*node, text).unwrap();
+                first.clone() + &encode_record(*node, "loser").unwrap()
+            })
+            .collect::<String>()
+            .into_bytes();
+        let mut file = Bytes { data, read: 0 };
+        let (index, _) = refresh(None, &mut file).unwrap();
+        IndexedTree { file, index }
+    }
+
     fn full_page(
         entries: &[Entry],
         tree: &Tree,
@@ -261,7 +296,7 @@ mod tests {
     fn refresh_builds_extends_and_rebuilds() {
         let entries = mixed(6);
         let mut log = bytes(&entries[..4]);
-        let (index, how) = refresh(None, &mut log).unwrap();
+        let (index, how) = refresh::<u64>(None, &mut log).unwrap();
         assert_eq!((index.count(), how), (4, Refresh::Rebuilt));
         let (same, how) = refresh(Some(index.clone()), &mut log).unwrap();
         assert_eq!((same, how), (index.clone(), Refresh::Fresh));
@@ -279,7 +314,7 @@ mod tests {
     fn refresh_ignores_a_torn_append() {
         let entries = mixed(3);
         let mut log = bytes(&entries);
-        let (index, _) = refresh(None, &mut log).unwrap();
+        let (index, _) = refresh::<u64>(None, &mut log).unwrap();
         log.data.extend_from_slice(b"{\"role\":\"us");
         let (same, how) = refresh(Some(index.clone()), &mut log).unwrap();
         assert_eq!((same, how), (index, Refresh::Fresh));
@@ -316,12 +351,41 @@ mod tests {
     }
 
     #[test]
+    fn tree_index_refreshes_like_a_full_build() {
+        let tree = summarized(&mixed(20), 2);
+        let whole = indexed(&tree).file.data;
+        let mut file = Vec::new();
+        let mut stored = None;
+        for end in [0, whole.len() / 3, whole.len() / 3, whole.len()] {
+            let mut source = Bytes {
+                data: whole[..end].to_vec(),
+                read: 0,
+            };
+            let (index, how) = refresh::<NodeSlot>(stored, &mut source).unwrap();
+            let mut built = TreeIndex::default();
+            built.extend(&whole[..end]);
+            assert_eq!(index, built, "end {end}");
+            apply(&mut file, write_plan(&index, how));
+            assert_eq!(file, index.encode(), "end {end}");
+            stored = TreeIndex::decode(&file);
+        }
+        let mut rewritten = Bytes {
+            data: whole.clone(),
+            read: 0,
+        };
+        rewritten.data[stored.as_ref().unwrap().tail as usize + 8] ^= 1;
+        let (_, how) = refresh(stored, &mut rewritten).unwrap();
+        assert_eq!(how, Refresh::Rebuilt);
+    }
+
+    #[test]
     fn read_pages_match_the_full_slice_with_cursors() {
         let entries = mixed(40);
         for skip in [1, 2, 5] {
-            let mut tree = summarized(&entries, skip);
+            let tree = summarized(&entries, skip);
+            let mut nodes = indexed(&tree);
             let mut log = bytes(&entries);
-            let (index, _) = refresh(None, &mut log).unwrap();
+            let (index, _) = refresh::<u64>(None, &mut log).unwrap();
             for mode in [Mode::Raw, Mode::Summary] {
                 for budget in [1, 7, 60, 400, 16384] {
                     let mut request = RangeRequest {
@@ -333,7 +397,7 @@ mod tests {
                     };
                     let mut pages = 0;
                     loop {
-                        let windowed = read_page(&mut log, &index, &mut tree, &request).unwrap();
+                        let windowed = read_page(&mut log, &index, &mut nodes, &request).unwrap();
                         let full = full_page(&entries, &tree, &request);
                         assert_eq!(windowed, full, "{mode:?} budget {budget}");
                         let Some(next) = full.unwrap().next else {
@@ -352,7 +416,7 @@ mod tests {
     fn read_errors_match_the_full_slice() {
         let entries = mixed(5);
         let mut log = bytes(&entries);
-        let (index, _) = refresh(None, &mut log).unwrap();
+        let (index, _) = refresh::<u64>(None, &mut log).unwrap();
         let mut tree = Tree::new();
         let base = RangeRequest {
             from: 1,
@@ -398,7 +462,7 @@ mod tests {
     fn a_small_read_loads_a_small_window() {
         let entries = mixed(400);
         let mut log = bytes(&entries);
-        let (index, _) = refresh(None, &mut log).unwrap();
+        let (index, _) = refresh::<u64>(None, &mut log).unwrap();
         log.read = 0;
         let request = RangeRequest {
             from: 200,
@@ -416,13 +480,14 @@ mod tests {
     #[test]
     fn zoom_matches_the_full_slice_for_every_node() {
         let entries = mixed(21);
-        let mut tree = summarized(&entries, 3);
+        let tree = summarized(&entries, 3);
+        let mut nodes = indexed(&tree);
         let mut log = bytes(&entries);
-        let (index, _) = refresh(None, &mut log).unwrap();
+        let (index, _) = refresh::<u64>(None, &mut log).unwrap();
         for size in [1, 2, 4, 8, 16, 32] {
             for lo in (0..40).step_by(size) {
                 let node = n(lo, lo + size);
-                let windowed = zoom_node(&mut log, &index, &mut tree, node).unwrap();
+                let windowed = zoom_node(&mut log, &index, &mut nodes, node).unwrap();
                 assert_eq!(
                     windowed,
                     zoom(&Window::full(&entries), &tree, node),
@@ -436,7 +501,7 @@ mod tests {
     fn first_window_holds_the_budget() {
         let entries = mixed(10);
         let mut log = bytes(&entries);
-        let (index, _) = refresh(None, &mut log).unwrap();
+        let (index, _) = refresh::<u64>(None, &mut log).unwrap();
         assert_eq!(first_window(&index, 0, 1), 1);
         assert_eq!(first_window(&index, 9, 16384), 1);
         assert_eq!(first_window(&index, 10, 16384), 1);

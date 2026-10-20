@@ -1,10 +1,11 @@
-use super::Entry;
+use super::{Entry, Node, Record};
+use std::collections::HashSet;
 
 pub const LOG_INDEX_FILE: &str = "log.idx";
+pub const TREE_INDEX_FILE: &str = "tree.idx";
 
-const LOG_MAGIC: [u8; 8] = *b"RLPHLOGX";
 const VERSION: u32 = 1;
-const HEADER_BYTES: usize = 40;
+const HEADER_BYTES: usize = 48;
 const STOPPED: u32 = 1;
 
 /// Byte span of one complete, non-blank line, newline excluded.
@@ -14,18 +15,126 @@ pub struct Line {
     pub end: u64,
 }
 
-/// Start offsets of the `log.jsonl` entries in `[0, covered)`. `covered` ends
-/// on the newline of the last indexed entry; `hash` is the FNV-1a hash of the
-/// bytes `[last_start, covered)`, so a rewritten log shows as stale.
-/// `stopped` means a corrupt line follows `covered`: like `parse_log`, nothing
-/// after it is visible.
+/// What one complete line adds to an index.
+pub enum Scan<S> {
+    Add(S),
+    Skip,
+    Stop,
+}
+
+/// One fixed-size record of an index over a JSONL file.
+pub trait Slot: Copy {
+    const FILE: &'static str;
+    const INDEX_FILE: &'static str;
+    const MAGIC: [u8; 8];
+    const BYTES: usize;
+    fn scan(bytes: &[u8], line: Line) -> Scan<Self>;
+    fn start(&self) -> u64;
+    fn write(&self, out: &mut Vec<u8>);
+    fn read(bytes: &[u8]) -> Option<Self>;
+}
+
+/// The start of a `log.jsonl` entry. A line that is not an entry stops the
+/// index, as it stops `parse_log`.
+impl Slot for u64 {
+    const FILE: &'static str = "log.jsonl";
+    const INDEX_FILE: &'static str = LOG_INDEX_FILE;
+    const MAGIC: [u8; 8] = *b"RLPHLOGX";
+    const BYTES: usize = 8;
+
+    fn scan(bytes: &[u8], line: Line) -> Scan<u64> {
+        match serde_json::from_slice::<Entry>(bytes) {
+            Ok(_) => Scan::Add(line.start),
+            Err(_) => Scan::Stop,
+        }
+    }
+
+    fn start(&self) -> u64 {
+        *self
+    }
+
+    fn write(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.to_le_bytes());
+    }
+
+    fn read(bytes: &[u8]) -> Option<u64> {
+        Some(read_u64(bytes))
+    }
+}
+
+/// A `tree.jsonl` record of `node` on bytes `[start, end)`. A line that is not
+/// a record is skipped, as `parse_tree` skips it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeSlot {
+    pub node: Node,
+    pub start: u64,
+    pub end: u64,
+}
+
+impl Slot for NodeSlot {
+    const FILE: &'static str = "tree.jsonl";
+    const INDEX_FILE: &'static str = TREE_INDEX_FILE;
+    const MAGIC: [u8; 8] = *b"RLPHTREX";
+    const BYTES: usize = 32;
+
+    fn scan(bytes: &[u8], line: Line) -> Scan<NodeSlot> {
+        let node = serde_json::from_slice::<Record>(bytes)
+            .ok()
+            .and_then(|r| Node::new(r.lo, r.hi).ok());
+        match node {
+            Some(node) => Scan::Add(NodeSlot {
+                node,
+                start: line.start,
+                end: line.end,
+            }),
+            None => Scan::Skip,
+        }
+    }
+
+    fn start(&self) -> u64 {
+        self.start
+    }
+
+    fn write(&self, out: &mut Vec<u8>) {
+        for word in [
+            self.node.lo as u64,
+            self.node.hi as u64,
+            self.start,
+            self.end,
+        ] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+
+    fn read(bytes: &[u8]) -> Option<NodeSlot> {
+        let word = |k: usize| read_u64(&bytes[8 * k..]);
+        let lo = usize::try_from(word(0)).ok()?;
+        let hi = usize::try_from(word(1)).ok()?;
+        let (start, end) = (word(2), word(3));
+        (start < end).then_some(())?;
+        Some(NodeSlot {
+            node: Node::new(lo, hi).ok()?,
+            start,
+            end,
+        })
+    }
+}
+
+/// Slots for the lines of a JSONL file in `[0, covered)`. `covered` ends on
+/// the newline of the last scanned line, which starts at `tail`; `hash` is the
+/// FNV-1a hash of the bytes `[tail, covered)`, so a rewritten file shows as
+/// stale. `stopped` means a line that stops the scan follows `covered`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LogIndex {
-    pub offsets: Vec<u64>,
+pub struct Index<S> {
+    pub slots: Vec<S>,
     pub covered: u64,
+    pub tail: u64,
     pub hash: u64,
     pub stopped: bool,
 }
+
+pub type LogIndex = Index<u64>;
+pub type TreeIndex = Index<NodeSlot>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Freshness {
@@ -60,30 +169,25 @@ pub fn scan_lines(data: &[u8], base: u64) -> Vec<Line> {
     lines
 }
 
-impl Default for LogIndex {
+impl<S> Default for Index<S> {
     fn default() -> Self {
         Self {
-            offsets: Vec::new(),
+            slots: Vec::new(),
             covered: 0,
+            tail: 0,
             hash: fnv1a(&[]),
             stopped: false,
         }
     }
 }
 
-impl LogIndex {
+impl<S: Slot> Index<S> {
     pub fn count(&self) -> usize {
-        self.offsets.len()
+        self.slots.len()
     }
 
-    /// Start of the bytes that `hash` covers.
-    pub fn last_start(&self) -> u64 {
-        self.offsets.last().copied().unwrap_or(0)
-    }
-
-    /// Indexes the entries in `data`, the log bytes from `covered` on. Each
-    /// new line must parse as an `Entry`; the first one that does not stops
-    /// the index for good.
+    /// Scans `data`, the file bytes from `covered` on. A line that stops the
+    /// scan stops the index for good.
     pub fn extend(&mut self, data: &[u8]) {
         if self.stopped {
             return;
@@ -92,94 +196,135 @@ impl LogIndex {
         let mut last = None;
         for line in scan_lines(data, base) {
             let bytes = &data[(line.start - base) as usize..(line.end - base) as usize];
-            if serde_json::from_slice::<Entry>(bytes).is_err() {
-                self.stopped = true;
-                break;
+            match S::scan(bytes, line) {
+                Scan::Add(slot) => self.slots.push(slot),
+                Scan::Skip => {}
+                Scan::Stop => {
+                    self.stopped = true;
+                    break;
+                }
             }
-            self.offsets.push(line.start);
             last = Some(line);
         }
         if let Some(line) = last {
+            self.tail = line.start;
             self.covered = line.end + 1;
-            let from = (self.last_start() - base) as usize;
-            self.hash = fnv1a(&data[from..(self.covered - base) as usize]);
+            self.hash = fnv1a(&data[(line.start - base) as usize..(self.covered - base) as usize]);
         }
     }
 
-    /// Compares the index with a log of `log_len` bytes whose bytes
-    /// `[last_start, covered)` are `tail` (shorter when the log is shorter).
-    pub fn freshness(&self, log_len: u64, tail: &[u8]) -> Freshness {
-        if log_len < self.covered || fnv1a(tail) != self.hash {
+    /// Compares the index with a file of `len` bytes whose bytes
+    /// `[tail, covered)` are `tail` (shorter when the file is shorter).
+    pub fn freshness(&self, len: u64, tail: &[u8]) -> Freshness {
+        if len < self.covered || fnv1a(tail) != self.hash {
             Freshness::Rebuild
-        } else if self.stopped || log_len == self.covered {
+        } else if self.stopped || len == self.covered {
             Freshness::Fresh
         } else {
             Freshness::Extend
         }
     }
 
-    /// Byte span of entries `[from, to)`; `None` when the range is empty or
-    /// past the index.
-    pub fn span(&self, from: usize, to: usize) -> Option<(u64, u64)> {
-        if from >= to || to > self.count() {
-            return None;
-        }
-        let end = self.offsets.get(to).copied().unwrap_or(self.covered);
-        Some((self.offsets[from], end))
-    }
-
     pub fn encode(&self) -> Vec<u8> {
         let mut out = self.encode_header();
-        for offset in &self.offsets {
-            out.extend_from_slice(&offset.to_le_bytes());
+        out.extend_from_slice(&self.encode_slots(0));
+        out
+    }
+
+    /// The header alone, for an in-place extend: slots first, then this.
+    pub fn encode_header(&self) -> Vec<u8> {
+        let flags = if self.stopped { STOPPED } else { 0 };
+        let mut out = Vec::with_capacity(HEADER_BYTES);
+        out.extend_from_slice(&S::MAGIC);
+        out.extend_from_slice(&VERSION.to_le_bytes());
+        out.extend_from_slice(&flags.to_le_bytes());
+        for word in [self.covered, self.tail, self.hash, self.count() as u64] {
+            out.extend_from_slice(&word.to_le_bytes());
         }
         out
     }
 
-    /// The header alone, for an in-place extend: body first, then this.
-    pub fn encode_header(&self) -> Vec<u8> {
-        let mut out = header(LOG_MAGIC, self.stopped, self.covered, self.hash);
-        out.extend_from_slice(&(self.count() as u64).to_le_bytes());
+    /// The slots from `from` on.
+    pub fn encode_slots(&self, from: usize) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.count().saturating_sub(from) * S::BYTES);
+        for slot in self.slots.iter().skip(from) {
+            slot.write(&mut out);
+        }
         out
     }
 
-    pub fn body_offset(count: usize) -> u64 {
-        (HEADER_BYTES + count * 8) as u64
+    /// File offset of slot `count`.
+    pub fn slot_offset(count: usize) -> u64 {
+        (HEADER_BYTES + count * S::BYTES) as u64
     }
 
     /// `None` for a missing, foreign, torn or inconsistent file; the caller
-    /// then rebuilds from the log.
-    pub fn decode(bytes: &[u8]) -> Option<LogIndex> {
-        let (stopped, covered, hash, count) = read_header(bytes, LOG_MAGIC)?;
+    /// then rebuilds from the JSONL file.
+    pub fn decode(bytes: &[u8]) -> Option<Index<S>> {
+        if bytes.len() < HEADER_BYTES || bytes[..8] != S::MAGIC {
+            return None;
+        }
+        if read_u32(&bytes[8..]) != VERSION {
+            return None;
+        }
+        let stopped = read_u32(&bytes[12..]) & STOPPED != 0;
+        let word = |k: usize| read_u64(&bytes[16 + 8 * k..]);
+        let (covered, tail, hash) = (word(0), word(1), word(2));
+        let count = usize::try_from(word(3)).ok()?;
         let body = &bytes[HEADER_BYTES..];
-        if body.len() != count.checked_mul(8)? {
+        if body.len() != count.checked_mul(S::BYTES)? {
             return None;
         }
-        let offsets: Vec<u64> = body.chunks_exact(8).map(read_u64).collect();
-        let ordered = offsets.windows(2).all(|w| w[0] < w[1]);
-        if !ordered || offsets.last().is_some_and(|last| *last >= covered) {
-            return None;
-        }
-        if offsets.is_empty() && covered != 0 {
-            return None;
-        }
-        Some(LogIndex {
-            offsets,
+        let slots = body
+            .chunks_exact(S::BYTES)
+            .map(S::read)
+            .collect::<Option<Vec<S>>>()?;
+        let ordered = slots.windows(2).all(|w| w[0].start() < w[1].start());
+        let inside = slots.last().is_none_or(|last| last.start() <= tail);
+        let tail_ok = tail < covered || (tail, covered) == (0, 0);
+        (ordered && inside && tail_ok).then_some(Index {
+            slots,
             covered,
+            tail,
             hash,
             stopped,
         })
     }
 }
 
-fn header(magic: [u8; 8], stopped: bool, covered: u64, hash: u64) -> Vec<u8> {
-    let mut out = Vec::with_capacity(HEADER_BYTES);
-    out.extend_from_slice(&magic);
-    out.extend_from_slice(&VERSION.to_le_bytes());
-    out.extend_from_slice(&(if stopped { STOPPED } else { 0 }).to_le_bytes());
-    out.extend_from_slice(&covered.to_le_bytes());
-    out.extend_from_slice(&hash.to_le_bytes());
-    out
+impl LogIndex {
+    /// Byte span of entries `[from, to)`; `None` when the range is empty or
+    /// past the index.
+    pub fn span(&self, from: usize, to: usize) -> Option<(u64, u64)> {
+        if from >= to || to > self.count() {
+            return None;
+        }
+        let end = self.slots.get(to).copied().unwrap_or(self.covered);
+        Some((self.slots[from], end))
+    }
+}
+
+impl TreeIndex {
+    /// The first record of each wanted node, as `parse_tree` keeps it.
+    pub fn find(&self, wanted: &[Node]) -> Vec<NodeSlot> {
+        let mut left: HashSet<Node> = wanted.iter().copied().collect();
+        let mut found = Vec::new();
+        for slot in &self.slots {
+            if left.is_empty() {
+                break;
+            }
+            if left.remove(&slot.node) {
+                found.push(*slot);
+            }
+        }
+        found
+    }
+}
+
+fn read_u32(bytes: &[u8]) -> u32 {
+    let mut word = [0; 4];
+    word.copy_from_slice(&bytes[..4]);
+    u32::from_le_bytes(word)
 }
 
 fn read_u64(bytes: &[u8]) -> u64 {
@@ -188,32 +333,11 @@ fn read_u64(bytes: &[u8]) -> u64 {
     u64::from_le_bytes(word)
 }
 
-/// Returns `(stopped, covered, hash, count)`.
-fn read_header(bytes: &[u8], magic: [u8; 8]) -> Option<(bool, u64, u64, usize)> {
-    if bytes.len() < HEADER_BYTES || bytes[..8] != magic {
-        return None;
-    }
-    let mut version = [0; 4];
-    version.copy_from_slice(&bytes[8..12]);
-    let mut flags = [0; 4];
-    flags.copy_from_slice(&bytes[12..16]);
-    if u32::from_le_bytes(version) != VERSION {
-        return None;
-    }
-    let count = usize::try_from(read_u64(&bytes[32..40])).ok()?;
-    Some((
-        u32::from_le_bytes(flags) & STOPPED != 0,
-        read_u64(&bytes[16..24]),
-        read_u64(&bytes[24..32]),
-        count,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chat_memory::encode_entry;
-    use crate::chat_memory::fixtures::entry;
+    use crate::chat_memory::fixtures::{entry, n};
+    use crate::chat_memory::{encode_entry, encode_record, parse_tree};
 
     fn log(count: usize) -> Vec<u8> {
         (0..count)
@@ -228,9 +352,9 @@ mod tests {
         index
     }
 
-    fn tail<'a>(index: &LogIndex, data: &'a [u8]) -> &'a [u8] {
+    fn tail<'a, S>(index: &Index<S>, data: &'a [u8]) -> &'a [u8] {
         let end = (index.covered as usize).min(data.len());
-        &data[(index.last_start() as usize).min(end)..end]
+        &data[(index.tail as usize).min(end)..end]
     }
 
     #[test]
@@ -277,7 +401,7 @@ mod tests {
     fn extend_in_steps_matches_one_build() {
         let data = log(6);
         let whole = built(&data);
-        let mut stepped = built(&data[..whole.offsets[3] as usize]);
+        let mut stepped = built(&data[..whole.slots[3] as usize]);
         stepped.extend(&data[stepped.covered as usize..]);
         assert_eq!(stepped, whole);
     }
@@ -315,7 +439,7 @@ mod tests {
     #[test]
     fn freshness_detects_growth_truncation_and_rewrites() {
         let data = log(4);
-        let index = built(&data[..built(&data).offsets[3] as usize]);
+        let index = built(&data[..built(&data).slots[3] as usize]);
         assert_eq!(
             index.freshness(index.covered, tail(&index, &data)),
             Freshness::Fresh
@@ -330,7 +454,7 @@ mod tests {
             Freshness::Rebuild
         );
         let mut rewritten = data.clone();
-        rewritten[index.last_start() as usize + 2] ^= 1;
+        rewritten[index.tail as usize + 2] ^= 1;
         assert_eq!(
             index.freshness(rewritten.len() as u64, tail(&index, &rewritten)),
             Freshness::Rebuild
@@ -356,8 +480,82 @@ mod tests {
     fn span_bounds() {
         let index = built(&log(3));
         assert_eq!(index.span(0, 3).map(|s| s.1), Some(index.covered));
-        assert_eq!(index.span(0, 1).map(|s| s.1), Some(index.offsets[1]));
+        assert_eq!(index.span(0, 1).map(|s| s.1), Some(index.slots[1]));
         assert_eq!(index.span(2, 2), None);
         assert_eq!(index.span(2, 4), None);
+    }
+
+    fn tree_file() -> Vec<u8> {
+        [
+            encode_record(n(0, 2), "first").unwrap(),
+            "not json\n".to_string(),
+            "{\"lo\":1,\"hi\":3,\"text\":\"unaligned\"}\n".to_string(),
+            encode_record(n(2, 3), "leaf").unwrap(),
+            encode_record(n(0, 2), "second").unwrap(),
+            "\n".to_string(),
+        ]
+        .concat()
+        .into_bytes()
+    }
+
+    #[test]
+    fn tree_index_skips_bad_records_and_finds_the_first_one() {
+        let data = tree_file();
+        let mut index = TreeIndex::default();
+        index.extend(&data);
+        assert_eq!(index.count(), 3);
+        assert!(!index.stopped);
+        assert_eq!(index.covered, data.len() as u64 - 1);
+        let (tree, _) = parse_tree(&data);
+        let found = index.find(&[n(0, 2), n(2, 3), n(4, 8)]);
+        assert_eq!(found.len(), 2);
+        for slot in found {
+            let line = &data[slot.start as usize..slot.end as usize];
+            let record: Record = serde_json::from_slice(line).unwrap();
+            assert_eq!(Some(&record.text), tree.get(&slot.node));
+        }
+    }
+
+    #[test]
+    fn tree_index_covers_trailing_skipped_lines() {
+        let mut data = encode_record(n(0, 1), "a").unwrap().into_bytes();
+        data.extend_from_slice(b"junk\n");
+        let mut index = TreeIndex::default();
+        index.extend(&data);
+        assert_eq!((index.count(), index.covered), (1, data.len() as u64));
+        let (fresh, extend) = (Freshness::Fresh, Freshness::Extend);
+        assert_eq!(
+            index.freshness(data.len() as u64, tail(&index, &data)),
+            fresh
+        );
+        let mut grown = data.clone();
+        grown.extend_from_slice(encode_record(n(1, 2), "b").unwrap().as_bytes());
+        assert_eq!(
+            index.freshness(grown.len() as u64, tail(&index, &grown)),
+            extend
+        );
+        let mut rewritten = data.clone();
+        let at = index.tail as usize;
+        rewritten[at] = b'J';
+        assert_eq!(
+            index.freshness(rewritten.len() as u64, tail(&index, &rewritten)),
+            Freshness::Rebuild
+        );
+    }
+
+    #[test]
+    fn tree_index_round_trips_and_rejects_bad_slots() {
+        let mut index = TreeIndex::default();
+        index.extend(&tree_file());
+        let bytes = index.encode();
+        assert_eq!(TreeIndex::decode(&bytes), Some(index.clone()));
+        assert!(LogIndex::decode(&bytes).is_none());
+        let mut unaligned = bytes.clone();
+        unaligned[HEADER_BYTES..HEADER_BYTES + 8].copy_from_slice(&3u64.to_le_bytes());
+        assert!(TreeIndex::decode(&unaligned).is_none());
+        let mut empty_span = bytes.clone();
+        let end = HEADER_BYTES + 24..HEADER_BYTES + 32;
+        empty_span[end].copy_from_slice(&index.slots[0].start.to_le_bytes());
+        assert!(TreeIndex::decode(&empty_span).is_none());
     }
 }

@@ -16,3 +16,4 @@ tokio = { workspace = true }
 anstream = { workspace = true }
 chrono = { workspace = true }
 ralph_core = { workspace = true }
+tempfile = { workspace = true }
