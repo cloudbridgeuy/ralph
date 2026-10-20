@@ -6,14 +6,12 @@ use serde::Serialize;
 pub enum Trigger {
     User,
     Worker,
-    Private,
 }
 
 pub fn trigger_entries(trigger: Trigger, texts: &[String]) -> Vec<(super::Role, String)> {
     let role = match trigger {
         Trigger::User => super::Role::User,
         Trigger::Worker => super::Role::Worker,
-        Trigger::Private => return Vec::new(),
     };
     texts.iter().map(|text| (role, text.clone())).collect()
 }
@@ -21,7 +19,6 @@ pub fn trigger_entries(trigger: Trigger, texts: &[String]) -> Vec<(super::Role, 
 pub fn reply_entries(trigger: Trigger, reply: &str) -> Vec<(super::Role, String)> {
     match trigger {
         Trigger::User | Trigger::Worker => vec![(super::Role::Assistant, reply.to_string())],
-        Trigger::Private => Vec::new(),
     }
 }
 
@@ -185,13 +182,6 @@ mod tests {
     }
 
     #[test]
-    fn private_turns_yield_no_log_entries() {
-        let texts = ["secret".to_string()];
-        assert!(trigger_entries(Trigger::Private, &texts).is_empty());
-        assert!(reply_entries(Trigger::Private, "answer").is_empty());
-    }
-
-    #[test]
     fn user_and_worker_turns_yield_log_entries() {
         let texts = ["a".to_string(), "b".to_string()];
         assert_eq!(
@@ -209,21 +199,6 @@ mod tests {
             reply_entries(Trigger::User, "r"),
             vec![(crate::chat_memory::Role::Assistant, "r".into())]
         );
-    }
-
-    #[test]
-    fn private_usage_records_are_tagged_private() {
-        let record = usage_record(
-            CallKind::Turn {
-                trigger: Trigger::Private,
-            },
-            "t".into(),
-            &costs(None),
-        )
-        .unwrap();
-        let line: Value = serde_json::from_str(encode_usage(&record).unwrap().trim()).unwrap();
-        assert_eq!(line["trigger"], "private");
-        assert_eq!(line["kind"], "turn");
     }
 
     #[test]

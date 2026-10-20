@@ -127,7 +127,7 @@ impl Turn<'_> {
             self.append_logged(trigger, logged)?;
         }
         let sent = match trigger {
-            Trigger::User | Trigger::Private => expand_slash_command(message, self.skills),
+            Trigger::User => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
         let prompt = turn_prompt(&tail, &sent);

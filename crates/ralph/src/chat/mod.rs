@@ -299,15 +299,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 outcome
             }
-            Route::Private(message) => {
-                let outcome = snapshots.around(|| {
-                    turn.run(Trigger::Private, std::slice::from_ref(&message), &message)
-                })?;
-                if let Some(draft) = draft_after(outcome, format!("/private {message}")) {
-                    editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
-                }
-                outcome
-            }
             Route::ReadInbox(selection) => {
                 let reports = monitor.drain(selection)?;
                 monitor.refresh(true);
