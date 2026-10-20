@@ -5,6 +5,7 @@ use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
 use crate::signal;
+use crate::warn::warn;
 use ralph_core::stream::{interrupt_line, user_line};
 use std::io::{self, Write};
 use std::process::{Child, ChildStdin, Stdio};
@@ -15,6 +16,8 @@ use std::time::{Duration, Instant};
 const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 const INTERRUPT_REQUEST_ID: &str = "int-1";
+const BACKGROUND_STOPPED_WARNING: &str =
+    "claude was still running after its result; its background work was stopped";
 
 pub struct Session {
     child: Child,
@@ -77,7 +80,7 @@ impl Session {
             }
             if interrupt.is_some_and(|(sent, _)| sent.elapsed() >= INTERRUPT_GRACE) {
                 kill_process_group(&mut self.child);
-                break pump.finish(turn_exit_code(false, EXIT_CODE_KILLED), false);
+                break pump.finish(EXIT_CODE_KILLED, false);
             }
             let paused = self
                 .config
@@ -85,8 +88,12 @@ impl Session {
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::SeqCst));
             if pump.step(paused)? {
-                let exit_code = turn_exit_code(true, self.close());
-                break pump.finish(exit_code, true);
+                let raw_exit_code = self.close();
+                let outcome = pump.finish(turn_exit_code(raw_exit_code), true);
+                if stopped_background(raw_exit_code) {
+                    warn(BACKGROUND_STOPPED_WARNING);
+                }
+                break outcome;
             }
         };
         match interrupt {
@@ -108,11 +115,15 @@ impl Session {
     }
 }
 
-fn turn_exit_code(result_received: bool, exit_code: i32) -> i32 {
-    if result_received && exit_code == EXIT_CODE_KILLED {
+fn stopped_background(exit_code_after_result: i32) -> bool {
+    exit_code_after_result == EXIT_CODE_KILLED
+}
+
+fn turn_exit_code(exit_code_after_result: i32) -> i32 {
+    if stopped_background(exit_code_after_result) {
         0
     } else {
-        exit_code
+        exit_code_after_result
     }
 }
 
@@ -128,21 +139,31 @@ mod tests {
 
     #[test]
     fn kill_after_result_counts_as_success() {
-        assert_eq!(turn_exit_code(true, EXIT_CODE_KILLED), 0);
+        assert_eq!(turn_exit_code(EXIT_CODE_KILLED), 0);
     }
 
     #[test]
     fn clean_exit_after_result_stays_zero() {
-        assert_eq!(turn_exit_code(true, 0), 0);
+        assert_eq!(turn_exit_code(0), 0);
     }
 
     #[test]
     fn failing_exit_after_result_stays_failing() {
-        assert_eq!(turn_exit_code(true, 1), 1);
+        assert_eq!(turn_exit_code(1), 1);
     }
 
     #[test]
-    fn no_result_kill_stays_failure() {
-        assert_eq!(turn_exit_code(false, EXIT_CODE_KILLED), EXIT_CODE_KILLED);
+    fn kill_after_result_warns() {
+        assert!(stopped_background(EXIT_CODE_KILLED));
+    }
+
+    #[test]
+    fn clean_exit_after_result_does_not_warn() {
+        assert!(!stopped_background(0));
+    }
+
+    #[test]
+    fn failing_exit_after_result_does_not_warn() {
+        assert!(!stopped_background(1));
     }
 }
