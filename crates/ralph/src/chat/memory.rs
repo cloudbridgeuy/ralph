@@ -66,17 +66,28 @@ impl Store {
     }
 
     pub fn load(&self) -> io::Result<(Vec<Entry>, Tree)> {
-        let log = read_optional(&self.dir.join("log.jsonl"))?;
-        let (entries, warnings) = parse_log(&log);
+        let (entries, tree, warnings) = self.load_quiet()?;
         for warning in &warnings {
             warn(warning);
         }
-        Ok((entries, self.load_tree()?))
+        Ok((entries, tree))
+    }
+
+    pub fn load_quiet(&self) -> io::Result<(Vec<Entry>, Tree, Vec<String>)> {
+        let log = read_optional(&self.dir.join("log.jsonl"))?;
+        let (entries, mut warnings) = parse_log(&log);
+        let (tree, tree_warnings) = self.read_tree()?;
+        warnings.extend(tree_warnings);
+        Ok((entries, tree, warnings))
+    }
+
+    fn read_tree(&self) -> io::Result<(Tree, Vec<String>)> {
+        let bytes = read_optional(&self.dir.join("tree.jsonl"))?;
+        Ok(parse_tree(&bytes))
     }
 
     fn load_tree(&self) -> io::Result<Tree> {
-        let bytes = read_optional(&self.dir.join("tree.jsonl"))?;
-        let (tree, warnings) = parse_tree(&bytes);
+        let (tree, warnings) = self.read_tree()?;
         for warning in &warnings {
             warn(warning);
         }

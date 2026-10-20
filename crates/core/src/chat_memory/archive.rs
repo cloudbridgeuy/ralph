@@ -5,6 +5,7 @@ use super::range::{
     read_range, Mode, RangePage, RangeRequest, Read, BUDGET_RANGE, BYTES_PER_TOKEN,
 };
 use super::{Entry, Node, Record, Tree, Window, SUMMARY_BYTES};
+use std::collections::HashSet;
 use std::io;
 
 /// Random reads over a file snapshot of `size` bytes.
@@ -66,6 +67,29 @@ pub struct Stale {
     pub tree: bool,
 }
 
+#[derive(Debug, Default)]
+pub struct Notes {
+    ordered: Vec<String>,
+    seen: HashSet<String>,
+}
+
+impl Notes {
+    pub fn push(&mut self, note: String) {
+        if self.seen.insert(note.clone()) {
+            self.ordered.push(note);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.ordered.clear();
+        self.seen.clear();
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        self.ordered.iter()
+    }
+}
+
 /// The log, the tree and their indexes for one `read` or `zoom`. A call that
 /// finds an index wrong rebuilds both from their files and runs once more.
 pub struct Archive<B> {
@@ -73,7 +97,7 @@ pub struct Archive<B> {
     pub log_index: LogIndex,
     pub tree: IndexedTree<B>,
     pub stale: Stale,
-    pub notes: Vec<String>,
+    pub notes: Notes,
 }
 
 impl<B: ByteSource> Archive<B> {
@@ -94,7 +118,7 @@ impl<B: ByteSource> Archive<B> {
                 log: log_how != Refresh::Fresh,
                 tree: tree_how != Refresh::Fresh,
             },
-            notes: Vec::new(),
+            notes: Notes::default(),
         })
     }
 
@@ -236,7 +260,7 @@ fn rebuild<S: Slot>(file: &mut impl ByteSource, size: u64) -> io::Result<(Index<
 fn load(
     log: &mut impl ByteSource,
     index: &LogIndex,
-    notes: &mut Vec<String>,
+    notes: &mut Notes,
     from: usize,
     to: usize,
 ) -> io::Result<Vec<Entry>> {
@@ -256,7 +280,7 @@ fn load(
     for (id, line) in (from..).zip(&lines) {
         let bytes = &data[(line.start - before) as usize..(line.end - before) as usize];
         let (entry, warning) = entry_or_corrupt(bytes, id, line.start);
-        if let Some(warning) = warning.filter(|w| !notes.contains(w)) {
+        if let Some(warning) = warning {
             notes.push(warning);
         }
         entries.push(entry);
@@ -293,7 +317,7 @@ fn read_page(
     log: &mut impl ByteSource,
     index: &LogIndex,
     nodes: &mut impl NodeSource,
-    notes: &mut Vec<String>,
+    notes: &mut Notes,
     request: &RangeRequest,
 ) -> io::Result<Result<RangePage, String>> {
     let total = index.count();
@@ -326,7 +350,7 @@ fn zoom_node(
     log: &mut impl ByteSource,
     index: &LogIndex,
     nodes: &mut impl NodeSource,
-    notes: &mut Vec<String>,
+    notes: &mut Notes,
     node: Node,
 ) -> io::Result<Result<Vec<String>, String>> {
     let total = index.count();
@@ -588,9 +612,14 @@ mod tests {
                     };
                     let mut pages = 0;
                     loop {
-                        let windowed =
-                            read_page(&mut log, &index, &mut nodes, &mut Vec::new(), &request)
-                                .unwrap();
+                        let windowed = read_page(
+                            &mut log,
+                            &index,
+                            &mut nodes,
+                            &mut Notes::default(),
+                            &request,
+                        )
+                        .unwrap();
                         let full = full_page(&entries, &tree, &request);
                         assert_eq!(windowed, full, "{mode:?} budget {budget}");
                         let Some(next) = full.unwrap().next else {
@@ -646,7 +675,7 @@ mod tests {
             stale(2, 999, 4),
         ] {
             let windowed =
-                read_page(&mut log, &index, &mut tree, &mut Vec::new(), &request).unwrap();
+                read_page(&mut log, &index, &mut tree, &mut Notes::default(), &request).unwrap();
             assert!(windowed.is_err(), "{request:?}");
             assert_eq!(windowed, full_page(&entries, &tree, &request));
         }
@@ -669,7 +698,7 @@ mod tests {
             &mut log,
             &index,
             &mut Tree::new(),
-            &mut Vec::new(),
+            &mut Notes::default(),
             &request,
         )
         .unwrap()
@@ -688,7 +717,7 @@ mod tests {
             for lo in (0..40).step_by(size) {
                 let node = n(lo, lo + size);
                 let windowed =
-                    zoom_node(&mut log, &index, &mut nodes, &mut Vec::new(), node).unwrap();
+                    zoom_node(&mut log, &index, &mut nodes, &mut Notes::default(), node).unwrap();
                 assert_eq!(
                     windowed,
                     zoom(&Window::full(&entries), &tree, node),
@@ -851,5 +880,18 @@ mod tests {
         assert_eq!(first_window(&index, 10, 16384), 1);
         assert_eq!(first_window(&index, 0, 16384), 10);
         assert_eq!(long_leaves(3, &entries[3..5]), [Node::leaf(3)]);
+    }
+
+    #[test]
+    fn notes_keep_first_seen_order_and_drop_repeats() {
+        let mut notes = Notes::default();
+        for note in ["b", "a", "b", "c", "a"] {
+            notes.push(note.to_string());
+        }
+        assert_eq!(notes.iter().collect::<Vec<_>>(), ["b", "a", "c"]);
+        notes.clear();
+        assert_eq!(notes.iter().count(), 0);
+        notes.push("a".to_string());
+        assert_eq!(notes.iter().collect::<Vec<_>>(), ["a"]);
     }
 }

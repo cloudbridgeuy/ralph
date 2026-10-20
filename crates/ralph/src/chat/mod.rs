@@ -1,6 +1,8 @@
 pub(crate) mod cell;
 mod changes;
 mod check;
+#[cfg(test)]
+mod corrupt_tests;
 mod diff;
 mod editor;
 mod inbox;
@@ -58,7 +60,7 @@ use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use reedline::EditCommand;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -204,6 +206,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         ),
         check: Mutex::new(CheckState::seeded(&store)),
         known: Mutex::new(known),
+        warned: Mutex::new(HashSet::new()),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
             notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,

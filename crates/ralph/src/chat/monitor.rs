@@ -3,7 +3,7 @@ use crate::chat::memory::Store;
 use crate::cursor_owner::now_secs;
 use crate::inbox_alert;
 use crate::signal;
-use crate::warn::warn_if_err;
+use crate::warn::{warn, warn_if_err};
 use crate::watch_requests;
 use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
@@ -49,6 +49,13 @@ pub(super) fn ready_ids(store_dir: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
+pub(super) fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) -> Vec<String> {
+    warnings
+        .into_iter()
+        .filter(|warning| seen.insert(warning.clone()))
+        .collect()
+}
+
 pub(super) struct Monitor {
     pub(super) inbox: Arc<Inbox>,
     pub(super) watches: Watches,
@@ -64,6 +71,7 @@ pub(super) struct Monitor {
     pub(super) workers: Workers,
     pub(super) check: Mutex<CheckState>,
     pub(super) known: Mutex<Vec<Report>>,
+    pub(super) warned: Mutex<HashSet<String>>,
     pub(super) alert: AlertConfig,
 }
 
@@ -193,7 +201,10 @@ impl Monitor {
     }
 
     fn measure_memory(&self) -> Option<Memory> {
-        let (entries, tree) = self.store.load().ok()?;
+        let (entries, tree, warnings) = self.store.load_quiet().ok()?;
+        for warning in fresh_warnings(&mut locked(&self.warned), warnings) {
+            warn(warning);
+        }
         let frozen = frozen_block(&entries, &tree, VIEW_LINES, self.frozen_window, None);
         let tail = tail_lines(&entries, &tree, frozen.end, self.recent_history_tokens);
         Some(memory_size(entries.len(), &[frozen.lines, tail].concat()))

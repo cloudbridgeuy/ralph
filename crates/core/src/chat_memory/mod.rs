@@ -1,4 +1,6 @@
 mod archive;
+#[cfg(test)]
+mod corrupt_tests;
 mod index;
 mod log;
 mod lookup;

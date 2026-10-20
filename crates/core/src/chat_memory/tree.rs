@@ -73,7 +73,7 @@ pub fn pending(entries: &[Entry], tree: &Tree) -> Vec<Node> {
         .enumerate()
         .filter(|(_, e)| is_long(e))
         .map(|(i, _)| Node::leaf(i))
-        .filter(|n| !tree.contains_key(n) && intact(n))
+        .filter(|n| !tree.contains_key(n))
         .collect();
     let mut size = 2;
     while size <= t {
