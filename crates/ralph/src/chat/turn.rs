@@ -17,7 +17,7 @@ use ralph_core::chat::{
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
     reply_entries, split_view, trigger_entries, turn_prompt_bytes, usage_record, view_stats,
-    CallKind, Trigger, TurnParts,
+    CallKind, Trigger, TurnParts, ViewSplit,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use std::borrow::Cow;
@@ -86,6 +86,14 @@ impl Drop for PendingTurn<'_> {
     }
 }
 
+struct Launch {
+    config: SpinnerSubprocessConfig,
+    split: ViewSplit,
+    system: String,
+    args: Vec<String>,
+    first_prompt: String,
+}
+
 pub(super) struct Turn<'a> {
     pub(super) store: &'a Store,
     pub(super) store_dir: &'a Path,
@@ -109,12 +117,6 @@ impl Turn<'_> {
         self.cancel.store(false, Ordering::SeqCst);
         self.store.set_pending_turn(trigger)?;
         let _pending = PendingTurn(self.store);
-        let (entries, tree) = self.store.load_settled(|| {
-            let mut spinner = Spinner::with_session_context(0, chat_session_info());
-            spinner.start_with_context(SpinnerContext::WaitingForMemory);
-            spinner
-        })?;
-        let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
         if logged_before_reply(trigger) {
             self.append_logged(trigger, logged)?;
         }
@@ -122,43 +124,26 @@ impl Turn<'_> {
             Trigger::User => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
-        let first_prompt = turn_prompt(&split.tail, &sent);
-        let system = turn_system_prompt(&split.older);
-        let args = [
-            self.mcp_args.to_vec(),
-            build_attachments_args(self.store_dir),
-            build_agents_args(),
-            self.plugin_args.to_vec(),
-        ]
-        .concat();
-        let config = SpinnerSubprocessConfig {
-            command: build_chat_command(
-                &system,
-                &args,
-                self.permission_mode,
-                dirs::home_dir().as_deref(),
-            ),
-            timeout_secs: None,
-            theme_config: self.theme_config.clone(),
-            session_elapsed_ms: 0,
-            verbose_tools: VerboseToolsConfig::new(),
-            session_info: chat_session_info(),
-            pause: None,
-            cancel: Some(Arc::clone(&self.cancel)),
-        };
         let mut session = locked(&self.session).take().filter(Session::is_alive);
-        let mut first = false;
+        let mut launch: Option<Launch> = None;
         print_rule();
         let result = retry_on_outage(
             "chat turn",
             || {
-                first = session.is_none();
+                launch = None;
                 let result = match session.take() {
                     Some(live) => Ok(live),
-                    None => Session::spawn(&config),
+                    None => self.launch(trigger, logged, &sent).and_then(|spawned| {
+                        let live = Session::spawn(&spawned.config)?;
+                        launch = Some(spawned);
+                        Ok(live)
+                    }),
                 }
                 .and_then(|mut live| {
-                    let result = live.turn(if first { &first_prompt } else { &sent });
+                    let prompt = launch
+                        .as_ref()
+                        .map_or(sent.as_ref(), |spawned| spawned.first_prompt.as_str());
+                    let result = live.turn(prompt);
                     session = Some(live);
                     result
                 });
@@ -204,20 +189,24 @@ impl Turn<'_> {
             &result.stream_result.costs,
         )
         .map(|record| {
-            if !first {
+            let Some(spawned) = &launch else {
                 return record;
-            }
+            };
             record
                 .with_view(view_stats(
-                    &[split.older.as_slice(), split.tail.as_slice()].concat(),
+                    &[
+                        spawned.split.older.as_slice(),
+                        spawned.split.tail.as_slice(),
+                    ]
+                    .concat(),
                 ))
                 .with_prompt(turn_prompt_bytes(&TurnParts {
-                    system: &system,
-                    older: &split.older,
-                    tail: &split.tail,
+                    system: &spawned.system,
+                    older: &spawned.split.older,
+                    tail: &spawned.split.tail,
                     message: &sent,
-                    prompt: &first_prompt,
-                    args: &args,
+                    prompt: &spawned.first_prompt,
+                    args: &spawned.args,
                 }))
         }) {
             warn_if_err(
@@ -243,6 +232,54 @@ impl Turn<'_> {
                 Ok(TurnOutcome::Unanswered)
             }
         }
+    }
+
+    fn launch(
+        &self,
+        trigger: Trigger,
+        logged: &[String],
+        sent: &str,
+    ) -> Result<Launch, SubprocessError> {
+        let (mut entries, tree) = self.store.load_settled(|| {
+            let mut spinner = Spinner::with_session_context(0, chat_session_info());
+            spinner.start_with_context(SpinnerContext::WaitingForMemory);
+            spinner
+        })?;
+        if logged_before_reply(trigger) {
+            entries.truncate(entries.len().saturating_sub(logged.len()));
+        }
+        let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
+        let first_prompt = turn_prompt(&split.tail, sent);
+        let system = turn_system_prompt(&split.older);
+        let args = [
+            self.mcp_args.to_vec(),
+            build_attachments_args(self.store_dir),
+            build_agents_args(),
+            self.plugin_args.to_vec(),
+        ]
+        .concat();
+        let config = SpinnerSubprocessConfig {
+            command: build_chat_command(
+                &system,
+                &args,
+                self.permission_mode,
+                dirs::home_dir().as_deref(),
+            ),
+            timeout_secs: None,
+            theme_config: self.theme_config.clone(),
+            session_elapsed_ms: 0,
+            verbose_tools: VerboseToolsConfig::new(),
+            session_info: chat_session_info(),
+            pause: None,
+            cancel: Some(Arc::clone(&self.cancel)),
+        };
+        Ok(Launch {
+            config,
+            split,
+            system,
+            args,
+            first_prompt,
+        })
     }
 
     fn stopped(&self) -> bool {
