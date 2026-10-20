@@ -218,13 +218,10 @@ impl Turn<'_> {
                 if !logged_before_reply(trigger) {
                     self.append_logged(trigger, logged)?;
                 }
-                let entries = reply_entries(trigger, &reply);
-                entries
+                reply_entries(&reply)
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
-                if !entries.is_empty() {
-                    warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
-                }
+                warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
                 Ok(TurnOutcome::Replied)
             }
             _ => {

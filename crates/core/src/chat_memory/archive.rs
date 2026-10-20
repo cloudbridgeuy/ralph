@@ -644,7 +644,12 @@ mod tests {
             cursor: None,
         };
         let stale = |next, offset, end| RangeRequest {
-            cursor: Some(Cursor { next, offset, end }),
+            cursor: Some(Cursor {
+                next,
+                offset,
+                end,
+                mode: Mode::Raw,
+            }),
             ..base.clone()
         };
         for request in [
