@@ -88,6 +88,7 @@ fn fixture(n: usize) -> Result<(String, String), String> {
             },
             at: "2026-10-20T00:00:00+00:00".to_string(),
             text: text(i),
+            corrupt: false,
         })
         .collect();
     let log = entries

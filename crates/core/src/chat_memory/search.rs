@@ -511,6 +511,7 @@ mod tests {
             role: Role::User,
             at: at(minute),
             text: text.to_string(),
+            corrupt: false,
         }
     }
 
@@ -519,6 +520,7 @@ mod tests {
             role,
             at: at.to_string(),
             text: text.to_string(),
+            corrupt: false,
         }
     }
 
@@ -765,12 +767,15 @@ mod tests {
 
     #[test]
     fn corrupt_placeholders_keep_their_ids_and_never_match() {
-        let entries = [
-            user(0, "corrupt needle"),
-            Entry::corrupt(),
-            user(2, "needle after"),
-        ];
-        let out = run(&entries, json!({"query": "corrupt entry needle"})).unwrap();
+        let log = format!(
+            "{}garbage\n{}",
+            encode_entry(&user(0, "corrupt needle")).unwrap(),
+            encode_entry(&user(2, "needle after")).unwrap()
+        );
+        let mut archive =
+            Archive::open(Bytes(log.into_bytes()), None, Bytes(Vec::new()), None).unwrap();
+        let request = parse_search_args(&json!({"query": "corrupt entry needle"})).unwrap();
+        let out = search(&mut archive, &request).unwrap().unwrap();
         assert_eq!(ids(&out), [0, 2]);
     }
 

@@ -62,6 +62,8 @@ pub struct Entry {
     pub role: Role,
     pub at: String,
     pub text: String,
+    #[serde(skip)]
+    pub corrupt: bool,
 }
 
 impl Entry {
@@ -70,11 +72,12 @@ impl Entry {
             role: Role::Worker,
             at: String::new(),
             text: CORRUPT_TEXT.to_string(),
+            corrupt: true,
         }
     }
 
     pub fn is_corrupt(&self) -> bool {
-        self.at.is_empty() && self.text == CORRUPT_TEXT
+        self.corrupt
     }
 }
 
@@ -201,6 +204,7 @@ mod fixtures {
             },
             at: format!("2026-01-01T00:00:{:02}Z", i % 60),
             text: format!("m{i} {}", "x".repeat(len)),
+            corrupt: false,
         }
     }
 

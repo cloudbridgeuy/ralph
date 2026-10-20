@@ -94,6 +94,7 @@ pub fn encode_record(node: Node, text: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::chat_memory::fixtures::{entry, n};
+    use crate::chat_memory::Role;
 
     #[test]
     fn parse_ignores_partial_and_stops_at_corrupt() {
@@ -124,6 +125,30 @@ mod tests {
             warning.starts_with("chat log entry 4 at byte 9 is corrupt"),
             "{warning}"
         );
+    }
+
+    #[test]
+    fn a_real_entry_with_the_placeholder_text_stays_normal() {
+        let real = Entry {
+            role: Role::Worker,
+            at: String::new(),
+            text: CORRUPT_TEXT.to_string(),
+            corrupt: false,
+        };
+        assert!(!real.is_corrupt());
+        let line = encode_entry(&real).unwrap();
+        let (parsed, warning) = entry_or_corrupt(line.trim_end().as_bytes(), 0, 0);
+        assert!(!parsed.is_corrupt());
+        assert_eq!((parsed, warning), (real, None));
+    }
+
+    #[test]
+    fn the_flag_is_never_written_or_read_from_the_log() {
+        let line = encode_entry(&Entry::corrupt()).unwrap();
+        assert!(!line.contains("corrupt\":"), "{line}");
+        let forged = r#"{"role":"worker","at":"","text":"x","corrupt":true}"#;
+        let (entry, warning) = entry_or_corrupt(forged.as_bytes(), 0, 0);
+        assert_eq!((entry.is_corrupt(), warning), (false, None));
     }
 
     #[test]

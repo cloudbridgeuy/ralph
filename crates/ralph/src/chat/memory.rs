@@ -193,6 +193,7 @@ impl Store {
             role,
             at: chrono::Utc::now().to_rfc3339(),
             text: text.to_string(),
+            corrupt: false,
         };
         let line = encode_entry(&entry).map_err(io::Error::other)?;
         let path = self.dir.join("log.jsonl");
