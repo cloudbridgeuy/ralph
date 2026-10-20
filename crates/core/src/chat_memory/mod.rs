@@ -17,7 +17,7 @@ pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
     INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,
 };
-pub use log::{encode_entry, encode_record, parse_log, parse_tree};
+pub use log::{encode_entry, encode_record, log_tail, parse_log, parse_tree, LogTail};
 pub use lookup::{recall, zoom};
 pub use nap::{
     check_summary, commit_decision, fallback_summary, nap_source, nap_step, nap_summary,

@@ -8,6 +8,22 @@ fn complete_lines(data: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogTail {
+    Whole,
+    Torn(u64),
+    NeedMore,
+}
+
+pub fn log_tail(chunk: &[u8], chunk_start: u64) -> LogTail {
+    match chunk.iter().rposition(|b| *b == b'\n') {
+        _ if chunk.last().is_none_or(|b| *b == b'\n') => LogTail::Whole,
+        Some(i) => LogTail::Torn(chunk_start + i as u64 + 1),
+        None if chunk_start == 0 => LogTail::Torn(0),
+        None => LogTail::NeedMore,
+    }
+}
+
 pub fn parse_log(data: &[u8]) -> (Vec<Entry>, Vec<String>) {
     let mut entries = Vec::new();
     for line in complete_lines(data) {
@@ -75,6 +91,15 @@ mod tests {
         let corrupt = format!("{a}garbage\n{b}");
         let (entries, warnings) = parse_log(corrupt.as_bytes());
         assert_eq!((entries.len(), warnings.len()), (1, 1));
+    }
+
+    #[test]
+    fn log_tail_finds_where_a_torn_line_starts() {
+        assert_eq!(log_tail(b"", 0), LogTail::Whole);
+        assert_eq!(log_tail(b"a\nb\n", 7), LogTail::Whole);
+        assert_eq!(log_tail(b"a\nbc", 7), LogTail::Torn(9));
+        assert_eq!(log_tail(b"abc", 0), LogTail::Torn(0));
+        assert_eq!(log_tail(b"abc", 5), LogTail::NeedMore);
     }
 
     #[test]
