@@ -173,6 +173,9 @@ impl Turn<'_> {
             cancelled: self.cancel.swap(false, Ordering::SeqCst),
             terminated: signal::is_terminated(),
         });
+        if !keeps_session(&end) {
+            locked(&self.session).take();
+        }
         match end {
             TurnEnd::Exit => return Ok(TurnOutcome::Exit),
             TurnEnd::Cancelled => {
@@ -292,5 +295,29 @@ impl Turn<'_> {
         trigger_entries(trigger, logged)
             .iter()
             .try_for_each(|(role, text)| self.store.append(*role, text))
+    }
+}
+
+fn keeps_session(end: &TurnEnd) -> bool {
+    !matches!(end, TurnEnd::Cancelled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_turn_keeps_session() {
+        assert!(keeps_session(&TurnEnd::Completed));
+    }
+
+    #[test]
+    fn cancelled_turn_drops_session() {
+        assert!(!keeps_session(&TurnEnd::Cancelled));
+    }
+
+    #[test]
+    fn exit_keeps_session() {
+        assert!(keeps_session(&TurnEnd::Exit));
     }
 }
