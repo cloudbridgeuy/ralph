@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Deserialize;
+use serde::Serialize;
 
 use super::provider::{CallKind, ProviderId, RequestFacts};
 use super::sse::SseEvent;
@@ -7,7 +9,8 @@ use super::usage::UsageOutcome;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct SessionRecord {
     pub schema_version: u32,
     pub ralph_version: String,
@@ -17,14 +20,16 @@ pub struct SessionRecord {
     pub started_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 #[serde(tag = "format", content = "body", rename_all = "snake_case")]
 pub enum RequestBody {
     Json(serde_json::Value),
     Base64(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct CallRecord {
     pub seq: u64,
     pub started_at: DateTime<Utc>,

@@ -178,6 +178,10 @@ impl Provider for Anthropic {
         "https://api.anthropic.com"
     }
 
+    fn base_url_env(&self) -> &'static str {
+        "ANTHROPIC_BASE_URL"
+    }
+
     fn secret_headers(&self) -> &'static [&'static str] {
         &[]
     }

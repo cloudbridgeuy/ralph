@@ -15,6 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Core dependencies for pure transformation functions
+base64 = { workspace = true }
 chrono = { workspace = true }
 flate2 = { workspace = true }
 regex = { workspace = true }

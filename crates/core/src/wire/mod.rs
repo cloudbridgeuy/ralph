@@ -1,7 +1,11 @@
+pub mod build;
 pub mod decode;
+pub mod headers;
+pub mod live;
 pub mod provider;
 pub mod record;
 pub mod redact;
 pub mod response;
+pub mod session;
 pub mod sse;
 pub mod usage;

@@ -1,17 +1,21 @@
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Deserialize;
+use serde::Serialize;
 
 use super::sse::SseEvent;
 use super::usage::{BillingRates, UsageOutcome};
 
 pub mod anthropic;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderId {
     Anthropic,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 #[serde(rename_all = "snake_case")]
 pub enum CallKind {
     Inference,
@@ -25,7 +29,8 @@ pub struct RequestHead {
     pub headers: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct RequestFacts {
     pub model: Option<String>,
     pub params: serde_json::Map<String, serde_json::Value>,
@@ -47,6 +52,7 @@ pub struct ResponseUsage {
 pub trait Provider: Send + Sync {
     fn id(&self) -> ProviderId;
     fn default_upstream(&self) -> &'static str;
+    fn base_url_env(&self) -> &'static str;
     fn secret_headers(&self) -> &'static [&'static str];
     fn classify(&self, call: &RequestHead) -> CallKind;
     fn request_facts(&self, body: &serde_json::Value) -> RequestFacts;

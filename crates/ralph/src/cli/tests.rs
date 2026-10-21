@@ -78,3 +78,33 @@ fn test_cli_rejects_removed_session_commands() {
         assert!(Cli::try_parse_from(args).is_err(), "{args:?}");
     }
 }
+
+#[test]
+fn test_cli_wire_defaults_and_flags() {
+    let Some(Commands::Wire(wire)) = Cli::try_parse_from(["ralph", "wire"]).unwrap().command else {
+        panic!("expected wire");
+    };
+    assert_eq!(wire.provider, WireProvider::Anthropic);
+    assert_eq!(wire.port, 0);
+    assert!(wire.upstream.is_none() && wire.dir.is_none() && !wire.responses);
+
+    let Some(Commands::Wire(wire)) = Cli::try_parse_from([
+        "ralph",
+        "wire",
+        "--port",
+        "9",
+        "--upstream",
+        "http://u",
+        "--dir",
+        "/d",
+        "--responses",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected wire");
+    };
+    assert_eq!(wire.port, 9);
+    assert_eq!(wire.upstream.as_deref(), Some("http://u"));
+    assert!(wire.responses);
+}

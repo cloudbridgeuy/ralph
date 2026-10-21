@@ -1,20 +1,25 @@
-use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde::Deserialize;
+use serde::Serialize;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CacheTier {
     Ttl { seconds: u64 },
     Unspecified,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct CacheWrite {
     pub tier: CacheTier,
     pub tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct Usage {
     pub input_uncached: u64,
     pub cache_read: u64,
@@ -24,7 +29,8 @@ pub struct Usage {
     pub other: Vec<(String, u64)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 #[serde(tag = "status", content = "usage", rename_all = "snake_case")]
 pub enum UsageOutcome {
     Reported(Usage),
@@ -32,13 +38,15 @@ pub enum UsageOutcome {
     Missing,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct TierRate {
     pub tier: CacheTier,
     pub multiplier: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(Deserialize))]
 pub struct BillingRates {
     pub cache_read: f64,
     pub cache_writes: Vec<TierRate>,

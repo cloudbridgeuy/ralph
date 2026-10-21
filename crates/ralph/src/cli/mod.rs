@@ -4,6 +4,7 @@
 //! It provides the main CLI struct and all subcommand definitions.
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[cfg(test)]
 mod tests;
@@ -50,6 +51,15 @@ pub enum Commands {
     /// ~/.ralph/chat.
     Chat(ChatArgs),
 
+    #[command(
+        about = "Record the wire traffic of an LLM harness through a local proxy.",
+        long_about = "Starts a local HTTP proxy that forwards every request to the provider \
+unchanged and records one line per call under a session directory. Prompts are \
+stored in plaintext. Export the printed base URL variable before starting the \
+harness; ralph never sets it."
+    )]
+    Wire(WireArgs),
+
     #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
 
@@ -64,6 +74,46 @@ pub enum Commands {
 
     #[command(hide = true)]
     WorkerStopHook(WorkerStopHookArgs),
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireProvider {
+    Anthropic,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WireArgs {
+    #[arg(
+        long,
+        value_enum,
+        default_value = "anthropic",
+        help = "Provider to proxy"
+    )]
+    pub provider: WireProvider,
+
+    #[arg(
+        long,
+        default_value_t = 0,
+        help = "Port on 127.0.0.1 (0 picks a free port)"
+    )]
+    pub port: u16,
+
+    #[arg(
+        long,
+        value_name = "URL",
+        help = "Upstream base URL (default: the provider's)"
+    )]
+    pub upstream: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Directory for session folders (default: <tmp>/ralph-wire)"
+    )]
+    pub dir: Option<PathBuf>,
+
+    #[arg(long, help = "Also store the decoded SSE events of each response")]
+    pub responses: bool,
 }
 
 #[derive(clap::Args, Debug)]
