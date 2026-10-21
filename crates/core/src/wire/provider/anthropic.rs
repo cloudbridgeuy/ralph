@@ -1,7 +1,8 @@
 use serde_json::{Map, Value};
 
 use super::{
-    CallKind, Provider, ProviderId, RequestFacts, RequestHead, ResponseUsage, ResponseView,
+    CallKind, PromptSegment, Provider, ProviderId, RequestFacts, RequestHead, ResponseUsage,
+    ResponseView,
 };
 use crate::wire::price::{
     matches_prefix, normalize_model, ModelPrice, PriceEntry, PriceTable, TierPrice,
@@ -265,6 +266,62 @@ fn geo_factor(raw: &Value, model: &str) -> Option<f64> {
     }
 }
 
+fn breakpoint(block: &Value) -> Option<CacheTier> {
+    block
+        .get("cache_control")
+        .map(|control| match control.get("ttl").and_then(Value::as_str) {
+            Some("1h") => ONE_HOUR,
+            _ => FIVE_MIN,
+        })
+}
+
+fn segment(label: String, block: &Value) -> PromptSegment {
+    PromptSegment {
+        label,
+        len: block.to_string().len(),
+        breakpoint: breakpoint(block),
+    }
+}
+
+fn items<'a>(body: &'a Value, key: &str) -> impl Iterator<Item = &'a Value> {
+    body.get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
+
+fn text<'a>(value: &'a Value, key: &str, default: &'a str) -> &'a str {
+    value.get(key).and_then(Value::as_str).unwrap_or(default)
+}
+
+fn system_segments(body: &Value) -> Vec<PromptSegment> {
+    match body.get("system") {
+        Some(system @ Value::String(_)) => vec![segment("system".into(), system)],
+        _ => items(body, "system")
+            .enumerate()
+            .map(|(i, block)| segment(format!("system[{i}]"), block))
+            .collect(),
+    }
+}
+
+fn message_segments(index: usize, message: &Value) -> Vec<PromptSegment> {
+    let role = text(message, "role", "?");
+    match message.get("content") {
+        Some(content @ Value::String(_)) => {
+            vec![segment(format!("msg[{index}] {role}/text"), content)]
+        }
+        Some(Value::Array(blocks)) => blocks
+            .iter()
+            .enumerate()
+            .map(|(j, block)| {
+                let kind = text(block, "type", "?");
+                segment(format!("msg[{index}].{j} {role}/{kind}"), block)
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 impl Provider for Anthropic {
     fn id(&self) -> ProviderId {
         ProviderId::Anthropic
@@ -299,6 +356,16 @@ impl Provider for Anthropic {
                 .filter_map(|key| body.get(key).map(|v| (key.to_string(), v.clone())))
                 .collect(),
         }
+    }
+
+    fn segments(&self, body: &Value) -> Vec<PromptSegment> {
+        let tools = items(body, "tools")
+            .enumerate()
+            .map(|(i, tool)| segment(format!("tools[{i}] {}", text(tool, "name", "?")), tool));
+        let messages = items(body, "messages")
+            .enumerate()
+            .flat_map(|(i, message)| message_segments(i, message));
+        tools.chain(system_segments(body)).chain(messages).collect()
     }
 
     fn usage(&self, response: &ResponseView) -> ResponseUsage {
@@ -439,7 +506,8 @@ mod tests {
                 expected: UsageOutcome::Missing,
             },
         ];
-        assert_provider_contract(&Anthropic, &cases);
+        let request: Value = serde_json::from_str(REQUEST).unwrap();
+        assert_provider_contract(&Anthropic, &cases, &request);
     }
 
     #[test]
@@ -582,6 +650,59 @@ mod tests {
         let text = serde_json::to_string(&record).unwrap();
         assert!(!text.contains("Bearer"));
         assert_eq!(serde_json::from_str::<CallRecord>(&text).unwrap(), record);
+    }
+
+    fn seg(label: &str, len: usize, breakpoint: Option<CacheTier>) -> PromptSegment {
+        PromptSegment {
+            label: label.into(),
+            len,
+            breakpoint,
+        }
+    }
+
+    #[test]
+    fn segments_follow_cache_order_with_breakpoints() {
+        let body: Value = serde_json::from_str(REQUEST).unwrap();
+        let segments = Anthropic.segments(&body);
+        let labels: Vec<&str> = segments.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "tools[0] Read",
+                "system[0]",
+                "system[1]",
+                "msg[0].0 user/text",
+                "msg[1].0 assistant/text"
+            ]
+        );
+        let tiers: Vec<Option<CacheTier>> = segments.iter().map(|s| s.breakpoint).collect();
+        assert_eq!(
+            tiers,
+            [Some(ONE_HOUR), None, Some(FIVE_MIN), None, Some(FIVE_MIN)]
+        );
+        assert_eq!(segments[1].len, body["system"][0].to_string().len());
+    }
+
+    #[test]
+    fn explicit_five_minute_ttl_is_five_minutes() {
+        let body = json!({"system": [{"type": "text", "text": "a", "cache_control": {"type": "ephemeral", "ttl": "5m"}}]});
+        assert_eq!(Anthropic.segments(&body)[0].breakpoint, Some(FIVE_MIN));
+    }
+
+    #[test]
+    fn string_system_and_content_are_single_segments() {
+        let body = json!({"system": "sys", "messages": [{"role": "user", "content": "hi"}]});
+        assert_eq!(
+            Anthropic.segments(&body),
+            [seg("system", 5, None), seg("msg[0] user/text", 4, None)]
+        );
+    }
+
+    #[test]
+    fn missing_fields_give_no_segments() {
+        assert!(Anthropic.segments(&json!({})).is_empty());
+        let body = json!({"messages": [{"content": [{}]}, {"role": "user"}]});
+        assert_eq!(Anthropic.segments(&body), [seg("msg[0].0 ?/?", 2, None)]);
     }
 
     #[test]

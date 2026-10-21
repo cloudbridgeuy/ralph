@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 
 use super::live::{format_row, hit_fraction, usage_columns, usd_suffix};
 use super::price::{prompt_tokens, resolve_price, usd, PriceOverride, PriceTable};
-use super::provider::{CallKind, Provider, ProviderId};
-use super::record::{CallRecord, SessionRecord};
-use super::usage::{CacheWrite, Usage, UsageOutcome};
+use super::provider::{CallKind, Provider, ProviderId, RequestFacts};
+use super::record::{CallRecord, RequestBody, SessionRecord};
+use super::usage::{CacheTier, CacheWrite, Usage, UsageOutcome};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CallRow {
@@ -247,6 +247,96 @@ pub fn sessions_table(rows: &[SessionRow]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SegmentRow {
+    pub label: String,
+    pub bytes: usize,
+    pub cumulative: usize,
+    pub breakpoint: Option<CacheTier>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ShowView {
+    pub seq: u64,
+    pub body_is_json: bool,
+    pub segments: Vec<SegmentRow>,
+    pub facts: RequestFacts,
+    pub usage: UsageOutcome,
+    pub raw_usage: Option<serde_json::Value>,
+}
+
+pub fn show_view(record: &CallRecord, provider: &dyn Provider) -> ShowView {
+    let (body_is_json, prompt) = match &record.request_body {
+        RequestBody::Json(body) => (true, provider.segments(body)),
+        RequestBody::Base64(_) => (false, Vec::new()),
+    };
+    let mut cumulative = 0;
+    let segments = prompt
+        .into_iter()
+        .map(|segment| {
+            cumulative += segment.len;
+            SegmentRow {
+                label: segment.label,
+                bytes: segment.len,
+                cumulative,
+                breakpoint: segment.breakpoint,
+            }
+        })
+        .collect();
+    ShowView {
+        seq: record.seq,
+        body_is_json,
+        segments,
+        facts: record.facts.clone(),
+        usage: record.usage.clone(),
+        raw_usage: record.raw_usage.clone(),
+    }
+}
+
+fn tier_text(tier: CacheTier) -> String {
+    match tier {
+        CacheTier::Ttl { seconds } if seconds % 3600 == 0 => format!("{}h", seconds / 3600),
+        CacheTier::Ttl { seconds } if seconds % 60 == 0 => format!("{}m", seconds / 60),
+        CacheTier::Ttl { seconds } => format!("{seconds}s"),
+        CacheTier::Unspecified => "?".to_string(),
+    }
+}
+
+fn json_text<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|error| format!("<{error}>"))
+}
+
+pub fn show_table(view: &ShowView) -> String {
+    let mut lines = vec![format!("call {}", view.seq)];
+    if view.body_is_json {
+        lines.push("segments (bytes approximate, re-encoded from parsed JSON):".to_string());
+        lines.extend(view.segments.iter().map(|row| {
+            let breakpoint = row.breakpoint.map_or(String::new(), |tier| {
+                format!(" breakpoint={}", tier_text(tier))
+            });
+            format!(
+                "  {} bytes={} cumulative={}{}",
+                row.label, row.bytes, row.cumulative, breakpoint
+            )
+        }));
+    } else {
+        lines.push("request body is not JSON; no segments".to_string());
+    }
+    lines.push(format!(
+        "model: {}",
+        view.facts.model.as_deref().unwrap_or("-")
+    ));
+    lines.push(format!("params: {}", json_text(&view.facts.params)));
+    lines.push(format!("usage: {}", json_text(&view.usage)));
+    lines.push(format!(
+        "raw_usage: {}",
+        view.raw_usage
+            .as_ref()
+            .map_or_else(|| "-".to_string(), json_text)
+    ));
+    lines.join("\n")
 }
 
 #[cfg(test)]
@@ -518,5 +608,63 @@ mod tests {
         };
         let view = super::ls_view(&[call], false, &pricing);
         assert_eq!(view.rows[0].usd, Some(1.0));
+    }
+
+    fn json_call() -> CallRecord {
+        let mut call = record(7, UsageOutcome::Missing, None);
+        call.request_body = RequestBody::Json(json!({
+            "tools": [{"name": "Read", "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
+            "system": "sys",
+        }));
+        call
+    }
+
+    #[test]
+    fn show_view_accumulates_bytes_and_keeps_breakpoints() {
+        let view = show_view(&json_call(), &Anthropic);
+        assert_eq!(view.seq, 7);
+        let rows: Vec<(&str, usize, usize, Option<CacheTier>)> = view
+            .segments
+            .iter()
+            .map(|r| (r.label.as_str(), r.bytes, r.cumulative, r.breakpoint))
+            .collect();
+        let tool = json!({"name": "Read", "cache_control": {"type": "ephemeral", "ttl": "1h"}})
+            .to_string()
+            .len();
+        assert_eq!(
+            rows,
+            [
+                (
+                    "tools[0] Read",
+                    tool,
+                    tool,
+                    Some(CacheTier::Ttl { seconds: 3600 })
+                ),
+                ("system", 5, tool + 5, None)
+            ]
+        );
+    }
+
+    #[test]
+    fn show_table_lists_segments_facts_and_usage() {
+        let table = show_table(&show_view(&json_call(), &Anthropic));
+        assert!(table.starts_with("call 7\n"), "{table}");
+        assert!(table.contains("  tools[0] Read bytes="), "{table}");
+        assert!(table.contains(" breakpoint=1h\n"), "{table}");
+        assert!(table.contains("  system bytes=5 cumulative="), "{table}");
+        assert!(table.contains("model: m\n"), "{table}");
+        assert!(
+            table.contains("usage: {\"status\":\"missing\"}\n"),
+            "{table}"
+        );
+        assert!(table.ends_with("raw_usage: -"), "{table}");
+    }
+
+    #[test]
+    fn base64_body_has_no_segments_and_says_so() {
+        let view = show_view(&record(1, UsageOutcome::Missing, None), &Anthropic);
+        assert!(!view.body_is_json);
+        assert!(view.segments.is_empty());
+        assert!(show_table(&view).contains("request body is not JSON"));
     }
 }

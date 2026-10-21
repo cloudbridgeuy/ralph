@@ -20,6 +20,10 @@ pub enum ReadError {
         id: String,
         root: String,
     },
+    UnknownCall {
+        seq: u64,
+        session: String,
+    },
 }
 
 impl fmt::Display for ReadError {
@@ -33,6 +37,7 @@ impl fmt::Display for ReadError {
             } => write!(f, "{label}:{line}: {message}"),
             Self::NoSessions { root } => write!(f, "no sessions in {root}"),
             Self::UnknownSession { id, root } => write!(f, "no session {id} in {root}"),
+            Self::UnknownCall { seq, session } => write!(f, "no call {seq} in session {session}"),
         }
     }
 }
@@ -74,6 +79,20 @@ pub fn pick_session(
             root: root.to_string(),
         }),
     }
+}
+
+pub fn find_call<'a>(
+    calls: &'a [CallRecord],
+    seq: u64,
+    session: &str,
+) -> Result<&'a CallRecord, ReadError> {
+    calls
+        .iter()
+        .find(|call| call.seq == seq)
+        .ok_or_else(|| ReadError::UnknownCall {
+            seq,
+            session: session.to_string(),
+        })
 }
 
 #[cfg(test)]
@@ -177,5 +196,14 @@ mod tests {
     fn requested_session_is_picked() {
         let id = pick_session(ids(&["a", "b"]), Some("a".into()), "/r").unwrap();
         assert_eq!(id, "a");
+    }
+
+    #[test]
+    fn find_call_matches_seq_not_position() {
+        let text = format!("{}\n{}\n", call_line(5), call_line(2));
+        let calls = parse_calls("c.jsonl", &text).unwrap();
+        assert_eq!(find_call(&calls, 2, "s").unwrap().seq, 2);
+        let error = find_call(&calls, 1, "s").unwrap_err();
+        assert_eq!(error.to_string(), "no call 1 in session s");
     }
 }
