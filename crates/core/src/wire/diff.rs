@@ -49,7 +49,10 @@ pub enum Verdict {
     NoSharedBreakpoint,
     UsageMissing,
     PrefixChanged {
-        label: Option<String>,
+        label: String,
+    },
+    PrefixShared {
+        relation: Relation,
     },
     ModelChanged {
         a: Option<String>,
@@ -69,6 +72,14 @@ pub enum Verdict {
     Unexplained {
         invisible: Vec<String>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Relation {
+    Extends,
+    PrefixOf,
+    Identical,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -248,6 +259,16 @@ fn excerpt(text: &str, offset: usize) -> String {
     text[start..end].to_string()
 }
 
+fn relation(a_len: usize, b_len: usize, shared: usize) -> Relation {
+    if b_len > shared {
+        Relation::Extends
+    } else if a_len > shared {
+        Relation::PrefixOf
+    } else {
+        Relation::Identical
+    }
+}
+
 fn divergence(shared: usize, a: &[PromptSegment], b: &[PromptSegment]) -> Option<Divergence> {
     let (left, right) = (a.get(shared)?, b.get(shared)?);
     let offset = left
@@ -403,7 +424,7 @@ fn explain(
     base: &DiffView,
     b_segments: &[PromptSegment],
     shared: usize,
-    div: Option<&Divergence>,
+    served: Verdict,
 ) -> Explanation {
     let usage = counted_usage(input.b);
     let cache_read = usage.map(|u| u.cache_read);
@@ -447,9 +468,7 @@ fn explain(
         }
     };
     let verdict = if usage.cache_read as f64 >= servable as f64 * CACHE_AGREE_RATIO {
-        Verdict::PrefixChanged {
-            label: div.map(|d| d.label_b.clone()),
-        }
+        served
     } else {
         mismatch_verdict(input, &base.facts, &base.headers, &breakpoint, b_segments)
     };
@@ -514,7 +533,15 @@ pub fn diff_view(input: &DiffInput) -> DiffView {
     let shared = shared_prefix(&a_segments, &b_segments);
     let div = divergence(shared, &a_segments, &b_segments);
     let skip = shared + usize::from(div.is_some());
-    let explanation = explain(&pair, &base, &b_segments, shared, div.as_ref());
+    let served = match &div {
+        Some(d) => Verdict::PrefixChanged {
+            label: d.label_b.clone(),
+        },
+        None => Verdict::PrefixShared {
+            relation: relation(a_segments.len(), b_segments.len(), shared),
+        },
+    };
+    let explanation = explain(&pair, &base, &b_segments, shared, served);
     DiffView {
         shared_segments: shared,
         removed: labels_after(&a_segments, skip),
@@ -545,14 +572,14 @@ fn verdict_text(view: &DiffView) -> String {
         }
         Verdict::NoSharedBreakpoint => "no cache breakpoint in the shared prefix".to_string(),
         Verdict::UsageMissing => "call b has no usage; cannot compare".to_string(),
-        Verdict::PrefixChanged { label: Some(label) } => {
+        Verdict::PrefixChanged { label } => {
             format!("cache served the shared prefix; prompts diverge at {label}")
         }
-        Verdict::PrefixChanged { label: None } => {
-            let relation = match (view.added.is_empty(), view.removed.is_empty()) {
-                (false, _) => "b extends a",
-                (true, false) => "b is a prefix of a",
-                (true, true) => "prompts are identical",
+        Verdict::PrefixShared { relation } => {
+            let relation = match relation {
+                Relation::Extends => "b extends a",
+                Relation::PrefixOf => "b is a prefix of a",
+                Relation::Identical => "prompts are identical",
             };
             format!("cache served the shared prefix; {relation}")
         }
