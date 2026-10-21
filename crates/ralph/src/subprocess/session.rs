@@ -16,6 +16,12 @@ const INTERRUPT_GRACE: Duration = Duration::from_secs(3);
 const EXIT_GRACE: Duration = Duration::from_secs(3);
 const INTERRUPT_REQUEST_ID: &str = "int-1";
 
+fn leftover_is_stale(lines: &[String]) -> bool {
+    lines
+        .iter()
+        .any(|line| line.contains("\"type\":\"result\""))
+}
+
 pub struct Session {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -75,6 +81,9 @@ impl Session {
     }
 
     fn drive(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
+        if leftover_is_stale(&self.readers.take_queued()) {
+            return Err(SubprocessError::LeftoverResult);
+        }
         let mut pump = Pump::start(&self.config)?;
         self.send(&user_line(prompt))
             .map_err(|_| SubprocessError::Stale)?;
@@ -138,5 +147,35 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(raw: &[&str]) -> Vec<String> {
+        raw.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn no_leftover_is_not_stale() {
+        assert!(!leftover_is_stale(&[]));
+    }
+
+    #[test]
+    fn leftover_system_and_assistant_lines_are_not_stale() {
+        assert!(!leftover_is_stale(&lines(&[
+            r#"{"type":"system","subtype":"status"}"#,
+            r#"{"type":"assistant","message":{"content":[]}}"#,
+        ])));
+    }
+
+    #[test]
+    fn leftover_result_is_stale() {
+        assert!(leftover_is_stale(&lines(&[
+            r#"{"type":"system","subtype":"status"}"#,
+            r#"{"type":"result","subtype":"success","is_error":false}"#,
+        ])));
     }
 }

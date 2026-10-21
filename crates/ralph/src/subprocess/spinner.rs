@@ -168,6 +168,10 @@ impl Readers {
         })
     }
 
+    pub(super) fn take_queued(&self) -> Vec<String> {
+        self.line_rx.try_iter().filter_map(Result::ok).collect()
+    }
+
     fn join(&mut self) {
         self.threads.drain(..).for_each(|handle| {
             let _ = handle.join();

@@ -23,6 +23,9 @@ pub enum SubprocessError {
     #[error("claude process exited before the turn")]
     Stale,
 
+    #[error("claude process wrote a result after the last turn")]
+    LeftoverResult,
+
     #[error("Subprocess terminated by signal")]
     Signaled,
 

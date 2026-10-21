@@ -333,7 +333,11 @@ impl Turn<'_> {
 }
 
 fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
-    reused && matches!(result, Err(SubprocessError::Stale))
+    reused
+        && matches!(
+            result,
+            Err(SubprocessError::Stale | SubprocessError::LeftoverResult)
+        )
 }
 
 fn keeps_session(end: &TurnEnd) -> bool {
@@ -370,6 +374,22 @@ mod tests {
     }
 
     #[test]
+    fn reused_session_with_leftover_result_relaunches() {
+        assert!(relaunch(
+            true,
+            &Err::<(), _>(SubprocessError::LeftoverResult)
+        ));
+    }
+
+    #[test]
+    fn fresh_session_with_leftover_result_does_not_relaunch() {
+        assert!(!relaunch(
+            false,
+            &Err::<(), _>(SubprocessError::LeftoverResult)
+        ));
+    }
+
+    #[test]
     fn reused_session_with_other_error_does_not_relaunch() {
         assert!(!relaunch(true, &Err::<(), _>(SubprocessError::Signaled)));
     }
@@ -384,6 +404,14 @@ mod tests {
         assert_eq!(
             SubprocessError::Stale.to_string(),
             "claude process exited before the turn"
+        );
+    }
+
+    #[test]
+    fn leftover_result_error_message_names_the_leftover() {
+        assert_eq!(
+            SubprocessError::LeftoverResult.to_string(),
+            "claude process wrote a result after the last turn"
         );
     }
 }
