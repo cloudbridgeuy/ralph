@@ -7,7 +7,9 @@ use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
-use crate::subprocess::{Session, SpinnerSubprocessConfig, SubprocessError};
+use crate::subprocess::{
+    Session, SpinnerSubprocessConfig, StreamingSubprocessResult, SubprocessError,
+};
 use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
 use ralph_core::chat::{
@@ -127,29 +129,17 @@ impl Turn<'_> {
             Trigger::User => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
-        let mut session = locked(&self.session).take().filter(Session::is_alive);
+        let mut session = locked(&self.session)
+            .take()
+            .and_then(|mut live| live.is_alive().then_some(live));
         let mut launch: Option<Launch> = None;
         print_rule();
         let result = retry_on_outage(
             "chat turn",
             || {
                 launch = None;
-                let result = match session.take() {
-                    Some(live) => Ok(live),
-                    None => self.launch(pre_log_len, &sent).and_then(|spawned| {
-                        let live = Session::spawn(&spawned.config)?;
-                        launch = Some(spawned);
-                        Ok(live)
-                    }),
-                }
-                .and_then(|mut live| {
-                    let prompt = launch
-                        .as_ref()
-                        .map_or(sent.as_ref(), |spawned| spawned.first_prompt.as_str());
-                    let result = live.turn(prompt);
-                    session = Some(live);
-                    result
-                });
+                let (live, result) = self.attempt(session.take(), pre_log_len, &sent, &mut launch);
+                session = live;
                 if self.stopped() {
                     Attempt::Done(result)
                 } else {
@@ -162,7 +152,7 @@ impl Turn<'_> {
             },
             |delay| wait_unless(|| self.stopped(), delay),
         );
-        *locked(&self.session) = session.filter(Session::is_alive);
+        *locked(&self.session) = session.and_then(|mut live| live.is_alive().then_some(live));
         let process_turns = if launch.is_some() {
             1
         } else {
@@ -246,6 +236,50 @@ impl Turn<'_> {
         }
     }
 
+    fn attempt(
+        &self,
+        reused: Option<Session>,
+        pre_log_len: Option<usize>,
+        sent: &str,
+        launch: &mut Option<Launch>,
+    ) -> (
+        Option<Session>,
+        Result<StreamingSubprocessResult, SubprocessError>,
+    ) {
+        let was_reused = reused.is_some();
+        let started = match reused {
+            Some(live) => Ok(live),
+            None => self.start(pre_log_len, sent, launch),
+        };
+        let (session, result) = match started {
+            Err(e) => (None, Err(e)),
+            Ok(mut live) => {
+                let prompt = launch
+                    .as_ref()
+                    .map_or(sent, |spawned| spawned.first_prompt.as_str());
+                let result = live.turn(prompt);
+                (Some(live), result)
+            }
+        };
+        if relaunch(was_reused, &result) {
+            drop(session);
+            return self.attempt(None, pre_log_len, sent, launch);
+        }
+        (session, result)
+    }
+
+    fn start(
+        &self,
+        pre_log_len: Option<usize>,
+        sent: &str,
+        launch: &mut Option<Launch>,
+    ) -> Result<Session, SubprocessError> {
+        let spawned = self.launch(pre_log_len, sent)?;
+        let live = Session::spawn(&spawned.config)?;
+        *launch = Some(spawned);
+        Ok(live)
+    }
+
     fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
         let (mut entries, tree) = self.store.load_after_nap(|| {
             let mut spinner = Spinner::with_session_context(0, chat_session_info());
@@ -298,6 +332,10 @@ impl Turn<'_> {
     }
 }
 
+fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
+    reused && matches!(result, Err(SubprocessError::Stale))
+}
+
 fn keeps_session(end: &TurnEnd) -> bool {
     !matches!(end, TurnEnd::Cancelled)
 }
@@ -319,5 +357,33 @@ mod tests {
     #[test]
     fn exit_keeps_session() {
         assert!(keeps_session(&TurnEnd::Exit));
+    }
+
+    #[test]
+    fn reused_session_that_is_stale_relaunches() {
+        assert!(relaunch(true, &Err::<(), _>(SubprocessError::Stale)));
+    }
+
+    #[test]
+    fn fresh_session_that_is_stale_does_not_relaunch() {
+        assert!(!relaunch(false, &Err::<(), _>(SubprocessError::Stale)));
+    }
+
+    #[test]
+    fn reused_session_with_other_error_does_not_relaunch() {
+        assert!(!relaunch(true, &Err::<(), _>(SubprocessError::Signaled)));
+    }
+
+    #[test]
+    fn reused_session_that_succeeds_does_not_relaunch() {
+        assert!(!relaunch(true, &Ok::<_, SubprocessError>(())));
+    }
+
+    #[test]
+    fn stale_error_message_names_the_exit() {
+        assert_eq!(
+            SubprocessError::Stale.to_string(),
+            "claude process exited before the turn"
+        );
     }
 }

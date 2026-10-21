@@ -20,6 +20,9 @@ pub enum SubprocessError {
     #[error("Failed to spawn subprocess: {0}")]
     SpawnFailed(#[from] io::Error),
 
+    #[error("claude process exited before the turn")]
+    Stale,
+
     #[error("Subprocess terminated by signal")]
     Signaled,
 

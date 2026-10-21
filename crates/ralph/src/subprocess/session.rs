@@ -61,7 +61,8 @@ impl Session {
         exit_code
     }
 
-    pub fn is_alive(&self) -> bool {
+    pub fn is_alive(&mut self) -> bool {
+        self.alive = self.alive && matches!(self.child.try_wait(), Ok(None));
         self.alive
     }
 
@@ -75,7 +76,8 @@ impl Session {
 
     fn drive(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
         let mut pump = Pump::start(&self.config)?;
-        self.send(&user_line(prompt))?;
+        self.send(&user_line(prompt))
+            .map_err(|_| SubprocessError::Stale)?;
         let mut interrupt: Option<(Instant, bool)> = None;
         let outcome = loop {
             if let Some(status) = try_wait_child(&mut self.child)? {
