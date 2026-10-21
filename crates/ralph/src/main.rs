@@ -44,6 +44,7 @@ pub mod warn;
 mod watch_requests;
 mod watch_store;
 mod watches;
+mod wire;
 mod worker_changes;
 mod worker_mcp;
 mod workers;
@@ -74,6 +75,7 @@ fn main() -> ExitCode {
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),
         Commands::Chat(args) => chat::run(args),
+        Commands::Wire(args) => wire::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::Mermaid(args) => execute_mermaid(args),

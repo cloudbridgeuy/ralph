@@ -22,6 +22,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `themes` | List available syntax highlighting themes |
 | `ask` | Send a single-shot prompt to the LLM ([details](context/ralph-ask.md)) |
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
+| `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
 
 ---
 
@@ -81,6 +82,24 @@ ralph ask 'your prompt'
 # One-off theme override
 RALPH_THEME="Monokai Extended" ralph ask 'your prompt'
 ```
+
+---
+
+## ralph wire
+
+Run a local recording proxy. Details: [ralph wire](context/ralph-wire.md).
+
+```bash
+ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--responses]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--provider` | `anthropic` | Provider to proxy |
+| `--port` | `0` | Port on 127.0.0.1; `0` picks a free port |
+| `--upstream` | provider default | Upstream base URL |
+| `--dir` | `<tmp>/ralph-wire` | Directory holding session folders |
+| `--responses` | off | Also store decoded SSE events per call |
 
 ---
 
