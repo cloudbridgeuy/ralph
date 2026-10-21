@@ -1,4 +1,5 @@
 use crate::chat_memory::SERVER_NAME;
+use crate::stream::IterationCosts;
 use crate::worker::ATTACHMENTS_DIR;
 use serde_json::{json, Map, Value};
 use std::ffi::OsString;
@@ -10,6 +11,27 @@ pub const RECENT_HISTORY_TOKENS: usize = 8192;
 pub const WORKER_CHECK_SECS: u64 = 60;
 pub const WORKER_QUIET_SECS: u64 = 300;
 pub const WATCH_TIMEOUT_SECS: u64 = 3600;
+pub const RESET_TURNS: u64 = 40;
+pub const RESET_TOKENS: u64 = 100_000;
+const BLOCKING_LIMIT: &str = "blocking_limit";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResetLimits {
+    pub turns: u64,
+    pub tokens: u64,
+}
+
+pub fn hit_blocking_limit(costs: &IterationCosts) -> bool {
+    costs.terminal_reason.as_deref() == Some(BLOCKING_LIMIT)
+}
+
+pub fn reset_due(limits: &ResetLimits, turns_on_process: u64, costs: &IterationCosts) -> bool {
+    turns_on_process >= limits.turns
+        || costs
+            .context_tokens
+            .is_some_and(|tokens| tokens >= limits.tokens)
+        || hit_blocking_limit(costs)
+}
 
 pub fn resolve_worker_check_secs(config: Option<u64>) -> Option<u64> {
     match config.unwrap_or(WORKER_CHECK_SECS) {
@@ -205,6 +227,69 @@ pub fn build_agents_args() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream::{extract_costs_from_events, parse_stream_line, ParsedLine};
+
+    const BLOCKING_LIMIT_EVENT: &str = r#"{"duration_api_ms":7597,"stop_reason":"stop_sequence","session_id":"27577908-328e-4174-bc2b-9f6fc57be9dc","total_cost_usd":0.17951885,"usage":{"output_tokens_details":{"thinking_tokens":0},"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":0},"inference_geo":"","iterations":[],"speed":"standard","fallback_credit":null},"modelUsage":{"claude-haiku-5-5":{"inputTokens":4,"outputTokens":181,"cacheReadInputTokens":136727,"cacheCreationInputTokens":172228,"webSearchRequests":0,"costUSD":0.17951885,"contextWindow":200000,"maxOutputTokens":128000,"thinkingTokens":171,"canonicalModel":"claude-haiku-5-5","provider":"firstParty","costBasis":"list"}},"permission_denials":[],"terminal_reason":"blocking_limit","fast_mode_state":"off","fast_mode_disabled_reason":"sdk_opt_in_required","subagent_stats":{"spawned":0,"requested":{"background":0,"foreground":0,"unset":0},"started_in_background":0,"max_depth":0,"spawned_by_subagents":0,"completed":0,"failed":0,"killed":{"parent":0,"user":0,"system":0},"refused":{"depth_limit":0,"concurrency_limit":0,"budget":0},"by_type":{}},"safety_stops":0,"is_error":true,"num_turns":1,"subtype":"success","api_error_status":null,"result":"Prompt is too long","type":"result","duration_ms":69,"uuid":"5f4d9442-8652-4f36-8590-63ecdc20db71","queued_turn_count":0,"result_index":2}"#;
+
+    const LIMITS: ResetLimits = ResetLimits {
+        turns: 40,
+        tokens: 100_000,
+    };
+
+    fn costs(context_tokens: Option<u64>, terminal_reason: Option<&str>) -> IterationCosts {
+        IterationCosts {
+            context_tokens,
+            terminal_reason: terminal_reason.map(str::to_string),
+            ..IterationCosts::default()
+        }
+    }
+
+    #[test]
+    fn parses_terminal_reason_from_the_real_blocking_limit_event() {
+        let ParsedLine::Event(event) = parse_stream_line(BLOCKING_LIMIT_EVENT) else {
+            panic!("event did not parse");
+        };
+        let costs = extract_costs_from_events(&[event]).unwrap();
+        assert_eq!(costs.terminal_reason.as_deref(), Some("blocking_limit"));
+        assert!(hit_blocking_limit(&costs));
+    }
+
+    #[test]
+    fn blocking_limit_ignores_the_prose() {
+        let event = BLOCKING_LIMIT_EVENT.replace(
+            "\"terminal_reason\":\"blocking_limit\"",
+            "\"terminal_reason\":\"completed\"",
+        );
+        let ParsedLine::Event(event) = parse_stream_line(&event) else {
+            panic!("event did not parse");
+        };
+        let costs = extract_costs_from_events(&[event]).unwrap();
+        assert!(!hit_blocking_limit(&costs));
+    }
+
+    #[test]
+    fn reset_due_turn_boundary() {
+        assert!(!reset_due(&LIMITS, 39, &costs(None, None)));
+        assert!(reset_due(&LIMITS, 40, &costs(None, None)));
+        assert!(reset_due(&LIMITS, 41, &costs(None, None)));
+    }
+
+    #[test]
+    fn reset_due_token_boundary() {
+        assert!(!reset_due(&LIMITS, 1, &costs(Some(99_999), None)));
+        assert!(reset_due(&LIMITS, 1, &costs(Some(100_000), None)));
+        assert!(!reset_due(&LIMITS, 1, &costs(None, None)));
+    }
+
+    #[test]
+    fn reset_due_on_blocking_limit_only_by_reason() {
+        assert!(reset_due(
+            &LIMITS,
+            1,
+            &costs(Some(0), Some("blocking_limit"))
+        ));
+        assert!(!reset_due(&LIMITS, 1, &costs(Some(0), Some("completed"))));
+    }
 
     #[test]
     fn worker_check_secs_resolution() {

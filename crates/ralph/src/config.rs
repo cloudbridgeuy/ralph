@@ -20,6 +20,8 @@ mod empty_submit;
 mod opencode;
 #[cfg(test)]
 mod recent_history_tests;
+#[cfg(test)]
+mod reset_limits_tests;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
 pub use opencode::OpencodeSection;
@@ -172,6 +174,10 @@ pub struct ChatSection {
     #[serde(default)]
     pub worker_quiet_secs: Option<toml::Value>,
     #[serde(default)]
+    pub reset_turns: Option<toml::Value>,
+    #[serde(default)]
+    pub reset_tokens: Option<toml::Value>,
+    #[serde(default)]
     pub watch_timeout_secs: Option<u64>,
     #[serde(default)]
     pub wrap_width: Option<usize>,
@@ -226,6 +232,8 @@ impl Default for ChatSection {
             recent_history_tokens: None,
             worker_check_secs: None,
             worker_quiet_secs: None,
+            reset_turns: None,
+            reset_tokens: None,
             watch_timeout_secs: None,
             wrap_width: None,
             cell_output_limit: None,

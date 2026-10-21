@@ -195,6 +195,15 @@ impl Store {
         self.load()
     }
 
+    pub fn load_after_nap<W>(&self, on_wait: impl FnOnce() -> W) -> io::Result<(Vec<Entry>, Tree)> {
+        let nap = self.open_nap_lock()?;
+        if must_wait(nap.try_lock_shared())? {
+            let _waiting = on_wait();
+            nap.lock_shared()?;
+        }
+        self.load_settled(|| ())
+    }
+
     /// Shared try-lock probe on `NAP`: reports true while a nap runs, so another
     /// `ralph chat` on the same store also shows NAP.
     pub fn napping(&self) -> bool {
@@ -434,6 +443,26 @@ mod tests {
         let mut waited = false;
         store.load_settled(|| waited = true).unwrap();
         assert!(!waited);
+    }
+
+    #[test]
+    fn load_after_nap_waits_only_while_a_nap_holds_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("s"));
+        store.append(Role::User, "hi").unwrap();
+        let mut waited = false;
+        let (entries, _) = store.load_after_nap(|| waited = true).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(!waited);
+        let held = store.open_nap_lock().unwrap();
+        held.lock().unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(held);
+        });
+        store.load_after_nap(|| waited = true).unwrap();
+        release.join().unwrap();
+        assert!(waited);
     }
 
     #[test]

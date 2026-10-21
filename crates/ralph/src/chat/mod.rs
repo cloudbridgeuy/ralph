@@ -63,7 +63,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 const STORE_ENV: &str = "RALPH_CHAT_STORE";
@@ -115,6 +115,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
     let (worker_quiet_secs, quiet_warning) = chat_config.worker_quiet_setting();
+    let (reset_limits, reset_warnings) = chat_config.reset_limits_setting();
     let watch_timeout = resolve_watch_timeout(chat_config.watch_timeout_secs)?;
     let wrap_cap = resolve_wrap_width(
         args.wrap_width,
@@ -174,6 +175,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         skills: &skills,
         theme_config: &theme_config,
         session: Mutex::new(None),
+        process_turns: AtomicU64::new(0),
+        reset_limits,
         recent_history_tokens,
         cancel: signal::interrupt_flag(),
     };
@@ -251,6 +254,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .chain(editor_warning)
         .chain(quiet_warning)
+        .chain(reset_warnings)
         .chain(empty_warning)
         .for_each(warn);
     let prompt = ChatPrompt {

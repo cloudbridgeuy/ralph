@@ -180,6 +180,7 @@ mod tests {
                 cache_creation_input_tokens: cache.map(|c| c + 1),
             }),
             context_tokens: None,
+            terminal_reason: None,
         }
     }
 

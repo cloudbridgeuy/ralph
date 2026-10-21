@@ -11,8 +11,8 @@ use crate::subprocess::{Session, SpinnerSubprocessConfig, SubprocessError};
 use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
 use ralph_core::chat::{
-    build_agents_args, build_attachments_args, build_nap_args, turn_prompt, turn_system_prompt,
-    VIEW_LINES,
+    build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_due,
+    turn_prompt, turn_system_prompt, ResetLimits, VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
@@ -24,7 +24,7 @@ use std::borrow::Cow;
 use std::io::{self};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use termimad::MadSkin;
 
@@ -103,6 +103,8 @@ pub(super) struct Turn<'a> {
     pub(super) skills: &'a [ChatSkill],
     pub(super) theme_config: &'a ThemeConfig,
     pub(super) session: Mutex<Option<Session>>,
+    pub(super) process_turns: AtomicU64,
+    pub(super) reset_limits: ResetLimits,
     pub(super) recent_history_tokens: usize,
     pub(super) cancel: Arc<AtomicBool>,
 }
@@ -163,6 +165,12 @@ impl Turn<'_> {
             |delay| wait_unless(|| self.stopped(), delay),
         );
         *locked(&self.session) = session.filter(Session::is_alive);
+        let process_turns = if launch.is_some() {
+            1
+        } else {
+            self.process_turns.load(Ordering::SeqCst) + 1
+        };
+        self.process_turns.store(process_turns, Ordering::SeqCst);
         let end = turn_end(&TurnSignals {
             cancelled: self.cancel.swap(false, Ordering::SeqCst),
             terminated: signal::is_terminated(),
@@ -218,8 +226,10 @@ impl Turn<'_> {
             );
         }
         print_rule();
+        let costs = &result.stream_result.costs;
+        let blocked = hit_blocking_limit(costs);
         match extract_response_text(&result.stream_result.output_blocks) {
-            Some(reply) if result.exit_code == 0 => {
+            Some(reply) if result.exit_code == 0 && !blocked => {
                 if !logged_before_reply(trigger) {
                     self.append_logged(trigger, logged)?;
                 }
@@ -227,18 +237,25 @@ impl Turn<'_> {
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
                 warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
+                if reset_due(&self.reset_limits, process_turns, costs) {
+                    locked(&self.session).take();
+                }
                 Ok(TurnOutcome::Replied)
             }
             _ => {
                 locked(&self.session).take();
-                warn(format!("chat turn failed (exit {})", result.exit_code));
+                if blocked {
+                    warn("chat context is full (blocking_limit); restarting claude from the memory store on the next turn");
+                } else {
+                    warn(format!("chat turn failed (exit {})", result.exit_code));
+                }
                 Ok(TurnOutcome::Unanswered)
             }
         }
     }
 
     fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
-        let (mut entries, tree) = self.store.load_settled(|| {
+        let (mut entries, tree) = self.store.load_after_nap(|| {
             let mut spinner = Spinner::with_session_context(0, chat_session_info());
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
             spinner

@@ -198,6 +198,9 @@ pub struct ResultEvent {
     /// Final result text, if any.
     #[serde(default)]
     pub result: Option<String>,
+
+    #[serde(default)]
+    pub terminal_reason: Option<String>,
 }
 
 impl ResultEvent {

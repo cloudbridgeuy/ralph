@@ -428,6 +428,7 @@ fn test_extract_metadata_init_at_end() {
             session_id: None,
             num_turns: None,
             result: None,
+            terminal_reason: None,
         }),
         StreamEvent::System(SystemEvent {
             subtype: Some("init".to_string()),

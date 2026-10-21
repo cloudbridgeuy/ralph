@@ -212,6 +212,8 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `recent_history_tokens` | integer | `8192` | Token budget for the newest chat messages shown verbatim in the memory view; `0` turns it off |
 | `worker_check_secs` | integer | `60` | Seconds between worker checks while chat is open; `0` turns the check off |
 | `worker_quiet_secs` | integer | `300` | Seconds a running Cursor worker may send no ACP traffic before one inbox alert; must be above 0, else a warning and `300`. The 300 s default is an unverified guess, to be measured by GUZ-651. Runs on the worker check, so `worker_check_secs = 0` turns it off too |
+| `reset_turns` | integer | `40` | Turns one `claude` process serves before chat drops it and respawns from the store; must be above 0, else a warning and `40` |
+| `reset_tokens` | integer | `100000` | Context tokens of the last assistant message at which chat drops the process and respawns from the store; must be above 0, else a warning and `100000` |
 | `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
 | `wrap_width` | integer | unset | Column cap for chat replies and the prompt area; `0` or unset wraps at the terminal width |
 | `cell_output_limit` | integer | `200` | Lines of cell output sent to Claude: first half and last half kept; `0` sends all |

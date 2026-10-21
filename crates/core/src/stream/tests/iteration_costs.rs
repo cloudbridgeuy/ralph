@@ -26,6 +26,7 @@ fn test_result_event_extract_costs_full() {
         session_id: Some("session-123".to_string()),
         num_turns: Some(3),
         result: None,
+        terminal_reason: None,
     };
 
     let costs = event.extract_costs();
@@ -52,6 +53,7 @@ fn test_result_event_extract_costs_uses_alternative_cost_field() {
         session_id: None,
         num_turns: None,
         result: None,
+        terminal_reason: None,
     };
 
     let costs = event.extract_costs();
@@ -73,6 +75,7 @@ fn test_result_event_extract_costs_prefers_total_cost_usd() {
         session_id: None,
         num_turns: None,
         result: None,
+        terminal_reason: None,
     };
 
     let costs = event.extract_costs();
@@ -91,6 +94,7 @@ fn test_result_event_extract_costs_empty() {
         session_id: None,
         num_turns: None,
         result: None,
+        terminal_reason: None,
     };
 
     let costs = event.extract_costs();
@@ -126,6 +130,7 @@ fn test_extract_costs_from_events_with_result() {
             session_id: None,
             num_turns: None,
             result: None,
+            terminal_reason: None,
         }),
     ];
 
@@ -183,6 +188,7 @@ fn test_extract_costs_from_events_multiple_results_takes_first() {
             session_id: None,
             num_turns: None,
             result: None,
+            terminal_reason: None,
         }),
         StreamEvent::Result(ResultEvent {
             subtype: None,
@@ -194,6 +200,7 @@ fn test_extract_costs_from_events_multiple_results_takes_first() {
             session_id: None,
             num_turns: None,
             result: None,
+            terminal_reason: None,
         }),
     ];
 
@@ -216,6 +223,7 @@ fn test_extract_costs_from_events_or_default_with_result() {
         session_id: None,
         num_turns: None,
         result: None,
+        terminal_reason: None,
     })];
 
     let costs = extract_costs_from_events_or_default(&events);
@@ -256,6 +264,7 @@ fn test_iteration_costs_serialization_round_trip() {
             cache_creation_input_tokens: Some(12504),
         }),
         context_tokens: None,
+        terminal_reason: None,
     };
 
     let json = serde_json::to_string(&costs).unwrap();
@@ -270,6 +279,7 @@ fn test_iteration_costs_empty_fields_skip_serialization() {
         duration_ms: None,
         usage: None,
         context_tokens: None,
+        terminal_reason: None,
     };
 
     let json = serde_json::to_string(&costs).unwrap();
@@ -326,6 +336,7 @@ fn test_extract_costs_result_at_end() {
             session_id: None,
             num_turns: Some(5),
             result: None,
+            terminal_reason: None,
         }),
     ];
 
@@ -390,6 +401,7 @@ fn test_context_tokens_uses_last_assistant_usage_not_result_usage() {
         session_id: None,
         num_turns: None,
         result: None,
+        terminal_reason: None,
     }));
     let costs = extract_costs_from_events(&events).unwrap();
     assert_eq!(costs.context_tokens, Some(20));
