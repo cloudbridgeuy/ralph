@@ -78,6 +78,15 @@ fn add_writes(sum: &mut Vec<CacheWrite>, writes: &[CacheWrite]) {
     }
 }
 
+fn add_other(sum: &mut Vec<(String, u64)>, other: &[(String, u64)]) {
+    for (key, tokens) in other {
+        match sum.iter_mut().find(|(existing, _)| existing == key) {
+            Some((_, total)) => *total += tokens,
+            None => sum.push((key.clone(), *tokens)),
+        }
+    }
+}
+
 fn totals(rows: &[CallRow]) -> Totals {
     let mut usage = Usage {
         input_uncached: 0,
@@ -102,7 +111,12 @@ fn totals(rows: &[CallRow]) -> Totals {
                 usage.input_uncached += u.input_uncached;
                 usage.cache_read += u.cache_read;
                 usage.output += u.output;
+                usage.reasoning = match (usage.reasoning, u.reasoning) {
+                    (Some(sum), Some(v)) => Some(sum + v),
+                    (sum, v) => sum.or(v),
+                };
                 add_writes(&mut usage.cache_writes, &u.cache_writes);
+                add_other(&mut usage.other, &u.other);
                 equivalent = equivalent.zip(row.input_equivalent).map(|(sum, v)| sum + v);
             }
         }
@@ -273,6 +287,39 @@ mod tests {
                 "total 2 counted (1 partial, 1 missing) in=10 cr=90 w5m=100 out=6 hit=45% eq=120"
             ),
             "{table}"
+        );
+    }
+
+    #[test]
+    fn totals_sum_reasoning_when_any_row_reports_it() {
+        let mut with = usage(1, 0, 0, 1);
+        with.reasoning = Some(7);
+        let records = vec![
+            record(1, UsageOutcome::Reported(with), None),
+            record(2, UsageOutcome::Reported(usage(1, 0, 0, 1)), None),
+        ];
+        assert_eq!(ls_view(&records, false).totals.usage.reasoning, Some(7));
+        let none = vec![record(1, UsageOutcome::Reported(usage(1, 0, 0, 1)), None)];
+        assert_eq!(ls_view(&none, false).totals.usage.reasoning, None);
+    }
+
+    #[test]
+    fn totals_merge_other_keys_in_first_seen_order() {
+        let mut first = usage(1, 0, 0, 1);
+        first.other = vec![("a".into(), 1), ("b".into(), 2)];
+        let mut second = usage(1, 0, 0, 1);
+        second.other = vec![("c".into(), 5), ("a".into(), 4)];
+        let records = vec![
+            record(1, UsageOutcome::Reported(first), None),
+            record(2, UsageOutcome::Partial(second), None),
+        ];
+        assert_eq!(
+            ls_view(&records, false).totals.usage.other,
+            vec![
+                ("a".to_string(), 5),
+                ("b".to_string(), 2),
+                ("c".to_string(), 5)
+            ]
         );
     }
 
