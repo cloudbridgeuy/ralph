@@ -22,6 +22,12 @@ pub fn redact_headers(headers: &[(String, String)], extra: &[&str]) -> Vec<(Stri
         .collect()
 }
 
+pub fn redact_metadata_user_id(body: &mut serde_json::Value) {
+    if let Some(user_id) = body.pointer_mut("/metadata/user_id") {
+        *user_id = serde_json::Value::String(REDACTED.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

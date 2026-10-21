@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use super::headers::{header_value, stored_response_headers};
 use super::provider::{Provider, RequestFacts, RequestHead, ResponseUsage, ResponseView};
 use super::record::{CallRecord, RequestBody};
-use super::redact::redact_headers;
+use super::redact::{redact_headers, redact_metadata_user_id};
 use super::response::view;
 use super::sse::SseEvent;
 use super::usage::{input_equivalent, UsageOutcome};
@@ -71,7 +71,10 @@ fn summarize_response(
 
 fn parse_request(provider: &dyn Provider, body: &[u8]) -> (RequestFacts, RequestBody) {
     match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(json) => (provider.request_facts(&json), RequestBody::Json(json)),
+        Ok(mut json) => {
+            redact_metadata_user_id(&mut json);
+            (provider.request_facts(&json), RequestBody::Json(json))
+        }
         Err(_) => (
             RequestFacts {
                 model: None,
@@ -184,6 +187,23 @@ mod tests {
         assert!(record.complete);
         assert_eq!(record.error, None);
         assert!(record.response_events.is_none());
+    }
+
+    #[test]
+    fn metadata_user_id_redacted_in_facts_and_body() {
+        let user_id = r#"{\"device_id\":\"dev-1\",\"account_uuid\":\"acc-2\"}"#;
+        let body = format!(
+            r#"{{"model":"m","max_tokens":5,"metadata":{{"user_id":"{user_id}","other":"keep"}}}}"#
+        );
+        let record = build(inputs(body.as_bytes(), SSE));
+        assert_eq!(
+            record.facts.params["metadata"]["user_id"],
+            serde_json::json!(REDACTED)
+        );
+        assert_eq!(record.facts.params["metadata"]["other"], "keep");
+        let stored = serde_json::to_string(&record.request_body).unwrap();
+        assert!(!stored.contains("dev-1") && !stored.contains("acc-2"));
+        assert!(stored.contains("\"max_tokens\":5") && stored.contains("keep"));
     }
 
     #[test]
