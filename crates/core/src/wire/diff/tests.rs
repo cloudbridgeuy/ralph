@@ -557,3 +557,139 @@ fn table_names_verdict_and_escapes_excerpts() {
     };
     assert!(diff_table(&bare).ends_with("(cache_read -; agree threshold 90%)"));
 }
+
+#[test]
+fn moved_breakpoint_is_not_a_divergence() {
+    let a = call(
+        1,
+        0,
+        10,
+        vec![blk("h", Some("5m")), blk("q1", Some("5m"))],
+        usage(1, 0),
+    );
+    let b = call(
+        2,
+        20,
+        30,
+        vec![
+            blk("h", Some("5m")),
+            blk("q1", None),
+            blk("q2", None),
+            blk("q3", Some("5m")),
+        ],
+        usage(0, 100),
+    );
+    let view = view_of(&a, &b, &[]);
+    assert_eq!(view.shared_segments, 2);
+    assert_eq!(view.divergence, None);
+    assert!(view.removed.is_empty());
+    assert_eq!(view.added, ["msg[0].2 user/text", "msg[0].3 user/text"]);
+    assert_eq!(
+        view.explanation.verdict,
+        Verdict::PrefixChanged { label: None }
+    );
+    let table = diff_table(&view);
+    assert!(table.contains("b extends a"), "{table}");
+}
+
+#[test]
+fn marker_only_difference_does_not_count_for_pick_base() {
+    let target = || vec![blk("x1", None), blk("x2", None), blk("x3", None)];
+    let calls = vec![
+        call(
+            1,
+            0,
+            1,
+            vec![
+                blk("x1", Some("5m")),
+                blk("x2", Some("5m")),
+                blk("x3", None),
+            ],
+            usage(1, 0),
+        ),
+        call(2, 2, 3, vec![blk("x1", None), blk("z", None)], usage(1, 0)),
+        call(3, 4, 5, target(), usage(1, 0)),
+    ];
+    assert_eq!(
+        pick_base(&calls, 3, "s", &Anthropic).unwrap().unwrap().seq,
+        1
+    );
+}
+
+#[test]
+fn divergence_excerpts_exclude_the_marker() {
+    let head = || blk("h", Some("5m"));
+    let a = call(1, 0, 10, vec![head(), blk("AAA", Some("5m"))], usage(1, 0));
+    let b = call(2, 20, 30, vec![head(), blk("BBB", None)], usage(1, 0));
+    let div = view_of(&a, &b, &[]).divergence.unwrap();
+    assert!(!div.a_excerpt.contains("cache_control"), "{div:?}");
+    assert!(!div.b_excerpt.contains("cache_control"), "{div:?}");
+    assert!(div.a_excerpt.contains("AAA"));
+    assert!(div.b_excerpt.contains("BBB"));
+}
+
+#[test]
+fn b_prefix_of_a_and_identical_prompts_say_so() {
+    let head = || blk("h", Some("5m"));
+    let long = call(1, 0, 10, vec![head(), blk("more", None)], usage(1, 0));
+    let short = call(2, 20, 30, vec![head()], usage(0, 100));
+    let table = diff_table(&view_of(&long, &short, &[]));
+    assert!(
+        table.contains("cache served the shared prefix; b is a prefix of a"),
+        "{table}"
+    );
+    let same = call(3, 40, 50, vec![head()], usage(0, 100));
+    let table = diff_table(&view_of(&short, &same, &[]));
+    assert!(
+        table.contains("cache served the shared prefix; prompts are identical"),
+        "{table}"
+    );
+}
+
+#[test]
+fn check_pair_rejects_a_not_before_b() {
+    let (a, b) = pair("a", "b", usage(1, 0));
+    assert_eq!(check_pair(Some(&a), &b), Ok(()));
+    assert_eq!(check_pair(None, &b), Ok(()));
+    let message = check_pair(Some(&b), &a).unwrap_err().to_string();
+    assert_eq!(message, "call A must come before call B (got 2 -> 1)");
+    let message = check_pair(Some(&a), &a).unwrap_err().to_string();
+    assert_eq!(message, "call A must come before call B (got 1 -> 1)");
+}
+
+#[test]
+fn check_pair_rejects_non_inference() {
+    let (a, b) = pair("a", "b", usage(1, 0));
+    let mut other = b.clone();
+    other.kind = CallKind::Other;
+    assert_eq!(
+        check_pair(Some(&a), &other).unwrap_err().to_string(),
+        "call 2 is not an inference call"
+    );
+    let mut other_a = a.clone();
+    other_a.kind = CallKind::Other;
+    assert_eq!(
+        check_pair(Some(&other_a), &b).unwrap_err().to_string(),
+        "call 1 is not an inference call"
+    );
+}
+
+#[test]
+fn header_for_non_json_target_does_not_claim_a_pick() {
+    let (_, mut b) = pair("a", "b", usage(1, 0));
+    b.request_body = RequestBody::Base64(String::new());
+    let table = diff_table(&no_base(&b));
+    assert!(
+        table.starts_with("diff - -> 2 (request body is not JSON; no base picked)"),
+        "{table}"
+    );
+}
+
+#[test]
+fn non_json_a_keeps_b_cache_read() {
+    let (mut a, b) = pair("a", "b", usage(5, 40));
+    a.request_body = RequestBody::Base64(String::new());
+    let view = view_of(&a, &b, &[]);
+    assert_eq!(view.explanation.cache_read, Some(40));
+    assert_eq!(view.explanation.verdict, Verdict::NoSegments);
+}

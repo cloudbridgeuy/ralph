@@ -116,6 +116,41 @@ struct Pair<'a> {
     provider: &'a dyn Provider,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffError {
+    NotInOrder { a: u64, b: u64 },
+    NotInference { seq: u64 },
+}
+
+impl std::fmt::Display for DiffError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiffError::NotInOrder { a, b } => {
+                write!(f, "call A must come before call B (got {a} -> {b})")
+            }
+            DiffError::NotInference { seq } => write!(f, "call {seq} is not an inference call"),
+        }
+    }
+}
+
+impl std::error::Error for DiffError {}
+
+pub fn check_pair(a: Option<&CallRecord>, b: &CallRecord) -> Result<(), DiffError> {
+    if b.kind != CallKind::Inference {
+        return Err(DiffError::NotInference { seq: b.seq });
+    }
+    let Some(a) = a else {
+        return Ok(());
+    };
+    if a.kind != CallKind::Inference {
+        return Err(DiffError::NotInference { seq: a.seq });
+    }
+    if a.seq >= b.seq {
+        return Err(DiffError::NotInOrder { a: a.seq, b: b.seq });
+    }
+    Ok(())
+}
+
 fn segments_of(call: &CallRecord, provider: &dyn Provider) -> Option<Vec<PromptSegment>> {
     match &call.request_body {
         RequestBody::Json(body) => Some(provider.segments(body)),
@@ -126,7 +161,7 @@ fn segments_of(call: &CallRecord, provider: &dyn Provider) -> Option<Vec<PromptS
 fn shared_prefix(a: &[PromptSegment], b: &[PromptSegment]) -> usize {
     a.iter()
         .zip(b)
-        .take_while(|(left, right)| left.text == right.text)
+        .take_while(|(left, right)| left.content == right.content)
         .count()
 }
 
@@ -216,18 +251,18 @@ fn excerpt(text: &str, offset: usize) -> String {
 fn divergence(shared: usize, a: &[PromptSegment], b: &[PromptSegment]) -> Option<Divergence> {
     let (left, right) = (a.get(shared)?, b.get(shared)?);
     let offset = left
-        .text
+        .content
         .bytes()
-        .zip(right.text.bytes())
+        .zip(right.content.bytes())
         .position(|(x, y)| x != y)
-        .unwrap_or_else(|| left.text.len().min(right.text.len()));
+        .unwrap_or_else(|| left.content.len().min(right.content.len()));
     Some(Divergence {
         index: shared,
         label_a: left.label.clone(),
         label_b: right.label.clone(),
         offset,
-        a_excerpt: excerpt(&left.text, offset),
-        b_excerpt: excerpt(&right.text, offset),
+        a_excerpt: excerpt(&left.content, offset),
+        b_excerpt: excerpt(&right.content, offset),
     })
 }
 
@@ -301,7 +336,7 @@ fn anchor_tokens<'a>(
                 && segments[..=index]
                     .iter()
                     .zip(&b_segments[..=index])
-                    .all(|(left, right)| left.text == right.text);
+                    .all(|(left, right)| left.content == right.content);
             let anchored = identical && last_breakpoint(&segments) == Some(index);
             anchored.then(|| {
                 let written: u64 = usage.cache_writes.iter().map(|write| write.tokens).sum();
@@ -449,12 +484,12 @@ fn empty_view(input: &DiffInput, verdict: Verdict, cache_read: Option<u64>) -> D
 }
 
 pub fn diff_view(input: &DiffInput) -> DiffView {
+    let cache_read = counted_usage(input.b).map(|usage| usage.cache_read);
     let Some(a) = input.a else {
         let verdict = match segments_of(input.b, input.provider) {
             Some(_) => Verdict::NoBase,
             None => Verdict::NoSegments,
         };
-        let cache_read = counted_usage(input.b).map(|usage| usage.cache_read);
         return empty_view(input, verdict, cache_read);
     };
     let pair = Pair {
@@ -468,7 +503,7 @@ pub fn diff_view(input: &DiffInput) -> DiffView {
     let base = DiffView {
         facts,
         headers,
-        ..empty_view(input, Verdict::NoSegments, None)
+        ..empty_view(input, Verdict::NoSegments, cache_read)
     };
     let (Some(a_segments), Some(b_segments)) = (
         segments_of(a, input.provider),
@@ -496,7 +531,9 @@ fn value_text(value: &Option<Value>) -> String {
         .map_or_else(|| "-".to_string(), Value::to_string)
 }
 
-fn verdict_text(verdict: &Verdict, cache_read: Option<u64>) -> String {
+fn verdict_text(view: &DiffView) -> String {
+    let verdict = &view.explanation.verdict;
+    let cache_read = view.explanation.cache_read;
     let model = |value: &Option<String>| value.clone().unwrap_or_else(|| "-".to_string());
     match verdict {
         Verdict::NoSegments => "request body is not JSON on one side; no segments".to_string(),
@@ -512,7 +549,12 @@ fn verdict_text(verdict: &Verdict, cache_read: Option<u64>) -> String {
             format!("cache served the shared prefix; prompts diverge at {label}")
         }
         Verdict::PrefixChanged { label: None } => {
-            "cache served the shared prefix; b extends a".to_string()
+            let relation = match (view.added.is_empty(), view.removed.is_empty()) {
+                (false, _) => "b extends a",
+                (true, false) => "b is a prefix of a",
+                (true, true) => "prompts are identical",
+            };
+            format!("cache served the shared prefix; {relation}")
         }
         Verdict::ModelChanged { a, b } => {
             format!("model changed {} -> {}", model(a), model(b))
@@ -535,10 +577,11 @@ fn verdict_text(verdict: &Verdict, cache_read: Option<u64>) -> String {
 }
 
 pub fn diff_table(view: &DiffView) -> String {
-    let picked = match (view.explanation.verdict.clone(), view.base_picked) {
-        (Verdict::NoBase, _) => " (no earlier call shares a prompt prefix)",
-        (_, true) => " (base picked by longest shared prefix)",
-        (_, false) => "",
+    let picked = match (view.a, &view.explanation.verdict, view.base_picked) {
+        (None, Verdict::NoBase, _) => " (no earlier call shares a prompt prefix)",
+        (None, _, _) => " (request body is not JSON; no base picked)",
+        (Some(_), _, true) => " (base picked by longest shared prefix)",
+        (Some(_), _, false) => "",
     };
     let a = view
         .a
@@ -591,7 +634,7 @@ pub fn diff_table(view: &DiffView) -> String {
     };
     lines.push(format!(
         "cache: {} ({estimate}cache_read {cache_read}; agree threshold {:.0}%)",
-        verdict_text(&explanation.verdict, explanation.cache_read),
+        verdict_text(view),
         CACHE_AGREE_RATIO * 100.0
     ));
     lines.join("\n")

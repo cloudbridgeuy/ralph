@@ -53,6 +53,7 @@ pub struct PromptSegment {
     pub label: String,
     pub source: SegmentSource,
     pub text: String,
+    pub content: String,
     pub breakpoint: Option<CacheTier>,
 }
 

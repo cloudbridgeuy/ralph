@@ -278,11 +278,20 @@ fn breakpoint(block: &Value) -> Option<CacheTier> {
     }
 }
 
+fn without_marker(block: &Value) -> String {
+    let mut bare = block.clone();
+    if let Some(object) = bare.as_object_mut() {
+        object.remove("cache_control");
+    }
+    bare.to_string()
+}
+
 fn segment(source: SegmentSource, label: String, block: &Value) -> PromptSegment {
     PromptSegment {
         label,
         source,
         text: block.to_string(),
+        content: without_marker(block),
         breakpoint: breakpoint(block),
     }
 }
@@ -696,6 +705,7 @@ mod tests {
             label: label.into(),
             source,
             text: text.into(),
+            content: text.into(),
             breakpoint,
         }
     }
@@ -721,6 +731,18 @@ mod tests {
             [Some(ONE_HOUR), None, Some(FIVE_MIN), None, Some(FIVE_MIN)]
         );
         assert_eq!(segments[1].text, body["system"][0].to_string());
+    }
+
+    #[test]
+    fn content_omits_the_cache_control_marker_but_text_keeps_it() {
+        let bare = json!({"type": "text", "text": "a"});
+        let marked = json!({"type": "text", "text": "a", "cache_control": {"type": "ephemeral"}});
+        let body = json!({"system": [marked.clone()]});
+        let segment = &Anthropic.segments(&body)[0];
+        assert!(segment.text.contains("cache_control"));
+        assert!(!segment.content.contains("cache_control"));
+        assert_eq!(segment.content, bare.to_string());
+        assert_eq!(segment.text, marked.to_string());
     }
 
     #[test]

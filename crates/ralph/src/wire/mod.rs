@@ -6,7 +6,7 @@ use crate::cli::{
 };
 use crate::config::AppConfig;
 use chrono::Utc;
-use ralph_core::wire::diff::{diff_table, diff_view, pick_base, DiffInput};
+use ralph_core::wire::diff::{check_pair, diff_table, diff_view, pick_base, DiffInput};
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::read::{find_call, pick_session, Calls};
 use ralph_core::wire::record::{SessionRecord, SCHEMA_VERSION};
@@ -102,6 +102,7 @@ fn diff(args: WireDiffArgs) -> Result<(), Box<dyn Error>> {
             find_call(&calls.records, args.a, &id)?,
         ),
     };
+    check_pair(a, b)?;
     let view = diff_view(&DiffInput {
         a,
         b,
