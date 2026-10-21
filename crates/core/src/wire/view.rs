@@ -176,10 +176,10 @@ pub fn sessions_table(rows: &[SessionRow]) -> String {
     rows.iter()
         .map(|row| {
             format!(
-                "{} {} {:?} {} calls={} inference={}",
+                "{} {} {} {} calls={} inference={}",
                 row.id,
                 row.started_at.format("%Y-%m-%d %H:%M:%S"),
-                row.provider,
+                row.provider.as_str(),
                 row.upstream,
                 row.calls,
                 row.inference_calls
@@ -337,7 +337,7 @@ mod tests {
         assert_eq!((row.calls, row.inference_calls), (2, 1));
         assert_eq!(
             sessions_table(&[row]),
-            "id1 2026-10-21 16:24:29 Anthropic http://u calls=2 inference=1"
+            "id1 2026-10-21 16:24:29 anthropic http://u calls=2 inference=1"
         );
         assert_eq!(sessions_table(&[]), "no sessions");
     }
