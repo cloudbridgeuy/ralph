@@ -21,8 +21,8 @@ use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
-    marker_state, ready_path, reduce, sent_path, unreported_path, waiting_path, HarnessId,
-    HeadlessState, Liveness, Report, HANDOFF_POLL, READY_DIR,
+    marker_state, ready_path, rearm, reduce, sent_path, unreported_path, waiting_path, HarnessId,
+    Report, HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -135,10 +135,10 @@ impl Monitor {
             let gone = read(gone_path(&self.store_dir, &worker.id));
             let blocked = blocked_path(&self.store_dir, &worker.id).exists();
             let (phase, events) = marker_state(activity.as_deref(), gone.as_deref(), blocked);
-            let mut current = state.heartbeats.remove(&worker.id).unwrap_or_default();
-            if gone.is_none() && matches!(current.liveness, Liveness::Dead { .. }) {
-                current = HeadlessState::default();
-            }
+            let mut current = rearm(
+                state.heartbeats.remove(&worker.id).unwrap_or_default(),
+                gone.is_some(),
+            );
             current.phase = phase;
             for event in &events {
                 current = reduce(&current, event).0;
