@@ -55,58 +55,6 @@ pub fn view_stats(lines: &[String]) -> ViewStats {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-pub struct PromptBytes {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_bytes: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub frozen_bytes: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tail_bytes: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message_bytes: Option<usize>,
-    pub prompt_bytes: usize,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agents_bytes: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_bytes: Option<usize>,
-}
-
-pub struct TurnParts<'a> {
-    pub system: &'a str,
-    pub older: &'a [String],
-    pub tail: &'a [String],
-    pub message: &'a str,
-    pub prompt: &'a str,
-    pub args: &'a [String],
-}
-
-pub fn turn_prompt_bytes(parts: &TurnParts) -> PromptBytes {
-    PromptBytes {
-        system_bytes: Some(parts.system.len()),
-        frozen_bytes: Some(parts.older.join("\n").len()),
-        tail_bytes: Some(parts.tail.join("\n").len()),
-        message_bytes: Some(parts.message.len()),
-        prompt_bytes: parts.prompt.len(),
-        agents_bytes: parts
-            .args
-            .windows(2)
-            .find(|pair| pair[0] == "--agents")
-            .map(|pair| pair[1].len()),
-        input_bytes: None,
-    }
-}
-
-pub fn nap_prompt_bytes(prompt: &str) -> PromptBytes {
-    PromptBytes {
-        prompt_bytes: prompt.len(),
-        input_bytes: prompt
-            .find(super::nap::NAP_INPUT_MARKER)
-            .map(|start| prompt.len() - start),
-        ..PromptBytes::default()
-    }
-}
-
 #[derive(Debug, Serialize)]
 pub struct UsageRecord {
     pub at: String,
@@ -122,21 +70,12 @@ pub struct UsageRecord {
     pub context_tokens: Option<u64>,
     #[serde(flatten)]
     pub view: Option<ViewStats>,
-    #[serde(flatten)]
-    pub prompt: Option<PromptBytes>,
 }
 
 impl UsageRecord {
     pub fn with_view(self, view: ViewStats) -> UsageRecord {
         UsageRecord {
             view: Some(view),
-            ..self
-        }
-    }
-
-    pub fn with_prompt(self, prompt: PromptBytes) -> UsageRecord {
-        UsageRecord {
-            prompt: Some(prompt),
             ..self
         }
     }
@@ -155,7 +94,6 @@ pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Optio
         duration_ms: costs.duration_ms,
         context_tokens: costs.context_tokens,
         view: None,
-        prompt: None,
     })
 }
 
@@ -318,65 +256,6 @@ mod tests {
 
     fn line(record: UsageRecord) -> Value {
         serde_json::from_str(&encode_usage(&record).unwrap()).unwrap()
-    }
-
-    #[test]
-    fn turn_record_logs_prompt_parts_and_agents_only_when_present() {
-        let older = vec!["ab".to_string(), "cd".to_string()];
-        let tail = vec!["xyz".to_string()];
-        let mut parts = TurnParts {
-            system: "sys",
-            older: &older,
-            tail: &tail,
-            message: "hello",
-            prompt: "the whole prompt",
-            args: &["--agents".to_string(), "{}".to_string()],
-        };
-        let kind = CallKind::Turn {
-            trigger: Trigger::User,
-        };
-        let with = line(
-            usage_record(kind, "t".into(), &costs(None))
-                .unwrap()
-                .with_prompt(turn_prompt_bytes(&parts)),
-        );
-        let got: Vec<_> = [
-            "system_bytes",
-            "frozen_bytes",
-            "tail_bytes",
-            "message_bytes",
-            "prompt_bytes",
-            "agents_bytes",
-        ]
-        .iter()
-        .map(|key| with[key].as_u64())
-        .collect();
-        assert_eq!(got, [Some(3), Some(5), Some(3), Some(5), Some(16), Some(2)]);
-        assert!(with.get("input_bytes").is_none());
-        parts.args = &[];
-        let without = line(
-            usage_record(kind, "t".into(), &costs(None))
-                .unwrap()
-                .with_prompt(turn_prompt_bytes(&parts)),
-        );
-        assert!(without.get("agents_bytes").is_none());
-    }
-
-    #[test]
-    fn nap_record_logs_input_bytes_from_the_marker_and_no_turn_keys() {
-        let prompt = format!(
-            "intro\n\n{}\nbody\n</input>",
-            super::super::nap::NAP_INPUT_MARKER
-        );
-        let value = line(
-            usage_record(CallKind::Nap, "t".into(), &costs(None))
-                .unwrap()
-                .with_prompt(nap_prompt_bytes(&prompt)),
-        );
-        assert_eq!(value["prompt_bytes"], prompt.len());
-        assert_eq!(value["input_bytes"], prompt.len() - "intro\n\n".len());
-        assert!(value.get("system_bytes").is_none() && value.get("agents_bytes").is_none());
-        assert!(nap_prompt_bytes("no marker").input_bytes.is_none());
     }
 
     #[test]

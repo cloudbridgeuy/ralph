@@ -36,8 +36,8 @@ pub use tree::{
     cover, estimate_tokens, pending, split_view, tail_lines, verbatim_start, ViewSplit,
 };
 pub use usage::{
-    encode_usage, nap_prompt_bytes, reply_entries, trigger_entries, turn_prompt_bytes,
-    usage_record, view_stats, CallKind, PromptBytes, Trigger, TurnParts, UsageRecord,
+    encode_usage, reply_entries, trigger_entries, usage_record, view_stats, CallKind, Trigger,
+    UsageRecord,
 };
 
 pub const SUMMARY_BYTES: usize = 512;

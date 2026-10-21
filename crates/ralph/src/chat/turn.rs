@@ -16,8 +16,8 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    reply_entries, split_view, trigger_entries, turn_prompt_bytes, usage_record, view_stats,
-    CallKind, Trigger, TurnParts, ViewSplit,
+    reply_entries, split_view, trigger_entries, usage_record, view_stats, CallKind, Trigger,
+    ViewSplit,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use std::borrow::Cow;
@@ -89,8 +89,6 @@ impl Drop for PendingTurn<'_> {
 struct Launch {
     config: SpinnerSubprocessConfig,
     split: ViewSplit,
-    system: String,
-    args: Vec<String>,
     first_prompt: String,
 }
 
@@ -203,22 +201,13 @@ impl Turn<'_> {
             let Some(spawned) = &launch else {
                 return record;
             };
-            record
-                .with_view(view_stats(
-                    &[
-                        spawned.split.older.as_slice(),
-                        spawned.split.tail.as_slice(),
-                    ]
-                    .concat(),
-                ))
-                .with_prompt(turn_prompt_bytes(&TurnParts {
-                    system: &spawned.system,
-                    older: &spawned.split.older,
-                    tail: &spawned.split.tail,
-                    message: &sent,
-                    prompt: &spawned.first_prompt,
-                    args: &spawned.args,
-                }))
+            record.with_view(view_stats(
+                &[
+                    spawned.split.older.as_slice(),
+                    spawned.split.tail.as_slice(),
+                ]
+                .concat(),
+            ))
         }) {
             warn_if_err(
                 self.store.append_usage(&record),
@@ -291,8 +280,6 @@ impl Turn<'_> {
         Ok(Launch {
             config,
             split,
-            system,
-            args,
             first_prompt,
         })
     }
