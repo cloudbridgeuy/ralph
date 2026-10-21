@@ -87,7 +87,7 @@ RALPH_THEME="Monokai Extended" ralph ask 'your prompt'
 
 ## ralph wire
 
-Run a local recording proxy, or inspect recorded sessions with `ls` and `sessions`. Details: [ralph wire](context/ralph-wire.md).
+Run a local recording proxy, or inspect recorded sessions with `ls`, `show`, and `sessions`. Details: [ralph wire](context/ralph-wire.md).
 
 ```bash
 ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--responses]
@@ -103,15 +103,17 @@ ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--re
 
 ```bash
 ralph wire ls [--session ID] [--dir PATH] [--all] [--json]
+ralph wire show N [--session ID] [--dir PATH] [--json]
 ralph wire sessions [--dir PATH] [--json]
 ```
 
 | Flag | Applies to | Description |
 |------|------------|-------------|
-| `--session` | `ls` | Session id (default: the latest) |
-| `--dir` | `ls`, `sessions` | Directory holding session folders (default `<tmp>/ralph-wire`) |
+| `--session` | `ls`, `show` | Session id (default: the latest) |
+| `--dir` | `ls`, `show`, `sessions` | Directory holding session folders (default `<tmp>/ralph-wire`) |
 | `--all` | `ls` | Also show non-inference calls |
-| `--json` | `ls`, `sessions` | Print JSON instead of a table |
+| `N` | `show` | Call number (`seq`) from `ls` |
+| `--json` | `ls`, `show`, `sessions` | Print JSON instead of a table |
 
 ---
 

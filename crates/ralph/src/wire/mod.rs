@@ -1,14 +1,16 @@
 mod proxy;
 mod store;
 
-use crate::cli::{WireArgs, WireCommand, WireLsArgs, WireProvider, WireSessionsArgs};
+use crate::cli::{WireArgs, WireCommand, WireLsArgs, WireProvider, WireSessionsArgs, WireShowArgs};
 use crate::config::AppConfig;
 use chrono::Utc;
 use ralph_core::wire::provider::{provider, ProviderId};
-use ralph_core::wire::read::pick_session;
-use ralph_core::wire::record::{SessionRecord, SCHEMA_VERSION};
+use ralph_core::wire::read::{find_call, pick_session};
+use ralph_core::wire::record::{CallRecord, SessionRecord, SCHEMA_VERSION};
 use ralph_core::wire::session::session_id;
-use ralph_core::wire::view::{ls_table, ls_view, session_row, sessions_table, Pricing};
+use ralph_core::wire::view::{
+    ls_table, ls_view, session_row, sessions_table, show_table, show_view, Pricing,
+};
 use std::collections::hash_map::RandomState;
 use std::error::Error;
 use std::hash::{BuildHasher, Hasher};
@@ -36,12 +38,20 @@ fn root_or_default(dir: Option<PathBuf>) -> PathBuf {
     dir.unwrap_or_else(|| std::env::temp_dir().join("ralph-wire"))
 }
 
-fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
-    let root = root_or_default(args.dir);
+fn load_session(
+    dir: Option<PathBuf>,
+    requested: Option<String>,
+) -> Result<(String, SessionRecord, Vec<CallRecord>), Box<dyn Error>> {
+    let root = root_or_default(dir);
     let ids =
         store::list_sessions(&root).map_err(|error| format!("{}: {error}", root.display()))?;
-    let id = pick_session(ids, args.session, &root.display().to_string())?;
+    let id = pick_session(ids, requested, &root.display().to_string())?;
     let (session, calls) = store::read_session(&root, &id)?;
+    Ok((id, session, calls))
+}
+
+fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
+    let (id, session, calls) = load_session(args.dir, args.session)?;
     let config = AppConfig::load()?;
     let provider = provider(session.provider);
     let pricing = Pricing {
@@ -54,6 +64,19 @@ fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
     } else {
         println!("session: {id}");
         println!("{}", ls_table(&view));
+    }
+    Ok(())
+}
+
+fn show(args: WireShowArgs) -> Result<(), Box<dyn Error>> {
+    let (id, session, calls) = load_session(args.dir, args.session)?;
+    let call = find_call(&calls, args.n, &id)?;
+    let view = show_view(call, provider(session.provider).as_ref());
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        println!("session: {id}");
+        println!("{}", show_table(&view));
     }
     Ok(())
 }
@@ -81,6 +104,7 @@ fn sessions(args: WireSessionsArgs) -> Result<(), Box<dyn Error>> {
 pub fn run(args: WireArgs) -> Result<(), Box<dyn Error>> {
     match args.command {
         Some(WireCommand::Ls(ls_args)) => ls(ls_args),
+        Some(WireCommand::Show(show_args)) => show(show_args),
         Some(WireCommand::Sessions(sessions_args)) => sessions(sessions_args),
         None => proxy(args),
     }

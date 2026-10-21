@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::price::PriceTable;
 use super::sse::SseEvent;
-use super::usage::{BillingRates, UsageOutcome};
+use super::usage::{BillingRates, CacheTier, UsageOutcome};
 
 pub mod anthropic;
 
@@ -40,6 +40,13 @@ pub struct RequestFacts {
     pub params: serde_json::Map<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptSegment {
+    pub label: String,
+    pub len: usize,
+    pub breakpoint: Option<CacheTier>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResponseView {
     Json(serde_json::Value),
@@ -60,6 +67,7 @@ pub trait Provider: Send + Sync {
     fn secret_headers(&self) -> &'static [&'static str];
     fn classify(&self, call: &RequestHead) -> CallKind;
     fn request_facts(&self, body: &serde_json::Value) -> RequestFacts;
+    fn segments(&self, body: &serde_json::Value) -> Vec<PromptSegment>;
     fn usage(&self, response: &ResponseView) -> ResponseUsage;
     fn rates(&self, model: &str) -> BillingRates;
     fn prices(&self) -> PriceTable;
@@ -80,7 +88,22 @@ pub(crate) struct ContractCase {
 }
 
 #[cfg(test)]
-pub(crate) fn assert_provider_contract(provider: &dyn Provider, cases: &[ContractCase]) {
+fn cache_order_rank(label: &str) -> u8 {
+    if label.starts_with("tools[") {
+        0
+    } else if label.starts_with("system") {
+        1
+    } else {
+        2
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn assert_provider_contract(
+    provider: &dyn Provider,
+    cases: &[ContractCase],
+    request: &serde_json::Value,
+) {
     use super::redact::{redact_headers, REDACTED};
     for case in cases {
         assert_eq!(
@@ -103,6 +126,20 @@ pub(crate) fn assert_provider_contract(provider: &dyn Provider, cases: &[Contrac
         let out = redact_headers(&headers, provider.secret_headers());
         assert_eq!(out[0].1, REDACTED, "header {name}");
     }
+    let segments = provider.segments(request);
+    assert!(!segments.is_empty(), "no prompt segments");
+    let ranks: Vec<u8> = segments
+        .iter()
+        .map(|segment| cache_order_rank(&segment.label))
+        .collect();
+    assert!(
+        ranks.windows(2).all(|pair| pair[0] <= pair[1]),
+        "segments not in tools, system, messages order"
+    );
+    assert!(
+        segments.iter().any(|segment| segment.breakpoint.is_some()),
+        "no cache breakpoint detected"
+    );
 }
 
 #[cfg(test)]

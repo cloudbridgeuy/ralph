@@ -125,6 +125,9 @@ pub enum WireCommand {
     #[command(about = "Show one row per inference call of a session, plus totals.")]
     Ls(WireLsArgs),
 
+    #[command(about = "Show the prompt segments, parameters, and usage of one recorded call.")]
+    Show(WireShowArgs),
+
     #[command(about = "List recorded sessions.")]
     Sessions(WireSessionsArgs),
 }
@@ -147,6 +150,29 @@ pub struct WireLsArgs {
 
     #[arg(long, help = "Also show non-inference calls")]
     pub all: bool,
+
+    #[arg(long, help = "Print JSON instead of a table")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WireShowArgs {
+    #[arg(value_name = "N", help = "Call number (seq) as printed by `wire ls`")]
+    pub n: u64,
+
+    #[arg(
+        long,
+        value_name = "ID",
+        help = "Session to show (default: the latest)"
+    )]
+    pub session: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Directory holding session folders (default: <tmp>/ralph-wire)"
+    )]
+    pub dir: Option<PathBuf>,
 
     #[arg(long, help = "Print JSON instead of a table")]
     pub json: bool,

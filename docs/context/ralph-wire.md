@@ -27,6 +27,10 @@ Prompts and responses are stored in plaintext. Auth headers (`authorization`, `x
 
 `ralph wire ls` prints one row per inference call of a session (the latest unless `--session ID`), in the live-row format, then a total line. `--all` also lists non-inference calls as `other METHOD PATH`; they never count in totals. `ralph wire sessions` lists sessions under the root with call counts. `--dir` is the root in all three modes. `--json` prints `{rows, totals, prices_as_of}` for `ls` and an array for `sessions`; JSON rows carry the full usage outcome, including reasoning and other counters.
 
+`ralph wire show N` prints one recorded call: its prompt segments, request model and parameters, and usage. `N` is the call's `seq` as shown by `ls` (not its line position). It takes `--session ID`, `--dir PATH`, and `--json`. Segments follow the provider's cache order: tools, then system, then messages. Each row has a label (`tools[0] Read`, `system[1]`, `msg[2].0 user/text`), `bytes`, `cumulative` (bytes through the end of that segment), and a cache `breakpoint` where the block sets `cache_control` (`5m` or `1h`). `--json` prints `{seq, body_is_json, segments: [{label, bytes, cumulative, breakpoint}], facts: {model, params}, usage, raw_usage}`; `breakpoint` is null or a cache tier (`{"kind": "ttl", "seconds": 300}`). A request body that was not JSON has no segments and `body_is_json` is false.
+
+Segment sizes and cumulative offsets are approximate. Raw request bytes are not recorded, so each size is the length of the block re-encoded from the parsed request JSON; key order, whitespace, and escaping may differ from the bytes sent. Provider usage totals are ground truth.
+
 - `usage=missing` rows and `usage=partial` rows are marked, never shown as zeros.
 - Totals sum reported and partial usage only. The total line shows how many calls were counted, partial, and missing.
 - Total `eq` is `-` (null in JSON) when no call was counted or any counted call is unrated.
