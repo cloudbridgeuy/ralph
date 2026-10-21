@@ -76,6 +76,22 @@ pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
     ids
 }
 
+pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
+    let mut ids: Vec<String> = request_ids(store_dir, CURSOR_OWNER_DIR)
+        .into_iter()
+        .filter(|id| group_alive(store_dir, id))
+        .collect();
+    ids.sort();
+    ids
+}
+
+fn group_alive(store_dir: &Path, id: &str) -> bool {
+    fs::read_to_string(HandoffFiles::cursor(store_dir, id).owner)
+        .ok()
+        .and_then(|text| OwnerRecord::parse(&text))
+        .is_some_and(|record| alive_since(record.group, &record.group_start))
+}
+
 pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
     let files = HandoffFiles::cursor(store_dir, id);
     let text = fs::read_to_string(&files.owner).ok()?;
