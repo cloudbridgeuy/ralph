@@ -80,11 +80,10 @@ fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
 fn show(args: WireShowArgs) -> Result<(), Box<dyn Error>> {
     let (id, session, calls) = load_session(args.dir, args.session)?;
     let call = find_call(&calls.records, args.n, &id)?;
-    let view = show_view(call, provider(session.provider).as_ref());
+    let view = show_view(call, &id, provider(session.provider).as_ref());
     if args.json {
         println!("{}", serde_json::to_string_pretty(&view)?);
     } else {
-        println!("session: {id}");
         println!("{}", show_table(&view));
     }
     Ok(())

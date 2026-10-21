@@ -40,9 +40,18 @@ pub struct RequestFacts {
     pub params: serde_json::Map<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SegmentSource {
+    Tools,
+    System,
+    Messages,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptSegment {
     pub label: String,
+    pub source: SegmentSource,
     pub text: String,
     pub breakpoint: Option<CacheTier>,
 }
@@ -90,17 +99,6 @@ pub(crate) struct ContractCase {
 }
 
 #[cfg(test)]
-fn cache_order_rank(label: &str) -> u8 {
-    if label.starts_with("tools[") {
-        0
-    } else if label.starts_with("system") {
-        1
-    } else {
-        2
-    }
-}
-
-#[cfg(test)]
 pub(crate) fn assert_provider_contract(
     provider: &dyn Provider,
     cases: &[ContractCase],
@@ -130,12 +128,10 @@ pub(crate) fn assert_provider_contract(
     }
     let segments = provider.segments(request);
     assert!(!segments.is_empty(), "no prompt segments");
-    let ranks: Vec<u8> = segments
-        .iter()
-        .map(|segment| cache_order_rank(&segment.label))
-        .collect();
     assert!(
-        ranks.windows(2).all(|pair| pair[0] <= pair[1]),
+        segments
+            .windows(2)
+            .all(|pair| pair[0].source <= pair[1].source),
         "segments not in tools, system, messages order"
     );
     assert!(

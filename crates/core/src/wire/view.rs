@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use super::live::{format_row, hit_fraction, usage_columns, usd_suffix};
 use super::price::{prompt_tokens, resolve_price, usd, PriceOverride, PriceTable};
-use super::provider::{CallKind, Provider, ProviderId, RequestFacts};
+use super::provider::{CallKind, Provider, ProviderId, RequestFacts, SegmentSource};
 use super::read::{Calls, ReadError};
 use super::record::{CallRecord, RequestBody, SessionRecord};
 use super::usage::{CacheTier, CacheWrite, Usage, UsageOutcome};
@@ -267,6 +267,7 @@ pub fn sessions_table(rows: &[SessionRow]) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SegmentRow {
     pub label: String,
+    pub source: SegmentSource,
     pub bytes: usize,
     pub cumulative: usize,
     pub breakpoint: Option<CacheTier>,
@@ -274,7 +275,12 @@ pub struct SegmentRow {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ShowView {
+    pub session: String,
     pub seq: u64,
+    pub kind: CallKind,
+    pub method: String,
+    pub path: String,
+    pub status: Option<u16>,
     pub body_is_json: bool,
     pub segments: Vec<SegmentRow>,
     pub facts: RequestFacts,
@@ -282,7 +288,7 @@ pub struct ShowView {
     pub raw_usage: Option<serde_json::Value>,
 }
 
-pub fn show_view(record: &CallRecord, provider: &dyn Provider) -> ShowView {
+pub fn show_view(record: &CallRecord, session: &str, provider: &dyn Provider) -> ShowView {
     let (body_is_json, prompt) = match &record.request_body {
         RequestBody::Json(body) => (true, provider.segments(body)),
         RequestBody::Base64(_) => (false, Vec::new()),
@@ -294,6 +300,7 @@ pub fn show_view(record: &CallRecord, provider: &dyn Provider) -> ShowView {
             cumulative += segment.text.len();
             SegmentRow {
                 label: segment.label,
+                source: segment.source,
                 bytes: segment.text.len(),
                 cumulative,
                 breakpoint: segment.breakpoint,
@@ -301,7 +308,12 @@ pub fn show_view(record: &CallRecord, provider: &dyn Provider) -> ShowView {
         })
         .collect();
     ShowView {
+        session: session.to_string(),
         seq: record.seq,
+        kind: record.kind,
+        method: record.method.clone(),
+        path: record.path.clone(),
+        status: record.status,
         body_is_json,
         segments,
         facts: record.facts.clone(),
@@ -324,8 +336,22 @@ fn json_text<T: Serialize>(value: &T) -> String {
 }
 
 pub fn show_table(view: &ShowView) -> String {
-    let mut lines = vec![format!("call {}", view.seq)];
-    if view.body_is_json {
+    let other = if view.kind == CallKind::Other {
+        "other "
+    } else {
+        ""
+    };
+    let status = view
+        .status
+        .map_or_else(|| "-".to_string(), |s| s.to_string());
+    let mut lines = vec![
+        format!("session: {}", view.session),
+        format!("call {}", view.seq),
+        format!("{other}{} {} status {status}", view.method, view.path),
+    ];
+    if view.body_is_json && view.segments.is_empty() {
+        lines.push("no segments".to_string());
+    } else if view.body_is_json {
         lines.push("segments (bytes approximate, re-encoded from parsed JSON):".to_string());
         lines.extend(view.segments.iter().map(|row| {
             let breakpoint = row.breakpoint.map_or(String::new(), |tier| {
@@ -668,7 +694,7 @@ mod tests {
 
     #[test]
     fn show_view_accumulates_bytes_and_keeps_breakpoints() {
-        let view = show_view(&json_call(), &Anthropic);
+        let view = show_view(&json_call(), "s1", &Anthropic);
         assert_eq!(view.seq, 7);
         let rows: Vec<(&str, usize, usize, Option<CacheTier>)> = view
             .segments
@@ -694,8 +720,11 @@ mod tests {
 
     #[test]
     fn show_table_lists_segments_facts_and_usage() {
-        let table = show_table(&show_view(&json_call(), &Anthropic));
-        assert!(table.starts_with("call 7\n"), "{table}");
+        let table = show_table(&show_view(&json_call(), "s1", &Anthropic));
+        assert!(
+            table.starts_with("session: s1\ncall 7\nPOST /v1/messages status 200\n"),
+            "{table}"
+        );
         assert!(table.contains("  tools[0] Read bytes="), "{table}");
         assert!(table.contains(" breakpoint=1h\n"), "{table}");
         assert!(
@@ -712,9 +741,44 @@ mod tests {
 
     #[test]
     fn base64_body_has_no_segments_and_says_so() {
-        let view = show_view(&record(1, UsageOutcome::Missing, None), &Anthropic);
+        let view = show_view(&record(1, UsageOutcome::Missing, None), "s1", &Anthropic);
         assert!(!view.body_is_json);
         assert!(view.segments.is_empty());
         assert!(show_table(&view).contains("request body is not JSON"));
+    }
+
+    #[test]
+    fn show_table_names_other_call_method_path_and_status() {
+        let mut call = other(3);
+        call.status = None;
+        let table = show_table(&show_view(&call, "s1", &Anthropic));
+        assert_eq!(
+            table,
+            "session: s1\ncall 3\nother GET /v1/models status -\n\
+             request body is not JSON; no segments\n\
+             model: m\nparams: {}\nusage: {\"status\":\"missing\"}\nraw_usage: -"
+        );
+    }
+
+    #[test]
+    fn show_view_json_carries_session_and_call_fields() {
+        let json = serde_json::to_value(show_view(&json_call(), "s1", &Anthropic)).unwrap();
+        assert_eq!(json["session"], "s1");
+        assert_eq!(json["seq"], 7);
+        assert_eq!(json["kind"], "inference");
+        assert_eq!(json["method"], "POST");
+        assert_eq!(json["path"], "/v1/messages");
+        assert_eq!(json["status"], 200);
+        assert_eq!(json["segments"][0]["source"], "tools");
+        assert_eq!(json["segments"][1]["source"], "system");
+    }
+
+    #[test]
+    fn json_body_without_segments_says_no_segments() {
+        let mut call = record(2, UsageOutcome::Missing, None);
+        call.request_body = RequestBody::Json(json!({}));
+        let table = show_table(&show_view(&call, "s1", &Anthropic));
+        assert!(table.contains("status 200\nno segments\nmodel:"), "{table}");
+        assert!(!table.contains("segments (bytes"), "{table}");
     }
 }
