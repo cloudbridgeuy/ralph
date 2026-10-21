@@ -82,7 +82,11 @@ pub enum WireProvider {
 }
 
 #[derive(clap::Args, Debug, Clone)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct WireArgs {
+    #[command(subcommand)]
+    pub command: Option<WireCommand>,
+
     #[arg(
         long,
         value_enum,
@@ -114,6 +118,51 @@ pub struct WireArgs {
 
     #[arg(long, help = "Also store the decoded SSE events of each response")]
     pub responses: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum WireCommand {
+    #[command(about = "Show one row per inference call of a session, plus totals.")]
+    Ls(WireLsArgs),
+
+    #[command(about = "List recorded sessions.")]
+    Sessions(WireSessionsArgs),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WireLsArgs {
+    #[arg(
+        long,
+        value_name = "ID",
+        help = "Session to show (default: the latest)"
+    )]
+    pub session: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Directory holding session folders (default: <tmp>/ralph-wire)"
+    )]
+    pub dir: Option<PathBuf>,
+
+    #[arg(long, help = "Also show non-inference calls")]
+    pub all: bool,
+
+    #[arg(long, help = "Print JSON instead of a table")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WireSessionsArgs {
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Directory holding session folders (default: <tmp>/ralph-wire)"
+    )]
+    pub dir: Option<PathBuf>,
+
+    #[arg(long, help = "Print JSON instead of a table")]
+    pub json: bool,
 }
 
 #[derive(clap::Args, Debug)]

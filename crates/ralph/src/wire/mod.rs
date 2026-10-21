@@ -1,14 +1,17 @@
 mod proxy;
 mod store;
 
-use crate::cli::{WireArgs, WireProvider};
+use crate::cli::{WireArgs, WireCommand, WireLsArgs, WireProvider, WireSessionsArgs};
 use chrono::Utc;
 use ralph_core::wire::provider::{provider, ProviderId};
+use ralph_core::wire::read::pick_session;
 use ralph_core::wire::record::{SessionRecord, SCHEMA_VERSION};
 use ralph_core::wire::session::session_id;
+use ralph_core::wire::view::{ls_table, ls_view, session_row, sessions_table};
 use std::collections::hash_map::RandomState;
 use std::error::Error;
 use std::hash::{BuildHasher, Hasher};
+use std::io;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -28,7 +31,55 @@ fn random_suffix() -> u32 {
     hasher.finish() as u32
 }
 
+fn root_or_default(dir: Option<PathBuf>) -> PathBuf {
+    dir.unwrap_or_else(|| std::env::temp_dir().join("ralph-wire"))
+}
+
+fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
+    let root = root_or_default(args.dir);
+    let ids =
+        store::list_sessions(&root).map_err(|error| format!("{}: {error}", root.display()))?;
+    let id = pick_session(ids, args.session, &root.display().to_string())?;
+    let (_, calls) = store::read_session(&root, &id)?;
+    let view = ls_view(&calls, args.all);
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        println!("session: {id}");
+        println!("{}", ls_table(&view));
+    }
+    Ok(())
+}
+
+fn sessions(args: WireSessionsArgs) -> Result<(), Box<dyn Error>> {
+    let root = root_or_default(args.dir);
+    let rows = store::list_sessions(&root)
+        .or_else(|error| match error.kind() {
+            io::ErrorKind::NotFound => Ok(vec![]),
+            _ => Err(error),
+        })?
+        .iter()
+        .map(|id| {
+            store::read_session(&root, id).map(|(session, calls)| session_row(id, &session, &calls))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        println!("{}", sessions_table(&rows));
+    }
+    Ok(())
+}
+
 pub fn run(args: WireArgs) -> Result<(), Box<dyn Error>> {
+    match args.command {
+        Some(WireCommand::Ls(ls_args)) => ls(ls_args),
+        Some(WireCommand::Sessions(sessions_args)) => sessions(sessions_args),
+        None => proxy(args),
+    }
+}
+
+fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
     let provider = provider(args.provider.into());
     let upstream = args
         .upstream
@@ -36,9 +87,7 @@ pub fn run(args: WireArgs) -> Result<(), Box<dyn Error>> {
     let server = tiny_http::Server::http(("127.0.0.1", args.port)).map_err(|e| e.to_string())?;
     let listen = server.server_addr().to_string();
     let started_at = Utc::now();
-    let root = args
-        .dir
-        .unwrap_or_else(|| std::env::temp_dir().join("ralph-wire"));
+    let root = root_or_default(args.dir);
     let dir: PathBuf = root.join(session_id(started_at, random_suffix()));
     let calls = store::open_session(
         &dir,

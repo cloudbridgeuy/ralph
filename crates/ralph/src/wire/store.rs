@@ -1,5 +1,7 @@
 use ralph_core::wire::live::live_row;
+use ralph_core::wire::read::{parse_calls, parse_session};
 use ralph_core::wire::record::{CallRecord, SessionRecord};
+use std::error::Error;
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -38,4 +40,36 @@ pub fn write_loop(records: Receiver<CallRecord>, mut file: File) {
             println!("{row}");
         }
     }
+}
+
+pub fn list_sessions(root: &Path) -> io::Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.path().join("session.json").is_file() {
+            if let Some(id) = entry.file_name().to_str() {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+pub fn read_session(
+    root: &Path,
+    id: &str,
+) -> Result<(SessionRecord, Vec<CallRecord>), Box<dyn Error>> {
+    let dir = root.join(id);
+    let meta_path = dir.join("session.json");
+    let session = parse_session(
+        &meta_path.display().to_string(),
+        &std::fs::read_to_string(&meta_path)?,
+    )?;
+    let calls_path = dir.join("calls.jsonl");
+    let calls = parse_calls(
+        &calls_path.display().to_string(),
+        &std::fs::read_to_string(&calls_path)?,
+    )?;
+    Ok((session, calls))
 }

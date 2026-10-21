@@ -87,7 +87,7 @@ RALPH_THEME="Monokai Extended" ralph ask 'your prompt'
 
 ## ralph wire
 
-Run a local recording proxy. Details: [ralph wire](context/ralph-wire.md).
+Run a local recording proxy, or inspect recorded sessions with `ls` and `sessions`. Details: [ralph wire](context/ralph-wire.md).
 
 ```bash
 ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--responses]
@@ -100,6 +100,18 @@ ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--re
 | `--upstream` | provider default | Upstream base URL |
 | `--dir` | `<tmp>/ralph-wire` | Directory holding session folders |
 | `--responses` | off | Also store decoded SSE events per call |
+
+```bash
+ralph wire ls [--session ID] [--dir PATH] [--all] [--json]
+ralph wire sessions [--dir PATH] [--json]
+```
+
+| Flag | Applies to | Description |
+|------|------------|-------------|
+| `--session` | `ls` | Session id (default: the latest) |
+| `--dir` | `ls`, `sessions` | Directory holding session folders (default `<tmp>/ralph-wire`) |
+| `--all` | `ls` | Also show non-inference calls |
+| `--json` | `ls`, `sessions` | Print JSON instead of a table |
 
 ---
 
