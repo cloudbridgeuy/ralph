@@ -3,6 +3,7 @@ pub mod decode;
 pub mod headers;
 pub mod live;
 pub mod provider;
+pub mod read;
 pub mod record;
 pub mod redact;
 pub mod response;

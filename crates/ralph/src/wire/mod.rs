@@ -4,6 +4,7 @@ mod store;
 use crate::cli::{WireArgs, WireCommand, WireLsArgs, WireProvider, WireSessionsArgs};
 use chrono::Utc;
 use ralph_core::wire::provider::{provider, ProviderId};
+use ralph_core::wire::read::pick_session;
 use ralph_core::wire::record::{SessionRecord, SCHEMA_VERSION};
 use ralph_core::wire::session::session_id;
 use ralph_core::wire::view::{ls_table, ls_view, session_row, sessions_table};
@@ -38,14 +39,7 @@ fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
     let root = root_or_default(args.dir);
     let ids =
         store::list_sessions(&root).map_err(|error| format!("{}: {error}", root.display()))?;
-    let id = match args.session {
-        Some(id) if ids.contains(&id) => id,
-        Some(id) => return Err(format!("no session {id} in {}", root.display()).into()),
-        None => ids
-            .into_iter()
-            .max()
-            .ok_or_else(|| format!("no sessions in {}", root.display()))?,
-    };
+    let id = pick_session(ids, args.session, &root.display().to_string())?;
     let (_, calls) = store::read_session(&root, &id)?;
     let view = ls_view(&calls, args.all);
     if args.json {

@@ -1,7 +1,9 @@
 use ralph_core::wire::live::live_row;
+use ralph_core::wire::read::{parse_calls, parse_session};
 use ralph_core::wire::record::{CallRecord, SessionRecord};
+use std::error::Error;
 use std::fs::{DirBuilder, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::mpsc::Receiver;
@@ -54,18 +56,20 @@ pub fn list_sessions(root: &Path) -> io::Result<Vec<String>> {
     Ok(ids)
 }
 
-pub fn read_session(root: &Path, id: &str) -> io::Result<(SessionRecord, Vec<CallRecord>)> {
+pub fn read_session(
+    root: &Path,
+    id: &str,
+) -> Result<(SessionRecord, Vec<CallRecord>), Box<dyn Error>> {
     let dir = root.join(id);
     let meta_path = dir.join("session.json");
-    let session = serde_json::from_slice(&std::fs::read(&meta_path)?)
-        .map_err(|e| io::Error::other(format!("{}: {e}", meta_path.display())))?;
+    let session = parse_session(
+        &meta_path.display().to_string(),
+        &std::fs::read_to_string(&meta_path)?,
+    )?;
     let calls_path = dir.join("calls.jsonl");
-    let mut calls = Vec::new();
-    for (index, line) in BufReader::new(File::open(&calls_path)?).lines().enumerate() {
-        let call = serde_json::from_str(&line?).map_err(|e| {
-            io::Error::other(format!("{}:{}: {e}", calls_path.display(), index + 1))
-        })?;
-        calls.push(call);
-    }
+    let calls = parse_calls(
+        &calls_path.display().to_string(),
+        &std::fs::read_to_string(&calls_path)?,
+    )?;
     Ok((session, calls))
 }
