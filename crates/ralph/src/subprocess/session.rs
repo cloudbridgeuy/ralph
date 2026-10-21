@@ -1,13 +1,12 @@
-use super::kill_process_group;
 use super::spinner::{spawn_piped, Pump, Readers, SpinnerSubprocessConfig, Step};
-use super::timeout::try_wait_child;
 use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
+use super::{exited_unreaped, signal_group};
 use crate::signal;
 use ralph_core::stream::{interrupt_line, user_line};
 use std::io::{self, Write};
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{Child, ChildStdin, ExitStatus, Stdio};
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -22,11 +21,25 @@ fn leftover_is_stale(lines: &[String]) -> bool {
         .any(|line| line.contains("\"type\":\"result\""))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChildState {
+    Running,
+    ExitedUnreaped,
+    Reaped,
+}
+
+/// After the child is reaped its pid may belong to another process, so the
+/// group must not be signalled again.
+fn group_signal_safe(state: ChildState) -> bool {
+    state != ChildState::Reaped
+}
+
 pub struct Session {
     child: Child,
     stdin: Option<ChildStdin>,
     readers: Readers,
     alive: bool,
+    reaped: bool,
     config: SpinnerSubprocessConfig,
 }
 
@@ -40,6 +53,7 @@ impl Session {
             stdin,
             readers,
             alive: true,
+            reaped: false,
             config: config.clone(),
         })
     }
@@ -53,22 +67,39 @@ impl Session {
         stdin.flush()
     }
 
+    fn state(&self) -> ChildState {
+        if self.reaped {
+            ChildState::Reaped
+        } else if exited_unreaped(&self.child) {
+            ChildState::ExitedUnreaped
+        } else {
+            ChildState::Running
+        }
+    }
+
+    /// Kills the process group while the child still holds its pid, then
+    /// reaps the child. Later calls only return the cached status.
+    fn reap(&mut self) -> Option<ExitStatus> {
+        if group_signal_safe(self.state()) {
+            signal_group(&self.child);
+        }
+        self.reaped = true;
+        self.child.wait().ok()
+    }
+
     fn close(&mut self) -> i32 {
         self.stdin.take();
         let deadline = Instant::now() + EXIT_GRACE;
-        let exit_code = loop {
-            match self.child.try_wait() {
-                Ok(Some(status)) => break status.code().unwrap_or(EXIT_CODE_KILLED),
-                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
-                _ => break EXIT_CODE_KILLED,
-            }
-        };
-        kill_process_group(&mut self.child);
-        exit_code
+        while self.state() == ChildState::Running && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(50));
+        }
+        self.reap()
+            .and_then(|status| status.code())
+            .unwrap_or(EXIT_CODE_KILLED)
     }
 
     pub fn is_alive(&mut self) -> bool {
-        self.alive = self.alive && matches!(self.child.try_wait(), Ok(None));
+        self.alive = self.alive && self.state() == ChildState::Running;
         self.alive
     }
 
@@ -89,9 +120,12 @@ impl Session {
             .map_err(|_| SubprocessError::Stale)?;
         let mut interrupt: Option<(Instant, bool)> = None;
         let outcome = loop {
-            if let Some(status) = try_wait_child(&mut self.child)? {
+            if self.state() != ChildState::Running {
                 self.alive = false;
-                let exit_code = status.code().ok_or(SubprocessError::Signaled)?;
+                let exit_code = self
+                    .reap()
+                    .and_then(|status| status.code())
+                    .ok_or(SubprocessError::Signaled)?;
                 break pump.finish(&self.readers, exit_code, true);
             }
             let cancelled = self
@@ -104,7 +138,7 @@ impl Session {
                 interrupt = Some((Instant::now(), cancelled));
             }
             if interrupt.is_some_and(|(sent, _)| sent.elapsed() >= INTERRUPT_GRACE) {
-                kill_process_group(&mut self.child);
+                self.reap();
                 self.alive = false;
                 break pump.finish(&self.readers, EXIT_CODE_KILLED, false);
             }
@@ -156,6 +190,21 @@ mod tests {
 
     fn lines(raw: &[&str]) -> Vec<String> {
         raw.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn running_child_group_is_safe_to_signal() {
+        assert!(group_signal_safe(ChildState::Running));
+    }
+
+    #[test]
+    fn exited_unreaped_child_group_is_safe_to_signal() {
+        assert!(group_signal_safe(ChildState::ExitedUnreaped));
+    }
+
+    #[test]
+    fn reaped_child_group_is_not_signalled_again() {
+        assert!(!group_signal_safe(ChildState::Reaped));
     }
 
     #[test]

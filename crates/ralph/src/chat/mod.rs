@@ -174,7 +174,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin_args: &plugin_args,
         skills: &skills,
         theme_config: &theme_config,
-        session: Mutex::new(None),
+        session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset_limits,
         recent_history_tokens,
@@ -235,6 +235,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let headless = watch_headless(monitor.store_dir.clone());
     watch_input(
         Arc::clone(&at_prompt),
+        Arc::clone(&turn.session),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );

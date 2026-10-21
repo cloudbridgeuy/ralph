@@ -8,7 +8,7 @@ use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
-    Session, SpinnerSubprocessConfig, StreamingSubprocessResult, SubprocessError,
+    spawn_detached, Session, SpinnerSubprocessConfig, StreamingSubprocessResult, SubprocessError,
 };
 use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
@@ -25,7 +25,7 @@ use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use std::borrow::Cow;
 use std::io::{self};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use termimad::MadSkin;
@@ -49,13 +49,7 @@ pub(super) fn print_rule_after(blocks: &[OutputBlock]) {
 }
 
 pub(super) fn spawn_nap(store: &Path) -> io::Result<()> {
-    Command::new(std::env::current_exe()?)
-        .args(build_nap_args(store))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(drop)
+    spawn_detached(Command::new(std::env::current_exe()?).args(build_nap_args(store)))
 }
 
 pub(super) fn chat_session_info() -> SpinnerSessionInfo {
@@ -102,7 +96,7 @@ pub(super) struct Turn<'a> {
     pub(super) plugin_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
     pub(super) theme_config: &'a ThemeConfig,
-    pub(super) session: Mutex<Option<Session>>,
+    pub(super) session: Arc<Mutex<Option<Session>>>,
     pub(super) process_turns: AtomicU64,
     pub(super) reset_limits: ResetLimits,
     pub(super) recent_history_tokens: usize,

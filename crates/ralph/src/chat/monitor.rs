@@ -3,6 +3,7 @@ use crate::chat::memory::Store;
 use crate::cursor_owner::now_secs;
 use crate::inbox_alert;
 use crate::signal;
+use crate::subprocess::Session;
 use crate::warn::{warn, warn_if_err};
 use crate::watch_requests;
 use crate::watches::{locked, Watches};
@@ -339,6 +340,7 @@ pub(super) fn stdin_hung_up() -> bool {
 
 pub(super) fn watch_input(
     at_prompt: Arc<AtomicBool>,
+    session: Arc<Mutex<Option<Session>>>,
     plugin_dir: Option<PathBuf>,
     exit: ExitCleanup,
 ) {
@@ -351,6 +353,11 @@ pub(super) fn watch_input(
             stdin_hung_up: stdin_hung_up(),
             at_prompt: at_prompt.load(Ordering::SeqCst),
         }) {
+            // No turn runs at the prompt, so the lock is free; `exit` skips
+            // destructors, so close the claude process group here.
+            if let Ok(mut live) = session.try_lock() {
+                live.take();
+            }
             if let Some(dir) = &plugin_dir {
                 std::fs::remove_dir_all(dir).ok();
             }

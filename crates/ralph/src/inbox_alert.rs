@@ -1,3 +1,4 @@
+use crate::subprocess::spawn_detached;
 use crate::warn::warn_if_err;
 use ralph_core::inbox_alert::{
     osc9, parse_pane, tmux_focus, Alert, Focus, CLIENT_FORMAT, NOTIFICATION_TITLE, PANE_FORMAT,
@@ -34,15 +35,6 @@ pub fn focus() -> Focus {
     tmux_focus(pane.as_ref(), clients.as_deref())
 }
 
-fn spawn_quiet(command: &mut Command) -> io::Result<()> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(drop)
-}
-
 fn write_terminal(text: &str) -> io::Result<()> {
     let mut stdout = io::stdout();
     stdout.write_all(text.as_bytes())?;
@@ -51,7 +43,7 @@ fn write_terminal(text: &str) -> io::Result<()> {
 
 fn play_sound() -> io::Result<()> {
     if cfg!(target_os = "macos") {
-        spawn_quiet(Command::new("afplay").arg(SOUND_FILE))
+        spawn_detached(Command::new("afplay").arg(SOUND_FILE))
     } else {
         write_terminal(BELL)
     }
@@ -59,7 +51,7 @@ fn play_sound() -> io::Result<()> {
 
 fn notify(body: &str) -> io::Result<()> {
     if cfg!(target_os = "macos") {
-        spawn_quiet(Command::new("osascript").args([
+        spawn_detached(Command::new("osascript").args([
             "-e",
             "on run argv",
             "-e",
