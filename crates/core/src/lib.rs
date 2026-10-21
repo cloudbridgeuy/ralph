@@ -44,5 +44,6 @@ pub mod watch;
 pub mod watch_command;
 pub mod watch_request;
 pub mod watch_store;
+pub mod wire;
 pub mod worker;
 pub mod worker_check;

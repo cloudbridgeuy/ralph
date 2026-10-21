@@ -29,6 +29,7 @@ debug = 0
 # Agent Client Protocol (cursor worker harness)
 agent-client-protocol = "=3.3.0"
 blocking = "1"
+flate2 = "1"
 futures = "0.3"
 
 # Output formatting
