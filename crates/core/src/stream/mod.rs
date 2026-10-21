@@ -48,7 +48,9 @@ pub use input::{interrupt_line, user_line};
 pub use metadata::{
     extract_metadata_from_events, extract_metadata_from_events_or_default, IterationMetadata,
 };
-pub use parsing::{parse_stream_line, parse_stream_output, ParsedLine, StreamParser};
+pub use parsing::{
+    parse_stream_line, parse_stream_output, result_is_error, ParsedLine, StreamParser,
+};
 
 // Re-export chunk types for convenience
 pub use crate::chunk::{parse_chunks, parse_chunks_with_heuristics, ChunkType, ParsedChunk};

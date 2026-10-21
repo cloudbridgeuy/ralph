@@ -166,3 +166,123 @@ where
         self.lines.next().map(|line| parse_stream_line(&line))
     }
 }
+
+fn first_json_object(line: &str) -> Option<serde_json::Value> {
+    let start = line.find('{')?;
+    serde_json::Deserializer::from_str(&line[start..])
+        .into_iter::<serde_json::Value>()
+        .next()?
+        .ok()
+}
+
+/// Returns `Some(is_error)` when the line's top-level `type` is `result`, and
+/// `None` for any other line. A `type` nested inside the event (for example a
+/// tool input) does not count. The first JSON object from the first `{` is
+/// read, so surrounding whitespace, a prefix, or trailing text do not hide a
+/// result.
+pub fn result_is_error(line: &str) -> Option<bool> {
+    let value = first_json_object(line)?;
+    if value.get("type")?.as_str()? != "result" {
+        return None;
+    }
+    Some(
+        value
+            .get("is_error")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    )
+}
+
+#[cfg(test)]
+mod result_is_error_tests {
+    use super::result_is_error;
+
+    #[test]
+    fn plain_result_is_not_error() {
+        assert_eq!(
+            result_is_error(r#"{"type":"result","subtype":"success","is_error":false}"#),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn missing_is_error_is_false() {
+        assert_eq!(result_is_error(r#"{"type":"result"}"#), Some(false));
+    }
+
+    #[test]
+    fn non_bool_is_error_is_false() {
+        assert_eq!(
+            result_is_error(r#"{"type":"result","is_error":"yes"}"#),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn error_result_is_error() {
+        assert_eq!(
+            result_is_error(r#"{"type":"result","is_error":true}"#),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn nested_tool_use_input_is_not_a_result() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"x","input":{"type":"result"}}]}}"#;
+        assert_eq!(result_is_error(line), None);
+    }
+
+    #[test]
+    fn tool_result_text_is_not_a_result() {
+        let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"{\"type\":\"result\"}"}]}}"#;
+        assert_eq!(result_is_error(line), None);
+    }
+
+    #[test]
+    fn other_types_are_not_results() {
+        assert_eq!(
+            result_is_error(r#"{"type":"system","subtype":"init"}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn invalid_or_empty_is_none() {
+        assert_eq!(result_is_error("not json"), None);
+        assert_eq!(result_is_error(""), None);
+        assert_eq!(result_is_error("{"), None);
+    }
+
+    #[test]
+    fn trailing_whitespace_is_tolerated() {
+        assert_eq!(
+            result_is_error("{\"type\":\"result\",\"is_error\":true}\r"),
+            Some(true)
+        );
+        assert_eq!(result_is_error("  {\"type\":\"result\"}   "), Some(false));
+    }
+
+    #[test]
+    fn junk_prefix_is_tolerated() {
+        assert_eq!(
+            result_is_error(r#"warn: {"type":"result","is_error":true}"#),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn trailing_junk_is_tolerated() {
+        assert_eq!(
+            result_is_error(r#"{"type":"result","is_error":true} garbage"#),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn type_need_not_be_first_key() {
+        assert_eq!(
+            result_is_error(r#"{"is_error":true,"subtype":"x","type":"result"}"#),
+            Some(true)
+        );
+    }
+}

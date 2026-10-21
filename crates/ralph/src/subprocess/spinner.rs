@@ -16,6 +16,7 @@ use crate::highlight::ThemeConfig;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
+use ralph_core::stream::result_is_error;
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
@@ -33,6 +34,8 @@ use std::time::{Duration, Instant};
 pub struct SpinnerSubprocessConfig {
     /// The command string to execute.
     pub command: String,
+    /// Time limit for one-shot runs. `Session` ignores it: chat turns have no
+    /// time limit.
     pub timeout_secs: Option<u64>,
     /// Configuration for syntax highlighting theme.
     pub theme_config: ThemeConfig,
@@ -65,13 +68,6 @@ fn drain_stderr(readers: &Readers, captured: &mut String, show: bool) {
         captured.push_str(&line);
         captured.push('\n');
     }
-}
-
-fn result_is_error(line: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(line)
-        .ok()
-        .and_then(|value| value.get("is_error")?.as_bool())
-        .unwrap_or(false)
 }
 
 /// Invokes a command with stream processing, theme configuration, and spinner display.
@@ -245,10 +241,8 @@ impl Pump {
                     let _ = io::stdout().flush();
                     self.last_output_time = Instant::now();
                 }
-                if line.contains("\"type\":\"result\"") {
-                    return Ok(Step::Result {
-                        is_error: result_is_error(&line),
-                    });
+                if let Some(is_error) = result_is_error(&line) {
+                    return Ok(Step::Result { is_error });
                 }
                 Ok(Step::Pending)
             }

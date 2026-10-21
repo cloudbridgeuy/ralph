@@ -4,7 +4,7 @@ use super::types::{
 };
 use super::{exited_unreaped, signal_group};
 use crate::signal;
-use ralph_core::stream::{interrupt_line, user_line};
+use ralph_core::stream::{interrupt_line, result_is_error, user_line};
 use std::io::{self, Write};
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
 use std::sync::atomic::Ordering;
@@ -16,9 +16,21 @@ const EXIT_GRACE: Duration = Duration::from_secs(3);
 const INTERRUPT_REQUEST_ID: &str = "int-1";
 
 fn leftover_is_stale(lines: &[String]) -> bool {
-    lines
-        .iter()
-        .any(|line| line.contains("\"type\":\"result\""))
+    lines.iter().any(|line| result_is_error(line).is_some())
+}
+
+fn drain_after_exit(
+    deadline: Instant,
+    mut step: impl FnMut() -> Result<Step, SubprocessError>,
+) -> Result<Option<bool>, SubprocessError> {
+    while Instant::now() < deadline {
+        match step()? {
+            Step::Pending => {}
+            Step::Result { is_error } => return Ok(Some(is_error)),
+            Step::Closed => return Ok(None),
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,10 +134,16 @@ impl Session {
         let outcome = loop {
             if self.state() != ChildState::Running {
                 self.alive = false;
-                let exit_code = self
-                    .reap()
-                    .and_then(|status| status.code())
-                    .ok_or(SubprocessError::Signaled)?;
+                let status = self.reap();
+                let drained = drain_after_exit(Instant::now() + EXIT_GRACE, || {
+                    pump.step(&self.readers, true)
+                })?;
+                let exit_code = match drained {
+                    Some(is_error) => i32::from(is_error),
+                    None => status
+                        .and_then(|status| status.code())
+                        .ok_or(SubprocessError::Signaled)?,
+                };
                 break pump.finish(&self.readers, exit_code, true);
             }
             let cancelled = self
@@ -226,5 +244,61 @@ mod tests {
             r#"{"type":"system","subtype":"status"}"#,
             r#"{"type":"result","subtype":"success","is_error":false}"#,
         ])));
+    }
+
+    #[test]
+    fn leftover_nested_result_text_is_not_stale() {
+        assert!(!leftover_is_stale(&lines(&[
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","input":{"type":"result"}}]}}"#,
+        ])));
+    }
+
+    fn scripted(
+        steps: Vec<Result<Step, SubprocessError>>,
+    ) -> impl FnMut() -> Result<Step, SubprocessError> {
+        let mut queue = std::collections::VecDeque::from(steps);
+        move || queue.pop_front().unwrap_or(Ok(Step::Closed))
+    }
+
+    fn far() -> Instant {
+        Instant::now() + Duration::from_secs(60)
+    }
+
+    #[test]
+    fn drain_returns_result_after_pending() {
+        let step = scripted(vec![
+            Ok(Step::Pending),
+            Ok(Step::Pending),
+            Ok(Step::Result { is_error: true }),
+        ]);
+        assert_eq!(drain_after_exit(far(), step).unwrap(), Some(true));
+    }
+
+    #[test]
+    fn drain_returns_none_when_closed() {
+        let step = scripted(vec![Ok(Step::Pending), Ok(Step::Closed)]);
+        assert_eq!(drain_after_exit(far(), step).unwrap(), None);
+    }
+
+    #[test]
+    fn drain_past_deadline_never_steps() {
+        let mut calls = 0;
+        let outcome = drain_after_exit(Instant::now(), || {
+            calls += 1;
+            Ok(Step::Pending)
+        });
+        assert_eq!(outcome.unwrap(), None);
+        assert_eq!(calls, 0);
+    }
+
+    #[test]
+    fn drain_propagates_errors() {
+        let step = scripted(vec![Err(SubprocessError::OutputCaptureFailed(
+            "boom".to_string(),
+        ))]);
+        assert!(matches!(
+            drain_after_exit(far(), step),
+            Err(SubprocessError::OutputCaptureFailed(_))
+        ));
     }
 }
