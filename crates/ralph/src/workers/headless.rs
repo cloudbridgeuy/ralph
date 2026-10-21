@@ -63,10 +63,6 @@ impl Heartbeat {
         write_file(&self.gone, &render_gone(scope, reason)).ok();
     }
 
-    pub(crate) fn revive(&self) {
-        fs::remove_file(&self.gone).ok();
-    }
-
     fn write(&self, at: u64, running: Option<bool>) {
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         let next = ActivityMark {

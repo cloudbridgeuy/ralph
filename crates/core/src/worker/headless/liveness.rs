@@ -93,6 +93,24 @@ pub fn liveness(
     (next, alert)
 }
 
+pub fn gone_acknowledged(state: &HeadlessState) -> bool {
+    state.alerted
+        && matches!(
+            state.liveness,
+            Liveness::Dead {
+                scope: Scope::Server(_),
+                ..
+            }
+        )
+}
+
+pub fn rearm(state: HeadlessState, gone: bool) -> HeadlessState {
+    if !gone && matches!(state.liveness, Liveness::Dead { .. }) {
+        return HeadlessState::default();
+    }
+    state
+}
+
 pub fn marker_state(
     activity: Option<&str>,
     gone: Option<&str>,
@@ -175,6 +193,74 @@ mod tests {
         assert_eq!(liveness(&again, 7, 300).1, None);
         let revived = feed(&again, WorkerEvent::Activity { at: 9 });
         assert_eq!(revived.last_activity, 5);
+    }
+
+    fn dead_server_state(alerted: bool) -> HeadlessState {
+        HeadlessState {
+            liveness: Liveness::Dead {
+                scope: Scope::Server("pid 7".into()),
+                reason: "exited".into(),
+            },
+            alerted,
+            ..HeadlessState::default()
+        }
+    }
+
+    #[test]
+    fn only_alerted_server_death_is_acknowledged() {
+        assert!(gone_acknowledged(&dead_server_state(true)));
+        assert!(!gone_acknowledged(&dead_server_state(false)));
+        let worker_dead = feed(
+            &state(Phase::Running, 5),
+            WorkerEvent::ProcessGone {
+                scope: Scope::Worker,
+                reason: "x".into(),
+            },
+        );
+        let (worker_dead, _) = liveness(&worker_dead, 6, 300);
+        assert!(!gone_acknowledged(&worker_dead));
+        let (quiet, _) = liveness(&state(Phase::Running, 100), 400, 300);
+        assert!(!gone_acknowledged(&quiet));
+        assert!(!gone_acknowledged(&state(Phase::Idle, 1)));
+    }
+
+    #[test]
+    fn rearm_resets_only_dead_state_without_a_marker() {
+        let dead = dead_server_state(true);
+        assert_eq!(rearm(dead.clone(), false), HeadlessState::default());
+        assert_eq!(rearm(dead.clone(), true), dead);
+        let live = state(Phase::Running, 5);
+        assert_eq!(rearm(live.clone(), false), live);
+        let (quiet, _) = liveness(&state(Phase::Running, 100), 400, 300);
+        assert_eq!(rearm(quiet.clone(), false), quiet);
+    }
+
+    #[test]
+    fn repeated_server_death_alerts_each_time_after_acknowledgement() {
+        let text = "scope server pid 7\ngone";
+        let tick = |previous: HeadlessState, gone: Option<&str>| {
+            let (phase, events) = marker_state(Some("7 idle"), gone, false);
+            let mut current = HeadlessState {
+                phase,
+                ..rearm(previous, gone.is_some())
+            };
+            for event in &events {
+                current = feed(&current, event.clone());
+            }
+            liveness(&current, 8, 300)
+        };
+        let (first, alert) = tick(HeadlessState::default(), Some(text));
+        assert!(alert.is_some());
+        assert!(gone_acknowledged(&first));
+        let (still, alert) = tick(first, Some(text));
+        assert_eq!(alert, None);
+        assert!(gone_acknowledged(&still));
+        let (cleared, alert) = tick(still, None);
+        assert_eq!(alert, None);
+        assert!(!gone_acknowledged(&cleared));
+        let (second, alert) = tick(cleared, Some(text));
+        assert!(alert.is_some());
+        assert!(gone_acknowledged(&second));
     }
 
     fn server_dead(name: &str) -> Alert {
