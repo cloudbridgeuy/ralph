@@ -10,15 +10,17 @@ use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::Scope;
 use ralph_core::worker::{
-    advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
-    opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
-    reconcile, reconnect_delay, reduce, running_sessions, server_record_fate, server_record_pid,
+    advance, descendants, hex_encode, launch_record_actions, launch_record_prefix,
+    opencode_failure_report, opencode_serve_command, opencode_server_log,
+    opencode_server_record_path, opencode_session_path, parse_event, parse_ps, reconcile,
+    reconnect_delay, reduce, running_sessions, server_record_fate, server_record_pid,
     server_record_usable, session_activity, session_missing, session_update, spawn_failure,
     stale_server_group, start_failure, turn_result, ApiData, Effect, HandoffFiles, HeadlessState,
-    HeadlessWorker, OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord,
-    ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState,
-    WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
-    OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
+    HeadlessWorker, OpencodeRecord, PermissionAsked, RecordAction, RecordFate, ServerEvent,
+    ServerRecord, ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts,
+    TurnState, WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR,
+    OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
+    SILENCE_TIMEOUT,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -66,7 +68,7 @@ impl Server {
         let log = open_log(store)?;
         let command = opencode_serve_command(port);
         let (program, args) = command.split_first().ok_or("empty opencode command")?;
-        let child = Command::new(program)
+        let child = match Command::new(program)
             .args(args)
             .env(OPENCODE_PASSWORD_ENV, &password)
             .stdin(Stdio::null())
@@ -74,24 +76,33 @@ impl Server {
             .stderr(log)
             .process_group(0)
             .spawn()
-            .map_err(|e| spawn_failure(program, &e))?;
+        {
+            Ok(child) => child,
+            Err(error) => {
+                apply_record_actions(None, port, &password, launch_record_actions(false, false))?;
+                return Err(spawn_failure(program, &error));
+            }
+        };
         let mut server = Self {
             child,
             api: HttpSse::new(port, &password),
             tree: Vec::new(),
             record: opencode_server_record_path(&std::env::temp_dir(), std::process::id()),
         };
-        let ready = server
-            .wait_healthy(closed)
-            .and_then(|()| owner_record(port, &password, server.child.id()))
-            .and_then(|record| write_record(&server.record, &record));
-        match ready {
+        let before_health = launch_record_prefix(
+            launch_record_actions(true, true),
+            launch_record_actions(true, false),
+        );
+        let recorded = apply_record_actions(Some(&server), port, &password, before_health);
+        let outcome = recorded.and_then(|()| server.wait_healthy(closed));
+        let actions = launch_record_actions(true, outcome.is_ok());
+        let pending = actions.get(before_health.len()..).unwrap_or(&[]);
+        if let Err(message) = apply_record_actions(Some(&server), port, &password, pending) {
+            return stop_failed(server, store, message);
+        }
+        match outcome {
             Ok(()) => Ok(server),
-            Err(message) => {
-                server.stop();
-                let log = fs::read_to_string(opencode_server_log(store)).unwrap_or_default();
-                Err(start_failure(&message, &log))
-            }
+            Err(message) => stop_failed(server, store, message),
         }
     }
 
@@ -154,6 +165,37 @@ fn owner_record(port: u16, password: &str, server_pid: u32) -> Result<ServerReco
         server_pid: Some(server_pid),
         server_start: process_start(server_pid),
     })
+}
+
+fn stop_failed(server: Server, store: &Path, message: String) -> Result<Server, String> {
+    server.stop();
+    let log = fs::read_to_string(opencode_server_log(store)).unwrap_or_default();
+    Err(start_failure(&message, &log))
+}
+
+fn apply_record_actions(
+    server: Option<&Server>,
+    port: u16,
+    password: &str,
+    actions: &[RecordAction],
+) -> Result<(), String> {
+    for action in actions {
+        let Some(server) = server else {
+            return Err(format!(
+                "opencode record action {action:?} with no server process"
+            ));
+        };
+        match action {
+            RecordAction::Write => {
+                let record = owner_record(port, password, server.child.id())?;
+                write_record(&server.record, &record)?;
+            }
+            RecordAction::Remove => {
+                fs::remove_file(&server.record).ok();
+            }
+        }
+    }
+    Ok(())
 }
 
 fn write_record(path: &Path, record: &ServerRecord) -> Result<(), String> {

@@ -119,6 +119,36 @@ pub fn stale_server_group(record: &ServerRecord, server_start_now: Option<&str>)
     (server_start_now == Some(start)).then_some(pid)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordAction {
+    Write,
+    Remove,
+}
+
+/// Record effects for one `opencode serve` launch.
+/// A spawned server is written before the health result exists.
+/// Startup failure removes that record. A failed spawn touches nothing.
+pub fn launch_record_actions(spawned: bool, startup_ok: bool) -> &'static [RecordAction] {
+    match (spawned, startup_ok) {
+        (false, _) => &[],
+        (true, true) => &[RecordAction::Write],
+        (true, false) => &[RecordAction::Write, RecordAction::Remove],
+    }
+}
+
+/// Actions shared by both outcomes, applied before the health result is known.
+pub fn launch_record_prefix<'a>(
+    on_success: &'a [RecordAction],
+    on_failure: &'a [RecordAction],
+) -> &'a [RecordAction] {
+    let count = on_success
+        .iter()
+        .zip(on_failure)
+        .take_while(|(left, right)| left == right)
+        .count();
+    &on_success[..count]
+}
+
 pub fn session_permissions() -> Value {
     json!([
         { "action": "*", "resource": "*", "effect": "allow" },
@@ -212,6 +242,24 @@ mod tests {
             server_start: Some(start.to_string()),
             ..record(1, "s")
         }
+    }
+
+    #[test]
+    fn launch_record_actions_writes_before_health_and_removes_on_failure() {
+        assert_eq!(launch_record_actions(false, false), &[]);
+        assert_eq!(launch_record_actions(false, true), &[]);
+        assert_eq!(launch_record_actions(true, true), &[RecordAction::Write]);
+        assert_eq!(
+            launch_record_actions(true, false),
+            &[RecordAction::Write, RecordAction::Remove]
+        );
+        let prefix = launch_record_prefix(
+            launch_record_actions(true, true),
+            launch_record_actions(true, false),
+        );
+        assert_eq!(prefix, &[RecordAction::Write]);
+        assert!(launch_record_actions(true, false).starts_with(prefix));
+        assert!(launch_record_actions(true, true).starts_with(prefix));
     }
 
     #[test]
