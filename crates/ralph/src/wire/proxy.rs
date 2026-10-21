@@ -239,9 +239,9 @@ mod tests {
     #[test]
     fn write_head_keeps_non_utf8_header_bytes() {
         let mut out = Vec::new();
-        let headers = [("x-weird".to_string(), b"caf\xe9-\xff".to_vec())];
+        let headers = [("x-weird".to_string(), b"x\xe9-\xff".to_vec())];
         write_head(&mut out, ureq::http::StatusCode::OK, &headers).unwrap();
-        let needle = b"x-weird: caf\xe9-\xff\r\n";
+        let needle = b"x-weird: x\xe9-\xff\r\n";
         assert!(out.windows(needle.len()).any(|w| w == needle));
     }
 }
