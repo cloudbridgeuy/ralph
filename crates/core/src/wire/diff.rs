@@ -45,6 +45,7 @@ pub struct Divergence {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Verdict {
     NoSegments,
+    NoBase,
     NoSharedBreakpoint,
     UsageMissing,
     PrefixChanged {
@@ -70,17 +71,25 @@ pub enum Verdict {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TokenMethod {
+    Anchor { seq: u64 },
+    Bytes,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Explanation {
     pub servable_bytes: usize,
-    pub estimated_tokens: Option<u64>,
+    pub servable_tokens: Option<u64>,
+    pub method: Option<TokenMethod>,
     pub cache_read: Option<u64>,
     pub verdict: Verdict,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DiffView {
-    pub a: u64,
+    pub a: Option<u64>,
     pub b: u64,
     pub base_picked: bool,
     pub facts: Vec<FactDiff>,
@@ -93,11 +102,18 @@ pub struct DiffView {
 }
 
 pub struct DiffInput<'a> {
-    pub a: &'a CallRecord,
+    pub a: Option<&'a CallRecord>,
     pub b: &'a CallRecord,
     pub session: &'a [CallRecord],
     pub provider: &'a dyn Provider,
     pub base_picked: bool,
+}
+
+struct Pair<'a> {
+    a: &'a CallRecord,
+    b: &'a CallRecord,
+    session: &'a [CallRecord],
+    provider: &'a dyn Provider,
 }
 
 fn segments_of(call: &CallRecord, provider: &dyn Provider) -> Option<Vec<PromptSegment>> {
@@ -119,11 +135,7 @@ pub fn pick_base<'a>(
     seq: u64,
     session: &str,
     provider: &dyn Provider,
-) -> Result<&'a CallRecord, ReadError> {
-    let no_base = || ReadError::NoBase {
-        seq,
-        session: session.to_string(),
-    };
+) -> Result<Option<&'a CallRecord>, ReadError> {
     let target =
         calls
             .iter()
@@ -132,8 +144,10 @@ pub fn pick_base<'a>(
                 seq,
                 session: session.to_string(),
             })?;
-    let target_segments = segments_of(target, provider).ok_or_else(no_base)?;
-    calls
+    let Some(target_segments) = segments_of(target, provider) else {
+        return Ok(None);
+    };
+    Ok(calls
         .iter()
         .filter(|call| call.seq < seq && call.kind == CallKind::Inference)
         .filter_map(|call| {
@@ -142,8 +156,7 @@ pub fn pick_base<'a>(
         })
         .filter(|(shared, _)| *shared > 0)
         .max_by_key(|(shared, call)| (*shared, call.seq))
-        .map(|(_, call)| call)
-        .ok_or_else(no_base)
+        .map(|(_, call)| call))
 }
 
 fn header_value<'a>(call: &'a CallRecord, name: &str) -> Option<&'a str> {
@@ -244,7 +257,7 @@ fn counted_usage(call: &CallRecord) -> Option<&Usage> {
 }
 
 fn last_touch<'a>(
-    input: &DiffInput<'a>,
+    input: &Pair<'a>,
     through: usize,
     b_segments: &[PromptSegment],
 ) -> &'a CallRecord {
@@ -266,13 +279,45 @@ fn last_touch<'a>(
         .unwrap_or(input.a)
 }
 
+fn last_breakpoint(segments: &[PromptSegment]) -> Option<usize> {
+    segments
+        .iter()
+        .rposition(|segment| segment.breakpoint.is_some())
+}
+
+fn anchor_tokens<'a>(
+    input: &Pair<'a>,
+    index: usize,
+    b_segments: &[PromptSegment],
+) -> Option<(&'a CallRecord, u64)> {
+    input
+        .session
+        .iter()
+        .filter(|call| call.seq <= input.b.seq && call.kind == CallKind::Inference)
+        .filter_map(|call| {
+            let usage = counted_usage(call)?;
+            let segments = segments_of(call, input.provider)?;
+            let identical = segments.len() > index
+                && segments[..=index]
+                    .iter()
+                    .zip(&b_segments[..=index])
+                    .all(|(left, right)| left.text == right.text);
+            let anchored = identical && last_breakpoint(&segments) == Some(index);
+            anchored.then(|| {
+                let written: u64 = usage.cache_writes.iter().map(|write| write.tokens).sum();
+                (call, usage.cache_read + written)
+            })
+        })
+        .max_by_key(|(call, _)| call.seq)
+}
+
 struct Breakpoint {
     index: usize,
     tier: CacheTier,
 }
 
 fn mismatch_verdict(
-    input: &DiffInput,
+    input: &Pair,
     facts: &[FactDiff],
     headers: &[HeaderDiff],
     breakpoint: &Breakpoint,
@@ -319,7 +364,7 @@ fn mismatch_verdict(
 }
 
 fn explain(
-    input: &DiffInput,
+    input: &Pair,
     base: &DiffView,
     b_segments: &[PromptSegment],
     shared: usize,
@@ -335,7 +380,8 @@ fn explain(
     else {
         return Explanation {
             servable_bytes: 0,
-            estimated_tokens: None,
+            servable_tokens: None,
+            method: None,
             cache_read,
             verdict: Verdict::NoSharedBreakpoint,
         };
@@ -347,18 +393,25 @@ fn explain(
     let Some(usage) = usage else {
         return Explanation {
             servable_bytes,
-            estimated_tokens: None,
+            servable_tokens: None,
+            method: None,
             cache_read: None,
             verdict: Verdict::UsageMissing,
         };
     };
-    let total: usize = b_segments.iter().map(|s| s.text.len()).sum();
-    let estimated = if total == 0 {
-        0
-    } else {
-        (servable_bytes as f64 * prompt_tokens(usage) as f64 / total as f64).round() as u64
+    let (servable, method) = match anchor_tokens(input, breakpoint.index, b_segments) {
+        Some((call, tokens)) => (tokens, TokenMethod::Anchor { seq: call.seq }),
+        None => {
+            let total: usize = b_segments.iter().map(|s| s.text.len()).sum();
+            let estimated = if total == 0 {
+                0
+            } else {
+                (servable_bytes as f64 * prompt_tokens(usage) as f64 / total as f64).round() as u64
+            };
+            (estimated, TokenMethod::Bytes)
+        }
     };
-    let verdict = if usage.cache_read as f64 >= estimated as f64 * CACHE_AGREE_RATIO {
+    let verdict = if usage.cache_read as f64 >= servable as f64 * CACHE_AGREE_RATIO {
         Verdict::PrefixChanged {
             label: div.map(|d| d.label_b.clone()),
         }
@@ -367,34 +420,58 @@ fn explain(
     };
     Explanation {
         servable_bytes,
-        estimated_tokens: Some(estimated),
+        servable_tokens: Some(servable),
+        method: Some(method),
         cache_read,
         verdict,
     }
 }
 
-pub fn diff_view(input: &DiffInput) -> DiffView {
-    let facts = fact_diffs(input.a, input.b);
-    let headers = header_diffs(input.a, input.b, input.provider);
-    let base = DiffView {
-        a: input.a.seq,
+fn empty_view(input: &DiffInput, verdict: Verdict, cache_read: Option<u64>) -> DiffView {
+    DiffView {
+        a: input.a.map(|a| a.seq),
         b: input.b.seq,
         base_picked: input.base_picked,
-        facts: facts.clone(),
-        headers: headers.clone(),
+        facts: Vec::new(),
+        headers: Vec::new(),
         shared_segments: 0,
         divergence: None,
         removed: Vec::new(),
         added: Vec::new(),
         explanation: Explanation {
             servable_bytes: 0,
-            estimated_tokens: None,
-            cache_read: None,
-            verdict: Verdict::NoSegments,
+            servable_tokens: None,
+            method: None,
+            cache_read,
+            verdict,
         },
+    }
+}
+
+pub fn diff_view(input: &DiffInput) -> DiffView {
+    let Some(a) = input.a else {
+        let verdict = match segments_of(input.b, input.provider) {
+            Some(_) => Verdict::NoBase,
+            None => Verdict::NoSegments,
+        };
+        let cache_read = counted_usage(input.b).map(|usage| usage.cache_read);
+        return empty_view(input, verdict, cache_read);
+    };
+    let pair = Pair {
+        a,
+        b: input.b,
+        session: input.session,
+        provider: input.provider,
+    };
+    let facts = fact_diffs(a, input.b);
+    let headers = header_diffs(a, input.b, input.provider);
+    let base = DiffView {
+        facts,
+        headers,
+        ..empty_view(input, Verdict::NoSegments, None)
     };
     let (Some(a_segments), Some(b_segments)) = (
-        segments_of(input.a, input.provider),
+        segments_of(a, input.provider),
         segments_of(input.b, input.provider),
     ) else {
         return base;
@@ -402,7 +479,7 @@ pub fn diff_view(input: &DiffInput) -> DiffView {
     let shared = shared_prefix(&a_segments, &b_segments);
     let div = divergence(shared, &a_segments, &b_segments);
     let skip = shared + usize::from(div.is_some());
-    let explanation = explain(input, &base, &b_segments, shared, div.as_ref());
+    let explanation = explain(&pair, &base, &b_segments, shared, div.as_ref());
     DiffView {
         shared_segments: shared,
         removed: labels_after(&a_segments, skip),
@@ -419,10 +496,16 @@ fn value_text(value: &Option<Value>) -> String {
         .map_or_else(|| "-".to_string(), Value::to_string)
 }
 
-fn verdict_text(verdict: &Verdict) -> String {
+fn verdict_text(verdict: &Verdict, cache_read: Option<u64>) -> String {
     let model = |value: &Option<String>| value.clone().unwrap_or_else(|| "-".to_string());
     match verdict {
         Verdict::NoSegments => "request body is not JSON on one side; no segments".to_string(),
+        Verdict::NoBase if cache_read.unwrap_or(0) > 0 => {
+            "no earlier call in this session shares a prompt prefix; the cache read came from outside this session".to_string()
+        }
+        Verdict::NoBase => {
+            "cold write: no earlier call in this session shares a prompt prefix".to_string()
+        }
         Verdict::NoSharedBreakpoint => "no cache breakpoint in the shared prefix".to_string(),
         Verdict::UsageMissing => "call b has no usage; cannot compare".to_string(),
         Verdict::PrefixChanged { label: Some(label) } => {
@@ -452,12 +535,15 @@ fn verdict_text(verdict: &Verdict) -> String {
 }
 
 pub fn diff_table(view: &DiffView) -> String {
-    let picked = if view.base_picked {
-        " (base picked by longest shared prefix)"
-    } else {
-        ""
+    let picked = match (view.explanation.verdict.clone(), view.base_picked) {
+        (Verdict::NoBase, _) => " (no earlier call shares a prompt prefix)",
+        (_, true) => " (base picked by longest shared prefix)",
+        (_, false) => "",
     };
-    let mut lines = vec![format!("diff {} -> {}{}", view.a, view.b, picked)];
+    let a = view
+        .a
+        .map_or_else(|| "-".to_string(), |seq| seq.to_string());
+    let mut lines = vec![format!("diff {a} -> {}{picked}", view.b)];
     lines.extend(view.facts.iter().map(|fact| {
         format!(
             "fact {}: {} -> {}",
@@ -493,407 +579,23 @@ pub fn diff_table(view: &DiffView) -> String {
     let cache_read = explanation
         .cache_read
         .map_or_else(|| "-".to_string(), |v| v.to_string());
-    let estimate = explanation
-        .estimated_tokens
-        .map_or_else(String::new, |tokens| {
-            format!(
-                "estimated servable ~{tokens} tokens from {} bytes, ",
-                explanation.servable_bytes
-            )
-        });
+    let estimate = match (explanation.servable_tokens, explanation.method) {
+        (Some(tokens), Some(TokenMethod::Anchor { seq })) => {
+            format!("servable {tokens} tokens exact from call {seq}, ")
+        }
+        (Some(tokens), _) => format!(
+            "servable ~{tokens} tokens by byte estimate from {} bytes, ",
+            explanation.servable_bytes
+        ),
+        (None, _) => String::new(),
+    };
     lines.push(format!(
         "cache: {} ({estimate}cache_read {cache_read}; agree threshold {:.0}%)",
-        verdict_text(&explanation.verdict),
+        verdict_text(&explanation.verdict, explanation.cache_read),
         CACHE_AGREE_RATIO * 100.0
     ));
     lines.join("\n")
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::wire::provider::anthropic::Anthropic;
-    use crate::wire::provider::RequestFacts;
-    use crate::wire::usage::CacheWrite;
-    use chrono::{DateTime, TimeZone, Utc};
-    use serde_json::json;
-
-    fn t(secs: i64) -> DateTime<Utc> {
-        Utc.timestamp_opt(1_700_000_000 + secs, 0).unwrap()
-    }
-
-    fn blk(text: &str, ttl: Option<&str>) -> Value {
-        match ttl {
-            Some(ttl) => {
-                json!({"type": "text", "text": text, "cache_control": {"type": "ephemeral", "ttl": ttl}})
-            }
-            None => json!({"type": "text", "text": text}),
-        }
-    }
-
-    fn usage(uncached: u64, read: u64) -> UsageOutcome {
-        UsageOutcome::Reported(Usage {
-            input_uncached: uncached,
-            cache_read: read,
-            cache_writes: vec![],
-            output: 1,
-            reasoning: None,
-            other: vec![],
-        })
-    }
-
-    fn call(seq: u64, start: i64, end: i64, blocks: Vec<Value>, usage: UsageOutcome) -> CallRecord {
-        CallRecord {
-            seq,
-            started_at: t(start),
-            first_byte_at: None,
-            ended_at: t(end),
-            method: "POST".into(),
-            path: "/v1/messages".into(),
-            status: Some(200),
-            kind: CallKind::Inference,
-            facts: RequestFacts {
-                model: Some("m".into()),
-                params: serde_json::Map::new(),
-            },
-            request_headers: vec![],
-            response_headers: vec![],
-            request_body: RequestBody::Json(
-                json!({"messages": [{"role": "user", "content": blocks}]}),
-            ),
-            raw_usage: None,
-            usage,
-            input_equivalent: None,
-            complete: true,
-            error: None,
-            response_events: None,
-        }
-    }
-
-    fn pair(a_tail: &str, b_tail: &str, b_usage: UsageOutcome) -> (CallRecord, CallRecord) {
-        let head = || blk("shared head", Some("5m"));
-        (
-            call(1, 0, 10, vec![head(), blk(a_tail, None)], usage(5, 0)),
-            call(2, 20, 30, vec![head(), blk(b_tail, None)], b_usage),
-        )
-    }
-
-    fn view_of(a: &CallRecord, b: &CallRecord, session: &[CallRecord]) -> DiffView {
-        diff_view(&DiffInput {
-            a,
-            b,
-            session,
-            provider: &Anthropic,
-            base_picked: false,
-        })
-    }
-
-    fn verdict_of(a: &CallRecord, b: &CallRecord) -> Verdict {
-        view_of(a, b, &[a.clone(), b.clone()]).explanation.verdict
-    }
-
-    #[test]
-    fn pick_base_prefers_longest_prefix_over_predecessor() {
-        let x = |tail: &str| vec![blk("x1", None), blk("x2", None), blk(tail, None)];
-        let mut other = call(2, 5, 6, vec![blk("y1", None)], usage(1, 0));
-        other.facts.model = Some("other".into());
-        let calls = vec![
-            call(1, 0, 1, x("x3"), usage(1, 0)),
-            other,
-            call(3, 10, 11, x("x4"), usage(1, 0)),
-        ];
-        assert_eq!(pick_base(&calls, 3, "s", &Anthropic).unwrap().seq, 1);
-    }
-
-    #[test]
-    fn pick_base_tie_takes_highest_seq() {
-        let body = || vec![blk("x1", None)];
-        let calls = vec![
-            call(1, 0, 1, body(), usage(1, 0)),
-            call(2, 2, 3, body(), usage(1, 0)),
-            call(3, 4, 5, body(), usage(1, 0)),
-        ];
-        assert_eq!(pick_base(&calls, 3, "s", &Anthropic).unwrap().seq, 2);
-    }
-
-    #[test]
-    fn pick_base_without_shared_prefix_errors() {
-        let calls = vec![
-            call(1, 0, 1, vec![blk("p", None)], usage(1, 0)),
-            call(2, 2, 3, vec![blk("q", None)], usage(1, 0)),
-        ];
-        let error = pick_base(&calls, 2, "s", &Anthropic).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "no earlier call in session s shares a prompt prefix with call 2"
-        );
-    }
-
-    #[test]
-    fn facts_and_cache_headers_differ_case_insensitively() {
-        let (mut a, mut b) = pair("t", "t", usage(1, 0));
-        b.facts.model = Some("n".into());
-        a.facts.params.insert("max_tokens".into(), json!(1));
-        b.facts.params.insert("max_tokens".into(), json!(2));
-        b.facts.params.insert("thinking".into(), json!({"a": 1}));
-        a.request_headers = vec![
-            ("Anthropic-Beta".into(), "x".into()),
-            ("anthropic-version".into(), "1".into()),
-            ("user-agent".into(), "p".into()),
-        ];
-        b.request_headers = vec![
-            ("anthropic-beta".into(), "x".into()),
-            ("Anthropic-Version".into(), "2".into()),
-            ("user-agent".into(), "q".into()),
-        ];
-        let view = view_of(&a, &b, &[]);
-        let names: Vec<&str> = view.facts.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names, ["model", "max_tokens", "thinking"]);
-        assert_eq!(view.facts[2].a, None);
-        assert_eq!(
-            view.headers,
-            [HeaderDiff {
-                name: "anthropic-version".into(),
-                a: Some("1".into()),
-                b: Some("2".into())
-            }]
-        );
-    }
-
-    #[test]
-    fn divergence_reports_offset_excerpt_and_removed_added() {
-        let (mut a, b) = pair("same prefix then A", "same prefix then B", usage(1, 0));
-        if let RequestBody::Json(body) = &mut a.request_body {
-            body["messages"][0]["content"]
-                .as_array_mut()
-                .unwrap()
-                .push(blk("tail", None));
-        }
-        let view = view_of(&a, &b, &[]);
-        let div = view.divergence.unwrap();
-        assert_eq!(view.shared_segments, 1);
-        assert_eq!(div.index, 1);
-        assert_eq!(div.label_a, "msg[0].1 user/text");
-        let text = segments_of(&b, &Anthropic).unwrap()[1].text.clone();
-        assert_eq!(&text[div.offset..div.offset + 1], "B");
-        assert_eq!(div.b_excerpt, text[div.offset..]);
-        assert!(div.a_excerpt.starts_with('A'));
-        assert_eq!(view.removed, ["msg[0].2 user/text"]);
-        assert!(view.added.is_empty());
-    }
-
-    #[test]
-    fn excerpt_snaps_to_char_boundaries_and_caps_length() {
-        let long = "z".repeat(100);
-        let (a, b) = pair(
-            &format!("\u{e9}{long}"),
-            &format!("\u{eb}{long}"),
-            usage(1, 0),
-        );
-        let div = view_of(&a, &b, &[]).divergence.unwrap();
-        assert!(div.a_excerpt.starts_with('\u{e9}'));
-        assert!(div.b_excerpt.starts_with('\u{eb}'));
-        assert!(div.a_excerpt.len() <= EXCERPT_BYTES);
-        assert!(excerpt("\u{e9}\u{e9}\u{e9}", 3).len() <= EXCERPT_BYTES);
-    }
-
-    #[test]
-    fn b_extends_a_has_no_divergence_and_only_added() {
-        let head = || blk("h", Some("5m"));
-        let a = call(1, 0, 10, vec![head()], usage(1, 0));
-        let b = call(2, 20, 30, vec![head(), blk("more", None)], usage(0, 100));
-        let view = view_of(&a, &b, &[]);
-        assert_eq!(view.divergence, None);
-        assert_eq!(view.shared_segments, 1);
-        assert!(view.removed.is_empty());
-        assert_eq!(view.added, ["msg[0].1 user/text"]);
-        assert_eq!(
-            view.explanation.verdict,
-            Verdict::PrefixChanged { label: None }
-        );
-    }
-
-    #[test]
-    fn string_content_shares_segment_with_block_content() {
-        let mut a = call(1, 0, 10, vec![], usage(1, 0));
-        a.request_body = RequestBody::Json(
-            json!({"messages": [{"role": "user", "content": "same"}, {"role": "user", "content": "x"}]}),
-        );
-        let b = call(
-            2,
-            20,
-            30,
-            vec![blk("same", None), blk("y", None)],
-            usage(1, 0),
-        );
-        let b_text = segments_of(&b, &Anthropic).unwrap();
-        assert_eq!(segments_of(&a, &Anthropic).unwrap()[0], b_text[0]);
-        assert_eq!(view_of(&a, &b, &[]).shared_segments, 1);
-    }
-
-    #[test]
-    fn no_shared_breakpoint() {
-        let a = call(1, 0, 10, vec![blk("p", None)], usage(1, 0));
-        let b = call(2, 20, 30, vec![blk("p", None)], usage(1, 7));
-        let explanation = view_of(&a, &b, &[]).explanation;
-        assert_eq!(explanation.verdict, Verdict::NoSharedBreakpoint);
-        assert_eq!(explanation.cache_read, Some(7));
-        assert_eq!(explanation.servable_bytes, 0);
-    }
-
-    #[test]
-    fn cache_agreeing_with_estimate_means_prefix_changed() {
-        let (a, b) = pair("a", "b", usage(0, 100));
-        let view = view_of(&a, &b, &[]);
-        assert_eq!(
-            view.explanation.verdict,
-            Verdict::PrefixChanged {
-                label: Some("msg[0].1 user/text".into())
-            }
-        );
-        assert!(view.explanation.estimated_tokens.unwrap() > 0);
-    }
-
-    #[test]
-    fn model_header_param_verdicts_in_order() {
-        let (mut a, mut b) = pair("a", "b", usage(5, 0));
-        a.facts.params.insert("thinking".into(), json!(1));
-        assert_eq!(
-            verdict_of(&a, &b),
-            Verdict::ParamChanged {
-                names: vec!["thinking".into()]
-            }
-        );
-        b.request_headers = vec![("anthropic-beta".into(), "x".into())];
-        assert_eq!(
-            verdict_of(&a, &b),
-            Verdict::HeaderChanged {
-                names: vec!["anthropic-beta".into()]
-            }
-        );
-        b.facts.model = Some("n".into());
-        assert_eq!(
-            verdict_of(&a, &b),
-            Verdict::ModelChanged {
-                a: Some("m".into()),
-                b: Some("n".into())
-            }
-        );
-    }
-
-    #[test]
-    fn irrelevant_param_does_not_explain() {
-        let (mut a, b) = pair("a", "b", usage(5, 0));
-        a.facts.params.insert("max_tokens".into(), json!(1));
-        assert!(matches!(verdict_of(&a, &b), Verdict::Unexplained { .. }));
-    }
-
-    #[test]
-    fn ttl_gap_beyond_ttl_expires() {
-        let (a, mut b) = pair("a", "b", usage(5, 0));
-        b.started_at = t(400);
-        assert_eq!(
-            verdict_of(&a, &b),
-            Verdict::TtlExpired {
-                gap_secs: 390,
-                ttl_secs: 300,
-                since_seq: 1
-            }
-        );
-    }
-
-    #[test]
-    fn intermediate_refresh_prevents_ttl_expiry() {
-        let (a, mut b) = pair("a", "b", usage(5, 0));
-        b.seq = 3;
-        b.started_at = t(400);
-        let refresh = call(
-            2,
-            200,
-            350,
-            vec![blk("shared head", Some("5m")), blk("mid", None)],
-            usage(1, 1),
-        );
-        let session = [a.clone(), refresh, b.clone()];
-        assert!(matches!(
-            view_of(&a, &b, &session).explanation.verdict,
-            Verdict::Unexplained { .. }
-        ));
-    }
-
-    #[test]
-    fn small_gap_is_unexplained_with_invisible_causes() {
-        let (a, b) = pair("a", "b", usage(5, 0));
-        match verdict_of(&a, &b) {
-            Verdict::Unexplained { invisible } => assert_eq!(invisible.len(), 3),
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn missing_usage_and_non_json_bodies() {
-        let (a, mut b) = pair("a", "b", UsageOutcome::Missing);
-        let explanation = view_of(&a, &b, &[]).explanation;
-        assert_eq!(explanation.verdict, Verdict::UsageMissing);
-        assert_eq!(
-            (explanation.estimated_tokens, explanation.cache_read),
-            (None, None)
-        );
-        b.request_body = RequestBody::Base64(String::new());
-        let view = view_of(&a, &b, &[]);
-        assert_eq!(view.explanation.verdict, Verdict::NoSegments);
-        assert_eq!(view.shared_segments, 0);
-    }
-
-    #[test]
-    fn partial_usage_counts_like_reported() {
-        let (a, reported) = pair("a", "b", usage(5, 20));
-        let mut partial = reported.clone();
-        if let UsageOutcome::Reported(u) = reported.usage.clone() {
-            partial.usage = UsageOutcome::Partial(u);
-        }
-        assert_eq!(
-            view_of(&a, &reported, &[]).explanation,
-            view_of(&a, &partial, &[]).explanation
-        );
-    }
-
-    #[test]
-    fn cache_writes_count_toward_prompt_tokens() {
-        let (a, mut b) = pair("a", "b", usage(0, 0));
-        b.usage = UsageOutcome::Reported(Usage {
-            input_uncached: 0,
-            cache_read: 0,
-            cache_writes: vec![CacheWrite {
-                tier: CacheTier::Unspecified,
-                tokens: 100,
-            }],
-            output: 1,
-            reasoning: None,
-            other: vec![],
-        });
-        assert!(view_of(&a, &b, &[]).explanation.estimated_tokens.unwrap() > 0);
-    }
-
-    #[test]
-    fn table_names_verdict_and_escapes_excerpts() {
-        let (a, mut b) = pair("a\nb", "c", usage(5, 0));
-        b.started_at = t(400);
-        let table = diff_table(&view_of(&a, &b, &[]));
-        assert!(table.starts_with("diff 1 -> 2\n"), "{table}");
-        assert!(table.contains("shared segments: 1"), "{table}");
-        assert!(table.contains("\\n"), "{table}");
-        assert!(table.contains("cache: ttl expired"), "{table}");
-        assert!(table.contains("agree threshold 90%"), "{table}");
-        let none = Explanation {
-            estimated_tokens: None,
-            cache_read: None,
-            ..view_of(&a, &b, &[]).explanation
-        };
-        let bare = DiffView {
-            explanation: none,
-            ..view_of(&a, &b, &[])
-        };
-        assert!(diff_table(&bare).ends_with("(cache_read -; agree threshold 90%)"));
-    }
-}
+mod tests;

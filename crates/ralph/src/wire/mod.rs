@@ -88,11 +88,14 @@ fn diff(args: WireDiffArgs) -> Result<(), Box<dyn Error>> {
     let (id, session, calls) = load_session(args.dir, args.session)?;
     let provider = provider(session.provider);
     let (a, b) = match args.b {
-        Some(b) => (find_call(&calls, args.a, &id)?, find_call(&calls, b, &id)?),
-        None => {
-            let b = find_call(&calls, args.a, &id)?;
-            (pick_base(&calls, args.a, &id, provider.as_ref())?, b)
-        }
+        Some(b) => (
+            Some(find_call(&calls, args.a, &id)?),
+            find_call(&calls, b, &id)?,
+        ),
+        None => (
+            pick_base(&calls, args.a, &id, provider.as_ref())?,
+            find_call(&calls, args.a, &id)?,
+        ),
     };
     let view = diff_view(&DiffInput {
         a,
