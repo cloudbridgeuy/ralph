@@ -55,10 +55,18 @@ fn response_headers(response: &ureq::http::Response<ureq::Body>) -> Vec<(String,
         .collect()
 }
 
-fn write_head(
+fn raw_response_headers(response: &ureq::http::Response<ureq::Body>) -> Vec<(String, Vec<u8>)> {
+    response
+        .headers()
+        .iter()
+        .map(|(name, value)| (name.as_str().to_string(), value.as_bytes().to_vec()))
+        .collect()
+}
+
+fn write_head<V: AsRef<[u8]>>(
     client: &mut dyn Write,
     status: ureq::http::StatusCode,
-    headers: &[(String, String)],
+    headers: &[(String, V)],
 ) -> io::Result<()> {
     write!(
         client,
@@ -67,7 +75,9 @@ fn write_head(
         status.canonical_reason().unwrap_or("")
     )?;
     for (name, value) in headers {
-        write!(client, "{name}: {value}\r\n")?;
+        write!(client, "{name}: ")?;
+        client.write_all(value.as_ref())?;
+        client.write_all(b"\r\n")?;
     }
     client.write_all(b"Connection: close\r\n\r\n")?;
     client.flush()
@@ -211,13 +221,27 @@ impl Proxy {
         let status = response.status();
         capture.status = Some(status.as_u16());
         capture.headers = response_headers(&response);
-        let mut forwarded = forward_headers(&capture.headers, Direction::Response);
-        forwarded.push(("transfer-encoding".to_string(), "chunked".to_string()));
+        let mut forwarded = forward_headers(&raw_response_headers(&response), Direction::Response);
+        forwarded.push(("transfer-encoding".to_string(), b"chunked".to_vec()));
         if write_head(&mut client, status, &forwarded).is_err() {
             capture.error = Some(CLIENT_DISCONNECTED.to_string());
             return;
         }
         let mut reader = response.into_body().into_reader();
         relay_body(&mut reader, &mut client, capture);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_head_keeps_non_utf8_header_bytes() {
+        let mut out = Vec::new();
+        let headers = [("x-weird".to_string(), b"caf\xe9-\xff".to_vec())];
+        write_head(&mut out, ureq::http::StatusCode::OK, &headers).unwrap();
+        let needle = b"x-weird: caf\xe9-\xff\r\n";
+        assert!(out.windows(needle.len()).any(|w| w == needle));
     }
 }

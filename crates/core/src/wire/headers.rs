@@ -31,10 +31,10 @@ impl Direction {
     }
 }
 
-pub fn forward_headers(
-    headers: &[(String, String)],
+pub fn forward_headers<V: Clone>(
+    headers: &[(String, V)],
     direction: Direction,
-) -> Vec<(String, String)> {
+) -> Vec<(String, V)> {
     headers
         .iter()
         .filter(|(name, _)| {
