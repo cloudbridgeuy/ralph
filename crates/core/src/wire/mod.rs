@@ -2,6 +2,7 @@ pub mod build;
 pub mod decode;
 pub mod headers;
 pub mod live;
+pub mod price;
 pub mod provider;
 pub mod read;
 pub mod record;

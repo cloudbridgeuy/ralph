@@ -22,9 +22,11 @@ mod opencode;
 mod recent_history_tests;
 #[cfg(test)]
 mod reset_limits_tests;
+mod wire;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
 pub use opencode::OpencodeSection;
+pub use wire::WireSection;
 
 /// Error type for configuration operations.
 #[derive(Debug, thiserror::Error)]
@@ -88,6 +90,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub changes: ChangesSection,
+
+    #[serde(default)]
+    pub wire: WireSection,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
