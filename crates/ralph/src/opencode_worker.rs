@@ -467,12 +467,6 @@ impl OpencodeHost {
         }
     }
 
-    fn revive_all(&self) {
-        for session in self.sessions().values() {
-            session.heartbeat.revive();
-        }
-    }
-
     fn snapshot_tree(&self) {
         if let Some(server) = self.server().as_mut() {
             server.snapshot();
@@ -759,7 +753,6 @@ impl OpencodeHost {
             if self.server().is_none() {
                 match self.start_server() {
                     Ok(_) => {
-                        self.revive_all();
                         start_failures = 0;
                         delay = Duration::ZERO;
                     }

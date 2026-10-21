@@ -20,9 +20,9 @@ use ralph_core::chat_status::{
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
-    activity_path, blocked_path, gone_path, group_alerts, liveness, marker_state, ready_path,
-    reduce, sent_path, unreported_path, waiting_path, HarnessId, HeadlessState, Liveness, Report,
-    HANDOFF_POLL, READY_DIR,
+    activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
+    marker_state, ready_path, reduce, sent_path, unreported_path, waiting_path, HarnessId,
+    HeadlessState, Liveness, Report, HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -144,6 +144,9 @@ impl Monitor {
                 current = reduce(&current, event).0;
             }
             let (next, alert) = liveness(&current, now, self.worker_quiet_secs);
+            if gone_acknowledged(&next) {
+                std::fs::remove_file(gone_path(&self.store_dir, &worker.id)).ok();
+            }
             state.heartbeats.insert(worker.id.clone(), next);
             alerts.extend(alert.map(|alert| (worker.id.clone(), alert)));
         }
