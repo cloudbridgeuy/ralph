@@ -1,8 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
-use super::live::{format_row, hit_fraction, usage_columns};
-use super::provider::{CallKind, ProviderId};
+use super::live::{format_row, hit_fraction, usage_columns, usd_suffix};
+use super::price::{prompt_tokens, resolve_price, usd, PriceOverride, PriceTable};
+use super::provider::{CallKind, Provider, ProviderId};
 use super::record::{CallRecord, SessionRecord};
 use super::usage::{CacheWrite, Usage, UsageOutcome};
 
@@ -17,19 +19,20 @@ pub struct CallRow {
     pub usage: UsageOutcome,
     pub hit_ratio: Option<f64>,
     pub input_equivalent: Option<f64>,
+    pub usd: Option<f64>,
     pub complete: bool,
     pub error: Option<String>,
     #[serde(skip)]
     text: String,
 }
 
-impl From<&CallRecord> for CallRow {
-    fn from(record: &CallRecord) -> Self {
+impl CallRow {
+    fn new(record: &CallRecord, usd: Option<f64>) -> Self {
         let hit_ratio = match &record.usage {
             UsageOutcome::Reported(usage) | UsageOutcome::Partial(usage) => hit_fraction(usage),
             UsageOutcome::Missing => None,
         };
-        let mut text = format_row(record);
+        let mut text = format_row(record, usd);
         if matches!(record.usage, UsageOutcome::Partial(_)) {
             text.push_str(" usage=partial");
         }
@@ -46,6 +49,7 @@ impl From<&CallRecord> for CallRow {
             usage: record.usage.clone(),
             hit_ratio,
             input_equivalent: record.input_equivalent,
+            usd,
             complete: record.complete,
             error: record.error.clone(),
             text,
@@ -61,12 +65,37 @@ pub struct Totals {
     pub usage: Usage,
     pub hit_ratio: Option<f64>,
     pub input_equivalent: Option<f64>,
+    pub usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct LsView {
     pub rows: Vec<CallRow>,
     pub totals: Totals,
+    pub prices_as_of: Option<String>,
+}
+
+pub struct Pricing<'a> {
+    pub provider: &'a dyn Provider,
+    pub overrides: &'a BTreeMap<String, PriceOverride>,
+}
+
+fn call_usd(record: &CallRecord, pricing: &Pricing, table: &PriceTable) -> Option<f64> {
+    let model = record.facts.model.as_deref()?;
+    let (UsageOutcome::Reported(usage) | UsageOutcome::Partial(usage)) = &record.usage else {
+        return None;
+    };
+    let factor = pricing
+        .provider
+        .price_factor(record.raw_usage.as_ref()?, model)?;
+    let price = resolve_price(
+        table,
+        pricing.overrides,
+        &pricing.provider.rates(model),
+        model,
+        prompt_tokens(usage),
+    )?;
+    usd(usage, &price).map(|value| value * factor)
 }
 
 fn add_writes(sum: &mut Vec<CacheWrite>, writes: &[CacheWrite]) {
@@ -100,6 +129,7 @@ fn totals(rows: &[CallRow]) -> Totals {
     let mut partial = 0;
     let mut missing = 0;
     let mut equivalent = Some(0.0);
+    let mut cost = Some(0.0);
     for row in rows.iter().filter(|row| row.kind == CallKind::Inference) {
         match &row.usage {
             UsageOutcome::Missing => missing += 1,
@@ -118,6 +148,7 @@ fn totals(rows: &[CallRow]) -> Totals {
                 add_writes(&mut usage.cache_writes, &u.cache_writes);
                 add_other(&mut usage.other, &u.other);
                 equivalent = equivalent.zip(row.input_equivalent).map(|(sum, v)| sum + v);
+                cost = cost.zip(row.usd).map(|(sum, v)| sum + v);
             }
         }
     }
@@ -127,18 +158,28 @@ fn totals(rows: &[CallRow]) -> Totals {
         missing,
         hit_ratio: hit_fraction(&usage),
         input_equivalent: if counted == 0 { None } else { equivalent },
+        usd: if counted == 0 { None } else { cost },
         usage,
     }
 }
 
-pub fn ls_view(records: &[CallRecord], all: bool) -> LsView {
+pub fn ls_view(records: &[CallRecord], all: bool, pricing: &Pricing) -> LsView {
+    let table = pricing.provider.prices();
     let rows: Vec<CallRow> = records
         .iter()
         .filter(|record| all || record.kind == CallKind::Inference)
-        .map(CallRow::from)
+        .map(|record| CallRow::new(record, call_usd(record, pricing, &table)))
         .collect();
     let totals = totals(&rows);
-    LsView { rows, totals }
+    let prices_as_of = rows
+        .iter()
+        .any(|row| row.usd.is_some())
+        .then(|| table.as_of.to_string());
+    LsView {
+        rows,
+        totals,
+        prices_as_of,
+    }
 }
 
 pub fn ls_table(view: &LsView) -> String {
@@ -153,8 +194,13 @@ pub fn ls_table(view: &LsView) -> String {
         usage_columns(&UsageOutcome::Reported(totals.usage.clone()))
     };
     lines.push(format!(
-        "total {} counted ({} partial, {} missing) {} eq={}",
-        totals.counted, totals.partial, totals.missing, columns, equivalent
+        "total {} counted ({} partial, {} missing) {} eq={}{}",
+        totals.counted,
+        totals.partial,
+        totals.missing,
+        columns,
+        equivalent,
+        usd_suffix(totals.usd)
     ));
     lines.join("\n")
 }
@@ -206,10 +252,30 @@ pub fn sessions_table(rows: &[SessionRow]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::provider::anthropic::Anthropic;
     use crate::wire::provider::RequestFacts;
     use crate::wire::record::{RequestBody, SCHEMA_VERSION};
     use crate::wire::usage::CacheTier;
     use chrono::TimeZone;
+    use serde_json::json;
+
+    fn ls_view(records: &[CallRecord], all: bool) -> LsView {
+        super::ls_view(
+            records,
+            all,
+            &Pricing {
+                provider: &Anthropic,
+                overrides: &BTreeMap::new(),
+            },
+        )
+    }
+
+    fn priced(seq: u64, usage: Usage, raw: serde_json::Value) -> CallRecord {
+        let mut call = record(seq, UsageOutcome::Reported(usage), Some(1.0));
+        call.facts.model = Some("claude-haiku-5-5".into());
+        call.raw_usage = Some(raw);
+        call
+    }
 
     fn usage(uncached: u64, read: u64, five_min: u64, out: u64) -> Usage {
         Usage {
@@ -387,5 +453,70 @@ mod tests {
             "id1 2026-10-21 16:24:29 anthropic http://u calls=2 inference=1"
         );
         assert_eq!(sessions_table(&[]), "no sessions");
+    }
+
+    #[test]
+    fn priced_rows_show_usd_in_rows_total_and_json() {
+        let records = vec![
+            priced(1, usage(100_000, 0, 0, 0), json!({})),
+            priced(2, usage(0, 0, 0, 1_000_000), json!({"inference_geo": "us"})),
+        ];
+        let view = ls_view(&records, false);
+        assert!((view.rows[0].usd.unwrap() - 0.01).abs() < 1e-9);
+        assert!((view.rows[1].usd.unwrap() - 0.55).abs() < 1e-9);
+        assert!((view.totals.usd.unwrap() - 0.56).abs() < 1e-9);
+        assert_eq!(view.prices_as_of.as_deref(), Some("2026-10-21"));
+        let table = ls_table(&view);
+        assert!(table.contains("eq=1 $=0.010000"), "{table}");
+        assert!(table.ends_with("eq=2 $=0.560000"), "{table}");
+        let json = serde_json::to_value(&view).unwrap();
+        assert!((json["rows"][0]["usd"].as_f64().unwrap() - 0.01).abs() < 1e-9);
+        assert_eq!(json["prices_as_of"], "2026-10-21");
+    }
+
+    #[test]
+    fn unpriced_row_hides_usd_and_nulls_total() {
+        let records = vec![
+            priced(1, usage(10, 0, 0, 0), json!({})),
+            priced(2, usage(10, 0, 0, 0), json!({"speed": "fast"})),
+        ];
+        let view = ls_view(&records, false);
+        assert_eq!(view.rows[1].usd, None);
+        assert_eq!(view.totals.usd, None);
+        let table = ls_table(&view);
+        assert!(!table.lines().nth(1).unwrap().contains('$'), "{table}");
+        assert!(!table.lines().last().unwrap().contains('$'), "{table}");
+        let json = serde_json::to_value(&view).unwrap();
+        assert!(json["totals"]["usd"].is_null());
+        assert!(json["rows"][1]["usd"].is_null());
+    }
+
+    #[test]
+    fn no_price_inputs_leaves_prices_as_of_null() {
+        let view = ls_view(&[record(1, UsageOutcome::Missing, None)], false);
+        assert_eq!(view.prices_as_of, None);
+        assert!(serde_json::to_value(&view).unwrap()["prices_as_of"].is_null());
+    }
+
+    #[test]
+    fn override_prices_unknown_model() {
+        let overrides = BTreeMap::from([(
+            "m".to_string(),
+            PriceOverride {
+                input: 2.0,
+                cache_read: None,
+                cache_write_5m: None,
+                cache_write_1h: None,
+                output: None,
+            },
+        )]);
+        let mut call = record(1, UsageOutcome::Reported(usage(500_000, 0, 0, 0)), None);
+        call.raw_usage = Some(json!({}));
+        let pricing = Pricing {
+            provider: &Anthropic,
+            overrides: &overrides,
+        };
+        let view = super::ls_view(&[call], false, &pricing);
+        assert_eq!(view.rows[0].usd, Some(1.0));
     }
 }

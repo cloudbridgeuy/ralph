@@ -51,7 +51,11 @@ pub(super) fn usage_columns(outcome: &UsageOutcome) -> String {
     }
 }
 
-pub(super) fn format_row(record: &CallRecord) -> String {
+pub(super) fn usd_suffix(usd: Option<f64>) -> String {
+    usd.map_or_else(String::new, |value| format!(" $={value:.6}"))
+}
+
+pub(super) fn format_row(record: &CallRecord, usd: Option<f64>) -> String {
     let status = record
         .status
         .map_or_else(|| "-".to_string(), |status| status.to_string());
@@ -59,13 +63,14 @@ pub(super) fn format_row(record: &CallRecord) -> String {
         .input_equivalent
         .map_or_else(|| "-".to_string(), |value| format!("{value:.0}"));
     let mut row = format!(
-        "#{} {} {} {} {} eq={}",
+        "#{} {} {} {} {} eq={}{}",
         record.seq,
         record.ended_at.format("%H:%M:%S"),
         record.facts.model.as_deref().unwrap_or("-"),
         status,
         usage_columns(&record.usage),
-        equivalent
+        equivalent,
+        usd_suffix(usd)
     );
     if !record.complete {
         let reason = record.error.as_deref().unwrap_or("unknown");
@@ -75,7 +80,7 @@ pub(super) fn format_row(record: &CallRecord) -> String {
 }
 
 pub fn live_row(record: &CallRecord) -> Option<String> {
-    (record.kind != CallKind::Other).then(|| format_row(record))
+    (record.kind != CallKind::Other).then(|| format_row(record, None))
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::price::PriceTable;
 use super::sse::SseEvent;
 use super::usage::{BillingRates, UsageOutcome};
 
@@ -61,6 +62,8 @@ pub trait Provider: Send + Sync {
     fn request_facts(&self, body: &serde_json::Value) -> RequestFacts;
     fn usage(&self, response: &ResponseView) -> ResponseUsage;
     fn rates(&self, model: &str) -> BillingRates;
+    fn prices(&self) -> PriceTable;
+    fn price_factor(&self, raw_usage: &serde_json::Value, model: &str) -> Option<f64>;
 }
 
 pub fn provider(id: ProviderId) -> Box<dyn Provider> {

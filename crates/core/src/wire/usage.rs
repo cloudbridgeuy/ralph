@@ -8,6 +8,9 @@ pub enum CacheTier {
     Unspecified,
 }
 
+pub const FIVE_MIN: CacheTier = CacheTier::Ttl { seconds: 300 };
+pub const ONE_HOUR: CacheTier = CacheTier::Ttl { seconds: 3600 };
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheWrite {
     pub tier: CacheTier,
@@ -74,9 +77,6 @@ pub fn input_equivalent(usage: &Usage, rates: &BillingRates) -> Result<f64, Unra
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const FIVE_MIN: CacheTier = CacheTier::Ttl { seconds: 300 };
-    const ONE_HOUR: CacheTier = CacheTier::Ttl { seconds: 3600 };
 
     fn anthropic() -> BillingRates {
         BillingRates {

@@ -282,6 +282,26 @@ Fixed limits: flowchart source up to 16 KB; sequenceDiagram up to 20 participant
 
 `delta` and `hunk` are one-off `git -c core.pager=...` (`hunk` passes `core.pager=hunk pager` as one argument). ralph sets no environment variables and does not change `core.pager` in git config. With `pager = "git"`, git uses the user's pager.
 
+### `[wire.prices]` - `ralph wire ls` price overrides
+
+`ralph wire ls` prices calls from a built-in dated table. A `[wire.prices."<model prefix>"]` table overrides it for every model whose id starts with the prefix (at a `-` boundary; longest prefix wins; any `[...]` suffix on the recorded model is ignored). An override applies at every prompt size. A config that fails to parse makes `ralph wire ls` fail. See [ralph wire](context/ralph-wire.md#prices).
+
+```toml
+[wire.prices."claude-haiku-5-5"]
+input = 0.1
+output = 0.5
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `input` | required | USD per million uncached input tokens |
+| `cache_read` | `input` x provider multiplier | USD per million cache-read tokens |
+| `cache_write_5m` | `input` x provider multiplier | USD per million 5-minute cache-write tokens |
+| `cache_write_1h` | `input` x provider multiplier | USD per million 1-hour cache-write tokens |
+| `output` | `input` x provider multiplier | USD per million output tokens |
+
+Unknown keys are an error. Speed and geography factors from the recorded usage still apply on top.
+
 ## Chat Store
 
 `ralph ask` stores nothing. `ralph chat` keeps its store at `~/.ralph/chat`. For another path the precedence is `chat --store <DIR>`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; a relative path resolves against the cwd at startup. Parallel chats need separate stores. See [ralph chat](context/ralph-chat.md).

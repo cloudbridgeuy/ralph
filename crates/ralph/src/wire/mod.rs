@@ -2,12 +2,13 @@ mod proxy;
 mod store;
 
 use crate::cli::{WireArgs, WireCommand, WireLsArgs, WireProvider, WireSessionsArgs};
+use crate::config::AppConfig;
 use chrono::Utc;
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::read::pick_session;
 use ralph_core::wire::record::{SessionRecord, SCHEMA_VERSION};
 use ralph_core::wire::session::session_id;
-use ralph_core::wire::view::{ls_table, ls_view, session_row, sessions_table};
+use ralph_core::wire::view::{ls_table, ls_view, session_row, sessions_table, Pricing};
 use std::collections::hash_map::RandomState;
 use std::error::Error;
 use std::hash::{BuildHasher, Hasher};
@@ -40,8 +41,14 @@ fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
     let ids =
         store::list_sessions(&root).map_err(|error| format!("{}: {error}", root.display()))?;
     let id = pick_session(ids, args.session, &root.display().to_string())?;
-    let (_, calls) = store::read_session(&root, &id)?;
-    let view = ls_view(&calls, args.all);
+    let (session, calls) = store::read_session(&root, &id)?;
+    let config = AppConfig::load()?;
+    let provider = provider(session.provider);
+    let pricing = Pricing {
+        provider: provider.as_ref(),
+        overrides: &config.wire.prices,
+    };
+    let view = ls_view(&calls, args.all, &pricing);
     if args.json {
         println!("{}", serde_json::to_string_pretty(&view)?);
     } else {

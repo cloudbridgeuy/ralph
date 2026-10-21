@@ -3,8 +3,13 @@ use serde_json::{Map, Value};
 use super::{
     CallKind, Provider, ProviderId, RequestFacts, RequestHead, ResponseUsage, ResponseView,
 };
+use crate::wire::price::{
+    matches_prefix, normalize_model, ModelPrice, PriceEntry, PriceTable, TierPrice,
+};
 use crate::wire::sse::SseEvent;
-use crate::wire::usage::{BillingRates, CacheTier, CacheWrite, TierRate, Usage, UsageOutcome};
+use crate::wire::usage::{
+    BillingRates, CacheTier, CacheWrite, TierRate, Usage, UsageOutcome, FIVE_MIN, ONE_HOUR,
+};
 
 const PARAM_KEYS: [&str; 6] = [
     "thinking",
@@ -14,9 +19,6 @@ const PARAM_KEYS: [&str; 6] = [
     "context_management",
     "metadata",
 ];
-
-const FIVE_MIN: CacheTier = CacheTier::Ttl { seconds: 300 };
-const ONE_HOUR: CacheTier = CacheTier::Ttl { seconds: 3600 };
 
 pub struct Anthropic;
 
@@ -169,6 +171,100 @@ fn cache_read_multiplier(model: &str) -> f64 {
     }
 }
 
+const PRICE_AS_OF: &str = "2026-10-21";
+const PRICE_SOURCE: &str = "https://platform.claude.com/docs/en/about-claude/pricing";
+const FAST_MODELS: [&str; 3] = ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"];
+const NO_GEO_MODELS: [&str; 2] = ["claude-opus-4-5", "claude-haiku-4-5"];
+
+struct Row {
+    model: &'static str,
+    above_prompt_tokens: Option<u64>,
+    input: f64,
+    write_5m: f64,
+    write_1h: f64,
+    cache_read: f64,
+    output: f64,
+}
+
+const fn row(
+    model: &'static str,
+    [input, write_5m, write_1h, cache_read, output]: [f64; 5],
+) -> Row {
+    Row {
+        model,
+        above_prompt_tokens: None,
+        input,
+        write_5m,
+        write_1h,
+        cache_read,
+        output,
+    }
+}
+
+const HAIKU_LONG_PROMPT: u64 = 100_000;
+
+fn price_rows() -> Vec<Row> {
+    vec![
+        row("claude-fable-5-1", [10.0, 12.5, 20.0, 0.25, 50.0]),
+        row("claude-fable-5", [10.0, 12.5, 20.0, 1.0, 50.0]),
+        row("claude-opus-5-5", [4.0, 5.0, 8.0, 0.2, 20.0]),
+        row("claude-opus-5", [5.0, 6.25, 10.0, 0.5, 25.0]),
+        row("claude-opus-4-8", [5.0, 6.25, 10.0, 0.5, 25.0]),
+        row("claude-opus-4-7", [5.0, 6.25, 10.0, 0.5, 25.0]),
+        row("claude-opus-4-6", [5.0, 6.25, 10.0, 0.5, 25.0]),
+        row("claude-opus-4-5", [5.0, 6.25, 10.0, 0.5, 25.0]),
+        row("claude-sonnet-5-5", [2.0, 2.5, 4.0, 0.1, 10.0]),
+        row("claude-sonnet-5", [2.0, 2.5, 4.0, 0.2, 10.0]),
+        row("claude-sonnet-4-6", [3.0, 3.75, 6.0, 0.3, 15.0]),
+        row("claude-haiku-5-5", [0.1, 0.125, 0.2, 0.01, 0.5]),
+        Row {
+            above_prompt_tokens: Some(HAIKU_LONG_PROMPT),
+            ..row("claude-haiku-5-5", [0.5, 0.625, 1.0, 0.05, 2.5])
+        },
+        row("claude-haiku-4-5", [1.0, 1.25, 2.0, 0.1, 5.0]),
+    ]
+}
+
+impl From<Row> for PriceEntry {
+    fn from(row: Row) -> Self {
+        Self {
+            model: row.model.to_string(),
+            above_prompt_tokens: row.above_prompt_tokens,
+            price: ModelPrice {
+                input: row.input,
+                cache_read: row.cache_read,
+                cache_writes: vec![
+                    TierPrice {
+                        tier: FIVE_MIN,
+                        usd_per_mtok: row.write_5m,
+                    },
+                    TierPrice {
+                        tier: ONE_HOUR,
+                        usd_per_mtok: row.write_1h,
+                    },
+                ],
+                output: row.output,
+            },
+        }
+    }
+}
+
+fn speed_factor(raw: &Value, model: &str) -> Option<f64> {
+    match raw.get("speed").and_then(Value::as_str) {
+        None | Some("standard") => Some(1.0),
+        Some("fast") if FAST_MODELS.iter().any(|m| matches_prefix(model, m)) => Some(2.0),
+        Some(_) => None,
+    }
+}
+
+fn geo_factor(raw: &Value, model: &str) -> Option<f64> {
+    match raw.get("inference_geo").and_then(Value::as_str) {
+        None | Some("global") => Some(1.0),
+        Some("us") if !NO_GEO_MODELS.iter().any(|m| matches_prefix(model, m)) => Some(1.1),
+        Some(_) => None,
+    }
+}
+
 impl Provider for Anthropic {
     fn id(&self) -> ProviderId {
         ProviderId::Anthropic
@@ -227,6 +323,19 @@ impl Provider for Anthropic {
             ],
             output: 5.0,
         }
+    }
+
+    fn prices(&self) -> PriceTable {
+        PriceTable {
+            as_of: PRICE_AS_OF,
+            source: PRICE_SOURCE,
+            entries: price_rows().into_iter().map(PriceEntry::from).collect(),
+        }
+    }
+
+    fn price_factor(&self, raw_usage: &Value, model: &str) -> Option<f64> {
+        let model = normalize_model(model);
+        Some(speed_factor(raw_usage, model)? * geo_factor(raw_usage, model)?)
     }
 }
 
@@ -542,6 +651,81 @@ mod tests {
         assert_eq!(
             provider(ProviderId::Anthropic).default_upstream(),
             "https://api.anthropic.com"
+        );
+    }
+
+    #[test]
+    fn price_table_agrees_with_billing_multipliers() {
+        for entry in Anthropic.prices().entries {
+            let rates = Anthropic.rates(&entry.model);
+            let price = entry.price;
+            let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+            assert!(
+                close(price.cache_read, price.input * rates.cache_read),
+                "{}",
+                entry.model
+            );
+            assert!(
+                close(price.output, price.input * rates.output),
+                "{}",
+                entry.model
+            );
+            for (tier, rate) in price.cache_writes.iter().zip(&rates.cache_writes) {
+                assert!(
+                    close(tier.usd_per_mtok, price.input * rate.multiplier),
+                    "{}",
+                    entry.model
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn price_factor_covers_speed_and_geo() {
+        let factor = |raw: Value, model: &str| Anthropic.price_factor(&raw, model);
+        assert_eq!(factor(json!({}), "claude-haiku-5-5"), Some(1.0));
+        assert_eq!(
+            factor(
+                json!({"speed": "standard", "inference_geo": "global"}),
+                "claude-haiku-5-5"
+            ),
+            Some(1.0)
+        );
+        assert_eq!(
+            factor(json!({"speed": "fast"}), "claude-opus-5-5"),
+            Some(2.0)
+        );
+        assert_eq!(factor(json!({"speed": "fast"}), "claude-haiku-5-5"), None);
+        assert_eq!(
+            factor(json!({"inference_geo": "us"}), "claude-sonnet-5-5[1m]"),
+            Some(1.1)
+        );
+        assert_eq!(
+            factor(json!({"inference_geo": "us"}), "claude-opus-4-5-20251101"),
+            None
+        );
+        let both = factor(
+            json!({"speed": "fast", "inference_geo": "us"}),
+            "claude-opus-5",
+        );
+        assert!((both.unwrap() - 2.2).abs() < 1e-9);
+        assert_eq!(factor(json!({"speed": "turbo"}), "claude-opus-5"), None);
+    }
+
+    #[test]
+    fn batch_paths_are_not_inference() {
+        let head = |path: &str| RequestHead {
+            method: "POST".into(),
+            path: path.into(),
+            headers: vec![],
+        };
+        assert_eq!(
+            Anthropic.classify(&head("/v1/messages/batches")),
+            CallKind::Other
+        );
+        assert_eq!(
+            Anthropic.classify(&head("/v1/messages")),
+            CallKind::Inference
         );
     }
 }
