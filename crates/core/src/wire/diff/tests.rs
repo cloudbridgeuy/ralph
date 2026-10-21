@@ -202,7 +202,9 @@ fn b_extends_a_has_no_divergence_and_only_added() {
     assert_eq!(view.added, ["msg[0].1 user/text"]);
     assert_eq!(
         view.explanation.verdict,
-        Verdict::PrefixChanged { label: None }
+        Verdict::PrefixShared {
+            relation: Relation::Extends
+        }
     );
 }
 
@@ -241,7 +243,7 @@ fn cache_agreeing_with_estimate_means_prefix_changed() {
     assert_eq!(
         view.explanation.verdict,
         Verdict::PrefixChanged {
-            label: Some("msg[0].1 user/text".into())
+            label: "msg[0].1 user/text".into()
         }
     );
     assert!(view.explanation.servable_tokens.unwrap() > 0);
@@ -586,7 +588,9 @@ fn moved_breakpoint_is_not_a_divergence() {
     assert_eq!(view.added, ["msg[0].2 user/text", "msg[0].3 user/text"]);
     assert_eq!(
         view.explanation.verdict,
-        Verdict::PrefixChanged { label: None }
+        Verdict::PrefixShared {
+            relation: Relation::Extends
+        }
     );
     let table = diff_table(&view);
     assert!(table.contains("b extends a"), "{table}");
@@ -633,16 +637,61 @@ fn b_prefix_of_a_and_identical_prompts_say_so() {
     let head = || blk("h", Some("5m"));
     let long = call(1, 0, 10, vec![head(), blk("more", None)], usage(1, 0));
     let short = call(2, 20, 30, vec![head()], usage(0, 100));
-    let table = diff_table(&view_of(&long, &short, &[]));
+    let view = view_of(&long, &short, &[]);
+    assert_eq!(
+        view.explanation.verdict,
+        Verdict::PrefixShared {
+            relation: Relation::PrefixOf
+        }
+    );
+    let table = diff_table(&view);
     assert!(
         table.contains("cache served the shared prefix; b is a prefix of a"),
         "{table}"
     );
     let same = call(3, 40, 50, vec![head()], usage(0, 100));
-    let table = diff_table(&view_of(&short, &same, &[]));
+    let view = view_of(&short, &same, &[]);
+    assert_eq!(
+        view.explanation.verdict,
+        Verdict::PrefixShared {
+            relation: Relation::Identical
+        }
+    );
+    let table = diff_table(&view);
     assert!(
         table.contains("cache served the shared prefix; prompts are identical"),
         "{table}"
+    );
+}
+
+#[test]
+fn relation_compares_lengths_against_the_shared_count() {
+    assert_eq!(relation(1, 2, 1), Relation::Extends);
+    assert_eq!(relation(2, 1, 1), Relation::PrefixOf);
+    assert_eq!(relation(1, 1, 1), Relation::Identical);
+    assert_eq!(relation(0, 0, 0), Relation::Identical);
+}
+
+#[test]
+fn cache_served_verdicts_serialize_without_null_labels() {
+    let shared = |relation| serde_json::to_value(Verdict::PrefixShared { relation }).unwrap();
+    assert_eq!(
+        shared(Relation::Extends),
+        json!({"kind": "prefix_shared", "relation": "extends"})
+    );
+    assert_eq!(
+        shared(Relation::PrefixOf),
+        json!({"kind": "prefix_shared", "relation": "prefix_of"})
+    );
+    assert_eq!(
+        shared(Relation::Identical),
+        json!({"kind": "prefix_shared", "relation": "identical"})
+    );
+    let (a, b) = pair("a", "b", usage(0, 100));
+    let verdict = serde_json::to_value(view_of(&a, &b, &[]).explanation.verdict).unwrap();
+    assert_eq!(
+        verdict,
+        json!({"kind": "prefix_changed", "label": "msg[0].1 user/text"})
     );
 }
 
