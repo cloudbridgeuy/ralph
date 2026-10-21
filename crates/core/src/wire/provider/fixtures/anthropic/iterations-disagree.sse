@@ -1,0 +1,9 @@
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_fixture","type":"message","role":"assistant","model":"claude-haiku-5-5","content":[],"usage":{"input_tokens":10,"cache_read_input_tokens":100,"output_tokens":1}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10,"cache_read_input_tokens":100,"output_tokens":20,"iterations":[{"input_tokens":7,"output_tokens":50,"type":"message"},{"input_tokens":7,"output_tokens":50,"type":"message"}]}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
