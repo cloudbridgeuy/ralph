@@ -1,9 +1,12 @@
 mod proxy;
 mod store;
 
-use crate::cli::{WireArgs, WireCommand, WireLsArgs, WireProvider, WireSessionsArgs, WireShowArgs};
+use crate::cli::{
+    WireArgs, WireCommand, WireDiffArgs, WireLsArgs, WireProvider, WireSessionsArgs, WireShowArgs,
+};
 use crate::config::AppConfig;
 use chrono::Utc;
+use ralph_core::wire::diff::{diff_table, diff_view, pick_base, DiffInput};
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::read::{find_call, pick_session, Calls};
 use ralph_core::wire::record::{SessionRecord, SCHEMA_VERSION};
@@ -87,6 +90,35 @@ fn show(args: WireShowArgs) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn diff(args: WireDiffArgs) -> Result<(), Box<dyn Error>> {
+    let (id, session, calls) = load_session(args.dir, args.session)?;
+    let provider = provider(session.provider);
+    let (a, b) = match args.b {
+        Some(b) => (
+            Some(find_call(&calls.records, args.a, &id)?),
+            find_call(&calls.records, b, &id)?,
+        ),
+        None => (
+            pick_base(&calls.records, args.a, &id, provider.as_ref())?,
+            find_call(&calls.records, args.a, &id)?,
+        ),
+    };
+    let view = diff_view(&DiffInput {
+        a,
+        b,
+        session: &calls.records,
+        provider: provider.as_ref(),
+        base_picked: args.b.is_none(),
+    });
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        println!("session: {id}");
+        println!("{}", diff_table(&view));
+    }
+    Ok(())
+}
+
 fn sessions(args: WireSessionsArgs) -> Result<(), Box<dyn Error>> {
     let root = root_or_default(args.dir);
     let reads = store::list_sessions(&root)
@@ -116,6 +148,7 @@ pub fn run(args: WireArgs) -> Result<(), Box<dyn Error>> {
     match args.command {
         Some(WireCommand::Ls(ls_args)) => ls(ls_args),
         Some(WireCommand::Show(show_args)) => show(show_args),
+        Some(WireCommand::Diff(diff_args)) => diff(diff_args),
         Some(WireCommand::Sessions(sessions_args)) => sessions(sessions_args),
         None => proxy(args),
     }

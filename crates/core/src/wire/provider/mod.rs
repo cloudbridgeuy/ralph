@@ -43,7 +43,7 @@ pub struct RequestFacts {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptSegment {
     pub label: String,
-    pub len: usize,
+    pub text: String,
     pub breakpoint: Option<CacheTier>,
 }
 
@@ -65,6 +65,8 @@ pub trait Provider: Send + Sync {
     fn default_upstream(&self) -> &'static str;
     fn base_url_env(&self) -> &'static str;
     fn secret_headers(&self) -> &'static [&'static str];
+    fn cache_relevant_headers(&self) -> &'static [&'static str];
+    fn cache_relevant_params(&self) -> &'static [&'static str];
     fn classify(&self, call: &RequestHead) -> CallKind;
     fn request_facts(&self, body: &serde_json::Value) -> RequestFacts;
     fn segments(&self, body: &serde_json::Value) -> Vec<PromptSegment>;
