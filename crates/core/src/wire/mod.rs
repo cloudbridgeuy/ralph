@@ -1,5 +1,6 @@
 pub mod build;
 pub mod decode;
+pub mod diff;
 pub mod headers;
 pub mod live;
 pub mod price;

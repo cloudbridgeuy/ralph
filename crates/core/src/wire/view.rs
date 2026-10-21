@@ -276,10 +276,10 @@ pub fn show_view(record: &CallRecord, provider: &dyn Provider) -> ShowView {
     let segments = prompt
         .into_iter()
         .map(|segment| {
-            cumulative += segment.len;
+            cumulative += segment.text.len();
             SegmentRow {
                 label: segment.label,
-                bytes: segment.len,
+                bytes: segment.text.len(),
                 cumulative,
                 breakpoint: segment.breakpoint,
             }
@@ -640,7 +640,7 @@ mod tests {
                     tool,
                     Some(CacheTier::Ttl { seconds: 3600 })
                 ),
-                ("system", 5, tool + 5, None)
+                ("system[0]", 28, tool + 28, None)
             ]
         );
     }
@@ -651,7 +651,10 @@ mod tests {
         assert!(table.starts_with("call 7\n"), "{table}");
         assert!(table.contains("  tools[0] Read bytes="), "{table}");
         assert!(table.contains(" breakpoint=1h\n"), "{table}");
-        assert!(table.contains("  system bytes=5 cumulative="), "{table}");
+        assert!(
+            table.contains("  system[0] bytes=28 cumulative="),
+            "{table}"
+        );
         assert!(table.contains("model: m\n"), "{table}");
         assert!(
             table.contains("usage: {\"status\":\"missing\"}\n"),

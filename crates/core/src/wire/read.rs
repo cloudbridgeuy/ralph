@@ -24,6 +24,10 @@ pub enum ReadError {
         seq: u64,
         session: String,
     },
+    NoBase {
+        seq: u64,
+        session: String,
+    },
 }
 
 impl fmt::Display for ReadError {
@@ -38,6 +42,10 @@ impl fmt::Display for ReadError {
             Self::NoSessions { root } => write!(f, "no sessions in {root}"),
             Self::UnknownSession { id, root } => write!(f, "no session {id} in {root}"),
             Self::UnknownCall { seq, session } => write!(f, "no call {seq} in session {session}"),
+            Self::NoBase { seq, session } => write!(
+                f,
+                "no earlier call in session {session} shares a prompt prefix with call {seq}"
+            ),
         }
     }
 }

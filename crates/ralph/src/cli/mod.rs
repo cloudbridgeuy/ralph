@@ -128,6 +128,11 @@ pub enum WireCommand {
     #[command(about = "Show the prompt segments, parameters, and usage of one recorded call.")]
     Show(WireShowArgs),
 
+    #[command(
+        about = "Explain why a call missed the prompt cache by diffing it against an earlier one."
+    )]
+    Diff(WireDiffArgs),
+
     #[command(about = "List recorded sessions.")]
     Sessions(WireSessionsArgs),
 }
@@ -159,6 +164,35 @@ pub struct WireLsArgs {
 pub struct WireShowArgs {
     #[arg(value_name = "N", help = "Call number (seq) as printed by `wire ls`")]
     pub n: u64,
+
+    #[arg(
+        long,
+        value_name = "ID",
+        help = "Session to show (default: the latest)"
+    )]
+    pub session: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Directory holding session folders (default: <tmp>/ralph-wire)"
+    )]
+    pub dir: Option<PathBuf>,
+
+    #[arg(long, help = "Print JSON instead of a table")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WireDiffArgs {
+    #[arg(
+        value_name = "A",
+        help = "Earlier call (seq); with B omitted, the call to explain"
+    )]
+    pub a: u64,
+
+    #[arg(value_name = "B", help = "Later call (seq) to compare against A")]
+    pub b: Option<u64>,
 
     #[arg(
         long,
