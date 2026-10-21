@@ -1,7 +1,7 @@
 use ralph_core::wire::live::live_row;
 use ralph_core::wire::record::{CallRecord, SessionRecord};
 use std::fs::{DirBuilder, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::Path;
 use std::sync::mpsc::Receiver;
@@ -38,4 +38,34 @@ pub fn write_loop(records: Receiver<CallRecord>, mut file: File) {
             println!("{row}");
         }
     }
+}
+
+pub fn list_sessions(root: &Path) -> io::Result<Vec<String>> {
+    let mut ids = Vec::new();
+    for entry in std::fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.path().join("session.json").is_file() {
+            if let Some(id) = entry.file_name().to_str() {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+pub fn read_session(root: &Path, id: &str) -> io::Result<(SessionRecord, Vec<CallRecord>)> {
+    let dir = root.join(id);
+    let meta_path = dir.join("session.json");
+    let session = serde_json::from_slice(&std::fs::read(&meta_path)?)
+        .map_err(|e| io::Error::other(format!("{}: {e}", meta_path.display())))?;
+    let calls_path = dir.join("calls.jsonl");
+    let mut calls = Vec::new();
+    for (index, line) in BufReader::new(File::open(&calls_path)?).lines().enumerate() {
+        let call = serde_json::from_str(&line?).map_err(|e| {
+            io::Error::other(format!("{}:{}: {e}", calls_path.display(), index + 1))
+        })?;
+        calls.push(call);
+    }
+    Ok((session, calls))
 }

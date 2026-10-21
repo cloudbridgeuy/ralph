@@ -24,16 +24,20 @@ fn writes_label(writes: &[CacheWrite]) -> String {
         .join(" ")
 }
 
-fn hit_ratio(usage: &Usage) -> String {
+pub(super) fn hit_fraction(usage: &Usage) -> Option<f64> {
     let written: u64 = usage.cache_writes.iter().map(|write| write.tokens).sum();
     let total = usage.input_uncached + usage.cache_read + written;
-    if total == 0 {
-        return "-".to_string();
-    }
-    format!("{:.0}%", usage.cache_read as f64 * 100.0 / total as f64)
+    (total != 0).then(|| usage.cache_read as f64 / total as f64)
 }
 
-fn usage_columns(outcome: &UsageOutcome) -> String {
+fn hit_ratio(usage: &Usage) -> String {
+    hit_fraction(usage).map_or_else(
+        || "-".to_string(),
+        |fraction| format!("{:.0}%", fraction * 100.0),
+    )
+}
+
+pub(super) fn usage_columns(outcome: &UsageOutcome) -> String {
     match outcome {
         UsageOutcome::Reported(usage) | UsageOutcome::Partial(usage) => format!(
             "in={} cr={} {} out={} hit={}",
@@ -47,10 +51,7 @@ fn usage_columns(outcome: &UsageOutcome) -> String {
     }
 }
 
-pub fn live_row(record: &CallRecord) -> Option<String> {
-    if record.kind == CallKind::Other {
-        return None;
-    }
+pub(super) fn format_row(record: &CallRecord) -> String {
     let status = record
         .status
         .map_or_else(|| "-".to_string(), |status| status.to_string());
@@ -70,7 +71,11 @@ pub fn live_row(record: &CallRecord) -> Option<String> {
         let reason = record.error.as_deref().unwrap_or("unknown");
         let _ = write!(row, " INCOMPLETE: {reason}");
     }
-    Some(row)
+    row
+}
+
+pub fn live_row(record: &CallRecord) -> Option<String> {
+    (record.kind != CallKind::Other).then(|| format_row(record))
 }
 
 #[cfg(test)]

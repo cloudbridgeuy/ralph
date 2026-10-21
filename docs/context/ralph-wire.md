@@ -4,6 +4,8 @@
 
 ```bash
 ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--responses]
+ralph wire ls [--session ID] [--dir PATH] [--all] [--json]
+ralph wire sessions [--dir PATH] [--json]
 ```
 
 Flags are listed in the [CLI reference](../cli-reference.md#ralph-wire).
@@ -20,6 +22,15 @@ Under `--dir` or `<tmp>/ralph-wire`, one folder per run named `<UTC timestamp>-<
 - `calls.jsonl`: one `CallRecord` per line, appended by a single writer thread.
 
 Prompts and responses are stored in plaintext. Auth headers (`authorization`, `x-api-key`, cookies) are redacted. Only a response-header allowlist is stored; account identifiers are not.
+
+## Inspecting recordings
+
+`ralph wire ls` prints one row per inference call of a session (the latest unless `--session ID`), in the live-row format, then a total line. `--all` also lists non-inference calls as `other METHOD PATH`; they never count in totals. `ralph wire sessions` lists sessions under the root with call counts. `--dir` is the root in all three modes. `--json` prints `{rows, totals}` for `ls` and an array for `sessions`; JSON rows carry the full usage outcome, including reasoning and other counters.
+
+- `usage=missing` rows and `usage=partial` rows are marked, never shown as zeros.
+- Totals sum reported and partial usage only. The total line shows how many calls were counted, partial, and missing.
+- Total `eq` is `-` (null in JSON) when no call was counted or any counted call is unrated.
+- A malformed `calls.jsonl` line is an error naming the file and line number. An unknown session id or a missing root is an error for `ls`; `sessions` prints `no sessions`.
 
 ## Proxy behaviour
 

@@ -9,3 +9,4 @@ pub mod response;
 pub mod session;
 pub mod sse;
 pub mod usage;
+pub mod view;
