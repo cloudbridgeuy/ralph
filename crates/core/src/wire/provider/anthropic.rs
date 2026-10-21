@@ -348,6 +348,15 @@ mod tests {
     }
 
     #[test]
+    fn truncated_gzip_is_partial() {
+        let truncated = view(SSE, Some("gzip"), &GZIP[..420]).unwrap();
+        assert!(matches!(
+            Anthropic.usage(&truncated).outcome,
+            UsageOutcome::Partial(_)
+        ));
+    }
+
+    #[test]
     fn stream_error_is_partial_with_message() {
         let result = Anthropic.usage(&view(SSE, None, ERROR).unwrap());
         assert_eq!(result.error.as_deref(), Some("Overloaded"));

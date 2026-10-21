@@ -1,6 +1,6 @@
 use flate2::read::{DeflateDecoder, MultiGzDecoder, ZlibDecoder};
 use std::fmt;
-use std::io::Read;
+use std::io::{ErrorKind, Read};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodeError {
@@ -43,13 +43,13 @@ fn decode_one(coding: &str, bytes: &[u8]) -> Result<Vec<u8>, DecodeError> {
 
 fn read_all(coding: &str, mut reader: impl Read) -> Result<Vec<u8>, DecodeError> {
     let mut out = Vec::new();
-    reader
-        .read_to_end(&mut out)
-        .map_err(|e| DecodeError::Corrupt {
+    match reader.read_to_end(&mut out) {
+        Err(e) if e.kind() != ErrorKind::UnexpectedEof => Err(DecodeError::Corrupt {
             encoding: coding.to_string(),
             message: e.to_string(),
-        })?;
-    Ok(out)
+        }),
+        _ => Ok(out),
+    }
 }
 
 #[cfg(test)]
@@ -121,5 +121,16 @@ mod tests {
             decode_body(Some("gzip"), b"not gzip data"),
             Err(DecodeError::Corrupt { .. })
         ));
+    }
+
+    #[test]
+    fn truncated_gzip_yields_decoded_prefix() {
+        let original: Vec<u8> = (0..20_000u32)
+            .flat_map(|i| i.wrapping_mul(2_654_435_761).to_le_bytes())
+            .collect();
+        let full = gzip(&original);
+        let decoded = decode_body(Some("gzip"), &full[..full.len() / 2]).unwrap();
+        assert!(!decoded.is_empty());
+        assert!(original.starts_with(&decoded));
     }
 }
