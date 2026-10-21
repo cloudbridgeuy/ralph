@@ -5,11 +5,11 @@ use crate::cli::{WireArgs, WireCommand, WireLsArgs, WireProvider, WireSessionsAr
 use crate::config::AppConfig;
 use chrono::Utc;
 use ralph_core::wire::provider::{provider, ProviderId};
-use ralph_core::wire::read::{find_call, pick_session};
-use ralph_core::wire::record::{CallRecord, SessionRecord, SCHEMA_VERSION};
+use ralph_core::wire::read::{find_call, pick_session, Calls};
+use ralph_core::wire::record::{SessionRecord, SCHEMA_VERSION};
 use ralph_core::wire::session::session_id;
 use ralph_core::wire::view::{
-    ls_table, ls_view, session_row, sessions_table, show_table, show_view, Pricing,
+    ls_table, ls_view, session_rows, sessions_table, show_table, show_view, Pricing,
 };
 use std::collections::hash_map::RandomState;
 use std::error::Error;
@@ -41,12 +41,18 @@ fn root_or_default(dir: Option<PathBuf>) -> PathBuf {
 fn load_session(
     dir: Option<PathBuf>,
     requested: Option<String>,
-) -> Result<(String, SessionRecord, Vec<CallRecord>), Box<dyn Error>> {
+) -> Result<(String, SessionRecord, Calls), Box<dyn Error>> {
     let root = root_or_default(dir);
     let ids =
         store::list_sessions(&root).map_err(|error| format!("{}: {error}", root.display()))?;
     let id = pick_session(ids, requested, &root.display().to_string())?;
     let (session, calls) = store::read_session(&root, &id)?;
+    if calls.torn_tail {
+        eprintln!(
+            "note: {}: ignored incomplete last line (session in progress or interrupted)",
+            root.join(&id).join("calls.jsonl").display()
+        );
+    }
     Ok((id, session, calls))
 }
 
@@ -58,7 +64,7 @@ fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
         provider: provider.as_ref(),
         overrides: &config.wire.prices,
     };
-    let view = ls_view(&calls, args.all, &pricing);
+    let view = ls_view(&calls.records, args.all, &pricing);
     if args.json {
         println!("{}", serde_json::to_string_pretty(&view)?);
     } else {
@@ -70,7 +76,7 @@ fn ls(args: WireLsArgs) -> Result<(), Box<dyn Error>> {
 
 fn show(args: WireShowArgs) -> Result<(), Box<dyn Error>> {
     let (id, session, calls) = load_session(args.dir, args.session)?;
-    let call = find_call(&calls, args.n, &id)?;
+    let call = find_call(&calls.records, args.n, &id)?;
     let view = show_view(call, provider(session.provider).as_ref());
     if args.json {
         println!("{}", serde_json::to_string_pretty(&view)?);
@@ -83,16 +89,21 @@ fn show(args: WireShowArgs) -> Result<(), Box<dyn Error>> {
 
 fn sessions(args: WireSessionsArgs) -> Result<(), Box<dyn Error>> {
     let root = root_or_default(args.dir);
-    let rows = store::list_sessions(&root)
+    let reads = store::list_sessions(&root)
         .or_else(|error| match error.kind() {
             io::ErrorKind::NotFound => Ok(vec![]),
             _ => Err(error),
         })?
-        .iter()
+        .into_iter()
         .map(|id| {
-            store::read_session(&root, id).map(|(session, calls)| session_row(id, &session, &calls))
+            let read = store::read_session(&root, &id);
+            (id, read)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect();
+    let (rows, warnings) = session_rows(reads);
+    for warning in warnings {
+        eprintln!("ralph wire: {warning}");
+    }
     if args.json {
         println!("{}", serde_json::to_string_pretty(&rows)?);
     } else {

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use super::live::{format_row, hit_fraction, usage_columns, usd_suffix};
 use super::price::{prompt_tokens, resolve_price, usd, PriceOverride, PriceTable};
 use super::provider::{CallKind, Provider, ProviderId, RequestFacts};
+use super::read::{Calls, ReadError};
 use super::record::{CallRecord, RequestBody, SessionRecord};
 use super::usage::{CacheTier, CacheWrite, Usage, UsageOutcome};
 
@@ -227,6 +228,20 @@ pub fn session_row(id: &str, session: &SessionRecord, calls: &[CallRecord]) -> S
             .filter(|call| call.kind == CallKind::Inference)
             .count(),
     }
+}
+
+pub type SessionRead = (String, Result<(SessionRecord, Calls), ReadError>);
+
+pub fn session_rows(reads: Vec<SessionRead>) -> (Vec<SessionRow>, Vec<String>) {
+    let mut rows = Vec::new();
+    let mut warnings = Vec::new();
+    for (id, read) in reads {
+        match read {
+            Ok((session, calls)) => rows.push(session_row(&id, &session, &calls.records)),
+            Err(error) => warnings.push(format!("skipped {id}: {error}")),
+        }
+    }
+    (rows, warnings)
 }
 
 pub fn sessions_table(rows: &[SessionRow]) -> String {
@@ -543,6 +558,38 @@ mod tests {
             "id1 2026-10-21 16:24:29 anthropic http://u calls=2 inference=1"
         );
         assert_eq!(sessions_table(&[]), "no sessions");
+    }
+
+    #[test]
+    fn damaged_sessions_are_skipped_with_a_warning() {
+        let session = SessionRecord {
+            schema_version: SCHEMA_VERSION,
+            ralph_version: "0".into(),
+            provider: ProviderId::Anthropic,
+            upstream: "http://u".into(),
+            listen: "127.0.0.1:1".into(),
+            started_at: Utc.with_ymd_and_hms(2026, 10, 21, 16, 24, 29).unwrap(),
+        };
+        let bad = ReadError::Session {
+            label: "/r/b/session.json".into(),
+            message: "EOF".into(),
+        };
+        let full = Calls {
+            records: vec![record(1, UsageOutcome::Missing, None)],
+            torn_tail: false,
+        };
+        let (rows, warnings) = session_rows(vec![
+            ("a".into(), Ok((session.clone(), full))),
+            ("b".into(), Err(bad)),
+            ("c".into(), Ok((session, Calls::default()))),
+        ]);
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.id.as_str(), r.calls))
+                .collect::<Vec<_>>(),
+            vec![("a", 1), ("c", 0)]
+        );
+        assert_eq!(warnings, vec!["skipped b: /r/b/session.json: EOF"]);
     }
 
     #[test]

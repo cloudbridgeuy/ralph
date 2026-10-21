@@ -1,7 +1,6 @@
 use ralph_core::wire::live::live_row;
-use ralph_core::wire::read::{parse_calls, parse_session};
+use ralph_core::wire::read::{parse_calls, parse_session, Calls, ReadError};
 use ralph_core::wire::record::{CallRecord, SessionRecord};
-use std::error::Error;
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -56,20 +55,24 @@ pub fn list_sessions(root: &Path) -> io::Result<Vec<String>> {
     Ok(ids)
 }
 
-pub fn read_session(
-    root: &Path,
-    id: &str,
-) -> Result<(SessionRecord, Vec<CallRecord>), Box<dyn Error>> {
+fn io_error(path: &Path, error: io::Error) -> ReadError {
+    ReadError::Session {
+        label: path.display().to_string(),
+        message: error.to_string(),
+    }
+}
+
+pub fn read_session(root: &Path, id: &str) -> Result<(SessionRecord, Calls), ReadError> {
     let dir = root.join(id);
     let meta_path = dir.join("session.json");
-    let session = parse_session(
-        &meta_path.display().to_string(),
-        &std::fs::read_to_string(&meta_path)?,
-    )?;
+    let meta = std::fs::read_to_string(&meta_path).map_err(|error| io_error(&meta_path, error))?;
+    let session = parse_session(&meta_path.display().to_string(), &meta)?;
     let calls_path = dir.join("calls.jsonl");
-    let calls = parse_calls(
-        &calls_path.display().to_string(),
-        &std::fs::read_to_string(&calls_path)?,
-    )?;
+    let text = match std::fs::read(&calls_path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(io_error(&calls_path, error)),
+    };
+    let calls = parse_calls(&calls_path.display().to_string(), text.as_deref())?;
     Ok((session, calls))
 }

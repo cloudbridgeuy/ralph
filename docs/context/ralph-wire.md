@@ -35,7 +35,11 @@ Segment sizes and cumulative offsets are approximate. Raw request bytes are not 
 - Totals sum reported and partial usage only. The total line shows how many calls were counted, partial, and missing.
 - Total `eq` is `-` (null in JSON) when no call was counted or any counted call is unrated.
 - A priced row and the total line end with `$=0.001234` (USD, six decimals). Unpriced rows show no `$=`. In JSON each row and `totals` carry `usd` (null when unpriced), and `prices_as_of` is the provider table date (null when no row is priced). Total `usd` is null when no call was counted or any counted call is unpriced.
-- A malformed `calls.jsonl` line is an error naming the file and line number. An unknown session id or a missing root is an error for `ls`; `sessions` prints `no sessions`.
+- A final `calls.jsonl` line without a newline that is a truncated record (session in progress or interrupted) is ignored. `ls` and `show` write a note on stderr; the dropped record is not available to `show N`.
+- Any other malformed line is an error naming the file and line number.
+- A missing `calls.jsonl` counts as zero calls.
+- `sessions` skips a damaged session with a `ralph wire: skipped ID: ...` warning on stderr and lists the rest.
+- An unknown session id or a missing root is an error for `ls`; `sessions` prints `no sessions`.
 
 ## Prices
 

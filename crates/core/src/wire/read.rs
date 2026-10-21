@@ -51,17 +51,55 @@ pub fn parse_session(label: &str, text: &str) -> Result<SessionRecord, ReadError
     })
 }
 
-pub fn parse_calls(label: &str, text: &str) -> Result<Vec<CallRecord>, ReadError> {
-    text.lines()
-        .enumerate()
-        .map(|(index, line)| {
-            serde_json::from_str(line).map_err(|error| ReadError::Call {
-                label: label.to_string(),
-                line: index + 1,
-                message: error.to_string(),
-            })
-        })
-        .collect()
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Calls {
+    pub records: Vec<CallRecord>,
+    pub torn_tail: bool,
+}
+
+fn decode<'a>(label: &str, bytes: &'a [u8]) -> Result<(&'a str, bool), ReadError> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok((text, false)),
+        Err(error) if error.error_len().is_none() => {
+            let valid = &bytes[..error.valid_up_to()];
+            Ok((std::str::from_utf8(valid).unwrap_or_default(), true))
+        }
+        Err(error) => Err(ReadError::Call {
+            label: label.to_string(),
+            line: bytes[..error.valid_up_to()]
+                .iter()
+                .filter(|byte| **byte == b'\n')
+                .count()
+                + 1,
+            message: error.to_string(),
+        }),
+    }
+}
+
+pub fn parse_calls(label: &str, bytes: Option<&[u8]>) -> Result<Calls, ReadError> {
+    let (text, cut) = decode(label, bytes.unwrap_or_default())?;
+    let mut calls = Calls {
+        torn_tail: cut,
+        ..Calls::default()
+    };
+    for (index, raw) in text.split_inclusive('\n').enumerate() {
+        let terminated = raw.ends_with('\n');
+        let line = raw.strip_suffix('\n').unwrap_or(raw);
+        match serde_json::from_str(line) {
+            Ok(record) => calls.records.push(record),
+            Err(error) if !terminated && error.classify() == serde_json::error::Category::Eof => {
+                calls.torn_tail = true;
+            }
+            Err(error) => {
+                return Err(ReadError::Call {
+                    label: label.to_string(),
+                    line: index + 1,
+                    message: error.to_string(),
+                })
+            }
+        }
+    }
+    Ok(calls)
 }
 
 pub fn pick_session(
@@ -135,25 +173,105 @@ mod tests {
         names.iter().map(|name| name.to_string()).collect()
     }
 
+    fn parse(text: &str) -> Result<Calls, ReadError> {
+        parse_calls("c.jsonl", Some(text.as_bytes()))
+    }
+
     #[test]
     fn parses_multi_line_calls() {
         let text = format!("{}\n{}\n", call_line(1), call_line(2));
-        let calls = parse_calls("c.jsonl", &text).unwrap();
-        assert_eq!(calls.iter().map(|c| c.seq).collect::<Vec<_>>(), vec![1, 2]);
+        let calls = parse(&text).unwrap();
+        let seqs = calls.records.iter().map(|c| c.seq).collect::<Vec<_>>();
+        assert_eq!(seqs, vec![1, 2]);
+        assert!(!calls.torn_tail);
     }
 
     #[test]
     fn bad_line_names_label_and_line() {
         let text = format!("{}\nnot json\n", call_line(1));
-        let error = parse_calls("c.jsonl", &text).unwrap_err();
+        let error = parse(&text).unwrap_err();
         assert!(error.to_string().starts_with("c.jsonl:2: "), "{error}");
     }
 
     #[test]
     fn blank_line_is_a_bad_line() {
         let text = format!("{}\n\n{}\n", call_line(1), call_line(2));
-        let error = parse_calls("c.jsonl", &text).unwrap_err();
+        let error = parse(&text).unwrap_err();
         assert!(error.to_string().starts_with("c.jsonl:2: "), "{error}");
+    }
+
+    #[test]
+    fn missing_file_is_empty_and_not_torn() {
+        let calls = parse_calls("c.jsonl", None).unwrap();
+        assert!(calls.records.is_empty());
+        assert!(!calls.torn_tail);
+    }
+
+    #[test]
+    fn truncated_last_line_is_skipped_and_flagged() {
+        let text = format!("{}\n{{\"seq\":2,\"started", call_line(1));
+        let calls = parse(&text).unwrap();
+        assert_eq!(calls.records.len(), 1);
+        assert!(calls.torn_tail);
+    }
+
+    #[test]
+    fn unterminated_last_line_that_parses_is_kept() {
+        let text = format!("{}\n{}", call_line(1), call_line(2));
+        let calls = parse(&text).unwrap();
+        assert_eq!(calls.records.len(), 2);
+        assert!(!calls.torn_tail);
+    }
+
+    #[test]
+    fn unterminated_last_line_with_syntax_error_is_an_error() {
+        for tail in ["{\"seq\":1}x", "not json"] {
+            let text = format!("{}\n{tail}", call_line(1));
+            let error = parse(&text).unwrap_err();
+            assert!(error.to_string().starts_with("c.jsonl:2: "), "{error}");
+        }
+    }
+
+    #[test]
+    fn tail_cut_inside_a_multibyte_char_is_torn() {
+        let mut bytes = format!("{}\n{{\"seq\":2,\"p\":\"", call_line(1)).into_bytes();
+        bytes.push("é".as_bytes()[0]);
+        let calls = parse_calls("c.jsonl", Some(&bytes)).unwrap();
+        assert_eq!(calls.records.len(), 1);
+        assert!(calls.torn_tail);
+    }
+
+    #[test]
+    fn cut_right_after_a_newline_is_torn() {
+        let mut bytes = format!("{}\n", call_line(1)).into_bytes();
+        bytes.push("é".as_bytes()[0]);
+        let calls = parse_calls("c.jsonl", Some(&bytes)).unwrap();
+        assert_eq!(calls.records.len(), 1);
+        assert!(calls.torn_tail);
+    }
+
+    #[test]
+    fn invalid_utf8_names_its_line() {
+        let mut bytes = format!("{}\n", call_line(1)).into_bytes();
+        bytes.extend_from_slice(b"ab\xff\n");
+        bytes.extend_from_slice(call_line(3).as_bytes());
+        bytes.push(b'\n');
+        let error = parse_calls("c.jsonl", Some(&bytes)).unwrap_err();
+        assert!(error.to_string().starts_with("c.jsonl:2: "), "{error}");
+    }
+
+    #[test]
+    fn terminated_truncated_line_is_an_error() {
+        let text = format!(
+            "{}\n{{\"seq\":2,\"started\n{}\n",
+            call_line(1),
+            call_line(3)
+        );
+        let error = parse(&text).unwrap_err();
+        assert!(error.to_string().starts_with("c.jsonl:2: "), "{error}");
+        let text = "{\"seq\":2,\"started\n";
+        let error = parse(text).unwrap_err();
+        assert!(error.to_string().starts_with("c.jsonl:1: "), "{error}");
     }
 
     #[test]
@@ -201,9 +319,20 @@ mod tests {
     #[test]
     fn find_call_matches_seq_not_position() {
         let text = format!("{}\n{}\n", call_line(5), call_line(2));
-        let calls = parse_calls("c.jsonl", &text).unwrap();
-        assert_eq!(find_call(&calls, 2, "s").unwrap().seq, 2);
-        let error = find_call(&calls, 1, "s").unwrap_err();
+        let calls = parse(&text).unwrap();
+        assert_eq!(find_call(&calls.records, 2, "s").unwrap().seq, 2);
+        let error = find_call(&calls.records, 1, "s").unwrap_err();
         assert_eq!(error.to_string(), "no call 1 in session s");
+    }
+
+    #[test]
+    fn find_call_does_not_find_the_torn_tail_record() {
+        let torn = call_line(2);
+        let text = format!("{}\n{}", call_line(1), &torn[..torn.len() / 2]);
+        let calls = parse(&text).unwrap();
+        assert!(calls.torn_tail);
+        assert_eq!(find_call(&calls.records, 1, "s").unwrap().seq, 1);
+        let error = find_call(&calls.records, 2, "s").unwrap_err();
+        assert_eq!(error.to_string(), "no call 2 in session s");
     }
 }
