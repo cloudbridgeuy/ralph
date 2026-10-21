@@ -28,6 +28,8 @@ Prompts and responses are stored in plaintext. Auth headers (`authorization`, `x
 - Redirects are not followed and bodies are not decompressed. The response is streamed to the client chunk by chunk and copied into a buffer.
 - Decoding happens after the response: gzip and deflate are decoded; `br` and `zstd` are recorded as an `Unsupported` decode error with usage `missing`.
 - Client disconnect, a ralph reset, or Ctrl-C mid-stream records the call as incomplete. An unreachable upstream returns 502 and records the error.
+- A request header with non-ASCII bytes is refused by `tiny_http`, which closes the connection with an empty reply. The call reaches neither the provider nor `calls.jsonl`.
+- `metadata.user_id` is stored as `<redacted>` in both `facts.params` and `request_body`; the forwarded bytes are unchanged.
 
 ## Using it with chat
 
