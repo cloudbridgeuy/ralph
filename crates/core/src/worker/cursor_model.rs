@@ -1,4 +1,5 @@
 use super::is_cursor_model;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Keys in `~/.cursor/cli-config.json` that a model `session/set_config_option` rewrites.
@@ -14,20 +15,28 @@ pub const CURSOR_CLI_DEFAULT_KEYS: &[&str] = &[
 /// Key in `~/.cursor/acp-config.json` that the same set rewrites.
 pub const CURSOR_ACP_DEFAULT_KEYS: &[&str] = &["selectedModelVariantId"];
 
-pub struct CursorModelSources<'a> {
-    pub spawn_model: Option<&'a str>,
-    pub config_model: Result<Option<&'a str>, &'a str>,
-    pub spawn_effort: Option<&'a str>,
-    pub config_effort: Result<Option<&'a str>, &'a str>,
-    pub spawn_fast: Option<bool>,
-    pub config_fast: Result<Option<bool>, &'a str>,
+/// Model keys saved before `session/set_config_option`, so a crash can be repaired.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CursorDefaultSnapshot {
+    pub cli: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp: Option<Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolvedCursorModel {
-    pub model: Option<String>,
-    pub reasoning_effort: Option<String>,
-    pub fast: Option<bool>,
+/// What the next start can do about a crash between the set and the restore.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CursorDefaultCrash {
+    /// A snapshot was saved before the set, so the saved keys can be put back.
+    Repairable(CursorDefaultSnapshot),
+    /// No snapshot was saved, so the files cannot be told from a change the user made.
+    Undetectable,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepairedCursorDefault {
+    pub cli: Value,
+    /// `None` when `acp-config.json` was absent before the set and should stay absent.
+    pub acp: Option<Value>,
 }
 
 pub struct AdvertisedCursorModel<'a> {
@@ -35,91 +44,55 @@ pub struct AdvertisedCursorModel<'a> {
     pub value: &'a str,
 }
 
-pub struct CursorVariantRequest<'a> {
-    pub model: &'a str,
-    pub reasoning_effort: Option<&'a str>,
-    pub fast: Option<bool>,
-}
-
 pub fn resolve_cursor_model(
-    sources: &CursorModelSources<'_>,
-) -> Result<(ResolvedCursorModel, Option<String>), String> {
-    let mut warnings = Vec::new();
-    let (model, effort, fast) = match sources.config_model {
+    spawn_model: Option<&str>,
+    config_model: Result<Option<&str>, &str>,
+) -> (Option<String>, Option<String>) {
+    match config_model {
         Err(error) => {
-            if sources.spawn_model.is_none() {
-                warnings.push(format!(
-                    "Warning: [cursor] model was skipped because the ralph config did not load ({error}). Used cursor's default model instead."
-                ));
+            if spawn_model.is_none() {
+                return (
+                    None,
+                    Some(format!(
+                        "Warning: [cursor] model was skipped because the ralph config did not load ({error}). Used cursor's default model instead."
+                    )),
+                );
             }
-            (
-                sources.spawn_model.map(str::to_string),
-                spawn_effort(sources.spawn_effort)?,
-                sources.spawn_fast,
-            )
+            (spawn_model.map(str::to_string), None)
         }
         Ok(config_model) => {
-            let model = if let Some(model) = sources.spawn_model {
-                Some(model.to_string())
-            } else {
-                match config_model {
-                    Some(model) if is_cursor_model(model) => Some(model.to_string()),
-                    Some(model) => {
-                        warnings.push(format!(
-                            "[cursor] model '{model}' must be non-empty with no whitespace; using cursor's default model."
-                        ));
-                        None
-                    }
-                    None => None,
-                }
-            };
-            let effort = match sources.spawn_effort {
-                Some(effort) => spawn_effort(Some(effort))?,
-                None => match sources.config_effort.ok().flatten() {
-                    Some(effort) if valid_effort(effort) => Some(effort.to_string()),
-                    Some(effort) => {
-                        warnings.push(format!(
-                            "[cursor] reasoning_effort '{effort}' must be non-empty with no whitespace; ignoring it."
-                        ));
-                        None
-                    }
-                    None => None,
-                },
-            };
-            (
-                model,
-                effort,
-                sources.spawn_fast.or(sources.config_fast.ok().flatten()),
-            )
-        }
-    };
-    finish(model, effort, fast, warnings)
-}
-
-/// Picks the ACP `model` option value for a request.
-/// An exact advertised value is kept when effort and fast are unset.
-/// A short name selects among the advertised values of that name.
-/// Unset effort and fast pick the cheapest advertised value: `fast=false`, then no `fast`,
-/// then `fast=true`, then the lowest effort (`none`, `minimal`, `low`, `medium`, `high`,
-/// `xhigh`, `max`). A requested parameter value that the model does not advertise is an error.
-pub fn select_cursor_model(
-    request: &CursorVariantRequest<'_>,
-    choices: &[AdvertisedCursorModel<'_>],
-) -> Result<String, String> {
-    if request.reasoning_effort.is_none() && request.fast.is_none() {
-        if let Some(choice) = choices.iter().find(|choice| choice.value == request.model) {
-            return Ok(choice.value.to_string());
+            if let Some(model) = spawn_model {
+                return (Some(model.to_string()), None);
+            }
+            match config_model {
+                Some(model) if is_cursor_model(model) => (Some(model.to_string()), None),
+                Some(model) => (
+                    None,
+                    Some(format!(
+                        "[cursor] model '{model}' must be non-empty with no whitespace; using cursor's default model."
+                    )),
+                ),
+                None => (None, None),
+            }
         }
     }
-    let Some(name) = model_name(request.model, choices) else {
-        if request.reasoning_effort.is_some() || request.fast.is_some() {
-            return Err(
-                "model is not offered, so reasoning_effort and fast cannot be applied".to_string(),
-            );
-        }
-        return Ok(request.model.to_string());
+}
+
+/// Picks the ACP `model` option value for a requested id.
+/// An exact advertised value is kept. A short name selects among the advertised
+/// values of that name. Cursor's ACP lists one value per name, so that value is
+/// the one sent. If a name is listed more than once, the cheapest wins:
+/// `fast=false`, then no `fast`, then `fast=true`, then the lowest effort
+/// (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`). Any other
+/// string is returned unchanged so the agent can reject it.
+pub fn select_cursor_model(requested: &str, choices: &[AdvertisedCursorModel<'_>]) -> String {
+    if choices.iter().any(|choice| choice.value == requested) {
+        return requested.to_string();
+    }
+    let Some(name) = model_name(requested, choices) else {
+        return requested.to_string();
     };
-    let variants: Vec<Variant> = choices
+    let variants: Vec<Variant<'_>> = choices
         .iter()
         .filter(|choice| choice.name == name)
         .map(|choice| Variant {
@@ -127,26 +100,18 @@ pub fn select_cursor_model(
             params: parse_params(choice.value),
         })
         .collect();
-    let mut indexes: Vec<usize> = (0..variants.len()).collect();
-    if let Some(effort) = request.reasoning_effort {
-        indexes = require_param(&variants, &indexes, "reasoning_effort", effort)?;
-    }
-    if let Some(fast) = request.fast {
-        let want = if fast { "true" } else { "false" };
-        indexes = require_param(&variants, &indexes, "fast", want)?;
-    }
-    let picked = indexes
-        .into_iter()
-        .min_by_key(|index| {
-            let variant = &variants[*index];
+    variants
+        .iter()
+        .enumerate()
+        .min_by_key(|(index, variant)| {
             (
                 fast_rank(&variant.params),
                 effort_rank(&variant.params),
                 *index,
             )
         })
-        .map(|index| variants[index].value.to_string());
-    picked.ok_or_else(|| format!("model '{name}' has no advertised value"))
+        .map(|(_, variant)| variant.value.to_string())
+        .unwrap_or_else(|| requested.to_string())
 }
 
 /// Copies `keys` from `before` onto `after`. A key missing from `before` is removed.
@@ -168,46 +133,57 @@ pub fn restore_json_keys(before: &Value, after: &Value, keys: &[&str]) -> Result
     Ok(Value::Object(restored))
 }
 
-fn spawn_effort(effort: Option<&str>) -> Result<Option<String>, String> {
-    match effort {
-        None => Ok(None),
-        Some(effort) if valid_effort(effort) => Ok(Some(effort.to_string())),
-        Some(effort) => Err(format!(
-            "reasoning_effort '{effort}' must be non-empty with no whitespace."
-        )),
+/// Keeps only the model-default keys. Other keys, including secrets, are dropped.
+pub fn cursor_default_snapshot(
+    cli: &Value,
+    acp: Option<&Value>,
+) -> Result<CursorDefaultSnapshot, String> {
+    Ok(CursorDefaultSnapshot {
+        cli: project_keys(cli, CURSOR_CLI_DEFAULT_KEYS)?,
+        acp: acp
+            .map(|value| project_keys(value, CURSOR_ACP_DEFAULT_KEYS))
+            .transpose()?,
+    })
+}
+
+pub fn cursor_default_crash(snapshot: Option<CursorDefaultSnapshot>) -> CursorDefaultCrash {
+    match snapshot {
+        Some(snapshot) => CursorDefaultCrash::Repairable(snapshot),
+        None => CursorDefaultCrash::Undetectable,
     }
 }
 
-fn valid_effort(effort: &str) -> bool {
-    !effort.is_empty() && !effort.chars().any(char::is_whitespace)
-}
-
-fn finish(
-    model: Option<String>,
-    mut effort: Option<String>,
-    mut fast: Option<bool>,
-    mut warnings: Vec<String>,
-) -> Result<(ResolvedCursorModel, Option<String>), String> {
-    if model.is_none() && (effort.is_some() || fast.is_some()) {
-        warnings.push(
-            "[cursor] reasoning_effort and fast were skipped because no model is set.".to_string(),
-        );
-        effort = None;
-        fast = None;
-    }
-    let warning = if warnings.is_empty() {
-        None
-    } else {
-        Some(warnings.join(" "))
+/// Puts the saved model keys back onto the files as a crash left them.
+pub fn repair_cursor_default(
+    snapshot: &CursorDefaultSnapshot,
+    cli_now: &Value,
+    acp_now: Option<&Value>,
+) -> Result<RepairedCursorDefault, String> {
+    let cli = restore_json_keys(&snapshot.cli, cli_now, CURSOR_CLI_DEFAULT_KEYS)?;
+    let acp = match &snapshot.acp {
+        Some(before) => Some(restore_json_keys(
+            before,
+            acp_now.unwrap_or(&serde_json::json!({})),
+            CURSOR_ACP_DEFAULT_KEYS,
+        )?),
+        None => acp_now
+            .map(|now| restore_json_keys(&serde_json::json!({}), now, CURSOR_ACP_DEFAULT_KEYS))
+            .transpose()?,
     };
-    Ok((
-        ResolvedCursorModel {
-            model,
-            reasoning_effort: effort,
-            fast,
-        },
-        warning,
-    ))
+    Ok(RepairedCursorDefault { cli, acp })
+}
+
+fn project_keys(document: &Value, keys: &[&str]) -> Result<Value, String> {
+    let Some(object) = document.as_object() else {
+        return Err("cursor config was not a JSON object".to_string());
+    };
+    let mut kept = serde_json::Map::new();
+    for key in keys {
+        if let Some(value) = object.get(*key) {
+            kept.insert((*key).to_string(), value.clone());
+        }
+    }
+    Ok(Value::Object(kept))
 }
 
 struct Variant<'a> {
@@ -248,55 +224,6 @@ fn parse_params(value: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn require_param(
-    variants: &[Variant],
-    indexes: &[usize],
-    key: &str,
-    want: &str,
-) -> Result<Vec<usize>, String> {
-    let mut offered = Vec::new();
-    for index in indexes {
-        if let Some((_, value)) = variants[*index].params.iter().find(|(name, _)| name == key) {
-            if !offered.iter().any(|seen| seen == value) {
-                offered.push(value.clone());
-            }
-        }
-    }
-    if offered.is_empty() {
-        let mut keys = Vec::new();
-        for index in indexes {
-            for (name, _) in &variants[*index].params {
-                if !keys.iter().any(|seen| seen == name) {
-                    keys.push(name.clone());
-                }
-            }
-        }
-        let keys = if keys.is_empty() {
-            "none".to_string()
-        } else {
-            keys.join(", ")
-        };
-        return Err(format!("{key} is not offered; offered parameters: {keys}"));
-    }
-    let matched: Vec<usize> = indexes
-        .iter()
-        .copied()
-        .filter(|index| {
-            variants[*index]
-                .params
-                .iter()
-                .any(|(name, value)| name == key && value == want)
-        })
-        .collect();
-    if matched.is_empty() {
-        return Err(format!(
-            "{key} '{want}' is not offered; offered: {}",
-            offered.join(", ")
-        ));
-    }
-    Ok(matched)
-}
-
 fn fast_rank(params: &[(String, String)]) -> u8 {
     match params
         .iter()
@@ -329,38 +256,22 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn sources<'a>(
-        spawn_model: Option<&'a str>,
-        config_model: Result<Option<&'a str>, &'a str>,
-    ) -> CursorModelSources<'a> {
-        CursorModelSources {
-            spawn_model,
-            config_model,
-            spawn_effort: None,
-            config_effort: Ok(None),
-            spawn_fast: None,
-            config_fast: Ok(None),
-        }
-    }
-
     #[test]
     fn cursor_model_resolution_prefers_spawn_then_config_then_default() {
-        let (resolved, warning) =
-            resolve_cursor_model(&sources(Some("gpt-5"), Ok(Some("sonnet-4")))).unwrap();
-        assert_eq!(resolved.model.as_deref(), Some("gpt-5"));
+        let (model, warning) = resolve_cursor_model(Some("gpt-5"), Ok(Some("sonnet-4")));
+        assert_eq!(model.as_deref(), Some("gpt-5"));
         assert_eq!(warning, None);
-        let (resolved, _) = resolve_cursor_model(&sources(None, Ok(Some("sonnet-4")))).unwrap();
-        assert_eq!(resolved.model.as_deref(), Some("sonnet-4"));
-        let (resolved, warning) = resolve_cursor_model(&sources(None, Ok(None))).unwrap();
-        assert_eq!(resolved, empty());
+        let (model, _) = resolve_cursor_model(None, Ok(Some("sonnet-4")));
+        assert_eq!(model.as_deref(), Some("sonnet-4"));
+        let (model, warning) = resolve_cursor_model(None, Ok(None));
+        assert_eq!(model, None);
         assert_eq!(warning, None);
-        let (resolved, _) = resolve_cursor_model(&sources(
+        let (model, _) = resolve_cursor_model(
             None,
             Ok(Some("claude-opus-4-8[context=1m,effort=high,fast=false]")),
-        ))
-        .unwrap();
+        );
         assert_eq!(
-            resolved.model.as_deref(),
+            model.as_deref(),
             Some("claude-opus-4-8[context=1m,effort=high,fast=false]")
         );
     }
@@ -368,21 +279,19 @@ mod tests {
     #[test]
     fn cursor_model_resolution_warns_on_invalid_config() {
         for bad in ["", "two words", " gpt-5"] {
-            let (resolved, warning) = resolve_cursor_model(&sources(None, Ok(Some(bad)))).unwrap();
-            assert_eq!(resolved.model, None);
+            let (model, warning) = resolve_cursor_model(None, Ok(Some(bad)));
+            assert_eq!(model, None);
             assert!(warning.unwrap().contains("[cursor] model"), "{bad}");
         }
-        let (resolved, warning) =
-            resolve_cursor_model(&sources(Some("gpt-5"), Ok(Some("")))).unwrap();
-        assert_eq!(resolved.model.as_deref(), Some("gpt-5"));
+        let (model, warning) = resolve_cursor_model(Some("gpt-5"), Ok(Some("")));
+        assert_eq!(model.as_deref(), Some("gpt-5"));
         assert_eq!(warning, None);
     }
 
     #[test]
     fn cursor_model_resolution_warns_when_config_fails_to_load() {
-        let (resolved, warning) =
-            resolve_cursor_model(&sources(None, Err("bad toml at line 3"))).unwrap();
-        assert_eq!(resolved, empty());
+        let (model, warning) = resolve_cursor_model(None, Err("bad toml at line 3"));
+        assert_eq!(model, None);
         let warning = warning.unwrap();
         assert!(warning.contains("bad toml at line 3"));
         assert!(warning.contains("default model"));
@@ -390,55 +299,9 @@ mod tests {
 
     #[test]
     fn cursor_model_resolution_ignores_config_error_when_spawn_model_given() {
-        let (resolved, warning) =
-            resolve_cursor_model(&sources(Some("gpt-5"), Err("boom"))).unwrap();
-        assert_eq!(resolved.model.as_deref(), Some("gpt-5"));
+        let (model, warning) = resolve_cursor_model(Some("gpt-5"), Err("boom"));
+        assert_eq!(model.as_deref(), Some("gpt-5"));
         assert_eq!(warning, None);
-    }
-
-    #[test]
-    fn cursor_effort_and_fast_prefer_spawn_then_config() {
-        let mut input = sources(Some("grok-4.7"), Ok(Some("grok-4.7")));
-        input.spawn_effort = Some("low");
-        input.config_effort = Ok(Some("high"));
-        input.spawn_fast = Some(false);
-        input.config_fast = Ok(Some(true));
-        let (resolved, warning) = resolve_cursor_model(&input).unwrap();
-        assert_eq!(resolved.reasoning_effort.as_deref(), Some("low"));
-        assert_eq!(resolved.fast, Some(false));
-        assert_eq!(warning, None);
-
-        input.spawn_effort = None;
-        input.spawn_fast = None;
-        let (resolved, _) = resolve_cursor_model(&input).unwrap();
-        assert_eq!(resolved.reasoning_effort.as_deref(), Some("high"));
-        assert_eq!(resolved.fast, Some(true));
-    }
-
-    #[test]
-    fn cursor_effort_without_a_model_is_skipped() {
-        let mut input = sources(None, Ok(None));
-        input.spawn_effort = Some("low");
-        input.spawn_fast = Some(false);
-        let (resolved, warning) = resolve_cursor_model(&input).unwrap();
-        assert_eq!(resolved, empty());
-        assert!(warning.unwrap().contains("no model is set"));
-    }
-
-    #[test]
-    fn cursor_config_effort_with_whitespace_warns() {
-        let mut input = sources(Some("grok-4.7"), Ok(None));
-        input.config_effort = Ok(Some("low effort"));
-        let (resolved, warning) = resolve_cursor_model(&input).unwrap();
-        assert_eq!(resolved.reasoning_effort, None);
-        assert!(warning.unwrap().contains("reasoning_effort"));
-    }
-
-    #[test]
-    fn spawn_effort_with_whitespace_is_an_error() {
-        let mut input = sources(Some("grok-4.7"), Ok(None));
-        input.spawn_effort = Some("low effort");
-        assert!(resolve_cursor_model(&input).is_err());
     }
 
     #[test]
@@ -446,49 +309,16 @@ mod tests {
         let choices = advertised();
         assert_eq!(
             select_cursor_model(
-                &request(
-                    "grok-4.7[context=256k,reasoning_effort=high,fast=true]",
-                    None,
-                    None
-                ),
+                "grok-4.7[context=256k,reasoning_effort=high,fast=true]",
                 &choices
-            )
-            .unwrap(),
+            ),
             "grok-4.7[context=256k,reasoning_effort=high,fast=true]"
         );
         assert_eq!(
-            select_cursor_model(&request("grok-4.7", None, None), &choices).unwrap(),
+            select_cursor_model("grok-4.7", &choices),
             "grok-4.7[context=256k,reasoning_effort=low,fast=false]"
         );
-        assert_eq!(
-            select_cursor_model(&request("not-a-model", None, None), &choices).unwrap(),
-            "not-a-model"
-        );
-    }
-
-    #[test]
-    fn select_applies_offered_parameters_and_refuses_the_rest() {
-        let choices = advertised();
-        assert_eq!(
-            select_cursor_model(&request("grok-4.7", Some("high"), Some(true)), &choices).unwrap(),
-            "grok-4.7[context=256k,reasoning_effort=high,fast=true]"
-        );
-        let missing = select_cursor_model(&request("grok-4.7", Some("max"), Some(false)), &choices);
-        assert_eq!(
-            missing.unwrap_err(),
-            "reasoning_effort 'max' is not offered; offered: high, low"
-        );
-        let no_fast = [AdvertisedCursorModel {
-            name: "gemini-4-argon",
-            value: "gemini-4-argon[reasoning_effort=medium]",
-        }];
-        let refused = select_cursor_model(&request("gemini-4-argon", None, Some(false)), &no_fast);
-        assert_eq!(
-            refused.unwrap_err(),
-            "fast is not offered; offered parameters: reasoning_effort"
-        );
-        let unknown = select_cursor_model(&request("nope", Some("low"), None), &choices);
-        assert!(unknown.unwrap_err().contains("not offered"));
+        assert_eq!(select_cursor_model("not-a-model", &choices), "not-a-model");
     }
 
     #[test]
@@ -515,24 +345,69 @@ mod tests {
         assert!(restore_json_keys(&json!([]), &after, CURSOR_CLI_DEFAULT_KEYS).is_err());
     }
 
-    fn empty() -> ResolvedCursorModel {
-        ResolvedCursorModel {
-            model: None,
-            reasoning_effort: None,
-            fast: None,
-        }
+    #[test]
+    fn a_missing_snapshot_cannot_be_told_from_a_user_change() {
+        assert_eq!(cursor_default_crash(None), CursorDefaultCrash::Undetectable);
     }
 
-    fn request<'a>(
-        model: &'a str,
-        reasoning_effort: Option<&'a str>,
-        fast: Option<bool>,
-    ) -> CursorVariantRequest<'a> {
-        CursorVariantRequest {
-            model,
-            reasoning_effort,
-            fast,
-        }
+    #[test]
+    fn a_saved_snapshot_repairs_a_crash_between_set_and_restore() {
+        let before_cli = json!({
+            "permissions": {"allow": ["Shell(ls)"]},
+            "authInfo": {"token": "secret"},
+            "selectedModel": {"modelId": "grok-4.7", "parameters": [{"id": "fast", "value": "true"}]},
+            "modelParameters": {"grok-4.7": [{"id": "fast", "value": "true"}]},
+            "hasChangedDefaultModel": true
+        });
+        let before_acp = json!({
+            "selectedModelVariantId": "grok-4.7[context=256k,reasoning_effort=high,fast=true]"
+        });
+        let snapshot = cursor_default_snapshot(&before_cli, Some(&before_acp)).unwrap();
+        assert!(snapshot.cli.get("authInfo").is_none());
+        assert!(snapshot.cli.get("permissions").is_none());
+        let saved = serde_json::from_str::<CursorDefaultSnapshot>(
+            &serde_json::to_string(&snapshot).unwrap(),
+        )
+        .unwrap();
+        let CursorDefaultCrash::Repairable(saved) = cursor_default_crash(Some(saved)) else {
+            panic!("a snapshot is repairable");
+        };
+        let cli_now = json!({
+            "permissions": {"allow": ["Shell(ls)"]},
+            "authInfo": {"token": "secret"},
+            "selectedModel": {"modelId": "composer-2.5", "parameters": [{"id": "fast", "value": "true"}]},
+            "modelParameters": {"composer-2.5": [{"id": "fast", "value": "true"}]},
+            "hasChangedDefaultModel": true,
+            "maxMode": true
+        });
+        let acp_now = json!({"selectedModelVariantId": "composer-2.5[fast=true]"});
+        let repaired = repair_cursor_default(&saved, &cli_now, Some(&acp_now)).unwrap();
+        assert_eq!(repaired.cli["selectedModel"]["modelId"], "grok-4.7");
+        assert_eq!(
+            repaired.cli["modelParameters"]["grok-4.7"][0]["value"],
+            "true"
+        );
+        assert!(repaired.cli.get("maxMode").is_none());
+        assert_eq!(repaired.cli["authInfo"]["token"], "secret");
+        assert_eq!(
+            repaired.acp.unwrap()["selectedModelVariantId"],
+            "grok-4.7[context=256k,reasoning_effort=high,fast=true]"
+        );
+    }
+
+    #[test]
+    fn repair_leaves_an_absent_acp_file_absent() {
+        let snapshot =
+            cursor_default_snapshot(&json!({"selectedModel": {"modelId": "grok-4.7"}}), None)
+                .unwrap();
+        let repaired = repair_cursor_default(
+            &snapshot,
+            &json!({"selectedModel": {"modelId": "composer-2.5"}}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(repaired.cli["selectedModel"]["modelId"], "grok-4.7");
+        assert_eq!(repaired.acp, None);
     }
 
     fn advertised() -> [AdvertisedCursorModel<'static>; 3] {

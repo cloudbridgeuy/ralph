@@ -129,8 +129,6 @@ struct Opening {
     loading: Arc<AtomicBool>,
     worker_id: String,
     model: Option<String>,
-    reasoning_effort: Option<String>,
-    fast: Option<bool>,
 }
 
 async fn open_session(
@@ -313,8 +311,6 @@ impl AcpWorker {
         let opened = Arc::new(AtomicBool::new(false));
         let was_opened = Arc::clone(&opened);
         let session_model = request.model.clone();
-        let session_effort = request.reasoning_effort.clone();
-        let session_fast = request.fast;
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = ByteStreams::new(
@@ -380,8 +376,6 @@ impl AcpWorker {
                             loading,
                             worker_id: worker_id.clone(),
                             model: session_model,
-                            reasoning_effort: session_effort,
-                            fast: session_fast,
                         };
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
@@ -585,6 +579,9 @@ pub struct CursorHost {
 
 impl CursorHost {
     pub fn new(store_dir: PathBuf) -> Arc<Self> {
+        if let Err(error) = model::repair_saved_cursor_default() {
+            warn(format!("cursor model default was not restored: {error}"));
+        }
         for id in request_ids(&store_dir, CURSOR_OWNER_DIR) {
             sweep_owner(&store_dir, &id);
         }
@@ -779,8 +776,6 @@ impl CursorHost {
                 inbox: request.inbox.clone(),
                 store: Some(self.store_dir.clone()),
                 model: request.model.clone(),
-                reasoning_effort: request.reasoning_effort.clone(),
-                fast: request.fast,
             },
         };
         match self.launch(id, &request, launch) {
@@ -873,8 +868,6 @@ impl CursorHost {
                 AppConfig::load().ok().map(|config| config.changes.enabled),
             ),
             model: record.model.clone(),
-            reasoning_effort: record.reasoning_effort.clone(),
-            fast: record.fast,
         };
         let launch = Launch::Resume {
             record,

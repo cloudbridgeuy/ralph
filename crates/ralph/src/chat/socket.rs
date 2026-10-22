@@ -2,7 +2,7 @@ use crate::chat::memory::Store;
 use crate::cursor_owner::process_start;
 use crate::warn::warn;
 use crate::watch_requests;
-use crate::workers::{WorkerModel, Workers};
+use crate::workers::Workers;
 use ralph_core::chat_socket::{
     check_socket_path, decode_line, dir_name, dir_pid, encode_line, orphan_sidecar_fate,
     sidecar_name, sidecar_pid, socket_fate, socket_file_name, SocketFacts, SocketFate, SocketOwner,
@@ -214,18 +214,7 @@ fn run_command(
             task,
             harness,
             model,
-            reasoning_effort,
-            fast,
-        } => workers.spawn(
-            id,
-            task,
-            *harness,
-            &WorkerModel {
-                model: model.as_deref(),
-                reasoning_effort: reasoning_effort.as_deref(),
-                fast: *fast,
-            },
-        ),
+        } => workers.spawn(id, task, *harness, model.as_deref()),
         Command::Reply {
             id,
             text,

@@ -21,9 +21,9 @@ mod rollback;
 mod worktree;
 pub use acp::*;
 pub use cursor_model::{
-    resolve_cursor_model, restore_json_keys, select_cursor_model, AdvertisedCursorModel,
-    CursorModelSources, CursorVariantRequest, ResolvedCursorModel, CURSOR_ACP_DEFAULT_KEYS,
-    CURSOR_CLI_DEFAULT_KEYS,
+    cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,
+    restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,
+    CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
 };
 pub use files::*;
 pub use headless::*;
@@ -184,8 +184,6 @@ pub enum Command {
         task: String,
         harness: HarnessId,
         model: Option<String>,
-        reasoning_effort: Option<String>,
-        fast: Option<bool>,
     },
     Reply {
         id: String,
@@ -617,8 +615,6 @@ mod tests {
             task: "t".into(),
             harness: HarnessId::Claude,
             model: None,
-            reasoning_effort: None,
-            fast: None,
         };
         assert!(command_allowed(&spawn, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&spawn, Some(Trigger::Worker)).is_err());

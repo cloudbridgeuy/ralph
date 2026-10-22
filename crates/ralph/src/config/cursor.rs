@@ -7,10 +7,6 @@ pub struct CursorSection {
     pub permissions: Option<toml::Value>,
     #[serde(default)]
     pub model: Option<String>,
-    #[serde(default)]
-    pub reasoning_effort: Option<String>,
-    #[serde(default)]
-    pub fast: Option<bool>,
 }
 
 impl CursorSection {
@@ -35,16 +31,9 @@ mod tests {
 
     #[test]
     fn cursor_model_parses_and_defaults_to_unset() {
-        let config: AppConfig = toml::from_str(
-            "[cursor]\nmodel = \"gpt-5\"\nreasoning_effort = \"low\"\nfast = false\n",
-        )
-        .unwrap();
+        let config: AppConfig = toml::from_str("[cursor]\nmodel = \"gpt-5\"\n").unwrap();
         assert_eq!(config.cursor.model.as_deref(), Some("gpt-5"));
-        assert_eq!(config.cursor.reasoning_effort.as_deref(), Some("low"));
-        assert_eq!(config.cursor.fast, Some(false));
         assert_eq!(AppConfig::new().cursor.model, None);
-        assert_eq!(AppConfig::new().cursor.reasoning_effort, None);
-        assert_eq!(AppConfig::new().cursor.fast, None);
     }
 
     #[test]

@@ -30,10 +30,6 @@ pub struct SessionRecord {
     pub store: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_effort: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fast: Option<bool>,
 }
 
 impl SessionRecord {
@@ -121,8 +117,6 @@ mod tests {
             inbox: PathBuf::from("/store/inbox"),
             store: store.map(PathBuf::from),
             model: None,
-            reasoning_effort: None,
-            fast: None,
         }
     }
 
@@ -137,8 +131,6 @@ mod tests {
         let parsed = SessionRecord::parse(bare).unwrap();
         assert_eq!(parsed.store, None);
         assert_eq!(parsed.model, None);
-        assert_eq!(parsed.reasoning_effort, None);
-        assert_eq!(parsed.fast, None);
         assert_eq!(SessionRecord::parse("nope"), None);
     }
 

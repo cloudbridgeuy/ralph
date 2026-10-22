@@ -28,8 +28,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 pub(crate) mod headless;
 mod spawn;
 
-pub(crate) use spawn::WorkerModel;
-
 pub struct Workers {
     store_dir: PathBuf,
     exe: PathBuf,
