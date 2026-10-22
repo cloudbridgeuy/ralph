@@ -1,4 +1,5 @@
 mod proxy;
+mod shutdown;
 mod store;
 
 use crate::cli::{
@@ -21,6 +22,9 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::thread;
+use std::time::{Duration, Instant};
+
+use self::shutdown::{drain_action, DrainAction, SHUTDOWN_DRAIN};
 
 impl From<WireProvider> for ProviderId {
     fn from(value: WireProvider) -> Self {
@@ -155,6 +159,7 @@ pub fn run(args: WireArgs) -> Result<(), Box<dyn Error>> {
 }
 
 fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
+    crate::signal::init()?;
     let provider = provider(args.provider.into());
     let upstream = args
         .upstream
@@ -163,6 +168,7 @@ fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
     let listen = server.server_addr().to_string();
     let started_at = Utc::now();
     let root = root_or_default(args.dir);
+    store::ensure_store_root(&root)?;
     let dir: PathBuf = root.join(session_id(started_at, random_suffix()));
     let calls = store::open_session(
         &dir,
@@ -183,16 +189,42 @@ fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
     );
     println!("export {}=http://{listen}", provider.base_url_env());
     let (records, receiver) = mpsc::channel();
-    thread::spawn(move || store::write_loop(receiver, calls));
+    let writer = thread::spawn(move || store::write_loop(receiver, calls));
     let proxy = Arc::new(proxy::Proxy::new(
         provider,
         upstream,
         args.responses,
         records,
     ));
-    for request in server.incoming_requests() {
-        let proxy = Arc::clone(&proxy);
-        thread::spawn(move || proxy.handle(request));
+    let accept_wait = Duration::from_millis(100);
+    loop {
+        if crate::signal::is_interrupted() {
+            break;
+        }
+        match server.recv_timeout(accept_wait) {
+            Ok(Some(request)) => {
+                let proxy = Arc::clone(&proxy);
+                thread::spawn(move || proxy.handle(request));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("ralph wire: accept failed: {error}");
+                break;
+            }
+        }
+    }
+    proxy.stop_accepting();
+    let drain_started = Instant::now();
+    loop {
+        let open = proxy.open_len();
+        if drain_action(drain_started.elapsed(), SHUTDOWN_DRAIN, open) == DrainAction::Finish {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    proxy.close_open();
+    if writer.join().is_err() {
+        eprintln!("ralph wire: recorder stopped");
     }
     Ok(())
 }

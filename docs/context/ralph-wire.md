@@ -16,7 +16,7 @@ Listen URL, session directory, a plaintext warning, and a hint such as `export A
 
 ## Storage
 
-Under `--dir` or `<tmp>/ralph-wire`, one folder per run named `<UTC timestamp>-<hex suffix>`. Directories are mode 0700, files 0600. Nothing is deleted or pruned.
+Under `--dir` or `<tmp>/ralph-wire`, one folder per run named `<UTC timestamp>-<hex suffix>`. Directories are mode 0700, files 0600. Nothing is deleted or pruned. An existing root is used only when it is a non-symlink directory owned by the current user and its mode is 0700. Otherwise `ralph wire` refuses it and prints the path, what is wrong, and the command that fixes it, such as `chmod 700 <path>`.
 
 - `session.json`: schema version, ralph version, provider, upstream, listen address, start time.
 - `calls.jsonl`: one `CallRecord` per line, appended by a single writer thread.
@@ -70,7 +70,7 @@ Limits:
 - Method, path, query, and body go upstream unchanged. Hop-by-hop headers and `host` are dropped. Other headers, including `accept-encoding` and credentials, are forwarded as given.
 - Redirects are not followed and bodies are not decompressed. The response is streamed to the client chunk by chunk and copied into a buffer.
 - Decoding happens after the response: gzip and deflate are decoded; `br` and `zstd` are recorded as an `Unsupported` decode error with usage `missing`.
-- Client disconnect, a ralph reset, or Ctrl-C mid-stream records the call as incomplete. An unreachable upstream returns 502 and records the error.
+- Client disconnect or a ralph reset records the call as incomplete. Ctrl-C, SIGTERM, or SIGHUP accepts no new calls, waits up to 2 seconds for calls already started, then records any still open as incomplete (`INCOMPLETE: interrupted`) and exits. An unreachable upstream returns 502 and records the error.
 - A request header with non-ASCII bytes is refused by `tiny_http`, which closes the connection with an empty reply. The call reaches neither the provider nor `calls.jsonl`.
 - `metadata.user_id` is stored as `<redacted>` in both `facts.params` and `request_body`; the forwarded bytes are unchanged.
 

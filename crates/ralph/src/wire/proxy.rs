@@ -3,10 +3,15 @@ use ralph_core::wire::build::{build_call, CallInputs};
 use ralph_core::wire::headers::{forward_headers, Direction};
 use ralph_core::wire::provider::{Provider, RequestHead};
 use ralph_core::wire::record::CallRecord;
+use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
+
+use super::shutdown::INTERRUPTED;
+use super::store::ToStore;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CHUNK_SIZE: usize = 8192;
@@ -21,13 +26,26 @@ struct Capture {
     error: Option<String>,
 }
 
+struct OpenCall {
+    seq: u64,
+    started_at: DateTime<Utc>,
+    head: RequestHead,
+    request_body: Vec<u8>,
+}
+
 pub struct Proxy {
     provider: Box<dyn Provider>,
     upstream: String,
     agent: ureq::Agent,
     store_events: bool,
     seq: AtomicU64,
-    records: Sender<CallRecord>,
+    records: Sender<ToStore>,
+    open: Mutex<BTreeMap<u64, OpenCall>>,
+    closed: AtomicBool,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 fn request_head(request: &tiny_http::Request) -> RequestHead {
@@ -136,7 +154,7 @@ impl Proxy {
         provider: Box<dyn Provider>,
         upstream: String,
         store_events: bool,
-        records: Sender<CallRecord>,
+        records: Sender<ToStore>,
     ) -> Self {
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -153,17 +171,66 @@ impl Proxy {
             store_events,
             seq: AtomicU64::new(0),
             records,
+            open: Mutex::new(BTreeMap::new()),
+            closed: AtomicBool::new(false),
         }
+    }
+
+    pub fn stop_accepting(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+    }
+
+    pub fn open_len(&self) -> usize {
+        lock(&self.open).len()
+    }
+
+    /// Record every call still open as incomplete, then stop the writer.
+    pub fn close_open(&self) {
+        let open: Vec<OpenCall> = {
+            let mut guard = lock(&self.open);
+            std::mem::take(&mut *guard).into_values().collect()
+        };
+        for call in open {
+            let _ = self
+                .records
+                .send(ToStore::Call(Box::new(self.interrupted(call))));
+        }
+        let _ = self.records.send(ToStore::Stop);
     }
 
     pub fn handle(&self, mut request: tiny_http::Request) {
         let started_at = Utc::now();
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let head = request_head(&request);
+        if self.closed.load(Ordering::SeqCst) {
+            let _ = self
+                .records
+                .send(ToStore::Call(Box::new(self.interrupted(OpenCall {
+                    seq,
+                    started_at,
+                    head,
+                    request_body: Vec::new(),
+                }))));
+            return;
+        }
+        lock(&self.open).insert(
+            seq,
+            OpenCall {
+                seq,
+                started_at,
+                head: head.clone(),
+                request_body: Vec::new(),
+            },
+        );
         let mut body = Vec::new();
         let mut capture = Capture::default();
         match request.as_reader().read_to_end(&mut body) {
-            Ok(_) => self.relay(request, &head, &body, &mut capture),
+            Ok(_) => {
+                if let Some(call) = lock(&self.open).get_mut(&seq) {
+                    call.request_body.clone_from(&body);
+                }
+                self.relay(request, &head, &body, &mut capture);
+            }
             Err(error) => capture.error = Some(format!("request body read failed: {error}")),
         }
         let record = build_call(
@@ -182,7 +249,30 @@ impl Proxy {
                 store_events: self.store_events,
             },
         );
-        let _ = self.records.send(record);
+        let mut guard = lock(&self.open);
+        if guard.remove(&seq).is_none() {
+            return;
+        }
+        let _ = self.records.send(ToStore::Call(Box::new(record)));
+    }
+
+    fn interrupted(&self, call: OpenCall) -> CallRecord {
+        build_call(
+            self.provider.as_ref(),
+            CallInputs {
+                seq: call.seq,
+                started_at: call.started_at,
+                first_byte_at: None,
+                ended_at: Utc::now(),
+                head: call.head,
+                request_body: call.request_body,
+                status: None,
+                response_headers: Vec::new(),
+                response_body: Vec::new(),
+                transport_error: Some(INTERRUPTED.to_string()),
+                store_events: self.store_events,
+            },
+        )
     }
 
     fn send(
