@@ -254,7 +254,7 @@ fn speed_factor(raw: &Value, model: &str) -> Option<f64> {
 
 fn geo_factor(raw: &Value, model: &str) -> Option<f64> {
     match raw.get("inference_geo").and_then(Value::as_str) {
-        None | Some("global") => Some(1.0),
+        None | Some("global" | "not_available") => Some(1.0),
         Some("us") if !NO_GEO_MODELS.iter().any(|m| matches_prefix(model, m)) => Some(1.1),
         Some(_) => None,
     }
@@ -942,6 +942,10 @@ mod tests {
             Some(2.0)
         );
         assert_eq!(factor(json!({"speed": "fast"}), "claude-haiku-5-5"), None);
+        assert_eq!(
+            factor(json!({"inference_geo": "not_available"}), "claude-opus-4-5"),
+            Some(1.0)
+        );
         assert_eq!(
             factor(json!({"inference_geo": "us"}), "claude-sonnet-5-5[1m]"),
             Some(1.1)

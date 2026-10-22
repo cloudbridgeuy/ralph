@@ -189,7 +189,7 @@ fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
     );
     println!("export {}=http://{listen}", provider.base_url_env());
     let (records, receiver) = mpsc::channel();
-    let writer = thread::spawn(move || store::write_loop(receiver, calls));
+    let writer = thread::spawn(move || store::write_loop(receiver, calls, &mut io::stdout()));
     let proxy = Arc::new(proxy::Proxy::new(
         provider,
         upstream,

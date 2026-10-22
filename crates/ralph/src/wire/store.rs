@@ -124,7 +124,8 @@ fn append(file: &mut File, record: &CallRecord) -> io::Result<()> {
     file.flush()
 }
 
-pub fn write_loop(records: Receiver<ToStore>, mut file: File) {
+pub fn write_loop(records: Receiver<ToStore>, mut file: File, out: &mut dyn Write) {
+    let mut live = true;
     for message in records {
         let ToStore::Call(record) = message else {
             return;
@@ -132,8 +133,14 @@ pub fn write_loop(records: Receiver<ToStore>, mut file: File) {
         if let Err(error) = append(&mut file, &record) {
             eprintln!("ralph wire: failed to record call {}: {error}", record.seq);
         }
+        if !live {
+            continue;
+        }
         if let Some(row) = live_row(&record) {
-            println!("{row}");
+            if writeln!(out, "{row}").and_then(|()| out.flush()).is_err() {
+                live = false;
+                eprintln!("ralph wire: stdout closed; live rows stopped, recording continues");
+            }
         }
     }
 }
@@ -177,7 +184,77 @@ pub fn read_session(root: &Path, id: &str) -> Result<(SessionRecord, Calls), Rea
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use ralph_core::wire::build::{build_call, CallInputs};
+    use ralph_core::wire::provider::anthropic::Anthropic;
+    use ralph_core::wire::provider::RequestHead;
+    use std::io::{Read, Seek, SeekFrom};
     use std::path::Path;
+    use std::sync::mpsc;
+
+    struct BrokenOut;
+
+    impl Write for BrokenOut {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    fn call(seq: u64) -> CallRecord {
+        let now = Utc::now();
+        build_call(
+            &Anthropic,
+            CallInputs {
+                seq,
+                started_at: now,
+                first_byte_at: None,
+                ended_at: now,
+                head: RequestHead {
+                    method: "POST".into(),
+                    path: "/v1/messages".into(),
+                    headers: Vec::new(),
+                },
+                request_body: Vec::new(),
+                status: Some(200),
+                response_headers: Vec::new(),
+                response_body: Vec::new(),
+                transport_error: None,
+                store_events: false,
+            },
+        )
+    }
+
+    fn lines_of(file: &mut File) -> usize {
+        let mut text = String::new();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.read_to_string(&mut text).unwrap();
+        text.lines().count()
+    }
+
+    #[test]
+    fn append_writes_one_line_per_record() {
+        let mut file = tempfile::tempfile().unwrap();
+        append(&mut file, &call(1)).unwrap();
+        append(&mut file, &call(2)).unwrap();
+        assert_eq!(lines_of(&mut file), 2);
+    }
+
+    #[test]
+    fn broken_stdout_does_not_stop_recording() {
+        let file = tempfile::tempfile().unwrap();
+        let mut reader = file.try_clone().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        for seq in 1..=3 {
+            sender.send(ToStore::Call(Box::new(call(seq)))).unwrap();
+        }
+        sender.send(ToStore::Stop).unwrap();
+        write_loop(receiver, file, &mut BrokenOut);
+        assert_eq!(lines_of(&mut reader), 3);
+    }
 
     fn facts(uid: u32, mode: u32) -> StoreRootFacts {
         StoreRootFacts {

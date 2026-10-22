@@ -15,6 +15,7 @@ use super::store::ToStore;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CHUNK_SIZE: usize = 8192;
+const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 const CLIENT_DISCONNECTED: &str = "client disconnected";
 
 #[derive(Default)]
@@ -108,18 +109,38 @@ fn write_chunk(client: &mut dyn Write, bytes: &[u8]) -> io::Result<()> {
     client.flush()
 }
 
-fn bad_gateway(client: &mut dyn Write, message: &str) -> io::Result<()> {
+fn upstream_url(upstream: &str, path: &str) -> Option<String> {
+    path.starts_with('/')
+        .then(|| format!("{}{path}", upstream.trim_end_matches('/')))
+}
+
+fn has_body(method: &str, status: u16) -> bool {
+    !(method.eq_ignore_ascii_case("HEAD") || status < 200 || status == 204 || status == 304)
+}
+
+fn append_capped(body: &mut Vec<u8>, bytes: &[u8], limit: usize) -> bool {
+    let kept = limit.saturating_sub(body.len()).min(bytes.len());
+    body.extend_from_slice(&bytes[..kept]);
+    kept < bytes.len()
+}
+
+fn write_error(
+    client: &mut dyn Write,
+    status: ureq::http::StatusCode,
+    message: &str,
+) -> io::Result<()> {
     let headers = [
         ("content-type".to_string(), "text/plain".to_string()),
         ("content-length".to_string(), message.len().to_string()),
     ];
-    write_head(client, ureq::http::StatusCode::BAD_GATEWAY, &headers)?;
+    write_head(client, status, &headers)?;
     client.write_all(message.as_bytes())?;
     client.flush()
 }
 
 fn relay_body(reader: &mut dyn Read, client: &mut dyn Write, capture: &mut Capture) {
     let mut chunk = [0u8; CHUNK_SIZE];
+    let mut truncated = false;
     loop {
         match reader.read(&mut chunk) {
             Ok(0) => {
@@ -129,6 +150,9 @@ fn relay_body(reader: &mut dyn Read, client: &mut dyn Write, capture: &mut Captu
                     .is_err()
                 {
                     capture.error = Some(CLIENT_DISCONNECTED.to_string());
+                } else if truncated {
+                    capture.error =
+                        Some(format!("response body truncated at {MAX_BODY_BYTES} bytes"));
                 }
                 return;
             }
@@ -138,7 +162,7 @@ fn relay_body(reader: &mut dyn Read, client: &mut dyn Write, capture: &mut Captu
                     capture.error = Some(CLIENT_DISCONNECTED.to_string());
                     return;
                 }
-                capture.body.extend_from_slice(&chunk[..n]);
+                truncated |= append_capped(&mut capture.body, &chunk[..n], MAX_BODY_BYTES);
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             Err(error) => {
@@ -191,9 +215,7 @@ impl Proxy {
             std::mem::take(&mut *guard).into_values().collect()
         };
         for call in open {
-            let _ = self
-                .records
-                .send(ToStore::Call(Box::new(self.interrupted(call))));
+            self.record(self.interrupted(call));
         }
         let _ = self.records.send(ToStore::Stop);
     }
@@ -203,14 +225,12 @@ impl Proxy {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let head = request_head(&request);
         if self.closed.load(Ordering::SeqCst) {
-            let _ = self
-                .records
-                .send(ToStore::Call(Box::new(self.interrupted(OpenCall {
-                    seq,
-                    started_at,
-                    head,
-                    request_body: Vec::new(),
-                }))));
+            self.record(self.interrupted(OpenCall {
+                seq,
+                started_at,
+                head,
+                request_body: Vec::new(),
+            }));
             return;
         }
         lock(&self.open).insert(
@@ -224,7 +244,21 @@ impl Proxy {
         );
         let mut body = Vec::new();
         let mut capture = Capture::default();
-        match request.as_reader().read_to_end(&mut body) {
+        let read = request
+            .as_reader()
+            .take(MAX_BODY_BYTES as u64 + 1)
+            .read_to_end(&mut body);
+        match read {
+            Ok(_) if body.len() > MAX_BODY_BYTES => {
+                body = Vec::new();
+                let message = format!("request body is over the limit of {MAX_BODY_BYTES} bytes");
+                let _ = write_error(
+                    &mut request.into_writer(),
+                    ureq::http::StatusCode::PAYLOAD_TOO_LARGE,
+                    &message,
+                );
+                capture.error = Some(message);
+            }
             Ok(_) => {
                 if let Some(call) = lock(&self.open).get_mut(&seq) {
                     call.request_body.clone_from(&body);
@@ -253,7 +287,14 @@ impl Proxy {
         if guard.remove(&seq).is_none() {
             return;
         }
-        let _ = self.records.send(ToStore::Call(Box::new(record)));
+        self.record(record);
+    }
+
+    fn record(&self, call: CallRecord) {
+        let seq = call.seq;
+        if self.records.send(ToStore::Call(Box::new(call))).is_err() {
+            eprintln!("ralph wire: recorder stopped; call {seq} not recorded");
+        }
     }
 
     fn interrupted(&self, call: OpenCall) -> CallRecord {
@@ -278,9 +319,9 @@ impl Proxy {
     fn send(
         &self,
         head: &RequestHead,
+        url: String,
         body: &[u8],
     ) -> Result<ureq::http::Response<ureq::Body>, String> {
-        let url = format!("{}{}", self.upstream.trim_end_matches('/'), head.path);
         let mut builder = ureq::http::Request::builder()
             .method(head.method.as_str())
             .uri(url);
@@ -299,11 +340,17 @@ impl Proxy {
         capture: &mut Capture,
     ) {
         let mut client = request.into_writer();
-        let response = match self.send(head, body) {
+        let Some(url) = upstream_url(&self.upstream, &head.path) else {
+            let message = "request path must start with `/`".to_string();
+            let _ = write_error(&mut client, ureq::http::StatusCode::BAD_REQUEST, &message);
+            capture.error = Some(message);
+            return;
+        };
+        let response = match self.send(head, url, body) {
             Ok(response) => response,
             Err(error) => {
                 let message = format!("upstream unreachable: {error}");
-                let _ = bad_gateway(&mut client, &message);
+                let _ = write_error(&mut client, ureq::http::StatusCode::BAD_GATEWAY, &message);
                 capture.error = Some(message);
                 return;
             }
@@ -312,9 +359,15 @@ impl Proxy {
         capture.status = Some(status.as_u16());
         capture.headers = response_headers(&response);
         let mut forwarded = forward_headers(&raw_response_headers(&response), Direction::Response);
-        forwarded.push(("transfer-encoding".to_string(), b"chunked".to_vec()));
+        let with_body = has_body(&head.method, status.as_u16());
+        if with_body {
+            forwarded.push(("transfer-encoding".to_string(), b"chunked".to_vec()));
+        }
         if write_head(&mut client, status, &forwarded).is_err() {
             capture.error = Some(CLIENT_DISCONNECTED.to_string());
+            return;
+        }
+        if !with_body {
             return;
         }
         let mut reader = response.into_body().into_reader();
@@ -333,5 +386,86 @@ mod tests {
         write_head(&mut out, ureq::http::StatusCode::OK, &headers).unwrap();
         let needle = b"x-weird: x\xe9-\xff\r\n";
         assert!(out.windows(needle.len()).any(|w| w == needle));
+    }
+
+    #[test]
+    fn upstream_url_requires_a_leading_slash() {
+        let up = "https://api.anthropic.com/";
+        assert_eq!(
+            upstream_url(up, "/v1/messages").as_deref(),
+            Some("https://api.anthropic.com/v1/messages")
+        );
+        assert_eq!(upstream_url(up, "@evil.com/x"), None);
+        assert_eq!(upstream_url(up, "http://evil.com/x"), None);
+        assert_eq!(upstream_url(up, "*"), None);
+    }
+
+    #[test]
+    fn has_body_is_false_for_head_and_bodyless_statuses() {
+        assert!(has_body("POST", 200));
+        assert!(has_body("GET", 404));
+        assert!(!has_body("HEAD", 200));
+        assert!(!has_body("GET", 100));
+        assert!(!has_body("GET", 204));
+        assert!(!has_body("GET", 304));
+    }
+
+    #[test]
+    fn append_capped_keeps_up_to_the_limit() {
+        let mut body = Vec::new();
+        assert!(!append_capped(&mut body, b"abc", 5));
+        assert!(append_capped(&mut body, b"defg", 5));
+        assert_eq!(body, b"abcde");
+        assert!(append_capped(&mut body, b"h", 5));
+        assert_eq!(body, b"abcde");
+    }
+
+    struct BrokenWriter;
+
+    impl Write for BrokenWriter {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct BrokenReader;
+
+    impl Read for BrokenReader {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::ConnectionReset.into())
+        }
+    }
+
+    #[test]
+    fn relay_body_frames_chunks_and_captures() {
+        let mut out = Vec::new();
+        let mut capture = Capture::default();
+        relay_body(&mut io::Cursor::new(b"hello"), &mut out, &mut capture);
+        assert_eq!(out, b"5\r\nhello\r\n0\r\n\r\n");
+        assert_eq!(capture.body, b"hello");
+        assert_eq!(capture.error, None);
+        assert!(capture.first_byte_at.is_some());
+    }
+
+    #[test]
+    fn relay_body_reports_client_disconnect() {
+        let mut capture = Capture::default();
+        relay_body(
+            &mut io::Cursor::new(b"hello"),
+            &mut BrokenWriter,
+            &mut capture,
+        );
+        assert_eq!(capture.error.as_deref(), Some(CLIENT_DISCONNECTED));
+    }
+
+    #[test]
+    fn relay_body_reports_upstream_read_failure() {
+        let mut capture = Capture::default();
+        relay_body(&mut BrokenReader, &mut Vec::new(), &mut capture);
+        assert!(capture.error.unwrap().starts_with("upstream read failed"));
     }
 }

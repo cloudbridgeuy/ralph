@@ -59,7 +59,7 @@ Overrides in `config.toml` replace the table for a model prefix at every prompt 
 
 Limits:
 
-- The table is standard speed and global geography. Usage `speed` and `inference_geo` then adjust the price: `fast` is 2x on Claude Opus 5.5, Opus 5, and Opus 4.8 (the fast-mode page says caching multipliers stack on fast pricing); `fast` on any other model is unpriced. `inference_geo: "us"` is 1.1x on all categories for Claude 4.6 and later; on Opus 4.5 and Haiku 4.5 it is unpriced. Any other `speed` or `inference_geo` value is unpriced. Factors also apply on top of an override.
+- The table is standard speed and global geography. Usage `speed` and `inference_geo` then adjust the price: `fast` is 2x on Claude Opus 5.5, Opus 5, and Opus 4.8 (the fast-mode page says caching multipliers stack on fast pricing); `fast` on any other model is unpriced. `inference_geo: "not_available"` is priced like `global`. `inference_geo: "us"` is 1.1x on all categories for Claude 4.6 and later; on Opus 4.5 and Haiku 4.5 it is unpriced. Any other `speed` or `inference_geo` value is unpriced. Factors also apply on top of an override.
 - Batch calls are never priced: only `POST /v1/messages` is an inference call, so `/v1/messages/batches` traffic is `other` and excluded from totals.
 - Discounts, credits, taxes, and Priority Tier commitments are not modeled. Server-tool charges (`server_tool_use`) are not priced.
 - Prices are a snapshot. A model the table does not list needs an override.
@@ -68,6 +68,9 @@ Limits:
 
 - One thread and one connection per call; the connection closes after each response.
 - Method, path, query, and body go upstream unchanged. Hop-by-hop headers and `host` are dropped. Other headers, including `accept-encoding` and credentials, are forwarded as given.
+- A path that does not start with `/` gets 400 and goes nowhere. A request body over 32 MiB gets 413 and is not forwarded (the Messages API limit is 32 MB; Batch and Files uploads over 32 MiB are refused by the proxy).
+- Response capture stops at 32 MiB while the relay continues; the call is marked `INCOMPLETE` with a truncation error. Responses to `HEAD` and with status 1xx, 204, or 304 relay no body.
+- Live rows stop if stdout closes; recording continues.
 - Redirects are not followed and bodies are not decompressed. The response is streamed to the client chunk by chunk and copied into a buffer.
 - Decoding happens after the response: gzip and deflate are decoded; `br` and `zstd` are recorded as an `Unsupported` decode error with usage `missing`.
 - Client disconnect or a ralph reset records the call as incomplete. Ctrl-C, SIGTERM, or SIGHUP accepts no new calls, waits up to 2 seconds for calls already started, then records any still open as incomplete (`INCOMPLETE: interrupted`) and exits. An unreachable upstream returns 502 and records the error.
