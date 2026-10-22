@@ -149,8 +149,8 @@ The spawn runs only after reedline `read_line` has turned raw mode off, so a ful
 
 The persistent `claude` process is dropped, and the next turn respawns it from the store through `Turn::launch`, when `reset_due` (`crates/core/src/chat.rs`) is true after a turn:
 
-- Turns on this process reach `[chat] reset_turns` (default 40).
-- The last assistant message's `context_tokens` reach `[chat] reset_tokens` (default 100000). No usage means no token trigger.
+- Turns on this process reach `[chat] reset_turns` (default 30).
+- The last assistant message's `context_tokens` reach `[chat] reset_tokens` (default 140000). No usage means no token trigger.
 - The `result` event has `terminal_reason` `blocking_limit` (claude's context is full). Only the structured field counts, never the text `Prompt is too long`. The turn counts as failed: warning, `Unanswered`, no reply stored, session dropped. The usage record is still written.
 
 Compaction stays off. A respawn waits for a running nap (`load_after_nap`: shared `NAP` try-lock, spinner while it blocks) and then loads under the shared `LOCK`; no lock is held while claude runs. A nap that is spawned but has not yet taken `NAP` when the respawn loads is not waited for: the respawn reads the committed tree and shows the nodes as pending.
