@@ -7,24 +7,29 @@ mod diff;
 mod editor;
 mod inbox;
 mod index_files;
+mod keys;
 pub(crate) mod mcp;
 pub(crate) mod memory;
 mod monitor;
 mod prompt;
+mod queue;
 mod route;
 mod skills;
 mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
+mod terminal;
 mod turn;
 mod watch;
 
 use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
+use crate::chat::keys::Keys;
 use crate::chat::memory::Store;
 use crate::chat::monitor::{ready_ids, watch_headless, watch_input, watch_status, Monitor};
 use crate::chat::prompt::{next_route, ChatPrompt};
+use crate::chat::queue::{decide, Decision, Queue};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
@@ -41,6 +46,7 @@ use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, render_markdown, RenderContext};
 use crate::signal;
+use crate::subprocess::OutputGate;
 use crate::warn::{warn, warn_if_err};
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
@@ -55,11 +61,11 @@ use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
-use ralph_core::chat_status::{orphan_hint, Route, Status};
+use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
-use reedline::EditCommand;
+use reedline::{EditCommand, HistoryItem};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
@@ -180,6 +186,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         reset_limits,
         recent_history_tokens,
         cancel: signal::interrupt_flag(),
+        gate: Arc::new(OutputGate::new()),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -280,14 +287,29 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         color,
     };
     let mut shell_state = cell::ShellState::default();
+    let keys = Keys {
+        gate: &turn.gate,
+        cancel: &turn.cancel,
+        monitor: &monitor,
+        bar: &prompt.bar,
+        edit_mode,
+    };
+    let mut pending: Option<Route> = None;
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
-        at_prompt.store(true, Ordering::SeqCst);
-        let route = next_route(&mut editor, &prompt);
-        at_prompt.store(false, Ordering::SeqCst);
-        let Some(route) = route? else {
+        let route = match pending.take() {
+            Some(route) => Some(route),
+            None => {
+                at_prompt.store(true, Ordering::SeqCst);
+                let route = next_route(&mut editor, &prompt);
+                at_prompt.store(false, Ordering::SeqCst);
+                route?
+            }
+        };
+        let Some(route) = route else {
             break;
         };
+        let mut queue = Queue::default();
         let outcome = match route {
             Route::Ignore => continue,
             Route::Send(message) => {
@@ -298,9 +320,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                             print!("{}", render_markdown(&ctx, shown, &agent_theme));
                         }
                         let sent = prepared.sent;
-                        snapshots.around(|| {
-                            turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
-                        })?
+                        let (result, queued) = snapshots.around(|| {
+                            keys.during(|| {
+                                turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
+                            })
+                        });
+                        queue = queued;
+                        result?
                     }
                     Err(outcome) => outcome,
                 };
@@ -315,7 +341,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     continue;
                 };
-                snapshots.around(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))?
+                let (result, queued) = snapshots.around(|| {
+                    keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
+                });
+                queue = queued;
+                result?
             }
             local => {
                 let ctx = LocalRoute {
@@ -334,6 +364,19 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         monitor.refresh(true);
         if outcome == TurnOutcome::Exit {
             break;
+        }
+        if let Decision::Send(text) = decide(outcome, queue) {
+            warn_if_err(
+                editor
+                    .history_mut()
+                    .save(HistoryItem::from_command_line(text.clone())),
+                "Failed to save chat history",
+            );
+            pending = Some(route_input(
+                &text,
+                monitor.status().unread,
+                &prompt.empty_submit,
+            ));
         }
     }
     Ok(())

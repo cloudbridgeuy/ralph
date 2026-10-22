@@ -34,6 +34,7 @@ impl Held {
 #[derive(Debug, Default)]
 struct GateState {
     paused: bool,
+    settled: bool,
     held: Held,
 }
 
@@ -77,13 +78,24 @@ impl OutputGate {
     }
 
     pub fn pause(&self) {
-        self.lock().paused = true;
+        let mut state = self.lock();
+        state.paused = true;
+        state.settled = false;
+    }
+
+    pub fn is_settled(&self) -> bool {
+        self.lock().settled
+    }
+
+    pub(super) fn settle(&self) {
+        self.lock().settled = true;
     }
 
     pub fn resume(&self) {
         let mut state = self.lock();
         state.held.take().iter().for_each(emit);
         state.paused = false;
+        state.settled = false;
     }
 
     pub(super) fn write(&self, stream: Stream, text: &str) {
@@ -131,6 +143,17 @@ mod tests {
         let gate = OutputGate::new();
         gate.write(Stream::Stdout, "");
         assert!(gate.lock().held.take().is_empty());
+    }
+
+    #[test]
+    fn pause_unsettles_and_settle_marks_until_resume() {
+        let gate = OutputGate::new();
+        gate.pause();
+        assert!(!gate.is_settled());
+        gate.settle();
+        assert!(gate.is_settled());
+        gate.resume();
+        assert!(!gate.is_settled());
     }
 
     #[test]

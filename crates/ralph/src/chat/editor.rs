@@ -15,6 +15,7 @@ use std::path::Path;
 use std::process::Command;
 
 pub(super) const OPEN_EDITOR: &str = "open-editor";
+pub(super) const CLOSE_QUEUE: &str = "close-queue";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
@@ -113,10 +114,28 @@ pub(super) fn vi_keybindings() -> (Keybindings, Keybindings) {
 }
 
 pub(super) fn edit_mode(mode: EditModeConfig) -> ChatEditMode {
+    edit_mode_with(mode, |_| {})
+}
+
+fn close_queue_binding(keybindings: &mut Keybindings) {
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('q'),
+        ReedlineEvent::ExecuteHostCommand(CLOSE_QUEUE.to_string()),
+    );
+}
+
+fn edit_mode_with(mode: EditModeConfig, extra: fn(&mut Keybindings)) -> ChatEditMode {
     let inner: Box<dyn EditMode> = match mode {
-        EditModeConfig::Emacs => Box::new(Emacs::new(emacs_keybindings())),
+        EditModeConfig::Emacs => {
+            let mut keybindings = emacs_keybindings();
+            extra(&mut keybindings);
+            Box::new(Emacs::new(keybindings))
+        }
         EditModeConfig::Vi => {
-            let (insert, normal) = vi_keybindings();
+            let (mut insert, mut normal) = vi_keybindings();
+            extra(&mut insert);
+            extra(&mut normal);
             Box::new(Vi::new(insert, normal, default_vi_visual_keybindings()))
         }
     };
@@ -136,6 +155,12 @@ pub(super) fn build_editor(
         .with_history(Box::new(history))
         .with_edit_mode(Box::new(edit_mode(mode)))
         .use_bracketed_paste(true))
+}
+
+pub(super) fn build_queue_editor(mode: EditModeConfig) -> Reedline {
+    Reedline::create()
+        .with_edit_mode(Box::new(edit_mode_with(mode, close_queue_binding)))
+        .use_bracketed_paste(true)
 }
 
 pub(super) fn edit_draft(

@@ -8,7 +8,8 @@ use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
 use crate::stream_processor::{extract_response_text, OutputBlock};
 use crate::subprocess::{
-    spawn_detached, Session, SpinnerSubprocessConfig, StreamingSubprocessResult, SubprocessError,
+    spawn_detached, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
+    SubprocessError,
 };
 use crate::warn::{warn, warn_if_err};
 use crate::watches::locked;
@@ -101,6 +102,7 @@ pub(super) struct Turn<'a> {
     pub(super) reset_limits: ResetLimits,
     pub(super) recent_history_tokens: usize,
     pub(super) cancel: Arc<AtomicBool>,
+    pub(super) gate: Arc<OutputGate>,
 }
 
 impl Turn<'_> {
@@ -305,7 +307,7 @@ impl Turn<'_> {
             session_elapsed_ms: 0,
             verbose_tools: VerboseToolsConfig::new(),
             session_info: chat_session_info(),
-            gate: None,
+            gate: Some(Arc::clone(&self.gate)),
             cancel: Some(Arc::clone(&self.cancel)),
         };
         Ok(Launch {

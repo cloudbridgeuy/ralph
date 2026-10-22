@@ -59,6 +59,20 @@ ralph                      # same as ralph chat with defaults
 
 `SYSTEM_PROMPT` tells the model that the message starts with the compressed chat, that `#<id>` lines are summaries, to use `zoom`, `recall` and `search` before guessing or asking (`read` pages a range of ids), that `[worker ...]` messages come from workers, not the person, and never to claim manual saving. On a worker message the model may `reply` only with an answer already settled in the chat (a decision the person made, approved scope, a step in an agreed plan); merges, pushes, PRs, Linear status changes, new scope and anything public go to the person, and every worker reply is listed in its next message to the person. `spawn_worker` and `close_worker` are only for what the person asked in their latest message, `abandon` only when the person said to drop the work, and `force` only when the person said to close a worker of another chat. The chat MCP server enforces this with the pure `worker::command_allowed`: in a turn the person started every worker command is allowed, in a worker-triggered turn only `reply` is, and anything else is refused. Messages that start with `[worker watch:<name> · watch]` are watch reports from the `watch` tool, not from an agent or the person; before calling `watch` the model shows the exact command and waits for approval. Its delegation rules keep turns short: the model reads inline only to scope (at most 3 tool calls per question), sends multi-file reads, broad searches and test runs to `evidence-collector`, all code edits to `implementer`, and fixing work that fell short to `reviser`, and every dispatch prompt states goal, question, known facts, owned files, output cap, stop condition and tool budget, "Report not-found, do not widen scope.", and "You are a subagent. Don't run mem." After 2 failed repair rounds it diagnoses; after a 3rd it waits for the person. It also must lead with the answer and end with one next step, show a 3-5 line plan when a request is ambiguous, treat a worker "done" as unverified until it checks the diff, tests, git and Linear, cite the `#<id>` behind facts from older chat, and say it has no erase tool when asked to forget.
 
+## Queued messages
+
+Ctrl-Q during a turn pauses the display of the turn output and opens a queue editor. The turn keeps running and the output is held.
+
+- Enter with text adds the text as a queue entry. Empty Enter, Ctrl-Q, or Ctrl-D adds nothing.
+- Each of these closes the editor, prints the held output, and resumes live output.
+- Ctrl-C in the editor cancels the turn like Ctrl-C does today.
+- The status bar shows `QUEUED N` when N is above zero.
+- Nothing sends while the editor is open. A turn that ends meanwhile waits for the editor to close.
+- After a normal reply, ralph joins the entries with a blank line, in typed order, and sends them as one message as if typed at the prompt. Slash commands and `!` cells behave as at the prompt.
+- Only the merged text goes to `history.txt`.
+- After a cancel, an exit, or a failed turn, ralph sends nothing and keeps the entries.
+- Keys typed during a turn other than Ctrl-Q are discarded. Ctrl-Q at the idle prompt does nothing.
+
 ## Worker inbox
 
 Worker reports never interrupt the draft. A watcher thread polls every 500 ms and repaints the prompt in place (reedline `RepaintSignal`), keeping the buffer and cursor.

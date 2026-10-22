@@ -1,6 +1,7 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat::editor::{edit_draft, OPEN_EDITOR};
 use crate::chat::monitor::Monitor;
+use crate::chat::queue::queued_label;
 use crate::chat::statusbar::StatusBar;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
@@ -45,6 +46,56 @@ pub(super) fn screen_columns() -> usize {
     )
 }
 
+fn indicator_for(edit_mode: PromptEditMode) -> &'static str {
+    let mode = match edit_mode {
+        PromptEditMode::Vi(PromptViMode::Insert) => PromptMode::ViInsert,
+        PromptEditMode::Vi(PromptViMode::Normal) => PromptMode::ViNormal,
+        _ => PromptMode::Emacs,
+    };
+    prompt_indicator(mode)
+}
+
+pub(super) fn with_queued(bar: &str, queued: usize) -> String {
+    match queued_label(queued) {
+        Some(label) => format!("{bar}{label}\n"),
+        None => bar.to_string(),
+    }
+}
+
+pub(super) struct QueuePrompt<'a> {
+    pub(super) monitor: &'a Monitor,
+    pub(super) bar: &'a StatusBar,
+    pub(super) queued: usize,
+}
+
+impl Prompt for QueuePrompt<'_> {
+    fn render_prompt_left(&self) -> Cow<'_, str> {
+        Cow::Owned(with_queued(
+            &self.bar.line(&self.monitor.status(), screen_columns()),
+            self.queued,
+        ))
+    }
+
+    fn render_prompt_right(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
+    }
+
+    fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
+        Cow::Borrowed(indicator_for(edit_mode))
+    }
+
+    fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
+        Cow::Borrowed(DEFAULT_MULTILINE_INDICATOR)
+    }
+
+    fn render_prompt_history_search_indicator(
+        &self,
+        history_search: PromptHistorySearch,
+    ) -> Cow<'_, str> {
+        Cow::Owned(format!("(reverse-search: {}) ", history_search.term))
+    }
+}
+
 impl Prompt for ChatPrompt {
     fn render_prompt_left(&self) -> Cow<'_, str> {
         Cow::Owned(self.bar.line(&self.monitor.status(), screen_columns()))
@@ -63,12 +114,7 @@ impl Prompt for ChatPrompt {
     }
 
     fn render_prompt_indicator(&self, edit_mode: PromptEditMode) -> Cow<'_, str> {
-        let mode = match edit_mode {
-            PromptEditMode::Vi(PromptViMode::Insert) => PromptMode::ViInsert,
-            PromptEditMode::Vi(PromptViMode::Normal) => PromptMode::ViNormal,
-            _ => PromptMode::Emacs,
-        };
-        Cow::Borrowed(prompt_indicator(mode))
+        Cow::Borrowed(indicator_for(edit_mode))
     }
 
     fn render_prompt_multiline_indicator(&self) -> Cow<'_, str> {
@@ -117,7 +163,7 @@ pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Resu
 }
 
 /// Re-runs `read` while it fails with `Interrupted`, which a stop/`fg` resume raises.
-fn retry_interrupted<T>(mut read: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+pub(super) fn retry_interrupted<T>(mut read: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     loop {
         match read() {
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
@@ -129,6 +175,16 @@ fn retry_interrupted<T>(mut read: impl FnMut() -> io::Result<T>) -> io::Result<T
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_label_follows_the_bar_on_its_own_line() {
+        assert_eq!(with_queued("bar\n", 2), "bar\nQUEUED 2\n");
+    }
+
+    #[test]
+    fn empty_queue_leaves_the_bar_alone() {
+        assert_eq!(with_queued("bar\n", 0), "bar\n");
+    }
 
     #[test]
     fn retries_interrupted_until_success() {

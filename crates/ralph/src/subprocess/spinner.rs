@@ -239,6 +239,9 @@ impl Pump {
     ) -> Result<Step, SubprocessError> {
         if paused {
             self.stop_spinner();
+            if let Some(gate) = &self.gate {
+                gate.settle();
+            }
         }
         match readers.line_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok(line)) => {
