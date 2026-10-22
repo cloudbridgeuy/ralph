@@ -107,3 +107,80 @@ pub fn truncate_multiline(s: &str, max_lines: usize) -> (String, bool) {
 }
 
 // Tests for extract_language_from_path are in crate::render::utils
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn key(value: &str, is_path: bool) -> Option<KeyArgument> {
+        Some(KeyArgument {
+            value: value.to_string(),
+            is_path,
+        })
+    }
+
+    #[test]
+    fn test_key_argument_for_file_tools_reads_only_file_path() {
+        assert_eq!(
+            extract_key_argument("Edit", &json!({"file_path": "a.rs"})),
+            key("a.rs", true)
+        );
+        assert_eq!(extract_key_argument("Read", &json!({"path": "a.rs"})), None);
+    }
+
+    #[test]
+    fn test_key_argument_for_bash_reads_only_command() {
+        assert_eq!(
+            extract_key_argument("Bash", &json!({"command": "ls"})),
+            key("ls", false)
+        );
+        assert_eq!(
+            extract_key_argument("Bash", &json!({"description": "list"})),
+            None
+        );
+    }
+
+    #[test]
+    fn test_key_argument_for_task_is_prompt() {
+        assert_eq!(
+            extract_key_argument("Task", &json!({"description": "d", "prompt": "p"})),
+            key("p", false)
+        );
+    }
+
+    #[test]
+    fn test_key_argument_for_notebook_edit_is_notebook_path() {
+        assert_eq!(
+            extract_key_argument(
+                "NotebookEdit",
+                &json!({"cell_id": "c1", "notebook_path": "n.ipynb"})
+            ),
+            key("n.ipynb", true)
+        );
+    }
+
+    #[test]
+    fn test_is_content_truncated_markers() {
+        assert!(is_content_truncated("line\n... (truncated)"));
+        assert!(is_content_truncated("Output truncated at 100 lines"));
+        assert!(!is_content_truncated("complete output"));
+    }
+
+    #[test]
+    fn test_count_non_empty_lines() {
+        assert_eq!(count_non_empty_lines("a\n\nb\nc\n"), 3);
+        assert_eq!(count_non_empty_lines(""), 0);
+    }
+
+    #[test]
+    fn test_truncate_string_compares_bytes_not_chars() {
+        assert_eq!(truncate_string("ééé", 5), "éé...");
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_truncate_string_panics_below_three() {
+        truncate_string("abcd", 2);
+    }
+}

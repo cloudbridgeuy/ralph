@@ -482,4 +482,170 @@ mod tests {
             _ => panic!("Expected TodoWrite variant"),
         }
     }
+
+    #[test]
+    fn test_build_read_invocation_block() {
+        let invocation = create_test_invocation(
+            "Read",
+            json!({"file_path": "src/main.rs", "offset": 10, "limit": 20}),
+        );
+
+        let inv = expect_tool_invocation(build_tool_invocation_block(&invocation));
+
+        assert_eq!(
+            inv.variant,
+            ToolInvocationVariant::Read {
+                file_path: "src/main.rs".to_string(),
+                offset: Some(10),
+                limit: Some(20),
+            }
+        );
+    }
+
+    #[test]
+    fn test_build_glob_invocation_block() {
+        let invocation =
+            create_test_invocation("Glob", json!({"pattern": "**/*.rs", "path": "crates"}));
+
+        let inv = expect_tool_invocation(build_tool_invocation_block(&invocation));
+
+        assert_eq!(
+            inv.variant,
+            ToolInvocationVariant::Glob {
+                pattern: "**/*.rs".to_string(),
+                path: Some("crates".to_string()),
+            }
+        );
+    }
+
+    fn edit_snapshot(old: &str, new: &str) -> EditSnapshot {
+        EditSnapshot {
+            file_path: "a.rs".to_string(),
+            content: None,
+            old_string: Some(old.to_string()),
+            new_string: Some(new.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_edit_block_with_equal_strings_has_no_changes() {
+        assert_eq!(
+            build_edit_before_after_block(&edit_snapshot("x", "x")),
+            OutputBlock::tool_result(
+                "Edit",
+                false,
+                ToolResultVariant::EditNoChanges {
+                    file_path: "a.rs".to_string(),
+                },
+            )
+        );
+    }
+
+    #[test]
+    fn test_edit_block_with_changed_strings_shows_before_and_after() {
+        assert_eq!(
+            build_edit_before_after_block(&edit_snapshot("old", "new")),
+            OutputBlock::tool_result(
+                "Edit",
+                false,
+                ToolResultVariant::EditBeforeAfter {
+                    file_path: "a.rs".to_string(),
+                    old_content: "old".to_string(),
+                    new_content: "new".to_string(),
+                },
+            )
+        );
+    }
+
+    fn write_snapshot(content: Option<&str>, file_existed: bool) -> WriteSnapshot {
+        WriteSnapshot {
+            file_path: "a.txt".to_string(),
+            content: content.map(String::from),
+            file_existed,
+        }
+    }
+
+    #[test]
+    fn test_write_block_for_new_file() {
+        assert_eq!(
+            build_write_result_block(&write_snapshot(None, false), Some("hi")),
+            OutputBlock::tool_result(
+                "Write",
+                false,
+                ToolResultVariant::WriteNewFile {
+                    file_path: "a.txt".to_string(),
+                    content: "hi".to_string(),
+                },
+            )
+        );
+    }
+
+    #[test]
+    fn test_write_block_with_same_content_has_no_changes() {
+        assert_eq!(
+            build_write_result_block(&write_snapshot(Some("hi"), true), Some("hi")),
+            OutputBlock::tool_result(
+                "Write",
+                false,
+                ToolResultVariant::WriteNoChanges {
+                    file_path: "a.txt".to_string(),
+                    is_new_file: false,
+                },
+            )
+        );
+    }
+
+    #[test]
+    fn test_write_block_for_overwrite() {
+        assert_eq!(
+            build_write_result_block(&write_snapshot(Some("old"), true), Some("new")),
+            OutputBlock::tool_result(
+                "Write",
+                false,
+                ToolResultVariant::WriteOverwrite {
+                    file_path: "a.txt".to_string(),
+                    before_content: "old".to_string(),
+                    after_content: "new".to_string(),
+                },
+            )
+        );
+    }
+
+    fn notebook_diff(content: Option<&str>, edit_mode: &str, new_source: &str) -> String {
+        let snapshot = NotebookSnapshot {
+            notebook_path: "n.ipynb".to_string(),
+            cell_identifier: "1".to_string(),
+            content: content.map(String::from),
+            edit_mode: edit_mode.to_string(),
+            cell_type: None,
+        };
+        match build_notebook_edit_block(&snapshot, new_source) {
+            OutputBlock::ToolResult(result) => match result.variant {
+                ToolResultVariant::NotebookEdit { diff_content, .. } => diff_content,
+                other => panic!("Expected NotebookEdit variant, got {other:?}"),
+            },
+            other => panic!("Expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_notebook_diff_delete_shows_only_old_lines() {
+        assert_eq!(notebook_diff(Some("a\nb"), "delete", "c"), "-a\n-b\n");
+    }
+
+    #[test]
+    fn test_notebook_diff_insert_shows_only_new_lines() {
+        assert_eq!(notebook_diff(Some("a"), "insert", "c\nd"), "+c\n+d\n");
+    }
+
+    #[test]
+    fn test_notebook_diff_replace_shows_old_then_new() {
+        assert_eq!(notebook_diff(Some("a"), "replace", "b"), "-a\n+b\n");
+    }
+
+    #[test]
+    fn test_notebook_diff_replace_skips_empty_sides() {
+        assert_eq!(notebook_diff(None, "replace", "b"), "+b\n");
+        assert_eq!(notebook_diff(Some("a"), "replace", ""), "-a\n");
+    }
 }
