@@ -130,7 +130,8 @@ After GUZ-618:
 | Rerun `-F 'shell_format\.rs:234:'` | 18 mutants: 18 caught |
 | Excluded equivalents | 5 |
 | Deferred | 26 `shell_format.rs` survivors, [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811) |
-| Scope after | 1,636 mutants |
+| Targeted rerun, cache tier `Display` and call sites | 32 mutants: 32 caught |
+| Scope after | 1,623 mutants |
 
 ## Survivors
 
