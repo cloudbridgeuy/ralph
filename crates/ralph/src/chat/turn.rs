@@ -11,7 +11,7 @@ use crate::subprocess::{
     spawn_detached, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
     SubprocessError,
 };
-use crate::warn::{warn, warn_if_err};
+use crate::warn::warning_line;
 use crate::watches::locked;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_due,
@@ -35,18 +35,8 @@ pub(super) fn rule(skin: &MadSkin, width: usize) -> String {
     skin.text("---", Some(width)).to_string()
 }
 
-pub(super) fn print_rule() {
-    print!("{}", rule(&MadSkin::default(), screen_columns()));
-}
-
 pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
     !blocks.is_empty()
-}
-
-pub(super) fn print_rule_after(blocks: &[OutputBlock]) {
-    if shown_output(blocks) {
-        print_rule();
-    }
 }
 
 pub(super) fn spawn_nap(store: &Path) -> io::Result<()> {
@@ -106,6 +96,27 @@ pub(super) struct Turn<'a> {
 }
 
 impl Turn<'_> {
+    fn print_rule(&self) {
+        self.gate
+            .write_out(&rule(&MadSkin::default(), screen_columns()));
+    }
+
+    fn print_rule_after(&self, blocks: &[OutputBlock]) {
+        if shown_output(blocks) {
+            self.print_rule();
+        }
+    }
+
+    fn warn(&self, message: impl std::fmt::Display) {
+        self.gate.write_err(&warning_line(message));
+    }
+
+    fn warn_if_err<T, E: std::fmt::Display>(&self, result: Result<T, E>, context: &str) {
+        if let Err(e) = result {
+            self.warn(format!("{context}: {e}"));
+        }
+    }
+
     pub(super) fn run(
         &self,
         trigger: Trigger,
@@ -129,7 +140,7 @@ impl Turn<'_> {
             .take()
             .and_then(|mut live| live.is_alive().then_some(live));
         let mut launch: Option<Launch> = None;
-        print_rule();
+        self.print_rule();
         let result = retry_on_outage(
             "chat turn",
             || {
@@ -166,9 +177,9 @@ impl Turn<'_> {
             TurnEnd::Exit => return Ok(TurnOutcome::Exit),
             TurnEnd::Cancelled => {
                 if let Ok(partial) = &result {
-                    print_rule_after(&partial.stream_result.output_blocks);
+                    self.print_rule_after(&partial.stream_result.output_blocks);
                 }
-                warn("Turn cancelled.");
+                self.warn("Turn cancelled.");
                 return Ok(TurnOutcome::Unanswered);
             }
             TurnEnd::Completed => {}
@@ -177,7 +188,7 @@ impl Turn<'_> {
             Ok(result) => result,
             Err(SubprocessError::Interrupted { .. }) => return Ok(TurnOutcome::Exit),
             Err(e) => {
-                warn(format!("chat turn failed: {e}"));
+                self.warn(format!("chat turn failed: {e}"));
                 return Ok(TurnOutcome::Unanswered);
             }
         };
@@ -198,12 +209,12 @@ impl Turn<'_> {
                 .concat(),
             ))
         }) {
-            warn_if_err(
+            self.warn_if_err(
                 self.store.append_usage(&record),
                 "Failed to record chat usage",
             );
         }
-        print_rule();
+        self.print_rule();
         let costs = &result.stream_result.costs;
         let blocked = hit_blocking_limit(costs);
         match extract_response_text(&result.stream_result.output_blocks) {
@@ -214,7 +225,7 @@ impl Turn<'_> {
                 reply_entries(&reply)
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
-                warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
+                self.warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
                 if reset_due(&self.reset_limits, process_turns, costs) {
                     locked(&self.session).take();
                 }
@@ -223,9 +234,9 @@ impl Turn<'_> {
             _ => {
                 locked(&self.session).take();
                 if blocked {
-                    warn("chat context is full (blocking_limit); restarting claude from the memory store on the next turn");
+                    self.warn("chat context is full (blocking_limit); restarting claude from the memory store on the next turn");
                 } else {
-                    warn(format!("chat turn failed (exit {})", result.exit_code));
+                    self.warn(format!("chat turn failed (exit {})", result.exit_code));
                 }
                 Ok(TurnOutcome::Unanswered)
             }

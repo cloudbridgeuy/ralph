@@ -366,6 +366,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         if let Decision::Send(text) = decide(outcome, queue) {
+            print!("{}", prompt.echo(&text));
             warn_if_err(
                 editor
                     .history_mut()

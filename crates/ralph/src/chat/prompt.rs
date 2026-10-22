@@ -46,6 +46,17 @@ pub(super) fn screen_columns() -> usize {
     )
 }
 
+impl ChatPrompt {
+    pub(super) fn echo(&self, text: &str) -> String {
+        sent_echo(
+            &self.bar.line(&self.monitor.status(), screen_columns()),
+            indicator_for(PromptEditMode::Default),
+            DEFAULT_MULTILINE_INDICATOR,
+            text,
+        )
+    }
+}
+
 fn indicator_for(edit_mode: PromptEditMode) -> &'static str {
     let mode = match edit_mode {
         PromptEditMode::Vi(PromptViMode::Insert) => PromptMode::ViInsert,
@@ -53,6 +64,18 @@ fn indicator_for(edit_mode: PromptEditMode) -> &'static str {
         _ => PromptMode::Emacs,
     };
     prompt_indicator(mode)
+}
+
+pub(super) fn sent_echo(bar: &str, indicator: &str, continuation: &str, text: &str) -> String {
+    let body = text
+        .split('\n')
+        .enumerate()
+        .map(|(i, line)| {
+            let lead = if i == 0 { indicator } else { continuation };
+            format!("{lead}{line}\n")
+        })
+        .collect::<String>();
+    format!("{bar}{body}")
 }
 
 pub(super) fn with_queued(bar: &str, queued: usize) -> String {
@@ -175,6 +198,22 @@ pub(super) fn retry_interrupted<T>(mut read: impl FnMut() -> io::Result<T>) -> i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn echo_of_one_line_shows_bar_indicator_and_text() {
+        assert_eq!(
+            sent_echo("bar\n", ">>> ", "::: ", "hello"),
+            "bar\n>>> hello\n"
+        );
+    }
+
+    #[test]
+    fn echo_of_many_lines_marks_each_continuation() {
+        assert_eq!(
+            sent_echo("bar\n", ">>> ", "::: ", "a\n\nb"),
+            "bar\n>>> a\n::: \n::: b\n"
+        );
+    }
 
     #[test]
     fn queued_label_follows_the_bar_on_its_own_line() {

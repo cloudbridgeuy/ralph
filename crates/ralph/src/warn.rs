@@ -65,12 +65,20 @@ fn format_warning(message: &str, terminal_width: usize, color: bool) -> String {
     frame(&rows, YELLOW)
 }
 
-pub fn warn(message: impl Display) {
+pub fn warning_line(message: impl Display) -> String {
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let width = crossterm::terminal::size()
         .map(|(w, _)| usize::from(w))
         .unwrap_or(DEFAULT_TERMINAL_WIDTH);
-    eprintln!("{}", format_warning(&message.to_string(), width, color));
+    line_of(&format_warning(&message.to_string(), width, color))
+}
+
+fn line_of(text: &str) -> String {
+    format!("{text}\n")
+}
+
+pub fn warn(message: impl Display) {
+    eprint!("{}", warning_line(message));
 }
 
 pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
@@ -84,6 +92,11 @@ mod tests {
     use super::*;
     use crate::frame::strip_ansi;
     use std::io;
+
+    #[test]
+    fn line_of_ends_with_one_newline() {
+        assert_eq!(line_of("Warning: x"), "Warning: x\n");
+    }
 
     #[test]
     fn plain_format_when_not_color() {

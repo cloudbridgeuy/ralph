@@ -98,6 +98,14 @@ impl OutputGate {
         state.settled = false;
     }
 
+    pub fn write_out(&self, text: &str) {
+        self.write(Stream::Stdout, text);
+    }
+
+    pub fn write_err(&self, text: &str) {
+        self.write(Stream::Stderr, text);
+    }
+
     pub(super) fn write(&self, stream: Stream, text: &str) {
         let mut state = self.lock();
         if state.paused {
@@ -127,6 +135,20 @@ mod tests {
                 (Stream::Stderr, "b"),
                 (Stream::Stdout, "c")
             ]
+        );
+    }
+
+    #[test]
+    fn paused_write_out_and_write_err_are_held_in_order() {
+        let gate = OutputGate::new();
+        gate.pause();
+        gate.write_out("rule");
+        gate.write_err("warning");
+        let held = gate.lock().held.take();
+        let seen: Vec<(Stream, &str)> = held.iter().map(|c| (c.stream, c.text.as_str())).collect();
+        assert_eq!(
+            seen,
+            vec![(Stream::Stdout, "rule"), (Stream::Stderr, "warning")]
         );
     }
 
