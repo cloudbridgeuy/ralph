@@ -287,7 +287,7 @@ Fixed limits: flowchart source up to 16 KB; sequenceDiagram up to 20 participant
 
 ### `[wire.prices]` - `ralph wire ls` price overrides
 
-`ralph wire ls` prices calls from a built-in dated table. A `[wire.prices."<model prefix>"]` table overrides it for every model whose id starts with the prefix (at a `-` boundary; longest prefix wins; any `[...]` suffix on the recorded model is ignored). An override applies at every prompt size. A config that fails to parse makes `ralph wire ls` fail. See [ralph wire](context/ralph-wire.md#prices).
+`ralph wire ls` prices calls from a built-in dated table. A `[wire.prices."<model prefix>"]` table overrides it for that exact model id, or the same id plus an 8-digit date (`-20261021`). Longest prefix wins. Any `[...]` suffix on the recorded model is ignored. An override applies at every prompt size. A negative price fails config load, so `ralph wire ls` fails. A config that fails to parse fails the same way. See [ralph wire](context/ralph-wire.md#prices).
 
 ```toml
 [wire.prices."claude-haiku-5-5"]

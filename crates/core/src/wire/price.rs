@@ -27,7 +27,6 @@ pub struct PriceEntry {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PriceTable {
     pub as_of: &'static str,
-    pub source: &'static str,
     pub entries: Vec<PriceEntry>,
 }
 
@@ -49,11 +48,37 @@ pub fn normalize_model(model: &str) -> &str {
     model.split('[').next().unwrap_or(model)
 }
 
+/// A listed id matches exactly, or with one `-YYYYMMDD` suffix.
+/// `claude-opus-5-6` does not match `claude-opus-5`.
 pub fn matches_prefix(model: &str, prefix: &str) -> bool {
-    model == prefix
-        || model
-            .strip_prefix(prefix)
-            .is_some_and(|rest| rest.starts_with('-'))
+    model == prefix || model.strip_prefix(prefix).is_some_and(is_date_suffix)
+}
+
+fn is_date_suffix(rest: &str) -> bool {
+    let Some(digits) = rest.strip_prefix('-') else {
+        return false;
+    };
+    digits.len() == 8 && digits.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Rejects a negative override price. Zero is allowed.
+pub fn validate_price_overrides(overrides: &BTreeMap<String, PriceOverride>) -> Result<(), String> {
+    for (prefix, price) in overrides {
+        for (name, value) in [
+            ("input", Some(price.input)),
+            ("cache_read", price.cache_read),
+            ("cache_write_5m", price.cache_write_5m),
+            ("cache_write_1h", price.cache_write_1h),
+            ("output", price.output),
+        ] {
+            if value.is_some_and(|amount| amount < 0.0) {
+                return Err(format!(
+                    "wire price for '{prefix}' {name} must be zero or positive"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn prompt_tokens(usage: &Usage) -> u64 {
@@ -181,7 +206,6 @@ mod tests {
     fn table() -> PriceTable {
         PriceTable {
             as_of: "2026-10-21",
-            source: "test",
             entries: vec![
                 entry("claude-haiku-5", None, 0.1),
                 entry("claude-haiku-5", Some(100_000), 0.5),
@@ -281,7 +305,8 @@ mod tests {
         let t = table();
         assert_eq!(t.lookup("claude-haiku-5-5-20260101", 1).unwrap().input, 1.0);
         assert_eq!(t.lookup("claude-haiku-5-5[1m]", 1).unwrap().input, 1.0);
-        assert_eq!(t.lookup("claude-haiku-5-6", 1).unwrap().input, 0.1);
+        assert!(t.lookup("claude-haiku-5-6", 1).is_none());
+        assert!(t.lookup("claude-haiku-5-5-latest", 1).is_none());
         assert!(t.lookup("claude-haiku-50", 1).is_none());
         assert!(t.lookup("gpt-4", 1).is_none());
     }
@@ -321,8 +346,7 @@ mod tests {
         assert_eq!(got.input, 5.0);
         assert!(resolve_price(&table(), &none, &rates(), "mystery", 1).is_none());
         let other = overrides(2.0);
-        let got = resolve_price(&table(), &other, &rates(), "claude-haiku-5-6", 1).unwrap();
-        assert_eq!(got.input, 0.1);
+        assert!(resolve_price(&table(), &other, &rates(), "claude-haiku-5-6", 1).is_none());
     }
 
     #[test]
@@ -338,7 +362,25 @@ mod tests {
                 output: None,
             },
         );
-        let got = resolve_price(&table(), &over, &rates(), "mystery-1", 1).unwrap();
+        assert!(resolve_price(&table(), &over, &rates(), "mystery-1", 1).is_none());
+        let got = resolve_price(&table(), &over, &rates(), "mystery", 1).unwrap();
         assert_eq!(got.input, 7.0);
+        let dated = resolve_price(&table(), &over, &rates(), "mystery-20261021", 1).unwrap();
+        assert_eq!(dated.input, 7.0);
+    }
+
+    #[test]
+    fn negative_override_price_is_rejected() {
+        let mut over = overrides(1.0);
+        assert!(validate_price_overrides(&over).is_ok());
+        over.get_mut("claude-haiku-5-5").unwrap().output = Some(-0.5);
+        let error = validate_price_overrides(&over).unwrap_err();
+        assert!(error.contains("claude-haiku-5-5"));
+        assert!(error.contains("output"));
+        over.get_mut("claude-haiku-5-5").unwrap().output = None;
+        over.get_mut("claude-haiku-5-5").unwrap().input = -1.0;
+        assert!(validate_price_overrides(&over)
+            .unwrap_err()
+            .contains("input"));
     }
 }

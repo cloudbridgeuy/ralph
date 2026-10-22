@@ -27,4 +27,16 @@ mod tests {
     fn unknown_price_key_is_rejected() {
         assert!(toml::from_str::<AppConfig>("[wire.prices.x]\ninput = 1\nbogus = 2\n").is_err());
     }
+
+    #[test]
+    fn negative_price_fails_load_and_zero_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "[wire.prices.m]\ninput = 0\n").unwrap();
+        assert!(AppConfig::load_from(&path).unwrap().wire.prices["m"].input == 0.0);
+        std::fs::write(&path, "[wire.prices.m]\ninput = -1\n").unwrap();
+        let err = AppConfig::load_from(&path).unwrap_err().to_string();
+        assert!(err.contains('m'), "{err}");
+        assert!(err.contains("input"), "{err}");
+    }
 }
