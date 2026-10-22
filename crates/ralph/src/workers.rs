@@ -1,7 +1,9 @@
 use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
-use crate::cursor_owner::{caller_owns_cursor, owned_cursor_ids, sweep_owner, write_file};
+use crate::cursor_owner::{
+    caller_owns, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file,
+};
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
@@ -13,9 +15,9 @@ use ralph_core::worker::{
     interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
     parse_interrupt_result, project_slug, prompt_entry_name, ready_path, resolve_worktree_dir,
     sent_path, session_name, session_owner, session_survived_kill, tagged_sessions,
-    worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff, HandoffFiles, HarnessId,
-    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
-    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    unsupported_reason, worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff,
+    HandoffFiles, HarnessId, Owner, Sweep, TaggedSession, WorkerCommand, WorktreeDir, HANDOFF_POLL,
+    HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -66,6 +68,9 @@ impl Workers {
     }
 
     fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
+        if self.codex_running(id) {
+            return Err(refuse_codex_reply(interrupt));
+        }
         if let Some(sent) = self.deliver_headless(id, text, interrupt, "Sent to") {
             return sent;
         }
@@ -111,6 +116,10 @@ impl Workers {
             return self.mark_sent(id, queued);
         }
         self.reply(id, text, false)
+    }
+
+    fn codex_running(&self, id: &str) -> bool {
+        HandoffFiles::codex(&self.store_dir, id).owner.exists()
     }
 
     fn opencode_http(&self, id: &str) -> bool {
@@ -186,7 +195,7 @@ impl Workers {
 
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
         let repo = repo_root()?;
-        self.refuse_busy_cursor(id, true)?;
+        self.refuse_busy_headless(id, true)?;
         let owner = self.owner(&project_slug(&repo), id);
         let config = AppConfig::load().map_err(|e| e.to_string());
         let (worktree, worktree_dir) =
@@ -223,6 +232,8 @@ impl Workers {
         };
         let kind = if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
             HarnessId::Cursor
+        } else if self.codex_running(id) {
+            HarnessId::Codex
         } else if self.opencode_http(id) {
             HarnessId::Opencode
         } else {
@@ -263,6 +274,7 @@ impl Workers {
         let files = HandoffFiles::cursor(&self.store_dir, id);
         clear_marker(&files.session)?;
         clear_marker(&files.interrupt_result)?;
+        clear_marker(&HandoffFiles::codex(&self.store_dir, id).session)?;
         if steps == [CloseStep::ClearMarkers] {
             return Ok(unset_warning.into_iter().fold(
                 with_warning(format!(
@@ -325,7 +337,12 @@ impl Workers {
             }
             CloseStep::TerminateCursor => {
                 if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
-                    self.terminate_cursor(id)?;
+                    self.terminate_headless(&HandoffFiles::cursor(&self.store_dir, id), "cursor")?;
+                }
+            }
+            CloseStep::TerminateCodex => {
+                if self.codex_running(id) {
+                    self.terminate_headless(&HandoffFiles::codex(&self.store_dir, id), "codex")?;
                 }
             }
             CloseStep::KillSession(session) => {
@@ -424,18 +441,27 @@ impl Workers {
         }
     }
 
-    fn refuse_busy_cursor(&self, id: &str, closing: bool) -> io::Result<()> {
-        match sweep_owner(&self.store_dir, id) {
-            Some(Sweep::Busy) if closing && caller_owns_cursor(&self.store_dir, id) => Ok(()),
-            Some(Sweep::Busy) => Err(io::Error::other(format!(
-                "worker {id} is a cursor worker owned by another running ralph chat"
-            ))),
-            _ => Ok(()),
+    fn refuse_busy_headless(&self, id: &str, closing: bool) -> io::Result<()> {
+        for harness in [HarnessId::Cursor, HarnessId::Codex] {
+            let files = match harness {
+                HarnessId::Codex => HandoffFiles::codex(&self.store_dir, id),
+                _ => HandoffFiles::cursor(&self.store_dir, id),
+            };
+            match sweep_owner(&files) {
+                Some(Sweep::Busy) if closing && caller_owns(&files) => {}
+                Some(Sweep::Busy) => {
+                    return Err(io::Error::other(format!(
+                        "worker {id} is a {} worker owned by another running ralph chat",
+                        harness.as_str()
+                    )))
+                }
+                _ => {}
+            }
         }
+        Ok(())
     }
 
-    fn terminate_cursor(&self, id: &str) -> io::Result<()> {
-        let files = HandoffFiles::cursor(&self.store_dir, id);
+    fn terminate_headless(&self, files: &HandoffFiles, name: &str) -> io::Result<()> {
         write_file(&files.close, "")?;
         let started = Instant::now();
         loop {
@@ -443,9 +469,9 @@ impl Workers {
                 Handoff::Done => return Ok(()),
                 Handoff::TimedOut => {
                     clear_marker(&files.close)?;
-                    return Err(io::Error::other(
-                        "ralph chat did not confirm stopping the cursor worker in time",
-                    ));
+                    return Err(io::Error::other(format!(
+                        "ralph chat did not confirm stopping the {name} worker in time"
+                    )));
                 }
                 Handoff::Pending | Handoff::Failed(_) => thread::sleep(HANDOFF_POLL),
             }
@@ -453,7 +479,7 @@ impl Workers {
     }
 
     fn owner(&self, project: &str, id: &str) -> Owner {
-        if self.headless_files(id).is_some() {
+        if self.headless_files(id).is_some() || self.codex_running(id) {
             return Owner::Mine(TaggedSession {
                 name: session_name(project, id),
                 store: self.store_dir.to_string_lossy().into_owned(),
@@ -620,7 +646,12 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     workers.extend(
         owned_cursor_ids(store_dir)
             .iter()
-            .map(|id| RunningWorker::cursor(id)),
+            .map(|id| RunningWorker::headless(id, HarnessId::Cursor)),
+    );
+    workers.extend(
+        owned_codex_ids(store_dir)
+            .iter()
+            .map(|id| RunningWorker::headless(id, HarnessId::Codex)),
     );
     workers.extend(
         entry_ids(store_dir, OPENCODE_OWNER_DIR)
@@ -633,6 +664,15 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     );
     workers.sort_by(|a, b| a.id.cmp(&b.id));
     workers
+}
+
+fn refuse_codex_reply(interrupt: bool) -> io::Error {
+    let command = if interrupt {
+        WorkerCommand::Interrupt(String::new())
+    } else {
+        WorkerCommand::Prompt(String::new())
+    };
+    io::Error::other(unsupported_reason(HarnessId::Codex, command).unwrap_or_default())
 }
 
 pub fn capture_pane(session: &str) -> Option<String> {

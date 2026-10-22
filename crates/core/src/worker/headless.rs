@@ -88,27 +88,12 @@ impl Capabilities {
                 Partial("per-session SSE activity; one alert per shared-server death")
             }
             (HarnessId::Codex, Spawn | Report | Model) => Full,
-            (HarnessId::Codex, PermAsk) => {
-                Partial("only protocol-raised command, file and MCP requests")
-            }
-            (HarnessId::Codex, PermYolo) => {
-                Partial("single-request accepts only; turn and session grants stay pending")
-            }
-            (HarnessId::Codex, Resume) => {
-                Partial("needs saved history, owned worktree and a usable codex login")
-            }
-            (HarnessId::Codex, Prompt) => {
-                Partial("a reply during a turn is held until turn/completed")
-            }
-            (HarnessId::Codex, Interrupt) => {
-                Partial("tool process outlives turn/interrupt; no reply means outcome unknown")
+            (HarnessId::Codex, Prompt | Interrupt | PermAsk | PermYolo | Resume | Heartbeat) => {
+                Support::None
             }
             (HarnessId::Codex, Close) => Partial(
                 "tool descendants can be orphaned; global trust entry left in ~/.codex/config.toml",
             ),
-            (HarnessId::Codex, Heartbeat) => {
-                Partial("no frames while idle; exit seen as stdout EOF")
-            }
         }
     }
 }
@@ -208,6 +193,15 @@ pub fn decide(caps: &Capabilities, command: WorkerCommand) -> Result<WorkerComma
         }),
         _ => Ok(command),
     }
+}
+
+pub fn unsupported_reason(harness: HarnessId, command: WorkerCommand) -> Option<String> {
+    decide(&capabilities(harness), command)
+        .err()
+        .map(|event| match event {
+            WorkerEvent::Unsupported { reason, .. } => reason,
+            other => format!("{other:?}"),
+        })
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -327,6 +321,18 @@ pub trait HeadlessWorker: Send {
 mod tests {
     use super::*;
 
+    #[test]
+    fn codex_prompt_is_refused_with_its_reason() {
+        assert_eq!(
+            unsupported_reason(HarnessId::Codex, WorkerCommand::Prompt("p".into())).as_deref(),
+            Some("codex prompt: not supported")
+        );
+        assert_eq!(
+            unsupported_reason(HarnessId::Codex, WorkerCommand::Close),
+            None
+        );
+    }
+
     fn command_for(feature: Feature) -> Option<WorkerCommand> {
         match feature {
             Feature::Spawn => Some(WorkerCommand::Spawn(SpawnSpec { model: None })),
@@ -362,11 +368,13 @@ mod tests {
             for feature in Feature::ALL {
                 match caps.support(feature) {
                     Support::None => {
-                        let command = command_for(feature).unwrap();
-                        let err = decide(&caps, command).unwrap_err();
-                        assert!(
-                            matches!(err, WorkerEvent::Unsupported { feature: f, .. } if f == feature)
-                        );
+                        assert!(describe(&caps, feature).ends_with(": not supported"));
+                        if let Some(command) = command_for(feature) {
+                            let err = decide(&caps, command).unwrap_err();
+                            assert!(
+                                matches!(err, WorkerEvent::Unsupported { feature: f, .. } if f == feature)
+                            );
+                        }
                     }
                     Support::Partial(reason) => {
                         assert!(describe(&caps, feature).contains(reason));

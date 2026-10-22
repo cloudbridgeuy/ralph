@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 mod acp;
+mod codex;
 mod cursor_model;
 mod files;
 mod headless;
@@ -20,6 +21,7 @@ mod ownership;
 mod rollback;
 mod worktree;
 pub use acp::*;
+pub use codex::*;
 pub use cursor_model::{
     cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,
     restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,

@@ -15,6 +15,7 @@ mod chat;
 mod claude_cleanup;
 mod cli;
 mod clipboard;
+mod codex_worker;
 pub mod config;
 mod cursor_cleanup;
 mod cursor_owner;
