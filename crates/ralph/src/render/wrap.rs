@@ -293,4 +293,40 @@ mod tests {
         );
         assert!(rendered.contains('│'));
     }
+
+    #[test]
+    fn prose_wraps_inside_both_margins() {
+        let mut skin = markdown_skin(&Palette::default());
+        skin.paragraph.left_margin = 1;
+        skin.paragraph.right_margin = 3;
+        let rendered = strip_ansi(&render_prose(&skin, "aaaa bbbb cccc", 12));
+        let lines: Vec<&str> = rendered.lines().map(str::trim).collect();
+        assert_eq!(lines, ["aaaa", "bbbb", "cccc"]);
+    }
+
+    #[test]
+    fn prose_never_wraps_code_lines() {
+        let skin = markdown_skin(&Palette::default());
+        let rendered = strip_ansi(&render_prose(&skin, "```\naaaa bbbb cccc\n```", 8));
+        let lines: Vec<&str> = rendered.lines().map(str::trim).collect();
+        assert_eq!(lines, ["aaaa bbbb cccc"]);
+    }
+
+    #[test]
+    fn prose_slices_compounds_after_a_styled_one() {
+        let skin = markdown_skin(&Palette::default());
+        let rendered = strip_ansi(&render_prose(&skin, "aa **bb** cc dd", 6));
+        let lines: Vec<&str> = rendered.lines().map(str::trim_end).collect();
+        assert_eq!(lines, ["aa bb", "cc dd"]);
+    }
+
+    #[test]
+    fn prose_hard_cut_at_a_style_boundary_adds_no_empty_styled_compound() {
+        let skin = markdown_skin(&Palette::default());
+        let rendered = render_prose(&skin, "aaaa**bb**", 4);
+        let lines: Vec<&str> = rendered.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(!lines[0].contains("\x1b[1m"), "{rendered:?}");
+        assert!(lines[1].contains("\x1b[1m"), "{rendered:?}");
+    }
 }

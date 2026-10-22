@@ -554,4 +554,71 @@ mod tests {
         assert_eq!(extract_language_from_path("main.RS"), Some("rust"));
         assert_eq!(extract_language_from_path("config.JSON"), Some("json"));
     }
+
+    #[test]
+    fn test_highlight_grep_match_exact_split() {
+        assert_eq!(
+            highlight_grep_match("a.rs:7:x"),
+            "\x1b[90ma.rs:7:\x1b[0m\x1b[93mx\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn test_extract_language_from_path_every_extension() {
+        let table = [
+            ("html", "html"),
+            ("htm", "html"),
+            ("css", "css"),
+            ("scss", "scss"),
+            ("sass", "scss"),
+            ("go", "go"),
+            ("java", "java"),
+            ("kt", "kotlin"),
+            ("kts", "kotlin"),
+            ("rb", "ruby"),
+            ("php", "php"),
+            ("swift", "swift"),
+            ("xml", "xml"),
+            ("md", "markdown"),
+            ("markdown", "markdown"),
+            ("sql", "sql"),
+            ("dockerfile", "dockerfile"),
+            ("mk", "makefile"),
+            ("makefile", "makefile"),
+            ("ini", "ini"),
+            ("cfg", "ini"),
+            ("diff", "diff"),
+            ("patch", "diff"),
+            ("lua", "lua"),
+            ("vim", "viml"),
+            ("hs", "haskell"),
+            ("ml", "ocaml"),
+            ("mli", "ocaml"),
+            ("ex", "elixir"),
+            ("exs", "elixir"),
+            ("erl", "erlang"),
+            ("hrl", "erlang"),
+            ("clj", "clojure"),
+            ("cljs", "clojure"),
+            ("cljc", "clojure"),
+            ("scala", "scala"),
+            ("sc", "scala"),
+            ("r", "r"),
+            ("pl", "perl"),
+            ("pm", "perl"),
+        ];
+        for (extension, language) in table {
+            assert_eq!(
+                extract_language_from_path(&format!("file.{extension}")),
+                Some(language),
+                "{extension}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_language_from_bare_dockerfile_and_makefile_is_none() {
+        assert_eq!(extract_language_from_path("Dockerfile"), None);
+        assert_eq!(extract_language_from_path("Makefile"), None);
+    }
 }

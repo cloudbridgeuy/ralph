@@ -422,6 +422,63 @@ mod tests {
     }
 
     #[test]
+    fn agent_base_overrides_inline_code_and_bullet() {
+        let palette = ThemeRole::Agent.base();
+        assert_eq!(palette.inline_code, Some(Color::DarkCyan));
+        assert_eq!(palette.bullet, Some(Color::DarkGreen));
+    }
+
+    #[test]
+    fn role_theme_sets_every_palette_slot() {
+        let keys = [
+            "heading1",
+            "heading2",
+            "heading3",
+            "bold",
+            "italic",
+            "inline_code",
+            "bullet",
+            "quote",
+            "table",
+            "link",
+            "url",
+            "memory_ref",
+            "border",
+            "done",
+            "blocked",
+            "waiting",
+        ];
+        let values: Vec<String> = (1..=keys.len()).map(|n| format!("#0000{n:02x}")).collect();
+        let pairs: Vec<(&str, &str)> = keys
+            .iter()
+            .zip(&values)
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+        let (palette, warnings) = role_theme(&pairs).palette(ThemeRole::Assistant);
+        let rgb = |b: u8| Some(Color::Rgb { r: 0, g: 0, b });
+        assert!(warnings.is_empty());
+        assert_eq!(
+            palette,
+            Palette {
+                headings: [rgb(1), rgb(2), rgb(3)],
+                bold: rgb(4),
+                italic: rgb(5),
+                inline_code: rgb(6),
+                bullet: rgb(7),
+                quote: rgb(8),
+                table: rgb(9),
+                link: rgb(10),
+                url: rgb(11),
+                memory_ref: rgb(12),
+                border: rgb(13),
+                done: rgb(14),
+                blocked: rgb(15),
+                waiting: rgb(16),
+            }
+        );
+    }
+
+    #[test]
     fn role_theme_warns_on_bad_color_and_unknown_key() {
         let (palette, warnings) = role_theme(&[("heading1", "#12345"), ("heading9", "red")])
             .palette(ThemeRole::Assistant);

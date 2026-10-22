@@ -153,6 +153,18 @@ mod tests {
     }
 
     #[test]
+    fn truncate_to_width_keeps_room_for_the_ellipsis() {
+        assert_eq!(truncate_to_width("abc", 3), "abc");
+        assert_eq!(truncate_to_width("abcdef", 4), "abc…");
+        assert_eq!(truncate_to_width("作業x", 3), "作…");
+    }
+
+    #[test]
+    fn truncate_to_width_zero_is_empty() {
+        assert_eq!(truncate_to_width("abc", 0), "");
+    }
+
+    #[test]
     fn frame_pads_rows_to_widest() {
         assert_eq!(
             strip_ansi(&frame(&["ab".to_string(), "a".to_string()], "")),
