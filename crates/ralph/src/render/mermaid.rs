@@ -14,6 +14,7 @@ pub enum DiagramKind {
     Sequence,
     Er,
     Class,
+    State,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,7 @@ fn kind_of(header: &str) -> Option<DiagramKind> {
         "sequenceDiagram" => Some(DiagramKind::Sequence),
         "erDiagram" => Some(DiagramKind::Er),
         "classDiagram" => Some(DiagramKind::Class),
+        "stateDiagram" | "stateDiagram-v2" => Some(DiagramKind::State),
         _ => None,
     }
 }
@@ -98,7 +100,7 @@ pub fn mermaid_precheck(source: &str, limits: &MermaidSection) -> Result<Diagram
     let header = body_lines(source).next().ok_or(Refusal::Empty)?;
     let kind = kind_of(header).ok_or(Refusal::Unsupported)?;
     match kind {
-        DiagramKind::Flowchart => {
+        DiagramKind::Flowchart | DiagramKind::State => {
             if source.len() > SMALL_SOURCE_BYTES {
                 return Err(Refusal::TooLarge);
             }
@@ -173,6 +175,14 @@ mod tests {
                 "classDiagram\n  Animal <|-- Duck\n  Animal <|-- Fish",
                 DiagramKind::Class,
             ),
+            (
+                "stateDiagram\n  [*] --> Idle\n  Idle --> [*]",
+                DiagramKind::State,
+            ),
+            (
+                "stateDiagram-v2\n  [*] --> Idle\n  Idle --> [*]",
+                DiagramKind::State,
+            ),
         ];
         for (src, kind) in cases {
             assert_eq!(mermaid_precheck(src, &l), Ok(kind), "{src}");
@@ -183,7 +193,7 @@ mod tests {
     fn unsupported_and_empty_refused() {
         let l = limits();
         assert_eq!(
-            mermaid_precheck("stateDiagram-v2\n  [*] --> A", &l),
+            mermaid_precheck("gantt\n  title T", &l),
             Err(Refusal::Unsupported)
         );
         assert_eq!(mermaid_precheck("%% only\n\n", &l), Err(Refusal::Empty));
@@ -199,6 +209,28 @@ mod tests {
         );
         let one_line = format!("graph LR\n{}", "A-->B-->C-->D;".repeat(17));
         assert_eq!(mermaid_precheck(&one_line, &l), Err(Refusal::TooManyEdges));
+    }
+
+    #[test]
+    fn state_diagram_shares_flowchart_limits() {
+        let l = limits();
+        assert!(mermaid_precheck(&chain("stateDiagram-v2", "-->", 50), &l).is_ok());
+        assert_eq!(
+            mermaid_precheck(&chain("stateDiagram-v2", "-->", 51), &l),
+            Err(Refusal::TooManyEdges)
+        );
+        assert_eq!(
+            mermaid_precheck(&chain("stateDiagram", "-->", 51), &l),
+            Err(Refusal::TooManyEdges)
+        );
+        let prefix = "stateDiagram-v2\n%%";
+        let suffix = "\n[*] --> A";
+        let at = SMALL_SOURCE_BYTES - prefix.len() - suffix.len();
+        let ok = format!("{prefix}{}{suffix}", "x".repeat(at));
+        assert_eq!(ok.len(), SMALL_SOURCE_BYTES);
+        assert!(mermaid_precheck(&ok, &l).is_ok());
+        let over = format!("{prefix}{}{suffix}", "x".repeat(at + 1));
+        assert_eq!(mermaid_precheck(&over, &l), Err(Refusal::TooLarge));
     }
 
     #[test]
