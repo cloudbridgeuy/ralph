@@ -1,0 +1,27 @@
+# Phase-1 mutation scope: pure ralph_core modules only (GUZ-616 design §1).
+examine_globs = [
+  "crates/core/src/shell_format.rs",
+  "crates/core/src/status_segments.rs",
+  "crates/core/src/chat_status.rs",
+  "crates/core/src/chat_cell.rs",
+  "crates/core/src/worker_check.rs",
+  "crates/core/src/chat_memory/tree.rs",
+  "crates/core/src/stream/**/*.rs",
+  "crates/core/src/chunk/**/*.rs",
+  "crates/core/src/wire/**/*.rs",
+  "crates/core/src/worker.rs",
+  "crates/core/src/worker/worktree.rs",
+  "crates/core/src/worker/rollback.rs",
+  "crates/core/src/watch.rs",
+  "crates/core/src/watch_store.rs",
+]
+exclude_globs = [
+  ".worktrees/**", ".claude/worktrees/**",
+  "vendor/**", "target/**", "xtask/**",
+  "**/tests/**", "**/tests.rs",
+]
+exclude_re = []
+additional_cargo_test_args = ["--all-targets"]
+timeout_multiplier = 5.0
+minimum_test_timeout = 30.0
+cap_lints = false

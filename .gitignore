@@ -22,3 +22,8 @@ docs/plans/
 .claude/plans/
 .claude/settings.local.json
 .memory
+
+# cargo-mutants output (local only)
+/mutants.out/
+/mutants.out.old/
+/mutation.diff
