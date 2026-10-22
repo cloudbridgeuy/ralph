@@ -24,8 +24,8 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_allow_option, cancels_turn, capabilities, check_protocol,
     decide, decode_update, describe, encode, gone_path, interrupt_result_text, match_option,
     no_option_message, permission_alert_report, permission_content, prompt_failure_report,
-    ready_path, reduce, request_stale, resume_decision, session_error, stop_problem, task_prompt,
-    turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
+    ready_path, reduce, request_stale, resume_decision, session_error, session_saved, stop_problem,
+    task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
     CursorPermissions, HandoffFiles, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker,
     Inbound, Marker, OwnerRecord, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step,
     TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod permissions;
 mod turns;
@@ -178,6 +178,7 @@ pub struct AcpWorker {
     child: Child,
     permissions: Arc<Permissions>,
     stop: Option<oneshot::Sender<()>>,
+    finished: mpsc::Receiver<()>,
     owner: PathBuf,
     prompts: queue::UnboundedSender<Inbound>,
     closing: Arc<AtomicBool>,
@@ -225,12 +226,14 @@ impl AcpWorker {
             Arc::clone(&events),
         );
         let (prompts, prompt_rx) = queue::unbounded();
+        let (finished_tx, finished_rx) = mpsc::channel();
         let closing = Arc::new(AtomicBool::new(false));
         let reported = Arc::new(AtomicBool::new(false));
         let mut worker = Self {
             child,
             permissions: Arc::clone(&permissions),
             stop: None,
+            finished: finished_rx,
             owner: owner.to_path_buf(),
             prompts: prompts.clone(),
             closing: Arc::clone(&closing),
@@ -261,6 +264,8 @@ impl AcpWorker {
         let prompt = task_prompt(&request.task);
         let loading = Arc::new(AtomicBool::new(false));
         let replaying = Arc::clone(&loading);
+        let updated = Arc::new(AtomicBool::new(false));
+        let touched = Arc::clone(&updated);
         let inbox = Inbox::new(request.inbox.clone());
         let worker_id = id.to_string();
         let changes = request
@@ -315,6 +320,9 @@ impl AcpWorker {
                     )
                     .on_receive_notification(
                         async move |notification: SessionNotification, _cx| {
+                            if !replaying.load(Ordering::SeqCst) {
+                                touched.store(true, Ordering::SeqCst);
+                            }
                             let update =
                                 serde_json::to_value(&notification.update).unwrap_or_default();
                             for event in decode_update(&update, now_secs()) {
@@ -351,19 +359,19 @@ impl AcpWorker {
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
                             Ok(session) => {
-                                if let Launch::Fresh { path, template } = &opening.launch {
-                                    let record = SessionRecord {
-                                        session_id: session.to_string(),
-                                        ..template.clone()
-                                    };
-                                    if let Err(e) = write_file(path, &record.render()) {
-                                        warn(format!(
-                                            "could not write the {} session record: {e}",
-                                            agent.name
-                                        ));
+                                let pending = match &opening.launch {
+                                    Launch::Fresh { path, template } => {
+                                        prompts.unbounded_send(Inbound::Prompt(prompt)).ok();
+                                        Some((
+                                            path.clone(),
+                                            SessionRecord {
+                                                session_id: session.to_string(),
+                                                ..template.clone()
+                                            },
+                                        ))
                                     }
-                                    prompts.unbounded_send(Inbound::Prompt(prompt)).ok();
-                                }
+                                    Launch::Resume { .. } => None,
+                                };
                                 opened.store(true, Ordering::SeqCst);
                                 ready_tx.send(Ok(())).ok();
                                 let turns = Turns {
@@ -379,6 +387,8 @@ impl AcpWorker {
                                     changes,
                                     heartbeat: in_turns,
                                     events,
+                                    updated,
+                                    pending,
                                 };
                                 run_turns(&connection, &turns, prompt_rx, stop_rx).await;
                             }
@@ -401,6 +411,7 @@ impl AcpWorker {
                     .send(Err(format!("{} agent connection failed: {e}", agent.name)))
                     .ok();
             }
+            finished_tx.send(()).ok();
         });
         match ready_rx.recv_timeout(READY_TIMEOUT) {
             Ok(Ok(())) => Ok(worker),
@@ -457,18 +468,29 @@ impl AcpWorker {
         }
     }
 
-    pub fn terminate(&mut self) {
-        if self.done {
-            return;
-        }
+    fn begin_stop(&mut self) {
         self.done = true;
         self.closing.store(true, Ordering::SeqCst);
         self.permissions.cancel_all();
         if let Some(stop) = self.stop.take() {
             stop.send(()).ok();
         }
+    }
+
+    fn finish_stop(&mut self, deadline: Instant) {
+        self.finished
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .ok();
         stop_child(&mut self.child);
         fs::remove_file(&self.owner).ok();
+    }
+
+    pub fn terminate(&mut self) {
+        if self.done {
+            return;
+        }
+        self.begin_stop();
+        self.finish_stop(Instant::now() + SHUTDOWN_GRACE);
     }
 }
 
@@ -596,10 +618,14 @@ impl CursorHost {
 
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
-        let drained: Vec<(String, AcpWorker)> = self.workers().drain().collect();
-        for (id, mut worker) in drained {
-            worker.terminate();
-            self.forget(&id);
+        let mut drained: Vec<(String, AcpWorker)> = self.workers().drain().collect();
+        for (_, worker) in &mut drained {
+            worker.begin_stop();
+        }
+        let deadline = Instant::now() + SHUTDOWN_GRACE;
+        for (id, worker) in &mut drained {
+            worker.finish_stop(deadline);
+            self.forget(id);
         }
         let starting: Vec<(String, u32)> = self
             .starting

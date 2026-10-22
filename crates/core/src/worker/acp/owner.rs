@@ -67,6 +67,10 @@ pub fn resume_decision(
     }
 }
 
+pub fn session_saved(turn: Result<&str, &str>, updated: bool) -> bool {
+    turn.is_ok() && updated
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OwnerFacts {
     pub chat_alive: bool,
@@ -138,6 +142,14 @@ mod tests {
                 Resume::Go => panic!("must skip"),
             }
         }
+    }
+
+    #[test]
+    fn session_is_saved_only_after_an_answered_turn_that_sent_an_update() {
+        assert!(session_saved(Ok("cancelled"), true));
+        assert!(session_saved(Ok("end_turn"), true));
+        assert!(!session_saved(Ok("cancelled"), false));
+        assert!(!session_saved(Err("boom"), true));
     }
 
     fn facts(chat_alive: bool, group_alive: bool, mine: bool) -> OwnerFacts {
