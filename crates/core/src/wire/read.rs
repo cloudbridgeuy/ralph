@@ -335,4 +335,22 @@ mod tests {
         let error = find_call(&calls.records, 2, "s").unwrap_err();
         assert_eq!(error.to_string(), "no call 2 in session s");
     }
+
+    #[test]
+    fn invalid_utf8_mid_stream_is_an_error() {
+        let mut bytes = call_line(1).into_bytes();
+        bytes.extend_from_slice(b"\n\xff\xfe\n");
+        bytes.extend_from_slice(call_line(2).as_bytes());
+        let error = parse_calls("c.jsonl", Some(&bytes)).unwrap_err();
+        assert!(matches!(error, ReadError::Call { line: 2, .. }), "{error}");
+    }
+
+    #[test]
+    fn truncated_utf8_at_the_end_is_a_torn_tail() {
+        let mut bytes = call_line(1).into_bytes();
+        bytes.extend_from_slice(b"\n\xc3");
+        let calls = parse_calls("c.jsonl", Some(&bytes)).unwrap();
+        assert!(calls.torn_tail);
+        assert_eq!(calls.records.len(), 1);
+    }
 }

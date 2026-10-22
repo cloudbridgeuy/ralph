@@ -179,4 +179,14 @@ mod tests {
         let row = live_row(&record(UsageOutcome::Partial(u))).unwrap();
         assert!(row.contains("w=0 out=20 hit=-"), "{row}");
     }
+
+    #[test]
+    fn tier_label_picks_the_largest_exact_unit() {
+        let label = |seconds| tier_label(CacheTier::Ttl { seconds });
+        assert_eq!(label(300), "w5m");
+        assert_eq!(label(90), "w90s");
+        assert_eq!(label(3600), "w1h");
+        assert_eq!(label(3660), "w61m");
+        assert_eq!(tier_label(CacheTier::Unspecified), "w?");
+    }
 }

@@ -781,4 +781,48 @@ mod tests {
         assert!(table.contains("status 200\nno segments\nmodel:"), "{table}");
         assert!(!table.contains("segments (bytes"), "{table}");
     }
+
+    #[test]
+    fn totals_add_reasoning_across_rows() {
+        let mut first = usage(1, 0, 0, 1);
+        first.reasoning = Some(7);
+        let mut second = usage(1, 0, 0, 1);
+        second.reasoning = Some(5);
+        let records = vec![
+            record(1, UsageOutcome::Reported(first), None),
+            record(2, UsageOutcome::Reported(second), None),
+        ];
+        assert_eq!(ls_view(&records, false).totals.usage.reasoning, Some(12));
+    }
+
+    #[test]
+    fn session_row_counts_only_inference_calls() {
+        let session = SessionRecord {
+            schema_version: SCHEMA_VERSION,
+            ralph_version: "0".into(),
+            provider: ProviderId::Anthropic,
+            upstream: "http://u".into(),
+            listen: "127.0.0.1:1".into(),
+            started_at: Utc.with_ymd_and_hms(2026, 10, 21, 16, 24, 29).unwrap(),
+        };
+        let calls = vec![
+            record(1, UsageOutcome::Missing, None),
+            record(2, UsageOutcome::Missing, None),
+            other(3),
+        ];
+        let row = session_row("id1", &session, &calls);
+        assert_eq!((row.calls, row.inference_calls), (3, 2));
+    }
+
+    #[test]
+    fn tier_text_picks_the_largest_exact_unit() {
+        let text = |seconds| tier_text(CacheTier::Ttl { seconds });
+        assert_eq!(text(300), "5m");
+        assert_eq!(text(90), "90s");
+        assert_eq!(text(3600), "1h");
+        assert_eq!(text(7200), "2h");
+        assert_eq!(text(60), "1m");
+        assert_eq!(text(3660), "61m");
+        assert_eq!(tier_text(CacheTier::Unspecified), "?");
+    }
 }

@@ -981,4 +981,16 @@ mod tests {
             CallKind::Inference
         );
     }
+
+    #[test]
+    fn zero_token_cache_write_is_omitted() {
+        let zero = json!({"input_tokens": 1, "cache_creation_input_tokens": 0});
+        assert!(cache_writes(&zero).is_empty());
+    }
+
+    #[test]
+    fn provider_constants_are_anthropic_specific() {
+        assert_eq!(Anthropic.base_url_env(), "ANTHROPIC_BASE_URL");
+        assert!(Anthropic.secret_headers().is_empty());
+    }
 }

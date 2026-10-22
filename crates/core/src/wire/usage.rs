@@ -188,4 +188,13 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn unrated_tier_message_names_the_tier() {
+        let message = UnratedTier(CacheTier::Ttl { seconds: 90 }).to_string();
+        assert_eq!(
+            message,
+            "no billing rate for cache tier Ttl { seconds: 90 }"
+        );
+    }
 }

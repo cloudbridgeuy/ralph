@@ -742,3 +742,92 @@ fn non_json_a_keeps_b_cache_read() {
     assert_eq!(view.explanation.cache_read, Some(40));
     assert_eq!(view.explanation.verdict, Verdict::NoSegments);
 }
+
+#[test]
+fn byte_estimate_scales_servable_bytes_by_prompt_tokens() {
+    let (a, b) = pair("a", "b", usage(50, 100));
+    let explanation = view_of(&a, &b, &[]).explanation;
+    let segments = segments_of(&b, &Anthropic).unwrap();
+    let total: usize = segments.iter().map(|s| s.text.len()).sum();
+    assert_eq!(explanation.method, Some(TokenMethod::Bytes));
+    assert_eq!(explanation.servable_bytes, segments[0].text.len());
+    assert_eq!(
+        explanation.servable_tokens,
+        Some((explanation.servable_bytes as f64 * 150.0 / total as f64).round() as u64)
+    );
+    assert!(explanation.servable_tokens.unwrap() < 150);
+    assert!(explanation.servable_tokens.unwrap() > 50);
+}
+
+#[test]
+fn table_lists_fact_changes_with_dash_for_absent_values() {
+    let (mut a, mut b) = pair("t", "t", usage(1, 0));
+    b.facts.model = Some("n".into());
+    a.facts.params.insert("max_tokens".into(), json!(1));
+    let table = diff_table(&view_of(&a, &b, &[]));
+    assert!(table.contains("fact model: \"m\" -> \"n\"\n"), "{table}");
+    assert!(table.contains("fact max_tokens: 1 -> -\n"), "{table}");
+}
+
+#[test]
+fn table_omits_removed_and_added_when_empty() {
+    let (a, b) = pair("t", "t", usage(1, 0));
+    let table = diff_table(&view_of(&a, &b, &[]));
+    assert!(!table.contains("removed:"), "{table}");
+    assert!(!table.contains("added:"), "{table}");
+}
+
+#[test]
+fn ttl_gap_equal_to_ttl_does_not_expire() {
+    let (a, mut b) = pair("a", "b", written(0, 100));
+    b.started_at = t(310);
+    assert!(matches!(verdict_of(&a, &b), Verdict::Unexplained { .. }));
+    b.started_at = t(311);
+    assert!(matches!(verdict_of(&a, &b), Verdict::TtlExpired { .. }));
+}
+
+#[test]
+fn anchor_requires_identical_prefix_content() {
+    let (a, b) = pair("a", "b", written(30, 70));
+    let other = call(
+        1,
+        0,
+        10,
+        vec![blk("other head", Some("5m"))],
+        written(500, 500),
+    );
+    let explanation = view_of(&a, &b, &[other]).explanation;
+    assert_eq!(explanation.method, Some(TokenMethod::Bytes));
+}
+
+#[test]
+fn anchor_ignores_non_inference_calls() {
+    let (a, b) = pair("a", "b", written(30, 70));
+    let mut other = call(
+        1,
+        0,
+        10,
+        vec![blk("shared head", Some("5m")), blk("a", None)],
+        written(500, 500),
+    );
+    other.kind = CallKind::Other;
+    let explanation = view_of(&a, &b, &[other]).explanation;
+    assert_eq!(explanation.method, Some(TokenMethod::Bytes));
+}
+
+#[test]
+fn calls_without_segments_are_skipped_by_anchor_and_refresh() {
+    let (a, mut b) = pair("a", "b", written(0, 100));
+    b.seq = 3;
+    b.started_at = t(400);
+    let empty = call(2, 200, 350, vec![], usage(1, 1));
+    let session = [a.clone(), empty, b.clone()];
+    assert_eq!(
+        view_of(&a, &b, &session).explanation.verdict,
+        Verdict::TtlExpired {
+            gap_secs: 390,
+            ttl_secs: 300,
+            since_seq: 1
+        }
+    );
+}
