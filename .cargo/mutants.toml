@@ -1,4 +1,5 @@
-# Phase-1 mutation scope: pure ralph_core modules only (GUZ-616 design §1).
+# Mutation scope: pure ralph_core modules (phase 1) and pure ralph modules
+# (phase 2), GUZ-616 design §1 and §8.
 examine_globs = [
   "crates/core/src/shell_format.rs",
   "crates/core/src/status_segments.rs",
@@ -14,6 +15,17 @@ examine_globs = [
   "crates/core/src/worker/rollback.rs",
   "crates/core/src/watch.rs",
   "crates/core/src/watch_store.rs",
+  "crates/ralph/src/stream_processor/types.rs",
+  "crates/ralph/src/stream_processor/output_block.rs",
+  "crates/ralph/src/stream_processor/block_builders.rs",
+  "crates/ralph/src/stream_processor/utils.rs",
+  "crates/ralph/src/render/wrap.rs",
+  "crates/ralph/src/render/utils.rs",
+  "crates/ralph/src/markdown.rs",
+  "crates/ralph/src/ansi.rs",
+  "crates/ralph/src/frame.rs",
+  "crates/ralph/src/formatting.rs",
+  "crates/ralph/src/status_theme.rs",
 ]
 exclude_globs = [
   ".worktrees/**", ".claude/worktrees/**",
@@ -27,6 +39,8 @@ exclude_re = [
   'tree\.rs:15:28: replace > with >= in cover_at$',
   'shell_format\.rs:356:25: replace > with >= in Layout::statement$',
   'secret_headers -> .* with Vec::leak\(Vec::new\(\)\)$',
+  'render/wrap\.rs:[0-9]+:[0-9]+: replace cap_wrap_width with \(\)$',
+  'render/wrap\.rs:[0-9]+:[0-9]+: replace wrap_width -> usize with [01]$',
 ]
 additional_cargo_test_args = ["--all-targets"]
 timeout_multiplier = 5.0
