@@ -50,7 +50,7 @@ Examined:
 - `crates/core/src/worker.rs`, `worker/worktree.rs`, `worker/rollback.rs`
 - `crates/core/src/watch.rs`, `crates/core/src/watch_store.rs` (time is passed in, not read)
 
-Excluded: `.worktrees/**`, `.claude/worktrees/**`, `vendor/**`, `target/**`, `xtask/**`, `**/tests/**`, `**/tests.rs`. Test files are not mutated but still run. `exclude_re` is empty.
+Excluded: `.worktrees/**`, `.claude/worktrees/**`, `vendor/**`, `target/**`, `xtask/**`, `**/tests/**`, `**/tests.rs`. Test files are not mutated but still run. `exclude_re` holds five line-pinned equivalents, listed in the [Ledger](#ledger).
 
 `wire/**` is not in the design's list. It was added in GUZ-617 because a grep found no filesystem, process, environment or clock calls in it.
 
@@ -104,18 +104,33 @@ Estimates, not measured:
 
 | Item | Value |
 | --- | --- |
-| Full phase-1 run, `-j 2`, 1,642 mutants | ~80 min |
 | CI setup + first build (ubuntu-24.04, 4 vCPU) | 30–45 s before the first mutant |
 | CI cost per mutant per worker | 8–12 s |
 
-First full local core run (not yet done):
+First full local core run (GUZ-618):
 
 | Item | Value |
 | --- | --- |
-| SHA | — |
-| Baseline build / test | — |
-| Wall time | — |
-| Caught / missed / unviable / timeouts | — |
+| SHA | 0c0085b |
+| Command | `cargo mutants -p ralph_core -j 2 --build-timeout 300`, with baseline |
+| Machine | Apple M2 Pro, 12 cores, 32 GiB; Rust 1.95.0; cargo-mutants 27.1.0 |
+| Baseline build / test | 10.95 s / 3.29 s (test limit is the 30 s minimum) |
+| Wall time | 83 min (4,951 s) |
+| Per mutant (n=1,642) | median 5.59 s, p95 6.53 s, max 36.1 s |
+| Caught / missed / unviable / timeouts | 1,357 / 90 / 152 / 43 |
+
+After GUZ-618:
+
+| Item | Value |
+| --- | --- |
+| Killed by new unit tests | 58 missed mutants |
+| Targeted rerun, wire lines | 68 mutants: 67 caught, 1 equivalent |
+| Targeted rerun, other lines | 70 mutants: 67 caught, 1 unviable, 2 timeouts |
+| Deleted condition | `shell_format.rs:234` `\|\| open_group` was redundant |
+| Rerun `-F 'shell_format\.rs:234:'` | 18 mutants: 18 caught |
+| Excluded equivalents | 5 |
+| Deferred | 26 `shell_format.rs` survivors, [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811) |
+| Scope after | 1,636 mutants |
 
 ## Survivors
 
@@ -132,16 +147,38 @@ Do not use `#[mutants::skip]`, broad trait or default skips, or a score threshol
 
 | Mutant | Reason | Owner | Review trigger |
 | --- | --- | --- | --- |
+| `sse.rs:23:34` `<` to `<=` in `SseDecoder::push` | A 3-byte BOM-only buffer waits for the next push. No other method reads the buffer, so events are identical. | GUZ-618 | Line moves, or the BOM check or a flush/finish method changes. |
+| `sse.rs:23:46` `&&` to `\|\|` in `SseDecoder::push` | Same reason. A short non-BOM buffer yields no events either way. | GUZ-618 | Same as above. |
+| `tree.rs:14:28` `>` to `>=` in `cover_at` | When `hi == t`, size > 1 >= alpha, so both forms split. | GUZ-618 | Line moves, or `cover_at` accepts alpha > 1. |
+| `shell_format.rs:356:25` `>` to `>=` in `Layout::statement` | A one-stage loop makes the same `push_stage` call as the single-stage branch. | GUZ-618 | Line moves, or the two branches diverge. |
+| `anthropic.rs` `secret_headers` to `Vec::leak(Vec::new())` | The original returns `&[]`. | GUZ-618 | Anthropic gets provider-specific secret headers. |
 
-No entries yet. The 7 missed mutants in the GUZ-617 sample were not recorded by name.
+The regexes are pinned to file:line:col. Any edit that moves a line drops the exclusion and the mutant reappears as missed. Re-pin it after checking `cargo mutants --list`.
+
+Deferred: 26 `shell_format.rs` missing assertions in `scan`, `Layout::push_stage`, `Layout::statement` and `Layout::segment` go to [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811).
 
 ### Timeouts and unviable
 
-None recorded yet.
+43 timeouts, all mutations that stop a loop advancing (`+=` to `*=`/`-=`, `next_line`/`next` returning `Some(..)`, and similar). They hit the 30 s limit and are expected.
+
+| File | Timeouts |
+| --- | --- |
+| `chat_memory/tree.rs` | 15 |
+| `shell_format.rs` | 10 |
+| `wire/sse.rs` | 8 |
+| `chat_cell.rs` | 4 |
+| `chunk/streaming.rs` | 3 |
+| `wire/diff.rs` | 1 |
+| `watch.rs` | 1 |
+| `status_segments.rs` | 1 |
+
+9 in `tree.rs` (`block_line`, `node_line`, `split_target`, `mergeable_pair`) are judged infinite loops from the code. The logs do not name the hung test.
+
+152 unviable mutants do not compile. They are counted only.
 
 ## Rollout
 
-**Phase 1** is done only after a full local core run with a healthy baseline, real counts and timing in [Results](#results), classified survivors and timeouts, linked follow-ups, and unit tests for the prioritised real gaps.
+**Phase 1** is done only after a full local core run with a healthy baseline, real counts and timing in [Results](#results), classified survivors and timeouts, linked follow-ups, and unit tests for the prioritised real gaps. GUZ-618 met these criteria; remaining gaps are in [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811).
 
 **Phase 2 (planned)** adds these `crates/ralph/src` files: `stream_processor/{types,output_block,block_builders,utils}.rs`, `render/{wrap,utils}.rs`, `markdown.rs`, `ansi.rs`, `frame.rs`, `formatting.rs`, `status_theme.rs`. The global-state `cap_wrap_width` and `wrap_width` are excluded with list-verified regexes. `render/text.rs`, `diff_highlight.rs` and the rest of the stream processor stay out because they read the terminal, spawn tools or touch the filesystem. Phase 2 has the same completion standard and runs locally:
 

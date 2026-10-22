@@ -20,7 +20,14 @@ exclude_globs = [
   "vendor/**", "target/**", "xtask/**",
   "**/tests/**", "**/tests.rs",
 ]
-exclude_re = []
+# Accepted equivalent mutants, recorded in the ledger in docs/context/mutation-testing.md.
+exclude_re = [
+  'sse\.rs:23:34: replace < with <= in SseDecoder::push$',
+  'sse\.rs:23:46: replace && with \|\| in SseDecoder::push$',
+  'tree\.rs:14:28: replace > with >= in cover_at$',
+  'shell_format\.rs:356:25: replace > with >= in Layout::statement$',
+  'secret_headers -> .* with Vec::leak\(Vec::new\(\)\)$',
+]
 additional_cargo_test_args = ["--all-targets"]
 timeout_multiplier = 5.0
 minimum_test_timeout = 30.0
