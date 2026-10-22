@@ -44,19 +44,52 @@ The shared trait unifies lifecycle orchestration only; it is not a plugin regist
 4. Keep worker close separate from host shutdown. Extend the pure `close_plan`/`CloseStep` dispatch in `core/src/worker/ownership.rs` and the shell's step executor only as needed. Shared resources must survive another worker's close. Keep home-directory cleanup explicitly scoped by kind, rather than treating every non-tmux worker as Cursor.
 5. Reuse the worktree, marker and `ralph-worker` report contracts. Add pure/unit coverage for serialization compatibility, close isolation, discovery/check behavior and lifecycle dispatch, following the existing tests; update the harness details and cleanup docs alongside the adapter.
 
-## opencode probe (opencode 2.0.29, 2026-10-19)
+## Capability probes
 
-Every opencode cell of the capability matrix (`Capabilities::support` in `crates/core/src/worker/headless.rs`) is tagged `[probed]`, with its probe note, or `[unverified]`, meaning no probe backs it yet.
+Every Cursor and opencode cell of the capability matrix (`Capabilities::support` in `crates/core/src/worker/headless.rs`) is tagged `[probed]`, with its probe note, `[corrected]`, meaning a probe found the matrix text wrong, or `[unverified]`, meaning no probe backs it yet. The 2026-10-22 probes ran the installed ralph (`f45be36`) in a throwaway repo and store with `RALPH_CONFIG_DIR` pointing at a test config.
+
+### Cursor probe (cursor-agent 2026.10.14, 2026-10-22)
 
 | Feature | Matrix value | Tag | Probe note |
 | --- | --- | --- | --- |
-| `spawn` | Full | [unverified] | No probe |
-| `prompt` | Full | [probed] | Mid-turn prompt: HTTP 200. The server serializes; the second prompt runs after the first ends (SSE labels it `session.inbox.*` with `"delivery":"steer"`) |
-| `interrupt` | Full | [probed] | `POST /api/session/{id}/interrupt` is synchronous. It returns 200 `{"interrupted":true}` mid-turn, `{"interrupted":false}` when idle, and 404 `SessionNotFoundError` for an unknown session. SSE then sends `session.execution.interrupted` |
-| `perm-ask` | Partial: only prompts the server raises despite `allow-*` | [probed] | Under `allow-*` session permissions a shell command and a file write outside the project ran, with 0 `permission.*` events |
-| `perm-yolo` | Partial: always on | [unverified] | No probe |
-| `resume` | Full | [unverified] | No probe |
-| `model` | Full | [unverified] | No probe |
-| `report` | Full | [unverified] | No probe |
-| `close` | Partial: no home cleanup; shared server kept | [unverified] | No probe |
-| `heartbeat` | Partial: per-session SSE activity; one alert per shared-server death | [probed] | The SSE comment `: heartbeat` arrives every 15 s with no session id; one session stayed silent up to 88 s in a tool-free turn. Server death (`kill -9`): SSE truncates with no close event; HTTP is refused |
+| `spawn` | Full | [probed] | `spawn_worker` started `agent acp` in a new worktree and wrote `ready/<id>` |
+| `prompt` | Full | [probed] | A `reply` after a chat restart ran as the next `session/prompt` |
+| `interrupt` | Partial: outcome unknown after 30 s | [probed] | Mid-tool `session/cancel` returned `stopReason: cancelled` within 1 s and chat reported the turn cancelled. The 30 s unknown path was not hit |
+| `perm-ask` | Full | [probed] | With `[cursor] permissions = "ask"` a shell call raised `session/request_permission`, `blocked/<id>` and one `blocked` inbox report; the `allow-once` reply resumed the turn |
+| `perm-yolo` | Partial: global config, not per spawn | [probed] | `[cursor] permissions = "yolo"` is read at chat start and needed a restart; every request was then answered `allow-once` in the same second with no `blocked` marker |
+| `resume` | Partial: only if agent supports session/load | [probed] | After a chat restart the host sent `session/load` and the worker recalled its earlier command |
+| `model` | Full | [probed] | `composer-2.5` became `session/set_config_option` `composer-2.5[fast=true]`; the model keys of `~/.cursor/cli-config.json` were back to the user's default afterwards |
+| `report` | Full | [probed] | `report` reached the inbox and wrote `reported/<id>` |
+| `close` | Partial: cli-config.json not restored | [corrected] | Stale since the model-default restore: close removed the sessions, worktree, branch, `~/.cursor/projects/<worktree>` and `~/.cursor/acp-sessions/<session>`, and `cli-config.json` matched its backup except Cursor's own `privacyCache.updatedAt` |
+| `heartbeat` | Partial: ACP traffic only; exit seen by polling the child every 250 ms | [probed] | `kill -9` of `agent acp` wrote `gone/<id>` within 1 s and posted one Dead message. Its `worker-server` child stayed alive with parent pid 1 |
+
+### opencode probe (opencode 2.0.29, 2026-10-19 and 2026-10-22)
+
+| Feature | Matrix value | Tag | Probe note |
+| --- | --- | --- | --- |
+| `spawn` | Full | [probed] | `spawn_worker` created `ses_ralph<id>` on the chat's shared server. A model whose provider auth fails (`anthropic/...` with an invalid OAuth token) ends the first turn with a `blocked` report naming the error |
+| `prompt` | Full | [probed] | Mid-turn prompt: HTTP 200. The server serializes; the second prompt runs after the first ends (SSE labels it `session.inbox.*` with `"delivery":"steer"`). A `reply` after a chat restart also ran |
+| `interrupt` | Full | [probed] | 2026-10-19 only. `POST /api/session/{id}/interrupt` is synchronous. It returns 200 `{"interrupted":true}` mid-turn, `{"interrupted":false}` when idle, and 404 `SessionNotFoundError` for an unknown session. SSE then sends `session.execution.interrupted` |
+| `perm-ask` | Partial: only prompts the server raises despite `allow-*` | [probed] | Under `allow-*` session permissions a shell command and a file write outside the project ran, with 0 `permission.*` events (seen again on 2026-10-22) |
+| `perm-yolo` | Partial: always on | [probed] | A worker wrote a file outside its worktree with no `blocked` marker; ralph has no opencode permission setting |
+| `resume` | Full | [probed] | After a chat restart a new `opencode serve` started and a `reply` to the same `ses_ralph<id>` recalled the earlier command |
+| `model` | Full | [probed] | The session record keeps the spawn model; `opencode/claude-haiku-5-5` reported itself as `claude-haiku-5-5`, and `anthropic/...` failed on Anthropic auth, so the provider follows the spawn model |
+| `report` | Full | [probed] | `report` reached the inbox and wrote `reported/<id>` |
+| `close` | Partial: no home cleanup; shared server kept | [probed] | Close removed the session, worktree and branch; the server kept its pid after the last opencode worker closed |
+| `heartbeat` | Partial: per-session SSE activity; one alert per shared-server death | [probed] | The SSE comment `: heartbeat` arrives every 15 s with no session id. Server death (`kill -9`, 2026-10-19): SSE truncates with no close event; HTTP is refused |
+
+### Quiet periods (2026-10-22)
+
+A 1 s poll of `activity/<id>` measured the longest silence while a worker was `running`. `[chat] worker_quiet_secs = 60` with `worker_check_secs = 10` posted `quiet 6x s; may be stuck on a prompt` once per silence and re-armed after new activity.
+
+| Harness | Turn | Longest silence |
+| --- | --- | --- |
+| Cursor | One shell call `sleep 240` | 242 s: no ACP traffic while a tool runs |
+| Cursor | First turn of the first spawn, prompt to first update | 132 s (a second spawn: 4 s) |
+| Cursor | After a permission answer | 81 s |
+| Cursor | Tool-free turn after resume | 2 s |
+| opencode | One shell call `sleep 240` | 240 s: no session SSE event while a tool runs |
+| opencode | Tool-free turn (2026-10-19) | 88 s |
+| opencode | Tool-free turn after resume | 6 s |
+
+Neither harness sends activity while a tool call runs, so silence equals the tool's run time. The 300 s default stays: it is above every observed silence outside tool calls (132 s at most) by more than 2x, and a tool call longer than 300 s costs one `check` message per episode.
