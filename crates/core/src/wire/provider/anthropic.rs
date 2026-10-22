@@ -156,13 +156,8 @@ fn event_usage(events: &[SseEvent]) -> ResponseUsage {
 }
 
 fn cache_read_multiplier(model: &str) -> f64 {
-    let model = model.split('[').next().unwrap_or(model);
-    let is = |name: &str| {
-        model == name
-            || model
-                .strip_prefix(name)
-                .is_some_and(|rest| rest.starts_with('-'))
-    };
+    let model = normalize_model(model);
+    let is = |name: &str| matches_prefix(model, name);
     if is("claude-fable-5-1") || is("claude-mythos-5-1") {
         0.025
     } else if is("claude-opus-5-5") || is("claude-sonnet-5-5") {
@@ -173,7 +168,6 @@ fn cache_read_multiplier(model: &str) -> f64 {
 }
 
 const PRICE_AS_OF: &str = "2026-10-21";
-const PRICE_SOURCE: &str = "https://platform.claude.com/docs/en/about-claude/pricing";
 const FAST_MODELS: [&str; 3] = ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"];
 const NO_GEO_MODELS: [&str; 2] = ["claude-opus-4-5", "claude-haiku-4-5"];
 
@@ -438,7 +432,6 @@ impl Provider for Anthropic {
     fn prices(&self) -> PriceTable {
         PriceTable {
             as_of: PRICE_AS_OF,
-            source: PRICE_SOURCE,
             entries: price_rows().into_iter().map(PriceEntry::from).collect(),
         }
     }

@@ -33,13 +33,14 @@ impl CallRow {
             UsageOutcome::Reported(usage) | UsageOutcome::Partial(usage) => hit_fraction(usage),
             UsageOutcome::Missing => None,
         };
-        let mut text = format_row(record, usd);
+        let mut text = format_row(record);
         if matches!(record.usage, UsageOutcome::Partial(_)) {
             text.push_str(" usage=partial");
         }
         if record.kind == CallKind::Other {
             text.push_str(&format!(" other {} {}", record.method, record.path));
         }
+        text.push_str(&usd_suffix(usd));
         Self {
             seq: record.seq,
             ended_at: record.ended_at,
@@ -129,6 +130,7 @@ fn totals(rows: &[CallRow]) -> Totals {
     let mut counted = 0;
     let mut partial = 0;
     let mut missing = 0;
+    let mut partial_cost = false;
     let mut equivalent = Some(0.0);
     let mut cost = Some(0.0);
     for row in rows.iter().filter(|row| row.kind == CallKind::Inference) {
@@ -137,6 +139,7 @@ fn totals(rows: &[CallRow]) -> Totals {
             UsageOutcome::Reported(u) | UsageOutcome::Partial(u) => {
                 if matches!(row.usage, UsageOutcome::Partial(_)) {
                     partial += 1;
+                    partial_cost = true;
                 }
                 counted += 1;
                 usage.input_uncached += u.input_uncached;
@@ -159,7 +162,11 @@ fn totals(rows: &[CallRow]) -> Totals {
         missing,
         hit_ratio: hit_fraction(&usage),
         input_equivalent: if counted == 0 { None } else { equivalent },
-        usd: if counted == 0 { None } else { cost },
+        usd: if counted == 0 || partial_cost {
+            None
+        } else {
+            cost
+        },
         usage,
     }
 }
@@ -643,6 +650,30 @@ mod tests {
         let json = serde_json::to_value(&view).unwrap();
         assert!(json["totals"]["usd"].is_null());
         assert!(json["rows"][1]["usd"].is_null());
+    }
+
+    #[test]
+    fn partial_and_incomplete_prices_end_the_row_and_drop_the_total() {
+        let mut partial = priced(1, usage(100_000, 0, 0, 0), json!({}));
+        partial.usage = UsageOutcome::Partial(usage(100_000, 0, 0, 0));
+        let mut incomplete = priced(2, usage(100_000, 0, 0, 0), json!({}));
+        incomplete.complete = false;
+        incomplete.error = Some("client disconnected".into());
+        let view = ls_view(&[partial, incomplete], false);
+        let lines: Vec<_> = ls_table(&view).lines().map(str::to_string).collect();
+        assert!(
+            lines[0].ends_with("usage=partial $=0.010000"),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[1].ends_with("INCOMPLETE: client disconnected $=0.010000"),
+            "{}",
+            lines[1]
+        );
+        assert_eq!(view.totals.usd, None);
+        assert!(!lines[2].contains('$'), "{}", lines[2]);
+        assert!(lines[2].contains("2 counted (1 partial"), "{}", lines[2]);
     }
 
     #[test]

@@ -59,6 +59,10 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+
+    /// A `[wire.prices]` value is below zero.
+    #[error("{0}")]
+    InvalidWirePrice(String),
 }
 
 /// Application configuration.
@@ -345,10 +349,13 @@ impl AppConfig {
             source: e,
         })?;
 
-        toml::from_str(&content).map_err(|e| ConfigError::ParseConfig {
+        let config: Self = toml::from_str(&content).map_err(|e| ConfigError::ParseConfig {
             path: path.display().to_string(),
             source: e,
-        })
+        })?;
+        ralph_core::wire::price::validate_price_overrides(&config.wire.prices)
+            .map_err(ConfigError::InvalidWirePrice)?;
+        Ok(config)
     }
 
     /// Save configuration to the default config file path.
