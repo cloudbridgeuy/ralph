@@ -179,8 +179,6 @@ The equivalent regexes are pinned to file:line:col. Any edit that moves a line d
 
 Deferred: 26 `shell_format.rs` missing assertions in `scan`, `Layout::push_stage`, `Layout::statement` and `Layout::segment` go to [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811).
 
-Flagged in phase 2, filed as [GUZ-817](https://linear.app/guzmonne/issue/GUZ-817): `extract_language_from_path` returns `None` for bare `Dockerfile` and `Makefile` (the arms match only an extension), and `truncate_string` panics when `max_len < 3` and compares a byte length with a character count. The tests pin the current behaviour.
-
 ### Timeouts and unviable
 
 Phase 1 had 43 timeouts, all mutations that stop a loop advancing (`+=` to `*=`/`-=`, `next_line`/`next` returning `Some(..)`, and similar). They hit the 30 s limit and are expected.

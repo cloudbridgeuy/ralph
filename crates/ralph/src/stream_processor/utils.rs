@@ -70,11 +70,15 @@ pub fn truncate_string(s: &str, max_len: usize) -> String {
         .collect();
 
     // Then truncate if needed
-    if single_line.len() <= max_len {
-        single_line
-    } else {
-        let truncated: String = single_line.chars().take(max_len - 3).collect();
-        format!("{}...", truncated)
+    if single_line.chars().count() <= max_len {
+        return single_line;
+    }
+    match max_len.checked_sub(3) {
+        Some(keep) => {
+            let truncated: String = single_line.chars().take(keep).collect();
+            format!("{}...", truncated)
+        }
+        None => single_line.chars().take(max_len).collect(),
     }
 }
 
@@ -174,13 +178,16 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_string_compares_bytes_not_chars() {
-        assert_eq!(truncate_string("ééé", 5), "éé...");
+    fn test_truncate_string_counts_chars() {
+        assert_eq!(truncate_string("ééé", 5), "ééé");
+        assert_eq!(truncate_string("éééééé", 5), "éé...");
     }
 
     #[test]
-    #[should_panic]
-    fn test_truncate_string_panics_below_three() {
-        truncate_string("abcd", 2);
+    fn test_truncate_string_below_three_drops_ellipsis() {
+        assert_eq!(truncate_string("abcd", 0), "");
+        assert_eq!(truncate_string("abcd", 1), "a");
+        assert_eq!(truncate_string("abcd", 2), "ab");
+        assert_eq!(truncate_string("ab", 2), "ab");
     }
 }

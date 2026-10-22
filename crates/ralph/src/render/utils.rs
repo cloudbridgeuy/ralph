@@ -190,10 +190,19 @@ pub fn highlight_grep_match(line: &str) -> String {
 /// assert_eq!(extract_language_from_path("unknown.xyz"), None);
 /// ```
 pub fn extract_language_from_path(file_path: &str) -> Option<&'static str> {
+    let path = std::path::Path::new(file_path);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_lowercase);
+    match file_name.as_deref() {
+        Some("dockerfile") => return Some("dockerfile"),
+        Some("makefile") => return Some("makefile"),
+        _ => {}
+    }
+
     // Get the extension from the file path
-    let extension = std::path::Path::new(file_path)
-        .extension()
-        .and_then(|ext| ext.to_str())?;
+    let extension = path.extension().and_then(|ext| ext.to_str())?;
 
     // Map common extensions to syntect language tokens
     match extension.to_lowercase().as_str() {
@@ -617,8 +626,15 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_language_from_bare_dockerfile_and_makefile_is_none() {
-        assert_eq!(extract_language_from_path("Dockerfile"), None);
-        assert_eq!(extract_language_from_path("Makefile"), None);
+    fn test_extract_language_from_bare_dockerfile_and_makefile_matches_by_name() {
+        assert_eq!(extract_language_from_path("Dockerfile"), Some("dockerfile"));
+        assert_eq!(
+            extract_language_from_path("docker/Dockerfile"),
+            Some("dockerfile")
+        );
+        assert_eq!(extract_language_from_path("DOCKERFILE"), Some("dockerfile"));
+        assert_eq!(extract_language_from_path("Makefile"), Some("makefile"));
+        assert_eq!(extract_language_from_path("makefile"), Some("makefile"));
+        assert_eq!(extract_language_from_path("Dockerfile.dev"), None);
     }
 }
