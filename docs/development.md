@@ -5,6 +5,7 @@ This guide covers local development setup and build instructions for ralph.
 ## Prerequisites
 
 - **Rust toolchain**: 1.95.0 or later (MSRV)
+  The root `Cargo.toml` sets `rust-version = "1.95.0"` under `[workspace.package]`, and CI and release workflows pin toolchain 1.95.0. Member manifests do not inherit `rust-version`, so Cargo does not enforce it for workspace crates.
 - **Cargo**: Included with Rust
 - **Git**: For version control and hooks
 

@@ -165,6 +165,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
 - [ralph wire Command](docs/context/ralph-wire.md) - Recording proxy, storage layout, live rows, `ls`/`sessions`, chat usage
 - [Release Process](docs/context/release-process.md) - `cargo xtask release`, release workflow, version scheme
+- [Mutation Testing](docs/context/mutation-testing.md) - cargo-mutants setup, pure scope, local runs, survivor ledger, CI status
 
 ## Glossary
 
