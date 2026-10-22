@@ -205,10 +205,15 @@ pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
     workers
 }
 
-pub fn orphan_hint(ready_ids: &[String], running: &[RunningWorker]) -> Option<String> {
+pub fn orphan_hint(
+    ready_ids: &[String],
+    running: &[RunningWorker],
+    acp_alive: &[String],
+    resumable: &[String],
+) -> Option<String> {
     let mut orphans: Vec<&str> = ready_ids
         .iter()
-        .filter(|id| !running.iter().any(|worker| &worker.id == *id))
+        .filter(|id| !ready_is_covered(id, running, acp_alive, resumable))
         .map(String::as_str)
         .collect();
     orphans.sort_unstable();
@@ -218,6 +223,20 @@ pub fn orphan_hint(ready_ids: &[String], running: &[RunningWorker]) -> Option<St
             orphans.join(", ")
         )
     })
+}
+
+/// A ready id is covered by a discovered running worker, a Cursor worker whose
+/// `agent acp` process group is still the recorded one, or a Cursor worker that
+/// still has a session record to resume.
+fn ready_is_covered(
+    id: &str,
+    running: &[RunningWorker],
+    acp_alive: &[String],
+    resumable: &[String],
+) -> bool {
+    running.iter().any(|worker| worker.id == id)
+        || acp_alive.iter().any(|alive| alive == id)
+        || resumable.iter().any(|session| session == id)
 }
 
 pub fn latest_states(reports: &[Report]) -> HashMap<String, String> {
@@ -694,11 +713,59 @@ mod tests {
             kind: HarnessId::Claude,
         }];
         let ready = ["C".to_string(), "A".to_string(), "B".to_string()];
-        let hint = orphan_hint(&ready, &running).unwrap();
+        let hint = orphan_hint(&ready, &running, &[], &[]).unwrap();
         assert!(hint.contains(": B, C."), "{hint}");
         assert!(hint.contains("nothing was removed"));
-        assert_eq!(orphan_hint(&ready[1..2], &running), None);
-        assert_eq!(orphan_hint(&[], &running), None);
+        assert_eq!(orphan_hint(&ready[1..2], &running, &[], &[]), None);
+        assert_eq!(orphan_hint(&[], &running, &[], &[]), None);
+    }
+
+    #[test]
+    fn orphan_hint_skips_an_acp_alive_cursor_worker() {
+        let running = [
+            RunningWorker {
+                id: "claude-up".into(),
+                session: "ralph-p-claude-up".into(),
+                kind: HarnessId::Claude,
+            },
+            RunningWorker::cursor("cursor-owned"),
+        ];
+        let ready = [
+            "cursor-live".to_string(),
+            "cursor-dead".to_string(),
+            "cursor-owned".to_string(),
+            "claude-down".to_string(),
+            "claude-up".to_string(),
+        ];
+        let alive = ["cursor-live".to_string()];
+        let hint = orphan_hint(&ready, &running, &alive, &[]).unwrap();
+        assert!(hint.contains("cursor-dead"), "{hint}");
+        assert!(hint.contains("claude-down"), "{hint}");
+        assert!(!hint.contains("cursor-live"), "{hint}");
+        assert!(!hint.contains("cursor-owned"), "{hint}");
+        assert!(!hint.contains("claude-up"), "{hint}");
+        assert_eq!(
+            orphan_hint(&["cursor-live".to_string()], &[], &alive, &[]),
+            None
+        );
+    }
+
+    #[test]
+    fn orphan_hint_skips_a_resumable_cursor_session_whose_agent_is_dead() {
+        let ready = [
+            "cursor-resume".to_string(),
+            "cursor-gone".to_string(),
+            "claude-down".to_string(),
+        ];
+        let resumable = ["cursor-resume".to_string()];
+        let hint = orphan_hint(&ready, &[], &[], &resumable).unwrap();
+        assert!(hint.contains("cursor-gone"), "{hint}");
+        assert!(hint.contains("claude-down"), "{hint}");
+        assert!(!hint.contains("cursor-resume"), "{hint}");
+        assert_eq!(
+            orphan_hint(&["cursor-resume".to_string()], &[], &[], &resumable),
+            None
+        );
     }
 
     #[test]

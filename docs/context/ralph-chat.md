@@ -362,7 +362,7 @@ The headless close handoffs wait up to 30 s for the owner file to vanish. The op
 
 The common remaining steps, skipping absent resources, are `git worktree remove` (`--force` when dirty and abandoned), `git branch -D worker/<id>`, `git worktree prune`, then clearing the worker's markers (`worker::marker_paths`: `<store>/ready/<id>`, `reported/<id>`, `blocked/<id>`, `waiting/<id>`, `unreported/<id>`, `sent/<id>`), which spawn also clears first. A failed step stops the close and names the step; opencode location-eviction errors only warn. After successful worktree removal, home-directory cleanup runs only for the matching harness: Claude data for `Claude`, Cursor data for `Cursor`, neither for `Opencode` (so it never scans `~/.cursor`). Cleanup failures only add warnings; the exact paths and ownership checks are documented in [Worker leftovers](worker-leftovers.md).
 
-At chat start, ids in `<store>/ready/` absent from this store's discovered running workers (tmux, Cursor and opencode) print one hint line (`chat_status::orphan_hint`) that suggests `close_worker`. The hint still says "no tmux session", but the test is absence from all discovered kinds. Chat never deletes these markers by itself.
+At chat start, ids in `<store>/ready/` print one hint line (`chat_status::orphan_hint`) when they are not a discovered running worker (a tmux session, a Cursor worker this chat owns, or an opencode worker), not a Cursor worker whose `agent acp` process group is still the one recorded in its owner file, and not a Cursor worker that still has a `cursor-session/<id>` record. The hint still says "no tmux session" and suggests `close_worker`. Chat never deletes these markers by itself.
 
 ## Skills
 
