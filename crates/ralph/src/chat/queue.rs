@@ -6,12 +6,13 @@ const JOIN: &str = "\n\n";
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct Queue {
     pub(super) entries: Vec<String>,
-    pub(super) cancelled: bool,
+    pub(super) held: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum EditorExit {
     Submitted(String),
+    BackOut(String),
     Closed,
     Cancelled,
 }
@@ -36,9 +37,16 @@ pub(super) fn on_exit(mut queue: Queue, exit: EditorExit) -> (Queue, Action) {
             }
             (queue, Action::Resume)
         }
+        EditorExit::BackOut(draft) => {
+            if !draft.trim().is_empty() {
+                queue.entries.push(draft);
+            }
+            queue.held = true;
+            (queue, Action::Resume)
+        }
         EditorExit::Closed => (queue, Action::Resume),
         EditorExit::Cancelled => {
-            queue.cancelled = true;
+            queue.held = true;
             (queue, Action::Cancel)
         }
     }
@@ -46,10 +54,6 @@ pub(super) fn on_exit(mut queue: Queue, exit: EditorExit) -> (Queue, Action) {
 
 pub(super) fn merged(entries: &[String]) -> Option<String> {
     (!entries.is_empty()).then(|| entries.join(JOIN))
-}
-
-pub(super) fn queued_label(count: usize) -> Option<String> {
-    (count > 0).then(|| format!("QUEUED {count}"))
 }
 
 pub(super) fn has_queue_key(bytes: &[u8]) -> bool {
@@ -98,7 +102,7 @@ pub(super) fn draft_with_queue(draft: Option<String>, entries: &[String]) -> Opt
 
 pub(super) fn decide(outcome: TurnOutcome, queue: Queue) -> Decision {
     match merged(&queue.entries) {
-        Some(text) if outcome == TurnOutcome::Replied && !queue.cancelled => Decision::Send(text),
+        Some(text) if outcome == TurnOutcome::Replied && !queue.held => Decision::Send(text),
         _ => Decision::Keep(queue.entries),
     }
 }
@@ -114,7 +118,7 @@ mod tests {
     fn queue(items: &[&str]) -> Queue {
         Queue {
             entries: entries(items),
-            cancelled: false,
+            held: false,
         }
     }
 
@@ -164,15 +168,33 @@ mod tests {
     fn cancel_keeps_entries_and_cancels() {
         let (queue, action) = on_exit(queue(&["a"]), EditorExit::Cancelled);
         assert_eq!(queue.entries, entries(&["a"]));
-        assert!(queue.cancelled);
+        assert!(queue.held);
         assert_eq!(action, Action::Cancel);
     }
 
     #[test]
-    fn label_shows_only_for_a_nonempty_queue() {
-        assert_eq!(queued_label(0), None);
-        assert_eq!(queued_label(1), Some("QUEUED 1".to_string()));
-        assert_eq!(queued_label(12), Some("QUEUED 12".to_string()));
+    fn back_out_adds_the_draft_and_holds_the_queue() {
+        let (queue, action) = on_exit(queue(&["a"]), EditorExit::BackOut("b".into()));
+        assert_eq!(queue.entries, entries(&["a", "b"]));
+        assert!(queue.held);
+        assert_eq!(action, Action::Resume);
+    }
+
+    #[test]
+    fn back_out_with_a_blank_draft_adds_nothing() {
+        let (queue, action) = on_exit(queue(&["a"]), EditorExit::BackOut(" \n".into()));
+        assert_eq!(queue.entries, entries(&["a"]));
+        assert!(queue.held);
+        assert_eq!(action, Action::Resume);
+    }
+
+    #[test]
+    fn back_out_after_a_reply_prefills_instead_of_sending() {
+        let (held, _) = on_exit(queue(&["a"]), EditorExit::BackOut("b".into()));
+        let Decision::Keep(kept) = decide(TurnOutcome::Replied, held) else {
+            panic!("a backed-out queue must not send");
+        };
+        assert_eq!(draft_with_queue(None, &kept), Some("a\n\nb".to_string()));
     }
 
     #[test]

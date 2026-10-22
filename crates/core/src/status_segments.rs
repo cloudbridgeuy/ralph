@@ -1,5 +1,6 @@
 use crate::chat_status::{tokens_label, Memory, Status, TurnCache};
 use crate::status_mode::{mode, Mode};
+use crate::status_queue::queue_variants;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const THIN_RULE: &str = "│";
@@ -9,13 +10,14 @@ const RIGHT_ARROW: &str = "\u{e0b2}";
 const RIGHT_THIN: &str = "\u{e0b3}";
 
 const MODE_PRIORITY: u8 = 0;
-const MAIL_PRIORITY: u8 = 1;
-const MEMORY_PRIORITY: u8 = 2;
-const CACHE_PRIORITY: u8 = 4;
-const COST_PRIORITY: u8 = 3;
-const WORKERS_PRIORITY: u8 = 5;
-const WATCHES_PRIORITY: u8 = 6;
-const STORE_PRIORITY: u8 = 7;
+const QUEUE_PRIORITY: u8 = 1;
+const MAIL_PRIORITY: u8 = 2;
+const MEMORY_PRIORITY: u8 = 3;
+const CACHE_PRIORITY: u8 = 5;
+const COST_PRIORITY: u8 = 4;
+const WORKERS_PRIORITY: u8 = 6;
+const WATCHES_PRIORITY: u8 = 7;
+const STORE_PRIORITY: u8 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
@@ -26,6 +28,7 @@ pub enum Side {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Mode(Mode),
+    Queue(Mode),
     Mail(Mode),
     Store,
     Workers,
@@ -113,18 +116,22 @@ fn mode_fg(mode: Mode) -> Shade {
 impl Kind {
     fn bg(self) -> Shade {
         match self {
-            Kind::Mode(mode) | Kind::Mail(mode) | Kind::Cache(mode) | Kind::Cost(mode) => {
-                mode_bg(mode)
-            }
+            Kind::Mode(mode)
+            | Kind::Queue(mode)
+            | Kind::Mail(mode)
+            | Kind::Cache(mode)
+            | Kind::Cost(mode) => mode_bg(mode),
             Kind::Store | Kind::Workers | Kind::Watches | Kind::Memory => Shade::BaseBg,
         }
     }
 
     fn fg(self) -> Shade {
         match self {
-            Kind::Mode(mode) | Kind::Mail(mode) | Kind::Cache(mode) | Kind::Cost(mode) => {
-                mode_fg(mode)
-            }
+            Kind::Mode(mode)
+            | Kind::Queue(mode)
+            | Kind::Mail(mode)
+            | Kind::Cache(mode)
+            | Kind::Cost(mode) => mode_fg(mode),
             Kind::Store => Shade::StoreFg,
             Kind::Workers => Shade::WorkersFg,
             Kind::Watches => Shade::WatchesFg,
@@ -258,6 +265,14 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         MODE_PRIORITY,
         vec![current.label().to_string()],
     );
+    let queue = status.queue.map(|cell| {
+        Segment::new(
+            Side::Left,
+            Kind::Queue(current),
+            QUEUE_PRIORITY,
+            queue_variants(cell),
+        )
+    });
     let mail = (unread > 0).then(|| {
         Segment::new(
             Side::Left,
@@ -304,11 +319,19 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         .as_ref()
         .map(|turn| cache_segments(turn, current))
         .unwrap_or_default();
-    [Some(mode), mail, store, workers, watches, Some(memory)]
-        .into_iter()
-        .flatten()
-        .chain(cache)
-        .collect()
+    [
+        Some(mode),
+        queue,
+        mail,
+        store,
+        workers,
+        watches,
+        Some(memory),
+    ]
+    .into_iter()
+    .flatten()
+    .chain(cache)
+    .collect()
 }
 
 fn segment_span(segment: &Segment, variant: usize) -> Span {
@@ -505,6 +528,7 @@ pub fn bar(status: &Status, context: &Context, width: usize, separator: Separato
 mod tests {
     use super::*;
     use crate::chat_status::{WatchState, WorkerState};
+    use crate::status_queue::QueueCell;
 
     const SEPARATORS: [Separator; 3] = [Separator::Block, Separator::Powerline, Separator::Bar];
 
@@ -528,6 +552,7 @@ mod tests {
             },
             turn: None,
             napping: false,
+            queue: None,
         }
     }
 
@@ -673,6 +698,25 @@ mod tests {
         assert_eq!(placed_texts(&status, 12), ["INBOX"]);
         assert_eq!(placed_texts(&status, 7), ["INBOX"]);
         assert_eq!(placed_texts(&status, 0), ["INBOX"]);
+    }
+
+    #[test]
+    fn queue_cell_follows_the_mode_and_outlasts_mail() {
+        let status = Status {
+            queue: Some(QueueCell {
+                running: true,
+                count: 2,
+            }),
+            ..status()
+        };
+        assert!(line(&status, 200).starts_with(" INBOX  turn running · QUEUED 2  📬 2 unread"));
+        assert_eq!(placed_texts(&status, 20), ["INBOX", "▶ Q2", "📬 2"]);
+        assert_eq!(placed_texts(&status, 14), ["INBOX", "▶ Q2"]);
+    }
+
+    #[test]
+    fn no_queue_cell_outside_the_queue_editor() {
+        assert!(!line(&status(), 200).contains("turn"));
     }
 
     #[test]

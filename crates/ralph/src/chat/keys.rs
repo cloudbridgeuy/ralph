@@ -1,4 +1,4 @@
-use crate::chat::editor::{build_queue_editor, CLOSE_QUEUE};
+use crate::chat::editor::{build_queue_editor, BACK_OUT};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::{retry_interrupted, QueuePrompt};
 use crate::chat::queue::{
@@ -7,10 +7,12 @@ use crate::chat::queue::{
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::PartialMode;
 use crate::subprocess::OutputGate;
+use crate::watches::locked;
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use reedline::{EditCommand, Reedline, Signal};
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,20 +29,33 @@ pub(super) struct Keys<'a> {
     pub(super) edit_mode: EditModeConfig,
 }
 
-struct Finished<'a>(&'a AtomicBool);
+/// The turn's end, as the queue editor sees it: `done` feeds the status bar,
+/// and `repaint` wakes the open editor so the bar flips without a key press.
+#[derive(Default)]
+struct TurnWatch {
+    done: AtomicBool,
+    repaint: Mutex<Option<Box<dyn Fn() + Send>>>,
+}
+
+struct Finished<'a>(&'a TurnWatch);
 
 impl Drop for Finished<'_> {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.0.done.store(true, Ordering::SeqCst);
+        if let Some(repaint) = locked(&self.0.repaint).as_ref() {
+            repaint();
+        }
     }
 }
 
-pub(super) fn exit_for(signal: Signal) -> Option<EditorExit> {
+pub(super) fn exit_for(signal: Signal, buffer: &str) -> Option<EditorExit> {
     match signal {
         Signal::Success(line) => Some(EditorExit::Submitted(line)),
         Signal::CtrlC => Some(EditorExit::Cancelled),
         Signal::CtrlD => Some(EditorExit::Closed),
-        Signal::HostCommand(command) if command == CLOSE_QUEUE => Some(EditorExit::Closed),
+        Signal::HostCommand(command) if command == BACK_OUT => {
+            Some(EditorExit::BackOut(buffer.to_string()))
+        }
         _ => None,
     }
 }
@@ -93,7 +108,7 @@ fn read_exit(editor: &mut Reedline, prompt: &QueuePrompt) -> EditorExit {
     loop {
         match retry_interrupted(|| editor.read_line(prompt)) {
             Ok(signal) => {
-                if let Some(exit) = exit_for(signal) {
+                if let Some(exit) = exit_for(signal, editor.current_buffer_contents()) {
                     return exit;
                 }
             }
@@ -111,10 +126,10 @@ impl Keys<'_> {
         else {
             return (run(), Queue::default());
         };
-        let done = AtomicBool::new(false);
+        let watch = TurnWatch::default();
         let (result, queue) = thread::scope(|scope| {
-            let finished = Finished(&done);
-            let listener = scope.spawn(|| self.listen(&done));
+            let finished = Finished(&watch);
+            let listener = scope.spawn(|| self.listen(&watch));
             let result = run();
             drop(finished);
             (result, listener.join().unwrap_or_default())
@@ -124,9 +139,9 @@ impl Keys<'_> {
         (result, queue)
     }
 
-    fn listen(&self, done: &AtomicBool) -> Queue {
+    fn listen(&self, watch: &TurnWatch) -> Queue {
         let mut queue = Queue::default();
-        while !done.load(Ordering::SeqCst) {
+        while !watch.done.load(Ordering::SeqCst) {
             match poll_input() {
                 Input::Idle => continue,
                 Input::Closed => break,
@@ -135,17 +150,19 @@ impl Keys<'_> {
             let bytes = read_input();
             if bytes.is_empty() {
                 thread::sleep(Duration::from_millis(POLL_MS as u64));
-            } else if has_queue_key(&bytes) && !done.load(Ordering::SeqCst) {
-                queue = self.edit(queue, &typed_after_queue_key(&bytes));
+            } else if has_queue_key(&bytes) && !watch.done.load(Ordering::SeqCst) {
+                queue = self.edit(queue, &typed_after_queue_key(&bytes), watch);
             }
         }
         queue
     }
 
-    fn edit(&self, queue: Queue, seed: &str) -> Queue {
+    fn edit(&self, queue: Queue, seed: &str, watch: &TurnWatch) -> Queue {
         self.gate.pause();
         wait_settled(self.gate);
         let mut editor = build_queue_editor(self.edit_mode);
+        let signal = editor.repaint_signal();
+        *locked(&watch.repaint) = Some(Box::new(move || signal.request_repaint()));
         if !seed.is_empty() {
             editor.run_edit_commands(&[EditCommand::InsertString(seed.to_string())]);
         }
@@ -153,8 +170,10 @@ impl Keys<'_> {
             monitor: self.monitor,
             bar: self.bar,
             queued: queue.entries.len(),
+            done: &watch.done,
         };
         let exit = read_exit(&mut editor, &prompt);
+        locked(&watch.repaint).take();
         let (queue, action) = on_exit(queue, exit);
         self.gate.resume();
         if action == Action::Cancel {
@@ -190,28 +209,32 @@ mod tests {
     #[test]
     fn enter_submits_the_line() {
         assert_eq!(
-            exit_for(Signal::Success("hi".into())),
+            exit_for(Signal::Success("hi".into()), ""),
             Some(EditorExit::Submitted("hi".into()))
         );
     }
 
     #[test]
     fn ctrl_c_cancels() {
-        assert_eq!(exit_for(Signal::CtrlC), Some(EditorExit::Cancelled));
+        assert_eq!(exit_for(Signal::CtrlC, "x"), Some(EditorExit::Cancelled));
     }
 
     #[test]
-    fn ctrl_d_and_ctrl_q_close() {
-        assert_eq!(exit_for(Signal::CtrlD), Some(EditorExit::Closed));
+    fn ctrl_d_closes() {
+        assert_eq!(exit_for(Signal::CtrlD, "x"), Some(EditorExit::Closed));
+    }
+
+    #[test]
+    fn ctrl_q_backs_out_with_the_draft() {
         assert_eq!(
-            exit_for(Signal::HostCommand(CLOSE_QUEUE.into())),
-            Some(EditorExit::Closed)
+            exit_for(Signal::HostCommand(BACK_OUT.into()), "draft"),
+            Some(EditorExit::BackOut("draft".into()))
         );
     }
 
     #[test]
     fn other_host_commands_keep_the_editor_open() {
-        assert_eq!(exit_for(Signal::HostCommand("other".into())), None);
-        assert_eq!(exit_for(Signal::ExternalBreak(String::new())), None);
+        assert_eq!(exit_for(Signal::HostCommand("other".into()), ""), None);
+        assert_eq!(exit_for(Signal::ExternalBreak(String::new()), ""), None);
     }
 }

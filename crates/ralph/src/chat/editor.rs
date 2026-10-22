@@ -15,7 +15,7 @@ use std::path::Path;
 use std::process::Command;
 
 pub(super) const OPEN_EDITOR: &str = "open-editor";
-pub(super) const CLOSE_QUEUE: &str = "close-queue";
+pub(super) const BACK_OUT: &str = "back-out-queue";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
@@ -123,7 +123,7 @@ pub(super) fn queue_bindings(keybindings: &mut Keybindings) {
     keybindings.add_binding(
         KeyModifiers::CONTROL,
         KeyCode::Char('q'),
-        ReedlineEvent::ExecuteHostCommand(CLOSE_QUEUE.to_string()),
+        ReedlineEvent::ExecuteHostCommand(BACK_OUT.to_string()),
     );
 }
 

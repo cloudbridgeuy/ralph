@@ -38,6 +38,7 @@ pub mod semver;
 pub mod shell_format;
 pub mod snapshot;
 pub mod status_mode;
+pub mod status_queue;
 pub mod status_segments;
 pub mod stream;
 pub mod watch;

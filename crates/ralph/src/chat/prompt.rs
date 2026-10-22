@@ -1,12 +1,12 @@
 use crate::ansi::{DIM, RESET};
 use crate::chat::editor::{edit_draft, OPEN_EDITOR};
 use crate::chat::monitor::Monitor;
-use crate::chat::queue::queued_label;
 use crate::chat::statusbar::StatusBar;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
 use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
+use ralph_core::status_queue::QueueCell;
 use ralph_core::worker::ATTACHMENTS_DIR;
 use reedline::{
     Prompt, PromptEditMode, PromptHistorySearch, PromptHistorySearchStatus, PromptViMode, Reedline,
@@ -15,6 +15,7 @@ use reedline::{
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::io::{self, ErrorKind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
@@ -78,25 +79,21 @@ pub(super) fn sent_echo(bar: &str, indicator: &str, continuation: &str, text: &s
     format!("{bar}{body}")
 }
 
-pub(super) fn with_queued(bar: &str, queued: usize) -> String {
-    match queued_label(queued) {
-        Some(label) => format!("{bar}{label}\n"),
-        None => bar.to_string(),
-    }
-}
-
 pub(super) struct QueuePrompt<'a> {
     pub(super) monitor: &'a Monitor,
     pub(super) bar: &'a StatusBar,
     pub(super) queued: usize,
+    pub(super) done: &'a AtomicBool,
 }
 
 impl Prompt for QueuePrompt<'_> {
     fn render_prompt_left(&self) -> Cow<'_, str> {
-        Cow::Owned(with_queued(
-            &self.bar.line(&self.monitor.status(), screen_columns()),
-            self.queued,
-        ))
+        let mut status = self.monitor.status();
+        status.queue = Some(QueueCell {
+            running: !self.done.load(Ordering::SeqCst),
+            count: self.queued,
+        });
+        Cow::Owned(self.bar.line(&status, screen_columns()))
     }
 
     fn render_prompt_right(&self) -> Cow<'_, str> {
@@ -213,16 +210,6 @@ mod tests {
             sent_echo("bar\n", ">>> ", "::: ", "a\n\nb"),
             "bar\n>>> a\n::: \n::: b\n"
         );
-    }
-
-    #[test]
-    fn queued_label_follows_the_bar_on_its_own_line() {
-        assert_eq!(with_queued("bar\n", 2), "bar\nQUEUED 2\n");
-    }
-
-    #[test]
-    fn empty_queue_leaves_the_bar_alone() {
-        assert_eq!(with_queued("bar\n", 0), "bar\n");
     }
 
     #[test]

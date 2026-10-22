@@ -1,5 +1,6 @@
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
+use crate::status_queue::QueueCell;
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
 use crate::worker::{
@@ -77,6 +78,7 @@ pub struct Status {
     pub memory: Memory,
     pub turn: Option<TurnCache>,
     pub napping: bool,
+    pub queue: Option<QueueCell>,
 }
 
 #[derive(Deserialize, Default)]

@@ -302,6 +302,7 @@ impl Monitor {
             memory: memory.unwrap_or(status.memory),
             turn: turn.unwrap_or(status.turn),
             napping: self.store.napping(),
+            queue: None,
         };
         let changed = *status != next;
         *status = next;
