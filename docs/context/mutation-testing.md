@@ -142,6 +142,8 @@ After GUZ-811:
 | Before | 285 mutants listed (271 `shell_format.rs` + 14 struct "delete field" mutants from other files the regex does not filter), 16 min |
 | Before, results | 26 missed / 246 caught / 3 unviable / 10 timeouts |
 | Killed by new unit tests | 26 missed mutants |
+| Deleted condition | `shell_format.rs` `prev != Sep::Semi` in the Do/Then and Else arms was always false |
+| After, results | 281 mutants, 16 min: 268 caught / 0 missed / 3 unviable / 10 timeouts |
 
 First full local ralph run (GUZ-619):
 

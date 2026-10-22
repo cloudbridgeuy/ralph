@@ -411,17 +411,14 @@ impl Layout {
                 }
                 Keyword::Do | Keyword::Then => {
                     let expected = if word == "do" { Block::Loop } else { Block::If };
-                    if prev != Sep::Semi
-                        || !self.header_open
-                        || self.stack.last() != Some(&expected)
-                    {
+                    if !self.header_open || self.stack.last() != Some(&expected) {
                         return None;
                     }
                     self.lines.last_mut()?.push_str(&format!("; {word}"));
                     self.header_open = false;
                 }
                 Keyword::Else => {
-                    if prev != Sep::Semi || self.stack.last() != Some(&Block::If) {
+                    if self.stack.last() != Some(&Block::If) {
                         return None;
                     }
                     self.push_line(INDENT * (self.stack.len() - 1), "else", Sep::Semi);
