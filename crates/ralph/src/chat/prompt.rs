@@ -83,6 +83,7 @@ pub(super) struct QueuePrompt<'a> {
     pub(super) monitor: &'a Monitor,
     pub(super) bar: &'a StatusBar,
     pub(super) queued: usize,
+    pub(super) held: bool,
     pub(super) done: &'a AtomicBool,
 }
 
@@ -92,6 +93,7 @@ impl Prompt for QueuePrompt<'_> {
         status.queue = Some(QueueCell {
             running: !self.done.load(Ordering::SeqCst),
             count: self.queued,
+            held: self.held,
         });
         Cow::Owned(self.bar.line(&status, screen_columns()))
     }

@@ -170,6 +170,7 @@ impl Keys<'_> {
             monitor: self.monitor,
             bar: self.bar,
             queued: queue.entries.len(),
+            held: queue.held,
             done: &watch.done,
         };
         let exit = read_exit(&mut editor, &prompt);

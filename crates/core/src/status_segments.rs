@@ -706,6 +706,7 @@ mod tests {
             queue: Some(QueueCell {
                 running: true,
                 count: 2,
+                held: false,
             }),
             ..status()
         };

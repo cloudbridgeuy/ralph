@@ -373,12 +373,12 @@ pub struct RepaintSignal {
 impl RepaintSignal {
     /// Request that the prompt is re-evaluated and repainted in place.
     pub fn request_repaint(&self) {
-        self.flag.store(true, Ordering::Relaxed);
+        self.flag.store(true, Ordering::Release);
     }
 
     /// Consume a pending repaint request.
     fn take(&self) -> bool {
-        self.flag.swap(false, Ordering::Relaxed)
+        self.flag.swap(false, Ordering::AcqRel)
     }
 }
 
