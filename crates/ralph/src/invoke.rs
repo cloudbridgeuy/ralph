@@ -113,7 +113,7 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
         session_elapsed_ms: 0,
         verbose_tools: config.verbose_tools,
         session_info: SpinnerSessionInfo::default(),
-        pause: None,
+        gate: None,
         cancel: None,
     })
 }

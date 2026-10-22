@@ -305,7 +305,7 @@ impl Turn<'_> {
             session_elapsed_ms: 0,
             verbose_tools: VerboseToolsConfig::new(),
             session_info: chat_session_info(),
-            pause: None,
+            gate: None,
             cancel: Some(Arc::clone(&self.cancel)),
         };
         Ok(Launch {

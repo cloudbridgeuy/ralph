@@ -290,7 +290,7 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
                         session_info: spinner::SpinnerSessionInfo {
                             persona: Some("chat memory".into()),
                         },
-                        pause: None,
+                        gate: None,
                         cancel: None,
                     },
                 ))

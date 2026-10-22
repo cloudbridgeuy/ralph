@@ -160,12 +160,7 @@ impl Session {
                 self.alive = false;
                 break pump.finish(&self.readers, EXIT_CODE_KILLED, false);
             }
-            let paused = self
-                .config
-                .pause
-                .as_ref()
-                .is_some_and(|flag| flag.load(Ordering::SeqCst));
-            match pump.step(&self.readers, paused)? {
+            match pump.step(&self.readers, pump.gate_paused())? {
                 Step::Pending => {}
                 Step::Result { is_error } => {
                     break pump.finish(&self.readers, i32::from(is_error), true);

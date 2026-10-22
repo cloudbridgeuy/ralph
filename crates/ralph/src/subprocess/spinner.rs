@@ -6,6 +6,7 @@
 //!
 //! `Ctrl+C` kills the child process via the cancel flag or the signal path (`signal::is_interrupted()`).
 
+use super::gate::{write_direct, OutputGate, Stream};
 use super::kill_process_group;
 use super::timeout::try_wait_child;
 use super::types::{
@@ -18,7 +19,7 @@ use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use ralph_core::stream::result_is_error;
 use std::io::IsTerminal;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,25 +46,31 @@ pub struct SpinnerSubprocessConfig {
     pub verbose_tools: VerboseToolsConfig,
     /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
-    pub pause: Option<Arc<AtomicBool>>,
+    pub gate: Option<Arc<OutputGate>>,
     pub cancel: Option<Arc<AtomicBool>>,
 }
 
-fn drain_stdout(readers: &Readers, processor: &mut StreamProcessor) {
+fn write_to(gate: Option<&OutputGate>, stream: Stream, text: &str) {
+    match gate {
+        Some(gate) => gate.write(stream, text),
+        None => write_direct(stream, text),
+    }
+}
+
+fn drain_stdout(readers: &Readers, processor: &mut StreamProcessor, gate: Option<&OutputGate>) {
     while let Ok(line_result) = readers.line_rx.try_recv() {
         if let Ok(line) = line_result {
             if let Some(output) = processor.process_line(&line) {
-                print!("{}", output);
-                let _ = io::stdout().flush();
+                write_to(gate, Stream::Stdout, &output);
             }
         }
     }
 }
 
-fn drain_stderr(readers: &Readers, captured: &mut String, show: bool) {
+fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Option<&OutputGate>) {
     while let Ok(line) = readers.stderr_rx.try_recv() {
         if show {
-            eprintln!("{}", line);
+            write_to(gate, Stream::Stderr, &format!("{line}\n"));
         }
         captured.push_str(&line);
         captured.push('\n');
@@ -102,7 +109,7 @@ fn drain_stderr(readers: &Readers, captured: &mut String, show: bool) {
 ///     session_elapsed_ms: 0,
 ///     verbose_tools: VerboseToolsConfig::new(),
 ///     session_info: SpinnerSessionInfo::default(),
-///     pause: None,
+///     gate: None,
 ///     cancel: None,
 /// };
 /// let result = invoke_subprocess_with_spinner_config(&config);
@@ -188,6 +195,7 @@ pub(super) struct Pump {
     last_output_time: Instant,
     pending_tool_count: usize,
     stderr: String,
+    gate: Option<Arc<OutputGate>>,
 }
 
 impl Pump {
@@ -209,6 +217,7 @@ impl Pump {
             last_output_time: Instant::now(),
             pending_tool_count: 0,
             stderr: String::new(),
+            gate: config.gate.clone(),
         })
     }
 
@@ -217,6 +226,10 @@ impl Pump {
             self.spinner.stop();
             self.spinner_active = false;
         }
+    }
+
+    pub(super) fn gate_paused(&self) -> bool {
+        self.gate.as_ref().is_some_and(|gate| gate.is_paused())
     }
 
     pub(super) fn step(
@@ -237,8 +250,7 @@ impl Pump {
                 }
                 if let Some(output) = self.processor.process_line(&line) {
                     self.stop_spinner();
-                    print!("{}", output);
-                    let _ = io::stdout().flush();
+                    write_to(self.gate.as_deref(), Stream::Stdout, &output);
                     self.last_output_time = Instant::now();
                 }
                 if let Some(is_error) = result_is_error(&line) {
@@ -254,7 +266,7 @@ impl Pump {
                 )))
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                drain_stderr(readers, &mut self.stderr, true);
+                drain_stderr(readers, &mut self.stderr, true, self.gate.as_deref());
                 let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
                 if !paused
                     && !self.spinner_active
@@ -281,12 +293,11 @@ impl Pump {
         show_stderr: bool,
     ) -> StreamingSubprocessResult {
         self.stop_spinner();
-        drain_stdout(readers, &mut self.processor);
-        drain_stderr(readers, &mut self.stderr, show_stderr);
+        drain_stdout(readers, &mut self.processor, self.gate.as_deref());
+        drain_stderr(readers, &mut self.stderr, show_stderr, self.gate.as_deref());
         let stream_result = self.processor.finish();
         if let Some(ref output) = stream_result.final_output {
-            print!("{}", output);
-            let _ = io::stdout().flush();
+            write_to(self.gate.as_deref(), Stream::Stdout, output);
         }
         StreamingSubprocessResult {
             exit_code,
@@ -310,11 +321,6 @@ fn run_subprocess_with_spinner(
             readers.join();
             return Ok(pump.finish(&readers, exit_code, true));
         }
-
-        let paused = config
-            .pause
-            .as_ref()
-            .is_some_and(|flag| flag.load(Ordering::SeqCst));
 
         if let Some(timeout_secs) = config
             .timeout_secs
@@ -346,6 +352,6 @@ fn run_subprocess_with_spinner(
             });
         }
 
-        pump.step(&readers, paused)?;
+        pump.step(&readers, pump.gate_paused())?;
     }
 }

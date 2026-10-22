@@ -12,12 +12,14 @@ use std::io;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 
+mod gate;
 mod session;
 mod spinner;
 mod timeout;
 mod types;
 
 // Re-export public API
+pub use gate::OutputGate;
 pub use session::Session;
 pub use spinner::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
 pub use types::{StreamingSubprocessResult, SubprocessError};
