@@ -150,7 +150,7 @@ Do not use `#[mutants::skip]`, broad trait or default skips, or a score threshol
 | --- | --- | --- | --- |
 | `sse.rs:23:34` `<` to `<=` in `SseDecoder::push` | A 3-byte BOM-only buffer waits for the next push. No other method reads the buffer, so events are identical. | GUZ-618 | Line moves, or the BOM check or a flush/finish method changes. |
 | `sse.rs:23:46` `&&` to `\|\|` in `SseDecoder::push` | Same reason. A short non-BOM buffer yields no events either way. | GUZ-618 | Same as above. |
-| `tree.rs:14:28` `>` to `>=` in `cover_at` | When `hi == t`, size > 1 >= alpha, so both forms split. | GUZ-618 | Line moves, or `cover_at` accepts alpha > 1. |
+| `tree.rs:15:28` `>` to `>=` in `cover_at` | When `hi == t`, size > 1 >= alpha, so both forms split. | GUZ-618 | Line moves, or `cover_at` accepts alpha > 1. |
 | `shell_format.rs:356:25` `>` to `>=` in `Layout::statement` | A one-stage loop makes the same `push_stage` call as the single-stage branch. | GUZ-618 | Line moves, or the two branches diverge. |
 | `anthropic.rs` `secret_headers` to `Vec::leak(Vec::new())` | The original returns `&[]`. | GUZ-618 | Anthropic gets provider-specific secret headers. |
 

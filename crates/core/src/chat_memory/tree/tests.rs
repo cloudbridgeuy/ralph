@@ -374,25 +374,95 @@ fn split_view_covers_every_entry_once() {
     let entries: Vec<Entry> = (0..300).map(|i| entry(i, 5)).collect();
     let tree = summarized(&entries);
     for recent in [0, 30, 300, 100_000] {
-        let start = verbatim_start(&entries, 0, recent);
+        let cut = stable_cut(verbatim_start(&entries, 0, recent), OLDER_VIEW_STEP);
         let split = split_view(&entries, &tree, 200, recent);
-        assert_eq!(
-            split.older,
-            view(&entries[..start], &tree, 200),
-            "r={recent}"
-        );
-        assert_eq!(split.tail.len(), 300 - start, "r={recent}");
+        assert_eq!(split.older, view(&entries[..cut], &tree, 200), "r={recent}");
+        assert_eq!(split.tail.len(), 300 - cut, "r={recent}");
         assert!(split.older.len() <= 200, "r={recent}");
     }
+}
+
+#[test]
+fn stable_cut_snaps_down_to_a_multiple_of_the_step() {
+    assert_eq!(stable_cut(70, 32), 64);
+    assert_eq!(stable_cut(31, 32), 0);
+    assert_eq!(stable_cut(0, 32), 0);
+    assert_eq!(stable_cut(64, 32), 64);
+    assert_eq!(stable_cut(7, 0), 7);
+}
+
+fn stable_lists() -> (Vec<Entry>, Vec<Entry>, Tree) {
+    let longer: Vec<Entry> = (0..305).map(|i| entry(i, 5)).collect();
+    let shorter = longer[..300].to_vec();
+    let tree = summarized(&longer);
+    (shorter, longer, tree)
+}
+
+#[test]
+fn split_view_older_is_identical_when_appends_stay_in_one_step() {
+    let (shorter, longer, tree) = stable_lists();
+    let recent = 100;
+    let a = verbatim_start(&shorter, 0, recent);
+    let b = verbatim_start(&longer, 0, recent);
+    assert_ne!(a, b);
+    assert_eq!(
+        stable_cut(a, OLDER_VIEW_STEP),
+        stable_cut(b, OLDER_VIEW_STEP)
+    );
+    let before = split_view(&shorter, &tree, 200, recent);
+    let after = split_view(&longer, &tree, 200, recent);
+    assert!(!before.older.is_empty());
+    assert_eq!(before.older, after.older);
+}
+
+#[test]
+fn turn_system_prompt_is_identical_when_appends_stay_in_one_step() {
+    let (shorter, longer, tree) = stable_lists();
+    let before = split_view(&shorter, &tree, 200, 100);
+    let after = split_view(&longer, &tree, 200, 100);
+    assert_eq!(
+        crate::chat::turn_system_prompt(&before.older),
+        crate::chat::turn_system_prompt(&after.older)
+    );
+}
+
+#[test]
+fn split_view_tail_keeps_newest_verbatim_and_bounds_settled_lines() {
+    let (_, entries, tree) = stable_lists();
+    let recent = 100;
+    let start = verbatim_start(&entries, 0, recent);
+    let cut = stable_cut(start, OLDER_VIEW_STEP);
+    let split = split_view(&entries, &tree, 200, recent);
+    let settled = start - cut;
+    assert_eq!(split.tail.len(), entries.len() - cut);
+    assert!(settled < OLDER_VIEW_STEP);
+    assert!(settled > 0);
+    for (offset, line) in split.tail.iter().enumerate() {
+        let i = cut + offset;
+        let expected = if i < start {
+            leaf_line(i, &entries[i], &tree).unwrap()
+        } else {
+            entry_line(i, &entries[i], &entries[i].text)
+        };
+        assert_eq!(line, &expected);
+    }
+    let used: usize = entries[start..]
+        .iter()
+        .map(|e| estimate_tokens(&e.text))
+        .sum();
+    assert!(used <= recent);
 }
 
 #[test]
 fn split_view_tail_respects_token_budget() {
     let entries: Vec<Entry> = (0..50).map(|i| entry(i, 30)).collect();
     let split = split_view(&entries, &Tree::new(), 200, 100);
-    let used: usize = split.tail.len() * estimate_tokens(&entries[0].text);
-    assert!(!split.tail.is_empty() && used <= 100);
-    assert_eq!(split.older.len(), 50 - split.tail.len());
+    let verbatim = verbatim_start(&entries, 0, 100);
+    let used: usize = (50 - verbatim) * estimate_tokens(&entries[0].text);
+    assert!(verbatim < 50 && used <= 100);
+    let cut = stable_cut(verbatim, OLDER_VIEW_STEP);
+    assert_eq!(split.tail.len(), 50 - cut);
+    assert_eq!(split.older.len(), cut);
 }
 
 #[test]
