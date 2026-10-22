@@ -117,7 +117,9 @@ pub(super) fn edit_mode(mode: EditModeConfig) -> ChatEditMode {
     edit_mode_with(mode, |_| {})
 }
 
-fn close_queue_binding(keybindings: &mut Keybindings) {
+pub(super) fn queue_bindings(keybindings: &mut Keybindings) {
+    keybindings.remove_binding(KeyModifiers::CONTROL, KeyCode::Char('v'));
+    keybindings.remove_binding(KeyModifiers::CONTROL, KeyCode::Char('g'));
     keybindings.add_binding(
         KeyModifiers::CONTROL,
         KeyCode::Char('q'),
@@ -159,7 +161,7 @@ pub(super) fn build_editor(
 
 pub(super) fn build_queue_editor(mode: EditModeConfig) -> Reedline {
     Reedline::create()
-        .with_edit_mode(Box::new(edit_mode_with(mode, close_queue_binding)))
+        .with_edit_mode(Box::new(edit_mode_with(mode, queue_bindings)))
         .use_bracketed_paste(true)
 }
 

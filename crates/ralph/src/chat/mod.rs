@@ -29,7 +29,7 @@ use crate::chat::keys::Keys;
 use crate::chat::memory::Store;
 use crate::chat::monitor::{ready_ids, watch_headless, watch_input, watch_status, Monitor};
 use crate::chat::prompt::{next_route, ChatPrompt};
-use crate::chat::queue::{decide, Decision, Queue};
+use crate::chat::queue::{decide, draft_with_queue, Decision, Queue};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
@@ -310,7 +310,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             break;
         };
         let mut queue = Queue::default();
-        let outcome = match route {
+        let (outcome, draft) = match route {
             Route::Ignore => continue,
             Route::Send(message) => {
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state) {
@@ -330,10 +330,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Err(outcome) => outcome,
                 };
-                if let Some(draft) = draft_after(outcome, message) {
-                    editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
-                }
-                outcome
+                (outcome, draft_after(outcome, message))
             }
             Route::ReadInbox(selection) => {
                 let reports = monitor.drain(selection)?;
@@ -345,7 +342,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
                 });
                 queue = queued;
-                result?
+                (result?, None)
             }
             local => {
                 let ctx = LocalRoute {
@@ -365,19 +362,26 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         if outcome == TurnOutcome::Exit {
             break;
         }
-        if let Decision::Send(text) = decide(outcome, queue) {
-            print!("{}", prompt.echo(&text));
-            warn_if_err(
-                editor
-                    .history_mut()
-                    .save(HistoryItem::from_command_line(text.clone())),
-                "Failed to save chat history",
-            );
-            pending = Some(route_input(
-                &text,
-                monitor.status().unread,
-                &prompt.empty_submit,
-            ));
+        let draft = match decide(outcome, queue) {
+            Decision::Send(text) => {
+                print!("{}", prompt.echo(&text));
+                warn_if_err(
+                    editor
+                        .history_mut()
+                        .save(HistoryItem::from_command_line(text.clone())),
+                    "Failed to save chat history",
+                );
+                pending = Some(route_input(
+                    &text,
+                    monitor.status().unread,
+                    &prompt.empty_submit,
+                ));
+                draft
+            }
+            Decision::Keep(entries) => draft_with_queue(draft, &entries),
+        };
+        if let Some(draft) = draft {
+            editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
         }
     }
     Ok(())

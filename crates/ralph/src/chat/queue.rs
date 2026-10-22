@@ -56,6 +56,46 @@ pub(super) fn has_queue_key(bytes: &[u8]) -> bool {
     bytes.contains(&QUEUE_KEY)
 }
 
+pub(super) fn typed_after_queue_key(bytes: &[u8]) -> String {
+    let Some(start) = bytes.iter().position(|byte| *byte == QUEUE_KEY) else {
+        return String::new();
+    };
+    let text = String::from_utf8_lossy(&bytes[start + 1..]);
+    let mut kept = String::new();
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\u{1b}' => skip_escape(&mut chars),
+            ch if ch.is_control() || ch == char::REPLACEMENT_CHARACTER => {}
+            ch => kept.push(ch),
+        }
+    }
+    kept
+}
+
+fn skip_escape(chars: &mut std::str::Chars) {
+    match chars.next() {
+        Some('[') => {
+            for ch in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&ch) {
+                    break;
+                }
+            }
+        }
+        Some('O') => {
+            chars.next();
+        }
+        Some(_) | None => {}
+    }
+}
+
+pub(super) fn draft_with_queue(draft: Option<String>, entries: &[String]) -> Option<String> {
+    match (draft, merged(entries)) {
+        (Some(draft), Some(queued)) => Some(format!("{draft}{JOIN}{queued}")),
+        (draft, queued) => draft.or(queued),
+    }
+}
+
 pub(super) fn decide(outcome: TurnOutcome, queue: Queue) -> Decision {
     match merged(&queue.entries) {
         Some(text) if outcome == TurnOutcome::Replied && !queue.cancelled => Decision::Send(text),
@@ -140,6 +180,53 @@ mod tests {
         assert!(has_queue_key(b"ab\x11c"));
         assert!(!has_queue_key(b"abc\x03"));
         assert!(!has_queue_key(b""));
+    }
+
+    #[test]
+    fn seed_is_the_printable_text_after_ctrl_q() {
+        assert_eq!(typed_after_queue_key(b"ab\x11hello"), "hello");
+        assert_eq!(typed_after_queue_key(b"\x11h\xc3\xa9y"), "h\u{e9}y");
+    }
+
+    #[test]
+    fn seed_without_ctrl_q_or_text_is_empty() {
+        assert_eq!(typed_after_queue_key(b"abc"), "");
+        assert_eq!(typed_after_queue_key(b"\x11"), "");
+    }
+
+    #[test]
+    fn seed_drops_control_bytes_and_escape_sequences() {
+        assert_eq!(typed_after_queue_key(b"\x11a\x03b\r\n\tc\x11d"), "abcd");
+        assert_eq!(typed_after_queue_key(b"\x11a\x1b[Ab\x1bOPc\x1bxd"), "abcd");
+        assert_eq!(typed_after_queue_key(b"\x11a\x1b[1;5C"), "a");
+        assert_eq!(typed_after_queue_key(b"\x11a\x1b[1;5"), "a");
+        assert_eq!(typed_after_queue_key(b"\x11a\x1b"), "a");
+    }
+
+    #[test]
+    fn seed_drops_invalid_utf8() {
+        assert_eq!(typed_after_queue_key(b"\x11a\xc3"), "a");
+    }
+
+    #[test]
+    fn queue_follows_the_restored_draft() {
+        assert_eq!(
+            draft_with_queue(Some("msg".into()), &entries(&["a", "b"])),
+            Some("msg\n\na\n\nb".to_string())
+        );
+    }
+
+    #[test]
+    fn queue_alone_or_draft_alone_is_unchanged() {
+        assert_eq!(
+            draft_with_queue(None, &entries(&["a"])),
+            Some("a".to_string())
+        );
+        assert_eq!(
+            draft_with_queue(Some("msg".into()), &[]),
+            Some("msg".to_string())
+        );
+        assert_eq!(draft_with_queue(None, &[]), None);
     }
 
     #[test]

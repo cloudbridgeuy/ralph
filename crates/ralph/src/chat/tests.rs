@@ -1,5 +1,6 @@
 use super::editor::{
-    edit_mode, emacs_keybindings, esc_esc, vi_keybindings, visual_reset, OPEN_EDITOR,
+    edit_mode, emacs_keybindings, esc_esc, queue_bindings, vi_keybindings, visual_reset,
+    OPEN_EDITOR,
 };
 use super::resolve_store;
 use super::turn::{draft_after, logged_before_reply, rule, shown_output, TurnOutcome};
@@ -191,4 +192,21 @@ fn empty_env_store_is_ignored_and_missing_home_errors() {
         PathBuf::from("/h/.ralph/chat")
     );
     assert!(resolve_store(None, empty, cwd, None).is_err());
+}
+
+#[test]
+fn queue_keymap_drops_paste_and_open_editor_bindings() {
+    let mut keys = emacs_keybindings();
+    queue_bindings(&mut keys);
+    assert_eq!(
+        keys.find_binding(KeyModifiers::CONTROL, KeyCode::Char('v')),
+        None
+    );
+    assert_eq!(
+        keys.find_binding(KeyModifiers::CONTROL, KeyCode::Char('g')),
+        None
+    );
+    assert!(keys
+        .find_binding(KeyModifiers::CONTROL, KeyCode::Char('q'))
+        .is_some());
 }

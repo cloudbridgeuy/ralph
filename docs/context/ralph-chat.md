@@ -70,8 +70,8 @@ Ctrl-Q during a turn pauses the display of the turn output and opens a queue edi
 - Nothing sends while the editor is open. A turn that ends meanwhile waits for the editor to close.
 - After a normal reply, ralph joins the entries with a blank line, in typed order, and sends them as one message as if typed at the prompt. Slash commands and `!` cells behave as at the prompt.
 - Only the merged text goes to `history.txt`.
-- After a cancel, an exit, or a failed turn, ralph sends nothing and keeps the entries.
-- Keys typed during a turn other than Ctrl-Q are discarded. Ctrl-Q at the idle prompt does nothing.
+- After a cancel, a failed turn, or an editor Ctrl-C, ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. A restored cancelled message comes first, then a blank line, then the entries. On exit the entries are dropped.
+- Printable text typed right after Ctrl-Q in the same read fills the queue editor. Other keys typed during a turn are discarded. If the input closes, ralph stops reading keys during the turn. Ctrl-Q at the idle prompt does nothing.
 
 ## Worker inbox
 
