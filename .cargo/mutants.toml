@@ -24,7 +24,7 @@ exclude_globs = [
 exclude_re = [
   'sse\.rs:23:34: replace < with <= in SseDecoder::push$',
   'sse\.rs:23:46: replace && with \|\| in SseDecoder::push$',
-  'tree\.rs:14:28: replace > with >= in cover_at$',
+  'tree\.rs:15:28: replace > with >= in cover_at$',
   'shell_format\.rs:356:25: replace > with >= in Layout::statement$',
   'secret_headers -> .* with Vec::leak\(Vec::new\(\)\)$',
 ]

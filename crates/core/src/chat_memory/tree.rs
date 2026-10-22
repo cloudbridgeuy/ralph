@@ -1,6 +1,7 @@
 use super::nap::fallback_summary;
 use super::notice::{merge_notices, Shown};
 use super::{Entry, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
+use crate::chat::OLDER_VIEW_STEP;
 
 fn cover_at(t: usize, alpha: f64) -> Vec<(usize, usize)> {
     let root = t.next_power_of_two();
@@ -199,11 +200,15 @@ pub fn split_view(
     budget: usize,
     recent_tokens: usize,
 ) -> ViewSplit {
-    let start = verbatim_start(entries, 0, recent_tokens);
+    let cut = stable_cut(verbatim_start(entries, 0, recent_tokens), OLDER_VIEW_STEP);
     ViewSplit {
-        older: view(&entries[..start], tree, budget),
-        tail: tail_lines(entries, tree, start, recent_tokens),
+        older: view(&entries[..cut], tree, budget),
+        tail: tail_lines(entries, tree, cut, recent_tokens),
     }
+}
+
+pub fn stable_cut(start: usize, step: usize) -> usize {
+    start - start.checked_rem(step).unwrap_or(0)
 }
 
 pub fn estimate_tokens(text: &str) -> usize {
