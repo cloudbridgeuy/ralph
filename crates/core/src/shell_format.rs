@@ -231,7 +231,7 @@ fn scan(chars: &[char]) -> Option<Vec<Segment>> {
         if close_group {
             groups -= 1;
         }
-        if groups > 0 || open_group || close_group {
+        if groups > 0 || close_group {
             scanner.current.push(c);
             i += 1;
             continue;
