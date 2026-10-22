@@ -769,6 +769,21 @@ mod tests {
     }
 
     #[test]
+    fn orphan_hint_lists_a_never_saved_cursor_worker() {
+        let ready = [
+            "cursor-new".to_string(),
+            "cursor-live".to_string(),
+            "cursor-resume".to_string(),
+        ];
+        let alive = ["cursor-live".to_string()];
+        let resumable = ["cursor-resume".to_string()];
+        let hint = orphan_hint(&ready, &[], &alive, &resumable).unwrap();
+        assert!(hint.contains("cursor-new"), "{hint}");
+        assert!(!hint.contains("cursor-live"), "{hint}");
+        assert!(!hint.contains("cursor-resume"), "{hint}");
+    }
+
+    #[test]
     fn opencode_workers_are_busy_while_their_session_is_active() {
         let worker = |id: &str, kind| RunningWorker {
             id: id.into(),

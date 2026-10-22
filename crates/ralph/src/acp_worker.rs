@@ -650,7 +650,6 @@ impl CursorHost {
         fs::remove_dir_all(&files.prompt).ok();
         fs::remove_dir_all(&files.interrupt).ok();
         fs::remove_dir_all(&files.interrupt_result).ok();
-        fs::remove_file(ready_path(&self.store_dir, id)).ok();
         fs::remove_file(activity_path(&self.store_dir, id)).ok();
         fs::remove_file(gone_path(&self.store_dir, id)).ok();
     }
@@ -727,6 +726,7 @@ impl CursorHost {
             worker.apply_events();
         }
         self.forget(id);
+        fs::remove_file(ready_path(&self.store_dir, id)).ok();
         fs::remove_file(&self.files(id).session).ok();
         fs::remove_file(&self.files(id).close).ok();
     }

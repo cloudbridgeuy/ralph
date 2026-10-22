@@ -1,6 +1,6 @@
 use crate::transport::stdio::stop_group;
 use ralph_core::worker::{
-    caller_owns_worker, ready_path, sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep,
+    agent_held, caller_owns_worker, sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep,
     CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
 };
 use std::fs;
@@ -79,7 +79,7 @@ pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
 pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
     let mut ids: Vec<String> = request_ids(store_dir, CURSOR_OWNER_DIR)
         .into_iter()
-        .filter(|id| group_alive(store_dir, id))
+        .filter(|id| owner_facts(store_dir, id).is_some_and(|(_, facts)| agent_held(facts)))
         .collect();
     ids.sort();
     ids
@@ -91,16 +91,8 @@ pub fn resumable_cursor_ids(store_dir: &Path) -> Vec<String> {
     ids
 }
 
-fn group_alive(store_dir: &Path, id: &str) -> bool {
-    fs::read_to_string(HandoffFiles::cursor(store_dir, id).owner)
-        .ok()
-        .and_then(|text| OwnerRecord::parse(&text))
-        .is_some_and(|record| alive_since(record.group, &record.group_start))
-}
-
-pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
-    let files = HandoffFiles::cursor(store_dir, id);
-    let text = fs::read_to_string(&files.owner).ok()?;
+fn owner_facts(store_dir: &Path, id: &str) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
+    let text = fs::read_to_string(HandoffFiles::cursor(store_dir, id).owner).ok()?;
     let record = OwnerRecord::parse(&text);
     let chat_alive = record
         .as_ref()
@@ -112,6 +104,12 @@ pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
             .is_some_and(|r| alive_since(r.group, &r.group_start)),
         mine: chat_alive && record.as_ref().is_some_and(|r| r.chat_pid == process::id()),
     };
+    Some((record, facts))
+}
+
+pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
+    let files = HandoffFiles::cursor(store_dir, id);
+    let (record, facts) = owner_facts(store_dir, id)?;
     let decision = sweep_decision(facts);
     if let (Sweep::Reclaim { kill_group: true }, Some(record)) = (decision, &record) {
         stop_group(record.group, || {
@@ -125,7 +123,6 @@ pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
         fs::remove_dir_all(&files.prompt).ok();
         fs::remove_dir_all(&files.interrupt).ok();
         fs::remove_dir_all(&files.interrupt_result).ok();
-        fs::remove_file(ready_path(store_dir, id)).ok();
     }
     Some(decision)
 }

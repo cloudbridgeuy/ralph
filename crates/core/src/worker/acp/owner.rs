@@ -95,6 +95,10 @@ pub fn sweep_decision(facts: OwnerFacts) -> Sweep {
     }
 }
 
+pub fn agent_held(facts: OwnerFacts) -> bool {
+    facts.group_alive && !matches!(sweep_decision(facts), Sweep::Reclaim { .. })
+}
+
 pub fn caller_owns_worker(owner_chat_pid: u32, caller_ancestry: &[u32]) -> bool {
     caller_ancestry.contains(&owner_chat_pid)
 }
@@ -177,6 +181,14 @@ mod tests {
             sweep_decision(facts(false, false, false)),
             Sweep::Reclaim { kill_group: false }
         );
+    }
+
+    #[test]
+    fn agent_is_held_only_while_the_owner_chat_and_the_group_are_alive() {
+        assert!(!agent_held(facts(false, true, false)));
+        assert!(agent_held(facts(true, true, true)));
+        assert!(agent_held(facts(true, true, false)));
+        assert!(!agent_held(facts(true, false, false)));
     }
 
     #[test]
