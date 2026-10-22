@@ -475,4 +475,12 @@ mod tests {
         assert_eq!(report.status, WATCH_STATUS);
         assert!(report.text.contains("exited with code 0"));
     }
+
+    #[test]
+    fn a_line_of_exactly_the_byte_limit_is_not_truncated() {
+        let line = "a".repeat(8192);
+        assert_eq!(tail_of(&[&line]).render(), line);
+        let longer = "a".repeat(8193);
+        assert!(tail_of(&[&longer]).render().starts_with(TRUNCATED_MARKER));
+    }
 }

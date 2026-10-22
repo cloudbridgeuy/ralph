@@ -179,3 +179,10 @@ fn test_prose_buffer_diff_block_unchanged() {
     assert!(matches!(chunks[0].chunk_type, ChunkType::Diff));
     assert_eq!(chunks[0].content, "-old\n+new\n-another");
 }
+
+#[test]
+fn blank_buffered_line_is_dropped_on_finish() {
+    let mut buffer = StreamingChunkBuffer::with_prose_threshold(3);
+    assert!(buffer.process_line("").is_empty());
+    assert!(buffer.finish().is_empty());
+}

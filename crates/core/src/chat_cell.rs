@@ -795,4 +795,47 @@ mod tests {
             "go\n```zsh\na\n```\n```result\n1\n2\n```\nmid\n```zsh\nb\n```\n````result\n```x\n````\nexit 3\n```zsh\nc\n```\nexit 1\n"
         );
     }
+
+    #[test]
+    fn bare_fence_opener_is_not_a_cell() {
+        assert!(parse_cells("```\nls\n```").is_empty());
+    }
+
+    #[test]
+    fn byte_trim_snaps_the_head_down_to_a_char_boundary() {
+        let output = "\u{e9}".repeat(20);
+        let limits = CellLimits {
+            lines: None,
+            bytes: Some(7),
+        };
+        assert_eq!(
+            trim_output(&output, limits),
+            "\u{e9}\n… 34 bytes trimmed …\n\u{e9}\u{e9}"
+        );
+    }
+
+    #[test]
+    fn byte_trim_snaps_the_tail_up_to_a_char_boundary() {
+        let output = "\u{e9}".repeat(20);
+        let limits = CellLimits {
+            lines: None,
+            bytes: Some(6),
+        };
+        assert_eq!(
+            trim_output(&output, limits),
+            "\u{e9}\n… 36 bytes trimmed …\n\u{e9}"
+        );
+    }
+
+    #[test]
+    fn line_trim_keeps_the_larger_half_at_the_tail_for_odd_limits() {
+        let limits = CellLimits {
+            lines: Some(5),
+            bytes: None,
+        };
+        assert_eq!(
+            trim_output(&numbered(10), limits),
+            "1\n2\n… 5 lines trimmed …\n8\n9\n10\n"
+        );
+    }
 }

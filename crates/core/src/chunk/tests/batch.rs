@@ -371,3 +371,14 @@ mod helpers {
         }
     }
 }
+
+#[test]
+fn unterminated_empty_code_opener_yields_no_chunks() {
+    assert!(parse_chunks("```rust").is_empty());
+}
+
+#[test]
+fn mid_line_hunk_marker_is_not_a_diff() {
+    assert!(!is_unfenced_diff("mail me @@ home"));
+    assert!(is_unfenced_diff("@@ -1 +1 @@"));
+}

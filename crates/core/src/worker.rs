@@ -963,4 +963,12 @@ mod tests {
             "[worker A · done]\none\n\n[worker B · blocked]\ntwo"
         );
     }
+
+    #[test]
+    fn worktree_path_joins_the_worker_id() {
+        assert_eq!(
+            worktree_path(Path::new("/tmp/wt"), "w1"),
+            PathBuf::from("/tmp/wt/w1")
+        );
+    }
 }

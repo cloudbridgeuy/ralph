@@ -564,3 +564,30 @@ fn view_keeps_markers_older_than_every_split_under_tight_budgets() {
         assert!(assert_markers_older_than_splits(&lines, 100, budget) > 0);
     }
 }
+
+#[test]
+fn cover_partitions_the_range_into_blocks_and_honours_the_budget() {
+    for t in 1..=64usize {
+        for budget in 1..=70usize {
+            let nodes = cover(t, budget);
+            assert_eq!(nodes[0].lo, 0, "t={t} b={budget}");
+            assert_eq!(nodes[nodes.len() - 1].hi, t, "t={t} b={budget}");
+            assert!(
+                nodes.windows(2).all(|pair| pair[0].hi == pair[1].lo),
+                "t={t} b={budget}"
+            );
+            assert!(
+                nodes.iter().all(|node| Node::new(node.lo, node.hi).is_ok()),
+                "t={t} b={budget}"
+            );
+            assert!(nodes.len() >= budget.min(t), "t={t} b={budget}");
+        }
+    }
+}
+
+#[test]
+fn an_entry_is_long_only_above_the_summary_size() {
+    let at = |len: usize| texted(1, |_| "a".repeat(len)).remove(0);
+    assert!(!is_long(&at(SUMMARY_BYTES)));
+    assert!(is_long(&at(SUMMARY_BYTES + 1)));
+}

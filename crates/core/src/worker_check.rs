@@ -808,4 +808,34 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn pane_footer_is_everything_below_the_last_rule() {
+        let pane = pane_with_footer("work", "footer");
+        assert_eq!(pane_footer(&pane), "footer");
+    }
+
+    #[test]
+    fn headless_harnesses_get_short_inbox_texts() {
+        let on = |kind| WorkerObservation { kind, ..obs() };
+        assert_eq!(
+            inbox_text(WorkerState::Waiting, &on(HarnessId::Cursor)),
+            Some("Worker w1 stopped without calling report.".to_string())
+        );
+        assert_eq!(
+            inbox_text(WorkerState::Waiting, &on(HarnessId::Opencode)),
+            Some("Worker w1 stopped without calling report.".to_string())
+        );
+        assert_eq!(
+            inbox_text(WorkerState::BlockedPermission, &on(HarnessId::Opencode)),
+            Some(
+                "Worker w1 is waiting for a permission answer. Answer it with reply and an optionId."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            inbox_text(WorkerState::BlockedPermission, &on(HarnessId::Cursor)),
+            None
+        );
+    }
 }

@@ -381,4 +381,17 @@ mod tests {
         let json = serde_json::to_string(&saved).unwrap();
         assert_eq!(serde_json::from_str::<SavedWatch>(&json).unwrap(), saved);
     }
+
+    #[test]
+    fn tied_wake_and_timeout_deadlines_report_a_clean_exit() {
+        let saved = persistent("sleep 20", Some(20));
+        let plan = plan_restore(&[saved], at(25), DEFAULT);
+        assert!(matches!(
+            plan.as_slice(),
+            [RestoreAction::Report {
+                outcome: WatchOutcome::Exited(0),
+                ..
+            }]
+        ));
+    }
 }

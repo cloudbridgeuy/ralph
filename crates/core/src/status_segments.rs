@@ -863,4 +863,38 @@ mod tests {
         let store = all.iter().find(|s| s.priority == STORE_PRIORITY).unwrap();
         assert_eq!(store.variants, ["chat"]);
     }
+
+    #[test]
+    fn only_mode_and_cost_segments_are_bold() {
+        assert!(Kind::Mode(Mode::Idle).bold());
+        assert!(Kind::Cost(Mode::Idle).bold());
+        assert!(!Kind::Memory.bold());
+        assert!(!Kind::Store.bold());
+    }
+
+    #[test]
+    fn powerline_glue_to_the_fill_depends_on_the_segment_background() {
+        let coloured = Edge::Seg(Kind::Mode(Mode::Work));
+        let plain = Edge::Seg(Kind::Memory);
+        assert!(glue(Separator::Powerline, Side::Left, coloured, Edge::Fill).is_some());
+        assert!(glue(Separator::Powerline, Side::Left, plain, Edge::Fill).is_none());
+        assert!(glue(Separator::Powerline, Side::Left, Edge::Fill, plain).is_none());
+    }
+
+    #[test]
+    fn right_side_has_no_trailing_glue() {
+        let segments = vec![Segment {
+            variants: vec!["x".into()],
+            priority: 1,
+            side: Side::Right,
+            kind: Kind::Cost(Mode::Work),
+        }];
+        let placed = [Placed {
+            segment: 0,
+            variant: 0,
+        }];
+        let spans = side_spans(&segments, &placed, Side::Right, Separator::Powerline);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[1].text, " x ");
+    }
 }

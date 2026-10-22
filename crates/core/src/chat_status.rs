@@ -870,4 +870,17 @@ mod tests {
         let lines = vec!["abcdefgh".to_string(), "ééééééé".to_string()];
         assert_eq!(memory_size(2, &lines), Memory { msgs: 2, tokens: 3 });
     }
+
+    #[test]
+    fn memory_size_floors_chars_over_four() {
+        let lines = vec!["abcdefgh".to_string()];
+        assert_eq!(memory_size(1, &lines), Memory { msgs: 1, tokens: 2 });
+    }
+
+    #[test]
+    fn tokens_label_switches_to_k_at_one_thousand() {
+        assert_eq!(tokens_label(999), "999");
+        assert_eq!(tokens_label(1000), "1.0k");
+        assert_eq!(tokens_label(12_345), "12.3k");
+    }
 }
