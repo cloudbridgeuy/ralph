@@ -39,6 +39,10 @@ pub struct SpawnRequest {
     pub snapshots: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fast: Option<bool>,
 }
 
 #[cfg(test)]
@@ -55,6 +59,8 @@ mod tests {
             at: 7,
             snapshots: true,
             model: Some("gpt-5".into()),
+            reasoning_effort: Some("low".into()),
+            fast: Some(false),
         };
         let text = serde_json::to_string(&request).unwrap();
         assert_eq!(
@@ -64,6 +70,16 @@ mod tests {
         let bare = r#"{"worktree":"/w","exe":"/bin/ralph","inbox":"/s/inbox","task":"do it","at":7,"snapshots":false}"#;
         assert_eq!(
             serde_json::from_str::<SpawnRequest>(bare).unwrap().model,
+            None
+        );
+        assert_eq!(
+            serde_json::from_str::<SpawnRequest>(bare)
+                .unwrap()
+                .reasoning_effort,
+            None
+        );
+        assert_eq!(
+            serde_json::from_str::<SpawnRequest>(bare).unwrap().fast,
             None
         );
     }

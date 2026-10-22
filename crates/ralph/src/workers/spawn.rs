@@ -13,9 +13,10 @@ use ralph_core::worker::{
     project_slug, resolve_claude_model, resolve_cursor_model, resolve_opencode_model,
     rollback_plan, rollback_report, session_name, spawn_handoff, startup_state, worker_command,
     worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs,
-    Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest,
-    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    CursorModelSources, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback,
+    SpawnFootprint, SpawnRequest, Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR,
+    CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
+    TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -33,7 +34,7 @@ impl Workers {
         id: &str,
         task: &str,
         harness: HarnessId,
-        model: Option<&str>,
+        model: &WorkerModel<'_>,
     ) -> io::Result<String> {
         let started = self.start(id, task, harness, model);
         self.mark_sent(id, started)
@@ -44,7 +45,7 @@ impl Workers {
         id: &str,
         task: &str,
         harness: HarnessId,
-        model: Option<&str>,
+        model: &WorkerModel<'_>,
     ) -> io::Result<String> {
         let repo = repo_root()?;
         let project = project_slug(&repo);
@@ -84,31 +85,53 @@ impl Workers {
         .flatten();
         let site = snapshots_enabled(config.as_ref().ok().map(|config| config.changes.enabled))
             .then(|| self.site(id, &worktree));
-        let (model, model_warning) = match harness {
+        let (model, reasoning_effort, fast, model_warning) = match harness {
             HarnessId::Opencode => {
                 let (model, warning) = resolve_opencode_model(
-                    model,
+                    model.model,
                     config
                         .as_ref()
                         .map(|config| config.opencode.model.as_deref())
                         .map_err(String::as_str),
                 );
-                (Some(model), warning)
+                (Some(model), None, None, warning)
             }
-            HarnessId::Claude => resolve_claude_model(
-                model,
-                config
-                    .as_ref()
-                    .map(|config| config.claude.model.as_deref())
-                    .map_err(String::as_str),
-            ),
-            HarnessId::Cursor => resolve_cursor_model(
-                model,
-                config
-                    .as_ref()
-                    .map(|config| config.cursor.model.as_deref())
-                    .map_err(String::as_str),
-            ),
+            HarnessId::Claude => {
+                let (model, warning) = resolve_claude_model(
+                    model.model,
+                    config
+                        .as_ref()
+                        .map(|config| config.claude.model.as_deref())
+                        .map_err(String::as_str),
+                );
+                (model, None, None, warning)
+            }
+            HarnessId::Cursor => {
+                let (resolved, warning) = resolve_cursor_model(&CursorModelSources {
+                    spawn_model: model.model,
+                    config_model: config
+                        .as_ref()
+                        .map(|config| config.cursor.model.as_deref())
+                        .map_err(String::as_str),
+                    spawn_effort: model.reasoning_effort,
+                    config_effort: config
+                        .as_ref()
+                        .map(|config| config.cursor.reasoning_effort.as_deref())
+                        .map_err(String::as_str),
+                    spawn_fast: model.fast,
+                    config_fast: config
+                        .as_ref()
+                        .map(|config| config.cursor.fast)
+                        .map_err(String::as_str),
+                })
+                .map_err(io::Error::other)?;
+                (
+                    resolved.model,
+                    resolved.reasoning_effort,
+                    resolved.fast,
+                    warning,
+                )
+            }
         };
         let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
         let launch = Launch {
@@ -116,6 +139,8 @@ impl Workers {
             task,
             harness,
             model: model.as_deref(),
+            reasoning_effort: reasoning_effort.as_deref(),
+            fast,
             worktree: &worktree,
             site: site.as_ref(),
             session: &session,
@@ -176,6 +201,8 @@ impl Workers {
             task,
             harness,
             model,
+            reasoning_effort: _,
+            fast: _,
             worktree,
             site,
             session,
@@ -266,6 +293,8 @@ impl Workers {
             at: now_secs(),
             snapshots: launch.site.is_some(),
             model: launch.model.map(str::to_string),
+            reasoning_effort: launch.reasoning_effort.map(str::to_string),
+            fast: launch.fast,
         };
         write_file(
             &files.spawn,
@@ -381,11 +410,19 @@ impl Workers {
     }
 }
 
+pub(crate) struct WorkerModel<'a> {
+    pub model: Option<&'a str>,
+    pub reasoning_effort: Option<&'a str>,
+    pub fast: Option<bool>,
+}
+
 struct Launch<'a> {
     id: &'a str,
     task: &'a str,
     harness: HarnessId,
     model: Option<&'a str>,
+    reasoning_effort: Option<&'a str>,
+    fast: Option<bool>,
     worktree: &'a Path,
     site: Option<&'a WorkerSite>,
     session: &'a str,

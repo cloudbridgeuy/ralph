@@ -92,26 +92,6 @@ pub fn acp_mcp_server(
     })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CursorModelChoice<'a> {
-    pub value: &'a str,
-    pub name: &'a str,
-}
-
-/// Value to send as the ACP `model` config option.
-/// An exact option value is kept. A request that matches exactly one option name
-/// becomes that option's value. Anything else is sent unchanged.
-pub fn cursor_model_value<'a>(requested: &'a str, choices: &[CursorModelChoice<'a>]) -> &'a str {
-    if choices.iter().any(|choice| choice.value == requested) {
-        return requested;
-    }
-    let mut named = choices.iter().filter(|choice| choice.name == requested);
-    match (named.next(), named.next()) {
-        (Some(choice), None) => choice.value,
-        _ => requested,
-    }
-}
-
 pub fn cursor_model_rejection(
     agent_name: &str,
     requested: &str,
@@ -127,41 +107,6 @@ pub fn cursor_model_rejection(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn cursor_model_value_prefers_an_exact_value_then_a_unique_name() {
-        let choices = [
-            CursorModelChoice {
-                value: "composer-2.5[fast=true]",
-                name: "composer-2.5",
-            },
-            CursorModelChoice {
-                value: "grok-4.7[fast=true]",
-                name: "grok-4.7",
-            },
-        ];
-        assert_eq!(
-            cursor_model_value("composer-2.5[fast=true]", &choices),
-            "composer-2.5[fast=true]"
-        );
-        assert_eq!(
-            cursor_model_value("composer-2.5", &choices),
-            "composer-2.5[fast=true]"
-        );
-        assert_eq!(cursor_model_value("not-a-model", &choices), "not-a-model");
-        assert_eq!(cursor_model_value("composer-2.5", &[]), "composer-2.5");
-        let ambiguous = [
-            CursorModelChoice {
-                value: "a[fast=true]",
-                name: "same",
-            },
-            CursorModelChoice {
-                value: "b[fast=true]",
-                name: "same",
-            },
-        ];
-        assert_eq!(cursor_model_value("same", &ambiguous), "same");
-    }
 
     #[test]
     fn cursor_model_rejection_prefers_the_agent_data_message() {

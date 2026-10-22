@@ -8,7 +8,6 @@ use crate::paths;
 use crate::status_theme::StatusTheme;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::inbox_alert::UnknownFocus;
-use ralph_core::worker::CursorPermissions;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -16,6 +15,7 @@ use std::path::PathBuf;
 mod changes;
 mod chat_settings;
 mod claude;
+mod cursor;
 mod empty_submit;
 mod opencode;
 #[cfg(test)]
@@ -25,6 +25,7 @@ mod reset_limits_tests;
 mod wire;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
+pub use cursor::CursorSection;
 pub use opencode::OpencodeSection;
 pub use wire::WireSection;
 
@@ -93,27 +94,6 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub wire: WireSection,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct CursorSection {
-    #[serde(default)]
-    pub permissions: Option<toml::Value>,
-    #[serde(default)]
-    pub model: Option<String>,
-}
-
-impl CursorSection {
-    pub fn permissions_setting(&self) -> (CursorPermissions, Option<String>) {
-        match self.permissions.as_ref().map(toml::Value::as_str) {
-            None | Some(Some("ask")) => (CursorPermissions::Ask, None),
-            Some(Some("yolo")) => (CursorPermissions::Yolo, None),
-            Some(_) => (
-                CursorPermissions::Ask,
-                Some("[cursor] permissions must be \"ask\" or \"yolo\"; using \"ask\"".to_string()),
-            ),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -542,49 +522,6 @@ mod tests {
             assert_eq!(config.chat.wrap_width, Some(80));
             let (argv, warning) = config.chat.editor_setting();
             assert_eq!(argv, None);
-            assert!(warning.is_some());
-        }
-    }
-
-    #[test]
-    fn cursor_model_parses_and_defaults_to_unset() {
-        let config: AppConfig = toml::from_str("[cursor]\nmodel = \"gpt-5\"\n").unwrap();
-        assert_eq!(config.cursor.model.as_deref(), Some("gpt-5"));
-        assert_eq!(AppConfig::new().cursor.model, None);
-    }
-
-    #[test]
-    fn cursor_permissions_parse_and_default_to_ask() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("config.toml");
-        for (value, mode) in [
-            ("yolo", CursorPermissions::Yolo),
-            ("ask", CursorPermissions::Ask),
-        ] {
-            fs::write(&path, format!("[cursor]\npermissions = \"{value}\"\n")).unwrap();
-            let config = AppConfig::load_from(&path).unwrap();
-            assert_eq!(config.cursor.permissions_setting(), (mode, None));
-        }
-        assert_eq!(
-            AppConfig::new().cursor.permissions_setting(),
-            (CursorPermissions::Ask, None)
-        );
-    }
-
-    #[test]
-    fn cursor_permissions_wrong_value_warns_and_keeps_other_keys() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("config.toml");
-        for value in ["\"always\"", "true", "[1]"] {
-            fs::write(
-                &path,
-                format!("[cursor]\npermissions = {value}\n[chat]\nwrap_width = 80\n"),
-            )
-            .unwrap();
-            let config = AppConfig::load_from(&path).unwrap();
-            assert_eq!(config.chat.wrap_width, Some(80));
-            let (mode, warning) = config.cursor.permissions_setting();
-            assert_eq!(mode, CursorPermissions::Ask);
             assert!(warning.is_some());
         }
     }

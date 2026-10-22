@@ -18,7 +18,9 @@ pub fn command_definitions() -> [Value; 4] {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": "Agent to run. Default claude. cursor runs headless without a tmux session; a reply to it is delivered as a new prompt between its turns, or answers a waiting permission request. It resumes after a chat restart."},
-                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default."}
+                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default."},
+                    "reasoning_effort": {"type": "string", "description": "cursor only. Overrides [cursor] reasoning_effort. Applied only when that parameter is advertised for the model; otherwise the spawn fails."},
+                    "fast": {"type": "boolean", "description": "cursor only. Overrides [cursor] fast. Applied only when fast is advertised for the model; otherwise the spawn fails."}
                 },
                 "required": ["id", "task"]
             }
@@ -57,12 +59,14 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
     let parsed = match name {
         "spawn_worker" => string_arg(args, "task").and_then(|task| {
             let id = worker_id(args)?;
-            let (harness, model) = harness(args)?;
+            let spawn = harness(args)?;
             Ok(Command::Spawn {
                 id,
                 task,
-                harness,
-                model,
+                harness: spawn.harness,
+                model: spawn.model,
+                reasoning_effort: spawn.reasoning_effort,
+                fast: spawn.fast,
             })
         }),
         "reply" => string_arg(args, "text").and_then(|text| {
@@ -115,9 +119,41 @@ fn harness_choices() -> String {
     }
 }
 
-fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
+struct ParsedSpawn {
+    harness: HarnessId,
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+    fast: Option<bool>,
+}
+
+fn optional_bool(args: &Value, name: &str) -> Result<Option<bool>, String> {
+    match args.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        Some(_) => Err(format!("{name} must be true or false.")),
+    }
+}
+
+fn optional_token(args: &Value, name: &str) -> Result<Option<String>, String> {
+    match args.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value))
+            if !value.is_empty() && !value.chars().any(char::is_whitespace) =>
+        {
+            Ok(Some(value.clone()))
+        }
+        Some(Value::String(value)) => Err(format!(
+            "{name} '{value}' must be non-empty with no whitespace."
+        )),
+        Some(_) => Err(format!("{name} must be a string.")),
+    }
+}
+
+fn harness(args: &Value) -> Result<ParsedSpawn, String> {
     let model = args.get("model").and_then(Value::as_str);
-    match (args.get("harness").and_then(Value::as_str), model) {
+    let reasoning_effort = optional_token(args, "reasoning_effort")?;
+    let fast = optional_bool(args, "fast")?;
+    let (harness, model) = match (args.get("harness").and_then(Value::as_str), model) {
         (None | Some("claude"), None) => Ok((HarnessId::Claude, None)),
         (None | Some("claude"), Some(model)) => {
             if capabilities(HarnessId::Claude).support(Feature::Model) == Support::None {
@@ -155,7 +191,18 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
             "Unknown harness '{other}'. Use {}.",
             harness_choices()
         )),
+    }?;
+    if harness != HarnessId::Cursor && (reasoning_effort.is_some() || fast.is_some()) {
+        return Err(
+            "reasoning_effort and fast are only supported for the cursor harness.".to_string(),
+        );
     }
+    Ok(ParsedSpawn {
+        harness,
+        model,
+        reasoning_effort,
+        fast,
+    })
 }
 
 #[cfg(test)]
@@ -170,7 +217,9 @@ mod tests {
                 id: "GUZ-1".into(),
                 task: "fix it".into(),
                 harness: HarnessId::Claude,
-                model: None
+                model: None,
+                reasoning_effort: None,
+                fast: None,
             }))
         );
         assert_eq!(
@@ -286,6 +335,29 @@ mod tests {
             spawn_harness(json!({"harness": "cursor", "model": "gpt-5"})),
             Ok((HarnessId::Cursor, Some("gpt-5".into())))
         );
+    }
+
+    #[test]
+    fn spawn_harness_accepts_cursor_effort_and_fast_only_for_cursor() {
+        match parse_command(
+            "spawn_worker",
+            &json!({"id": "A", "task": "t", "harness": "cursor", "model": "grok-4.7", "reasoning_effort": "low", "fast": false}),
+        ) {
+            Some(Ok(Command::Spawn {
+                reasoning_effort,
+                fast,
+                ..
+            })) => {
+                assert_eq!(reasoning_effort.as_deref(), Some("low"));
+                assert_eq!(fast, Some(false));
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(spawn_harness(json!({"harness": "claude", "reasoning_effort": "low"})).is_err());
+        assert!(
+            spawn_harness(json!({"harness": "cursor", "reasoning_effort": "low effort"})).is_err()
+        );
+        assert!(spawn_harness(json!({"harness": "cursor", "fast": "false"})).is_err());
     }
 
     #[test]
