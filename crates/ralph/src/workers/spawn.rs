@@ -10,12 +10,12 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
-    project_slug, resolve_claude_model, resolve_opencode_model, rollback_plan, rollback_report,
-    session_name, spawn_handoff, startup_state, worker_command, worker_mcp_args, worker_mcp_config,
-    worktree_add_args, wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId,
-    OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest, Startup, WorkerMarkers,
-    WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    project_slug, resolve_claude_model, resolve_cursor_model, resolve_opencode_model,
+    rollback_plan, rollback_report, session_name, spawn_handoff, startup_state, worker_command,
+    worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs,
+    Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest,
+    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION,
+    INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -102,7 +102,13 @@ impl Workers {
                     .map(|config| config.claude.model.as_deref())
                     .map_err(String::as_str),
             ),
-            HarnessId::Cursor => (None, None),
+            HarnessId::Cursor => resolve_cursor_model(
+                model,
+                config
+                    .as_ref()
+                    .map(|config| config.cursor.model.as_deref())
+                    .map_err(String::as_str),
+            ),
         };
         let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
         let launch = Launch {
@@ -207,7 +213,7 @@ impl Workers {
                 ));
             }
             HarnessId::Cursor => {
-                self.spawn_cursor(id, worktree, task, site.is_some())?;
+                self.spawn_cursor(launch)?;
                 return Ok(format!(
                     "{started} It runs headless inside ralph chat (no tmux session)."
                 ));
@@ -246,24 +252,20 @@ impl Workers {
         }
     }
 
-    fn spawn_cursor(
-        &self,
-        id: &str,
-        worktree: &Path,
-        task: &str,
-        snapshots: bool,
-    ) -> io::Result<()> {
+    fn spawn_cursor(&self, launch: &Launch) -> io::Result<()> {
+        let id = launch.id;
         let files = HandoffFiles::cursor(&self.store_dir, id);
         for path in files.all() {
             clear_marker(path)?;
         }
         let request = SpawnRequest {
-            worktree: worktree.to_path_buf(),
+            worktree: launch.worktree.to_path_buf(),
             exe: self.exe.clone(),
             inbox: self.store_dir.join(INBOX_DIR),
-            task: task.to_string(),
+            task: launch.task.to_string(),
             at: now_secs(),
-            snapshots,
+            snapshots: launch.site.is_some(),
+            model: launch.model.map(str::to_string),
         };
         write_file(
             &files.spawn,

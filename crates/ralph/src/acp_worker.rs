@@ -43,6 +43,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod model;
 mod permissions;
 mod turns;
 
@@ -127,6 +128,7 @@ struct Opening {
     server: McpServer,
     loading: Arc<AtomicBool>,
     worker_id: String,
+    model: Option<String>,
 }
 
 async fn open_session(
@@ -135,15 +137,24 @@ async fn open_session(
     loads_session: bool,
 ) -> Result<SessionId, String> {
     match &opening.launch {
-        Launch::Fresh { .. } => connection
-            .send_request(
-                NewSessionRequest::new(opening.cwd.clone())
-                    .mcp_servers(vec![opening.server.clone()]),
+        Launch::Fresh { .. } => {
+            let created = connection
+                .send_request(
+                    NewSessionRequest::new(opening.cwd.clone())
+                        .mcp_servers(vec![opening.server.clone()]),
+                )
+                .block_task()
+                .await
+                .map_err(|e| session_error(&opening.agent, i32::from(e.code), &e.message))?;
+            model::apply_model(
+                connection,
+                opening,
+                &created.session_id,
+                created.config_options.as_deref(),
             )
-            .block_task()
-            .await
-            .map(|created| created.session_id)
-            .map_err(|e| session_error(&opening.agent, i32::from(e.code), &e.message)),
+            .await?;
+            Ok(created.session_id)
+        }
         Launch::Resume { record, store } => {
             if let Resume::Skip(message) = resume_decision(
                 &opening.agent,
@@ -164,12 +175,20 @@ async fn open_session(
                 .block_task()
                 .await;
             opening.loading.store(false, Ordering::SeqCst);
-            loaded.map(|_| session).map_err(|e| {
+            let loaded = loaded.map_err(|e| {
                 format!(
                     "{} session {} could not be loaded: {}",
                     opening.agent.name, opening.worker_id, e.message
                 )
-            })
+            })?;
+            model::apply_model(
+                connection,
+                opening,
+                &session,
+                loaded.config_options.as_deref(),
+            )
+            .await?;
+            Ok(session)
         }
     }
 }
@@ -291,6 +310,7 @@ impl AcpWorker {
         let ended = Arc::clone(&closing);
         let opened = Arc::new(AtomicBool::new(false));
         let was_opened = Arc::clone(&opened);
+        let session_model = request.model.clone();
         thread::spawn(move || {
             let failed = ready_tx.clone();
             let transport = ByteStreams::new(
@@ -355,6 +375,7 @@ impl AcpWorker {
                             server,
                             loading,
                             worker_id: worker_id.clone(),
+                            model: session_model,
                         };
                         let loads = init.agent_capabilities.load_session;
                         match open_session(&connection, &opening, loads).await {
@@ -558,6 +579,9 @@ pub struct CursorHost {
 
 impl CursorHost {
     pub fn new(store_dir: PathBuf) -> Arc<Self> {
+        if let Err(error) = model::repair_saved_cursor_default() {
+            warn(format!("cursor model default was not restored: {error}"));
+        }
         for id in request_ids(&store_dir, CURSOR_OWNER_DIR) {
             sweep_owner(&store_dir, &id);
         }
@@ -751,6 +775,7 @@ impl CursorHost {
                 cwd: request.worktree.clone(),
                 inbox: request.inbox.clone(),
                 store: Some(self.store_dir.clone()),
+                model: request.model.clone(),
             },
         };
         match self.launch(id, &request, launch) {
@@ -842,6 +867,7 @@ impl CursorHost {
             snapshots: snapshots_enabled(
                 AppConfig::load().ok().map(|config| config.changes.enabled),
             ),
+            model: record.model.clone(),
         };
         let launch = Launch::Resume {
             record,

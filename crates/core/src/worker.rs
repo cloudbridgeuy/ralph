@@ -8,6 +8,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 mod acp;
+mod cursor_model;
 mod files;
 mod headless;
 mod hooks;
@@ -19,6 +20,11 @@ mod ownership;
 mod rollback;
 mod worktree;
 pub use acp::*;
+pub use cursor_model::{
+    cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,
+    restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,
+    CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
+};
 pub use files::*;
 pub use headless::*;
 pub use hooks::*;
@@ -55,8 +61,16 @@ pub fn is_model_id(model: &str) -> bool {
     matches!(model.split_once('/'), Some((provider, name)) if !provider.is_empty() && !name.is_empty())
 }
 
-pub fn is_claude_model(model: &str) -> bool {
+fn is_token_model(model: &str) -> bool {
     !model.is_empty() && !model.chars().any(char::is_whitespace)
+}
+
+pub fn is_claude_model(model: &str) -> bool {
+    is_token_model(model)
+}
+
+pub fn is_cursor_model(model: &str) -> bool {
+    is_token_model(model)
 }
 
 pub fn resolve_claude_model(

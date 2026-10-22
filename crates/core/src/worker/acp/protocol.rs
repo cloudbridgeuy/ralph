@@ -92,9 +92,38 @@ pub fn acp_mcp_server(
     })
 }
 
+pub fn cursor_model_rejection(
+    agent_name: &str,
+    requested: &str,
+    message: &str,
+    data_message: Option<&str>,
+) -> String {
+    let detail = data_message
+        .filter(|text| !text.is_empty())
+        .unwrap_or(message);
+    format!("{agent_name} agent rejected model '{requested}': {detail}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cursor_model_rejection_prefers_the_agent_data_message() {
+        assert_eq!(
+            cursor_model_rejection(
+                "cursor",
+                "composer-2.5",
+                "Invalid params",
+                Some("Invalid model value: composer-2.5")
+            ),
+            "cursor agent rejected model 'composer-2.5': Invalid model value: composer-2.5"
+        );
+        assert_eq!(
+            cursor_model_rejection("cursor", "x", "Invalid params", Some("")),
+            "cursor agent rejected model 'x': Invalid params"
+        );
+    }
 
     #[test]
     fn version_output_is_parsed_without_the_build_hash() {

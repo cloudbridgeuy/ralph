@@ -37,6 +37,8 @@ pub struct SpawnRequest {
     pub task: String,
     pub at: u64,
     pub snapshots: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 #[cfg(test)]
@@ -52,11 +54,17 @@ mod tests {
             task: "do it".into(),
             at: 7,
             snapshots: true,
+            model: Some("gpt-5".into()),
         };
         let text = serde_json::to_string(&request).unwrap();
         assert_eq!(
             serde_json::from_str::<SpawnRequest>(&text).unwrap(),
             request
+        );
+        let bare = r#"{"worktree":"/w","exe":"/bin/ralph","inbox":"/s/inbox","task":"do it","at":7,"snapshots":false}"#;
+        assert_eq!(
+            serde_json::from_str::<SpawnRequest>(bare).unwrap().model,
+            None
         );
     }
 }

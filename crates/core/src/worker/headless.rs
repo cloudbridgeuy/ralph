@@ -70,11 +70,10 @@ impl Capabilities {
         match (self.harness, feature) {
             (HarnessId::Claude, Model) => Full,
             (HarnessId::Claude, _) => Support::None,
-            (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report) => Full,
+            (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report | Model) => Full,
             (HarnessId::Cursor, Interrupt) => Partial("outcome unknown after 30 s"),
             (HarnessId::Cursor, PermYolo) => Partial("global config, not per spawn"),
             (HarnessId::Cursor, Resume) => Partial("only if agent supports session/load"),
-            (HarnessId::Cursor, Model) => Support::None,
             (HarnessId::Cursor, Close) => Partial("cli-config.json not restored"),
             (HarnessId::Cursor, Heartbeat) => {
                 Partial("ACP traffic only; exit seen by polling the child every 250 ms")
@@ -366,29 +365,37 @@ mod tests {
     fn model_refusal_names_accepting_harnesses() {
         assert_eq!(
             model_refusal(HarnessId::Cursor),
-            "cursor does not accept a model; harnesses that do: claude, opencode"
+            "cursor does not accept a model; harnesses that do: claude, opencode, cursor"
         );
     }
 
     #[test]
-    fn decide_refuses_cursor_model_with_model_refusal() {
+    fn decide_accepts_a_cursor_model() {
         let spec = SpawnSpec {
-            model: Some("x/y".into()),
+            model: Some("gpt-5".into()),
         };
         assert_eq!(
-            decide(&capabilities(HarnessId::Cursor), WorkerCommand::Spawn(spec)),
-            Err(WorkerEvent::Unsupported {
-                feature: Feature::Model,
-                reason: model_refusal(HarnessId::Cursor),
-            })
+            decide(
+                &capabilities(HarnessId::Cursor),
+                WorkerCommand::Spawn(spec.clone())
+            ),
+            Ok(WorkerCommand::Spawn(spec))
         );
     }
 
     #[test]
-    fn describe_keeps_generic_wording_for_unsupported_model() {
+    fn describe_reports_cursor_model_as_full() {
         assert_eq!(
             describe(&capabilities(HarnessId::Cursor), Feature::Model),
-            "cursor model: not supported"
+            "cursor model: full"
+        );
+    }
+
+    #[test]
+    fn describe_keeps_generic_wording_for_unsupported_features() {
+        assert_eq!(
+            describe(&capabilities(HarnessId::Claude), Feature::Spawn),
+            "claude spawn: not supported"
         );
     }
 
