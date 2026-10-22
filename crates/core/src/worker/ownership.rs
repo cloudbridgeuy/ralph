@@ -159,6 +159,10 @@ pub enum CloseStep {
     ClearMarkers,
 }
 
+pub fn session_survived_kill(kill_ok: bool, listed: Option<bool>) -> bool {
+    listed.unwrap_or(!kill_ok)
+}
+
 pub fn close_plan(
     state: &CloseState,
     abandon: bool,
@@ -307,6 +311,14 @@ mod tests {
             markers: false,
             kind: HarnessId::Claude,
         }
+    }
+
+    #[test]
+    fn session_survival_trusts_the_listing_else_the_kill_result() {
+        assert!(session_survived_kill(true, Some(true)));
+        assert!(!session_survived_kill(false, Some(false)));
+        assert!(session_survived_kill(false, None));
+        assert!(!session_survived_kill(true, None));
     }
 
     #[test]

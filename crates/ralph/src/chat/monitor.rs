@@ -1,6 +1,6 @@
 use crate::chat::check::CheckState;
 use crate::chat::memory::Store;
-use crate::cursor_owner::now_secs;
+use crate::cursor_owner::{now_secs, write_file};
 use crate::inbox_alert;
 use crate::signal;
 use crate::subprocess::Session;
@@ -21,8 +21,8 @@ use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
-    marker_state, ready_path, rearm, reduce, sent_path, unreported_path, waiting_path, HarnessId,
-    Report, HANDOFF_POLL, READY_DIR,
+    marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
+    vanished_claude, waiting_path, HarnessId, Report, Scope, HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -122,21 +122,27 @@ impl Monitor {
 
     fn heartbeats(&self, state: &mut CheckState, running: &[RunningWorker]) -> Vec<CheckAction> {
         state
-            .heartbeats
-            .retain(|id, _| running.iter().any(|worker| &worker.id == id));
+            .claude_dead
+            .retain(|id| gone_path(&self.store_dir, id).exists());
+        state.heartbeats.retain(|id, _| {
+            state.claude_dead.contains(id) || running.iter().any(|worker| &worker.id == id)
+        });
         let now = now_secs();
         let mut alerts = Vec::new();
-        for worker in running
+        let ids: Vec<String> = running
             .iter()
             .filter(|w| matches!(w.kind, HarnessId::Cursor | HarnessId::Opencode))
-        {
+            .map(|w| w.id.clone())
+            .chain(state.claude_dead.iter().cloned())
+            .collect();
+        for id in &ids {
             let read = |path: PathBuf| std::fs::read_to_string(path).ok();
-            let activity = read(activity_path(&self.store_dir, &worker.id));
-            let gone = read(gone_path(&self.store_dir, &worker.id));
-            let blocked = blocked_path(&self.store_dir, &worker.id).exists();
+            let activity = read(activity_path(&self.store_dir, id));
+            let gone = read(gone_path(&self.store_dir, id));
+            let blocked = blocked_path(&self.store_dir, id).exists();
             let (phase, events) = marker_state(activity.as_deref(), gone.as_deref(), blocked);
             let mut current = rearm(
-                state.heartbeats.remove(&worker.id).unwrap_or_default(),
+                state.heartbeats.remove(id).unwrap_or_default(),
                 gone.is_some(),
             );
             current.phase = phase;
@@ -145,10 +151,10 @@ impl Monitor {
             }
             let (next, alert) = liveness(&current, now, self.worker_quiet_secs);
             if gone_acknowledged(&next) {
-                std::fs::remove_file(gone_path(&self.store_dir, &worker.id)).ok();
+                std::fs::remove_file(gone_path(&self.store_dir, id)).ok();
             }
-            state.heartbeats.insert(worker.id.clone(), next);
-            alerts.extend(alert.map(|alert| (worker.id.clone(), alert)));
+            state.heartbeats.insert(id.clone(), next);
+            alerts.extend(alert.map(|alert| (id.clone(), alert)));
         }
         group_alerts(alerts)
             .into_iter()
@@ -170,6 +176,20 @@ impl Monitor {
             state
                 .nudges
                 .retain(|id, _| running.iter().any(|worker| &worker.id == id));
+            let alive: HashSet<String> = running
+                .iter()
+                .filter(|worker| matches!(worker.kind, HarnessId::Claude))
+                .map(|worker| worker.id.clone())
+                .collect();
+            for id in vanished_claude(&state.claude_alive, &alive, &ready_ids(&self.store_dir)) {
+                let marked = write_file(
+                    &gone_path(&self.store_dir, &id),
+                    &render_gone(&Scope::Worker, "tmux session ended"),
+                );
+                warn_if_err(marked, format!("marking worker {id} gone"));
+                state.claude_dead.insert(id);
+            }
+            state.claude_alive = alive;
             let (mut actions, memory) = plan(&state.memory, &observations);
             state.memory = memory;
             actions.extend(self.heartbeats(&mut state, &running));

@@ -1,6 +1,6 @@
 use super::{HeadlessState, Liveness, Phase, Scope, WorkerEvent};
 use crate::worker::{parse_gone, ActivityMark};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlertKind {
@@ -102,6 +102,20 @@ pub fn gone_acknowledged(state: &HeadlessState) -> bool {
                 ..
             }
         )
+}
+
+pub fn vanished_claude(
+    was_alive: &HashSet<String>,
+    alive_now: &HashSet<String>,
+    ready: &[String],
+) -> Vec<String> {
+    ready
+        .iter()
+        .filter(|id| was_alive.contains(*id) && !alive_now.contains(*id))
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub fn rearm(state: HeadlessState, gone: bool) -> HeadlessState {
@@ -333,5 +347,27 @@ mod tests {
                 }
             ]
         );
+    }
+
+    fn ids(items: &[&str]) -> HashSet<String> {
+        items.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn vanished_claude_returns_sorted_ready_sessions_that_disappeared() {
+        let ready = vec!["C".to_string(), "A".to_string()];
+        assert_eq!(
+            vanished_claude(&ids(&["A", "C"]), &ids(&[]), &ready),
+            vec!["A".to_string(), "C".to_string()]
+        );
+    }
+
+    #[test]
+    fn vanished_claude_ignores_clean_close_alive_and_new_ids() {
+        let ready = vec!["A".to_string(), "B".to_string(), "N".to_string()];
+        assert!(vanished_claude(&ids(&["X"]), &ids(&[]), &ready).is_empty());
+        assert!(vanished_claude(&ids(&["A"]), &ids(&["A"]), &ready).is_empty());
+        assert!(vanished_claude(&ids(&[]), &ids(&["N"]), &ready).is_empty());
+        assert!(vanished_claude(&ids(&["B"]), &ids(&[]), &[]).is_empty());
     }
 }

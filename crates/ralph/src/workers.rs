@@ -11,11 +11,11 @@ use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
     interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
-    parse_interrupt_result, project_slug, prompt_entry_name, resolve_worktree_dir, sent_path,
-    session_name, session_owner, tagged_sessions, worktree_for_branch, worktree_path, CloseState,
-    CloseStep, Handoff, HandoffFiles, HarnessId, Owner, Sweep, TaggedSession, WorktreeDir,
-    HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT,
-    WORKTREE_DIR_ENV,
+    parse_interrupt_result, project_slug, prompt_entry_name, ready_path, resolve_worktree_dir,
+    sent_path, session_name, session_owner, session_survived_kill, tagged_sessions,
+    worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff, HandoffFiles, HarnessId,
+    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
+    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -329,7 +329,18 @@ impl Workers {
                 }
             }
             CloseStep::KillSession(session) => {
-                run(Command::new("tmux").args(["kill-session", "-t", &format!("={session}")]))?;
+                let ready = ready_path(&self.store_dir, id);
+                clear_marker(&ready)?;
+                let killed =
+                    run(Command::new("tmux").args(["kill-session", "-t", &format!("={session}")]));
+                if session_survived_kill(killed.is_ok(), spawn::session_exists(session).ok()) {
+                    write_file(&ready, "")?;
+                    killed?;
+                    return Err(io::Error::other(format!(
+                        "tmux session {session} is still alive after kill-session"
+                    )));
+                }
+                killed?;
             }
             CloseStep::RemoveWorktree { force } => {
                 let mut remove = git();

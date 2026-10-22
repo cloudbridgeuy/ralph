@@ -485,7 +485,7 @@ fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
     Ok(false)
 }
 
-fn session_exists(session: &str) -> io::Result<bool> {
+pub(super) fn session_exists(session: &str) -> io::Result<bool> {
     Ok(Command::new("tmux")
         .args(["has-session", "-t", &format!("={session}")])
         .stderr(Stdio::null())

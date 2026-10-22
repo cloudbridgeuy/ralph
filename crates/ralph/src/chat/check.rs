@@ -1,7 +1,7 @@
 use crate::chat::memory::Store;
 use ralph_core::worker::HeadlessState;
 use ralph_core::worker_check::{logged_reports, CheckMemory};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub struct CheckState {
@@ -10,6 +10,8 @@ pub struct CheckState {
     pub nudges: HashMap<String, Option<String>>,
     pub reports: HashMap<String, String>,
     pub heartbeats: HashMap<String, HeadlessState>,
+    pub claude_alive: HashSet<String>,
+    pub claude_dead: HashSet<String>,
 }
 
 impl CheckState {
