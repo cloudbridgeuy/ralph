@@ -28,6 +28,8 @@ pub struct SessionRecord {
     pub inbox: PathBuf,
     #[serde(default)]
     pub store: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl SessionRecord {
@@ -114,6 +116,7 @@ mod tests {
             cwd: PathBuf::from("/w"),
             inbox: PathBuf::from("/store/inbox"),
             store: store.map(PathBuf::from),
+            model: None,
         }
     }
 
@@ -121,8 +124,13 @@ mod tests {
     fn session_record_round_trips_and_old_records_have_no_owner() {
         let owned = record(Some("/store"));
         assert_eq!(SessionRecord::parse(&owned.render()), Some(owned));
+        let mut with_model = record(Some("/store"));
+        with_model.model = Some("gpt-5".into());
+        assert_eq!(SessionRecord::parse(&with_model.render()), Some(with_model));
         let bare = r#"{"session_id":"s1","cwd":"/w","inbox":"/i"}"#;
-        assert_eq!(SessionRecord::parse(bare).map(|r| r.store), Some(None));
+        let parsed = SessionRecord::parse(bare).unwrap();
+        assert_eq!(parsed.store, None);
+        assert_eq!(parsed.model, None);
         assert_eq!(SessionRecord::parse("nope"), None);
     }
 

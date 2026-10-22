@@ -1,6 +1,7 @@
 use super::{
-    capabilities, decide, is_claude_model, is_model_id, model_refusal, Command, Feature, HarnessId,
-    SpawnSpec, Support, WorkerCommand, WorkerEvent, CURSOR_HARNESS, OPENCODE_HARNESS,
+    capabilities, decide, is_claude_model, is_cursor_model, is_model_id, model_refusal, Command,
+    Feature, HarnessId, SpawnSpec, Support, WorkerCommand, WorkerEvent, CURSOR_HARNESS,
+    OPENCODE_HARNESS,
 };
 use crate::mcp::string_arg;
 use crate::watch_request::parse_watch_args;
@@ -17,7 +18,7 @@ pub fn command_definitions() -> [Value; 4] {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": "Agent to run. Default claude. cursor runs headless without a tmux session; a reply to it is delivered as a new prompt between its turns, or answers a waiting permission request. It resumes after a chat restart."},
-                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor does not accept a model."}
+                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default."}
                 },
                 "required": ["id", "task"]
             }
@@ -144,7 +145,10 @@ fn harness(args: &Value) -> Result<(HarnessId, Option<String>), String> {
             match decide(&capabilities(HarnessId::Cursor), WorkerCommand::Spawn(spec)) {
                 Err(WorkerEvent::Unsupported { reason, .. }) => Err(reason),
                 Err(other) => Err(format!("{other:?}")),
-                Ok(_) => Ok((HarnessId::Cursor, Some(model.to_string()))),
+                Ok(_) if is_cursor_model(model) => Ok((HarnessId::Cursor, Some(model.to_string()))),
+                Ok(_) => Err(format!(
+                    "Model '{model}' must be non-empty with no whitespace."
+                )),
             }
         }
         (Some(other), _) => Err(format!(
@@ -269,17 +273,18 @@ mod tests {
             json!({"harness": "opencode", "model": "gpt-6.1-sol"}),
             json!({"harness": "opencode", "model": "openai/"}),
             json!({"harness": "opencode", "model": "/sol"}),
+            json!({"harness": "cursor", "model": ""}),
+            json!({"harness": "cursor", "model": "two words"}),
         ] {
             assert!(spawn_harness(args.clone()).is_err(), "{args}");
         }
     }
 
     #[test]
-    fn spawn_harness_rejects_cursor_model_through_capabilities() {
-        let result = spawn_harness(json!({"harness": "cursor", "model": "x/y"}));
+    fn spawn_harness_accepts_a_cursor_model_when_the_capability_allows() {
         assert_eq!(
-            result,
-            Err("cursor does not accept a model; harnesses that do: claude, opencode".to_string())
+            spawn_harness(json!({"harness": "cursor", "model": "gpt-5"})),
+            Ok((HarnessId::Cursor, Some("gpt-5".into())))
         );
     }
 

@@ -237,8 +237,11 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `permissions` | `"ask"` or `"yolo"` | `"ask"` | `"yolo"` answers every Cursor `session/request_permission` with the allow-once option at once; `"ask"` waits for the person, except for the worker `report` tool |
+| `model` | string | unset (cursor's own default) | Model id for Cursor workers that `spawn_worker` starts without a `model`. Applied with `session/set_config_option`, not `agent --model` |
 
 `yolo` picks only the allow-once option, never allow-always, and writes nothing to `~/.cursor/cli-config.json`. A request with no allow-once option still waits for the person. Cursor's own rules (deny lists, sandbox) still apply. Risk: shell commands and MCP tools run without asking. A wrong value or type, or a config that fails to read, warns and uses `"ask"`. The key is read when a Cursor worker starts.
+
+A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses cursor's default. A config that fails to load warns and uses cursor's default. The key is read at each spawn. The child is `agent acp`. After `session/new`, and again after `session/load` when chat resumes the worker, ralph sets the session `model` option. A value equal to an option value is sent as-is. A value equal to exactly one option name is sent as that option's value, so an id from `agent --list-models` such as `composer-2.5` selects the parameterized value the agent lists. Any other string is sent unchanged, and the agent's rejection is the spawn error. `agent --model` does not change the ACP session model. The resolved string is stored on the session record and applied again on resume; a record with no model leaves the agent's current model alone.
 
 ### `[claude]` - Claude Workers
 

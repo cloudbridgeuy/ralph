@@ -99,6 +99,8 @@ pub struct AppConfig {
 pub struct CursorSection {
     #[serde(default)]
     pub permissions: Option<toml::Value>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 impl CursorSection {
@@ -542,6 +544,13 @@ mod tests {
             assert_eq!(argv, None);
             assert!(warning.is_some());
         }
+    }
+
+    #[test]
+    fn cursor_model_parses_and_defaults_to_unset() {
+        let config: AppConfig = toml::from_str("[cursor]\nmodel = \"gpt-5\"\n").unwrap();
+        assert_eq!(config.cursor.model.as_deref(), Some("gpt-5"));
+        assert_eq!(AppConfig::new().cursor.model, None);
     }
 
     #[test]
