@@ -27,6 +27,10 @@ use std::time::{Duration, Instant};
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STARTUP_POLL: Duration = Duration::from_millis(250);
 
+fn codex_not_implemented() -> io::Error {
+    io::Error::other("codex harness not implemented yet")
+}
+
 impl Workers {
     pub fn spawn(
         &self,
@@ -109,6 +113,7 @@ impl Workers {
                     .map(|config| config.cursor.model.as_deref())
                     .map_err(String::as_str),
             ),
+            HarnessId::Codex => (model.map(str::to_string), None),
         };
         let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
         let launch = Launch {
@@ -167,6 +172,7 @@ impl Workers {
             }
             HarnessId::Opencode => self.preflight_opencode(id),
             HarnessId::Cursor => require_on_path(CURSOR_AGENT.command),
+            HarnessId::Codex => Err(codex_not_implemented()),
         }
     }
 
@@ -218,6 +224,7 @@ impl Workers {
                     "{started} It runs headless inside ralph chat (no tmux session)."
                 ));
             }
+            HarnessId::Codex => return Err(codex_not_implemented()),
         };
         run(Command::new("tmux")
             .args(["new-session", "-d", "-s", session])
@@ -249,6 +256,7 @@ impl Workers {
             HarnessId::Cursor => HandoffFiles::cursor(&self.store_dir, launch.id)
                 .owner
                 .exists(),
+            HarnessId::Codex => false,
         }
     }
 

@@ -53,6 +53,7 @@ pub const ACTIVITY_DIR: &str = "activity";
 pub const GONE_DIR: &str = "gone";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-6.1-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
+pub const CODEX_HARNESS: &str = "codex";
 pub const STORE_OPTION: &str = "@ralph_store";
 pub const ID_OPTION: &str = "@ralph_id";
 pub const SESSION_FORMAT: &str = "#{session_name}\t#{@ralph_store}\t#{@ralph_id}";

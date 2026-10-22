@@ -31,7 +31,7 @@ impl Feature {
         Self::Heartbeat,
     ];
 
-    fn name(self) -> &'static str {
+    pub(super) fn name(self) -> &'static str {
         match self {
             Self::Spawn => "spawn",
             Self::Prompt => "prompt",
@@ -86,6 +86,28 @@ impl Capabilities {
             (HarnessId::Opencode, Close) => Partial("no home cleanup; shared server kept"),
             (HarnessId::Opencode, Heartbeat) => {
                 Partial("per-session SSE activity; one alert per shared-server death")
+            }
+            (HarnessId::Codex, Spawn | Report | Model) => Full,
+            (HarnessId::Codex, PermAsk) => {
+                Partial("only protocol-raised command, file and MCP requests")
+            }
+            (HarnessId::Codex, PermYolo) => {
+                Partial("single-request accepts only; turn and session grants stay pending")
+            }
+            (HarnessId::Codex, Resume) => {
+                Partial("needs saved history, owned worktree and a usable codex login")
+            }
+            (HarnessId::Codex, Prompt) => {
+                Partial("a reply during a turn is held until turn/completed")
+            }
+            (HarnessId::Codex, Interrupt) => {
+                Partial("tool process outlives turn/interrupt; no reply means outcome unknown")
+            }
+            (HarnessId::Codex, Close) => Partial(
+                "tool descendants can be orphaned; global trust entry left in ~/.codex/config.toml",
+            ),
+            (HarnessId::Codex, Heartbeat) => {
+                Partial("no frames while idle; exit seen as stdout EOF")
             }
         }
     }
@@ -365,7 +387,7 @@ mod tests {
     fn model_refusal_names_accepting_harnesses() {
         assert_eq!(
             model_refusal(HarnessId::Cursor),
-            "cursor does not accept a model; harnesses that do: claude, opencode, cursor"
+            "cursor does not accept a model; harnesses that do: claude, opencode, cursor, codex"
         );
     }
 

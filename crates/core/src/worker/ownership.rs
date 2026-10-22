@@ -206,8 +206,8 @@ pub fn close_plan(
     }
     match state.kind {
         HarnessId::Cursor => steps.push(CloseStep::TerminateCursor),
-        // Opencode shares one server across workers: end only this session.
         HarnessId::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
+        HarnessId::Codex => {}
         HarnessId::Claude => {
             if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
                 steps.push(CloseStep::KillSession(session.name.clone()));
