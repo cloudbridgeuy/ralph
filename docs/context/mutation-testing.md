@@ -31,6 +31,8 @@ cargo mutants --in-diff changes.diff -p ralph_core -j 2 --build-timeout 300
 cargo mutants --shard 1/10 -p ralph_core -j 2 --build-timeout 300
 ```
 
+`-f <file>` does not narrow the run when the config sets `examine_globs`: with cargo-mutants 27.1.0 it ran all 1,638 core mutants. Use `-F '^<path>:'` for a targeted file run.
+
 `--in-diff` mutates only lines touched by a diff, intersected with the configured scope. `--shard k/n` runs a deterministic slice, which is useful to sample timings or split a full run across sessions.
 
 ## Scope
@@ -125,11 +127,21 @@ After GUZ-618:
 | Deleted condition | `shell_format.rs:234` `\|\| open_group` was redundant |
 | Rerun `-F 'shell_format\.rs:234:'` | 18 mutants: 18 caught |
 | Excluded equivalents | 5 |
-| Deferred | 26 `shell_format.rs` survivors, [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811) |
+| Deferred | 26 `shell_format.rs` survivors, killed in [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811) |
 | Targeted rerun, cache tier `Display` and call sites | 32 mutants: 32 caught |
 | Scope after | 1,623 mutants |
 
 At a49420f the core scope is 1,627 mutants.
+
+After GUZ-811:
+
+| Item | Value |
+| --- | --- |
+| SHA | fd69fb5 |
+| Command | `cargo mutants -p ralph_core -j 2 --build-timeout 300 -F '^crates/core/src/shell_format\.rs:'` |
+| Before | 285 mutants listed (271 `shell_format.rs` + 14 struct "delete field" mutants from other files the regex does not filter), 16 min |
+| Before, results | 26 missed / 246 caught / 3 unviable / 10 timeouts |
+| Killed by new unit tests | 26 missed mutants |
 
 First full local ralph run (GUZ-619):
 
@@ -177,7 +189,7 @@ Do not use `#[mutants::skip]`, broad trait or default skips, or a score threshol
 
 The equivalent regexes are pinned to file:line:col. Any edit that moves a line drops the exclusion and the mutant reappears as missed. Re-pin it after checking `cargo mutants --list`.
 
-Deferred: 26 `shell_format.rs` missing assertions in `scan`, `Layout::push_stage`, `Layout::statement` and `Layout::segment` go to [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811).
+Deferred: 26 `shell_format.rs` missing assertions in `scan`, `Layout::push_stage`, `Layout::statement` and `Layout::segment` were killed in [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811).
 
 ### Timeouts and unviable
 
@@ -202,6 +214,6 @@ Unviable mutants (152 core, 31 ralph) do not compile. They are counted only.
 
 ## Rollout
 
-**Phase 1** is done only after a full local core run with a healthy baseline, real counts and timing in [Results](#results), classified survivors and timeouts, linked follow-ups, and unit tests for the prioritised real gaps. GUZ-618 met these criteria; remaining gaps are in [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811).
+**Phase 1** is done only after a full local core run with a healthy baseline, real counts and timing in [Results](#results), classified survivors and timeouts, linked follow-ups, and unit tests for the prioritised real gaps. GUZ-618 met these criteria; the remaining gaps were killed in [GUZ-811](https://linear.app/guzmonne/issue/GUZ-811).
 
 **Phase 2** adds the `crates/ralph/src` files listed in [Scope](#scope) and excludes the global-state `cap_wrap_width` and `wrap_width` with list-verified regexes. It has the same completion standard. GUZ-619 met it: a full local run with a healthy baseline, all 74 survivors killed by unit tests, and the 7 timeouts classified.

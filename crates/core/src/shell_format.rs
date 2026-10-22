@@ -913,4 +913,80 @@ mod tests {
         assert!(!has_sequence(&segments("a;")));
         assert!(!has_sequence(&[]));
     }
+
+    fn assert_lines(command: &str, width: usize, expected: &[&str]) {
+        assert_eq!(format_command(command, width), Some(expected.join("\n")));
+    }
+
+    #[test]
+    fn quotes_nested_in_dollar_brace_and_backtick_stay_in_one_word() {
+        let dollar = r#""${a:-"x --yy"}" --bb cc"#;
+        assert_lines(dollar, 10, &[r#""${a:-"x --yy"}" \"#, "  --bb cc"]);
+        let tick = r#"echo "`x "a --bb"`" --cc d"#;
+        assert_lines(tick, 10, &[r#"echo "`x "a --bb"`" \"#, "  --cc d"]);
+    }
+
+    #[test]
+    fn stray_braces_in_words_do_not_open_groups() {
+        assert_lines("echo a{ b; echo c", 10, &["echo a{ b", "echo c"]);
+        assert_lines("echo } ; echo x", 80, &["echo }", "echo x"]);
+    }
+
+    #[test]
+    fn unbalanced_or_unsupported_operators_fall_back() {
+        assert_eq!(format_command("a |&>x; echo two", 10), None);
+        assert_eq!(format_command("echo one; echo $(abc; echo two", 10), None);
+        assert_eq!(format_command("echo x; { echo a; echo b", 10), None);
+    }
+
+    #[test]
+    fn flagged_stage_wraps_under_its_pipe_or_loop_body() {
+        let pipe = ["cat f", "  | grep \\", "    --aa b"];
+        assert_lines("cat f | grep --aa b", 12, &pipe);
+        let looped = ["for a in 1; do", "  grep \\", "    --aa b", "done"];
+        assert_lines("for a in 1; do grep --aa b; done", 12, &looped);
+    }
+
+    #[test]
+    fn chain_operator_stays_on_the_last_line_of_a_wrapped_statement() {
+        let flags = ["grep \\", "  --aa b &&", "  echo x"];
+        assert_lines("grep --aa b && echo x", 12, &flags);
+        let pipe = ["cat f", "  | wc &&", "  echo x"];
+        assert_lines("cat f | wc && echo x", 11, &pipe);
+    }
+
+    #[test]
+    fn short_pipeline_before_semicolon_stays_on_one_line() {
+        assert_lines("cat f | wc; echo x", 10, &["cat f | wc", "echo x"]);
+    }
+
+    #[test]
+    fn keyword_after_a_chain_or_background_operator_falls_back() {
+        let chained = "cd x && for a in 1; do echo $a; done";
+        assert_eq!(format_command(chained, 10), None);
+        let elif = "if a; then echo b; elif c & echo d; fi";
+        assert_eq!(format_command(elif, 10), None);
+    }
+
+    #[test]
+    fn background_operator_before_a_loop_header_is_allowed() {
+        let expected = ["sleep 1 &", "for a in 1; do", "  echo $a", "done"];
+        assert_lines("sleep 1 & for a in 1; do echo $a; done", 10, &expected);
+    }
+
+    #[test]
+    fn misplaced_keywords_in_a_loop_fall_back() {
+        let double_do = "for a in 1; do echo x; do echo y; done";
+        assert_eq!(format_command(double_do, 10), None);
+        let else_in_loop = "for a in 1; do echo x; else echo y; done";
+        assert_eq!(format_command(else_in_loop, 10), None);
+        assert_eq!(format_command("for a in 1; do | cat; done", 10), None);
+        assert_eq!(format_command("for a in 1; do && echo x; done", 10), None);
+    }
+
+    #[test]
+    fn semicolon_right_after_do_is_accepted() {
+        let expected = ["for a in 1; do", "  echo x", "done"];
+        assert_lines("for a in 1; do; echo x; done", 10, &expected);
+    }
 }
