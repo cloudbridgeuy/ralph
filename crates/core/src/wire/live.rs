@@ -2,16 +2,7 @@ use std::fmt::Write;
 
 use super::provider::CallKind;
 use super::record::CallRecord;
-use super::usage::{CacheTier, CacheWrite, Usage, UsageOutcome};
-
-fn tier_label(tier: CacheTier) -> String {
-    match tier {
-        CacheTier::Unspecified => "w?".to_string(),
-        CacheTier::Ttl { seconds } if seconds % 3600 == 0 => format!("w{}h", seconds / 3600),
-        CacheTier::Ttl { seconds } if seconds % 60 == 0 => format!("w{}m", seconds / 60),
-        CacheTier::Ttl { seconds } => format!("w{seconds}s"),
-    }
-}
+use super::usage::{CacheWrite, Usage, UsageOutcome};
 
 fn writes_label(writes: &[CacheWrite]) -> String {
     if writes.is_empty() {
@@ -19,7 +10,7 @@ fn writes_label(writes: &[CacheWrite]) -> String {
     }
     writes
         .iter()
-        .map(|write| format!("{}={}", tier_label(write.tier), write.tokens))
+        .map(|write| format!("w{}={}", write.tier, write.tokens))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -88,6 +79,7 @@ mod tests {
     use super::*;
     use crate::wire::provider::RequestFacts;
     use crate::wire::record::RequestBody;
+    use crate::wire::usage::CacheTier;
     use chrono::{TimeZone, Utc};
 
     fn record(usage: UsageOutcome) -> CallRecord {
@@ -178,15 +170,5 @@ mod tests {
         u.cache_read = 0;
         let row = live_row(&record(UsageOutcome::Partial(u))).unwrap();
         assert!(row.contains("w=0 out=20 hit=-"), "{row}");
-    }
-
-    #[test]
-    fn tier_label_picks_the_largest_exact_unit() {
-        let label = |seconds| tier_label(CacheTier::Ttl { seconds });
-        assert_eq!(label(300), "w5m");
-        assert_eq!(label(90), "w90s");
-        assert_eq!(label(3600), "w1h");
-        assert_eq!(label(3660), "w61m");
-        assert_eq!(tier_label(CacheTier::Unspecified), "w?");
     }
 }

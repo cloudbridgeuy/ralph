@@ -322,15 +322,6 @@ pub fn show_view(record: &CallRecord, session: &str, provider: &dyn Provider) ->
     }
 }
 
-fn tier_text(tier: CacheTier) -> String {
-    match tier {
-        CacheTier::Ttl { seconds } if seconds % 3600 == 0 => format!("{}h", seconds / 3600),
-        CacheTier::Ttl { seconds } if seconds % 60 == 0 => format!("{}m", seconds / 60),
-        CacheTier::Ttl { seconds } => format!("{seconds}s"),
-        CacheTier::Unspecified => "?".to_string(),
-    }
-}
-
 fn json_text<T: Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_else(|error| format!("<{error}>"))
 }
@@ -354,9 +345,9 @@ pub fn show_table(view: &ShowView) -> String {
     } else if view.body_is_json {
         lines.push("segments (bytes approximate, re-encoded from parsed JSON):".to_string());
         lines.extend(view.segments.iter().map(|row| {
-            let breakpoint = row.breakpoint.map_or(String::new(), |tier| {
-                format!(" breakpoint={}", tier_text(tier))
-            });
+            let breakpoint = row
+                .breakpoint
+                .map_or(String::new(), |tier| format!(" breakpoint={tier}"));
             format!(
                 "  {} bytes={} cumulative={}{}",
                 row.label, row.bytes, row.cumulative, breakpoint
@@ -812,17 +803,5 @@ mod tests {
         ];
         let row = session_row("id1", &session, &calls);
         assert_eq!((row.calls, row.inference_calls), (3, 2));
-    }
-
-    #[test]
-    fn tier_text_picks_the_largest_exact_unit() {
-        let text = |seconds| tier_text(CacheTier::Ttl { seconds });
-        assert_eq!(text(300), "5m");
-        assert_eq!(text(90), "90s");
-        assert_eq!(text(3600), "1h");
-        assert_eq!(text(7200), "2h");
-        assert_eq!(text(60), "1m");
-        assert_eq!(text(3660), "61m");
-        assert_eq!(tier_text(CacheTier::Unspecified), "?");
     }
 }

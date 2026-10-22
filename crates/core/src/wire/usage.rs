@@ -8,6 +8,17 @@ pub enum CacheTier {
     Unspecified,
 }
 
+impl fmt::Display for CacheTier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CacheTier::Ttl { seconds } if seconds % 3600 == 0 => write!(f, "{}h", seconds / 3600),
+            CacheTier::Ttl { seconds } if seconds % 60 == 0 => write!(f, "{}m", seconds / 60),
+            CacheTier::Ttl { seconds } => write!(f, "{seconds}s"),
+            CacheTier::Unspecified => f.write_str("?"),
+        }
+    }
+}
+
 pub const FIVE_MIN: CacheTier = CacheTier::Ttl { seconds: 300 };
 pub const ONE_HOUR: CacheTier = CacheTier::Ttl { seconds: 3600 };
 
@@ -53,7 +64,10 @@ pub struct UnratedTier(pub CacheTier);
 
 impl fmt::Display for UnratedTier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "no billing rate for cache tier {:?}", self.0)
+        match self.0 {
+            CacheTier::Ttl { .. } => write!(f, "no billing rate for the {} cache tier", self.0),
+            CacheTier::Unspecified => f.write_str("no billing rate for an unspecified cache tier"),
+        }
     }
 }
 
@@ -191,10 +205,25 @@ mod tests {
 
     #[test]
     fn unrated_tier_message_names_the_tier() {
-        let message = UnratedTier(CacheTier::Ttl { seconds: 90 }).to_string();
         assert_eq!(
-            message,
-            "no billing rate for cache tier Ttl { seconds: 90 }"
+            UnratedTier(CacheTier::Ttl { seconds: 90 }).to_string(),
+            "no billing rate for the 90s cache tier"
         );
+        assert_eq!(
+            UnratedTier(CacheTier::Unspecified).to_string(),
+            "no billing rate for an unspecified cache tier"
+        );
+    }
+
+    #[test]
+    fn cache_tier_display_picks_the_largest_exact_unit() {
+        let text = |seconds| CacheTier::Ttl { seconds }.to_string();
+        assert_eq!(text(300), "5m");
+        assert_eq!(text(3600), "1h");
+        assert_eq!(text(90), "90s");
+        assert_eq!(text(3660), "61m");
+        assert_eq!(text(7200), "2h");
+        assert_eq!(text(60), "1m");
+        assert_eq!(CacheTier::Unspecified.to_string(), "?");
     }
 }

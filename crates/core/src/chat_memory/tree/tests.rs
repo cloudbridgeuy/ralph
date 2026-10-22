@@ -580,7 +580,12 @@ fn cover_partitions_the_range_into_blocks_and_honours_the_budget() {
                 nodes.iter().all(|node| Node::new(node.lo, node.hi).is_ok()),
                 "t={t} b={budget}"
             );
-            assert!(nodes.len() >= budget.min(t), "t={t} b={budget}");
+            let expected = if t <= budget {
+                t
+            } else {
+                budget.max(cover_at(t, 1.0).len())
+            };
+            assert_eq!(nodes.len(), expected, "t={t} b={budget}");
         }
     }
 }
