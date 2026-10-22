@@ -261,17 +261,19 @@ A `model` passed to `spawn_worker` wins over this key. A value that is not `prov
 
 ### `[mermaid]` - Diagram Rendering
 
-In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, and classDiagram. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
+In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, and stateDiagram-v2. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
+
+mermaid-text can drop a transition label on an edge into a composite state.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `timeout_ms` | `500` | Kill the render child after this many milliseconds |
 | `max_rss_mb` | `256` | Kill the child above this resident size (macOS and Linux only; elsewhere only the timeout applies) |
 | `max_input_bytes` | `1048576` | Refuse a block with more source bytes |
-| `max_flowchart_edges` | `50` | Refuse a flowchart/graph with more arrow tokens |
+| `max_flowchart_edges` | `50` | Refuse a flowchart/graph, stateDiagram, or stateDiagram-v2 with more arrow tokens |
 | `max_class_relations` | `400` | Refuse a classDiagram with more relation tokens (provisional: dense graphs among few classes can exceed the timeout well below 400; the timeout still bounds them) |
 
-Fixed limits: flowchart source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements. A config that fails to load prints a warning and uses these defaults.
+Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements. A config that fails to load prints a warning and uses these defaults.
 
 ### `[changes]` - `/diff` pager and turn snapshots
 
