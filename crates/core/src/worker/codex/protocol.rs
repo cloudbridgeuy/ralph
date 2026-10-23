@@ -118,15 +118,16 @@ fn parse_version(version: &str) -> Option<(u64, u64)> {
 pub fn check_version(found: &str) -> Result<Option<String>, String> {
     let parsed = parse_version(found)
         .ok_or_else(|| format!("could not read the codex version from `{found}`"))?;
-    match parsed.cmp(&MIN_VERSION) {
-        std::cmp::Ordering::Less => Err(format!(
+    let probed = parse_version(PROBED_VERSION).unwrap_or(MIN_VERSION);
+    match (parsed.cmp(&MIN_VERSION), parsed.cmp(&probed)) {
+        (std::cmp::Ordering::Less, _) => Err(format!(
             "codex {found} is too old; needs codex-cli >= {}.{} (probed {PROBED_VERSION})",
             MIN_VERSION.0, MIN_VERSION.1
         )),
-        std::cmp::Ordering::Equal => Ok(None),
-        std::cmp::Ordering::Greater => Ok(Some(format!(
+        (_, std::cmp::Ordering::Greater) => Ok(Some(format!(
             "codex {found} is newer than the probed {PROBED_VERSION}; the app-server protocol may differ."
         ))),
+        _ => Ok(None),
     }
 }
 
@@ -261,8 +262,10 @@ mod tests {
         assert_eq!(check_version("0.162.9-alpha.1"), Ok(None));
         let old = check_version("0.161.4").unwrap_err();
         assert!(old.contains("0.161.4") && old.contains(">= 0.162"));
-        let warning = check_version("0.163.0").unwrap().unwrap();
-        assert!(warning.contains("0.163.0") && warning.contains("0.164.0"));
+        assert_eq!(check_version("0.164.0"), Ok(None));
+        assert_eq!(check_version("0.163.0"), Ok(None));
+        let warning = check_version("0.165.0").unwrap().unwrap();
+        assert!(warning.contains("0.165.0") && warning.contains("0.164.0"));
         assert!(check_version("1.0.0").unwrap().is_some());
         assert!(check_version("garbage").is_err());
     }

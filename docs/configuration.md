@@ -252,7 +252,7 @@ A `model` passed to `spawn_worker` wins over this key. A value that is empty or 
 
 Codex setup and limits:
 
-- Version: codex CLI 0.162 or newer, probed with 0.164.0. Older fails the spawn. From 0.163 on, the spawn result warns `codex X is newer than the probed 0.164.0; the app-server protocol may differ.` and goes on.
+- Version: codex CLI 0.162 or newer, probed with 0.164.0. Older fails the spawn. From 0.165 on, the spawn result warns `codex X is newer than the probed 0.164.0; the app-server protocol may differ.` and goes on.
 - Login: ralph never manages Codex keys or env. Run `codex login` yourself. A spawn without login fails with `codex is not logged in; run `codex login``.
 - Interrupt: `reply` with `interrupt` is partial. If chat gets no confirmation within 30 s, the outcome is unknown.
 - Permissions: only requests that Codex raises are handled (`ask`), and `yolo` accepts one request at a time. Nothing is granted for a session.
