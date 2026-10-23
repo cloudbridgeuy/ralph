@@ -31,7 +31,9 @@ pub struct UsageLine {
     pub at: String,
     pub cost_usd: Option<f64>,
     pub context_tokens: Option<u64>,
+    pub input_tokens: u64,
     pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
     pub process_turn: Option<u64>,
     pub request_at: Option<String>,
     pub reset: Option<ResetReason>,
@@ -124,8 +126,9 @@ pub fn session_cost(turns: &[UsageLine]) -> Option<SessionCost> {
     })
 }
 
-pub fn restart_write(write: u64, context: u64) -> bool {
-    context > 0 && write.saturating_mul(2) >= context
+pub fn restart_write(input: u64, write: u64, read: u64) -> bool {
+    let total = input.saturating_add(write).saturating_add(read);
+    total > 0 && write.saturating_mul(2) >= total
 }
 
 pub fn cache_left_minutes(
@@ -145,8 +148,9 @@ pub fn thread_usage(usage_jsonl: &str, since: DateTime<Utc>) -> Option<ThreadUsa
         process_turn: last.process_turn.unwrap_or(0),
         context_tokens: last.context_tokens,
         write_heavy: restart_write(
+            last.input_tokens,
             last.cache_creation_input_tokens,
-            last.context_tokens.unwrap_or(0),
+            last.cache_read_input_tokens,
         ),
         request_at: last.request_at.as_deref().and_then(parse_time),
         reset: last.reset,
@@ -365,18 +369,30 @@ mod tests {
     }
 
     #[test]
-    fn restart_write_flags_half_of_the_context() {
-        assert!(!restart_write(49, 100));
-        assert!(restart_write(50, 100));
-        assert!(restart_write(100, 100));
-        assert!(!restart_write(0, 0));
-        assert!(!restart_write(5, 0));
+    fn restart_write_ignores_a_tool_heavy_turn() {
+        assert!(!restart_write(4, 7_610, 27_154));
+    }
+
+    #[test]
+    fn restart_write_flags_a_cold_restart() {
+        assert!(restart_write(4, 18_000, 0));
+    }
+
+    #[test]
+    fn restart_write_flags_exactly_half() {
+        assert!(restart_write(0, 50, 50));
+        assert!(!restart_write(0, 49, 51));
+    }
+
+    #[test]
+    fn restart_write_is_off_without_tokens() {
+        assert!(!restart_write(0, 0, 0));
     }
 
     #[test]
     fn thread_usage_reads_the_last_turn_of_this_session() {
         let last = format!(
-            r#"{{"at":"{}","kind":"turn","cost_usd":2.0,"context_tokens":1000,"cache_creation_input_tokens":600,"process_turn":1,"request_at":"{}","reset":"turns"}}"#,
+            r#"{{"at":"{}","kind":"turn","cost_usd":2.0,"context_tokens":1000,"input_tokens":4,"cache_creation_input_tokens":600,"cache_read_input_tokens":100,"process_turn":1,"request_at":"{}","reset":"turns"}}"#,
             time(5).to_rfc3339(),
             time(4).to_rfc3339()
         );
