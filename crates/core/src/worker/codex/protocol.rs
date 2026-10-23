@@ -51,6 +51,9 @@ pub fn thread_start_params(cwd: &Path, selection: &Selection, mcp_server: &Value
                     "required": true,
                     "default_tools_approval_mode": "approve"
                 }
+            },
+            "projects": {
+                (cwd.to_string_lossy().into_owned()): {"trust_level": "trusted"}
             }
         }
     });
@@ -317,7 +320,7 @@ mod tests {
                     "args": ["worker-mcp", "--id", "A"],
                     "required": true,
                     "default_tools_approval_mode": "approve"
-                }}}
+                }}, "projects": {"/w": {"trust_level": "trusted"}}}
             })
         );
         assert!(
@@ -358,6 +361,7 @@ mod tests {
             true
         );
         assert_eq!(params["model"], "m");
+        assert_eq!(params["config"]["projects"]["/w"]["trust_level"], "trusted");
     }
 
     #[test]

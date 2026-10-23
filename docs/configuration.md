@@ -257,7 +257,7 @@ Codex setup and limits:
 - Interrupt: `reply` with `interrupt` is partial. If chat gets no confirmation within 30 s, the outcome is unknown.
 - Permissions: only requests that Codex raises are handled (`ask`), and `yolo` accepts one request at a time. Nothing is granted for a session.
 - Resume: needs the saved Codex history, the worktree and a Codex login.
-- Close: Codex writes a global trust entry for the repo to `~/.codex/config.toml`. Ralph does not restore it.
+- Trust: ralph passes an in-memory `projects."<cwd>".trust_level = "trusted"` override on `thread/start` and `thread/resume`, so Codex writes no trust entry to `~/.codex/config.toml` (GUZ-847).
 - Quiet: Codex frames count as activity, not progress. A tool that is silent for longer than `worker_quiet_secs` gives a false Quiet alert.
 - Resume failure: a worker that cannot resume (for example, its history is gone) is not resumed. Chat warns `codex session <id> not resumed: ` followed by the start error, writes `codex-error/<id>` and keeps the session record.
 
