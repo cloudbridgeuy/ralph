@@ -175,7 +175,7 @@ The spawn runs only after reedline `read_line` has turned raw mode off, so a ful
 
 ## /workers
 
-`/workers` is local: it never starts a turn or calls the model. Only the bare command and `/workers <id>` (one token) count; `/workers a b` and `/workersfoo` are normal messages. Only live workers appear (`running_workers`); a Codex worker has only what its shared record gives. The shell is `crates/ralph/src/chat/workers.rs`; the pure parsing and layout is `crates/core/src/workers_view.rs`. It never fetches and uses no network.
+`/workers` is local: it never starts a turn or calls the model. Only the bare command and `/workers <id>` (one token) count; `/workers a b` and `/workersfoo` are normal messages. Only live workers appear (`running_workers`); a Codex worker has only what its shared record gives. The shell is `crates/ralph/src/chat/workers.rs`; the pure parsing and layout is `crates/core/src/workers_view.rs`, with the detail view in `crates/core/src/workers_view/detail.rs`. It never fetches and uses no network.
 
 | Column | Source |
 | --- | --- |
