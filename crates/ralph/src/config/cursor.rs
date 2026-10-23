@@ -1,4 +1,5 @@
-use ralph_core::worker::CursorPermissions;
+use super::permissions::permission_setting;
+use ralph_core::worker::PermissionMode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -10,15 +11,8 @@ pub struct CursorSection {
 }
 
 impl CursorSection {
-    pub fn permissions_setting(&self) -> (CursorPermissions, Option<String>) {
-        match self.permissions.as_ref().map(toml::Value::as_str) {
-            None | Some(Some("ask")) => (CursorPermissions::Ask, None),
-            Some(Some("yolo")) => (CursorPermissions::Yolo, None),
-            Some(_) => (
-                CursorPermissions::Ask,
-                Some("[cursor] permissions must be \"ask\" or \"yolo\"; using \"ask\"".to_string()),
-            ),
-        }
+    pub fn permissions_setting(&self) -> (PermissionMode, Option<String>) {
+        permission_setting("cursor", self.permissions.as_ref())
     }
 }
 
@@ -40,17 +34,14 @@ mod tests {
     fn cursor_permissions_parse_and_default_to_ask() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("config.toml");
-        for (value, mode) in [
-            ("yolo", CursorPermissions::Yolo),
-            ("ask", CursorPermissions::Ask),
-        ] {
+        for (value, mode) in [("yolo", PermissionMode::Yolo), ("ask", PermissionMode::Ask)] {
             fs::write(&path, format!("[cursor]\npermissions = \"{value}\"\n")).unwrap();
             let config = AppConfig::load_from(&path).unwrap();
             assert_eq!(config.cursor.permissions_setting(), (mode, None));
         }
         assert_eq!(
             AppConfig::new().cursor.permissions_setting(),
-            (CursorPermissions::Ask, None)
+            (PermissionMode::Ask, None)
         );
     }
 
@@ -67,7 +58,7 @@ mod tests {
             let config = AppConfig::load_from(&path).unwrap();
             assert_eq!(config.chat.wrap_width, Some(80));
             let (mode, warning) = config.cursor.permissions_setting();
-            assert_eq!(mode, CursorPermissions::Ask);
+            assert_eq!(mode, PermissionMode::Ask);
             assert!(warning.is_some());
         }
     }

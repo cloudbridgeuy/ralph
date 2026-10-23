@@ -15,9 +15,11 @@ use std::path::PathBuf;
 mod changes;
 mod chat_settings;
 mod claude;
+mod codex;
 mod cursor;
 mod empty_submit;
 mod opencode;
+mod permissions;
 #[cfg(test)]
 mod recent_history_tests;
 #[cfg(test)]
@@ -25,8 +27,10 @@ mod reset_limits_tests;
 mod wire;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
+pub use codex::CodexSection;
 pub use cursor::CursorSection;
 pub use opencode::OpencodeSection;
+pub use permissions::configured_permission_mode;
 pub use wire::WireSection;
 
 /// Error type for configuration operations.
@@ -86,6 +90,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub cursor: CursorSection,
+
+    #[serde(default)]
+    pub codex: CodexSection,
 
     #[serde(default)]
     pub claude: ClaudeSection,

@@ -15,9 +15,9 @@ use ralph_core::worker::{
     interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
     parse_interrupt_result, project_slug, prompt_entry_name, ready_path, resolve_worktree_dir,
     sent_path, session_name, session_owner, session_survived_kill, tagged_sessions,
-    unsupported_reason, worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff,
-    HandoffFiles, HarnessId, Owner, Sweep, TaggedSession, WorkerCommand, WorktreeDir, HANDOFF_POLL,
-    HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff, HandoffFiles, HarnessId,
+    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
+    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -68,15 +68,12 @@ impl Workers {
     }
 
     fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
-        if interrupt && self.codex_running(id) {
-            return Err(refuse_codex_interrupt());
-        }
         if let Some(sent) = self.deliver_headless(id, text, interrupt, "Sent to") {
             return sent;
         }
         if interrupt {
             return Err(io::Error::other(
-                "interrupt needs a Cursor or opencode worker",
+                "interrupt needs a Cursor, Codex or opencode worker",
             ));
         }
         let session = match self.owner(&project_slug(&repo_root()?), id) {
@@ -668,13 +665,6 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     );
     workers.sort_by(|a, b| a.id.cmp(&b.id));
     workers
-}
-
-fn refuse_codex_interrupt() -> io::Error {
-    io::Error::other(
-        unsupported_reason(HarnessId::Codex, WorkerCommand::Interrupt(String::new()))
-            .unwrap_or_default(),
-    )
 }
 
 pub fn capture_pane(session: &str) -> Option<String> {

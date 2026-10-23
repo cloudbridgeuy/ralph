@@ -44,11 +44,7 @@ fn accept_inbound(
     };
     let steps = queue.accept(item);
     if let Some(entry) = entry {
-        let text = interrupt_result_text(cancels_turn(&steps));
-        let pending = turns.results.join(format!(".{entry}"));
-        if write_file(&pending, text).is_ok() {
-            fs::rename(&pending, turns.results.join(&entry)).ok();
-        }
+        write_interrupt_result(&turns.results, &entry, cancels_turn(&steps));
     }
     run_steps(connection, turns, steps);
 }

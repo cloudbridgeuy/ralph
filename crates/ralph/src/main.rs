@@ -29,6 +29,7 @@ pub mod markdown;
 mod mermaid_guard;
 mod opencode_worker;
 pub mod paths;
+mod permission_queue;
 pub mod prompt_source;
 pub mod render;
 pub mod signal;

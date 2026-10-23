@@ -9,6 +9,7 @@ pub const ACCOUNT_READ: &str = "account/read";
 pub const MODEL_LIST: &str = "model/list";
 pub const THREAD_START: &str = "thread/start";
 pub const TURN_START: &str = "turn/start";
+pub const TURN_INTERRUPT: &str = "turn/interrupt";
 pub const MCP_STARTUP_STATUS: &str = "mcpServer/startupStatus/updated";
 pub const PROBED_VERSION: &str = "0.162.1";
 pub const NOT_LOGGED_IN: &str = "codex is not logged in; run `codex login`";
@@ -50,6 +51,14 @@ pub fn thread_start_params(cwd: &Path, model: Option<&str>, mcp_server: &Value) 
 
 pub fn turn_start_params(thread_id: &str, text: &str) -> Value {
     json!({"threadId": thread_id, "input": [{"type": "text", "text": text}]})
+}
+
+pub fn turn_interrupt_params(thread_id: &str, turn_id: &str) -> Value {
+    json!({"threadId": thread_id, "turnId": turn_id})
+}
+
+pub fn decode_turn_id(started: &Value) -> Option<String> {
+    started["turn"]["id"].as_str().map(str::to_string)
 }
 
 pub fn decode_version(initialize: &Value) -> Option<String> {

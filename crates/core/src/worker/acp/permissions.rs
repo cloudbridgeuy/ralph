@@ -1,28 +1,6 @@
 use super::REPORT_TOOL;
-use crate::worker::{Report, ReportStatus, SERVER_NAME};
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PermissionOption {
-    pub option_id: String,
-    pub name: String,
-    pub kind: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct BlockedContent {
-    pub tool: String,
-    pub summary: String,
-    pub options: Vec<PermissionOption>,
-}
-
-impl BlockedContent {
-    pub fn render(&self) -> String {
-        json!(self).to_string()
-    }
-}
+use crate::worker::{BlockedContent, PermissionMode, PermissionOption, SERVER_NAME};
+use serde_json::Value;
 
 pub fn permission_content(request: &Value) -> BlockedContent {
     let call = &request["toolCall"];
@@ -40,32 +18,17 @@ pub fn permission_content(request: &Value) -> BlockedContent {
     }
 }
 
-pub fn match_option<'a>(
-    options: &'a [PermissionOption],
-    text: &str,
-) -> Option<&'a PermissionOption> {
-    let text = text.trim();
-    options.iter().find(|option| option.option_id == text)
-}
-
 fn report_tool_label() -> String {
     format!("{SERVER_NAME}-{REPORT_TOOL}: {REPORT_TOOL}")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CursorPermissions {
-    #[default]
-    Ask,
-    Yolo,
-}
-
 pub fn auto_allow_option(
-    mode: CursorPermissions,
+    mode: PermissionMode,
     content: &BlockedContent,
 ) -> Option<&PermissionOption> {
     let label = report_tool_label();
     let is_report = content.tool.trim() == label || content.summary.trim() == label;
-    (mode == CursorPermissions::Yolo || is_report)
+    (mode == PermissionMode::Yolo || is_report)
         .then(|| {
             content
                 .options
@@ -75,39 +38,10 @@ pub fn auto_allow_option(
         .flatten()
 }
 
-pub fn no_option_message(options: &[PermissionOption]) -> String {
-    let ids: Vec<&str> = options
-        .iter()
-        .map(|option| option.option_id.as_str())
-        .collect();
-    format!(
-        "No permission option matches that answer. Valid optionIds: {}.",
-        ids.join(", ")
-    )
-}
-
-pub fn permission_alert_report(id: &str, at: &str, content: &BlockedContent) -> Report {
-    let ids: Vec<&str> = content
-        .options
-        .iter()
-        .map(|option| option.option_id.as_str())
-        .collect();
-    Report {
-        worker: id.to_string(),
-        at: at.to_string(),
-        status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!(
-            "Worker {id} is waiting for a permission answer on {}: {}. Answer it with reply and one optionId: {}.",
-            content.tool,
-            content.summary,
-            ids.join(", ")
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn options() -> Vec<PermissionOption> {
         vec![
@@ -149,17 +83,6 @@ mod tests {
         assert_eq!(permission_content(&json!({})).tool, "tool");
     }
 
-    #[test]
-    fn match_option_takes_only_an_exact_option_id() {
-        let options = options();
-        assert_eq!(match_option(&options, "allow-once"), Some(&options[0]));
-        assert_eq!(match_option(&options, " reject-once\n"), Some(&options[1]));
-        assert_eq!(match_option(&options, &options[0].name), None);
-        assert_eq!(match_option(&options, "Allow-Once"), None);
-        assert_eq!(match_option(&options, "yes"), None);
-        assert_eq!(match_option(&options, ""), None);
-    }
-
     fn report_content(tool: &str, summary: &str) -> BlockedContent {
         BlockedContent {
             tool: tool.into(),
@@ -184,8 +107,8 @@ mod tests {
         assert!(auto_allow_option(ASK, &report_content("x", "ralph-chat-reply: reply")).is_none());
     }
 
-    const ASK: CursorPermissions = CursorPermissions::Ask;
-    const YOLO: CursorPermissions = CursorPermissions::Yolo;
+    const ASK: PermissionMode = PermissionMode::Ask;
+    const YOLO: PermissionMode = PermissionMode::Yolo;
 
     #[test]
     fn yolo_allows_any_request_with_allow_once_only() {
@@ -213,23 +136,5 @@ mod tests {
         let mut content = report_content("x", "ralph-worker-report: report");
         content.options.retain(|o| o.kind != "allow_once");
         assert!(auto_allow_option(ASK, &content).is_none());
-    }
-
-    #[test]
-    fn the_permission_alert_names_the_tool_and_every_option() {
-        let content = BlockedContent {
-            tool: "shell".into(),
-            summary: "ls".into(),
-            options: options(),
-        };
-        let report = permission_alert_report("A", "t", &content);
-        assert!(report.text.contains("shell"));
-        assert!(report.text.contains("allow-once, reject-once"));
-    }
-
-    #[test]
-    fn no_option_message_lists_every_option_id() {
-        let message = no_option_message(&options());
-        assert!(message.contains("allow-once, reject-once"));
     }
 }

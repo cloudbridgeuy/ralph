@@ -1,7 +1,7 @@
 use crate::transport::stdio::stop_group;
 use ralph_core::worker::{
-    agent_held, caller_owns_worker, sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep,
-    CODEX_OWNER_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    agent_held, caller_owns_worker, interrupt_result_text, sweep_decision, HandoffFiles,
+    OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -155,6 +155,13 @@ pub fn write_file(path: &Path, text: &str) -> io::Result<()> {
         fs::create_dir_all(dir)?;
     }
     fs::write(path, text)
+}
+
+pub fn write_interrupt_result(results: &Path, entry: &str, cancelled: bool) {
+    let pending = results.join(format!(".{entry}"));
+    if write_file(&pending, interrupt_result_text(cancelled)).is_ok() {
+        fs::rename(&pending, results.join(entry)).ok();
+    }
 }
 
 pub fn now_secs() -> u64 {

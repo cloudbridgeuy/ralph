@@ -18,6 +18,7 @@ mod markers;
 mod mcp;
 mod opencode_http;
 mod ownership;
+mod permissions;
 mod rollback;
 mod worktree;
 pub use acp::*;
@@ -35,6 +36,7 @@ pub use markers::*;
 pub use mcp::*;
 pub use opencode_http::*;
 pub use ownership::*;
+pub use permissions::*;
 pub use rollback::*;
 pub use worktree::*;
 
