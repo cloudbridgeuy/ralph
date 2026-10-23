@@ -92,12 +92,12 @@ impl Capabilities {
             (HarnessId::Codex, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Codex, PermYolo) => Partial("single-request accepts only"),
             (HarnessId::Codex, Resume) => {
-                Partial("needs saved history, worktree and codex login [probed]")
+                Partial("needs saved history, worktree and codex login")
             }
             (HarnessId::Codex, Heartbeat) => Partial(
-                "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default [unverified]",
+                "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default",
             ),
-            (HarnessId::Codex, Close) => Partial("global trust entry left in ~/.codex/config.toml [probed]"),
+            (HarnessId::Codex, Close) => Partial("global trust entry left in ~/.codex/config.toml"),
         }
     }
 }
@@ -326,40 +326,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_interrupt_and_resume_are_allowed() {
-        assert_eq!(
-            unsupported_reason(HarnessId::Codex, WorkerCommand::Interrupt("i".into())),
-            None
-        );
-        assert_eq!(
-            unsupported_reason(HarnessId::Codex, WorkerCommand::Resume),
-            None
-        );
-        assert_eq!(
-            unsupported_reason(HarnessId::Codex, WorkerCommand::Prompt("p".into())),
-            None
-        );
-        assert_eq!(
-            unsupported_reason(HarnessId::Codex, WorkerCommand::Close),
-            None
-        );
-        assert_eq!(
-            unsupported_reason(
-                HarnessId::Codex,
-                WorkerCommand::AnswerPermission {
-                    option_id: "accept".into()
+    fn codex_cells_match_the_probed_matrix() {
+        let caps = capabilities(HarnessId::Codex);
+        for feature in Feature::ALL {
+            let expected = match feature {
+                Feature::Spawn | Feature::Prompt | Feature::Report | Feature::Model => {
+                    Support::Full
                 }
-            ),
-            None
-        );
-        assert_eq!(
-            capabilities(HarnessId::Codex).support(Feature::PermAsk),
-            Support::Partial("protocol-raised requests only")
-        );
-        assert_eq!(
-            capabilities(HarnessId::Codex).support(Feature::PermYolo),
-            Support::Partial("single-request accepts only")
-        );
+                Feature::Interrupt => Support::Partial("outcome unknown after 30 s"),
+                Feature::PermAsk => Support::Partial("protocol-raised requests only"),
+                Feature::PermYolo => Support::Partial("single-request accepts only"),
+                Feature::Resume => {
+                    Support::Partial("needs saved history, worktree and codex login")
+                }
+                Feature::Heartbeat => Support::Partial(
+                    "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default",
+                ),
+                Feature::Close => {
+                    Support::Partial("global trust entry left in ~/.codex/config.toml")
+                }
+            };
+            assert_eq!(caps.support(feature), expected, "{feature:?}");
+            if let Some(command) = command_for(feature) {
+                assert_eq!(unsupported_reason(HarnessId::Codex, command), None);
+            }
+        }
     }
 
     fn command_for(feature: Feature) -> Option<WorkerCommand> {
