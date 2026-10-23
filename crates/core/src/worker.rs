@@ -19,6 +19,7 @@ mod mcp;
 mod opencode_http;
 mod ownership;
 mod permissions;
+mod process_tree;
 mod rollback;
 mod worktree;
 pub use acp::*;
@@ -37,6 +38,7 @@ pub use mcp::*;
 pub use opencode_http::*;
 pub use ownership::*;
 pub use permissions::*;
+pub use process_tree::*;
 pub use rollback::*;
 pub use worktree::*;
 

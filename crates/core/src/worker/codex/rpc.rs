@@ -58,6 +58,10 @@ impl Rpc {
         (self.last, line.to_string())
     }
 
+    pub fn fail_pending(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.pending).into_iter().collect()
+    }
+
     pub fn settle(&mut self, id: u64, incoming: Incoming) -> Option<Result<Value, RpcError>> {
         match incoming {
             Incoming::Response {
@@ -155,6 +159,19 @@ mod tests {
             })
         );
         assert_eq!(rpc.receive(reply), Err(FrameError::UnknownId(1)));
+    }
+
+    #[test]
+    fn failing_pending_requests_returns_them_once_and_rejects_late_replies() {
+        let mut rpc = Rpc::default();
+        rpc.request("a", json!({}));
+        rpc.request("b", json!({}));
+        assert_eq!(rpc.fail_pending(), vec![1, 2]);
+        assert!(rpc.fail_pending().is_empty());
+        assert_eq!(
+            rpc.receive(r#"{"id":1,"result":{}}"#),
+            Err(FrameError::UnknownId(1))
+        );
     }
 
     #[test]

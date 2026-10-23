@@ -60,6 +60,13 @@ impl Heartbeat {
         self.write(now_secs(), Some(running));
     }
 
+    pub(crate) fn running(&self) -> bool {
+        self.last
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .running
+    }
+
     pub(crate) fn gone(&self, scope: &Scope, reason: &str) {
         write_file(&self.gone, &render_gone(scope, reason)).ok();
     }

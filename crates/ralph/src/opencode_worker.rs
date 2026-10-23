@@ -1,6 +1,7 @@
 use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, write_file};
+use crate::process_tree::process_table;
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
 use crate::warn::warn;
@@ -11,7 +12,7 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::Scope;
 use ralph_core::worker::{
     advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
-    opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event, parse_ps,
+    opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event,
     reconcile, reconnect_delay, reduce, running_sessions, server_record_fate, server_record_pid,
     server_record_usable, session_activity, session_missing, session_update, spawn_failure,
     stale_server_group, start_failure, turn_result, ApiData, Effect, HandoffFiles, HeadlessState,
@@ -258,16 +259,6 @@ fn sweep(pids: &[u32]) {
     for pid in survivors(&found) {
         kill("KILL", &pid.to_string());
     }
-}
-
-fn process_table() -> Vec<(u32, u32)> {
-    Command::new("ps")
-        .args(["-axo", "pid=,ppid="])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map(|output| parse_ps(&String::from_utf8_lossy(&output.stdout)))
-        .unwrap_or_default()
 }
 
 fn free_port() -> Result<u16, String> {

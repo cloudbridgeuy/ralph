@@ -6,6 +6,7 @@ use crate::cursor_owner::{
     write_owner_record,
 };
 use crate::permission_queue::PermissionQueue;
+use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
@@ -14,16 +15,16 @@ use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, answer_server_request, check_login, check_model, check_version,
-    classify, decide, decode_thread_id, decode_turn_id, decode_version, describe, gone_path,
-    initialize_params, model_ids, model_list_params, prompt_failure_report, ready_path, reduce,
-    reject_server_request, request_stale, resolved_request_id, response_body, task_prompt,
+    classify, codex_close_plan, decide, decode_thread_id, decode_turn_id, decode_version, describe,
+    gone_path, initialize_params, model_ids, model_list_params, prompt_failure_report, ready_path,
+    reduce, reject_server_request, request_stale, resolved_request_id, response_body, task_prompt,
     thread_start_params, turn_interrupt_params, turn_start_params, yolo_option, Action,
-    ApprovalKind, Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
-    Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope, SessionRecord, SpawnRequest,
-    ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ,
-    CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR,
-    CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, SERVER_NAME,
-    THREAD_START, TURN_INTERRUPT, TURN_START,
+    ApprovalKind, Capabilities, CodexCloseStep, HandoffFiles, HarnessId, HeadlessState,
+    HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope,
+    SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent,
+    WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_CLOSE_TURN_WAIT,
+    CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SPAWN_DIR,
+    INITIALIZE, INITIALIZED, MODEL_LIST, SERVER_NAME, THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -40,6 +41,7 @@ use std::time::{Duration, Instant};
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const REPLY_POLL: Duration = Duration::from_millis(100);
+const CLOSE_POLL: Duration = Duration::from_millis(20);
 const EXIT_REASON: &str = "codex app-server exited";
 
 type Stdin = Arc<Mutex<Option<LoggedWrite<ChildStdin>>>>;
@@ -77,6 +79,7 @@ struct Wire {
     lines: mpsc::Receiver<String>,
     startup: McpStartup,
     heartbeat: Arc<Heartbeat>,
+    closing: Arc<AtomicBool>,
 }
 
 fn exit_reason(status: ExitStatus) -> String {
@@ -158,7 +161,14 @@ impl Wire {
         let (id, line) = self.rpc.request(method, params);
         self.send_line(&line).map_err(Stop::message)?;
         loop {
-            let incoming = self.next_frame(Some(deadline)).map_err(Stop::message)?;
+            if self.closing.load(Ordering::SeqCst) {
+                return Err(format!("codex {method} failed: worker closed"));
+            }
+            let slice = deadline.min(Instant::now() + REPLY_POLL);
+            let incoming = match self.next_frame(Some(slice)) {
+                Err(Stop::Timeout) if Instant::now() < deadline => continue,
+                other => other.map_err(Stop::message)?,
+            };
             if let Some(outcome) = self.rpc.settle(id, incoming) {
                 return outcome.map_err(|e| format!("codex {method} failed: {}", e.message));
             }
@@ -226,9 +236,17 @@ struct Pump {
     inbox: Inbox,
     changes: Option<WorkerChanges>,
     id: String,
+    wound_down: bool,
 }
 
 impl Pump {
+    fn wind_down(&mut self) {
+        self.wound_down = true;
+        self.wire.rpc.fail_pending();
+        let actions = self.turns.close();
+        self.settle(actions);
+    }
+
     fn perform(&mut self, actions: Vec<Action>) -> Result<(), String> {
         for action in actions {
             match action {
@@ -316,6 +334,9 @@ impl Pump {
 
     fn run(mut self) {
         loop {
+            if !self.wound_down && self.closing.load(Ordering::SeqCst) {
+                self.wind_down();
+            }
             while let Ok(inbound) = self.replies.try_recv() {
                 let actions = match inbound {
                     Inbound::Prompt(text) => self.turns.accept(text),
@@ -452,6 +473,7 @@ impl CodexWorker {
             lines,
             startup: McpStartup::default(),
             heartbeat: Arc::clone(&heartbeat),
+            closing: Arc::clone(&closing),
         };
         let server = acp_mcp_server(
             &request.exe,
@@ -493,6 +515,7 @@ impl CodexWorker {
                     })
                 }),
             id: id.to_string(),
+            wound_down: false,
         };
         let first = pump.turns.accept(task_prompt(&request.task));
         pump.perform(first)?;
@@ -542,26 +565,36 @@ impl CodexWorker {
             .ok();
     }
 
-    fn begin_stop(&mut self) {
-        self.done = true;
-        self.closing.store(true, Ordering::SeqCst);
-        locked(&self.stdin).take();
-    }
-
-    fn finish_stop(&mut self, deadline: Instant) {
-        self.finished
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .ok();
-        stop_child(&mut self.child);
-        fs::remove_file(&self.owner).ok();
-    }
-
     fn terminate(&mut self) {
         if self.done {
             return;
         }
-        self.begin_stop();
-        self.finish_stop(Instant::now() + SHUTDOWN_GRACE);
+        self.done = true;
+        let mut tree = Vec::new();
+        for step in codex_close_plan(self.heartbeat.running()) {
+            match step {
+                CodexCloseStep::WindDown => {
+                    self.closing.store(true, Ordering::SeqCst);
+                    self.permissions.drain();
+                }
+                CodexCloseStep::AwaitTurn => {
+                    let deadline = Instant::now() + CODEX_CLOSE_TURN_WAIT;
+                    while self.heartbeat.running() && Instant::now() < deadline {
+                        thread::sleep(CLOSE_POLL);
+                    }
+                }
+                CodexCloseStep::SnapshotTree => tree = snapshot_tree(self.child.id()),
+                CodexCloseStep::DropStdin => {
+                    locked(&self.stdin).take();
+                    self.finished.recv_timeout(SHUTDOWN_GRACE).ok();
+                }
+                CodexCloseStep::StopGroup => stop_child(&mut self.child),
+                CodexCloseStep::SweepTree => sweep_tree(&tree),
+                CodexCloseStep::RemoveOwner => {
+                    fs::remove_file(&self.owner).ok();
+                }
+            }
+        }
     }
 }
 
@@ -667,12 +700,8 @@ impl CodexHost {
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let mut drained: Vec<(String, CodexWorker)> = locked(&self.workers).drain().collect();
-        for (_, worker) in &mut drained {
-            worker.begin_stop();
-        }
-        let deadline = Instant::now() + SHUTDOWN_GRACE;
         for (id, worker) in &mut drained {
-            worker.finish_stop(deadline);
+            worker.terminate();
             self.forget(id);
         }
         let starting: Vec<(String, u32)> = locked(&self.starting).drain().collect();

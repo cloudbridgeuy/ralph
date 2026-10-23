@@ -1,9 +1,11 @@
 mod approvals;
+mod close;
 mod protocol;
 mod rpc;
 mod turns;
 
 pub use approvals::*;
+pub use close::*;
 pub use protocol::*;
 pub use rpc::*;
 pub use turns::*;
