@@ -25,7 +25,7 @@ ralph                      # same as ralph chat with defaults
 - `crates/core/src/chat.rs`: `VIEW_LINES`, `RECENT_HISTORY_TOKENS`, `OLDER_VIEW_STEP`, `SYSTEM_PROMPT`, `turn_system_prompt`, `turn_prompt`, `build_mcp_args`.
 - `crates/core/src/chat_status.rs`: footer hints, input routing, worker state parsing, memory size.
 - `crates/core/src/status_mode.rs`: pure mode selection for the status line mode block.
-- `crates/core/src/status_segments.rs`: status line segments, priorities, and the pure width layout.
+- `crates/core/src/status_segments/`: status line types (`mod.rs`), segment building and priorities (`build.rs`), and the pure width layout (`layout.rs`).
 - `crates/ralph/src/status_theme.rs`: `[theme.status]` keys, defaults and validation.
 - `crates/ralph/src/chat/statusbar.rs`: paints the laid-out segments with the `[theme.status]` colors.
 - `crates/core/src/watch_command.rs`: `/watch` argument parsing, watch ids, time-left and list formatting.

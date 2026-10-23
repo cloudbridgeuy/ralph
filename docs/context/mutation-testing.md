@@ -42,7 +42,7 @@ cargo mutants --shard 1/10 -p ralph_core -j 2 --build-timeout 300
 Examined:
 
 - `crates/core/src/shell_format.rs`
-- `crates/core/src/status_segments.rs`
+- `crates/core/src/status_segments/**/*.rs`
 - `crates/core/src/chat_status.rs`
 - `crates/core/src/chat_cell.rs`
 - `crates/core/src/worker_check.rs`
@@ -206,7 +206,7 @@ Phase 1 had 43 timeouts, all mutations that stop a loop advancing (`+=` to `*=`/
 | `chunk/streaming.rs` | 3 |
 | `wire/diff.rs` | 1 |
 | `watch.rs` | 1 |
-| `status_segments.rs` | 1 |
+| `status_segments/layout.rs` | 1 |
 
 9 in `tree.rs` (`block_line`, `node_line`, `split_target`, `mergeable_pair`) are judged infinite loops from the code. The logs do not name the hung test.
 
