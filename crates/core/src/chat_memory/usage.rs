@@ -1,3 +1,4 @@
+use crate::chat_thread::ResetReason;
 use crate::stream::IterationCosts;
 use serde::Serialize;
 
@@ -68,6 +69,12 @@ pub struct UsageRecord {
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_turn: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset: Option<ResetReason>,
     #[serde(flatten)]
     pub view: Option<ViewStats>,
 }
@@ -93,6 +100,9 @@ pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Optio
         cost_usd: costs.cost_usd,
         duration_ms: costs.duration_ms,
         context_tokens: costs.context_tokens,
+        process_turn: None,
+        request_at: None,
+        reset: None,
         view: None,
     })
 }
@@ -252,6 +262,29 @@ mod tests {
         let nap = usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap();
         let value: Value = serde_json::from_str(&encode_usage(&nap).unwrap()).unwrap();
         assert!(value.get("view_bytes").is_none());
+    }
+
+    #[test]
+    fn thread_fields_are_serialized_only_when_present() {
+        let mut record = usage_record(
+            CallKind::Turn {
+                trigger: Trigger::User,
+            },
+            "t".into(),
+            &costs(None),
+        )
+        .unwrap();
+        let value = line(usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap());
+        for key in ["process_turn", "request_at", "reset"] {
+            assert!(value.get(key).is_none(), "{key}");
+        }
+        record.process_turn = Some(3);
+        record.request_at = Some("2026-01-02T03:04:05+00:00".into());
+        record.reset = Some(ResetReason::Restart);
+        let value = line(record);
+        assert_eq!(value["process_turn"], 3);
+        assert_eq!(value["request_at"], "2026-01-02T03:04:05+00:00");
+        assert_eq!(value["reset"], "restart");
     }
 
     fn line(record: UsageRecord) -> Value {

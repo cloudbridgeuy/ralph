@@ -201,13 +201,14 @@ pub fn bar(status: &Status, context: &Context, width: usize, separator: Separato
 mod tests {
     use super::super::fixtures::*;
     use super::*;
+    use crate::status_queue::QueueCell;
 
     const SEPARATORS: [Separator; 3] = [Separator::Block, Separator::Powerline, Separator::Bar];
 
     #[test]
     fn bar_fills_the_full_width_in_every_separator_mode() {
         for separator in SEPARATORS {
-            for status in [status(), with_turn(), with_watches()] {
+            for status in [status(), with_thread(), with_watches()] {
                 for width in 12..200 {
                     let spans = bar(&status, &context(), width, separator);
                     assert_eq!(text(&spans).width(), width, "{separator:?} {width}");
@@ -220,7 +221,7 @@ mod tests {
     fn bar_never_exceeds_width_even_below_the_mode_block() {
         for separator in SEPARATORS {
             for width in 0..200 {
-                let spans = bar(&with_turn(), &context(), width, separator);
+                let spans = bar(&with_thread(), &context(), width, separator);
                 assert!(text(&spans).width() <= width);
             }
         }
@@ -246,27 +247,84 @@ mod tests {
             seen,
             ["watch w1 12m, w2", "watch w1, w2", "2 watches", "2wt"]
         );
-        assert!(placed_texts(&status, 300).contains(&"mem 132 msgs ~4.1k tok".to_string()));
+        assert!(placed_texts(&status, 300)
+            .contains(&"T12/30 · ctx 62% · cache 41m · shift ~9".to_string()));
     }
 
     #[test]
     fn layout_goes_compact_at_forty_columns_on_one_row() {
-        let status = with_turn();
+        let status = with_thread();
         let shown = line(&status, 40);
         assert_eq!(shown.width(), 40);
         assert!(shown.contains("📬 2") && !shown.contains("unread"));
-        assert!(shown.contains("$0.04") && !shown.contains("c96%"));
-        assert!(shown.contains("132m ~4.1k"));
+        assert!(shown.contains(" 41m ") && shown.contains("$4.12"));
+        assert!(!shown.contains("cache") && !shown.contains("(+"));
         assert!(!shown.contains("workers"));
         assert!(!shown.contains(".ralph"));
     }
 
+    fn everything() -> Status {
+        Status {
+            watches: with_watches().watches,
+            queue: Some(QueueCell {
+                running: true,
+                count: 2,
+                held: false,
+            }),
+            ..with_thread()
+        }
+    }
+
+    fn kinds_at(status: &Status, width: usize) -> Vec<Kind> {
+        let all = segments(status, &context());
+        layout(&all, width, Separator::Block)
+            .iter()
+            .map(|p| all[p.segment].kind)
+            .collect()
+    }
+
     #[test]
-    fn layout_drops_the_store_then_workers_before_memory() {
-        let narrow = placed_texts(&status(), 27);
-        assert_eq!(narrow, ["INBOX", "📬 2", "132m ~4.1k"]);
-        let wide = placed_texts(&status(), 30);
-        assert_eq!(wide, ["INBOX", "📬 2", "2w", "132m ~4.1k"]);
+    fn layout_drops_segments_in_the_documented_order() {
+        let status = everything();
+        let mut dropped: Vec<Kind> = Vec::new();
+        let mut present = kinds_at(&status, 300);
+        for width in (0..300).rev() {
+            let now = kinds_at(&status, width);
+            dropped.extend(present.iter().filter(|kind| !now.contains(kind)));
+            present = now;
+        }
+        assert_eq!(
+            dropped,
+            [
+                Kind::Store,
+                Kind::Watches,
+                Kind::Workers,
+                Kind::Cost(Mode::Inbox),
+                Kind::Thread(Mode::Inbox),
+                Kind::Mail(Mode::Inbox),
+                Kind::Queue(Mode::Inbox),
+            ]
+        );
+        assert_eq!(present, [Kind::Mode(Mode::Inbox)]);
+    }
+
+    #[test]
+    fn layout_shrinks_the_thread_to_the_cache_form_before_dropping_it() {
+        let status = everything();
+        let all = segments(&status, &context());
+        let thread = all
+            .iter()
+            .position(|s| matches!(s.kind, Kind::Thread(_)))
+            .unwrap();
+        let last_form = all[thread].variants.len() - 1;
+        let widest_without_cost = (0..300)
+            .rev()
+            .find(|width| !kinds_at(&status, *width).contains(&Kind::Cost(Mode::Inbox)))
+            .unwrap();
+        let placed = layout(&all, widest_without_cost, Separator::Block);
+        let at = placed.iter().find(|p| p.segment == thread).unwrap();
+        assert_eq!(at.variant, last_form);
+        assert_eq!(all[thread].variants[last_form], "41m");
     }
 
     #[test]
@@ -282,7 +340,7 @@ mod tests {
     fn powerline_glyphs_appear_only_in_powerline_mode() {
         let glyphs = [LEFT_ARROW, RIGHT_ARROW, LEFT_THIN, RIGHT_THIN];
         let has = |separator| {
-            let shown = text(&bar(&with_turn(), &context(), 200, separator));
+            let shown = text(&bar(&with_thread(), &context(), 200, separator));
             glyphs.iter().any(|glyph| shown.contains(glyph))
         };
         assert!(has(Separator::Powerline));
@@ -324,7 +382,7 @@ mod tests {
     }
 
     #[test]
-    fn mail_cache_and_cost_take_the_mode_colours() {
+    fn mail_thread_and_cost_take_the_mode_colours() {
         let expected = [
             (Mode::Idle, Shade::ModeIdleBg, Shade::ModeIdleFg),
             (Mode::Nap, Shade::ModeNapBg, Shade::ModeNapFg),
@@ -332,7 +390,7 @@ mod tests {
             (Mode::Work, Shade::ModeWorkBg, Shade::ModeWorkFg),
         ];
         for (mode, bg, fg) in expected {
-            for kind in [Kind::Mail(mode), Kind::Cache(mode), Kind::Cost(mode)] {
+            for kind in [Kind::Mail(mode), Kind::Thread(mode), Kind::Cost(mode)] {
                 assert_eq!((kind.bg(), kind.fg()), (bg, fg));
             }
         }
@@ -341,12 +399,11 @@ mod tests {
     #[test]
     fn middle_blocks_keep_the_base_background_and_their_own_text() {
         assert_eq!(
-            [Kind::Store, Kind::Workers, Kind::Watches, Kind::Memory].map(|k| (k.bg(), k.fg())),
+            [Kind::Store, Kind::Workers, Kind::Watches].map(|k| (k.bg(), k.fg())),
             [
                 (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::WorkersFg),
                 (Shade::BaseBg, Shade::WatchesFg),
-                (Shade::BaseBg, Shade::MemoryFg),
             ]
         );
     }
@@ -369,14 +426,14 @@ mod tests {
     fn only_mode_and_cost_segments_are_bold() {
         assert!(Kind::Mode(Mode::Idle).bold());
         assert!(Kind::Cost(Mode::Idle).bold());
-        assert!(!Kind::Memory.bold());
+        assert!(!Kind::Thread(Mode::Idle).bold());
         assert!(!Kind::Store.bold());
     }
 
     #[test]
     fn powerline_glue_to_the_fill_depends_on_the_segment_background() {
         let coloured = Edge::Seg(Kind::Mode(Mode::Work));
-        let plain = Edge::Seg(Kind::Memory);
+        let plain = Edge::Seg(Kind::Store);
         assert!(glue(Separator::Powerline, Side::Left, coloured, Edge::Fill).is_some());
         assert!(glue(Separator::Powerline, Side::Left, plain, Edge::Fill).is_none());
         assert!(glue(Separator::Powerline, Side::Left, Edge::Fill, plain).is_none());

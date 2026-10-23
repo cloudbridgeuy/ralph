@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
-const SLOTS: [(&str, Shade, Color); 13] = [
+const SLOTS: [(&str, Shade, Color); 12] = [
     ("mode_idle_fg", Shade::ModeIdleFg, Color::Black),
     ("mode_idle_bg", Shade::ModeIdleBg, Color::Green),
     ("mode_nap_fg", Shade::ModeNapFg, Color::Black),
@@ -16,13 +16,12 @@ const SLOTS: [(&str, Shade, Color); 13] = [
     ("store_fg", Shade::StoreFg, Color::Reset),
     ("workers_fg", Shade::WorkersFg, Color::Reset),
     ("watches_fg", Shade::WatchesFg, Color::Reset),
-    ("memory_fg", Shade::MemoryFg, Color::Reset),
     ("base_bg", Shade::BaseBg, Color::AnsiValue(236)),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusColors {
-    colors: [(&'static str, Shade, Color); 13],
+    colors: [(&'static str, Shade, Color); 12],
 }
 
 impl Default for StatusColors {
@@ -151,6 +150,16 @@ mod tests {
                 g: 0x22,
                 b: 0x33
             }
+        );
+    }
+
+    #[test]
+    fn the_removed_memory_fg_key_is_ignored_with_a_warning() {
+        let (colors, warnings) = theme(&[("memory_fg", "red")]).resolve();
+        assert_eq!(colors, StatusColors::default());
+        assert_eq!(
+            warnings,
+            ["[theme.status] unknown key \"memory_fg\"; ignored"]
         );
     }
 

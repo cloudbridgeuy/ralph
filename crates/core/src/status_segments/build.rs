@@ -1,14 +1,14 @@
 use super::*;
+use crate::chat_thread::{cost_variants, thread_variants};
 
 pub(super) const MODE_PRIORITY: u8 = 0;
 const QUEUE_PRIORITY: u8 = 1;
 const MAIL_PRIORITY: u8 = 2;
-const MEMORY_PRIORITY: u8 = 3;
-const CACHE_PRIORITY: u8 = 5;
+const THREAD_PRIORITY: u8 = 3;
 const COST_PRIORITY: u8 = 4;
-const WORKERS_PRIORITY: u8 = 6;
-const WATCHES_PRIORITY: u8 = 7;
-const STORE_PRIORITY: u8 = 8;
+const WORKERS_PRIORITY: u8 = 5;
+const WATCHES_PRIORITY: u8 = 6;
+const STORE_PRIORITY: u8 = 7;
 
 pub fn store_label(path: &str) -> String {
     let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
@@ -27,32 +27,6 @@ fn dedup(variants: Vec<String>) -> Vec<String> {
         }
     }
     seen
-}
-
-fn cache_segments(turn: &TurnCache, current: Mode) -> Vec<Segment> {
-    let share = turn.token_share_percent();
-    let cache = Segment::new(
-        Side::Right,
-        Kind::Cache(current),
-        CACHE_PRIORITY,
-        vec![
-            format!(
-                "cache {} read {} write {share}% tok",
-                tokens_label(turn.read),
-                tokens_label(turn.write)
-            ),
-            format!("c{share}% tok"),
-        ],
-    );
-    let cost = turn.cost_usd.map(|cost| {
-        Segment::new(
-            Side::Right,
-            Kind::Cost(current),
-            COST_PRIORITY,
-            vec![format!("${cost:.2}")],
-        )
-    });
-    std::iter::once(cache).chain(cost).collect()
 }
 
 fn workers_variants(status: &Status) -> Vec<String> {
@@ -101,8 +75,6 @@ fn watches_variants(status: &Status) -> Vec<String> {
 }
 
 pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
-    let Memory { msgs, tokens } = status.memory;
-    let tok = tokens_label(u64::try_from(tokens).unwrap_or(u64::MAX));
     let unread = status.unread;
     let current = mode(status);
     let mode = Segment::new(
@@ -151,20 +123,26 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             watches_variants(status),
         )
     });
-    let memory = Segment::new(
-        Side::Right,
-        Kind::Memory,
-        MEMORY_PRIORITY,
-        vec![
-            format!("mem {msgs} msgs ~{tok} tok"),
-            format!("{msgs}m ~{tok}"),
-        ],
-    );
-    let cache = status
-        .turn
+    let thread = status.thread.as_ref().map(|cell| {
+        Segment::new(
+            Side::Right,
+            Kind::Thread(current),
+            THREAD_PRIORITY,
+            thread_variants(cell),
+        )
+    });
+    let cost = status
+        .thread
         .as_ref()
-        .map(|turn| cache_segments(turn, current))
-        .unwrap_or_default();
+        .and_then(|cell| cell.cost.as_ref())
+        .map(|cost| {
+            Segment::new(
+                Side::Right,
+                Kind::Cost(current),
+                COST_PRIORITY,
+                cost_variants(cost),
+            )
+        });
     [
         Some(mode),
         queue,
@@ -172,11 +150,11 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         store,
         workers,
         watches,
-        Some(memory),
+        thread,
+        cost,
     ]
     .into_iter()
     .flatten()
-    .chain(cache)
     .collect()
 }
 
@@ -184,19 +162,19 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
 mod tests {
     use super::super::fixtures::*;
     use super::*;
+    use crate::chat_thread::ThreadCell;
     use crate::status_queue::QueueCell;
 
     #[test]
     fn full_width_shows_every_segment_in_long_form() {
-        let all = line(&with_turn(), 200);
+        let all = line(&with_thread(), 200);
         for part in [
             "INBOX",
             "📬 2 unread",
             ".ralph/chat",
             "workers GUZ-416 running, GUZ-417 question",
-            "mem 132 msgs ~4.1k tok",
-            "cache 12.3k read 400 write 96% tok",
-            "$0.04",
+            "T12/30 · ctx 62% · cache 41m · shift ~9",
+            "$4.12 (+0.31)",
         ] {
             assert!(all.contains(part), "{part}: {all}");
         }
@@ -226,7 +204,7 @@ mod tests {
     fn zero_unread_has_no_mail_segment_at_any_width() {
         let status = Status {
             unread: 0,
-            ..with_turn()
+            ..with_thread()
         };
         for width in 0..200 {
             assert!(!line(&status, width).contains("📬"));
@@ -234,7 +212,7 @@ mod tests {
         assert!(line(&status, 200).starts_with(" WORK "));
         assert_eq!(
             line(&status, 24).split_whitespace().collect::<Vec<_>>(),
-            ["WORK", "132m", "~4.1k"]
+            ["WORK", "2w", "41m", "$4.12"]
         );
     }
 
@@ -260,26 +238,22 @@ mod tests {
     }
 
     #[test]
-    fn cache_omits_cost_when_missing_and_share_ignores_cost() {
-        for cost_usd in [Some(0.0), Some(10.0), None] {
-            let status = Status {
-                turn: Some(TurnCache {
-                    input: 100,
-                    read: 300,
-                    write: 200,
-                    cost_usd,
-                }),
-                ..status()
-            };
-            assert!(line(&status, 200).contains("cache 300 read 200 write 50% tok"));
-            assert!(line(&status, 50).contains("c50% tok") || cost_usd.is_some());
-            assert_eq!(line(&status, 200).contains('$'), cost_usd.is_some());
-        }
+    fn cost_is_absent_without_a_session_cost() {
+        let status = Status {
+            thread: Some(ThreadCell {
+                cost: None,
+                ..thread()
+            }),
+            ..status()
+        };
+        assert!(line(&status, 200).contains("cache 41m"));
+        assert!(!line(&status, 200).contains('$'));
+        assert!(!line(&Status::default(), 200).contains("cache"));
     }
 
     #[test]
     fn segment_kinds_run_in_display_order_on_the_right() {
-        let all = segments(&with_turn(), &context());
+        let all = segments(&with_thread(), &context());
         let right: Vec<Kind> = all
             .iter()
             .filter(|s| s.side == Side::Right)
@@ -289,8 +263,7 @@ mod tests {
             right,
             [
                 Kind::Workers,
-                Kind::Memory,
-                Kind::Cache(Mode::Inbox),
+                Kind::Thread(Mode::Inbox),
                 Kind::Cost(Mode::Inbox)
             ]
         );

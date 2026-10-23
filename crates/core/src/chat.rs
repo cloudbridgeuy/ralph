@@ -1,4 +1,5 @@
 use crate::chat_memory::SERVER_NAME;
+use crate::chat_thread::ResetReason;
 use crate::stream::IterationCosts;
 use crate::worker::ATTACHMENTS_DIR;
 use serde_json::{json, Map, Value};
@@ -26,12 +27,18 @@ pub fn hit_blocking_limit(costs: &IterationCosts) -> bool {
     costs.terminal_reason.as_deref() == Some(BLOCKING_LIMIT)
 }
 
-pub fn reset_due(limits: &ResetLimits, turns_on_process: u64, costs: &IterationCosts) -> bool {
-    turns_on_process >= limits.turns
-        || costs
-            .context_tokens
-            .is_some_and(|tokens| tokens >= limits.tokens)
-        || hit_blocking_limit(costs)
+pub fn reset_reason(
+    limits: &ResetLimits,
+    turns_on_process: u64,
+    costs: &IterationCosts,
+) -> Option<ResetReason> {
+    if turns_on_process >= limits.turns {
+        return Some(ResetReason::Turns);
+    }
+    let over_tokens = costs
+        .context_tokens
+        .is_some_and(|tokens| tokens >= limits.tokens);
+    (over_tokens || hit_blocking_limit(costs)).then_some(ResetReason::Tokens)
 }
 
 pub fn resolve_worker_check_secs(config: Option<u64>) -> Option<u64> {
@@ -269,27 +276,44 @@ mod tests {
     }
 
     #[test]
-    fn reset_due_turn_boundary() {
-        assert!(!reset_due(&LIMITS, 29, &costs(None, None)));
-        assert!(reset_due(&LIMITS, 30, &costs(None, None)));
-        assert!(reset_due(&LIMITS, 31, &costs(None, None)));
+    fn reset_reason_turn_boundary() {
+        assert_eq!(reset_reason(&LIMITS, 29, &costs(None, None)), None);
+        for turns in [30, 31] {
+            assert_eq!(
+                reset_reason(&LIMITS, turns, &costs(None, None)),
+                Some(ResetReason::Turns)
+            );
+        }
     }
 
     #[test]
-    fn reset_due_token_boundary() {
-        assert!(!reset_due(&LIMITS, 1, &costs(Some(139_999), None)));
-        assert!(reset_due(&LIMITS, 1, &costs(Some(140_000), None)));
-        assert!(!reset_due(&LIMITS, 1, &costs(None, None)));
+    fn reset_reason_token_boundary() {
+        assert_eq!(reset_reason(&LIMITS, 1, &costs(Some(139_999), None)), None);
+        assert_eq!(
+            reset_reason(&LIMITS, 1, &costs(Some(140_000), None)),
+            Some(ResetReason::Tokens)
+        );
+        assert_eq!(reset_reason(&LIMITS, 1, &costs(None, None)), None);
     }
 
     #[test]
-    fn reset_due_on_blocking_limit_only_by_reason() {
-        assert!(reset_due(
-            &LIMITS,
-            1,
-            &costs(Some(0), Some("blocking_limit"))
-        ));
-        assert!(!reset_due(&LIMITS, 1, &costs(Some(0), Some("completed"))));
+    fn reset_reason_on_blocking_limit_only_by_reason() {
+        assert_eq!(
+            reset_reason(&LIMITS, 1, &costs(Some(0), Some("blocking_limit"))),
+            Some(ResetReason::Tokens)
+        );
+        assert_eq!(
+            reset_reason(&LIMITS, 1, &costs(Some(0), Some("completed"))),
+            None
+        );
+    }
+
+    #[test]
+    fn reset_reason_checks_turns_before_tokens() {
+        assert_eq!(
+            reset_reason(&LIMITS, 30, &costs(Some(200_000), Some("blocking_limit"))),
+            Some(ResetReason::Turns)
+        );
     }
 
     #[test]

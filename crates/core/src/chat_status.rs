@@ -1,3 +1,4 @@
+use crate::chat_thread::ThreadCell;
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
 use crate::status_queue::QueueCell;
@@ -56,59 +57,14 @@ impl RunningWorker {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Memory {
-    pub msgs: usize,
-    pub tokens: usize,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct TurnCache {
-    pub input: u64,
-    pub read: u64,
-    pub write: u64,
-    pub cost_usd: Option<f64>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Status {
     pub unread: usize,
     pub workers: Vec<WorkerState>,
     pub watches: Vec<WatchState>,
-    pub memory: Memory,
-    pub turn: Option<TurnCache>,
+    pub thread: Option<ThreadCell>,
     pub napping: bool,
     pub queue: Option<QueueCell>,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct UsageLine {
-    kind: String,
-    input_tokens: u64,
-    cache_creation_input_tokens: u64,
-    cache_read_input_tokens: u64,
-    cost_usd: Option<f64>,
-}
-
-pub fn last_turn_cache(usage_jsonl: &str) -> Option<TurnCache> {
-    usage_jsonl
-        .lines()
-        .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
-        .rfind(|usage| usage.kind == "turn")
-        .map(|usage| TurnCache {
-            input: usage.input_tokens,
-            read: usage.cache_read_input_tokens,
-            write: usage.cache_creation_input_tokens,
-            cost_usd: usage.cost_usd,
-        })
-}
-
-impl TurnCache {
-    pub(crate) fn token_share_percent(&self) -> u64 {
-        let total = self.input + self.read + self.write;
-        (self.read * 100).checked_div(total).unwrap_or(0)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,14 +78,6 @@ pub enum Route {
     Watch(WatchCommand),
     Diff(DiffArgs),
     Ignore,
-}
-
-pub fn memory_size(msgs: usize, view_lines: &[String]) -> Memory {
-    let chars: usize = view_lines.iter().map(|line| line.chars().count()).sum();
-    Memory {
-        msgs,
-        tokens: chars / 4,
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -295,14 +243,6 @@ fn worker_state(
     .to_string()
 }
 
-pub(crate) fn tokens_label(tokens: u64) -> String {
-    if tokens < 1000 {
-        tokens.to_string()
-    } else {
-        format!("{}.{}k", tokens / 1000, tokens % 1000 / 100)
-    }
-}
-
 fn fit(candidates: Vec<String>, width: usize) -> String {
     let chosen = candidates
         .iter()
@@ -360,34 +300,6 @@ mod tests {
     use super::*;
     use crate::changes::{ScopeQuery, TurnWindow};
     use crate::diff_command::{DiffArgs, DiffTarget, WINDOW_USAGE};
-
-    #[test]
-    fn last_turn_cache_picks_last_turn_and_ignores_the_rest() {
-        let jsonl = concat!(
-            r#"{"kind":"turn","input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"cost_usd":0.5}"#,
-            "\n",
-            r#"{"kind":"turn","input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"cost_usd":null,"system_bytes":5,"prompt_bytes":9,"agents_bytes":2}"#,
-            "\n",
-            r#"{"kind":"nap","input_tokens":99}"#,
-            "\nnot json\n"
-        );
-        assert_eq!(
-            last_turn_cache(jsonl),
-            Some(TurnCache {
-                input: 10,
-                read: 30,
-                write: 20,
-                cost_usd: None
-            })
-        );
-        assert_eq!(last_turn_cache(""), None);
-        assert_eq!(last_turn_cache("garbage\n{\"kind\":\"nap\"}\n"), None);
-    }
-
-    #[test]
-    pub(crate) fn token_share_percent_is_zero_without_tokens() {
-        assert_eq!(TurnCache::default().token_share_percent(), 0);
-    }
 
     #[test]
     fn fit_truncates_wide_chars_by_display_width() {
@@ -865,24 +777,5 @@ mod tests {
         let states = worker_states(&workers, &seen, &HashSet::new(), None, &blocked);
         assert_eq!(states[0].state, "permission");
         assert!(states[0].is_running());
-    }
-
-    #[test]
-    fn memory_size_is_chars_over_four() {
-        let lines = vec!["abcdefgh".to_string(), "ééééééé".to_string()];
-        assert_eq!(memory_size(2, &lines), Memory { msgs: 2, tokens: 3 });
-    }
-
-    #[test]
-    fn memory_size_floors_chars_over_four() {
-        let lines = vec!["abcdefgh".to_string()];
-        assert_eq!(memory_size(1, &lines), Memory { msgs: 1, tokens: 2 });
-    }
-
-    #[test]
-    fn tokens_label_switches_to_k_at_one_thousand() {
-        assert_eq!(tokens_label(999), "999");
-        assert_eq!(tokens_label(1000), "1.0k");
-        assert_eq!(tokens_label(12_345), "12.3k");
     }
 }

@@ -49,7 +49,8 @@ pub use metadata::{
     extract_metadata_from_events, extract_metadata_from_events_or_default, IterationMetadata,
 };
 pub use parsing::{
-    parse_stream_line, parse_stream_output, result_is_error, ParsedLine, StreamParser,
+    is_main_assistant_line, parse_stream_line, parse_stream_output, result_is_error, ParsedLine,
+    StreamParser,
 };
 
 // Re-export chunk types for convenience

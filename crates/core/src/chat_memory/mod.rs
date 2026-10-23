@@ -33,7 +33,8 @@ pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search, SearchRequest};
 pub use tools::{finish_call, handle_request, parse_tool_call, tool_definitions, Outcome, Tool};
 pub use tree::{
-    cover, estimate_tokens, pending, split_view, tail_lines, verbatim_start, ViewSplit,
+    cover, entries_to_shift, estimate_tokens, pending, split_view, tail_lines, verbatim_start,
+    ViewSplit,
 };
 pub use usage::{
     encode_usage, reply_entries, trigger_entries, usage_record, view_stats, CallKind, Trigger,

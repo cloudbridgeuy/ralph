@@ -1,5 +1,6 @@
 use super::*;
 use crate::chat_status::{WatchState, WorkerState};
+use crate::chat_thread::{SessionCost, ThreadCell};
 
 pub(super) fn status() -> Status {
     Status {
@@ -15,28 +16,31 @@ pub(super) fn status() -> Status {
             },
         ],
         watches: Vec::new(),
-        memory: Memory {
-            msgs: 132,
-            tokens: 4100,
-        },
-        turn: None,
+        thread: None,
         napping: false,
         queue: None,
     }
 }
 
-pub(super) fn turn() -> TurnCache {
-    TurnCache {
-        input: 100,
-        read: 12_300,
-        write: 400,
-        cost_usd: Some(0.0412),
+pub(super) fn thread() -> ThreadCell {
+    ThreadCell {
+        turn: 12,
+        max_turns: 30,
+        ctx_percent: Some(62),
+        cache_minutes: Some(41),
+        write_heavy: false,
+        reset: None,
+        shift: Some(9),
+        cost: Some(SessionCost {
+            total: 4.123,
+            delta: Some(0.314),
+        }),
     }
 }
 
-pub(super) fn with_turn() -> Status {
+pub(super) fn with_thread() -> Status {
     Status {
-        turn: Some(turn()),
+        thread: Some(thread()),
         ..status()
     }
 }
@@ -53,7 +57,7 @@ pub(super) fn with_watches() -> Status {
                 left: None,
             },
         ],
-        ..status()
+        ..with_thread()
     }
 }
 

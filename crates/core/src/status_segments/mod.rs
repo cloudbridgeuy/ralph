@@ -1,4 +1,4 @@
-use crate::chat_status::{tokens_label, Memory, Status, TurnCache};
+use crate::chat_status::Status;
 use crate::status_mode::{mode, Mode};
 use crate::status_queue::queue_variants;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -25,8 +25,7 @@ pub enum Kind {
     Store,
     Workers,
     Watches,
-    Memory,
-    Cache(Mode),
+    Thread(Mode),
     Cost(Mode),
 }
 
@@ -43,7 +42,6 @@ pub enum Shade {
     StoreFg,
     WorkersFg,
     WatchesFg,
-    MemoryFg,
     BaseBg,
 }
 
@@ -111,9 +109,9 @@ impl Kind {
             Kind::Mode(mode)
             | Kind::Queue(mode)
             | Kind::Mail(mode)
-            | Kind::Cache(mode)
+            | Kind::Thread(mode)
             | Kind::Cost(mode) => mode_bg(mode),
-            Kind::Store | Kind::Workers | Kind::Watches | Kind::Memory => Shade::BaseBg,
+            Kind::Store | Kind::Workers | Kind::Watches => Shade::BaseBg,
         }
     }
 
@@ -122,12 +120,11 @@ impl Kind {
             Kind::Mode(mode)
             | Kind::Queue(mode)
             | Kind::Mail(mode)
-            | Kind::Cache(mode)
+            | Kind::Thread(mode)
             | Kind::Cost(mode) => mode_fg(mode),
             Kind::Store => Shade::StoreFg,
             Kind::Workers => Shade::WorkersFg,
             Kind::Watches => Shade::WatchesFg,
-            Kind::Memory => Shade::MemoryFg,
         }
     }
 

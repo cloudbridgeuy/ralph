@@ -10,13 +10,11 @@ use crate::watches::{locked, Watches};
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{ExitCleanup, HeadlessShutdown};
 use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
-use ralph_core::chat::VIEW_LINES;
+use ralph_core::chat::ResetLimits;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
-use ralph_core::chat_memory::split_view;
-use ralph_core::chat_status::{
-    last_turn_cache, latest_states, memory_size, watch_states, worker_states, Memory,
-    RunningWorker, Status,
-};
+use ralph_core::chat_memory::entries_to_shift;
+use ralph_core::chat_status::{latest_states, watch_states, worker_states, RunningWorker, Status};
+use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::worker::{
@@ -57,6 +55,12 @@ pub(super) fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) 
         .collect()
 }
 
+#[derive(Default)]
+pub(super) struct ThreadMemo {
+    usage: Option<ThreadUsage>,
+    shift: Option<usize>,
+}
+
 pub(super) struct Monitor {
     pub(super) inbox: Arc<Inbox>,
     pub(super) watches: Watches,
@@ -73,6 +77,10 @@ pub(super) struct Monitor {
     pub(super) known: Mutex<Vec<Report>>,
     pub(super) warned: Mutex<HashSet<String>>,
     pub(super) alert: AlertConfig,
+    pub(super) live: Arc<AtomicBool>,
+    pub(super) started: chrono::DateTime<chrono::Utc>,
+    pub(super) reset_limits: ResetLimits,
+    pub(super) thread: Mutex<ThreadMemo>,
 }
 
 impl Monitor {
@@ -228,16 +236,26 @@ impl Monitor {
         }
     }
 
-    fn measure_memory(&self) -> Option<Memory> {
-        let (entries, tree, warnings) = self.store.load_quiet().ok()?;
+    fn measure_shift(&self) -> Option<usize> {
+        let (entries, _, warnings) = self.store.load_quiet().ok()?;
         for warning in fresh_warnings(&mut locked(&self.warned), warnings) {
             warn(warning);
         }
-        let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
-        Some(memory_size(
-            entries.len(),
-            &[split.older, split.tail].concat(),
-        ))
+        Some(entries_to_shift(&entries, self.recent_history_tokens))
+    }
+
+    fn reload_thread(&self) {
+        let usage = self
+            .store
+            .load_usage()
+            .ok()
+            .map(|text| thread_usage(&text, self.started));
+        let shift = self.measure_shift();
+        let mut memo = locked(&self.thread);
+        if let Some(usage) = usage {
+            memo.usage = usage;
+        }
+        memo.shift = shift.or(memo.shift);
     }
 
     fn alert_fresh(&self, pending: &[Report]) {
@@ -286,26 +304,27 @@ impl Monitor {
             .map(|worker| worker.id.clone())
             .collect();
         let workers = worker_states(&running, &seen, &sent, active.as_ref(), &blocked);
-        let memory = if with_memory {
-            self.measure_memory()
-        } else {
-            None
-        };
-        let turn = if with_memory {
-            self.store
-                .load_usage()
-                .ok()
-                .map(|text| last_turn_cache(&text))
-        } else {
-            None
+        if with_memory {
+            self.reload_thread();
+        }
+        let thread = {
+            let memo = locked(&self.thread);
+            thread_cell(
+                memo.usage.as_ref(),
+                &ThreadEnv {
+                    now: chrono::Utc::now(),
+                    live: self.live.load(Ordering::SeqCst),
+                    limits: self.reset_limits,
+                    shift: memo.shift,
+                },
+            )
         };
         let mut status = locked(&self.status);
         let next = Status {
             unread: pending.len(),
             workers,
             watches: watch_states(&self.watches.list(), chrono::Utc::now()),
-            memory: memory.unwrap_or(status.memory),
-            turn: turn.unwrap_or(status.turn),
+            thread: Some(thread),
             napping: self.store.napping(),
             queue: None,
         };

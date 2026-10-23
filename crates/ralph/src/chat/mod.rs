@@ -27,7 +27,9 @@ use crate::chat::editor::build_editor;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::memory::Store;
-use crate::chat::monitor::{ready_ids, watch_headless, watch_input, watch_status, Monitor};
+use crate::chat::monitor::{
+    ready_ids, watch_headless, watch_input, watch_status, Monitor, ThreadMemo,
+};
 use crate::chat::prompt::{next_route, ChatPrompt};
 use crate::chat::queue::{decide, draft_with_queue, Decision, Queue};
 use crate::chat::route::{run_local, LocalRoute};
@@ -173,6 +175,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 Highlighter::new()
             });
     let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
+    let live = Arc::new(AtomicBool::new(false));
+    let started = chrono::Utc::now();
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -183,6 +187,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         theme_config: &theme_config,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
+        reset: Mutex::new(None),
+        live: Arc::clone(&live),
         reset_limits,
         recent_history_tokens,
         cancel: signal::interrupt_flag(),
@@ -220,6 +226,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
             unknown_focus: chat_config.inbox_alert_unknown_focus,
         },
+        live,
+        started,
+        reset_limits,
+        thread: Mutex::new(ThreadMemo::default()),
     });
     chat_socket.serve(
         Store::new(store_dir.clone()),

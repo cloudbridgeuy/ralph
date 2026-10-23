@@ -14,7 +14,7 @@ use crate::subprocess::{
 use crate::warn::warning_line;
 use crate::watches::locked;
 use ralph_core::chat::{
-    build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_due,
+    build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_reason,
     turn_prompt, turn_system_prompt, ResetLimits, VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
@@ -23,6 +23,7 @@ use ralph_core::chat_memory::{
     ViewSplit,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
+use ralph_core::chat_thread::ResetReason;
 use std::borrow::Cow;
 use std::io::{self};
 use std::path::Path;
@@ -89,6 +90,8 @@ pub(super) struct Turn<'a> {
     pub(super) theme_config: &'a ThemeConfig,
     pub(super) session: Arc<Mutex<Option<Session>>>,
     pub(super) process_turns: AtomicU64,
+    pub(super) reset: Mutex<Option<ResetReason>>,
+    pub(super) live: Arc<AtomicBool>,
     pub(super) reset_limits: ResetLimits,
     pub(super) recent_history_tokens: usize,
     pub(super) cancel: Arc<AtomicBool>,
@@ -117,7 +120,38 @@ impl Turn<'_> {
         }
     }
 
+    fn note_reset(&self, reason: ResetReason) {
+        locked(&self.reset).get_or_insert(reason);
+    }
+
+    fn live_or_note(&self, held: Option<Session>) -> Option<Session> {
+        let mut held = held?;
+        if held.is_alive() {
+            return Some(held);
+        }
+        self.note_reset(ResetReason::Restart);
+        None
+    }
+
+    fn drop_session(&self, reason: ResetReason) {
+        if locked(&self.session).take().is_some() {
+            self.note_reset(reason);
+        }
+    }
+
     pub(super) fn run(
+        &self,
+        trigger: Trigger,
+        logged: &[String],
+        message: &str,
+    ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
+        let outcome = self.run_turn(trigger, logged, message);
+        self.live
+            .store(locked(&self.session).is_some(), Ordering::SeqCst);
+        outcome
+    }
+
+    fn run_turn(
         &self,
         trigger: Trigger,
         logged: &[String],
@@ -136,9 +170,7 @@ impl Turn<'_> {
             Trigger::User => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
-        let mut session = locked(&self.session)
-            .take()
-            .and_then(|mut live| live.is_alive().then_some(live));
+        let mut session = self.live_or_note(locked(&self.session).take());
         let mut launch: Option<Launch> = None;
         self.print_rule();
         let result = retry_on_outage(
@@ -151,15 +183,15 @@ impl Turn<'_> {
                     Attempt::Done(result)
                 } else {
                     let attempt = attempt_from(result);
-                    if matches!(attempt, Attempt::Failed(..)) {
-                        session = None;
+                    if matches!(attempt, Attempt::Failed(..)) && session.take().is_some() {
+                        self.note_reset(ResetReason::Restart);
                     }
                     attempt
                 }
             },
             |delay| wait_unless(|| self.stopped(), delay),
         );
-        *locked(&self.session) = session.and_then(|mut live| live.is_alive().then_some(live));
+        *locked(&self.session) = self.live_or_note(session);
         let process_turns = if launch.is_some() {
             1
         } else {
@@ -171,7 +203,7 @@ impl Turn<'_> {
             terminated: signal::is_terminated(),
         });
         if !keeps_session(&end) {
-            locked(&self.session).take();
+            self.drop_session(ResetReason::Restart);
         }
         match end {
             TurnEnd::Exit => return Ok(TurnOutcome::Exit),
@@ -192,23 +224,28 @@ impl Turn<'_> {
                 return Ok(TurnOutcome::Unanswered);
             }
         };
-        if let Some(record) = usage_record(
+        let reset = if launch.is_some() {
+            locked(&self.reset).take()
+        } else {
+            None
+        };
+        if let Some(mut record) = usage_record(
             CallKind::Turn { trigger },
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
-        )
-        .map(|record| {
-            let Some(spawned) = &launch else {
-                return record;
-            };
-            record.with_view(view_stats(
-                &[
-                    spawned.split.older.as_slice(),
-                    spawned.split.tail.as_slice(),
-                ]
-                .concat(),
-            ))
-        }) {
+        ) {
+            if let Some(spawned) = &launch {
+                record = record.with_view(view_stats(
+                    &[
+                        spawned.split.older.as_slice(),
+                        spawned.split.tail.as_slice(),
+                    ]
+                    .concat(),
+                ));
+            }
+            record.process_turn = Some(process_turns);
+            record.request_at = result.request_at.map(|at| at.to_rfc3339());
+            record.reset = reset;
             self.warn_if_err(
                 self.store.append_usage(&record),
                 "Failed to record chat usage",
@@ -226,13 +263,19 @@ impl Turn<'_> {
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
                 self.warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
-                if reset_due(&self.reset_limits, process_turns, costs) {
-                    locked(&self.session).take();
+                if let Some(reason) = reset_reason(&self.reset_limits, process_turns, costs) {
+                    if locked(&self.session).take().is_some() {
+                        *locked(&self.reset) = Some(reason);
+                    }
                 }
                 Ok(TurnOutcome::Replied)
             }
             _ => {
-                locked(&self.session).take();
+                self.drop_session(if blocked {
+                    ResetReason::Tokens
+                } else {
+                    ResetReason::Restart
+                });
                 if blocked {
                     self.warn("chat context is full (blocking_limit); restarting claude from the memory store on the next turn");
                 } else {
@@ -270,6 +313,7 @@ impl Turn<'_> {
         };
         if relaunch(was_reused, &result) {
             drop(session);
+            self.note_reset(ResetReason::Restart);
             return self.attempt(None, pre_log_len, sent, launch);
         }
         (session, result)

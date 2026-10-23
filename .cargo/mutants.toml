@@ -4,6 +4,7 @@ examine_globs = [
   "crates/core/src/shell_format.rs",
   "crates/core/src/status_segments/**/*.rs",
   "crates/core/src/chat_status.rs",
+  "crates/core/src/chat_thread.rs",
   "crates/core/src/chat_cell.rs",
   "crates/core/src/worker_check.rs",
   "crates/core/src/chat_memory/tree.rs",

@@ -193,6 +193,48 @@ pub fn result_is_error(line: &str) -> Option<bool> {
     )
 }
 
+pub fn is_main_assistant_line(line: &str) -> bool {
+    first_json_object(line).is_some_and(|value| {
+        value.get("type").and_then(serde_json::Value::as_str) == Some("assistant")
+            && value
+                .get("parent_tool_use_id")
+                .is_none_or(serde_json::Value::is_null)
+    })
+}
+
+#[cfg(test)]
+mod main_assistant_tests {
+    use super::is_main_assistant_line;
+
+    #[test]
+    fn main_thread_assistant_events_count() {
+        assert!(is_main_assistant_line(
+            r#"{"type":"assistant","message":{}}"#
+        ));
+        assert!(is_main_assistant_line(
+            r#"{"type":"assistant","parent_tool_use_id":null}"#
+        ));
+    }
+
+    #[test]
+    fn subagent_assistant_events_do_not_count() {
+        assert!(!is_main_assistant_line(
+            r#"{"type":"assistant","parent_tool_use_id":"toolu_1"}"#
+        ));
+    }
+
+    #[test]
+    fn other_events_and_nested_types_do_not_count() {
+        assert!(!is_main_assistant_line(r#"{"type":"user"}"#));
+        assert!(!is_main_assistant_line(r#"{"type":"result"}"#));
+        assert!(!is_main_assistant_line(
+            r#"{"type":"user","message":{"type":"assistant"}}"#
+        ));
+        assert!(!is_main_assistant_line("not json"));
+        assert!(!is_main_assistant_line(""));
+    }
+}
+
 #[cfg(test)]
 mod result_is_error_tests {
     use super::result_is_error;

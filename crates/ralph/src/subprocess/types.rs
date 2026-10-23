@@ -59,4 +59,5 @@ pub struct StreamingSubprocessResult {
     pub stderr: String,
     /// Processed stream result with chunks, metadata, and tool interactions.
     pub stream_result: StreamProcessorResult,
+    pub request_at: Option<chrono::DateTime<chrono::Utc>>,
 }

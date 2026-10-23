@@ -61,16 +61,11 @@ impl StatusBar {
 mod tests {
     use super::*;
     use crate::frame::strip_ansi;
-    use ralph_core::chat_status::Memory;
     use ralph_core::status_segments::Shade;
 
     fn status() -> Status {
         Status {
             unread: 1,
-            memory: Memory {
-                msgs: 3,
-                tokens: 400,
-            },
             ..Status::default()
         }
     }

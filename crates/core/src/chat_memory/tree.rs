@@ -211,6 +211,11 @@ pub fn stable_cut(start: usize, step: usize) -> usize {
     start - start.checked_rem(step).unwrap_or(0)
 }
 
+pub fn entries_to_shift(entries: &[Entry], recent_tokens: usize) -> usize {
+    let start = verbatim_start(entries, 0, recent_tokens);
+    stable_cut(start, OLDER_VIEW_STEP) + OLDER_VIEW_STEP - start
+}
+
 pub fn estimate_tokens(text: &str) -> usize {
     text.len().div_ceil(3)
 }

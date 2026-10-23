@@ -17,7 +17,7 @@ use crate::highlight::ThemeConfig;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
-use ralph_core::stream::result_is_error;
+use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use std::io::IsTerminal;
 use std::io::{self, BufRead, BufReader};
 use std::os::unix::process::CommandExt;
@@ -196,6 +196,7 @@ pub(super) struct Pump {
     pending_tool_count: usize,
     stderr: String,
     gate: Option<Arc<OutputGate>>,
+    request_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Pump {
@@ -218,6 +219,7 @@ impl Pump {
             pending_tool_count: 0,
             stderr: String::new(),
             gate: config.gate.clone(),
+            request_at: None,
         })
     }
 
@@ -245,6 +247,9 @@ impl Pump {
         }
         match readers.line_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok(line)) => {
+                if is_main_assistant_line(&line) {
+                    self.request_at = Some(chrono::Utc::now());
+                }
                 if line.contains("\"type\":\"tool_use\"") {
                     self.pending_tool_count += 1;
                 }
@@ -306,6 +311,7 @@ impl Pump {
             exit_code,
             stderr: self.stderr,
             stream_result,
+            request_at: self.request_at,
         }
     }
 }

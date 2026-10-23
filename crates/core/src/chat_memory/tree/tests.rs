@@ -248,6 +248,17 @@ fn verbatim_start_takes_a_contiguous_newest_suffix() {
 }
 
 #[test]
+fn entries_to_shift_counts_to_the_next_stable_cut() {
+    let entries = texted(40, |_| "abc".into());
+    let shift = |budget| entries_to_shift(&entries, budget);
+    assert_eq!(shift(100), 32);
+    assert_eq!(shift(9), 1);
+    assert_eq!(shift(8), 32);
+    assert_eq!(shift(7), 31);
+    assert_eq!(entries_to_shift(&[], 100), 32);
+}
+
+#[test]
 fn verbatim_start_stops_at_the_first_entry_that_does_not_fit() {
     let mut entries = texted(4, |_| "ab".into());
     entries[1].text = "x".repeat(300);

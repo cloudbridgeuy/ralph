@@ -112,7 +112,7 @@ A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
 
 #### Status line colors: `[theme.status]`
 
-`ralph chat` paints its status line from this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table draws the same bar as before. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it.
+`ralph chat` paints its status line from this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table draws the same bar as before. The removed `memory_fg` key is an unknown key now: it is ignored with a warning. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it.
 
 ```toml
 [theme.status]
@@ -127,8 +127,7 @@ mode_work_bg = "blue"     # WORK block background
 store_fg = "reset"        # store path text
 workers_fg = "reset"      # workers text
 watches_fg = "reset"      # watches text
-memory_fg = "reset"       # memory size text
-base_bg = "#303030"       # bar background: filler, store, workers, watches, memory
+base_bg = "#303030"       # bar background: filler, store, workers, watches
 ```
 
 The default `base_bg` is ANSI color 236, written `#303030` above. `reset` is the terminal's own text color. Powerline glyphs take their colors from the neighbouring blocks, so they have no keys.
