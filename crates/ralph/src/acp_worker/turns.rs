@@ -146,7 +146,7 @@ pub(super) async fn run_turns(
             TurnOutcome::Cancelled => turns.permissions.cancel_all(),
             TurnOutcome::Problem(problem) => post_prompt_failure(turns, &problem),
             TurnOutcome::Stopped(reason) => {
-                post_prompt_failure(turns, &stop_problem(&turns.agent, &reason));
+                post_prompt_failure(turns, &stop_problem(turns.agent.name, &reason));
             }
             TurnOutcome::Reported | TurnOutcome::Closed => {}
         }
@@ -178,6 +178,6 @@ fn turn_end<T>(result: &Result<T, agent_client_protocol::Error>, interrupted: bo
 
 fn post_prompt_failure(turns: &Turns, problem: &str) {
     let at = chrono::Utc::now().to_rfc3339();
-    let report = prompt_failure_report(&turns.agent, &turns.worker_id, &at, problem);
+    let report = prompt_failure_report(turns.agent.name, &turns.worker_id, &at, problem);
     turns.inbox.post(&report, 0).ok();
 }

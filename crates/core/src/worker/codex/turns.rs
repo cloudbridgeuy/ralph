@@ -1,7 +1,7 @@
 use crate::worker::acp::REPORT_TOOL;
 use crate::worker::{
-    turn_outcome, turn_stop, Inbound, PromptQueue, TurnEnd, TurnOutcome, WorkerEvent,
-    REPORT_REMINDER, SERVER_NAME,
+    stop_problem, turn_outcome, turn_stop, HarnessId, Inbound, PromptQueue, TurnEnd, TurnOutcome,
+    WorkerEvent, REPORT_REMINDER, SERVER_NAME,
 };
 use serde_json::Value;
 
@@ -49,6 +49,8 @@ pub enum Action {
     Start(String),
     Emit(WorkerEvent),
     MarkUnreported,
+    Snapshot,
+    PostFailure(String),
 }
 
 #[derive(Debug, Default)]
@@ -99,14 +101,23 @@ impl Turns {
             closing,
             false,
         );
-        let mut actions = vec![Action::Emit(WorkerEvent::TurnEnded(end))];
+        let mut actions = Vec::new();
+        if !closing {
+            actions.push(Action::Snapshot);
+        }
+        actions.push(Action::Emit(WorkerEvent::TurnEnded(end)));
         match outcome {
             TurnOutcome::Remind => {
                 self.queue
                     .accept(Inbound::Prompt(REPORT_REMINDER.to_string()));
             }
             TurnOutcome::Unreported => actions.push(Action::MarkUnreported),
-            _ => {}
+            TurnOutcome::Problem(problem) => actions.push(Action::PostFailure(problem)),
+            TurnOutcome::Stopped(reason) => actions.push(Action::PostFailure(stop_problem(
+                HarnessId::Codex.as_str(),
+                &reason,
+            ))),
+            TurnOutcome::Reported | TurnOutcome::Cancelled | TurnOutcome::Closed => {}
         }
         actions.extend(self.advance());
         actions
@@ -207,6 +218,42 @@ mod tests {
         let second = turns.signal(done(), false);
         assert!(second.contains(&Action::MarkUnreported));
         assert!(starts(&second).is_empty());
+    }
+
+    #[test]
+    fn a_failed_turn_posts_its_error_and_still_snapshots_first() {
+        let mut turns = Turns::default();
+        turns.accept("task".into());
+        let failed = ThreadSignal::TurnEnded(TurnEnd::Failed {
+            message: "boom".into(),
+            transient: false,
+        });
+        let actions = turns.signal(failed, false);
+        assert_eq!(actions[0], Action::Snapshot);
+        assert!(actions.contains(&Action::PostFailure("boom".into())));
+    }
+
+    #[test]
+    fn an_interrupted_turn_posts_nothing_and_closing_skips_the_snapshot() {
+        let mut turns = Turns::default();
+        turns.accept("task".into());
+        let actions = turns.signal(ThreadSignal::TurnEnded(TurnEnd::Interrupted), false);
+        assert!(!actions.iter().any(|a| matches!(a, Action::PostFailure(_))));
+        turns.accept("again".into());
+        let closing = turns.signal(done(), true);
+        assert!(!closing.contains(&Action::Snapshot));
+    }
+
+    #[test]
+    fn a_snapshot_comes_before_the_next_queued_start() {
+        let mut turns = Turns::default();
+        turns.accept("task".into());
+        turns.accept("next".into());
+        turns.signal(ThreadSignal::Reported, false);
+        let actions = turns.signal(done(), false);
+        let snapshot = actions.iter().position(|a| *a == Action::Snapshot);
+        let start = actions.iter().position(|a| matches!(a, Action::Start(_)));
+        assert!(snapshot < start);
     }
 
     #[test]

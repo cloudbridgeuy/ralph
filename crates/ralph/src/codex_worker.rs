@@ -5,16 +5,20 @@ use crate::cursor_owner::{
 };
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
+use crate::worker_changes::WorkerChanges;
+use crate::worker_mcp::Inbox;
 use crate::workers::headless::HeadlessHost;
+use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, check_login, check_model, check_version, decide, decode_signal,
     decode_thread_id, decode_version, describe, gone_path, initialize_params, model_ids,
-    model_list_params, ready_path, reduce, reject_server_request, render_gone, request_stale,
-    task_prompt, thread_start_params, turn_start_params, Action, Capabilities, HandoffFiles,
-    HarnessId, HeadlessState, HeadlessWorker, Incoming, McpStartup, McpVerdict, Rpc, Scope,
-    SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent,
-    WorkerMarkers, ACCOUNT_READ, CODEX_CLOSE_DIR, CODEX_COMMAND, CODEX_OWNER_DIR, CODEX_PROMPT_DIR,
-    CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, SERVER_NAME, THREAD_START, TURN_START,
+    model_list_params, prompt_failure_report, ready_path, reduce, reject_server_request,
+    render_gone, request_stale, task_prompt, thread_start_params, turn_start_params, Action,
+    Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Incoming, McpStartup,
+    McpVerdict, Rpc, Scope, SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns,
+    WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ, CODEX_CLOSE_DIR, CODEX_COMMAND,
+    CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST,
+    SERVER_NAME, THREAD_START, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -166,6 +170,9 @@ struct Pump {
     markers: WorkerMarkers,
     closing: Arc<AtomicBool>,
     replies: mpsc::Receiver<String>,
+    inbox: Inbox,
+    changes: Option<WorkerChanges>,
+    id: String,
 }
 
 impl Pump {
@@ -181,6 +188,17 @@ impl Pump {
                 Action::MarkUnreported => {
                     write_file(&self.markers.unreported, "").ok();
                     write_file(&self.markers.waiting, "").ok();
+                }
+                Action::Snapshot => {
+                    if let Some(changes) = &self.changes {
+                        changes.snapshot_turn_or_warn();
+                    }
+                }
+                Action::PostFailure(problem) => {
+                    let at = chrono::Utc::now().to_rfc3339();
+                    let report =
+                        prompt_failure_report(HarnessId::Codex.as_str(), &self.id, &at, &problem);
+                    self.inbox.post(&report, 0).ok();
                 }
             }
         }
@@ -335,6 +353,19 @@ impl CodexWorker {
             markers: markers.clone(),
             closing,
             replies: reply_rx,
+            inbox: Inbox::new(request.inbox.clone()),
+            changes: request
+                .inbox
+                .parent()
+                .filter(|_| request.snapshots)
+                .and_then(|store| {
+                    WorkerChanges::open(&WorkerSite {
+                        store: store.to_path_buf(),
+                        id: id.to_string(),
+                        worktree: request.worktree.clone(),
+                    })
+                }),
+            id: id.to_string(),
         };
         let first = pump.turns.accept(task_prompt(&request.task));
         pump.perform(first)?;

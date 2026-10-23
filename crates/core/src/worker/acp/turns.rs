@@ -1,4 +1,3 @@
-use super::AcpAgent;
 use super::REPORT_TOOL;
 use crate::worker::{Report, ReportStatus, SERVER_NAME, WORKER_PROMPT};
 use serde_json::Value;
@@ -137,16 +136,16 @@ pub fn is_report_tool_call(update: &Value) -> bool {
         && update["title"].as_str().is_some_and(|v| v.trim() == title)
 }
 
-pub fn stop_problem(agent: &AcpAgent, reason: &str) -> String {
-    format!("the {} agent ended its turn with `{reason}`", agent.name)
+pub fn stop_problem(agent: &str, reason: &str) -> String {
+    format!("the {agent} agent ended its turn with `{reason}`")
 }
 
-pub fn prompt_failure_report(agent: &AcpAgent, id: &str, at: &str, problem: &str) -> Report {
+pub fn prompt_failure_report(agent: &str, id: &str, at: &str, problem: &str) -> Report {
     Report {
         worker: id.to_string(),
         at: at.to_string(),
         status: ReportStatus::Blocked.as_str().to_string(),
-        text: format!("The {} task prompt failed: {problem}.", agent.name),
+        text: format!("The {agent} task prompt failed: {problem}."),
     }
 }
 
@@ -366,7 +365,7 @@ mod tests {
 
     #[test]
     fn prompt_failure_report_blocks_the_worker() {
-        let report = prompt_failure_report(&CURSOR_AGENT, "A", "2026-01-01T00:00:00Z", "boom");
+        let report = prompt_failure_report(CURSOR_AGENT.name, "A", "2026-01-01T00:00:00Z", "boom");
         assert_eq!(report.worker, "A");
         assert_eq!(report.status, "blocked");
         assert!(report.text.contains("boom"));
@@ -375,10 +374,10 @@ mod tests {
     #[test]
     fn a_cursor_stop_reason_keeps_its_exact_failure_text() {
         let report = prompt_failure_report(
-            &CURSOR_AGENT,
+            CURSOR_AGENT.name,
             "A",
             "2026-01-01T00:00:00Z",
-            &stop_problem(&CURSOR_AGENT, "refusal"),
+            &stop_problem(CURSOR_AGENT.name, "refusal"),
         );
         assert_eq!(
             report.text,
