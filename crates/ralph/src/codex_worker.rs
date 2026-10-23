@@ -1,9 +1,9 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
-use crate::config::{configured_codex, configured_permission_mode};
+use crate::config::{configured_codex, configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
-    now_secs, queued_entries, request_ids, sweep_owner, write_file, write_interrupt_result,
-    write_owner_record,
+    claim_owner, now_secs, queued_entries, request_ids, sweep_owner, write_file,
+    write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::PermissionQueue;
 use crate::process_tree::{snapshot_tree, sweep_tree};
@@ -12,25 +12,27 @@ use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
-use ralph_core::snapshot::WorkerSite;
+use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, answer_server_request, check_effort, check_login, check_model,
-    check_version, classify, codex_close_plan, decide, decode_thread, decode_turn_id,
-    decode_version, describe, gone_path, initialize_params, model_ids, model_list_params,
-    next_cursor, prompt_failure_report, ready_path, reduce, reject_server_request, request_stale,
-    resolve_selection, resolved_request_id, response_body, session_saved, task_prompt,
-    thread_start_params, turn_interrupt_params, turn_start_params, turn_stop, yolo_option, Action,
-    ApprovalKind, Capabilities, CodexCloseStep, HandoffFiles, HarnessId, HeadlessState,
-    HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope,
-    Selection, SessionRecord, SpawnRequest, ThreadInfo, ThreadSignal, TurnEnd, Turns,
-    WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR,
-    CODEX_CLOSE_TURN_WAIT, CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR,
+    check_version, classify, codex_close_plan, codex_resume_decision, decide, decode_thread,
+    decode_turn_id, decode_version, describe, gone_path, initialize_params, model_ids,
+    model_list_params, next_cursor, prompt_failure_report, ready_path, record_selection, reduce,
+    reject_server_request, request_stale, resolve_selection, resolved_request_id, response_body,
+    session_saved, task_prompt, thread_resume_params, thread_start_params, turn_interrupt_params,
+    turn_start_params, turn_stop, yolo_option, Action, ApprovalKind, Capabilities, CodexCloseStep,
+    HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound, Incoming, McpStartup,
+    McpVerdict, PermissionMode, Resume, ResumeFacts, Rpc, Scope, Selection, SessionRecord,
+    SpawnRequest, ThreadInfo, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent,
+    WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_CLOSE_TURN_WAIT,
+    CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SESSION_DIR,
     CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, MODEL_LIST_MAX_PAGES, SERVER_NAME,
-    THREAD_START, TURN_INTERRUPT, TURN_START,
+    THREAD_RESUME, THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus};
@@ -39,6 +41,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
+
+mod resume;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
@@ -195,8 +199,7 @@ fn list_models(wire: &mut Wire, deadline: Instant) -> Result<Value, String> {
 fn handshake(
     wire: &mut Wire,
     selection: &Selection,
-    cwd: &Path,
-    server: &Value,
+    open: (&str, Value),
     deadline: Instant,
 ) -> Result<ThreadInfo, String> {
     let init = wire.call(
@@ -215,11 +218,8 @@ fn handshake(
     let listed = list_models(wire, deadline)?;
     check_model(selection.model.as_deref(), &model_ids(&listed))?;
     check_effort(selection, &listed)?;
-    let started = wire.call(
-        THREAD_START,
-        thread_start_params(cwd, selection, server),
-        deadline,
-    )?;
+    let (method, params) = open;
+    let started = wire.call(method, params, deadline)?;
     let thread = decode_thread(&started).ok_or("codex did not return a thread id")?;
     loop {
         match wire.startup.verdict(&[SERVER_NAME]) {
@@ -406,12 +406,17 @@ impl Pump {
     }
 }
 
+pub enum Launch {
+    Fresh(SessionRecord),
+    Resume(SessionRecord),
+}
+
 pub struct Slot<'a> {
     pub id: &'a str,
     pub owner: &'a Path,
     pub session: &'a Path,
     pub results: &'a Path,
-    pub template: SessionRecord,
+    pub launch: Launch,
     pub markers: WorkerMarkers,
     pub starting: &'a Mutex<HashMap<String, u32>>,
 }
@@ -440,7 +445,7 @@ impl CodexWorker {
             owner,
             session,
             results,
-            template,
+            launch,
             markers,
             starting,
         } = slot;
@@ -517,20 +522,47 @@ impl CodexWorker {
             request.snapshots.then_some(request.worktree.as_path()),
         );
         let deadline = Instant::now() + READY_TIMEOUT;
-        let codex = configured_codex();
-        let selection = resolve_selection(
-            request.model.as_deref(),
-            codex.model.as_deref(),
-            codex.effort.as_deref(),
-        );
-        let thread = handshake(&mut wire, &selection, &request.worktree, &server, deadline)?;
-        let mode = configured_permission_mode("codex", |config| config.codex.permissions_setting());
-        let record = SessionRecord {
-            session_id: thread.id.clone(),
-            model: thread.model.or(selection.model.clone()),
-            effort: thread.effort.or(selection.effort.clone()),
-            permissions: Some(mode),
-            ..template
+        let configured_mode =
+            || configured_permission_mode("codex", |config| config.codex.permissions_setting());
+        let (selection, open, mode) = match &launch {
+            Launch::Fresh(_) => {
+                let codex = configured_codex();
+                let selection = resolve_selection(
+                    request.model.as_deref(),
+                    codex.model.as_deref(),
+                    codex.effort.as_deref(),
+                );
+                let open = (
+                    THREAD_START,
+                    thread_start_params(&request.worktree, &selection, &server),
+                );
+                (selection, open, configured_mode())
+            }
+            Launch::Resume(record) => (
+                record_selection(record),
+                (THREAD_RESUME, thread_resume_params(record, &server)),
+                record.permissions.unwrap_or_else(configured_mode),
+            ),
+        };
+        let thread = handshake(&mut wire, &selection, open, deadline)?;
+        let pending_record = match &launch {
+            Launch::Fresh(template) => Some((
+                session.to_path_buf(),
+                SessionRecord {
+                    session_id: thread.id.clone(),
+                    model: thread.model.or(selection.model.clone()),
+                    effort: thread.effort.or(selection.effort.clone()),
+                    permissions: Some(mode),
+                    ..template.clone()
+                },
+            )),
+            Launch::Resume(record) if record.session_id != thread.id => {
+                return Err(format!(
+                    "codex resumed thread {} instead of {}",
+                    thread.id, record.session_id
+                ))
+            }
+            Launch::Resume(_) => None,
         };
         let mut pump = Pump {
             wire,
@@ -545,7 +577,7 @@ impl CodexWorker {
             permissions,
             mode,
             selection,
-            pending_record: Some((session.to_path_buf(), record)),
+            pending_record,
             inbox: Inbox::new(request.inbox.clone()),
             changes: request
                 .inbox
@@ -561,8 +593,10 @@ impl CodexWorker {
             id: id.to_string(),
             wound_down: false,
         };
-        let first = pump.turns.accept(task_prompt(&request.task));
-        pump.perform(first)?;
+        if matches!(launch, Launch::Fresh(_)) {
+            let first = pump.turns.accept(task_prompt(&request.task));
+            pump.perform(first)?;
+        }
         let closing = Arc::clone(&pump.closing);
         let events = Arc::clone(&pump.events);
         thread::spawn(move || {
@@ -840,34 +874,45 @@ impl CodexHost {
             self.fail(id, "worker is already running");
             return;
         }
-        let started = CodexWorker::start(
-            &request,
-            Slot {
-                id,
-                owner: &files.owner,
-                session: &files.session,
-                results: &files.interrupt_result,
-                template: SessionRecord {
-                    session_id: String::new(),
-                    cwd: request.worktree.clone(),
-                    inbox: request.inbox.clone(),
-                    store: Some(self.store_dir.clone()),
-                    model: request.model.clone(),
-                    effort: None,
-                    permissions: None,
-                },
-                markers: WorkerMarkers::new(&self.store_dir, id),
-                starting: &self.starting,
-            },
-        );
-        locked(&self.starting).remove(id);
-        match started {
+        let launch = Launch::Fresh(SessionRecord {
+            session_id: String::new(),
+            cwd: request.worktree.clone(),
+            inbox: request.inbox.clone(),
+            store: Some(self.store_dir.clone()),
+            model: request.model.clone(),
+            effort: None,
+            permissions: None,
+        });
+        match self.launch(id, &request, launch) {
             Ok(worker) => self.adopt(id, worker),
             Err(message) => {
                 fs::remove_file(&files.session).ok();
                 self.fail(id, &message);
             }
         }
+    }
+
+    fn launch(
+        &self,
+        id: &str,
+        request: &SpawnRequest,
+        launch: Launch,
+    ) -> Result<CodexWorker, String> {
+        let files = self.files(id);
+        let started = CodexWorker::start(
+            request,
+            Slot {
+                id,
+                owner: &files.owner,
+                session: &files.session,
+                results: &files.interrupt_result,
+                launch,
+                markers: WorkerMarkers::new(&self.store_dir, id),
+                starting: &self.starting,
+            },
+        );
+        locked(&self.starting).remove(id);
+        started
     }
 
     fn adopt(&self, id: &str, worker: CodexWorker) {
@@ -892,7 +937,9 @@ impl CodexHost {
 }
 
 impl HeadlessHost for CodexHost {
-    fn resume(&self) {}
+    fn resume(&self) {
+        self.resume_all();
+    }
 
     fn poll(&self) -> bool {
         if self.closed.load(Ordering::SeqCst) {

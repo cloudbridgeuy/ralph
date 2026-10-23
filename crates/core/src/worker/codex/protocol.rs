@@ -1,4 +1,4 @@
-use crate::worker::{Selection, SERVER_NAME};
+use crate::worker::{Selection, SessionRecord, SERVER_NAME};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -8,6 +8,7 @@ pub const INITIALIZED: &str = "initialized";
 pub const ACCOUNT_READ: &str = "account/read";
 pub const MODEL_LIST: &str = "model/list";
 pub const THREAD_START: &str = "thread/start";
+pub const THREAD_RESUME: &str = "thread/resume";
 pub const TURN_START: &str = "turn/start";
 pub const TURN_INTERRUPT: &str = "turn/interrupt";
 pub const MCP_STARTUP_STATUS: &str = "mcpServer/startupStatus/updated";
@@ -59,6 +60,20 @@ pub fn thread_start_params(cwd: &Path, selection: &Selection, mcp_server: &Value
     if let Some(effort) = &selection.effort {
         params["config"]["model_reasoning_effort"] = json!(effort);
     }
+    params
+}
+
+pub fn record_selection(record: &SessionRecord) -> Selection {
+    Selection {
+        model: record.model.clone(),
+        effort: record.effort.clone(),
+    }
+}
+
+pub fn thread_resume_params(record: &SessionRecord, mcp_server: &Value) -> Value {
+    let mut params = thread_start_params(&record.cwd, &record_selection(record), mcp_server);
+    params["threadId"] = json!(record.session_id);
+    params["excludeTurns"] = json!(true);
     params
 }
 
@@ -314,6 +329,32 @@ mod tests {
         let params = thread_start_params(Path::new("/w"), &effort, &server);
         assert_eq!(params["config"]["model_reasoning_effort"], "high");
         assert!(params["config"]["mcp_servers"].is_object());
+    }
+
+    #[test]
+    fn thread_resume_reuses_start_params_for_the_saved_thread_without_history() {
+        let server = json!({"name": "ralph-worker", "command": "/bin/ralph", "args": ["worker-mcp"], "env": []});
+        let record = SessionRecord {
+            session_id: "thread-1".into(),
+            cwd: "/w".into(),
+            inbox: "/i".into(),
+            store: Some("/s".into()),
+            model: Some("m".into()),
+            effort: Some("low".into()),
+            permissions: None,
+        };
+        let params = thread_resume_params(&record, &server);
+        let mut expected =
+            thread_start_params(Path::new("/w"), &record_selection(&record), &server);
+        expected["threadId"] = json!("thread-1");
+        expected["excludeTurns"] = json!(true);
+        assert_eq!(params, expected);
+        assert_eq!(params["config"]["model_reasoning_effort"], "low");
+        assert_eq!(
+            params["config"]["mcp_servers"]["ralph-worker"]["required"],
+            true
+        );
+        assert_eq!(params["model"], "m");
     }
 
     #[test]
