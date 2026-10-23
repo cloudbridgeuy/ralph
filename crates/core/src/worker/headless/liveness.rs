@@ -151,7 +151,7 @@ pub fn marker_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::reduce;
+    use crate::worker::{reduce, BlockedContent};
 
     fn state(phase: Phase, last_activity: u64) -> HeadlessState {
         HeadlessState {
@@ -347,6 +347,50 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn codex_episode_alerts_once_per_quiet_then_dead() {
+        let mut current = feed(&HeadlessState::default(), WorkerEvent::Activity { at: 100 });
+        current = feed(&current, WorkerEvent::TurnStarted);
+        assert_eq!(current.phase, Phase::Running);
+        let (quiet, alert) = liveness(&current, 400, 300);
+        assert!(alert.is_some());
+        assert_eq!(liveness(&quiet, 500, 300).1, None);
+        let live = feed(&quiet, WorkerEvent::Activity { at: 600 });
+        assert_eq!(live.liveness, Liveness::Live);
+        let (quiet, alert) = liveness(&live, 900, 300);
+        assert!(alert.is_some());
+        let gone = WorkerEvent::ProcessGone {
+            scope: Scope::Worker,
+            reason: "codex app-server exited".into(),
+        };
+        let (dead, alert) = liveness(&feed(&quiet, gone), 901, 300);
+        assert!(alert.is_some_and(|alert| alert.text.contains("codex app-server exited")));
+        let after = feed(&dead, WorkerEvent::Activity { at: 950 });
+        assert_eq!(liveness(&after, 2000, 300).1, None);
+    }
+
+    #[test]
+    fn blocked_turn_is_never_quiet() {
+        let running = feed(&HeadlessState::default(), WorkerEvent::TurnStarted);
+        let blocked = feed(
+            &feed(&running, WorkerEvent::Activity { at: 10 }),
+            WorkerEvent::PermissionAsked(BlockedContent {
+                tool: "bash".into(),
+                summary: "ls".into(),
+                options: Vec::new(),
+            }),
+        );
+        assert_eq!(blocked.phase, Phase::Blocked);
+        let (after, alert) = liveness(&blocked, 10_000, 300);
+        assert_eq!((after.liveness, alert), (Liveness::Live, None));
+        let (phase, events) = marker_state(Some("10 running"), None, true);
+        assert_eq!(phase, Phase::Blocked);
+        let from_marker = events
+            .iter()
+            .fold(state(phase, 0), |acc, event| feed(&acc, event.clone()));
+        assert_eq!(liveness(&from_marker, 10_000, 300).1, None);
     }
 
     fn ids(items: &[&str]) -> HashSet<String> {

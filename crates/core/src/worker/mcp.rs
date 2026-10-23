@@ -386,7 +386,9 @@ mod tests {
         let (partial, unsupported) = codex.split_once("; unsupported: ").unwrap();
         assert!(partial.contains("interrupt (outcome unknown after 30 s)"));
         assert!(partial.contains("close (tool descendants"));
-        assert!(unsupported.contains("resume") && unsupported.contains("heartbeat"));
+        assert!(partial.contains("heartbeat (app-server frames"));
+        assert!(unsupported.contains("resume"));
+        assert!(!unsupported.contains("heartbeat"));
         assert!(!unsupported.contains("interrupt") && !unsupported.contains("close"));
         assert!(!text.contains("partial or unsupported"));
     }

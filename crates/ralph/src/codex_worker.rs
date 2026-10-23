@@ -10,27 +10,27 @@ use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
-use crate::workers::headless::HeadlessHost;
+use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, answer_server_request, check_login, check_model, check_version,
     classify, decide, decode_thread_id, decode_turn_id, decode_version, describe, gone_path,
     initialize_params, model_ids, model_list_params, prompt_failure_report, ready_path, reduce,
-    reject_server_request, render_gone, request_stale, resolved_request_id, response_body,
-    task_prompt, thread_start_params, turn_interrupt_params, turn_start_params, yolo_option,
-    Action, ApprovalKind, Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker,
-    Inbound, Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope, SessionRecord,
-    SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent, WorkerMarkers,
-    ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_COMMAND, CODEX_INTERRUPT_DIR,
-    CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST,
-    SERVER_NAME, THREAD_START, TURN_INTERRUPT, TURN_START,
+    reject_server_request, request_stale, resolved_request_id, response_body, task_prompt,
+    thread_start_params, turn_interrupt_params, turn_start_params, yolo_option, Action,
+    ApprovalKind, Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
+    Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope, SessionRecord, SpawnRequest,
+    ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ,
+    CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR,
+    CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, SERVER_NAME,
+    THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command};
+use std::process::{Child, ChildStdin, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -76,6 +76,31 @@ struct Wire {
     stdin: Stdin,
     lines: mpsc::Receiver<String>,
     startup: McpStartup,
+    heartbeat: Arc<Heartbeat>,
+}
+
+fn exit_reason(status: ExitStatus) -> String {
+    format!("{CODEX_COMMAND} app-server exited ({status})")
+}
+
+fn report_exit(
+    heartbeat: &Heartbeat,
+    events: &Events,
+    exited: &AtomicBool,
+    closing: &AtomicBool,
+    reason: &str,
+) {
+    if exited.swap(true, Ordering::SeqCst) || closing.load(Ordering::SeqCst) {
+        return;
+    }
+    heartbeat.gone(&Scope::Worker, reason);
+    push_event(
+        events,
+        WorkerEvent::ProcessGone {
+            scope: Scope::Worker,
+            reason: reason.to_string(),
+        },
+    );
 }
 
 fn write_line(stdin: &Stdin, line: &str) -> Result<(), Stop> {
@@ -109,6 +134,7 @@ impl Wire {
                 })?,
             None => self.lines.recv().map_err(|_| Stop::Gone)?,
         };
+        self.heartbeat.touch();
         let incoming = self
             .rpc
             .receive(&line)
@@ -224,7 +250,14 @@ impl Pump {
                 Action::InterruptResult { entry, cancelled } => {
                     write_interrupt_result(&self.results, &entry, cancelled);
                 }
-                Action::Emit(event) => push_event(&self.events, event),
+                Action::Emit(event) => {
+                    match &event {
+                        WorkerEvent::TurnStarted => self.wire.heartbeat.set_running(true),
+                        WorkerEvent::TurnEnded(_) => self.wire.heartbeat.set_running(false),
+                        _ => {}
+                    }
+                    push_event(&self.events, event);
+                }
                 Action::MarkUnreported => {
                     write_file(&self.markers.unreported, "").ok();
                     write_file(&self.markers.waiting, "").ok();
@@ -334,6 +367,8 @@ pub struct CodexWorker {
     finished: mpsc::Receiver<()>,
     owner: PathBuf,
     closing: Arc<AtomicBool>,
+    exited: Arc<AtomicBool>,
+    heartbeat: Arc<Heartbeat>,
     done: bool,
     caps: Capabilities,
     markers: WorkerMarkers,
@@ -382,8 +417,9 @@ impl CodexWorker {
             }
             finished_tx.send(()).ok();
         });
-        fs::remove_file(&markers.activity).ok();
-        fs::remove_file(&markers.gone).ok();
+        let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
+        heartbeat.clear();
+        let exited = Arc::new(AtomicBool::new(false));
         let closing = Arc::new(AtomicBool::new(false));
         let (replies, reply_rx) = mpsc::channel();
         let events = Events::default();
@@ -398,6 +434,8 @@ impl CodexWorker {
             finished,
             owner: owner.to_path_buf(),
             closing: Arc::clone(&closing),
+            exited: Arc::clone(&exited),
+            heartbeat: Arc::clone(&heartbeat),
             done: false,
             caps: ralph_core::worker::capabilities(HarnessId::Codex),
             markers: markers.clone(),
@@ -413,6 +451,7 @@ impl CodexWorker {
             stdin,
             lines,
             startup: McpStartup::default(),
+            heartbeat: Arc::clone(&heartbeat),
         };
         let server = acp_mcp_server(
             &request.exe,
@@ -457,15 +496,28 @@ impl CodexWorker {
         };
         let first = pump.turns.accept(task_prompt(&request.task));
         pump.perform(first)?;
-        let gone = markers.gone;
         let closing = Arc::clone(&pump.closing);
+        let events = Arc::clone(&pump.events);
         thread::spawn(move || {
             pump.run();
-            if !closing.load(Ordering::SeqCst) {
-                write_file(&gone, &render_gone(&Scope::Worker, EXIT_REASON)).ok();
-            }
+            report_exit(&heartbeat, &events, &exited, &closing, EXIT_REASON);
         });
         Ok(worker)
+    }
+
+    fn reap_exit(&mut self) {
+        if self.done {
+            return;
+        }
+        if let Ok(Some(status)) = self.child.try_wait() {
+            report_exit(
+                &self.heartbeat,
+                &self.events,
+                &self.exited,
+                &self.closing,
+                &exit_reason(status),
+            );
+        }
     }
 
     fn apply_events(&mut self) {
@@ -544,6 +596,7 @@ impl HeadlessWorker for CodexWorker {
     }
 
     fn poll(&mut self) -> Vec<WorkerEvent> {
+        self.reap_exit();
         std::mem::take(&mut *locked(&self.events))
     }
 }
