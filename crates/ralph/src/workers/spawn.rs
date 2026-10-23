@@ -9,12 +9,13 @@ use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    branch_name, claude_worker_settings, close_clear_paths, exclude_lines, opencode_config,
-    project_slug, resolve_claude_model, resolve_cursor_model, resolve_opencode_model,
-    rollback_plan, rollback_report, session_name, spawn_handoff, startup_state, worker_command,
-    worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs,
-    Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest,
-    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
+    branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
+    opencode_config, project_slug, resolve_claude_model, resolve_cursor_model,
+    resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report, session_name,
+    spawn_handoff, spawn_record_path, startup_state, worker_command, worker_mcp_args,
+    worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles,
+    HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup,
+    Ticket, TicketKeys, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
     HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS,
     WORKERS_DIR,
 };
@@ -29,24 +30,19 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STARTUP_POLL: Duration = Duration::from_millis(250);
 
 impl Workers {
-    pub fn spawn(
-        &self,
-        id: &str,
-        task: &str,
-        harness: HarnessId,
-        model: Option<&str>,
-    ) -> io::Result<String> {
-        let started = self.start(id, task, harness, model);
-        self.mark_sent(id, started)
+    pub fn spawn(&self, args: &SpawnArgs) -> io::Result<String> {
+        let started = self.start(args);
+        self.mark_sent(args.id, started)
     }
 
-    fn start(
-        &self,
-        id: &str,
-        task: &str,
-        harness: HarnessId,
-        model: Option<&str>,
-    ) -> io::Result<String> {
+    fn start(&self, args: &SpawnArgs) -> io::Result<String> {
+        let SpawnArgs {
+            id,
+            task,
+            harness,
+            model,
+            ticket,
+        } = *args;
         let repo = repo_root()?;
         let project = project_slug(&repo);
         self.refuse_busy_headless(id, false)?;
@@ -112,6 +108,14 @@ impl Workers {
             ),
             HarnessId::Codex => (model.map(str::to_string), None),
         };
+        let ticket = resolve_ticket(
+            id,
+            ticket,
+            config
+                .as_ref()
+                .map(|config| &config.tickets)
+                .unwrap_or(&TicketKeys::default()),
+        );
         let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
         let launch = Launch {
             id,
@@ -121,6 +125,7 @@ impl Workers {
             worktree: &worktree,
             site: site.as_ref(),
             session: &session,
+            ticket,
             started: started_text(id, &worktree, &via, &warnings),
         };
         if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
@@ -182,6 +187,7 @@ impl Workers {
             worktree,
             site,
             session,
+            ticket,
             started,
         } = launch;
         let inbox = self.store_dir.join(INBOX_DIR);
@@ -191,6 +197,7 @@ impl Workers {
         for marker in close_clear_paths(&self.store_dir, id) {
             clear_marker(&marker)?;
         }
+        self.write_spawn_record(id, ticket.clone())?;
         let command = match harness {
             HarnessId::Claude => {
                 let settings = self.write_settings(id, &markers, *site)?;
@@ -247,6 +254,16 @@ impl Workers {
                 STARTUP_TIMEOUT.as_secs()
             )
         })
+    }
+
+    fn write_spawn_record(&self, id: &str, ticket: Option<Ticket>) -> io::Result<()> {
+        let path = spawn_record_path(&self.store_dir, id);
+        let dir = path.parent().unwrap_or(&self.store_dir);
+        fs::create_dir_all(dir)?;
+        let tmp = dir.join(format!(".{id}.tmp"));
+        let record = SpawnRecord::new(ticket, now_secs());
+        fs::write(&tmp, encode_spawn_record(&record)?)?;
+        fs::rename(tmp, path)
     }
 
     fn harness_running(&self, launch: &Launch) -> bool {
@@ -405,7 +422,17 @@ struct Launch<'a> {
     worktree: &'a Path,
     site: Option<&'a WorkerSite>,
     session: &'a str,
+    ticket: Option<Ticket>,
     started: String,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct SpawnArgs<'a> {
+    pub id: &'a str,
+    pub task: &'a str,
+    pub harness: HarnessId,
+    pub model: Option<&'a str>,
+    pub ticket: Option<&'a str>,
 }
 
 fn require_on_path(program: &str) -> io::Result<()> {

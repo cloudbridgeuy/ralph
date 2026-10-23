@@ -20,6 +20,7 @@ mod permissions;
 mod process_tree;
 mod rollback;
 mod status;
+mod ticket;
 mod tools;
 mod worktree;
 pub use acp::*;
@@ -41,6 +42,7 @@ pub use permissions::*;
 pub use process_tree::*;
 pub use rollback::*;
 pub use status::*;
+pub use ticket::*;
 pub use tools::*;
 pub use worktree::*;
 
@@ -158,6 +160,7 @@ pub enum Command {
         task: String,
         harness: HarnessId,
         model: Option<String>,
+        ticket: Option<String>,
     },
     Reply {
         id: String,
@@ -551,6 +554,7 @@ mod tests {
             task: "t".into(),
             harness: HarnessId::Claude,
             model: None,
+            ticket: None,
         };
         assert!(command_allowed(&spawn, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&spawn, Some(Trigger::Worker)).is_err());

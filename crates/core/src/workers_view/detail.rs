@@ -1,5 +1,6 @@
 use super::{block, cut, row_lines, title, WorkerDetail, WorkerRow, REPORT_LIMIT};
 use crate::inbox::age;
+use crate::worker::ticket_line;
 use chrono::{DateTime, Utc};
 
 pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> String {
@@ -17,6 +18,9 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
         detail.worktree.clone().unwrap_or_else(|| "-".to_string()),
     ));
     lines.push(("base", row.base.clone().unwrap_or_else(|| "-".to_string())));
+    if let Some(ticket) = &detail.ticket {
+        lines.push(("ticket", ticket_line(ticket)));
+    }
     if let Some(session) = &detail.tmux {
         lines.push(("tmux", session.clone()));
     }
@@ -69,6 +73,7 @@ mod tests {
     use super::super::tests::{line, now, row, with_status};
     use super::super::{ActivityMark, WorkerDetail};
     use super::*;
+    use crate::worker::{Ticket, Tracker};
     use unicode_width::UnicodeWidthStr;
 
     #[test]
@@ -88,6 +93,7 @@ mod tests {
             worktree: Some("/w/GUZ-1".into()),
             tmux: Some("ralph-x-GUZ-1".into()),
             markers: vec!["sent", "gone"],
+            ticket: None,
             heartbeat: Some(ActivityMark {
                 at: 1_767_229_200 - 30,
                 running: true,
@@ -116,6 +122,7 @@ mod tests {
             tmux: None,
             markers: vec![],
             heartbeat: None,
+            ticket: None,
             reports: vec![],
         };
         let text = detail_view(&detail, now(), 40);
@@ -134,6 +141,7 @@ mod tests {
             tmux: None,
             markers: vec![],
             heartbeat: None,
+            ticket: None,
             reports: vec![line("done", "2026-01-01T00:30:00Z", "first")],
         };
         let text = detail_view(&detail, now(), 200);
@@ -154,6 +162,7 @@ mod tests {
             tmux: None,
             markers: vec![],
             heartbeat: None,
+            ticket: None,
             reports: vec![],
         };
         let text = detail_view(&detail, now(), 200);
@@ -161,5 +170,40 @@ mod tests {
             text.ends_with("\n\nstatus: Reading the tests. (5m ago)\nNo reports."),
             "{text}"
         );
+    }
+
+    fn bare_detail(ticket: Option<Ticket>) -> WorkerDetail {
+        WorkerDetail {
+            row: row("GUZ-1"),
+            branch: "worker/GUZ-1".into(),
+            worktree: None,
+            tmux: None,
+            markers: vec![],
+            heartbeat: None,
+            ticket,
+            reports: vec![],
+        }
+    }
+
+    #[test]
+    fn detail_shows_the_ticket_with_its_tracker() {
+        let ticket = Ticket {
+            key: "GUZ-918".into(),
+            tracker: Some(Tracker::Linear),
+        };
+        let text = detail_view(&bare_detail(Some(ticket)), now(), 200);
+        assert!(text.contains("  ticket    GUZ-918 (linear)"), "{text}");
+    }
+
+    #[test]
+    fn detail_shows_a_ticket_without_a_tracker_and_omits_an_absent_one() {
+        let ticket = Ticket {
+            key: "FOO-1".into(),
+            tracker: None,
+        };
+        let text = detail_view(&bare_detail(Some(ticket)), now(), 200);
+        assert!(text.contains("  ticket    FOO-1\n"), "{text}");
+        let text = detail_view(&bare_detail(None), now(), 200);
+        assert!(!text.contains("ticket"), "{text}");
     }
 }

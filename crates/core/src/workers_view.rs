@@ -3,7 +3,7 @@
 
 use crate::chat_memory::{Entry, Role};
 use crate::inbox::age;
-use crate::worker::{ActivityMark, Report, StatusLine};
+use crate::worker::{ActivityMark, Report, StatusLine, Ticket};
 use crate::worker_check::{is_report_status, message_header};
 use chrono::{DateTime, Utc};
 use std::cmp::Reverse;
@@ -79,6 +79,7 @@ pub struct WorkerDetail {
     pub tmux: Option<String>,
     pub markers: Vec<&'static str>,
     pub heartbeat: Option<ActivityMark>,
+    pub ticket: Option<Ticket>,
     pub reports: Vec<ReportLine>,
 }
 

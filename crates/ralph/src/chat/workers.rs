@@ -7,8 +7,9 @@ use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{
-    activity_path, blocked_path, branch_name, decode_status, gone_path, sent_path, status_path,
-    unreported_path, waiting_path, worktree_for_branch, ActivityMark, HarnessId, StatusLine,
+    activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, gone_path,
+    sent_path, spawn_record_path, status_path, unreported_path, waiting_path, worktree_for_branch,
+    ActivityMark, HarnessId, StatusLine, Ticket,
 };
 use ralph_core::workers_view::{
     count_untracked, detail_view, not_live, parse_head, parse_numstat, workers_view, Diff, Lookup,
@@ -50,6 +51,10 @@ struct Facts {
 
 fn status_line(store: &Path, id: &str) -> Option<StatusLine> {
     decode_status(&std::fs::read_to_string(status_path(store, id)).ok()?)
+}
+
+fn spawn_ticket(store: &Path, id: &str) -> Option<Ticket> {
+    decode_spawn_record(&std::fs::read_to_string(spawn_record_path(store, id)).ok()?)?.ticket()
 }
 
 fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, Option<String>) {
@@ -173,6 +178,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
             .then(|| worker.session.clone()),
         markers: markers(&monitor.store_dir, id),
         heartbeat: heartbeat(&monitor.store_dir, id),
+        ticket: spawn_ticket(&monitor.store_dir, id),
         reports: facts
             .reports
             .and_then(|mut reports| reports.remove(id))
@@ -286,5 +292,20 @@ mod tests {
         assert_eq!(cells[7], "-", "{text}");
         assert_eq!(cells[6], "?", "{text}");
         assert!(!text.contains('•'), "{text}");
+    }
+
+    #[test]
+    fn the_ticket_is_read_from_the_spawn_record() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(spawn_ticket(dir.path(), "GUZ-1"), None);
+        let path = spawn_record_path(dir.path(), "GUZ-1");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"ticket":"GUZ-1","tracker":"linear","at":1}"#).unwrap();
+        assert_eq!(
+            spawn_ticket(dir.path(), "GUZ-1").map(|ticket| ticket.key),
+            Some("GUZ-1".to_string())
+        );
+        std::fs::write(&path, "garbage").unwrap();
+        assert_eq!(spawn_ticket(dir.path(), "GUZ-1"), None);
     }
 }

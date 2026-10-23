@@ -18,6 +18,7 @@ pub fn command_definitions() -> [Value; 4] {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
+                    "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
                     "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default codex's own default."}
                 },
                 "required": ["id", "task"]
@@ -63,6 +64,7 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
                 task,
                 harness: spawn.harness,
                 model: spawn.model,
+                ticket: ticket_arg(args)?,
             })
         }),
         "reply" => string_arg(args, "text").and_then(|text| {
@@ -96,9 +98,29 @@ fn bool_flag(args: &Value, name: &str) -> Result<bool, String> {
     }
 }
 
+fn is_dashed_token(text: &str) -> bool {
+    text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+fn ticket_arg(args: &Value) -> Result<Option<String>, String> {
+    match args.get("ticket") {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => {
+            let ticket = string_arg(args, "ticket")?;
+            if is_dashed_token(&ticket) {
+                Ok(Some(ticket))
+            } else {
+                Err(format!(
+                    "Ticket '{ticket}' may only use letters, digits and dashes."
+                ))
+            }
+        }
+    }
+}
+
 fn worker_id(args: &Value) -> Result<String, String> {
     let id = string_arg(args, "id")?;
-    if id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if is_dashed_token(&id) {
         Ok(id)
     } else {
         Err(format!(
@@ -219,6 +241,7 @@ mod tests {
                 task: "fix it".into(),
                 harness: HarnessId::Claude,
                 model: None,
+                ticket: None,
             }))
         );
         assert_eq!(
@@ -281,6 +304,50 @@ mod tests {
             parse_command("close_worker", &json!({"id": "../x"})),
             Some(Err(_))
         ));
+    }
+
+    fn spawn_ticket(extra: Value) -> Result<Option<String>, String> {
+        let mut args = json!({"id": "A", "task": "t"});
+        args.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        match parse_command("spawn_worker", &args) {
+            Some(Ok(Command::Spawn { ticket, .. })) => Ok(ticket),
+            Some(Ok(other)) => panic!("unexpected {other:?}"),
+            Some(Err(e)) => Err(e),
+            None => panic!("not a worker command"),
+        }
+    }
+
+    #[test]
+    fn spawn_reads_an_optional_ticket() {
+        assert_eq!(spawn_ticket(json!({})), Ok(None));
+        assert_eq!(spawn_ticket(json!({"ticket": null})), Ok(None));
+        assert_eq!(
+            spawn_ticket(json!({"ticket": "GUZ-918"})),
+            Ok(Some("GUZ-918".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_bad_ticket_is_refused() {
+        for ticket in [
+            json!(""),
+            json!("  "),
+            json!(5),
+            json!("a b"),
+            json!("../x"),
+        ] {
+            assert!(spawn_ticket(json!({"ticket": ticket})).is_err());
+        }
+    }
+
+    #[test]
+    fn the_spawn_schema_lists_ticket_as_optional() {
+        let [spawn, ..] = command_definitions();
+        let schema = &spawn["inputSchema"];
+        assert_eq!(schema["properties"]["ticket"]["type"], "string");
+        assert_eq!(schema["required"], json!(["id", "task"]));
     }
 
     fn spawn_harness(args: Value) -> Result<(HarnessId, Option<String>), String> {

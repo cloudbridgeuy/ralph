@@ -277,6 +277,21 @@ A `model` passed to `spawn_worker` wins over this key. A value that is empty or 
 
 A `model` passed to `spawn_worker` wins over this key. A value that is not `provider/model` warns in the spawn result and uses the built-in default. A config that fails to load uses the built-in default. The key is read at each spawn.
 
+### `[tickets]` - Ticket Keys
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `linear` | `[]` | Team keys of Linear tickets, such as `["GUZ"]` |
+| `jira` | `[]` | Project keys of Jira tickets, such as `["VP20", "KODA"]` |
+
+```toml
+[tickets]
+linear = ["GUZ"]
+jira = ["VP20", "KODA"]
+```
+
+`spawn_worker` records a ticket for each worker. The `ticket` argument wins. Without it, a worker id that is exactly `<KEY>-<digits>` for a key above (case-sensitive) is the ticket, and any other id has none. The tracker is the list that holds the key, Linear first. A `ticket` argument that matches no key is kept with no tracker. `/workers <id>` shows it as `ticket  GUZ-918 (linear)`. The key is read at each spawn. A config that fails to load gives no keys, so only an explicit ticket is recorded, with no tracker.
+
 ### `[mermaid]` - Diagram Rendering
 
 In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, and stateDiagram-v2. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.

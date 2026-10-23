@@ -8,6 +8,7 @@ use crate::paths;
 use crate::status_theme::StatusTheme;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::inbox_alert::UnknownFocus;
+use ralph_core::worker::TicketKeys;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -105,6 +106,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub wire: WireSection,
+
+    #[serde(default)]
+    pub tickets: TicketKeys,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -781,6 +785,17 @@ mod tests {
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.theme.name, Some("base16-eighties.dark".to_string()));
         assert!(config.theme.no_background);
+    }
+
+    #[test]
+    fn tickets_parse_and_default_to_empty() {
+        let config: AppConfig =
+            toml::from_str("[tickets]\nlinear = [\"GUZ\"]\njira = [\"VP20\", \"KODA\"]\n").unwrap();
+        assert_eq!(config.tickets.linear, ["GUZ"]);
+        assert_eq!(config.tickets.jira, ["VP20", "KODA"]);
+        assert_eq!(AppConfig::new().tickets, TicketKeys::default());
+        let partial: AppConfig = toml::from_str("[tickets]\njira = [\"KODA\"]\n").unwrap();
+        assert!(partial.tickets.linear.is_empty());
     }
 
     #[test]
