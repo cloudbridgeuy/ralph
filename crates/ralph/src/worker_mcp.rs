@@ -205,10 +205,16 @@ pub fn run_stdio_server(
         let response = match handle_request(&request) {
             Outcome::Silent => continue,
             Outcome::Respond(v) => v,
-            Outcome::Status { id, text } => match inbox.set_status(worker, &text) {
-                Ok(()) => tool_result(id, "Status set.", false),
-                Err(e) => tool_result(id, &format!("Could not set status: {e}"), true),
-            },
+            Outcome::Status { id, text } => {
+                if !inbox.accepts_report() {
+                    tool_result(id, "Could not set status: worker closed.", true)
+                } else {
+                    match inbox.set_status(worker, &text) {
+                        Ok(()) => tool_result(id, "Status set.", false),
+                        Err(e) => tool_result(id, &format!("Could not set status: {e}"), true),
+                    }
+                }
+            }
             Outcome::Report { id, status, text } => {
                 if !inbox.accepts_report() {
                     let closed = tool_result(id, "Could not deliver: worker closed.", true);
@@ -415,6 +421,37 @@ mod tests {
         assert!(inbox.peek().unwrap().is_empty());
         assert!(!dir.path().join("inbox").exists());
         assert!(!dir.path().join("reported").exists());
+    }
+
+    #[test]
+    fn set_status_is_refused_after_close_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"))
+            .requiring_owner(Some(dir.path().join("owner-gone")));
+        let mut out = Vec::new();
+        let input = format!("{}\n", status_call(1, "late"));
+        run_stdio_server("GUZ-1", &inbox, None, input.as_bytes(), &mut out).unwrap();
+        let reply: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(reply["result"]["isError"], true);
+        assert_eq!(
+            reply["result"]["content"][0]["text"],
+            "Could not set status: worker closed."
+        );
+        assert!(!dir.path().join("status").exists());
+    }
+
+    #[test]
+    fn set_status_works_while_the_owner_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = dir.path().join("owner");
+        fs::write(&owner, "").unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox")).requiring_owner(Some(owner));
+        let mut out = Vec::new();
+        let input = format!("{}\n", status_call(1, "ok"));
+        run_stdio_server("GUZ-1", &inbox, None, input.as_bytes(), &mut out).unwrap();
+        let reply: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(reply["result"]["isError"], false);
+        assert!(status_path(dir.path(), "GUZ-1").exists());
     }
 
     #[test]

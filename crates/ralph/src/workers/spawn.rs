@@ -9,7 +9,7 @@ use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    branch_name, claude_worker_settings, exclude_lines, marker_paths, opencode_config,
+    branch_name, claude_worker_settings, close_clear_paths, exclude_lines, opencode_config,
     project_slug, resolve_claude_model, resolve_cursor_model, resolve_opencode_model,
     rollback_plan, rollback_report, session_name, spawn_handoff, startup_state, worker_command,
     worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs,
@@ -188,7 +188,7 @@ impl Workers {
         let attachments = self.store_dir.join(ATTACHMENTS_DIR);
         fs::create_dir_all(&attachments)?;
         let markers = WorkerMarkers::new(&self.store_dir, id);
-        for marker in marker_paths(&self.store_dir, id) {
+        for marker in close_clear_paths(&self.store_dir, id) {
             clear_marker(&marker)?;
         }
         let command = match harness {

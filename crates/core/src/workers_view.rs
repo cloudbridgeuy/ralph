@@ -214,13 +214,35 @@ fn report_cell(report: &ReportLine, now: DateTime<Utc>) -> String {
     format!("{} {} ago", report.status, age(&report.at, now))
 }
 
-fn status_cell(status: &StatusLine, now: DateTime<Utc>) -> String {
-    format!("{} · {} ago", status.text, age(&status.at, now))
+fn status_cell(status: &StatusLine, now: DateTime<Utc>, text_limit: usize) -> String {
+    format!(
+        "{} · {} ago",
+        cut(&status.text, text_limit),
+        age(&status.at, now)
+    )
 }
 
-fn activity_cell(row: &WorkerRow, now: DateTime<Utc>) -> String {
-    match &row.status {
-        Some(status) => status_cell(status, now),
+fn is_newer(status_at: &str, report_at: &str) -> bool {
+    match (
+        DateTime::parse_from_rfc3339(status_at),
+        DateTime::parse_from_rfc3339(report_at),
+    ) {
+        (Ok(status), Ok(report)) => status > report,
+        _ => false,
+    }
+}
+
+fn shown_status(row: &WorkerRow) -> Option<&StatusLine> {
+    let status = row.status.as_ref()?;
+    match &row.report {
+        Lookup::Found(report) if !is_newer(&status.at, &report.at) => None,
+        _ => Some(status),
+    }
+}
+
+fn activity_cell(row: &WorkerRow, now: DateTime<Utc>, text_limit: usize) -> String {
+    match shown_status(row) {
+        Some(status) => status_cell(status, now, text_limit),
         None => row.report.cell(|report| report_cell(report, now)),
     }
 }
@@ -272,7 +294,7 @@ fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [St
         row.id.clone(),
         row.harness.clone(),
         row.state.clone().unwrap_or_else(|| "-".to_string()),
-        activity_cell(row, now),
+        activity_cell(row, now, subject_limit),
         row.head.cell(|head| head_cell(head, subject_limit)),
         row.diff.cell(diff_cell),
         row.behind.cell(usize::to_string),
@@ -316,10 +338,15 @@ fn table(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> Option<String>
     };
     let longest = rows
         .iter()
-        .filter_map(|row| match &row.head {
-            Lookup::Found(head) => Some(head.subject.width()),
-            _ => None,
+        .flat_map(|row| {
+            let subject = match &row.head {
+                Lookup::Found(head) => Some(head.subject.width()),
+                _ => None,
+            };
+            let status = shown_status(row).map(|status| status.text.width());
+            [subject, status]
         })
+        .flatten()
         .max()
         .unwrap_or(0);
     let full = build(longest);
@@ -335,7 +362,7 @@ fn table(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> Option<String>
 fn row_lines(row: &WorkerRow, now: DateTime<Utc>) -> Vec<(&'static str, String)> {
     let diff = row.diff.cell(diff_text);
     vec![
-        ("report", activity_cell(row, now)),
+        ("report", activity_cell(row, now, usize::MAX)),
         ("head", row.head.cell(|head| head_cell(head, usize::MAX))),
         ("diff", format!("{diff} · {}", behind_text(row))),
     ]
@@ -788,6 +815,74 @@ mod tests {
     fn a_row_without_status_falls_back_to_the_latest_report() {
         assert_eq!(table_cells(&row("A"), now(), 99)[3], "done 12m ago");
         assert_eq!(row_lines(&row("A"), now())[0].1, "done 12m ago");
+    }
+
+    #[test]
+    fn a_report_newer_than_the_status_is_shown_instead() {
+        let mut newer = with_status(row("A"));
+        newer.report = Lookup::Found(line("done", "2026-01-01T00:58:00Z", ""));
+        assert_eq!(table_cells(&newer, now(), 99)[3], "done 2m ago");
+        assert_eq!(row_lines(&newer, now())[0].1, "done 2m ago");
+    }
+
+    #[test]
+    fn equal_times_and_unparsable_report_times_keep_the_report() {
+        let mut same = with_status(row("A"));
+        same.report = Lookup::Found(line("done", "2026-01-01T00:55:00Z", ""));
+        assert_eq!(table_cells(&same, now(), 99)[3], "done 5m ago");
+        same.report = Lookup::Found(line("done", "garbage", ""));
+        assert!(!is_newer("2026-01-01T00:55:00Z", "garbage"));
+        assert_eq!(shown_status(&same), None);
+    }
+
+    #[test]
+    fn times_compare_across_offsets() {
+        assert!(is_newer(
+            "2026-01-01T00:55:00Z",
+            "2026-01-01T01:50:00+01:00"
+        ));
+        assert!(!is_newer(
+            "2026-01-01T00:55:00Z",
+            "2026-01-01T00:40:00-01:00"
+        ));
+    }
+
+    #[test]
+    fn a_status_shows_when_there_is_no_report_to_compare() {
+        for report in [Lookup::Missing, Lookup::Failed] {
+            let mut r = with_status(row("A"));
+            r.report = report;
+            assert_eq!(table_cells(&r, now(), 99)[3], "Reading the tests. · 5m ago");
+        }
+    }
+
+    #[test]
+    fn a_long_status_is_cut_and_the_table_stays_a_table() {
+        let mut long = with_status(row("GUZ-1"));
+        let text = "s".repeat(120);
+        long.status = Some(StatusLine {
+            at: "2026-01-01T00:55:00Z".into(),
+            text: text.clone(),
+        });
+        let markdown = table_of(workers_view(&[long.clone()], now(), 140));
+        assert!(markdown.contains("…"), "{markdown}");
+        assert!(!markdown.contains(&text));
+        assert!(markdown.lines().all(|l| l.width() <= 140), "{markdown}");
+        let View::Text(list) = workers_view(&[long], now(), 40) else {
+            panic!("not a list");
+        };
+        assert!(!list.contains(&text));
+    }
+
+    #[test]
+    fn a_wide_screen_keeps_a_long_status_whole() {
+        let mut long = with_status(row("GUZ-1"));
+        let text = "s".repeat(120);
+        long.status = Some(StatusLine {
+            at: "2026-01-01T00:55:00Z".into(),
+            text: text.clone(),
+        });
+        assert!(table_of(workers_view(&[long], now(), 400)).contains(&text));
     }
 
     #[test]
