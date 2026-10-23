@@ -1,3 +1,4 @@
+use super::{MCP_STARTUP_STATUS, SERVER_REQUEST_RESOLVED};
 use crate::worker::acp::REPORT_TOOL;
 use crate::worker::{
     cancels_turn, stop_problem, turn_outcome, turn_stop, HarnessId, Inbound, PromptQueue, TurnEnd,
@@ -44,6 +45,17 @@ pub fn decode_signal(method: &str, params: &Value) -> Option<ThreadSignal> {
         ITEM_COMPLETED => is_delivered_report(&params["item"]).then_some(ThreadSignal::Reported),
         _ => None,
     }
+}
+
+pub fn is_unmapped(method: &str) -> bool {
+    !matches!(
+        method,
+        TURN_STARTED
+            | TURN_COMPLETED
+            | ITEM_COMPLETED
+            | MCP_STARTUP_STATUS
+            | SERVER_REQUEST_RESOLVED
+    )
 }
 
 pub fn event_turn_id<'a>(method: &str, params: &'a Value) -> Option<&'a str> {
@@ -468,6 +480,20 @@ mod tests {
         let ended = turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
         assert_eq!(results(&ended), [("e1", false)]);
         assert_eq!(starts(&ended), ["now"]);
+    }
+
+    #[test]
+    fn only_methods_the_worker_consumes_are_mapped() {
+        for method in [
+            TURN_STARTED,
+            TURN_COMPLETED,
+            ITEM_COMPLETED,
+            MCP_STARTUP_STATUS,
+            SERVER_REQUEST_RESOLVED,
+        ] {
+            assert!(!is_unmapped(method));
+        }
+        assert!(is_unmapped("item/agentMessage/delta"));
     }
 
     #[test]

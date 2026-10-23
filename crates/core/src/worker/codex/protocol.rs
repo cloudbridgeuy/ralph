@@ -12,7 +12,7 @@ pub const THREAD_RESUME: &str = "thread/resume";
 pub const TURN_START: &str = "turn/start";
 pub const TURN_INTERRUPT: &str = "turn/interrupt";
 pub const MCP_STARTUP_STATUS: &str = "mcpServer/startupStatus/updated";
-pub const PROBED_VERSION: &str = "0.162.1";
+pub const PROBED_VERSION: &str = "0.164.0";
 pub const NOT_LOGGED_IN: &str = "codex is not logged in; run `codex login`";
 const MIN_VERSION: (u64, u64) = (0, 162);
 
@@ -262,7 +262,7 @@ mod tests {
         let old = check_version("0.161.4").unwrap_err();
         assert!(old.contains("0.161.4") && old.contains(">= 0.162"));
         let warning = check_version("0.163.0").unwrap().unwrap();
-        assert!(warning.contains("0.163.0") && warning.contains("0.162.1"));
+        assert!(warning.contains("0.163.0") && warning.contains("0.164.0"));
         assert!(check_version("1.0.0").unwrap().is_some());
         assert!(check_version("garbage").is_err());
     }
