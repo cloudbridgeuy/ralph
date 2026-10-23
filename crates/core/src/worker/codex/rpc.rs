@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
 const REJECTED_CODE: i64 = -32601;
 
@@ -47,6 +47,7 @@ impl std::fmt::Display for FrameError {
 pub struct Rpc {
     last: u64,
     pending: BTreeSet<u64>,
+    deferred: VecDeque<Incoming>,
 }
 
 impl Rpc {
@@ -55,6 +56,23 @@ impl Rpc {
         self.pending.insert(self.last);
         let line = json!({"jsonrpc": "2.0", "id": self.last, "method": method, "params": params});
         (self.last, line.to_string())
+    }
+
+    pub fn settle(&mut self, id: u64, incoming: Incoming) -> Option<Result<Value, RpcError>> {
+        match incoming {
+            Incoming::Response {
+                id: answered,
+                outcome,
+            } if answered == id => Some(outcome),
+            other => {
+                self.deferred.push_back(other);
+                None
+            }
+        }
+    }
+
+    pub fn next_deferred(&mut self) -> Option<Incoming> {
+        self.deferred.pop_front()
     }
 
     pub fn notification(method: &str) -> String {
@@ -168,6 +186,53 @@ mod tests {
         assert_eq!(reply["id"], json!(0));
         assert_eq!(reply["error"]["code"], json!(-32601));
         assert!(reply.get("result").is_none());
+    }
+
+    #[test]
+    fn frames_that_arrive_while_waiting_are_kept_in_arrival_order() {
+        let mut rpc = Rpc::default();
+        let (id, _) = rpc.request("turn/start", json!({}));
+        let (other, _) = rpc.request("turn/interrupt", json!({}));
+        let frames = [
+            r#"{"method":"item/completed","params":{"n":1}}"#,
+            r#"{"id":7,"method":"item/commandExecution/requestApproval","params":{}}"#,
+            r#"{"id":2,"result":{}}"#,
+            r#"{"method":"turn/completed","params":{"n":2}}"#,
+            r#"{"id":1,"result":{"turn":{"id":"u"}}}"#,
+        ];
+        let mut settled = None;
+        for frame in frames {
+            let incoming = rpc.receive(frame).unwrap();
+            settled = settled.or(rpc.settle(id, incoming));
+        }
+        assert_eq!(settled, Some(Ok(json!({"turn": {"id": "u"}}))));
+        let mut replies = Vec::new();
+        let methods: Vec<_> = std::iter::from_fn(|| rpc.next_deferred())
+            .map(|incoming| match incoming {
+                Incoming::Notification { method, .. } => method,
+                Incoming::Response { id, .. } => format!("response {id}"),
+                Incoming::ServerRequest { id, method, .. } => {
+                    replies.push(reject_server_request(&id, &method));
+                    method
+                }
+            })
+            .collect();
+        assert_eq!(
+            methods,
+            [
+                "item/completed",
+                "item/commandExecution/requestApproval",
+                &format!("response {other}"),
+                "turn/completed"
+            ]
+        );
+        assert_eq!(replies.len(), 1);
+        let reply: Value = serde_json::from_str(&replies[0]).unwrap();
+        assert_eq!(
+            (reply["id"].clone(), reply["error"]["code"].clone()),
+            (json!(7), json!(-32601))
+        );
+        assert_eq!(rpc.next_deferred(), None);
     }
 
     #[test]

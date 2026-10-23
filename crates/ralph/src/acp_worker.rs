@@ -1,7 +1,9 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::AppConfig;
 use crate::cursor_owner::request_ids;
-use crate::cursor_owner::{now_secs, sweep_owner, write_file, write_owner_record};
+use crate::cursor_owner::{
+    now_secs, sweep_owner, write_file, write_interrupt_result, write_owner_record,
+};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
@@ -22,10 +24,10 @@ use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_allow_option, cancels_turn, capabilities, check_protocol,
-    decide, decode_update, describe, encode, gone_path, interrupt_result_text, match_option,
-    no_option_message, permission_alert_report, permission_content, prompt_failure_report,
-    ready_path, reduce, request_stale, resume_decision, session_error, session_saved, stop_problem,
-    task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
+    decide, decode_update, describe, encode, gone_path, match_option, no_option_message,
+    permission_alert_report, permission_content, prompt_failure_report, ready_path, reduce,
+    request_stale, resume_decision, session_error, session_saved, stop_problem, task_prompt,
+    turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
     CursorPermissions, HandoffFiles, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker,
     Inbound, Marker, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
     TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,

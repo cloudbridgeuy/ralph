@@ -88,9 +88,8 @@ impl Capabilities {
                 Partial("per-session SSE activity; one alert per shared-server death")
             }
             (HarnessId::Codex, Spawn | Prompt | Report | Model) => Full,
-            (HarnessId::Codex, Interrupt | PermAsk | PermYolo | Resume | Heartbeat) => {
-                Support::None
-            }
+            (HarnessId::Codex, Interrupt) => Partial("outcome unknown after 30 s"),
+            (HarnessId::Codex, PermAsk | PermYolo | Resume | Heartbeat) => Support::None,
             (HarnessId::Codex, Close) => Partial(
                 "tool descendants can be orphaned; global trust entry left in ~/.codex/config.toml",
             ),
@@ -322,10 +321,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_interrupt_is_refused_with_its_reason() {
+    fn codex_interrupt_is_allowed_and_resume_is_refused_with_its_reason() {
         assert_eq!(
-            unsupported_reason(HarnessId::Codex, WorkerCommand::Interrupt("i".into())).as_deref(),
-            Some("codex interrupt: not supported")
+            unsupported_reason(HarnessId::Codex, WorkerCommand::Interrupt("i".into())),
+            None
+        );
+        assert_eq!(
+            unsupported_reason(HarnessId::Codex, WorkerCommand::Resume).as_deref(),
+            Some("codex resume: not supported")
         );
         assert_eq!(
             unsupported_reason(HarnessId::Codex, WorkerCommand::Prompt("p".into())),
