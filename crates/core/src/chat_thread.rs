@@ -15,7 +15,7 @@ pub enum ResetReason {
 }
 
 impl ResetReason {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             ResetReason::Tokens => "tokens",
             ResetReason::Turns => "turns",

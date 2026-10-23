@@ -7,10 +7,12 @@ use super::turn::{draft_after, logged_before_reply, rule, shown_output, TurnOutc
 use crate::stream_processor::OutputBlock;
 use crossterm::event::{Event, KeyEvent};
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
+use ralph_core::chat_help::{KeyHelp, PROMPT_KEYS, QUEUE_KEYS, VI_KEYS};
 use ralph_core::chat_memory::Trigger;
 use reedline::{
-    EditCommand, EditMode, KeyCode, KeyModifiers, PromptEditMode, PromptViMode, ReedlineEvent,
-    ReedlineRawEvent,
+    default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
+    EditCommand, EditMode, KeyCode, KeyModifiers, Keybindings, PromptEditMode, PromptViMode,
+    ReedlineEvent, ReedlineRawEvent,
 };
 use std::path::{Path, PathBuf};
 use termimad::MadSkin;
@@ -209,4 +211,64 @@ fn queue_keymap_drops_paste_and_open_editor_bindings() {
     assert!(keys
         .find_binding(KeyModifiers::CONTROL, KeyCode::Char('q'))
         .is_some());
+}
+
+fn key_label(modifier: KeyModifiers, code: KeyCode) -> String {
+    let mut label = String::new();
+    for (flag, name) in [
+        (KeyModifiers::CONTROL, "Ctrl-"),
+        (KeyModifiers::ALT, "Alt-"),
+        (KeyModifiers::SHIFT, "Shift-"),
+    ] {
+        if modifier.contains(flag) {
+            label.push_str(name);
+        }
+    }
+    match code {
+        KeyCode::Char(c) => label.push(c.to_ascii_uppercase()),
+        other => label.push_str(&format!("{other:?}")),
+    }
+    label
+}
+
+/// Labels of the bindings ralph adds or changes on top of reedline's defaults.
+fn added_labels(keys: &Keybindings, defaults: &Keybindings) -> Vec<String> {
+    keys.get_keybindings()
+        .iter()
+        .filter(|(combo, event)| defaults.get_keybindings().get(*combo) != Some(*event))
+        .map(|(combo, _)| key_label(combo.modifier, combo.key_code))
+        .collect()
+}
+
+fn assert_documented(labels: Vec<String>, tables: &[&[KeyHelp]]) {
+    for label in labels {
+        let documented = tables
+            .iter()
+            .flat_map(|table| table.iter())
+            .any(|help| help.keys.split(", ").any(|key| key == label));
+        assert!(documented, "{label} is bound but has no /help entry");
+    }
+}
+
+#[test]
+fn every_chat_binding_has_a_help_entry() {
+    assert_documented(
+        added_labels(&emacs_keybindings(), &default_emacs_keybindings()),
+        &[PROMPT_KEYS],
+    );
+    let (insert, normal) = vi_keybindings();
+    assert_documented(
+        added_labels(&insert, &default_vi_insert_keybindings()),
+        &[PROMPT_KEYS, VI_KEYS],
+    );
+    assert_documented(
+        added_labels(&normal, &default_vi_normal_keybindings()),
+        &[PROMPT_KEYS, VI_KEYS],
+    );
+    let mut queue = emacs_keybindings();
+    queue_bindings(&mut queue);
+    assert_documented(
+        added_labels(&queue, &default_emacs_keybindings()),
+        &[QUEUE_KEYS, PROMPT_KEYS],
+    );
 }

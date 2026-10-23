@@ -4,6 +4,7 @@ use crate::chat::watch;
 use crate::config::ChangesSection;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
+use ralph_core::chat_help::help_text;
 use ralph_core::chat_status::Route;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use std::io;
@@ -39,6 +40,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         ),
         Route::Diff(DiffArgs::Usage(usage)) => println!("{usage}"),
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
+        Route::Help => print!("{}", help_text()),
         Route::Send(_) | Route::ReadInbox(_) | Route::Ignore => {}
     }
     Ok(())

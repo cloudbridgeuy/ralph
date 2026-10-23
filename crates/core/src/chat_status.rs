@@ -1,3 +1,4 @@
+use crate::chat_help::Command;
 use crate::chat_thread::ThreadCell;
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -15,10 +16,7 @@ const DEFAULT_STATE: &str = "running";
 const BUSY_STATE: &str = "busy";
 const IDLE_STATE: &str = "idle";
 const PERMISSION_STATE: &str = "permission";
-const INBOX_COMMAND: &str = "/inbox";
 pub const INBOX_USAGE: &str = "Usage: /inbox [next | N | list | peek N | drop N]";
-const WATCH_COMMAND: &str = "/watch";
-const DIFF_COMMAND: &str = "/diff";
 const SEPARATOR: &str = " · ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +75,7 @@ pub enum Route {
     InboxUsage,
     Watch(WatchCommand),
     Diff(DiffArgs),
+    Help,
     Ignore,
 }
 
@@ -99,35 +98,34 @@ pub fn empty_route(unread: usize, empty: &EmptySubmit) -> Route {
 
 pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
     let line = line.trim();
-    if let Some(args) = line
-        .strip_prefix(WATCH_COMMAND)
-        .filter(|args| args.is_empty() || args.starts_with(char::is_whitespace))
-    {
-        return Route::Watch(parse_watch_args(args));
-    }
-    if let Some(args) = line
-        .strip_prefix(DIFF_COMMAND)
-        .filter(|args| args.is_empty() || args.starts_with(char::is_whitespace))
-    {
-        return Route::Diff(parse_diff_args(args));
-    }
-    let mut tokens = line.split_whitespace();
-    if tokens.next() == Some(INBOX_COMMAND) {
-        return match (tokens.next(), tokens.next(), tokens.next()) {
-            (None, ..) => Route::ReadInbox(Selection::All),
-            (Some("next"), None, _) => Route::ReadInbox(Selection::Next),
-            (Some("list"), None, _) => Route::ListInbox,
-            (Some("peek"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
-            (Some("drop"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::DropInbox),
-            (Some(n), None, _) => n
-                .parse()
-                .map_or(Route::InboxUsage, |p| Route::ReadInbox(Selection::At(p))),
-            _ => Route::InboxUsage,
-        };
+    for command in Command::ALL {
+        if let Some(args) = command.args(line) {
+            return match command {
+                Command::Help => Route::Help,
+                Command::Inbox => inbox_route(args),
+                Command::Watch => Route::Watch(parse_watch_args(args)),
+                Command::Diff => Route::Diff(parse_diff_args(args)),
+            };
+        }
     }
     match line {
         "" => empty_route(unread, empty),
         message => Route::Send(message.to_string()),
+    }
+}
+
+fn inbox_route(args: &str) -> Route {
+    let mut tokens = args.split_whitespace();
+    match (tokens.next(), tokens.next(), tokens.next()) {
+        (None, ..) => Route::ReadInbox(Selection::All),
+        (Some("next"), None, _) => Route::ReadInbox(Selection::Next),
+        (Some("list"), None, _) => Route::ListInbox,
+        (Some("peek"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::PeekInbox),
+        (Some("drop"), Some(n), None) => n.parse().map_or(Route::InboxUsage, Route::DropInbox),
+        (Some(n), None, _) => n
+            .parse()
+            .map_or(Route::InboxUsage, |p| Route::ReadInbox(Selection::At(p))),
+        _ => Route::InboxUsage,
     }
 }
 
@@ -278,18 +276,16 @@ pub fn footer(unread: usize, width: usize) -> String {
     };
     let reports = if unread == 1 { "report" } else { "reports" };
     let hint = |text: String| (unread > 0).then_some(text);
+    let inbox = Command::Inbox.name();
     let candidates = vec![
         base(
             hint(format!(
-                "{INBOX_COMMAND} or Enter on empty prompt reads {unread} {reports}"
+                "{inbox} or Enter on empty prompt reads {unread} {reports}"
             )),
             true,
         ),
-        base(
-            hint(format!("{INBOX_COMMAND} read {unread} {reports}")),
-            true,
-        ),
-        base(hint(format!("{INBOX_COMMAND} {unread}")), false),
+        base(hint(format!("{inbox} read {unread} {reports}")), true),
+        base(hint(format!("{inbox} {unread}")), false),
         "Enter send".to_string(),
     ];
     format!("{}\n", fit(candidates, width))
