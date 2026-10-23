@@ -87,8 +87,8 @@ impl Capabilities {
             (HarnessId::Opencode, Heartbeat) => {
                 Partial("per-session SSE activity; one alert per shared-server death")
             }
-            (HarnessId::Codex, Spawn | Report | Model) => Full,
-            (HarnessId::Codex, Prompt | Interrupt | PermAsk | PermYolo | Resume | Heartbeat) => {
+            (HarnessId::Codex, Spawn | Prompt | Report | Model) => Full,
+            (HarnessId::Codex, Interrupt | PermAsk | PermYolo | Resume | Heartbeat) => {
                 Support::None
             }
             (HarnessId::Codex, Close) => Partial(
@@ -322,10 +322,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_prompt_is_refused_with_its_reason() {
+    fn codex_interrupt_is_refused_with_its_reason() {
         assert_eq!(
-            unsupported_reason(HarnessId::Codex, WorkerCommand::Prompt("p".into())).as_deref(),
-            Some("codex prompt: not supported")
+            unsupported_reason(HarnessId::Codex, WorkerCommand::Interrupt("i".into())).as_deref(),
+            Some("codex interrupt: not supported")
+        );
+        assert_eq!(
+            unsupported_reason(HarnessId::Codex, WorkerCommand::Prompt("p".into())),
+            None
         );
         assert_eq!(
             unsupported_reason(HarnessId::Codex, WorkerCommand::Close),

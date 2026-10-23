@@ -68,8 +68,8 @@ impl Workers {
     }
 
     fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
-        if self.codex_running(id) {
-            return Err(refuse_codex_reply(interrupt));
+        if interrupt && self.codex_running(id) {
+            return Err(refuse_codex_interrupt());
         }
         if let Some(sent) = self.deliver_headless(id, text, interrupt, "Sent to") {
             return sent;
@@ -131,6 +131,10 @@ impl Workers {
         let cursor = HandoffFiles::cursor(&self.store_dir, id);
         if cursor.owner.exists() {
             return Some(cursor);
+        }
+        let codex = HandoffFiles::codex(&self.store_dir, id);
+        if codex.owner.exists() {
+            return Some(codex);
         }
         self.opencode_http(id)
             .then(|| HandoffFiles::opencode(&self.store_dir, id))
@@ -479,7 +483,7 @@ impl Workers {
     }
 
     fn owner(&self, project: &str, id: &str) -> Owner {
-        if self.headless_files(id).is_some() || self.codex_running(id) {
+        if self.headless_files(id).is_some() {
             return Owner::Mine(TaggedSession {
                 name: session_name(project, id),
                 store: self.store_dir.to_string_lossy().into_owned(),
@@ -666,13 +670,11 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
     workers
 }
 
-fn refuse_codex_reply(interrupt: bool) -> io::Error {
-    let command = if interrupt {
-        WorkerCommand::Interrupt(String::new())
-    } else {
-        WorkerCommand::Prompt(String::new())
-    };
-    io::Error::other(unsupported_reason(HarnessId::Codex, command).unwrap_or_default())
+fn refuse_codex_interrupt() -> io::Error {
+    io::Error::other(
+        unsupported_reason(HarnessId::Codex, WorkerCommand::Interrupt(String::new()))
+            .unwrap_or_default(),
+    )
 }
 
 pub fn capture_pane(session: &str) -> Option<String> {

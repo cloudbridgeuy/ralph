@@ -5,7 +5,7 @@ use ralph_core::worker::{
 };
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -172,4 +172,17 @@ pub(crate) fn request_ids(store_dir: &Path, dir: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub(crate) fn queued_entries(dir: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<PathBuf> = fs::read_dir(dir)
+        .map(|dir| {
+            dir.filter_map(Result::ok)
+                .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                .map(|entry| entry.path())
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort();
+    entries
 }
