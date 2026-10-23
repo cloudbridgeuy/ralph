@@ -87,7 +87,7 @@ impl Capabilities {
             (HarnessId::Opencode, Heartbeat) => {
                 Partial("per-session SSE activity; one alert per shared-server death")
             }
-            (HarnessId::Codex, Spawn | Prompt | Report | Model) => Full,
+            (HarnessId::Codex, Spawn | Prompt | Report | Model | Close) => Full,
             (HarnessId::Codex, Interrupt) => Partial("outcome unknown after 30 s"),
             (HarnessId::Codex, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Codex, PermYolo) => Partial("single-request accepts only"),
@@ -97,7 +97,6 @@ impl Capabilities {
             (HarnessId::Codex, Heartbeat) => Partial(
                 "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default",
             ),
-            (HarnessId::Codex, Close) => Partial("global trust entry left in ~/.codex/config.toml"),
         }
     }
 }
@@ -330,7 +329,11 @@ mod tests {
         let caps = capabilities(HarnessId::Codex);
         for feature in Feature::ALL {
             let expected = match feature {
-                Feature::Spawn | Feature::Prompt | Feature::Report | Feature::Model => {
+                Feature::Spawn
+                | Feature::Prompt
+                | Feature::Report
+                | Feature::Model
+                | Feature::Close => {
                     Support::Full
                 }
                 Feature::Interrupt => Support::Partial("outcome unknown after 30 s"),
@@ -342,9 +345,6 @@ mod tests {
                 Feature::Heartbeat => Support::Partial(
                     "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default",
                 ),
-                Feature::Close => {
-                    Support::Partial("global trust entry left in ~/.codex/config.toml")
-                }
             };
             assert_eq!(caps.support(feature), expected, "{feature:?}");
             if let Some(command) = command_for(feature) {

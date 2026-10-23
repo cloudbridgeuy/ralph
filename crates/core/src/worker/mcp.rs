@@ -385,7 +385,7 @@ mod tests {
             .unwrap();
         assert!(codex.contains("interrupt (outcome unknown after 30 s)"));
         assert!(codex.contains("resume (needs saved history"));
-        assert!(codex.contains("close (global trust entry"));
+        assert!(!codex.contains("close ("));
         assert!(codex.contains("heartbeat (app-server frames"));
         assert!(!codex.contains("unsupported"));
         assert!(!text.contains("partial or unsupported"));
