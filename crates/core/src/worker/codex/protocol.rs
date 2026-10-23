@@ -1,4 +1,4 @@
-use crate::worker::SERVER_NAME;
+use crate::worker::{Selection, SessionRecord, SERVER_NAME};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -8,6 +8,7 @@ pub const INITIALIZED: &str = "initialized";
 pub const ACCOUNT_READ: &str = "account/read";
 pub const MODEL_LIST: &str = "model/list";
 pub const THREAD_START: &str = "thread/start";
+pub const THREAD_RESUME: &str = "thread/resume";
 pub const TURN_START: &str = "turn/start";
 pub const TURN_INTERRUPT: &str = "turn/interrupt";
 pub const MCP_STARTUP_STATUS: &str = "mcpServer/startupStatus/updated";
@@ -22,11 +23,21 @@ pub fn initialize_params(version: &str) -> Value {
     })
 }
 
-pub fn model_list_params() -> Value {
-    json!({"limit": 200, "includeHidden": true})
+pub const MODEL_LIST_MAX_PAGES: usize = 20;
+
+pub fn model_list_params(cursor: Option<&str>) -> Value {
+    let mut params = json!({"limit": 200, "includeHidden": true});
+    if let Some(cursor) = cursor {
+        params["cursor"] = json!(cursor);
+    }
+    params
 }
 
-pub fn thread_start_params(cwd: &Path, model: Option<&str>, mcp_server: &Value) -> Value {
+pub fn next_cursor(page: &Value) -> Option<String> {
+    page["nextCursor"].as_str().map(str::to_string)
+}
+
+pub fn thread_start_params(cwd: &Path, selection: &Selection, mcp_server: &Value) -> Value {
     let mut params = json!({
         "cwd": cwd,
         "approvalPolicy": "on-request",
@@ -43,14 +54,38 @@ pub fn thread_start_params(cwd: &Path, model: Option<&str>, mcp_server: &Value) 
             }
         }
     });
-    if let Some(model) = model {
+    if let Some(model) = &selection.model {
         params["model"] = json!(model);
+    }
+    if let Some(effort) = &selection.effort {
+        params["config"]["model_reasoning_effort"] = json!(effort);
     }
     params
 }
 
-pub fn turn_start_params(thread_id: &str, text: &str) -> Value {
-    json!({"threadId": thread_id, "input": [{"type": "text", "text": text}]})
+pub fn record_selection(record: &SessionRecord) -> Selection {
+    Selection {
+        model: record.model.clone(),
+        effort: record.effort.clone(),
+    }
+}
+
+pub fn thread_resume_params(record: &SessionRecord, mcp_server: &Value) -> Value {
+    let mut params = thread_start_params(&record.cwd, &record_selection(record), mcp_server);
+    params["threadId"] = json!(record.session_id);
+    params["excludeTurns"] = json!(true);
+    params
+}
+
+pub fn turn_start_params(thread_id: &str, text: &str, selection: &Selection) -> Value {
+    let mut params = json!({"threadId": thread_id, "input": [{"type": "text", "text": text}]});
+    if let Some(model) = &selection.model {
+        params["model"] = json!(model);
+    }
+    if let Some(effort) = &selection.effort {
+        params["effort"] = json!(effort);
+    }
+    params
 }
 
 pub fn turn_interrupt_params(thread_id: &str, turn_id: &str) -> Value {
@@ -124,8 +159,20 @@ pub fn check_model(requested: Option<&str>, available: &[String]) -> Result<(), 
     }
 }
 
-pub fn decode_thread_id(started: &Value) -> Option<String> {
-    started["thread"]["id"].as_str().map(str::to_string)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadInfo {
+    pub id: String,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
+pub fn decode_thread(started: &Value) -> Option<ThreadInfo> {
+    let text = |value: &Value| value.as_str().map(str::to_string);
+    Some(ThreadInfo {
+        id: text(&started["thread"]["id"])?,
+        model: text(&started["model"]),
+        effort: text(&started["reasoningEffort"]),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,7 +293,14 @@ mod tests {
     #[test]
     fn thread_start_attaches_the_report_server_with_approve_mode() {
         let server = json!({"name": "ralph-worker", "command": "/bin/ralph", "args": ["worker-mcp", "--id", "A"], "env": []});
-        let params = thread_start_params(Path::new("/w"), Some("gpt-6.1-sol"), &server);
+        let params = thread_start_params(
+            Path::new("/w"),
+            &Selection {
+                model: Some("gpt-6.1-sol".into()),
+                effort: None,
+            },
+            &server,
+        );
         assert_eq!(
             params,
             json!({
@@ -263,21 +317,91 @@ mod tests {
                 }}}
             })
         );
-        assert!(thread_start_params(Path::new("/w"), None, &server)
-            .get("model")
-            .is_none());
+        assert!(
+            thread_start_params(Path::new("/w"), &Selection::default(), &server)
+                .get("model")
+                .is_none()
+        );
+        let effort = Selection {
+            model: None,
+            effort: Some("high".into()),
+        };
+        let params = thread_start_params(Path::new("/w"), &effort, &server);
+        assert_eq!(params["config"]["model_reasoning_effort"], "high");
+        assert!(params["config"]["mcp_servers"].is_object());
     }
 
     #[test]
-    fn thread_id_is_read_from_the_thread_start_result() {
+    fn thread_resume_reuses_start_params_for_the_saved_thread_without_history() {
+        let server = json!({"name": "ralph-worker", "command": "/bin/ralph", "args": ["worker-mcp"], "env": []});
+        let record = SessionRecord {
+            session_id: "thread-1".into(),
+            cwd: "/w".into(),
+            inbox: "/i".into(),
+            store: Some("/s".into()),
+            model: Some("m".into()),
+            effort: Some("low".into()),
+            permissions: None,
+        };
+        let params = thread_resume_params(&record, &server);
+        let mut expected =
+            thread_start_params(Path::new("/w"), &record_selection(&record), &server);
+        expected["threadId"] = json!("thread-1");
+        expected["excludeTurns"] = json!(true);
+        assert_eq!(params, expected);
+        assert_eq!(params["config"]["model_reasoning_effort"], "low");
+        assert_eq!(
+            params["config"]["mcp_servers"]["ralph-worker"]["required"],
+            true
+        );
+        assert_eq!(params["model"], "m");
+    }
+
+    #[test]
+    fn turn_start_carries_model_and_effort_only_when_selected() {
+        let bare = turn_start_params("t", "hi", &Selection::default());
+        assert_eq!(
+            bare,
+            json!({"threadId": "t", "input": [{"type": "text", "text": "hi"}]})
+        );
+        let chosen = Selection {
+            model: Some("m".into()),
+            effort: Some("low".into()),
+        };
+        let params = turn_start_params("t", "hi", &chosen);
+        assert_eq!(
+            (params["model"].as_str(), params["effort"].as_str()),
+            (Some("m"), Some("low"))
+        );
+    }
+
+    #[test]
+    fn model_list_pages_follow_next_cursor() {
+        assert!(model_list_params(None).get("cursor").is_none());
+        assert_eq!(model_list_params(Some("c2"))["cursor"], "c2");
+        assert_eq!(
+            next_cursor(&json!({"data": [], "nextCursor": "c2"})).as_deref(),
+            Some("c2")
+        );
+        assert_eq!(next_cursor(&json!({"data": [], "nextCursor": null})), None);
+    }
+
+    #[test]
+    fn thread_info_is_read_from_the_thread_start_result() {
         let started = frame(
-            r#"{"thread":{"id":"01a1655f-e1b3-7871-93ff-c4273c3bac74","cwd":"/w","status":{"type":"idle"}},"model":"m","approvalPolicy":"on-request"}"#,
+            r#"{"thread":{"id":"01a1655f-e1b3-7871-93ff-c4273c3bac74","cwd":"/w","status":{"type":"idle"}},"model":"m","reasoningEffort":"high","approvalPolicy":"on-request"}"#,
         );
         assert_eq!(
-            decode_thread_id(&started).as_deref(),
-            Some("01a1655f-e1b3-7871-93ff-c4273c3bac74")
+            decode_thread(&started),
+            Some(ThreadInfo {
+                id: "01a1655f-e1b3-7871-93ff-c4273c3bac74".into(),
+                model: Some("m".into()),
+                effort: Some("high".into())
+            })
         );
-        assert_eq!(decode_thread_id(&json!({})), None);
+        let bare = decode_thread(&json!({"thread": {"id": "x"}})).unwrap();
+        assert_eq!((bare.model, bare.effort), (None, None));
+        assert_eq!(decode_thread(&json!({})), None);
     }
 
     #[test]

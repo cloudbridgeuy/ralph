@@ -377,19 +377,17 @@ mod tests {
     }
 
     #[test]
-    fn harness_description_separates_partial_from_unsupported() {
+    fn harness_description_lists_codex_limits_as_partial() {
         let text = harness_description();
         let codex = text
             .split(" | ")
             .find(|entry| entry.starts_with("codex"))
             .unwrap();
-        let (partial, unsupported) = codex.split_once("; unsupported: ").unwrap();
-        assert!(partial.contains("interrupt (outcome unknown after 30 s)"));
-        assert!(partial.contains("close (tool descendants"));
-        assert!(partial.contains("heartbeat (app-server frames"));
-        assert!(unsupported.contains("resume"));
-        assert!(!unsupported.contains("heartbeat"));
-        assert!(!unsupported.contains("interrupt") && !unsupported.contains("close"));
+        assert!(codex.contains("interrupt (outcome unknown after 30 s)"));
+        assert!(codex.contains("resume (needs saved history"));
+        assert!(codex.contains("close (global trust entry"));
+        assert!(codex.contains("heartbeat (app-server frames"));
+        assert!(!codex.contains("unsupported"));
         assert!(!text.contains("partial or unsupported"));
     }
 

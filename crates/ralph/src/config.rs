@@ -27,7 +27,7 @@ mod reset_limits_tests;
 mod wire;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
-pub use codex::CodexSection;
+pub use codex::{configured_codex, CodexSection};
 pub use cursor::CursorSection;
 pub use opencode::OpencodeSection;
 pub use permissions::configured_permission_mode;

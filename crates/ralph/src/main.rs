@@ -30,6 +30,7 @@ mod mermaid_guard;
 mod opencode_worker;
 pub mod paths;
 mod permission_queue;
+mod process_tree;
 pub mod prompt_source;
 pub mod render;
 pub mod signal;

@@ -1,33 +1,38 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
-use crate::config::configured_permission_mode;
+use crate::config::{configured_codex, configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
-    now_secs, queued_entries, request_ids, sweep_owner, write_file, write_interrupt_result,
-    write_owner_record,
+    claim_owner, now_secs, queued_entries, request_ids, sweep_owner, write_file,
+    write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::PermissionQueue;
+use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
-use ralph_core::snapshot::WorkerSite;
+use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, answer_server_request, check_login, check_model, check_version,
-    classify, decide, decode_thread_id, decode_turn_id, decode_version, describe, gone_path,
-    initialize_params, model_ids, model_list_params, prompt_failure_report, ready_path, reduce,
-    reject_server_request, request_stale, resolved_request_id, response_body, task_prompt,
-    thread_start_params, turn_interrupt_params, turn_start_params, yolo_option, Action,
-    ApprovalKind, Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound,
-    Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope, SessionRecord, SpawnRequest,
-    ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ,
-    CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR,
-    CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, SERVER_NAME,
-    THREAD_START, TURN_INTERRUPT, TURN_START,
+    acp_mcp_server, activity_path, answer_server_request, check_effort, check_login, check_model,
+    check_version, classify, codex_close_plan, codex_resume_decision, decide, decode_thread,
+    decode_turn_id, decode_version, describe, gone_path, initialize_params, model_ids,
+    model_list_params, next_cursor, prompt_failure_report, ready_path, record_selection, reduce,
+    reject_server_request, request_stale, resolve_selection, resolved_request_id, response_body,
+    session_saved, task_prompt, thread_resume_params, thread_start_params, turn_interrupt_params,
+    turn_start_params, turn_stop, yolo_option, Action, ApprovalKind, Capabilities, CodexCloseStep,
+    HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound, Incoming, McpStartup,
+    McpVerdict, PermissionMode, Resume, ResumeFacts, Rpc, Scope, Selection, SessionRecord,
+    SpawnRequest, ThreadInfo, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent,
+    WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_CLOSE_TURN_WAIT,
+    CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SESSION_DIR,
+    CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, MODEL_LIST_MAX_PAGES, SERVER_NAME,
+    THREAD_RESUME, THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus};
@@ -37,9 +42,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod resume;
+
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const REPLY_POLL: Duration = Duration::from_millis(100);
+const CLOSE_POLL: Duration = Duration::from_millis(20);
 const EXIT_REASON: &str = "codex app-server exited";
 
 type Stdin = Arc<Mutex<Option<LoggedWrite<ChildStdin>>>>;
@@ -77,6 +85,7 @@ struct Wire {
     lines: mpsc::Receiver<String>,
     startup: McpStartup,
     heartbeat: Arc<Heartbeat>,
+    closing: Arc<AtomicBool>,
 }
 
 fn exit_reason(status: ExitStatus) -> String {
@@ -158,7 +167,14 @@ impl Wire {
         let (id, line) = self.rpc.request(method, params);
         self.send_line(&line).map_err(Stop::message)?;
         loop {
-            let incoming = self.next_frame(Some(deadline)).map_err(Stop::message)?;
+            if self.closing.load(Ordering::SeqCst) {
+                return Err(format!("codex {method} failed: worker closed"));
+            }
+            let slice = deadline.min(Instant::now() + REPLY_POLL);
+            let incoming = match self.next_frame(Some(slice)) {
+                Err(Stop::Timeout) if Instant::now() < deadline => continue,
+                other => other.map_err(Stop::message)?,
+            };
             if let Some(outcome) = self.rpc.settle(id, incoming) {
                 return outcome.map_err(|e| format!("codex {method} failed: {}", e.message));
             }
@@ -166,12 +182,26 @@ impl Wire {
     }
 }
 
+fn list_models(wire: &mut Wire, deadline: Instant) -> Result<Value, String> {
+    let mut data = Vec::new();
+    let mut cursor = None;
+    for _ in 0..MODEL_LIST_MAX_PAGES {
+        let page = wire.call(MODEL_LIST, model_list_params(cursor.as_deref()), deadline)?;
+        data.extend(page["data"].as_array().cloned().unwrap_or_default());
+        cursor = next_cursor(&page);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(json!({"data": data}))
+}
+
 fn handshake(
     wire: &mut Wire,
-    request: &SpawnRequest,
-    server: &Value,
+    selection: &Selection,
+    open: (&str, Value),
     deadline: Instant,
-) -> Result<String, String> {
+) -> Result<ThreadInfo, String> {
     let init = wire.call(
         INITIALIZE,
         initialize_params(env!("CARGO_PKG_VERSION")),
@@ -185,16 +215,12 @@ fn handshake(
         warn(warning);
     }
     check_login(&wire.call(ACCOUNT_READ, json!({}), deadline)?)?;
-    if request.model.is_some() {
-        let listed = wire.call(MODEL_LIST, model_list_params(), deadline)?;
-        check_model(request.model.as_deref(), &model_ids(&listed))?;
-    }
-    let started = wire.call(
-        THREAD_START,
-        thread_start_params(&request.worktree, request.model.as_deref(), server),
-        deadline,
-    )?;
-    let thread = decode_thread_id(&started).ok_or("codex did not return a thread id")?;
+    let listed = list_models(wire, deadline)?;
+    check_model(selection.model.as_deref(), &model_ids(&listed))?;
+    check_effort(selection, &listed)?;
+    let (method, params) = open;
+    let started = wire.call(method, params, deadline)?;
+    let thread = decode_thread(&started).ok_or("codex did not return a thread id")?;
     loop {
         match wire.startup.verdict(&[SERVER_NAME]) {
             McpVerdict::Ready => return Ok(thread),
@@ -223,17 +249,38 @@ struct Pump {
     interrupt_call: Option<u64>,
     permissions: Arc<Permissions>,
     mode: PermissionMode,
+    selection: Selection,
+    pending_record: Option<(PathBuf, SessionRecord)>,
     inbox: Inbox,
     changes: Option<WorkerChanges>,
     id: String,
+    wound_down: bool,
 }
 
 impl Pump {
+    fn wind_down(&mut self) {
+        self.wound_down = true;
+        self.wire.rpc.fail_pending();
+        let actions = self.turns.close();
+        self.settle(actions);
+    }
+
+    fn save_record(&mut self) {
+        if self.closing.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Some((path, record)) = self.pending_record.take() {
+            if let Err(e) = write_file(&path, &record.render()) {
+                warn(format!("could not write the codex session file: {e}"));
+            }
+        }
+    }
+
     fn perform(&mut self, actions: Vec<Action>) -> Result<(), String> {
         for action in actions {
             match action {
                 Action::Start(text) => {
-                    let params = turn_start_params(&self.thread, &text);
+                    let params = turn_start_params(&self.thread, &text, &self.selection);
                     let started =
                         self.wire
                             .call(TURN_START, params, Instant::now() + READY_TIMEOUT)?;
@@ -253,7 +300,12 @@ impl Pump {
                 Action::Emit(event) => {
                     match &event {
                         WorkerEvent::TurnStarted => self.wire.heartbeat.set_running(true),
-                        WorkerEvent::TurnEnded(_) => self.wire.heartbeat.set_running(false),
+                        WorkerEvent::TurnEnded(end) => {
+                            self.wire.heartbeat.set_running(false);
+                            if session_saved(turn_stop(end), true) {
+                                self.save_record();
+                            }
+                        }
                         _ => {}
                     }
                     push_event(&self.events, event);
@@ -316,6 +368,9 @@ impl Pump {
 
     fn run(mut self) {
         loop {
+            if !self.wound_down && self.closing.load(Ordering::SeqCst) {
+                self.wind_down();
+            }
             while let Ok(inbound) = self.replies.try_recv() {
                 let actions = match inbound {
                     Inbound::Prompt(text) => self.turns.accept(text),
@@ -351,12 +406,17 @@ impl Pump {
     }
 }
 
+pub enum Launch {
+    Fresh(SessionRecord),
+    Resume(SessionRecord),
+}
+
 pub struct Slot<'a> {
     pub id: &'a str,
     pub owner: &'a Path,
     pub session: &'a Path,
     pub results: &'a Path,
-    pub template: SessionRecord,
+    pub launch: Launch,
     pub markers: WorkerMarkers,
     pub starting: &'a Mutex<HashMap<String, u32>>,
 }
@@ -385,7 +445,7 @@ impl CodexWorker {
             owner,
             session,
             results,
-            template,
+            launch,
             markers,
             starting,
         } = slot;
@@ -452,6 +512,7 @@ impl CodexWorker {
             lines,
             startup: McpStartup::default(),
             heartbeat: Arc::clone(&heartbeat),
+            closing: Arc::clone(&closing),
         };
         let server = acp_mcp_server(
             &request.exe,
@@ -461,16 +522,51 @@ impl CodexWorker {
             request.snapshots.then_some(request.worktree.as_path()),
         );
         let deadline = Instant::now() + READY_TIMEOUT;
-        let thread_id = handshake(&mut wire, request, &server, deadline)?;
-        let record = SessionRecord {
-            session_id: thread_id.clone(),
-            ..template
+        let configured_mode =
+            || configured_permission_mode("codex", |config| config.codex.permissions_setting());
+        let (selection, open, mode) = match &launch {
+            Launch::Fresh(_) => {
+                let codex = configured_codex();
+                let selection = resolve_selection(
+                    request.model.as_deref(),
+                    codex.model.as_deref(),
+                    codex.effort.as_deref(),
+                );
+                let open = (
+                    THREAD_START,
+                    thread_start_params(&request.worktree, &selection, &server),
+                );
+                (selection, open, configured_mode())
+            }
+            Launch::Resume(record) => (
+                record_selection(record),
+                (THREAD_RESUME, thread_resume_params(record, &server)),
+                record.permissions.unwrap_or_else(configured_mode),
+            ),
         };
-        write_file(session, &record.render())
-            .map_err(|e| format!("could not write the codex session file: {e}"))?;
+        let thread = handshake(&mut wire, &selection, open, deadline)?;
+        let pending_record = match &launch {
+            Launch::Fresh(template) => Some((
+                session.to_path_buf(),
+                SessionRecord {
+                    session_id: thread.id.clone(),
+                    model: thread.model.or(selection.model.clone()),
+                    effort: thread.effort.or(selection.effort.clone()),
+                    permissions: Some(mode),
+                    ..template.clone()
+                },
+            )),
+            Launch::Resume(record) if record.session_id != thread.id => {
+                return Err(format!(
+                    "codex resumed thread {} instead of {}",
+                    thread.id, record.session_id
+                ))
+            }
+            Launch::Resume(_) => None,
+        };
         let mut pump = Pump {
             wire,
-            thread: thread_id,
+            thread: thread.id,
             turns: Turns::default(),
             events: Arc::clone(&worker.events),
             markers: markers.clone(),
@@ -479,7 +575,9 @@ impl CodexWorker {
             results: results.to_path_buf(),
             interrupt_call: None,
             permissions,
-            mode: configured_permission_mode("codex", |config| config.codex.permissions_setting()),
+            mode,
+            selection,
+            pending_record,
             inbox: Inbox::new(request.inbox.clone()),
             changes: request
                 .inbox
@@ -493,9 +591,12 @@ impl CodexWorker {
                     })
                 }),
             id: id.to_string(),
+            wound_down: false,
         };
-        let first = pump.turns.accept(task_prompt(&request.task));
-        pump.perform(first)?;
+        if matches!(launch, Launch::Fresh(_)) {
+            let first = pump.turns.accept(task_prompt(&request.task));
+            pump.perform(first)?;
+        }
         let closing = Arc::clone(&pump.closing);
         let events = Arc::clone(&pump.events);
         thread::spawn(move || {
@@ -542,26 +643,36 @@ impl CodexWorker {
             .ok();
     }
 
-    fn begin_stop(&mut self) {
-        self.done = true;
-        self.closing.store(true, Ordering::SeqCst);
-        locked(&self.stdin).take();
-    }
-
-    fn finish_stop(&mut self, deadline: Instant) {
-        self.finished
-            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .ok();
-        stop_child(&mut self.child);
-        fs::remove_file(&self.owner).ok();
-    }
-
     fn terminate(&mut self) {
         if self.done {
             return;
         }
-        self.begin_stop();
-        self.finish_stop(Instant::now() + SHUTDOWN_GRACE);
+        self.done = true;
+        let mut tree = Vec::new();
+        for step in codex_close_plan(self.heartbeat.running()) {
+            match step {
+                CodexCloseStep::WindDown => {
+                    self.closing.store(true, Ordering::SeqCst);
+                    self.permissions.drain();
+                }
+                CodexCloseStep::AwaitTurn => {
+                    let deadline = Instant::now() + CODEX_CLOSE_TURN_WAIT;
+                    while self.heartbeat.running() && Instant::now() < deadline {
+                        thread::sleep(CLOSE_POLL);
+                    }
+                }
+                CodexCloseStep::SnapshotTree => tree = snapshot_tree(self.child.id()),
+                CodexCloseStep::DropStdin => {
+                    locked(&self.stdin).take();
+                    self.finished.recv_timeout(SHUTDOWN_GRACE).ok();
+                }
+                CodexCloseStep::StopGroup => stop_child(&mut self.child),
+                CodexCloseStep::SweepTree => sweep_tree(&tree),
+                CodexCloseStep::RemoveOwner => {
+                    fs::remove_file(&self.owner).ok();
+                }
+            }
+        }
     }
 }
 
@@ -667,12 +778,12 @@ impl CodexHost {
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let mut drained: Vec<(String, CodexWorker)> = locked(&self.workers).drain().collect();
-        for (_, worker) in &mut drained {
-            worker.begin_stop();
-        }
-        let deadline = Instant::now() + SHUTDOWN_GRACE;
-        for (id, worker) in &mut drained {
-            worker.finish_stop(deadline);
+        thread::scope(|scope| {
+            for (_, worker) in &mut drained {
+                scope.spawn(|| worker.terminate());
+            }
+        });
+        for (id, _) in &drained {
             self.forget(id);
         }
         let starting: Vec<(String, u32)> = locked(&self.starting).drain().collect();
@@ -763,32 +874,45 @@ impl CodexHost {
             self.fail(id, "worker is already running");
             return;
         }
-        let started = CodexWorker::start(
-            &request,
-            Slot {
-                id,
-                owner: &files.owner,
-                session: &files.session,
-                results: &files.interrupt_result,
-                template: SessionRecord {
-                    session_id: String::new(),
-                    cwd: request.worktree.clone(),
-                    inbox: request.inbox.clone(),
-                    store: Some(self.store_dir.clone()),
-                    model: request.model.clone(),
-                },
-                markers: WorkerMarkers::new(&self.store_dir, id),
-                starting: &self.starting,
-            },
-        );
-        locked(&self.starting).remove(id);
-        match started {
+        let launch = Launch::Fresh(SessionRecord {
+            session_id: String::new(),
+            cwd: request.worktree.clone(),
+            inbox: request.inbox.clone(),
+            store: Some(self.store_dir.clone()),
+            model: request.model.clone(),
+            effort: None,
+            permissions: None,
+        });
+        match self.launch(id, &request, launch) {
             Ok(worker) => self.adopt(id, worker),
             Err(message) => {
                 fs::remove_file(&files.session).ok();
                 self.fail(id, &message);
             }
         }
+    }
+
+    fn launch(
+        &self,
+        id: &str,
+        request: &SpawnRequest,
+        launch: Launch,
+    ) -> Result<CodexWorker, String> {
+        let files = self.files(id);
+        let started = CodexWorker::start(
+            request,
+            Slot {
+                id,
+                owner: &files.owner,
+                session: &files.session,
+                results: &files.interrupt_result,
+                launch,
+                markers: WorkerMarkers::new(&self.store_dir, id),
+                starting: &self.starting,
+            },
+        );
+        locked(&self.starting).remove(id);
+        started
     }
 
     fn adopt(&self, id: &str, worker: CodexWorker) {
@@ -813,7 +937,9 @@ impl CodexHost {
 }
 
 impl HeadlessHost for CodexHost {
-    fn resume(&self) {}
+    fn resume(&self) {
+        self.resume_all();
+    }
 
     fn poll(&self) -> bool {
         if self.closed.load(Ordering::SeqCst) {

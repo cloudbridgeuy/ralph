@@ -75,6 +75,7 @@ pub struct Turns {
     turn_id: Option<String>,
     interrupts: Vec<String>,
     interrupt_sent: bool,
+    close_requested: bool,
     reported: bool,
 }
 
@@ -96,6 +97,14 @@ impl Turns {
         }];
         actions.extend(self.advance());
         actions
+    }
+
+    pub fn close(&mut self) -> Vec<Action> {
+        if self.running.is_none() {
+            return Vec::new();
+        }
+        self.close_requested = true;
+        self.send_interrupt()
     }
 
     pub fn bind_turn(&mut self, turn_id: Option<String>) -> Vec<Action> {
@@ -132,7 +141,10 @@ impl Turns {
 
     fn send_interrupt(&mut self) -> Vec<Action> {
         match &self.turn_id {
-            Some(turn_id) if !self.interrupts.is_empty() && !self.interrupt_sent => {
+            Some(turn_id)
+                if (!self.interrupts.is_empty() || self.close_requested)
+                    && !self.interrupt_sent =>
+            {
                 self.interrupt_sent = true;
                 vec![Action::Interrupt(turn_id.clone())]
             }
@@ -280,6 +292,19 @@ mod tests {
             decode(json!({"id": "u", "status": "inProgress", "items": []})),
             None
         );
+    }
+
+    #[test]
+    fn closing_interrupts_the_running_turn_once_its_id_is_bound() {
+        let mut turns = Turns::default();
+        assert!(turns.close().is_empty());
+        turns.accept("task".into());
+        assert!(turns.close().is_empty());
+        assert_eq!(
+            turns.bind_turn(Some("u".into())),
+            vec![Action::Interrupt("u".into())]
+        );
+        assert!(turns.close().is_empty());
     }
 
     #[test]

@@ -91,13 +91,13 @@ impl Capabilities {
             (HarnessId::Codex, Interrupt) => Partial("outcome unknown after 30 s"),
             (HarnessId::Codex, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Codex, PermYolo) => Partial("single-request accepts only"),
-            (HarnessId::Codex, Resume) => Support::None,
+            (HarnessId::Codex, Resume) => {
+                Partial("needs saved history, worktree and codex login [probed]")
+            }
             (HarnessId::Codex, Heartbeat) => Partial(
                 "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default [unverified]",
             ),
-            (HarnessId::Codex, Close) => Partial(
-                "tool descendants can be orphaned; global trust entry left in ~/.codex/config.toml",
-            ),
+            (HarnessId::Codex, Close) => Partial("global trust entry left in ~/.codex/config.toml [probed]"),
         }
     }
 }
@@ -326,14 +326,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_interrupt_is_allowed_and_resume_is_refused_with_its_reason() {
+    fn codex_interrupt_and_resume_are_allowed() {
         assert_eq!(
             unsupported_reason(HarnessId::Codex, WorkerCommand::Interrupt("i".into())),
             None
         );
         assert_eq!(
-            unsupported_reason(HarnessId::Codex, WorkerCommand::Resume).as_deref(),
-            Some("codex resume: not supported")
+            unsupported_reason(HarnessId::Codex, WorkerCommand::Resume),
+            None
         );
         assert_eq!(
             unsupported_reason(HarnessId::Codex, WorkerCommand::Prompt("p".into())),

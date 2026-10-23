@@ -247,6 +247,8 @@ A `model` passed to `spawn_worker` wins over this key. A value that is empty or 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `permissions` | `"ask"` or `"yolo"` | `"ask"` | `"yolo"` answers `accept` at once to Codex command, file-change and MCP tool-call approvals when `accept` is offered; `"ask"` waits for the person. Session or persistent grants, amendments and permission-grant requests are never auto-answered. Read when a worker starts; a wrong value warns and uses `"ask"` |
+| `model` | string | unset (Codex's own default) | Model for Codex workers that `spawn_worker` starts without a `model`. A `model` passed to `spawn_worker` wins. Checked against `model/list` at spawn; an unknown model fails the spawn |
+| `effort` | string | unset (Codex's own setting) | Reasoning effort for Codex workers. Checked against the effective model's `supportedReasoningEfforts` at spawn; an unsupported value fails the spawn and lists the supported ones. There is no `spawn_worker` effort parameter. Read when a worker starts |
 
 ### `[claude]` - Claude Workers
 

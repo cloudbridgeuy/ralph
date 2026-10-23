@@ -1,7 +1,8 @@
 use crate::transport::stdio::stop_group;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, interrupt_result_text, sweep_decision, HandoffFiles,
-    OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
+    CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -96,8 +97,9 @@ pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
     ids
 }
 
-pub fn resumable_cursor_ids(store_dir: &Path) -> Vec<String> {
+pub fn resumable_ids(store_dir: &Path) -> Vec<String> {
     let mut ids = request_ids(store_dir, CURSOR_SESSION_DIR);
+    ids.extend(request_ids(store_dir, CODEX_SESSION_DIR));
     ids.sort();
     ids
 }
@@ -150,6 +152,31 @@ pub fn write_owner_record(owner: &Path, group: u32, agent: &str) -> Result<(), S
         .map_err(|e| format!("could not write the {agent} owner file: {e}"))
 }
 
+pub fn claim_owner(owner: &Path) -> io::Result<()> {
+    let chat = process::id();
+    let start = process_start(chat)
+        .ok_or_else(|| io::Error::other("could not read the chat start time"))?;
+    let record = OwnerRecord {
+        chat_pid: chat,
+        chat_start: start.clone(),
+        group: chat,
+        group_start: start,
+    };
+    let name = owner.file_name().unwrap_or_default().to_string_lossy();
+    let pending = owner
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(owner)
+        .join(format!(".claim-{name}-{chat}"));
+    write_file(&pending, &record.render())?;
+    if let Some(dir) = owner.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let linked = fs::hard_link(&pending, owner);
+    fs::remove_file(&pending).ok();
+    linked
+}
+
 pub fn write_file(path: &Path, text: &str) -> io::Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
@@ -192,4 +219,21 @@ pub(crate) fn queued_entries(dir: &Path) -> Vec<PathBuf> {
         .unwrap_or_default();
     entries.sort();
     entries
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claim_owner_succeeds_once_and_leaves_a_parseable_record() {
+        let store = tempfile::tempdir().unwrap();
+        let owner = store.path().join("codex").join("A");
+        claim_owner(&owner).unwrap();
+        let second = claim_owner(&owner).unwrap_err();
+        assert_eq!(second.kind(), io::ErrorKind::AlreadyExists);
+        let record = OwnerRecord::parse(&fs::read_to_string(&owner).unwrap()).unwrap();
+        assert_eq!(record.chat_pid, process::id());
+        assert_eq!(fs::read_dir(store.path()).unwrap().count(), 1);
+    }
 }

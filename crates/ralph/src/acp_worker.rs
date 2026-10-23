@@ -744,6 +744,8 @@ impl CursorHost {
                 inbox: request.inbox.clone(),
                 store: Some(self.store_dir.clone()),
                 model: request.model.clone(),
+                effort: None,
+                permissions: None,
             },
         };
         match self.launch(id, &request, launch) {
