@@ -1,17 +1,23 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
-use crate::cursor_owner::{now_secs, request_ids, sweep_owner, write_file, write_owner_record};
+use crate::cursor_owner::{
+    now_secs, queued_entries, request_ids, sweep_owner, write_file, write_owner_record,
+};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
+use crate::worker_changes::WorkerChanges;
+use crate::worker_mcp::Inbox;
 use crate::workers::headless::HeadlessHost;
+use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, check_login, check_model, check_version, decide,
+    acp_mcp_server, activity_path, check_login, check_model, check_version, decide, decode_signal,
     decode_thread_id, decode_version, describe, gone_path, initialize_params, model_ids,
-    model_list_params, ready_path, reduce, reject_server_request, render_gone, request_stale,
-    task_prompt, thread_start_params, turn_start_params, Capabilities, HandoffFiles, HarnessId,
-    HeadlessState, HeadlessWorker, Incoming, McpStartup, McpVerdict, Rpc, Scope, SessionRecord,
-    SpawnRequest, WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ, CODEX_CLOSE_DIR,
-    CODEX_COMMAND, CODEX_OWNER_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST,
+    model_list_params, prompt_failure_report, ready_path, reduce, reject_server_request,
+    render_gone, request_stale, task_prompt, thread_start_params, turn_start_params, Action,
+    Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Incoming, McpStartup,
+    McpVerdict, Rpc, Scope, SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns,
+    WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ, CODEX_CLOSE_DIR, CODEX_COMMAND,
+    CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST,
     SERVER_NAME, THREAD_START, TURN_START,
 };
 use serde_json::{json, Value};
@@ -28,6 +34,7 @@ use std::time::{Duration, Instant};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
+const REPLY_POLL: Duration = Duration::from_millis(100);
 const EXIT_REASON: &str = "codex app-server exited";
 
 type Stdin = Arc<Mutex<Option<LoggedWrite<ChildStdin>>>>;
@@ -155,8 +162,86 @@ fn handshake(
     }
 }
 
-fn pump(mut wire: Wire) {
-    while !matches!(wire.next(None), Err(Stop::Gone)) {}
+struct Pump {
+    wire: Wire,
+    thread: String,
+    turns: Turns,
+    events: Events,
+    markers: WorkerMarkers,
+    closing: Arc<AtomicBool>,
+    replies: mpsc::Receiver<String>,
+    inbox: Inbox,
+    changes: Option<WorkerChanges>,
+    id: String,
+}
+
+impl Pump {
+    fn perform(&mut self, actions: Vec<Action>) -> Result<(), String> {
+        for action in actions {
+            match action {
+                Action::Start(text) => {
+                    let params = turn_start_params(&self.thread, &text);
+                    self.wire
+                        .call(TURN_START, params, Instant::now() + READY_TIMEOUT)?;
+                }
+                Action::Emit(event) => push_event(&self.events, event),
+                Action::MarkUnreported => {
+                    write_file(&self.markers.unreported, "").ok();
+                    write_file(&self.markers.waiting, "").ok();
+                }
+                Action::Snapshot => {
+                    if let Some(changes) = &self.changes {
+                        changes.snapshot_turn_or_warn();
+                    }
+                }
+                Action::PostFailure(problem) => {
+                    let at = chrono::Utc::now().to_rfc3339();
+                    let report =
+                        prompt_failure_report(HarnessId::Codex.as_str(), &self.id, &at, &problem);
+                    self.inbox.post(&report, 0).ok();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn settle(&mut self, signal: ThreadSignal) {
+        let mut actions = self
+            .turns
+            .signal(signal, self.closing.load(Ordering::SeqCst));
+        while let Err(message) = self.perform(actions) {
+            let failed = ThreadSignal::TurnEnded(TurnEnd::Failed {
+                message,
+                transient: false,
+            });
+            actions = self
+                .turns
+                .signal(failed, self.closing.load(Ordering::SeqCst));
+        }
+    }
+
+    fn run(mut self) {
+        loop {
+            while let Ok(text) = self.replies.try_recv() {
+                let actions = self.turns.accept(text);
+                if let Err(message) = self.perform(actions) {
+                    self.settle(ThreadSignal::TurnEnded(TurnEnd::Failed {
+                        message,
+                        transient: false,
+                    }));
+                }
+            }
+            match self.wire.next(Some(Instant::now() + REPLY_POLL)) {
+                Err(Stop::Gone) => return,
+                Ok(Incoming::Notification { method, params }) => {
+                    if let Some(signal) = decode_signal(&method, &params) {
+                        self.settle(signal);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 pub struct Slot<'a> {
@@ -179,6 +264,7 @@ pub struct CodexWorker {
     markers: WorkerMarkers,
     state: HeadlessState,
     events: Events,
+    replies: mpsc::Sender<String>,
 }
 
 impl CodexWorker {
@@ -222,6 +308,7 @@ impl CodexWorker {
         fs::remove_file(&markers.activity).ok();
         fs::remove_file(&markers.gone).ok();
         let closing = Arc::new(AtomicBool::new(false));
+        let (replies, reply_rx) = mpsc::channel();
         let worker = Self {
             child,
             stdin: Arc::clone(&stdin),
@@ -233,6 +320,7 @@ impl CodexWorker {
             markers: markers.clone(),
             state: HeadlessState::default(),
             events: Events::default(),
+            replies,
         };
         write_owner_record(owner, worker.child.id(), "codex")?;
         locked(starting).insert(id.to_string(), worker.child.id());
@@ -257,14 +345,34 @@ impl CodexWorker {
         };
         write_file(session, &record.render())
             .map_err(|e| format!("could not write the codex session file: {e}"))?;
-        wire.call(
-            TURN_START,
-            turn_start_params(&thread_id, &task_prompt(&request.task)),
-            deadline,
-        )?;
+        let mut pump = Pump {
+            wire,
+            thread: thread_id,
+            turns: Turns::default(),
+            events: Arc::clone(&worker.events),
+            markers: markers.clone(),
+            closing,
+            replies: reply_rx,
+            inbox: Inbox::new(request.inbox.clone()),
+            changes: request
+                .inbox
+                .parent()
+                .filter(|_| request.snapshots)
+                .and_then(|store| {
+                    WorkerChanges::open(&WorkerSite {
+                        store: store.to_path_buf(),
+                        id: id.to_string(),
+                        worktree: request.worktree.clone(),
+                    })
+                }),
+            id: id.to_string(),
+        };
+        let first = pump.turns.accept(task_prompt(&request.task));
+        pump.perform(first)?;
         let gone = markers.gone;
+        let closing = Arc::clone(&pump.closing);
         thread::spawn(move || {
-            pump(wire);
+            pump.run();
             if !closing.load(Ordering::SeqCst) {
                 write_file(&gone, &render_gone(&Scope::Worker, EXIT_REASON)).ok();
             }
@@ -321,9 +429,12 @@ impl HeadlessWorker for CodexWorker {
                 push_event(&self.events, WorkerEvent::Closed);
                 Ok(())
             }
+            WorkerCommand::Prompt(text) => self
+                .replies
+                .send(text)
+                .map_err(|_| "codex worker is not running".to_string()),
             WorkerCommand::Spawn(_)
             | WorkerCommand::Resume
-            | WorkerCommand::Prompt(_)
             | WorkerCommand::Interrupt(_)
             | WorkerCommand::AnswerPermission { .. } => Err(format!(
                 "not sent: the host handles it ({})",
@@ -368,8 +479,14 @@ impl CodexHost {
     }
 
     fn poll(&self) {
+        for worker in locked(&self.workers).values_mut() {
+            worker.apply_events();
+        }
         for id in request_ids(&self.store_dir, CODEX_CLOSE_DIR) {
             self.close(&id);
+        }
+        for id in request_ids(&self.store_dir, CODEX_PROMPT_DIR) {
+            self.deliver_prompts(&id);
         }
         for id in request_ids(&self.store_dir, CODEX_SPAWN_DIR) {
             self.spawn(&id);
@@ -398,8 +515,28 @@ impl CodexHost {
         }
     }
 
+    fn deliver_prompts(&self, id: &str) {
+        let starting = locked(&self.starting).contains_key(id);
+        if starting && !locked(&self.workers).contains_key(id) {
+            return;
+        }
+        for entry in queued_entries(&self.files(id).prompt) {
+            if let (Ok(text), Some(worker)) = (
+                fs::read_to_string(&entry),
+                locked(&self.workers).get_mut(id),
+            ) {
+                if let Err(message) = worker.send(WorkerCommand::Prompt(text)) {
+                    warn(message);
+                }
+            }
+            fs::remove_file(&entry).ok();
+        }
+    }
+
     fn forget(&self, id: &str) {
-        fs::remove_file(self.files(id).owner).ok();
+        let files = self.files(id);
+        fs::remove_file(&files.owner).ok();
+        fs::remove_dir_all(&files.prompt).ok();
         fs::remove_file(activity_path(&self.store_dir, id)).ok();
         fs::remove_file(gone_path(&self.store_dir, id)).ok();
     }

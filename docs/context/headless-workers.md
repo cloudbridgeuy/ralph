@@ -53,7 +53,9 @@ Start order, all inside a 20 s deadline: `initialize` (`experimentalApi`), `init
 
 `thread/start` sets `approvalPolicy: "on-request"`, `approvalsReviewer: "user"`, `sandbox: "workspace-write"` and a runtime `config.mcp_servers.ralph-worker` entry (`required: true`, `default_tools_approval_mode: "approve"`, so the `report` tool needs no elicitation). Any other server request, approvals included, is answered with JSON-RPC error -32601, so approvals fail closed.
 
-Cells now `None` for Codex: `prompt`, `interrupt`, `perm-ask`, `perm-yolo`, `resume`, `heartbeat`. They are not wired until GUZ-646..649. `reply` to a running Codex worker is refused. Stdout EOF writes a `gone` marker unless the worker is closing. Close terminates the app-server process group; tool descendants may orphan, so `close` stays Partial.
+Cells now `None` for Codex: `interrupt`, `perm-ask`, `perm-yolo`, `resume`, `heartbeat`. They are not wired until GUZ-647..649. `reply` with interrupt to a running Codex worker is refused.
+
+Codex replies use the Cursor transport: `reply` writes `<store>/codex-prompt/<id>/<entry>`, `CodexHost` polls it and hands the text to the worker, whose pump thread holds it in the shared `PromptQueue` (`crates/core/src/worker/codex/turns.rs`). The next `turn/start` goes out only after `turn/completed`, because the GUZ-643 probe showed a `turn/start` during a running turn merges into it. `item/completed` of an `mcpToolCall` (`ralph-worker`, `report`, `completed`) emits `Reported`. A turn that ends without a report gets one `REPORT_REMINDER` turn; if that also ends unreported the worker writes the `unreported` and `waiting` markers, as Cursor does. A failed turn, or one that ends with a stop reason, posts a `blocked` prompt-failure report to the inbox as Cursor does; an interrupted turn posts nothing. Each turn end takes a snapshot first (unless closing), before any reminder or queued `turn/start`. Stdout EOF writes a `gone` marker unless the worker is closing. Close terminates the app-server process group; tool descendants may orphan, so `close` stays Partial.
 
 ## Capability probes
 

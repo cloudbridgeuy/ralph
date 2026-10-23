@@ -27,7 +27,7 @@ pub const CURSOR_PROMPT_DIR: &str = "cursor-prompt";
 pub const CURSOR_INTERRUPT_DIR: &str = "cursor-interrupt";
 pub const CURSOR_SESSION_DIR: &str = "cursor-session";
 pub const CURSOR_INTERRUPT_RESULT_DIR: &str = "cursor-interrupt-result";
-const REPORT_TOOL: &str = "report";
+pub(crate) const REPORT_TOOL: &str = "report";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnRequest {
