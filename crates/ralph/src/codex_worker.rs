@@ -1,9 +1,11 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
+use crate::config::configured_permission_mode;
 use crate::cursor_owner::{
     now_secs, queued_entries, request_ids, sweep_owner, write_file, write_interrupt_result,
     write_owner_record,
 };
+use crate::permission_queue::PermissionQueue;
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
@@ -11,16 +13,17 @@ use crate::worker_mcp::Inbox;
 use crate::workers::headless::HeadlessHost;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, check_login, check_model, check_version, decide,
-    decode_thread_id, decode_turn_id, decode_version, describe, gone_path, initialize_params,
-    model_ids, model_list_params, prompt_failure_report, ready_path, reduce, reject_server_request,
-    render_gone, request_stale, task_prompt, thread_start_params, turn_interrupt_params,
-    turn_start_params, Action, Capabilities, HandoffFiles, HarnessId, HeadlessState,
-    HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict, Rpc, Scope, SessionRecord,
+    acp_mcp_server, activity_path, answer_server_request, check_login, check_model, check_version,
+    classify, decide, decode_thread_id, decode_turn_id, decode_version, describe, gone_path,
+    initialize_params, model_ids, model_list_params, prompt_failure_report, ready_path, reduce,
+    reject_server_request, render_gone, request_stale, resolved_request_id, response_body,
+    task_prompt, thread_start_params, turn_interrupt_params, turn_start_params, yolo_option,
+    Action, ApprovalKind, Capabilities, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker,
+    Inbound, Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope, SessionRecord,
     SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent, WorkerMarkers,
-    ACCOUNT_READ, CODEX_CLOSE_DIR, CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR,
-    CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, SERVER_NAME,
-    THREAD_START, TURN_INTERRUPT, TURN_START,
+    ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_COMMAND, CODEX_INTERRUPT_DIR,
+    CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST,
+    SERVER_NAME, THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -40,6 +43,13 @@ const REPLY_POLL: Duration = Duration::from_millis(100);
 const EXIT_REASON: &str = "codex app-server exited";
 
 type Stdin = Arc<Mutex<Option<LoggedWrite<ChildStdin>>>>;
+
+struct CodexReply {
+    id: Value,
+    kind: ApprovalKind,
+}
+
+type Permissions = PermissionQueue<CodexReply>;
 
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -68,13 +78,17 @@ struct Wire {
     startup: McpStartup,
 }
 
+fn write_line(stdin: &Stdin, line: &str) -> Result<(), Stop> {
+    let mut guard = locked(stdin);
+    let stdin = guard.as_mut().ok_or(Stop::Gone)?;
+    writeln!(stdin, "{line}")
+        .and_then(|()| stdin.flush())
+        .map_err(|e| Stop::Bad(format!("could not write to codex: {e}")))
+}
+
 impl Wire {
     fn send_line(&self, line: &str) -> Result<(), Stop> {
-        let mut guard = locked(&self.stdin);
-        let stdin = guard.as_mut().ok_or(Stop::Gone)?;
-        writeln!(stdin, "{line}")
-            .and_then(|()| stdin.flush())
-            .map_err(|e| Stop::Bad(format!("could not write to codex: {e}")))
+        write_line(&self.stdin, line)
     }
 
     fn next(&mut self, deadline: Option<Instant>) -> Result<Incoming, Stop> {
@@ -181,6 +195,8 @@ struct Pump {
     replies: mpsc::Receiver<Inbound>,
     results: PathBuf,
     interrupt_call: Option<u64>,
+    permissions: Arc<Permissions>,
+    mode: PermissionMode,
     inbox: Inbox,
     changes: Option<WorkerChanges>,
     id: String,
@@ -203,6 +219,7 @@ impl Pump {
                     let (id, line) = self.wire.rpc.request(TURN_INTERRUPT, params);
                     self.interrupt_call = Some(id);
                     self.wire.send_line(&line).map_err(Stop::message)?;
+                    self.permissions.drain();
                 }
                 Action::InterruptResult { entry, cancelled } => {
                     write_interrupt_result(&self.results, &entry, cancelled);
@@ -240,6 +257,30 @@ impl Pump {
         }
     }
 
+    fn server_request(&mut self, id: Value, method: &str, params: &Value) -> Result<(), Stop> {
+        let stale = self.turns.is_stale_request(method, params);
+        let Some(approval) = classify(method, params).filter(|_| !stale) else {
+            return self.wire.send_line(&reject_server_request(&id, method));
+        };
+        let auto = Some(self.mode)
+            .filter(|mode| *mode == PermissionMode::Yolo)
+            .and_then(|_| yolo_option(&approval));
+        match auto {
+            Some(option) => {
+                let body = response_body(approval.kind, &option.option_id);
+                self.wire.send_line(&answer_server_request(&id, &body))
+            }
+            None => {
+                let reply = CodexReply {
+                    id,
+                    kind: approval.kind,
+                };
+                self.permissions.enqueue(reply, approval.content);
+                Ok(())
+            }
+        }
+    }
+
     fn run(mut self) {
         loop {
             while let Ok(inbound) = self.replies.try_recv() {
@@ -252,6 +293,9 @@ impl Pump {
             match self.wire.next(Some(Instant::now() + REPLY_POLL)) {
                 Err(Stop::Gone) => return,
                 Ok(Incoming::Notification { method, params }) => {
+                    if let Some(id) = resolved_request_id(&method, &params) {
+                        self.permissions.settle(|reply| reply.id == id);
+                    }
                     let closing = self.closing.load(Ordering::SeqCst);
                     let actions = self.turns.notification(&method, &params, closing);
                     self.settle(actions);
@@ -263,8 +307,8 @@ impl Pump {
                     let actions = self.turns.interrupt_failed(error.code);
                     self.settle(actions);
                 }
-                Ok(request @ Incoming::ServerRequest { .. }) => {
-                    if let Err(Stop::Gone) = self.wire.answer(&request) {
+                Ok(Incoming::ServerRequest { id, method, params }) => {
+                    if let Err(Stop::Gone) = self.server_request(id, &method, &params) {
                         return;
                     }
                 }
@@ -296,6 +340,7 @@ pub struct CodexWorker {
     state: HeadlessState,
     events: Events,
     replies: mpsc::Sender<Inbound>,
+    permissions: Arc<Permissions>,
 }
 
 impl CodexWorker {
@@ -341,6 +386,12 @@ impl CodexWorker {
         fs::remove_file(&markers.gone).ok();
         let closing = Arc::new(AtomicBool::new(false));
         let (replies, reply_rx) = mpsc::channel();
+        let events = Events::default();
+        let permissions = Arc::new(PermissionQueue::new(
+            id.to_string(),
+            Inbox::new(request.inbox.clone()),
+            Arc::clone(&events),
+        ));
         let worker = Self {
             child,
             stdin: Arc::clone(&stdin),
@@ -351,8 +402,9 @@ impl CodexWorker {
             caps: ralph_core::worker::capabilities(HarnessId::Codex),
             markers: markers.clone(),
             state: HeadlessState::default(),
-            events: Events::default(),
+            events: Arc::clone(&events),
             replies,
+            permissions: Arc::clone(&permissions),
         };
         write_owner_record(owner, worker.child.id(), "codex")?;
         locked(starting).insert(id.to_string(), worker.child.id());
@@ -387,6 +439,8 @@ impl CodexWorker {
             replies: reply_rx,
             results: results.to_path_buf(),
             interrupt_call: None,
+            permissions,
+            mode: configured_permission_mode("codex", |config| config.codex.permissions_setting()),
             inbox: Inbox::new(request.inbox.clone()),
             changes: request
                 .inbox
@@ -422,6 +476,12 @@ impl CodexWorker {
                 apply_effect(&self.markers, effect);
             }
         }
+    }
+
+    fn answer_permission(&self, text: &str) -> Result<(), String> {
+        let (reply, option) = self.permissions.take_answer(text)?;
+        let body = response_body(reply.kind, &option.option_id);
+        write_line(&self.stdin, &answer_server_request(&reply.id, &body)).map_err(Stop::message)
     }
 
     fn interrupt(&self, text: String, entry: &str) {
@@ -473,13 +533,13 @@ impl HeadlessWorker for CodexWorker {
                 .replies
                 .send(Inbound::Prompt(text))
                 .map_err(|_| "codex worker is not running".to_string()),
-            WorkerCommand::Spawn(_)
-            | WorkerCommand::Resume
-            | WorkerCommand::Interrupt(_)
-            | WorkerCommand::AnswerPermission { .. } => Err(format!(
-                "not sent: the host handles it ({})",
-                describe(&self.caps, command.feature())
-            )),
+            WorkerCommand::AnswerPermission { option_id } => self.answer_permission(&option_id),
+            WorkerCommand::Spawn(_) | WorkerCommand::Resume | WorkerCommand::Interrupt(_) => {
+                Err(format!(
+                    "not sent: the host handles it ({})",
+                    describe(&self.caps, command.feature())
+                ))
+            }
         }
     }
 
@@ -524,6 +584,9 @@ impl CodexHost {
         }
         for id in request_ids(&self.store_dir, CODEX_CLOSE_DIR) {
             self.close(&id);
+        }
+        for id in request_ids(&self.store_dir, CODEX_ANSWER_DIR) {
+            self.answer(&id);
         }
         for id in request_ids(&self.store_dir, CODEX_PROMPT_DIR) {
             self.deliver_queued(
@@ -570,6 +633,21 @@ impl CodexHost {
         }
     }
 
+    fn answer(&self, id: &str) {
+        let files = self.files(id);
+        let Ok(text) = fs::read_to_string(&files.answer) else {
+            return;
+        };
+        let result = locked(&self.workers)
+            .get_mut(id)
+            .ok_or_else(|| "worker has no running codex agent".to_string())
+            .and_then(|worker| worker.send(WorkerCommand::AnswerPermission { option_id: text }));
+        if let Err(message) = result {
+            write_file(&files.error, &message).ok();
+        }
+        fs::remove_file(&files.answer).ok();
+    }
+
     fn deliver_queued(
         &self,
         id: &str,
@@ -598,6 +676,7 @@ impl CodexHost {
     fn forget(&self, id: &str) {
         let files = self.files(id);
         fs::remove_file(&files.owner).ok();
+        fs::remove_file(&files.answer).ok();
         fs::remove_dir_all(&files.prompt).ok();
         fs::remove_dir_all(&files.interrupt).ok();
         fs::remove_dir_all(&files.interrupt_result).ok();

@@ -89,7 +89,9 @@ impl Capabilities {
             }
             (HarnessId::Codex, Spawn | Prompt | Report | Model) => Full,
             (HarnessId::Codex, Interrupt) => Partial("outcome unknown after 30 s"),
-            (HarnessId::Codex, PermAsk | PermYolo | Resume | Heartbeat) => Support::None,
+            (HarnessId::Codex, PermAsk) => Partial("protocol-raised requests only"),
+            (HarnessId::Codex, PermYolo) => Partial("single-request accepts only"),
+            (HarnessId::Codex, Resume | Heartbeat) => Support::None,
             (HarnessId::Codex, Close) => Partial(
                 "tool descendants can be orphaned; global trust entry left in ~/.codex/config.toml",
             ),
@@ -337,6 +339,23 @@ mod tests {
         assert_eq!(
             unsupported_reason(HarnessId::Codex, WorkerCommand::Close),
             None
+        );
+        assert_eq!(
+            unsupported_reason(
+                HarnessId::Codex,
+                WorkerCommand::AnswerPermission {
+                    option_id: "accept".into()
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            capabilities(HarnessId::Codex).support(Feature::PermAsk),
+            Support::Partial("protocol-raised requests only")
+        );
+        assert_eq!(
+            capabilities(HarnessId::Codex).support(Feature::PermYolo),
+            Support::Partial("single-request accepts only")
         );
     }
 

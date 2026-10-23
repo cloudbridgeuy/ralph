@@ -1,7 +1,9 @@
+mod approvals;
 mod protocol;
 mod rpc;
 mod turns;
 
+pub use approvals::*;
 pub use protocol::*;
 pub use rpc::*;
 pub use turns::*;

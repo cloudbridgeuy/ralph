@@ -1,5 +1,5 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
-use crate::config::AppConfig;
+use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
     now_secs, sweep_owner, write_file, write_interrupt_result, write_owner_record,
@@ -24,17 +24,16 @@ use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_allow_option, cancels_turn, capabilities, check_protocol,
-    decide, decode_update, describe, encode, gone_path, match_option, no_option_message,
-    permission_alert_report, permission_content, prompt_failure_report, ready_path, reduce,
-    request_stale, resume_decision, session_error, session_saved, stop_problem, task_prompt,
-    turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
-    CursorPermissions, HandoffFiles, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker,
-    Inbound, Marker, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
-    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
-    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
-    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    decide, decode_update, describe, encode, gone_path, permission_content, prompt_failure_report,
+    ready_path, reduce, request_stale, resume_decision, session_error, session_saved, stop_problem,
+    task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, Capabilities, HandoffFiles,
+    HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker, Inbound, Marker, PermissionMode,
+    PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome,
+    WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
+    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -84,22 +83,8 @@ pub(crate) fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 
-fn cursor_permissions() -> CursorPermissions {
-    match AppConfig::load() {
-        Ok(config) => {
-            let (mode, warning) = config.cursor.permissions_setting();
-            if let Some(warning) = warning {
-                warn(warning);
-            }
-            mode
-        }
-        Err(e) => {
-            warn(format!(
-                "could not read config: {e}; cursor permissions use \"ask\""
-            ));
-            CursorPermissions::Ask
-        }
-    }
+fn cursor_permissions() -> PermissionMode {
+    configured_permission_mode("cursor", |config| config.cursor.permissions_setting())
 }
 
 pub enum Launch {

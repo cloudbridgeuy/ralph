@@ -243,6 +243,12 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 
 A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses cursor's default. A config that fails to load warns and uses cursor's default. The key is read at each spawn. The child is `agent acp`. After `session/new`, and again after `session/load` when chat resumes the worker, ralph sets the session `model` option from the value Cursor advertises there (`worker::select_cursor_model`). An exact advertised value is sent as-is. A short name selects the advertised value for that name. Cursor's ACP fixes one variant per model name, so effort and fast mode cannot be chosen: there is no `[cursor] reasoning_effort` or `[cursor] fast`. If a name is listed more than once, the cheapest listed value is sent (`fast=false`, then no `fast`, then `fast=true`, then the lowest effort). Any other string is sent unchanged, and the agent's rejection is the spawn error. `agent --model` does not change the ACP session model. The set rewrites the user's Cursor default. Before the set, ralph writes `cursor-model-default.json` next to `config.toml` in the ralph config directory, holding only the model keys. It then restores `model`, `selectedModel`, `modelParameters`, `hasChangedDefaultModel`, `modelSelectionHistory` and `maxMode` in `~/.cursor/cli-config.json`, and `selectedModelVariantId` in `~/.cursor/acp-config.json`, and deletes the snapshot. A crash between the set and the restore leaves those files on the worker model. The next `ralph chat` start sees the snapshot and puts the saved keys back. With no snapshot, that start cannot tell the switched files from a change the user made. The resolved model is stored on the session record and applied again on resume; a record with no model leaves the agent's current model alone.
 
+### `[codex]` - Codex Workers
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `permissions` | `"ask"` or `"yolo"` | `"ask"` | `"yolo"` answers `accept` at once to Codex command, file-change and MCP tool-call approvals when `accept` is offered; `"ask"` waits for the person. Session or persistent grants, amendments and permission-grant requests are never auto-answered. Read when a worker starts; a wrong value warns and uses `"ask"` |
+
 ### `[claude]` - Claude Workers
 
 | Field | Type | Default | Description |

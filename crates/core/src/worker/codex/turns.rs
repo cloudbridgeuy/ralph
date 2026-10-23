@@ -113,6 +113,10 @@ impl Turns {
         self.resolve_interrupts(false)
     }
 
+    pub fn is_stale_request(&self, method: &str, params: &Value) -> bool {
+        is_stale(self.turn_id.as_deref(), event_turn_id(method, params))
+    }
+
     pub fn notification(&mut self, method: &str, params: &Value, closing: bool) -> Vec<Action> {
         let event = event_turn_id(method, params);
         if is_stale(self.turn_id.as_deref(), event) {

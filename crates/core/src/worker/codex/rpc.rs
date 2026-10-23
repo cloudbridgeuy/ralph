@@ -119,13 +119,17 @@ impl Rpc {
     }
 }
 
+pub fn answer_server_request(id: &Value, result: &Value) -> String {
+    json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+}
+
 pub fn reject_server_request(id: &Value, method: &str) -> String {
     json!({
         "jsonrpc": "2.0",
         "id": id,
         "error": {
             "code": REJECTED_CODE,
-            "message": format!("ralph declines {method}: approvals are not answered")
+            "message": format!("ralph declines {method}")
         }
     })
     .to_string()
