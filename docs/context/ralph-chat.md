@@ -132,14 +132,14 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 
 ## /help
 
-`/help` is local: it never starts a turn or calls the model. `/helpfoo` is a normal message; words after `/help` are ignored. It prints the pure `chat_help::help_text`:
+`/help` is local: it never starts a turn or calls the model. Only the bare command (after trimming) counts: `/help x`, `/help me fix the build` and `/helpfoo` are normal messages. It prints the pure `chat_help::help_text(width)`, word-wrapped to the prompt width (the terminal width, capped by `--wrap-width`); a section whose text column would be under 30 columns puts each text under its label:
 
 - Commands: one row per form of `/help`, `/inbox`, `/watch` and `/diff`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
 - Cells: the `!` shorthand and `!<runtime>` fences.
 - Keys: at the prompt, in vi mode, during a turn, and in the queue editor (`PROMPT_KEYS`, `VI_KEYS`, `TURN_KEYS`, `QUEUE_KEYS`).
 - Status bar: one row per segment `Kind`, the four modes, each part of the thread cell (`T12/30`, `ctx 62%`, `cache 41m`, `!`, `shift ~9`) and the `↻ tokens`, `↻ turns` and `↻ restart` marks.
 
-Staleness tests: `chat_help` tests fail when a `Command` does not route or has no row, when `status_segments::segments` builds a segment kind with no legend, or when `status_mode::mode` returns a mode with no legend. `every_chat_binding_has_a_help_entry` in `crates/ralph/src/chat/tests.rs` builds the real emacs, vi and queue keymaps, keeps the bindings that differ from reedline's defaults, and fails when one has no key table entry. Keys handled outside reedline (Esc Esc, Ctrl-C, Ctrl-D, Ctrl-Q during a turn) are listed in the tables by hand.
+Staleness tests: `chat_help` tests fail when a `Command` does not route or has no row, when `status_segments::segments` builds a segment kind with no legend, or when `status_mode::mode` returns a mode with no legend. `every_chat_binding_has_a_help_entry` in `crates/ralph/src/chat/tests.rs` builds the real emacs, vi and queue keymaps, keeps the bindings that differ from reedline's defaults, and fails when one has no key table entry. Keys handled outside reedline (Esc Esc, Ctrl-C, Ctrl-D, Ctrl-Q during a turn) are listed in the tables by hand. Another test fails when `Command::ALL`, `MODES` or `RESETS` misses a variant, and the thread legend is checked against `thread_variants` of a real cell.
 
 ## /diff
 

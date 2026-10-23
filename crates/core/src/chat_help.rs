@@ -2,10 +2,10 @@
 //! without a model turn.
 
 use crate::chat::OLDER_VIEW_STEP;
-use crate::chat_thread::{ResetReason, CACHE_TTL_SECS};
+use crate::chat_thread::{thread_variants, ResetReason, ThreadCell, CACHE_TTL_SECS};
 use crate::status_mode::Mode;
 use crate::status_segments::Kind;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
@@ -28,10 +28,12 @@ impl Command {
     }
 
     /// The text after the command word, or `None` when `line` is another
-    /// message (`/difffoo`).
+    /// message (`/difffoo`). `/help` takes no arguments, so `/help me` is a
+    /// message too.
     pub fn args(self, line: &str) -> Option<&str> {
-        line.strip_prefix(self.name())
-            .filter(|args| args.is_empty() || args.starts_with(char::is_whitespace))
+        let args = line.strip_prefix(self.name())?;
+        let takes_args = self != Command::Help;
+        (args.is_empty() || takes_args && args.starts_with(char::is_whitespace)).then_some(args)
     }
 
     fn usage(self) -> &'static [(&'static str, &'static str)] {
@@ -121,8 +123,12 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
         effect: "browse and search the message history",
     },
     KeyHelp {
-        keys: "Ctrl-C, Ctrl-D",
-        effect: "quit ralph chat",
+        keys: "Ctrl-C",
+        effect: "quit ralph chat, also with text in the draft",
+    },
+    KeyHelp {
+        keys: "Ctrl-D",
+        effect: "quit ralph chat on an empty draft; else delete the character under the cursor",
     },
 ];
 
@@ -134,6 +140,10 @@ pub const VI_KEYS: &[KeyHelp] = &[
     KeyHelp {
         keys: "Ctrl-U",
         effect: "clear the whole draft (insert and normal mode)",
+    },
+    KeyHelp {
+        keys: "Alt-Enter, Ctrl-J, Ctrl-V, Ctrl-O",
+        effect: "insert mode only; normal mode adds just Ctrl-G and Ctrl-U",
     },
 ];
 
@@ -159,11 +169,15 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
     },
     KeyHelp {
         keys: "Ctrl-D",
-        effect: "close the editor and add nothing",
+        effect: "on an empty draft close the editor and add nothing; else delete the character under the cursor",
     },
     KeyHelp {
         keys: "Ctrl-C",
         effect: "cancel the turn",
+    },
+    KeyHelp {
+        keys: "Ctrl-V, Ctrl-G",
+        effect: "off here: no image paste and no external editor",
     },
 ];
 
@@ -228,6 +242,18 @@ fn reset_help(reason: ResetReason) -> &'static str {
     }
 }
 
+/// The cell the thread legend shows, rendered by the status bar formatter.
+const EXAMPLE_THREAD: ThreadCell = ThreadCell {
+    turn: 12,
+    max_turns: 30,
+    ctx_percent: Some(62),
+    cache_minutes: Some(41),
+    write_heavy: true,
+    reset: None,
+    shift: Some(9),
+    cost: None,
+};
+
 fn thread_parts() -> Vec<(String, String)> {
     vec![
         (
@@ -259,21 +285,75 @@ fn thread_parts() -> Vec<(String, String)> {
     ]
 }
 
-fn rows(out: &mut String, rows: &[(String, String)]) {
-    let width = rows.iter().map(|(left, _)| left.width()).max().unwrap_or(0);
-    for (left, right) in rows {
-        let pad = width - left.width();
-        out.push_str(&format!("  {left}{}  {right}\n", " ".repeat(pad)));
+const INDENT: &str = "  ";
+const GAP: &str = "  ";
+const STACKED_INDENT: &str = "      ";
+/// A section narrower than this for its text puts the text under the label.
+const MIN_TEXT_WIDTH: usize = 30;
+
+/// Splits a word wider than `width` into pieces that fit.
+fn pieces(word: &str, width: usize) -> Vec<String> {
+    let mut pieces = Vec::new();
+    let mut piece = String::new();
+    for c in word.chars() {
+        if !piece.is_empty() && piece.width() + c.width().unwrap_or(0) > width {
+            pieces.push(std::mem::take(&mut piece));
+        }
+        piece.push(c);
+    }
+    pieces.push(piece);
+    pieces
+}
+
+/// Word-wraps `text` to lines of at most `width` display columns.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace().flat_map(|word| pieces(word, width)) {
+        if !line.is_empty() && line.width() + 1 + word.width() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(&word);
+    }
+    lines.push(line);
+    lines
+}
+
+fn indented(out: &mut String, first: &str, rest: &str, lines: Vec<String>) {
+    for (i, line) in lines.iter().enumerate() {
+        out.push_str(if i == 0 { first } else { rest });
+        out.push_str(line);
+        out.push('\n');
     }
 }
 
-fn section(out: &mut String, title: &str, lines: Vec<(String, String)>) {
+fn rows(out: &mut String, rows: &[(String, String)], width: usize) {
+    let label = rows.iter().map(|(left, _)| left.width()).max().unwrap_or(0);
+    let column = INDENT.len() + label + GAP.len();
+    let text_width = width.saturating_sub(column);
+    for (left, right) in rows {
+        if text_width >= MIN_TEXT_WIDTH {
+            let first = format!("{INDENT}{left}{}{GAP}", " ".repeat(label - left.width()));
+            indented(out, &first, &" ".repeat(column), wrap(right, text_width));
+        } else {
+            let label_width = width.saturating_sub(INDENT.len());
+            indented(out, INDENT, INDENT, wrap(left, label_width));
+            let text_width = width.saturating_sub(STACKED_INDENT.len());
+            indented(out, STACKED_INDENT, STACKED_INDENT, wrap(right, text_width));
+        }
+    }
+}
+
+fn section(out: &mut String, title: &str, lines: Vec<(String, String)>, width: usize) {
     if !out.is_empty() {
         out.push('\n');
     }
-    out.push_str(title);
-    out.push('\n');
-    rows(out, &lines);
+    indented(out, "", "", wrap(title, width));
+    rows(out, &lines, width);
 }
 
 fn pairs(table: &[(&str, &str)]) -> Vec<(String, String)> {
@@ -290,22 +370,34 @@ fn keys(table: &[KeyHelp]) -> Vec<(String, String)> {
         .collect()
 }
 
-pub fn help_text() -> String {
+/// The help, wrapped to `width` columns.
+pub fn help_text(width: usize) -> String {
     let mut out = String::new();
     let commands = Command::ALL
         .iter()
         .flat_map(|command| pairs(command.usage()))
         .collect();
-    section(&mut out, "Commands (ralph answers these itself)", commands);
-    section(&mut out, "Cells", pairs(CELLS));
-    section(&mut out, "Keys at the prompt", keys(PROMPT_KEYS));
+    section(
+        &mut out,
+        "Commands (ralph answers these itself)",
+        commands,
+        width,
+    );
+    section(&mut out, "Cells", pairs(CELLS), width);
+    section(&mut out, "Keys at the prompt", keys(PROMPT_KEYS), width);
     section(
         &mut out,
         "Keys with [chat] edit_mode = \"vi\"",
         keys(VI_KEYS),
+        width,
     );
-    section(&mut out, "Keys during a turn", keys(TURN_KEYS));
-    section(&mut out, "Keys in the queue editor", keys(QUEUE_KEYS));
+    section(&mut out, "Keys during a turn", keys(TURN_KEYS), width);
+    section(
+        &mut out,
+        "Keys in the queue editor",
+        keys(QUEUE_KEYS),
+        width,
+    );
     let segments = SEGMENTS
         .iter()
         .map(|kind| {
@@ -313,12 +405,12 @@ pub fn help_text() -> String {
             (name.to_string(), text.to_string())
         })
         .collect();
-    section(&mut out, "Status bar, left to right", segments);
+    section(&mut out, "Status bar, left to right", segments, width);
     let modes = MODES
         .iter()
         .map(|mode| (mode.label().to_string(), mode_help(*mode).to_string()))
         .collect();
-    section(&mut out, "Mode block (first match wins)", modes);
+    section(&mut out, "Mode block (first match wins)", modes, width);
     let mut thread = thread_parts();
     thread.extend(RESETS.iter().map(|reason| {
         (
@@ -326,10 +418,15 @@ pub fn help_text() -> String {
             format!("first turn after a reset: {}", reset_help(*reason)),
         )
     }));
+    let example = thread_variants(&EXAMPLE_THREAD)
+        .into_iter()
+        .next()
+        .unwrap_or_default();
     section(
         &mut out,
-        "Thread cell: T12/30 · ctx 62% · cache 41m! · shift ~9 (shorter forms drop parts)",
+        &format!("Thread cell: {example} (shorter forms drop parts)"),
         thread,
+        width,
     );
     out
 }
@@ -338,11 +435,36 @@ pub fn help_text() -> String {
 mod tests {
     use super::*;
     use crate::chat_status::{route_input, EmptySubmit, Route, Status, WatchState, WorkerState};
-    use crate::chat_thread::{SessionCost, ThreadCell};
+    use crate::chat_thread::SessionCost;
     use crate::status_mode::mode;
     use crate::status_queue::QueueCell;
     use crate::status_segments::{segments, Context};
     use std::mem::discriminant;
+
+    /// The exhaustive match stops compiling when `$ty` gains a variant not
+    /// named here; each named variant must then be in `$list`.
+    macro_rules! assert_lists_every {
+        ($list:expr, $ty:ident { $($variant:ident),+ $(,)? }) => {{
+            let _exhaustive = |value: $ty| match value {
+                $($ty::$variant)|+ => {}
+            };
+            $(assert!(
+                $list.contains(&$ty::$variant),
+                concat!(stringify!($ty), "::", stringify!($variant), " is not listed")
+            );)+
+        }};
+    }
+
+    fn thread(reset: Option<ResetReason>) -> ThreadCell {
+        ThreadCell {
+            reset,
+            cost: Some(SessionCost {
+                total: 4.12,
+                delta: Some(0.31),
+            }),
+            ..EXAMPLE_THREAD
+        }
+    }
 
     fn full_status() -> Status {
         Status {
@@ -355,19 +477,7 @@ mod tests {
                 id: "watch:w1".into(),
                 left: Some("5m".into()),
             }],
-            thread: Some(ThreadCell {
-                turn: 12,
-                max_turns: 30,
-                ctx_percent: Some(62),
-                cache_minutes: Some(41),
-                write_heavy: true,
-                reset: None,
-                shift: Some(9),
-                cost: Some(SessionCost {
-                    total: 4.12,
-                    delta: Some(0.31),
-                }),
-            }),
+            thread: Some(thread(None)),
             napping: false,
             queue: Some(QueueCell {
                 running: true,
@@ -377,9 +487,46 @@ mod tests {
         }
     }
 
+    fn has_row(text: &str, label: &str) -> bool {
+        text.lines().any(|line| {
+            line.strip_prefix(INDENT)
+                .is_some_and(|rest| rest.starts_with(&format!("{label} ")))
+        })
+    }
+
+    #[test]
+    fn lists_hold_every_variant() {
+        assert_lists_every!(
+            Command::ALL,
+            Command {
+                Help,
+                Inbox,
+                Watch,
+                Diff
+            }
+        );
+        assert_lists_every!(
+            MODES,
+            Mode {
+                Nap,
+                Inbox,
+                Work,
+                Idle
+            }
+        );
+        assert_lists_every!(
+            RESETS,
+            ResetReason {
+                Tokens,
+                Turns,
+                Restart
+            }
+        );
+    }
+
     #[test]
     fn every_command_routes_locally_and_has_help() {
-        let text = help_text();
+        let text = help_text(160);
         for command in Command::ALL {
             let route = route_input(command.name(), 0, &EmptySubmit::Inbox);
             assert!(
@@ -388,7 +535,7 @@ mod tests {
                 command.name()
             );
             assert!(
-                text.contains(command.name()),
+                has_row(&text, command.name()),
                 "{} has no help",
                 command.name()
             );
@@ -396,12 +543,38 @@ mod tests {
     }
 
     #[test]
-    fn help_routes_to_help() {
+    fn only_bare_help_routes_to_help() {
         assert_eq!(route_input("/help", 0, &EmptySubmit::Inbox), Route::Help);
         assert_eq!(
-            route_input("/helpfoo", 0, &EmptySubmit::Inbox),
-            Route::Send("/helpfoo".into())
+            route_input("  /help  ", 0, &EmptySubmit::Inbox),
+            Route::Help
         );
+        for line in ["/help x", "/help me fix the build", "/helpfoo"] {
+            assert_eq!(
+                route_input(line, 0, &EmptySubmit::Inbox),
+                Route::Send(line.into())
+            );
+        }
+    }
+
+    #[test]
+    fn no_line_exceeds_the_width() {
+        for width in [80, 160] {
+            for line in help_text(width).lines() {
+                assert!(line.width() <= width, "{width} columns: {line}");
+            }
+        }
+    }
+
+    #[test]
+    fn wrapping_keeps_every_word() {
+        let words = |width| {
+            help_text(width)
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(words(80), words(160));
     }
 
     #[test]
@@ -437,37 +610,23 @@ mod tests {
             },
             Status::default(),
         ];
-        let text = help_text();
+        let text = help_text(160);
         for status in statuses {
             let current = mode(&status);
             assert!(MODES.contains(&current), "{current:?} has no /help legend");
-            assert!(text.contains(current.label()));
+            assert!(has_row(&text, current.label()));
         }
     }
 
     #[test]
-    fn thread_legend_explains_each_part_and_reset_mark() {
-        let text = help_text();
-        for part in [
-            "T12/30",
-            "ctx 62%",
-            "cache 41m",
-            "shift ~9",
-            "↻ tokens",
-            "↻ turns",
-            "↻ restart",
-        ] {
-            assert!(text.contains(part), "{part} is missing");
-        }
-        assert!(text.contains("(a cache rebuild)"));
-    }
-
-    #[test]
-    fn help_text_has_every_key() {
-        let text = help_text();
-        for table in [PROMPT_KEYS, VI_KEYS, TURN_KEYS, QUEUE_KEYS] {
-            for key in table {
-                assert!(text.contains(key.keys));
+    fn thread_legend_covers_every_part_of_the_real_cell() {
+        let text = help_text(160);
+        for reset in [None].into_iter().chain(RESETS.map(Some)) {
+            let longest = thread_variants(&thread(reset)).remove(0);
+            for part in longest.split(" · ") {
+                let (part, rebuild) = part.strip_suffix('!').map_or((part, false), |p| (p, true));
+                assert!(has_row(&text, part), "{part} has no legend row");
+                assert!(!rebuild || has_row(&text, "!"), "! has no legend row");
             }
         }
     }
