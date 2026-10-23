@@ -39,7 +39,7 @@
 
 - **Persistent chat** - Bare `ralph` runs `ralph chat`. One Claude process serves the chat, started with a compressed view of the chat so far, stored under `~/.ralph/chat`.
 - **Compressed memory** - The chat log is summarized into a tree by a background nap pass. Claude opens details with the `zoom` and `recall` tools.
-- **Background workers** - Claude starts, messages, and closes workers with `spawn_worker`, `reply`, and `close_worker`. Harnesses: `claude` in tmux, `cursor`, and `opencode`. Each worker gets its own git worktree. These tools come from `ralph chat-mcp`, which talks to the running chat over a Unix socket.
+- **Background workers** - Claude starts, messages, and closes workers with `spawn_worker`, `reply`, and `close_worker`. Harnesses: `claude` in tmux, `cursor`, `opencode`, and `codex` (spawn and report only for now). Each worker gets its own git worktree. These tools come from `ralph chat-mcp`, which talks to the running chat over a Unix socket.
 - **Inbox and watches** - Worker reports and finished `watch` commands land in the chat inbox. Read them with `/inbox`.
 - **Status line** - Shows the chat mode (`NAP`, `INBOX`, `WORK`, `IDLE`); colors are set under `[theme.status]`.
 - **Chat input** - Multi-line editor with history, `$EDITOR` drafts, clipboard images, `!` shell cells, skills, and an opt-in vi mode (`[chat] edit_mode = "vi"`).

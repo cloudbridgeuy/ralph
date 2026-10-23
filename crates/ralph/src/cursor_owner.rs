@@ -1,7 +1,7 @@
 use crate::transport::stdio::stop_group;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep,
-    CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    CODEX_OWNER_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -60,26 +60,37 @@ fn parent_pid(pid: u32) -> Option<u32> {
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
-pub fn caller_owns_cursor(store_dir: &Path, id: &str) -> bool {
-    fs::read_to_string(HandoffFiles::cursor(store_dir, id).owner)
+pub fn caller_owns(files: &HandoffFiles) -> bool {
+    fs::read_to_string(&files.owner)
         .ok()
         .and_then(|text| OwnerRecord::parse(&text))
         .is_some_and(|record| caller_owns_worker(record.chat_pid, &own_ancestry()))
 }
 
-pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
-    let mut ids: Vec<String> = request_ids(store_dir, CURSOR_OWNER_DIR)
+fn owned_ids(store_dir: &Path, dir: &str, files: fn(&Path, &str) -> HandoffFiles) -> Vec<String> {
+    let mut ids: Vec<String> = request_ids(store_dir, dir)
         .into_iter()
-        .filter(|id| caller_owns_cursor(store_dir, id))
+        .filter(|id| caller_owns(&files(store_dir, id)))
         .collect();
     ids.sort();
     ids
 }
 
+pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
+    owned_ids(store_dir, CURSOR_OWNER_DIR, HandoffFiles::cursor)
+}
+
+pub fn owned_codex_ids(store_dir: &Path) -> Vec<String> {
+    owned_ids(store_dir, CODEX_OWNER_DIR, HandoffFiles::codex)
+}
+
 pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
     let mut ids: Vec<String> = request_ids(store_dir, CURSOR_OWNER_DIR)
         .into_iter()
-        .filter(|id| owner_facts(store_dir, id).is_some_and(|(_, facts)| agent_held(facts)))
+        .filter(|id| {
+            owner_facts(&HandoffFiles::cursor(store_dir, id).owner)
+                .is_some_and(|(_, facts)| agent_held(facts))
+        })
         .collect();
     ids.sort();
     ids
@@ -91,8 +102,8 @@ pub fn resumable_cursor_ids(store_dir: &Path) -> Vec<String> {
     ids
 }
 
-fn owner_facts(store_dir: &Path, id: &str) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
-    let text = fs::read_to_string(HandoffFiles::cursor(store_dir, id).owner).ok()?;
+fn owner_facts(owner: &Path) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
+    let text = fs::read_to_string(owner).ok()?;
     let record = OwnerRecord::parse(&text);
     let chat_alive = record
         .as_ref()
@@ -107,9 +118,8 @@ fn owner_facts(store_dir: &Path, id: &str) -> Option<(Option<OwnerRecord>, Owner
     Some((record, facts))
 }
 
-pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
-    let files = HandoffFiles::cursor(store_dir, id);
-    let (record, facts) = owner_facts(store_dir, id)?;
+pub fn sweep_owner(files: &HandoffFiles) -> Option<Sweep> {
+    let (record, facts) = owner_facts(&files.owner)?;
     let decision = sweep_decision(facts);
     if let (Sweep::Reclaim { kill_group: true }, Some(record)) = (decision, &record) {
         stop_group(record.group, || {
@@ -125,6 +135,19 @@ pub fn sweep_owner(store_dir: &Path, id: &str) -> Option<Sweep> {
         fs::remove_dir_all(&files.interrupt_result).ok();
     }
     Some(decision)
+}
+
+pub fn write_owner_record(owner: &Path, group: u32, agent: &str) -> Result<(), String> {
+    let chat = process::id();
+    let record = OwnerRecord {
+        chat_pid: chat,
+        chat_start: process_start(chat).ok_or("could not read the chat start time")?,
+        group,
+        group_start: process_start(group)
+            .ok_or_else(|| format!("could not read the {agent} agent start time"))?,
+    };
+    write_file(owner, &record.render())
+        .map_err(|e| format!("could not write the {agent} owner file: {e}"))
 }
 
 pub fn write_file(path: &Path, text: &str) -> io::Result<()> {

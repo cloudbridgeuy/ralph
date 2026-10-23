@@ -7,16 +7,18 @@ pub enum HarnessId {
     Claude,
     Cursor,
     Opencode,
+    Codex,
 }
 
 impl HarnessId {
-    pub const ALL: [HarnessId; 3] = [Self::Claude, Self::Opencode, Self::Cursor];
+    pub const ALL: [HarnessId; 4] = [Self::Claude, Self::Opencode, Self::Cursor, Self::Codex];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
+            Self::Codex => "codex",
         }
     }
 }
@@ -30,6 +32,7 @@ impl<'de> Deserialize<'de> for HarnessId {
             Tmux,
             Cursor,
             Opencode,
+            Codex,
         }
 
         #[derive(Deserialize)]
@@ -43,6 +46,7 @@ impl<'de> Deserialize<'de> for HarnessId {
             Compatible::Kind(Kind::Claude | Kind::Tmux) | Compatible::Cursor(false) => Self::Claude,
             Compatible::Kind(Kind::Cursor) | Compatible::Cursor(true) => Self::Cursor,
             Compatible::Kind(Kind::Opencode) => Self::Opencode,
+            Compatible::Kind(Kind::Codex) => Self::Codex,
         })
     }
 }
@@ -57,6 +61,7 @@ mod tests {
             (HarnessId::Claude, "claude"),
             (HarnessId::Cursor, "cursor"),
             (HarnessId::Opencode, "opencode"),
+            (HarnessId::Codex, "codex"),
         ] {
             let json = format!("\"{name}\"");
             assert_eq!(serde_json::to_string(&kind).unwrap(), json);

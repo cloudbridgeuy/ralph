@@ -153,6 +153,7 @@ pub enum CloseStep {
     RemoveOpencodeSession,
     KillSession(String),
     TerminateCursor,
+    TerminateCodex,
     RemoveWorktree { force: bool },
     DeleteBranch,
     PruneWorktrees,
@@ -206,8 +207,8 @@ pub fn close_plan(
     }
     match state.kind {
         HarnessId::Cursor => steps.push(CloseStep::TerminateCursor),
-        // Opencode shares one server across workers: end only this session.
         HarnessId::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
+        HarnessId::Codex => steps.push(CloseStep::TerminateCodex),
         HarnessId::Claude => {
             if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
                 steps.push(CloseStep::KillSession(session.name.clone()));
@@ -344,6 +345,15 @@ mod tests {
         state.kind = HarnessId::Cursor;
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateCursor);
+        assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
+    }
+
+    #[test]
+    fn close_plan_terminates_a_codex_worker_instead_of_killing_a_session() {
+        let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+        state.kind = HarnessId::Codex;
+        let steps = close_plan(&state, false, false).unwrap();
+        assert_eq!(steps[0], CloseStep::TerminateCodex);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
     }
 

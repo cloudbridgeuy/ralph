@@ -1,7 +1,7 @@
-use crate::acp_log::{CappedLog, LoggedRead, LoggedWrite};
+use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::AppConfig;
 use crate::cursor_owner::request_ids;
-use crate::cursor_owner::{now_secs, process_start, sweep_owner, write_file};
+use crate::cursor_owner::{now_secs, sweep_owner, write_file, write_owner_record};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
@@ -27,16 +27,15 @@ use ralph_core::worker::{
     ready_path, reduce, request_stale, resume_decision, session_error, session_saved, stop_problem,
     task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
     CursorPermissions, HandoffFiles, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker,
-    Inbound, Marker, OwnerRecord, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step,
-    TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
-    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR,
-    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    Inbound, Marker, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd,
+    TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR,
+    CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR,
+    CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{self, Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -227,15 +226,7 @@ impl AcpWorker {
         let (child, stdin, stdout, stderr) = spawn_piped(command)
             .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
         let log = CappedLog::new(request.inbox.parent(), id);
-        let stderr_log = Arc::clone(&log);
-        thread::spawn(move || {
-            let mut stderr = LoggedRead {
-                inner: stderr,
-                log: stderr_log,
-                tag: "err",
-            };
-            io::copy(&mut stderr, &mut io::sink()).ok();
-        });
+        drain_stderr(stderr, Arc::clone(&log));
         let events = Events::default();
         let permissions = Permissions::new(
             &markers,
@@ -462,17 +453,7 @@ impl AcpWorker {
     }
 
     fn write_owner(&self, agent: &AcpAgent) -> Result<(), String> {
-        let chat = process::id();
-        let group = self.child.id();
-        let record = OwnerRecord {
-            chat_pid: chat,
-            chat_start: process_start(chat).ok_or("could not read the chat start time")?,
-            group,
-            group_start: process_start(group)
-                .ok_or_else(|| format!("could not read the {} agent start time", agent.name))?,
-        };
-        write_file(&self.owner, &record.render())
-            .map_err(|e| format!("could not write the {} owner file: {e}", agent.name))
+        write_owner_record(&self.owner, self.child.id(), agent.name)
     }
 
     fn reap_exit(&mut self) {
@@ -583,7 +564,7 @@ impl CursorHost {
             warn(format!("cursor model default was not restored: {error}"));
         }
         for id in request_ids(&store_dir, CURSOR_OWNER_DIR) {
-            sweep_owner(&store_dir, &id);
+            sweep_owner(&HandoffFiles::cursor(&store_dir, &id));
         }
         fs::remove_dir_all(store_dir.join(CURSOR_INTERRUPT_RESULT_DIR)).ok();
         Arc::new(Self {

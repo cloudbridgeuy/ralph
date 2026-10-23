@@ -14,8 +14,9 @@ use ralph_core::worker::{
     rollback_plan, rollback_report, session_name, spawn_handoff, startup_state, worker_command,
     worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs,
     Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRequest,
-    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CURSOR_AGENT, HANDOFF_POLL, ID_OPTION,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    Startup, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
+    HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS,
+    WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -48,7 +49,7 @@ impl Workers {
     ) -> io::Result<String> {
         let repo = repo_root()?;
         let project = project_slug(&repo);
-        self.refuse_busy_cursor(id, false)?;
+        self.refuse_busy_headless(id, false)?;
         match self.owner(&project, id) {
             Owner::Missing => {}
             Owner::Mine(_) => {
@@ -109,6 +110,7 @@ impl Workers {
                     .map(|config| config.cursor.model.as_deref())
                     .map_err(String::as_str),
             ),
+            HarnessId::Codex => (model.map(str::to_string), None),
         };
         let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
         let launch = Launch {
@@ -167,6 +169,7 @@ impl Workers {
             }
             HarnessId::Opencode => self.preflight_opencode(id),
             HarnessId::Cursor => require_on_path(CURSOR_AGENT.command),
+            HarnessId::Codex => require_on_path(CODEX_COMMAND),
         }
     }
 
@@ -213,7 +216,13 @@ impl Workers {
                 ));
             }
             HarnessId::Cursor => {
-                self.spawn_cursor(launch)?;
+                self.spawn_headless(launch, HandoffFiles::cursor(&self.store_dir, id), "cursor")?;
+                return Ok(format!(
+                    "{started} It runs headless inside ralph chat (no tmux session)."
+                ));
+            }
+            HarnessId::Codex => {
+                self.spawn_headless(launch, HandoffFiles::codex(&self.store_dir, id), "codex")?;
                 return Ok(format!(
                     "{started} It runs headless inside ralph chat (no tmux session)."
                 ));
@@ -249,12 +258,19 @@ impl Workers {
             HarnessId::Cursor => HandoffFiles::cursor(&self.store_dir, launch.id)
                 .owner
                 .exists(),
+            HarnessId::Codex => HandoffFiles::codex(&self.store_dir, launch.id)
+                .owner
+                .exists(),
         }
     }
 
-    fn spawn_cursor(&self, launch: &Launch) -> io::Result<()> {
+    fn spawn_headless(
+        &self,
+        launch: &Launch,
+        files: HandoffFiles,
+        harness: &str,
+    ) -> io::Result<()> {
         let id = launch.id;
-        let files = HandoffFiles::cursor(&self.store_dir, id);
         for path in files.all() {
             clear_marker(path)?;
         }
@@ -272,7 +288,7 @@ impl Workers {
             &serde_json::to_string(&request).map_err(io::Error::other)?,
         )?;
         let ready = WorkerMarkers::new(&self.store_dir, id).ready;
-        self.await_spawn(&files.spawn, &ready, &files.error, "cursor")
+        self.await_spawn(&files.spawn, &ready, &files.error, harness)
     }
 
     fn spawn_opencode(&self, launch: &Launch, model: &str) -> io::Result<()> {

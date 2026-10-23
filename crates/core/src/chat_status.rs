@@ -47,11 +47,11 @@ pub struct RunningWorker {
 }
 
 impl RunningWorker {
-    pub fn cursor(id: &str) -> Self {
+    pub fn headless(id: &str, kind: HarnessId) -> Self {
         Self {
             id: id.to_string(),
             session: String::new(),
-            kind: HarnessId::Cursor,
+            kind,
         }
     }
 }
@@ -730,7 +730,7 @@ mod tests {
                 session: "ralph-p-claude-up".into(),
                 kind: HarnessId::Claude,
             },
-            RunningWorker::cursor("cursor-owned"),
+            RunningWorker::headless("cursor-owned", HarnessId::Cursor),
         ];
         let ready = [
             "cursor-live".to_string(),

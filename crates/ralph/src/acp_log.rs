@@ -3,7 +3,9 @@ use ralph_core::worker::{acp_log_path, log_entry, rotated_log_path, rotates};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::ChildStderr;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
 
 pub struct CappedLog {
     path: Option<PathBuf>,
@@ -89,6 +91,17 @@ impl<W: Write> Write for LoggedWrite<W> {
     fn flush(&mut self) -> io::Result<()> {
         self.inner.flush()
     }
+}
+
+pub fn drain_stderr(stderr: ChildStderr, log: Arc<CappedLog>) {
+    thread::spawn(move || {
+        let mut stderr = LoggedRead {
+            inner: stderr,
+            log,
+            tag: "err",
+        };
+        io::copy(&mut stderr, &mut io::sink()).ok();
+    });
 }
 
 #[cfg(test)]

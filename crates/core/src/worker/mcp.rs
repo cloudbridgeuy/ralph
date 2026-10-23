@@ -1,7 +1,7 @@
 use super::{
-    capabilities, decide, is_claude_model, is_cursor_model, is_model_id, model_refusal, Command,
-    Feature, HarnessId, SpawnSpec, Support, WorkerCommand, WorkerEvent, CURSOR_HARNESS,
-    OPENCODE_HARNESS,
+    capabilities, decide, is_claude_model, is_cursor_model, is_model_id, is_token_model,
+    model_refusal, Command, Feature, HarnessId, SpawnSpec, Support, WorkerCommand, WorkerEvent,
+    CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
 use crate::mcp::string_arg;
 use crate::watch_request::parse_watch_args;
@@ -17,8 +17,8 @@ pub fn command_definitions() -> [Value; 4] {
                 "properties": {
                     "id": {"type": "string", "description": "Short id such as a ticket key: letters, digits and dashes."},
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
-                    "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": "Agent to run. Default claude. cursor runs headless without a tmux session; a reply to it is delivered as a new prompt between its turns, or answers a waiting permission request. It resumes after a chat restart."},
-                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model."}
+                    "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
+                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default codex's own default."}
                 },
                 "required": ["id", "task"]
             }
@@ -107,6 +107,31 @@ fn worker_id(args: &Value) -> Result<String, String> {
     }
 }
 
+fn harness_description() -> String {
+    let headless = HarnessId::ALL
+        .into_iter()
+        .filter(|harness| capabilities(*harness).headless())
+        .map(|harness| {
+            let caps = capabilities(harness);
+            let limits = Feature::ALL
+                .into_iter()
+                .filter(|feature| caps.support(*feature) != Support::Full)
+                .map(Feature::name)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if limits.is_empty() {
+                harness.as_str().to_string()
+            } else {
+                format!("{} (partial or unsupported: {limits})", harness.as_str())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!(
+        "Agent to run. Default claude. Headless harnesses run without a tmux session and take a reply as a new prompt between turns, or as the answer to a waiting permission request: {headless}."
+    )
+}
+
 fn harness_choices() -> String {
     let names = HarnessId::ALL.map(HarnessId::as_str);
     match names.split_last() {
@@ -142,6 +167,11 @@ fn harness(args: &Value) -> Result<ParsedSpawn, String> {
         (Some(OPENCODE_HARNESS), Some(model)) => {
             Err(format!("Model '{model}' must look like provider/model."))
         }
+        (Some(CODEX_HARNESS), None) => Ok((HarnessId::Codex, None)),
+        (Some(CODEX_HARNESS), Some(model)) if is_token_model(model) => {
+            Ok((HarnessId::Codex, Some(model.to_string())))
+        }
+        (Some(CODEX_HARNESS), Some(_)) => Err("Model must be non-empty with no whitespace.".into()),
         (Some(CURSOR_HARNESS), None) => Ok((HarnessId::Cursor, None)),
         (Some(CURSOR_HARNESS), Some(model)) => {
             let spec = SpawnSpec {
@@ -273,7 +303,8 @@ mod tests {
     #[test]
     fn spawn_harness_rejects_bad_choices() {
         for args in [
-            json!({"harness": "codex"}),
+            json!({"harness": "gemini"}),
+            json!({"harness": "codex", "model": "two words"}),
             json!({"model": "two words"}),
             json!({"harness": "claude", "model": ""}),
             json!({"harness": "opencode", "model": "gpt-6.1-sol"}),
@@ -307,6 +338,28 @@ mod tests {
                 spawn_harness(json!({"harness": harness.as_str(), "model": model})),
                 expected
             );
+        }
+    }
+
+    #[test]
+    fn harness_description_follows_capability_matrix() {
+        let text = harness_description();
+        let (_, list) = text.split_once("request: ").unwrap();
+        let entries = list.trim_end_matches('.').split("; ").collect::<Vec<_>>();
+        let headless = HarnessId::ALL
+            .into_iter()
+            .filter(|harness| capabilities(*harness).headless())
+            .collect::<Vec<_>>();
+        assert_eq!(entries.len(), headless.len());
+        for (harness, entry) in headless.into_iter().zip(entries) {
+            assert!(entry.starts_with(harness.as_str()));
+            for feature in Feature::ALL {
+                assert_eq!(
+                    entry.contains(feature.name()),
+                    capabilities(harness).support(feature) != Support::Full,
+                    "{harness:?} {feature:?}"
+                );
+            }
         }
     }
 
