@@ -210,7 +210,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
 | `recent_history_tokens` | integer | `8192` | Token budget for the newest chat messages shown verbatim in the memory view; `0` turns it off |
 | `worker_check_secs` | integer | `60` | Seconds between worker checks while chat is open; `0` turns the check off |
-| `worker_quiet_secs` | integer | `300` | Seconds a running Cursor, opencode or Codex worker may send no activity (ACP traffic, session SSE events or Codex app-server frames) before one inbox alert; must be above 0, else a warning and `300`. The 300 s default is measured: silences outside tool calls reached 132 s, and a tool call is silent for its whole run, so a tool call over 300 s alerts once ([Quiet periods](context/headless-workers.md#quiet-periods-2026-10-22)). Runs on the worker check, so `worker_check_secs = 0` turns it off too |
+| `worker_quiet_secs` | integer | `300` | Seconds a running Cursor, opencode or Codex worker may send no activity (ACP traffic, session SSE events or Codex app-server frames) before one inbox alert; must be above 0, else a warning and `300`. The 300 s default is measured for Cursor and opencode, not for Codex: silences outside tool calls reached 132 s, and a tool call is silent for its whole run, so a tool call over 300 s alerts once ([Quiet periods](context/headless-workers.md#quiet-periods-2026-10-22)). Runs on the worker check, so `worker_check_secs = 0` turns it off too |
 | `reset_turns` | integer | `30` | Turns one `claude` process serves before chat drops it and respawns from the store; must be above 0, else a warning and `30` |
 | `reset_tokens` | integer | `140000` | Context tokens of the last assistant message at which chat drops the process and respawns from the store; must be above 0, else a warning and `140000` |
 | `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
@@ -249,6 +249,17 @@ A `model` passed to `spawn_worker` wins over this key. A value that is empty or 
 | `permissions` | `"ask"` or `"yolo"` | `"ask"` | `"yolo"` answers `accept` at once to Codex command, file-change and MCP tool-call approvals when `accept` is offered; `"ask"` waits for the person. Session or persistent grants, amendments and permission-grant requests are never auto-answered. Read when a worker starts; a wrong value warns and uses `"ask"` |
 | `model` | string | unset (Codex's own default) | Model for Codex workers that `spawn_worker` starts without a `model`. A `model` passed to `spawn_worker` wins. Checked against `model/list` at spawn; an unknown model fails the spawn |
 | `effort` | string | unset (Codex's own setting) | Reasoning effort for Codex workers. Checked against the effective model's `supportedReasoningEfforts` at spawn; an unsupported value fails the spawn and lists the supported ones. There is no `spawn_worker` effort parameter. Read when a worker starts |
+
+Codex setup and limits:
+
+- Version: codex CLI 0.162 or newer, probed with 0.164.0. Older fails the spawn. From 0.165 on, the spawn result warns `codex X is newer than the probed 0.164.0; the app-server protocol may differ.` and goes on.
+- Login: ralph never manages Codex keys or env. Run `codex login` yourself. A spawn without login fails with `codex is not logged in; run `codex login``.
+- Interrupt: `reply` with `interrupt` is partial. If chat gets no confirmation within 30 s, the outcome is unknown.
+- Permissions: only requests that Codex raises are handled (`ask`), and `yolo` accepts one request at a time. Nothing is granted for a session.
+- Resume: needs the saved Codex history, the worktree and a Codex login.
+- Close: Codex writes a global trust entry for the repo to `~/.codex/config.toml`. Ralph does not restore it.
+- Quiet: Codex frames count as activity, not progress. A tool that is silent for longer than `worker_quiet_secs` gives a false Quiet alert.
+- Resume failure: a worker that cannot resume (for example, its history is gone) is not resumed. Chat warns `codex session <id> not resumed: ` followed by the start error, writes `codex-error/<id>` and keeps the session record.
 
 ### `[claude]` - Claude Workers
 

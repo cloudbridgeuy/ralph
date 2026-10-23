@@ -31,7 +31,7 @@ fn signal_pid(pid: u32, signal: &str) {
         .ok();
 }
 
-pub(crate) fn sweep_tree(snapshot: &[Tracked]) {
+pub(crate) fn sweep_tree(snapshot: &[Tracked]) -> Vec<u32> {
     let found = still_running(snapshot, process_start);
     for pid in &found {
         signal_pid(*pid, "TERM");
@@ -43,4 +43,11 @@ pub(crate) fn sweep_tree(snapshot: &[Tracked]) {
     for pid in still_running(snapshot, process_start) {
         signal_pid(pid, "KILL");
     }
+    let deadline = Instant::now() + TERM_GRACE;
+    let mut survivors = still_running(snapshot, process_start);
+    while Instant::now() < deadline && !survivors.is_empty() {
+        thread::sleep(TERM_POLL);
+        survivors = still_running(snapshot, process_start);
+    }
+    survivors
 }

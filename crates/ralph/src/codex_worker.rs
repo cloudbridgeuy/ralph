@@ -16,7 +16,7 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, answer_server_request, check_effort, check_login, check_model,
     check_version, classify, codex_close_plan, codex_resume_decision, decide, decode_thread,
-    decode_turn_id, decode_version, describe, gone_path, initialize_params, model_ids,
+    decode_turn_id, decode_version, describe, gone_path, initialize_params, is_unmapped, model_ids,
     model_list_params, next_cursor, prompt_failure_report, ready_path, record_selection, reduce,
     reject_server_request, request_stale, resolve_selection, resolved_request_id, response_body,
     session_saved, task_prompt, thread_resume_params, thread_start_params, turn_interrupt_params,
@@ -30,7 +30,7 @@ use ralph_core::worker::{
     THREAD_RESUME, THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::io::{BufRead, BufReader, Write};
@@ -255,6 +255,8 @@ struct Pump {
     changes: Option<WorkerChanges>,
     id: String,
     wound_down: bool,
+    log: Arc<CappedLog>,
+    unmapped: HashSet<String>,
 }
 
 impl Pump {
@@ -384,6 +386,9 @@ impl Pump {
                     if let Some(id) = resolved_request_id(&method, &params) {
                         self.permissions.settle(|reply| reply.id == id);
                     }
+                    if is_unmapped(&method) && self.unmapped.insert(method.clone()) {
+                        self.log.append("unmapped", method.as_bytes());
+                    }
                     let closing = self.closing.load(Ordering::SeqCst);
                     let actions = self.turns.notification(&method, &params, closing);
                     self.settle(actions);
@@ -436,6 +441,7 @@ pub struct CodexWorker {
     events: Events,
     replies: mpsc::Sender<Inbound>,
     permissions: Arc<Permissions>,
+    log: Arc<CappedLog>,
 }
 
 impl CodexWorker {
@@ -464,10 +470,11 @@ impl CodexWorker {
         })));
         let (lines_tx, lines) = mpsc::channel();
         let (finished_tx, finished) = mpsc::channel();
+        let reader_log = Arc::clone(&log);
         thread::spawn(move || {
             let reader = BufReader::new(LoggedRead {
                 inner: stdout,
-                log,
+                log: reader_log,
                 tag: "out",
             });
             for line in reader.lines().map_while(Result::ok) {
@@ -503,6 +510,7 @@ impl CodexWorker {
             events: Arc::clone(&events),
             replies,
             permissions: Arc::clone(&permissions),
+            log,
         };
         write_owner_record(owner, worker.child.id(), "codex")?;
         locked(starting).insert(id.to_string(), worker.child.id());
@@ -592,6 +600,8 @@ impl CodexWorker {
                 }),
             id: id.to_string(),
             wound_down: false,
+            log: Arc::clone(&worker.log),
+            unmapped: HashSet::new(),
         };
         if matches!(launch, Launch::Fresh(_)) {
             let first = pump.turns.accept(task_prompt(&request.task));
@@ -667,7 +677,15 @@ impl CodexWorker {
                     self.finished.recv_timeout(SHUTDOWN_GRACE).ok();
                 }
                 CodexCloseStep::StopGroup => stop_child(&mut self.child),
-                CodexCloseStep::SweepTree => sweep_tree(&tree),
+                CodexCloseStep::SweepTree => {
+                    let survivors = sweep_tree(&tree);
+                    if !survivors.is_empty() {
+                        self.log.append(
+                            "sweep",
+                            format!("survivors after KILL: {survivors:?}").as_bytes(),
+                        );
+                    }
+                }
                 CodexCloseStep::RemoveOwner => {
                     fs::remove_file(&self.owner).ok();
                 }
