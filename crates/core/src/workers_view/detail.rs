@@ -36,7 +36,7 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
     }
     let mut out = block(title(row), &lines, width);
     out.push_str("\n\n");
-    if let Some(status) = &row.status {
+    for status in detail.history.iter().rev() {
         out.push_str(&cut(
             &format!("status: {} ({} ago)", status.text, age(&status.at, now)),
             width,
@@ -70,10 +70,10 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{line, now, row, with_status};
+    use super::super::tests::{line, now, row};
     use super::super::{ActivityMark, WorkerDetail};
     use super::*;
-    use crate::worker::{Ticket, Tracker};
+    use crate::worker::{StatusLine, Ticket, Tracker};
     use unicode_width::UnicodeWidthStr;
 
     #[test]
@@ -94,6 +94,7 @@ mod tests {
             tmux: Some("ralph-x-GUZ-1".into()),
             markers: vec!["sent", "gone"],
             ticket: None,
+            history: vec![],
             heartbeat: Some(ActivityMark {
                 at: 1_767_229_200 - 30,
                 running: true,
@@ -123,6 +124,7 @@ mod tests {
             markers: vec![],
             heartbeat: None,
             ticket: None,
+            history: vec![],
             reports: vec![],
         };
         let text = detail_view(&detail, now(), 40);
@@ -132,16 +134,52 @@ mod tests {
         assert!(text.lines().all(|l| l.width() <= 40), "{text}");
     }
 
+    fn reading() -> StatusLine {
+        StatusLine {
+            at: "2026-01-01T00:55:00Z".into(),
+            text: "Reading the tests.".into(),
+        }
+    }
+
+    #[test]
+    fn detail_lists_the_status_history_newest_first_above_the_reports() {
+        let older = StatusLine {
+            at: "2026-01-01T00:40:00Z".into(),
+            text: "Planning.".into(),
+        };
+        let oldest = StatusLine {
+            at: "2026-01-01T00:10:00Z".into(),
+            text: "Starting.".into(),
+        };
+        let detail = WorkerDetail {
+            history: vec![oldest, older, reading()],
+            reports: vec![line("done", "2026-01-01T00:30:00Z", "first")],
+            ..bare_detail(None)
+        };
+        let text = detail_view(&detail, now(), 200);
+        let tail: Vec<_> = text.lines().skip_while(|l| !l.is_empty()).skip(1).collect();
+        assert_eq!(
+            tail,
+            [
+                "status: Reading the tests. (5m ago)",
+                "status: Planning. (20m ago)",
+                "status: Starting. (50m ago)",
+                "done 30m  first"
+            ]
+        );
+    }
+
     #[test]
     fn detail_puts_the_status_line_above_the_reports() {
         let detail = WorkerDetail {
-            row: with_status(row("GUZ-1")),
+            row: row("GUZ-1"),
             branch: "worker/GUZ-1".into(),
             worktree: None,
             tmux: None,
             markers: vec![],
             heartbeat: None,
             ticket: None,
+            history: vec![reading()],
             reports: vec![line("done", "2026-01-01T00:30:00Z", "first")],
         };
         let text = detail_view(&detail, now(), 200);
@@ -156,13 +194,14 @@ mod tests {
     #[test]
     fn detail_with_status_and_no_reports_still_says_so() {
         let detail = WorkerDetail {
-            row: with_status(row("GUZ-1")),
+            row: row("GUZ-1"),
             branch: "worker/GUZ-1".into(),
             worktree: None,
             tmux: None,
             markers: vec![],
             heartbeat: None,
             ticket: None,
+            history: vec![reading()],
             reports: vec![],
         };
         let text = detail_view(&detail, now(), 200);
@@ -181,6 +220,7 @@ mod tests {
             markers: vec![],
             heartbeat: None,
             ticket,
+            history: vec![],
             reports: vec![],
         }
     }

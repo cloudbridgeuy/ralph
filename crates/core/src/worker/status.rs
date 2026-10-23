@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub const STATUS_DIR: &str = "status";
 pub const STATUS_MAX_CHARS: usize = 120;
+pub const STATUS_HISTORY: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusLine {
@@ -46,18 +47,37 @@ pub fn parse_status(args: &Value) -> Result<String, String> {
     }
 }
 
-pub fn encode_status(at: &str, text: &str) -> String {
-    format!("{at}\n{text}\n")
+pub fn encode_statuses(history: &[StatusLine]) -> String {
+    history
+        .iter()
+        .map(|status| format!("{}\n{}\n", status.at, status.text))
+        .collect()
+}
+
+pub fn decode_statuses(raw: &str) -> Vec<StatusLine> {
+    let lines: Vec<&str> = raw.lines().collect();
+    lines
+        .chunks_exact(2)
+        .filter_map(|pair| {
+            DateTime::parse_from_rfc3339(pair[0]).ok()?;
+            let text = pair[1].trim();
+            (!text.is_empty()).then(|| StatusLine {
+                at: pair[0].to_string(),
+                text: text.to_string(),
+            })
+        })
+        .collect()
 }
 
 pub fn decode_status(raw: &str) -> Option<StatusLine> {
-    let (at, rest) = raw.split_once('\n')?;
-    DateTime::parse_from_rfc3339(at).ok()?;
-    let text = rest.trim();
-    (!text.is_empty()).then(|| StatusLine {
-        at: at.to_string(),
-        text: text.to_string(),
-    })
+    decode_statuses(raw).pop()
+}
+
+pub fn append_status(mut history: Vec<StatusLine>, status: StatusLine) -> Vec<StatusLine> {
+    history.push(status);
+    let excess = history.len().saturating_sub(STATUS_HISTORY);
+    history.drain(..excess);
+    history
 }
 
 #[cfg(test)]
@@ -113,15 +133,56 @@ mod tests {
         assert_eq!(tool["inputSchema"]["properties"]["text"]["maxLength"], 120);
     }
 
+    fn status(minute: usize, text: &str) -> StatusLine {
+        StatusLine {
+            at: format!("2026-01-01T00:{minute:02}:00+00:00"),
+            text: text.into(),
+        }
+    }
+
     #[test]
     fn encode_and_decode_round_trip() {
-        let at = "2026-01-01T00:00:00+00:00";
+        let history = [status(0, "Fixing the build."), status(1, "Running tests.")];
+        let raw = encode_statuses(&history);
         assert_eq!(
-            decode_status(&encode_status(at, "Fixing the build.")),
-            Some(StatusLine {
-                at: at.into(),
-                text: "Fixing the build.".into()
-            })
+            raw,
+            "2026-01-01T00:00:00+00:00\nFixing the build.\n2026-01-01T00:01:00+00:00\nRunning tests.\n"
+        );
+        assert_eq!(decode_statuses(&raw), history);
+        assert_eq!(decode_status(&raw), Some(status(1, "Running tests.")));
+    }
+
+    #[test]
+    fn an_old_single_entry_file_decodes() {
+        let raw = "2026-01-01T00:00:00+00:00\nFixing the build.\n";
+        assert_eq!(decode_statuses(raw), vec![status(0, "Fixing the build.")]);
+        assert_eq!(decode_status(raw), Some(status(0, "Fixing the build.")));
+    }
+
+    #[test]
+    fn an_entry_without_a_valid_time_or_text_is_skipped() {
+        let raw =
+            "not a time\nlost\n2026-01-01T00:01:00+00:00\n  \n2026-01-01T00:02:00+00:00\nkept\n";
+        assert_eq!(decode_statuses(raw), vec![status(2, "kept")]);
+    }
+
+    #[test]
+    fn appending_keeps_the_last_five_oldest_first() {
+        let mut history = Vec::new();
+        for minute in 0..7 {
+            history = append_status(history, status(minute, &format!("step {minute}")));
+        }
+        let texts: Vec<_> = history.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(texts, ["step 2", "step 3", "step 4", "step 5", "step 6"]);
+    }
+
+    #[test]
+    fn appending_below_the_limit_drops_nothing() {
+        let four: Vec<_> = (0..4).map(|m| status(m, "x")).collect();
+        assert_eq!(append_status(four, status(4, "y")).len(), 5);
+        assert_eq!(
+            append_status(Vec::new(), status(0, "a")),
+            vec![status(0, "a")]
         );
     }
 
@@ -136,6 +197,7 @@ mod tests {
             "2026-01-01T00:00:00Z",
         ] {
             assert_eq!(decode_status(raw), None, "{raw:?}");
+            assert!(decode_statuses(raw).is_empty(), "{raw:?}");
         }
     }
 

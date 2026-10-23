@@ -80,6 +80,7 @@ pub struct WorkerDetail {
     pub markers: Vec<&'static str>,
     pub heartbeat: Option<ActivityMark>,
     pub ticket: Option<Ticket>,
+    pub history: Vec<StatusLine>,
     pub reports: Vec<ReportLine>,
 }
 

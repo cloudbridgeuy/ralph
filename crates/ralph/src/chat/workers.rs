@@ -7,9 +7,9 @@ use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{
-    activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, gone_path,
-    sent_path, spawn_record_path, status_path, unreported_path, waiting_path, worktree_for_branch,
-    ActivityMark, HarnessId, StatusLine, Ticket,
+    activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, decode_statuses,
+    gone_path, sent_path, spawn_record_path, status_path, unreported_path, waiting_path,
+    worktree_for_branch, ActivityMark, HarnessId, StatusLine, Ticket,
 };
 use ralph_core::workers_view::{
     count_untracked, detail_view, not_live, parse_head, parse_numstat, workers_view, Diff, Lookup,
@@ -47,6 +47,12 @@ struct Facts {
     origin_head: Option<String>,
     reports: Option<HashMap<String, Vec<ReportLine>>>,
     porcelain: Option<String>,
+}
+
+fn status_history(store: &Path, id: &str) -> Vec<StatusLine> {
+    std::fs::read_to_string(status_path(store, id))
+        .map(|raw| decode_statuses(&raw))
+        .unwrap_or_default()
 }
 
 fn status_line(store: &Path, id: &str) -> Option<StatusLine> {
@@ -179,6 +185,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
         markers: markers(&monitor.store_dir, id),
         heartbeat: heartbeat(&monitor.store_dir, id),
         ticket: spawn_ticket(&monitor.store_dir, id),
+        history: status_history(&monitor.store_dir, id),
         reports: facts
             .reports
             .and_then(|mut reports| reports.remove(id))

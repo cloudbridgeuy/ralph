@@ -1,8 +1,9 @@
 use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
-    accept_report, encode_status, handle_request, inbox_file_name, reported_path, sent_path,
-    status_path, stop_block_output, stop_decision, unreported_path, Outcome, Report, StopDecision,
+    accept_report, append_status, decode_statuses, encode_statuses, handle_request,
+    inbox_file_name, reported_path, sent_path, status_path, stop_block_output, stop_decision,
+    unreported_path, Outcome, Report, StatusLine, StopDecision,
 };
 use serde_json::Value;
 use std::fs;
@@ -55,8 +56,14 @@ impl Inbox {
         let dir = path.parent().unwrap_or(store);
         fs::create_dir_all(dir)?;
         let tmp = dir.join(format!(".{worker}.tmp"));
-        let encoded = encode_status(&chrono::Utc::now().to_rfc3339(), text);
-        fs::write(&tmp, encoded)?;
+        let history = fs::read_to_string(&path)
+            .map(|raw| decode_statuses(&raw))
+            .unwrap_or_default();
+        let status = StatusLine {
+            at: chrono::Utc::now().to_rfc3339(),
+            text: text.to_string(),
+        };
+        fs::write(&tmp, encode_statuses(&append_status(history, status)))?;
         fs::rename(tmp, path)
     }
 
@@ -390,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn set_status_writes_and_replaces_the_file_without_touching_the_inbox() {
+    fn set_status_appends_to_the_file_without_touching_the_inbox() {
         let dir = tempfile::tempdir().unwrap();
         let inbox = Inbox::new(dir.path().join("inbox"));
         let input = format!(
@@ -409,10 +416,11 @@ mod tests {
         assert_eq!(replies[1]["result"]["content"][0]["text"], "Status set.");
 
         let status = fs::read_to_string(status_path(dir.path(), "GUZ-1")).unwrap();
-        assert_eq!(
-            ralph_core::worker::decode_status(&status).unwrap().text,
-            "second"
-        );
+        let texts: Vec<_> = decode_statuses(&status)
+            .into_iter()
+            .map(|status| status.text)
+            .collect();
+        assert_eq!(texts, ["first", "second"]);
         let names: Vec<_> = fs::read_dir(dir.path().join("status"))
             .unwrap()
             .map(|e| e.unwrap().file_name())
@@ -421,6 +429,41 @@ mod tests {
         assert!(inbox.peek().unwrap().is_empty());
         assert!(!dir.path().join("inbox").exists());
         assert!(!dir.path().join("reported").exists());
+    }
+
+    #[test]
+    fn set_status_keeps_only_the_last_five() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let input: String = (1..=7)
+            .map(|n| format!("{}\n", status_call(n, &format!("step {n}"))))
+            .collect();
+        let mut out = Vec::new();
+        run_stdio_server("GUZ-1", &inbox, None, input.as_bytes(), &mut out).unwrap();
+        let status = fs::read_to_string(status_path(dir.path(), "GUZ-1")).unwrap();
+        let texts: Vec<_> = decode_statuses(&status)
+            .into_iter()
+            .map(|status| status.text)
+            .collect();
+        assert_eq!(texts, ["step 3", "step 4", "step 5", "step 6", "step 7"]);
+        assert_eq!(fs::read_dir(dir.path().join("status")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn set_status_starts_from_an_old_single_entry_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = status_path(dir.path(), "GUZ-1");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "2026-01-01T00:00:00+00:00\nold\n").unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let input = format!("{}\n", status_call(1, "new"));
+        let mut out = Vec::new();
+        run_stdio_server("GUZ-1", &inbox, None, input.as_bytes(), &mut out).unwrap();
+        let texts: Vec<_> = decode_statuses(&fs::read_to_string(&path).unwrap())
+            .into_iter()
+            .map(|status| status.text)
+            .collect();
+        assert_eq!(texts, ["old", "new"]);
     }
 
     #[test]
