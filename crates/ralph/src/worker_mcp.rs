@@ -1,8 +1,8 @@
 use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
-    accept_report, handle_request, inbox_file_name, reported_path, sent_path, stop_block_output,
-    stop_decision, unreported_path, Outcome, Report, StopDecision,
+    accept_report, encode_status, handle_request, inbox_file_name, reported_path, sent_path,
+    status_path, stop_block_output, stop_decision, unreported_path, Outcome, Report, StopDecision,
 };
 use serde_json::Value;
 use std::fs;
@@ -47,6 +47,17 @@ impl Inbox {
         let tmp = self.dir.join(format!(".{name}"));
         fs::write(&tmp, serde_json::to_vec(report)?)?;
         fs::rename(tmp, self.dir.join(name))
+    }
+
+    fn set_status(&self, worker: &str, text: &str) -> io::Result<()> {
+        let store = self.dir.parent().unwrap_or(Path::new("."));
+        let path = status_path(store, worker);
+        let dir = path.parent().unwrap_or(store);
+        fs::create_dir_all(dir)?;
+        let tmp = dir.join(format!(".{worker}.tmp"));
+        let encoded = encode_status(&chrono::Utc::now().to_rfc3339(), text);
+        fs::write(&tmp, encoded)?;
+        fs::rename(tmp, path)
     }
 
     fn mark_reported(&self, worker: &str) -> io::Result<()> {
@@ -194,6 +205,10 @@ pub fn run_stdio_server(
         let response = match handle_request(&request) {
             Outcome::Silent => continue,
             Outcome::Respond(v) => v,
+            Outcome::Status { id, text } => match inbox.set_status(worker, &text) {
+                Ok(()) => tool_result(id, "Status set.", false),
+                Err(e) => tool_result(id, &format!("Could not set status: {e}"), true),
+            },
             Outcome::Report { id, status, text } => {
                 if !inbox.accepts_report() {
                     let closed = tool_result(id, "Could not deliver: worker closed.", true);
@@ -360,6 +375,46 @@ mod tests {
         assert_eq!(reports[0].worker, "GUZ-1");
         assert_eq!(reports[0].text, "hello");
         assert!(inbox.peek().unwrap().is_empty());
+    }
+
+    fn status_call(id: u32, text: &str) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"set_status","arguments":{{"text":"{text}"}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn set_status_writes_and_replaces_the_file_without_touching_the_inbox() {
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = Inbox::new(dir.path().join("inbox"));
+        let input = format!(
+            "{}\n{}\n",
+            status_call(1, "first"),
+            status_call(2, "second")
+        );
+        let mut out = Vec::new();
+        run_stdio_server("GUZ-1", &inbox, None, input.as_bytes(), &mut out).unwrap();
+        let replies: Vec<Value> = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(replies.iter().all(|r| r["result"]["isError"] == false));
+        assert_eq!(replies[1]["result"]["content"][0]["text"], "Status set.");
+
+        let status = fs::read_to_string(status_path(dir.path(), "GUZ-1")).unwrap();
+        assert_eq!(
+            ralph_core::worker::decode_status(&status).unwrap().text,
+            "second"
+        );
+        let names: Vec<_> = fs::read_dir(dir.path().join("status"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["GUZ-1"]);
+        assert!(inbox.peek().unwrap().is_empty());
+        assert!(!dir.path().join("inbox").exists());
+        assert!(!dir.path().join("reported").exists());
     }
 
     #[test]

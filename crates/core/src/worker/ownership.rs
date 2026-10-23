@@ -1,4 +1,4 @@
-use super::{branch_name, HarnessId};
+use super::{branch_name, marker_paths, status_path, HarnessId};
 use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
@@ -158,6 +158,12 @@ pub enum CloseStep {
     DeleteBranch,
     PruneWorktrees,
     ClearMarkers,
+}
+
+pub fn close_clear_paths(store: &Path, id: &str) -> Vec<PathBuf> {
+    let mut paths = marker_paths(store, id).to_vec();
+    paths.push(status_path(store, id));
+    paths
 }
 
 pub fn session_survived_kill(kill_ok: bool, listed: Option<bool>) -> bool {
@@ -427,6 +433,16 @@ mod tests {
         );
         state.unmerged_commits = None;
         assert!(close_plan(&state, true, false).is_err());
+    }
+
+    #[test]
+    fn close_clears_every_marker_and_the_status_file() {
+        let paths = close_clear_paths(Path::new("/s"), "A");
+        assert_eq!(paths.len(), marker_paths(Path::new("/s"), "A").len() + 1);
+        assert!(marker_paths(Path::new("/s"), "A")
+            .iter()
+            .all(|marker| paths.contains(marker)));
+        assert_eq!(paths.last(), Some(&PathBuf::from("/s/status/A")));
     }
 
     #[test]

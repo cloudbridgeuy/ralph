@@ -83,11 +83,11 @@ impl Command {
             Command::Workers => &[
                 (
                     "/workers",
-                    "list live workers: id, harness, state, report, head, +/-, behind; BEHIND counts against local origin/<base>, stale until a fetch; no turn",
+                    "list live workers: id, harness, state, report (the worker's status and its age, else its last report), head, +/-, behind; BEHIND counts against local origin/<base>, stale until a fetch; no turn",
                 ),
                 (
                     "/workers <id>",
-                    "one worker in detail with its last 5 reports",
+                    "one worker in detail with its status and last 5 reports",
                 ),
             ],
         }

@@ -11,8 +11,8 @@ use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::claude_leftovers::{cleans_claude_leftovers, trust_lock_path};
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
-    base_branch, base_config_key, blocked_path, branch_name, close_handoff, close_plan,
-    interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
+    base_branch, base_config_key, blocked_path, branch_name, close_clear_paths, close_handoff,
+    close_plan, interrupt_reply, legacy_base_unset_warning, marker_paths, opencode_close_handoff,
     parse_interrupt_result, project_slug, prompt_entry_name, ready_path, resolve_worktree_dir,
     sent_path, session_name, session_owner, session_survived_kill, tagged_sessions,
     worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff, HandoffFiles, HarnessId,
@@ -375,8 +375,8 @@ impl Workers {
                 run(git().args(["worktree", "prune"]))?;
             }
             CloseStep::ClearMarkers => {
-                for marker in marker_paths(&self.store_dir, id) {
-                    clear_marker(&marker)?;
+                for path in close_clear_paths(&self.store_dir, id) {
+                    clear_marker(&path)?;
                 }
             }
         }

@@ -3,7 +3,7 @@
 
 use crate::chat_memory::{Entry, Role};
 use crate::inbox::age;
-use crate::worker::{ActivityMark, Report};
+use crate::worker::{ActivityMark, Report, StatusLine};
 use crate::worker_check::{is_report_status, message_header};
 use chrono::{DateTime, Utc};
 use std::cmp::Reverse;
@@ -60,6 +60,7 @@ pub struct WorkerRow {
     pub harness: String,
     pub state: Option<String>,
     pub report: Lookup<ReportLine>,
+    pub status: Option<StatusLine>,
     pub head: Lookup<Head>,
     pub diff: Lookup<Diff>,
     pub behind: Lookup<usize>,
@@ -213,6 +214,17 @@ fn report_cell(report: &ReportLine, now: DateTime<Utc>) -> String {
     format!("{} {} ago", report.status, age(&report.at, now))
 }
 
+fn status_cell(status: &StatusLine, now: DateTime<Utc>) -> String {
+    format!("{} · {} ago", status.text, age(&status.at, now))
+}
+
+fn activity_cell(row: &WorkerRow, now: DateTime<Utc>) -> String {
+    match &row.status {
+        Some(status) => status_cell(status, now),
+        None => row.report.cell(|report| report_cell(report, now)),
+    }
+}
+
 fn head_cell(head: &Head, subject_limit: usize) -> String {
     format!("{} {}", head.hash, cut(&head.subject, subject_limit))
         .trim_end()
@@ -260,7 +272,7 @@ fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [St
         row.id.clone(),
         row.harness.clone(),
         row.state.clone().unwrap_or_else(|| "-".to_string()),
-        row.report.cell(|report| report_cell(report, now)),
+        activity_cell(row, now),
         row.head.cell(|head| head_cell(head, subject_limit)),
         row.diff.cell(diff_cell),
         row.behind.cell(usize::to_string),
@@ -323,7 +335,7 @@ fn table(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> Option<String>
 fn row_lines(row: &WorkerRow, now: DateTime<Utc>) -> Vec<(&'static str, String)> {
     let diff = row.diff.cell(diff_text);
     vec![
-        ("report", row.report.cell(|report| report_cell(report, now))),
+        ("report", activity_cell(row, now)),
         ("head", row.head.cell(|head| head_cell(head, usize::MAX))),
         ("diff", format!("{diff} · {}", behind_text(row))),
     ]
@@ -370,7 +382,13 @@ pub fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> Vie
 
 pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> String {
     let row = &detail.row;
-    let mut lines = row_lines(row, now);
+    let mut lines = row_lines(
+        &WorkerRow {
+            status: None,
+            ..row.clone()
+        },
+        now,
+    );
     lines.push(("branch", detail.branch.clone()));
     lines.push((
         "worktree",
@@ -392,6 +410,13 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
     }
     let mut out = block(title(row), &lines, width);
     out.push_str("\n\n");
+    if let Some(status) = &row.status {
+        out.push_str(&cut(
+            &format!("status: {} ({} ago)", status.text, age(&status.at, now)),
+            width,
+        ));
+        out.push('\n');
+    }
     if detail.reports.is_empty() {
         out.push_str("No reports.");
     }
@@ -450,6 +475,7 @@ mod tests {
             harness: "claude".into(),
             state: Some("busy".into()),
             report: Lookup::Found(line("done", "2026-01-01T00:48:00Z", "")),
+            status: None,
             head: Lookup::Found(Head {
                 hash: "2f7f8c0".into(),
                 subject: "fix(chat): exact /help, width-wrapped help and stricter help tests"
@@ -738,6 +764,68 @@ mod tests {
         assert!(text.contains("worktree  -"));
         assert!(text.ends_with("\n\nNo reports."));
         assert!(text.lines().all(|l| l.width() <= 40), "{text}");
+    }
+
+    fn with_status(mut row: WorkerRow) -> WorkerRow {
+        row.status = Some(StatusLine {
+            at: "2026-01-01T00:55:00Z".into(),
+            text: "Reading the tests.".into(),
+        });
+        row
+    }
+
+    #[test]
+    fn a_status_replaces_the_report_cell_with_text_and_age() {
+        let cells = table_cells(&with_status(row("A")), now(), 99);
+        assert_eq!(cells[3], "Reading the tests. · 5m ago");
+        assert_eq!(
+            row_lines(&with_status(row("A")), now())[0].1,
+            "Reading the tests. · 5m ago"
+        );
+    }
+
+    #[test]
+    fn a_row_without_status_falls_back_to_the_latest_report() {
+        assert_eq!(table_cells(&row("A"), now(), 99)[3], "done 12m ago");
+        assert_eq!(row_lines(&row("A"), now())[0].1, "done 12m ago");
+    }
+
+    #[test]
+    fn detail_puts_the_status_line_above_the_reports() {
+        let detail = WorkerDetail {
+            row: with_status(row("GUZ-1")),
+            branch: "worker/GUZ-1".into(),
+            worktree: None,
+            tmux: None,
+            markers: vec![],
+            heartbeat: None,
+            reports: vec![line("done", "2026-01-01T00:30:00Z", "first")],
+        };
+        let text = detail_view(&detail, now(), 200);
+        let tail: Vec<_> = text.lines().skip_while(|l| !l.is_empty()).skip(1).collect();
+        assert_eq!(
+            tail,
+            ["status: Reading the tests. (5m ago)", "done 30m  first"]
+        );
+        assert!(text.contains("  report    done 12m ago"), "{text}");
+    }
+
+    #[test]
+    fn detail_with_status_and_no_reports_still_says_so() {
+        let detail = WorkerDetail {
+            row: with_status(row("GUZ-1")),
+            branch: "worker/GUZ-1".into(),
+            worktree: None,
+            tmux: None,
+            markers: vec![],
+            heartbeat: None,
+            reports: vec![],
+        };
+        let text = detail_view(&detail, now(), 200);
+        assert!(
+            text.ends_with("\n\nstatus: Reading the tests. (5m ago)\nNo reports."),
+            "{text}"
+        );
     }
 
     #[test]

@@ -7,8 +7,8 @@ use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{
-    activity_path, blocked_path, branch_name, gone_path, sent_path, unreported_path, waiting_path,
-    worktree_for_branch, ActivityMark, HarnessId,
+    activity_path, blocked_path, branch_name, decode_status, gone_path, sent_path, status_path,
+    unreported_path, waiting_path, worktree_for_branch, ActivityMark, HarnessId, StatusLine,
 };
 use ralph_core::workers_view::{
     count_untracked, detail_view, not_live, parse_head, parse_numstat, workers_view, Diff, Lookup,
@@ -46,6 +46,10 @@ struct Facts {
     origin_head: Option<String>,
     reports: Option<HashMap<String, Vec<ReportLine>>>,
     porcelain: Option<String>,
+}
+
+fn status_line(store: &Path, id: &str) -> Option<StatusLine> {
+    decode_status(&std::fs::read_to_string(status_path(store, id)).ok()?)
 }
 
 fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, Option<String>) {
@@ -94,6 +98,7 @@ fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, 
             harness: worker.kind.as_str().to_string(),
             state,
             report,
+            status: status_line(&monitor.store_dir, &worker.id),
             head,
             diff,
             behind,
@@ -202,6 +207,7 @@ mod tests {
                 at: "2026-01-01T00:48:00Z".into(),
                 text: String::new(),
             }),
+            status: None,
             head: Lookup::Found(Head {
                 hash: "2f7f8c0".into(),
                 subject: subject.into(),

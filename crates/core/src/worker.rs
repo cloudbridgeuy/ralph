@@ -19,6 +19,7 @@ mod ownership;
 mod permissions;
 mod process_tree;
 mod rollback;
+mod status;
 mod tools;
 mod worktree;
 pub use acp::*;
@@ -39,6 +40,7 @@ pub use ownership::*;
 pub use permissions::*;
 pub use process_tree::*;
 pub use rollback::*;
+pub use status::*;
 pub use tools::*;
 pub use worktree::*;
 
@@ -134,6 +136,8 @@ pub const WORKER_PROMPT: &str = "\
 You work for one person on the task you were given, in your own git worktree. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
 
 End every turn with the report tool: status done when the task is finished, blocked when you cannot go on, or question when you need a decision only the person can make, and a full summary in text. Then stop and wait. The person's answer arrives as your next message. Never send progress updates.
+
+Call set_status with one sentence about what you are doing when you start and whenever your current activity changes; it is not a report and costs no turn.
 
 A reference like [Image #N: <path>] in a message is an image file: read it at that path.";
 
