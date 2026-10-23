@@ -1,4 +1,5 @@
 use super::AcpAgent;
+use crate::worker::PermissionMode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,10 @@ pub struct SessionRecord {
     pub store: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<PermissionMode>,
 }
 
 impl SessionRecord {
@@ -117,6 +122,8 @@ mod tests {
             inbox: PathBuf::from("/store/inbox"),
             store: store.map(PathBuf::from),
             model: None,
+            effort: None,
+            permissions: None,
         }
     }
 
@@ -131,7 +138,18 @@ mod tests {
         let parsed = SessionRecord::parse(bare).unwrap();
         assert_eq!(parsed.store, None);
         assert_eq!(parsed.model, None);
+        assert_eq!((parsed.effort, parsed.permissions), (None, None));
+        let mut codex = record(Some("/store"));
+        codex.effort = Some("high".into());
+        codex.permissions = Some(PermissionMode::Yolo);
+        assert!(codex.render().contains(r#""permissions":"yolo""#));
+        assert_eq!(SessionRecord::parse(&codex.render()), Some(codex));
+        assert!(!owned_json().contains("effort"));
         assert_eq!(SessionRecord::parse("nope"), None);
+    }
+
+    fn owned_json() -> String {
+        record(Some("/store")).render()
     }
 
     #[test]

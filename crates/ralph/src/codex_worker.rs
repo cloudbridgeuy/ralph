@@ -1,6 +1,6 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
-use crate::config::configured_permission_mode;
+use crate::config::{configured_codex, configured_permission_mode};
 use crate::cursor_owner::{
     now_secs, queued_entries, request_ids, sweep_owner, write_file, write_interrupt_result,
     write_owner_record,
@@ -14,17 +14,19 @@ use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, answer_server_request, check_login, check_model, check_version,
-    classify, codex_close_plan, decide, decode_thread_id, decode_turn_id, decode_version, describe,
-    gone_path, initialize_params, model_ids, model_list_params, prompt_failure_report, ready_path,
-    reduce, reject_server_request, request_stale, resolved_request_id, response_body, task_prompt,
-    thread_start_params, turn_interrupt_params, turn_start_params, yolo_option, Action,
+    acp_mcp_server, activity_path, answer_server_request, check_effort, check_login, check_model,
+    check_version, classify, codex_close_plan, decide, decode_thread, decode_turn_id,
+    decode_version, describe, gone_path, initialize_params, model_ids, model_list_params,
+    next_cursor, prompt_failure_report, ready_path, reduce, reject_server_request, request_stale,
+    resolve_selection, resolved_request_id, response_body, session_saved, task_prompt,
+    thread_start_params, turn_interrupt_params, turn_start_params, turn_stop, yolo_option, Action,
     ApprovalKind, Capabilities, CodexCloseStep, HandoffFiles, HarnessId, HeadlessState,
     HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict, PermissionMode, Rpc, Scope,
-    SessionRecord, SpawnRequest, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent,
-    WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_CLOSE_TURN_WAIT,
-    CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SPAWN_DIR,
-    INITIALIZE, INITIALIZED, MODEL_LIST, SERVER_NAME, THREAD_START, TURN_INTERRUPT, TURN_START,
+    Selection, SessionRecord, SpawnRequest, ThreadInfo, ThreadSignal, TurnEnd, Turns,
+    WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR,
+    CODEX_CLOSE_TURN_WAIT, CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR,
+    CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, MODEL_LIST_MAX_PAGES, SERVER_NAME,
+    THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -176,12 +178,27 @@ impl Wire {
     }
 }
 
+fn list_models(wire: &mut Wire, deadline: Instant) -> Result<Value, String> {
+    let mut data = Vec::new();
+    let mut cursor = None;
+    for _ in 0..MODEL_LIST_MAX_PAGES {
+        let page = wire.call(MODEL_LIST, model_list_params(cursor.as_deref()), deadline)?;
+        data.extend(page["data"].as_array().cloned().unwrap_or_default());
+        cursor = next_cursor(&page);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(json!({"data": data}))
+}
+
 fn handshake(
     wire: &mut Wire,
-    request: &SpawnRequest,
+    selection: &Selection,
+    cwd: &Path,
     server: &Value,
     deadline: Instant,
-) -> Result<String, String> {
+) -> Result<ThreadInfo, String> {
     let init = wire.call(
         INITIALIZE,
         initialize_params(env!("CARGO_PKG_VERSION")),
@@ -195,16 +212,15 @@ fn handshake(
         warn(warning);
     }
     check_login(&wire.call(ACCOUNT_READ, json!({}), deadline)?)?;
-    if request.model.is_some() {
-        let listed = wire.call(MODEL_LIST, model_list_params(), deadline)?;
-        check_model(request.model.as_deref(), &model_ids(&listed))?;
-    }
+    let listed = list_models(wire, deadline)?;
+    check_model(selection.model.as_deref(), &model_ids(&listed))?;
+    check_effort(selection, &listed)?;
     let started = wire.call(
         THREAD_START,
-        thread_start_params(&request.worktree, request.model.as_deref(), server),
+        thread_start_params(cwd, selection, server),
         deadline,
     )?;
-    let thread = decode_thread_id(&started).ok_or("codex did not return a thread id")?;
+    let thread = decode_thread(&started).ok_or("codex did not return a thread id")?;
     loop {
         match wire.startup.verdict(&[SERVER_NAME]) {
             McpVerdict::Ready => return Ok(thread),
@@ -233,6 +249,8 @@ struct Pump {
     interrupt_call: Option<u64>,
     permissions: Arc<Permissions>,
     mode: PermissionMode,
+    selection: Selection,
+    pending_record: Option<(PathBuf, SessionRecord)>,
     inbox: Inbox,
     changes: Option<WorkerChanges>,
     id: String,
@@ -247,11 +265,22 @@ impl Pump {
         self.settle(actions);
     }
 
+    fn save_record(&mut self) {
+        if self.closing.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Some((path, record)) = self.pending_record.take() {
+            if let Err(e) = write_file(&path, &record.render()) {
+                warn(format!("could not write the codex session file: {e}"));
+            }
+        }
+    }
+
     fn perform(&mut self, actions: Vec<Action>) -> Result<(), String> {
         for action in actions {
             match action {
                 Action::Start(text) => {
-                    let params = turn_start_params(&self.thread, &text);
+                    let params = turn_start_params(&self.thread, &text, &self.selection);
                     let started =
                         self.wire
                             .call(TURN_START, params, Instant::now() + READY_TIMEOUT)?;
@@ -271,7 +300,12 @@ impl Pump {
                 Action::Emit(event) => {
                     match &event {
                         WorkerEvent::TurnStarted => self.wire.heartbeat.set_running(true),
-                        WorkerEvent::TurnEnded(_) => self.wire.heartbeat.set_running(false),
+                        WorkerEvent::TurnEnded(end) => {
+                            self.wire.heartbeat.set_running(false);
+                            if session_saved(turn_stop(end), true) {
+                                self.save_record();
+                            }
+                        }
                         _ => {}
                     }
                     push_event(&self.events, event);
@@ -483,16 +517,24 @@ impl CodexWorker {
             request.snapshots.then_some(request.worktree.as_path()),
         );
         let deadline = Instant::now() + READY_TIMEOUT;
-        let thread_id = handshake(&mut wire, request, &server, deadline)?;
+        let codex = configured_codex();
+        let selection = resolve_selection(
+            request.model.as_deref(),
+            codex.model.as_deref(),
+            codex.effort.as_deref(),
+        );
+        let thread = handshake(&mut wire, &selection, &request.worktree, &server, deadline)?;
+        let mode = configured_permission_mode("codex", |config| config.codex.permissions_setting());
         let record = SessionRecord {
-            session_id: thread_id.clone(),
+            session_id: thread.id.clone(),
+            model: thread.model.or(selection.model.clone()),
+            effort: thread.effort.or(selection.effort.clone()),
+            permissions: Some(mode),
             ..template
         };
-        write_file(session, &record.render())
-            .map_err(|e| format!("could not write the codex session file: {e}"))?;
         let mut pump = Pump {
             wire,
-            thread: thread_id,
+            thread: thread.id,
             turns: Turns::default(),
             events: Arc::clone(&worker.events),
             markers: markers.clone(),
@@ -501,7 +543,9 @@ impl CodexWorker {
             results: results.to_path_buf(),
             interrupt_call: None,
             permissions,
-            mode: configured_permission_mode("codex", |config| config.codex.permissions_setting()),
+            mode,
+            selection,
+            pending_record: Some((session.to_path_buf(), record)),
             inbox: Inbox::new(request.inbox.clone()),
             changes: request
                 .inbox
@@ -700,8 +744,12 @@ impl CodexHost {
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let mut drained: Vec<(String, CodexWorker)> = locked(&self.workers).drain().collect();
-        for (id, worker) in &mut drained {
-            worker.terminate();
+        thread::scope(|scope| {
+            for (_, worker) in &mut drained {
+                scope.spawn(|| worker.terminate());
+            }
+        });
+        for (id, _) in &drained {
             self.forget(id);
         }
         let starting: Vec<(String, u32)> = locked(&self.starting).drain().collect();
@@ -805,6 +853,8 @@ impl CodexHost {
                     inbox: request.inbox.clone(),
                     store: Some(self.store_dir.clone()),
                     model: request.model.clone(),
+                    effort: None,
+                    permissions: None,
                 },
                 markers: WorkerMarkers::new(&self.store_dir, id),
                 starting: &self.starting,
