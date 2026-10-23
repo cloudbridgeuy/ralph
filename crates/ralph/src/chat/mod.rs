@@ -42,7 +42,7 @@ use crate::chat::statusbar::StatusBar;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
-use crate::cursor_owner::{acp_alive_ids, resumable_cursor_ids};
+use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
@@ -249,7 +249,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         &ready_ids(&monitor.store_dir),
         &running_workers(&monitor.store_dir),
         &acp_alive_ids(&monitor.store_dir),
-        &resumable_cursor_ids(&monitor.store_dir),
+        &resumable_ids(&monitor.store_dir),
     ) {
         println!("{hint}");
     }

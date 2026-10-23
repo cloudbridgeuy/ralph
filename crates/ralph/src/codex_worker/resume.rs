@@ -83,6 +83,7 @@ impl CodexHost {
         let ready = ready_path(&self.store_dir, id);
         if !self.closed.load(Ordering::SeqCst) && write_file(&ready, "").is_ok() {
             locked(&self.workers).insert(id.to_string(), worker);
+            fs::remove_file(&self.files(id).error).ok();
             warn(format!("codex session {id} resumed"));
         } else {
             drop(worker);

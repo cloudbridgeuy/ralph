@@ -1,7 +1,8 @@
 use crate::transport::stdio::stop_group;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, interrupt_result_text, sweep_decision, HandoffFiles,
-    OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
+    CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -96,8 +97,9 @@ pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
     ids
 }
 
-pub fn resumable_cursor_ids(store_dir: &Path) -> Vec<String> {
+pub fn resumable_ids(store_dir: &Path) -> Vec<String> {
     let mut ids = request_ids(store_dir, CURSOR_SESSION_DIR);
+    ids.extend(request_ids(store_dir, CODEX_SESSION_DIR));
     ids.sort();
     ids
 }
