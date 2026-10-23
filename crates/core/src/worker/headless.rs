@@ -91,7 +91,10 @@ impl Capabilities {
             (HarnessId::Codex, Interrupt) => Partial("outcome unknown after 30 s"),
             (HarnessId::Codex, PermAsk) => Partial("protocol-raised requests only"),
             (HarnessId::Codex, PermYolo) => Partial("single-request accepts only"),
-            (HarnessId::Codex, Resume | Heartbeat) => Support::None,
+            (HarnessId::Codex, Resume) => Support::None,
+            (HarnessId::Codex, Heartbeat) => Partial(
+                "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default [unverified]",
+            ),
             (HarnessId::Codex, Close) => Partial(
                 "tool descendants can be orphaned; global trust entry left in ~/.codex/config.toml",
             ),
