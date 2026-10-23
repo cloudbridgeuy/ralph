@@ -182,7 +182,7 @@ The spawn runs only after reedline `read_line` has turned raw mode off, so a ful
 | STATE | the status bar state (`Monitor::status`) |
 | REPORT | `<status> <age> ago` of the latest real report (`done`, `blocked`, `question`): worker entries in the chat log (read only) and unread inbox reports, newest first |
 | HEAD | `git log -1 --format=%h %s` in the worker worktree (`git worktree list --porcelain`, branch `worker/<id>`) |
-| +/- | `+A -D Nf` over tracked changes of the worktree against `git merge-base HEAD <base>`, plus ` ?N` for untracked files (omitted at 0); binary files count as files with 0 lines; one failed git call makes the whole cell `?` |
+| +/- | `+A -D Nf` over tracked changes of the worktree against `git merge-base HEAD <base>`, plus ` ?N` for untracked files, each file counted (`git status --porcelain -uall`; omitted at 0). Every git call runs with `--no-optional-locks`, so `/workers` never takes the worktree `index.lock`; binary files count as files with 0 lines; one failed git call makes the whole cell `?` |
 | BEHIND | `git rev-list --count HEAD..origin/<base>` |
 
 BEHIND counts against the local remote-tracking ref `origin/<base>` (base = `[chat] worker_base`, else `origin/HEAD`, else `main`), so it is stale until a fetch; no network is used, and a missing ref shows `?`. +/- uses the merge-base with `<base>`. In the table a `-` cell is wrapped in a code span (backslash escapes are not honored) so termimad does not draw a list bullet. A missing value shows `-`, a failed lookup `?`.

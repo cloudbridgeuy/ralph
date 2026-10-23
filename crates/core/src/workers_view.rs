@@ -3,7 +3,8 @@
 
 use crate::chat_memory::{Entry, Role};
 use crate::inbox::age;
-use crate::worker::{ActivityMark, Report, ReportStatus};
+use crate::worker::{ActivityMark, Report};
+use crate::worker_check::{is_report_status, message_header};
 use chrono::{DateTime, Utc};
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -82,23 +83,11 @@ pub enum View {
     Text(String),
 }
 
-fn header(line: &str) -> Option<(&str, &str)> {
-    line.strip_prefix("[worker ")?
-        .strip_suffix(']')?
-        .split_once(" · ")
-}
-
-fn is_report_status(status: &str) -> bool {
-    ReportStatus::ALL
-        .iter()
-        .any(|known| known.as_str() == status)
-}
-
 fn entry_reports(text: &str, at: &str) -> Vec<(String, ReportLine)> {
     let mut found: Vec<(String, ReportLine)> = Vec::new();
     let mut open = false;
     for line in text.lines() {
-        match header(line) {
+        match message_header(line) {
             Some((id, status)) => {
                 open = is_report_status(status);
                 if open {
@@ -548,6 +537,11 @@ mod tests {
             }
         );
         assert_eq!(parse_numstat(""), Diff::default());
+    }
+
+    #[test]
+    fn untracked_counts_every_file_of_a_new_directory() {
+        assert_eq!(count_untracked("?? d/a\n?? d/b\n?? d/c.rs\n M x"), 3);
     }
 
     #[test]

@@ -72,20 +72,22 @@ pub(crate) fn git_line(worktree: &Path, args: &[&str]) -> Option<String> {
     .filter(|line| !line.is_empty())
 }
 
-pub(crate) fn base_of(worktree: &Path) -> String {
-    let config = AppConfig::load().map_err(|e| e.to_string());
+pub(crate) const ORIGIN_HEAD_ARGS: [&str; 3] = ["symbolic-ref", "-q", "refs/remotes/origin/HEAD"];
+
+pub(crate) fn base_with(config: &Result<AppConfig, String>, origin_head: Option<&str>) -> String {
     base_branch(
         config
             .as_ref()
             .map(|config| config.chat.worker_base.as_deref())
             .map_err(String::as_str),
-        git_line(
-            worktree,
-            &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"],
-        )
-        .as_deref(),
+        origin_head,
     )
     .branch
+}
+
+pub(crate) fn base_of(worktree: &Path) -> String {
+    let config = AppConfig::load().map_err(|e| e.to_string());
+    base_with(&config, git_line(worktree, &ORIGIN_HEAD_ARGS).as_deref())
 }
 
 fn rev_parse(cwd: &Path, flag: &str) -> Option<PathBuf> {

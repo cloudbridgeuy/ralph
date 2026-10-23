@@ -72,12 +72,20 @@ pub fn logged_reports(entries: &[Entry]) -> HashMap<String, String> {
 }
 
 fn report_header_id(line: &str) -> Option<&str> {
-    let inner = line.strip_prefix("[worker ")?.strip_suffix(']')?;
-    let (id, status) = inner.split_once(" · ")?;
+    let (id, status) = message_header(line)?;
+    is_report_status(status).then_some(id)
+}
+
+pub fn message_header(line: &str) -> Option<(&str, &str)> {
+    line.strip_prefix("[worker ")?
+        .strip_suffix(']')?
+        .split_once(" · ")
+}
+
+pub fn is_report_status(status: &str) -> bool {
     ReportStatus::ALL
         .iter()
         .any(|known| known.as_str() == status)
-        .then_some(id)
 }
 
 pub fn reported_since_nudge(last_report: Option<&String>, nudge: Option<&Option<String>>) -> bool {

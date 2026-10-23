@@ -1,8 +1,9 @@
 use crate::chat::inbox::Display;
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
+use crate::config::AppConfig;
 use crate::render::render_markdown;
-use crate::snapshot::{base_of, stdout_of};
+use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{
@@ -19,6 +20,7 @@ use std::process::{Command, Stdio};
 
 fn git(dir: Option<&Path>, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
+    command.arg("--no-optional-locks");
     if let Some(dir) = dir {
         command.arg("-C").arg(dir);
     }
@@ -28,7 +30,7 @@ fn git(dir: Option<&Path>, args: &[&str]) -> Option<String> {
 fn diff_of(worktree: &Path, base: &str) -> Option<Diff> {
     let merge_base = git(Some(worktree), &["merge-base", "HEAD", base])?;
     let numstat = git(Some(worktree), &["diff", "--numstat", &merge_base])?;
-    let status = git(Some(worktree), &["status", "--porcelain"])?;
+    let status = git(Some(worktree), &["status", "--porcelain", "-uall"])?;
     Some(Diff {
         untracked: count_untracked(&status),
         ..parse_numstat(&numstat)
@@ -40,6 +42,8 @@ fn found<T>(value: Option<T>) -> Lookup<T> {
 }
 
 struct Facts {
+    config: Result<AppConfig, String>,
+    origin_head: Option<String>,
     reports: Option<HashMap<String, Vec<ReportLine>>>,
     porcelain: Option<String>,
 }
@@ -62,7 +66,9 @@ fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, 
         .porcelain
         .as_deref()
         .and_then(|porcelain| worktree_for_branch(porcelain, &branch_name(&worker.id)));
-    let base = tree.as_deref().map(base_of);
+    let base = tree
+        .as_ref()
+        .map(|_| base_with(&facts.config, facts.origin_head.as_deref()));
     let (head, diff, behind) = match (&tree, &base) {
         (Some(tree), Some(base)) => (
             found(
@@ -121,6 +127,8 @@ fn facts(monitor: &Monitor) -> Facts {
         Some(ralph_core::workers_view::group_reports(&entries, &unread))
     });
     Facts {
+        config: AppConfig::load().map_err(|e| e.to_string()),
+        origin_head: git(None, &ORIGIN_HEAD_ARGS),
         reports,
         porcelain: git(None, &["worktree", "list", "--porcelain"]),
     }
@@ -172,9 +180,8 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
 mod tests {
     use super::*;
     use crate::frame::strip_ansi;
-    use crate::highlight::{Highlighter, ThemeConfig};
     use crate::markdown::MarkdownTheme;
-    use crate::render::{wrap_width, RenderContext};
+    use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
     use ralph_core::workers_view::Head;
     use unicode_width::UnicodeWidthStr;
@@ -211,27 +218,34 @@ mod tests {
     }
 
     fn rendered(rows: &[WorkerRow], width: usize) -> (View, String) {
-        let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
-        let ctx = RenderContext::terminal(&highlighter);
         let view = workers_view(rows, now(), width);
         let text = match &view {
-            View::Table(markdown) => {
-                strip_ansi(&render_markdown(&ctx, markdown, &MarkdownTheme::default()))
-            }
+            View::Table(markdown) => strip_ansi(&render_prose(
+                &MarkdownTheme::default().skin,
+                markdown,
+                width,
+            )),
             View::Text(text) => text.clone(),
         };
         (view, text)
     }
 
+    fn is_table(view: &View) -> bool {
+        matches!(view, View::Table(_))
+    }
+
     #[test]
     fn termimad_tables_fit_the_estimated_width() {
-        let width = wrap_width(termimad::terminal_size().0.into());
         let short = [row("GUZ-844", "x"), row("GUZ-2", "y")];
-        let (view, text) = rendered(&short, width);
-        assert!(matches!(view, View::Table(_)), "{width} columns: {text}");
+        let (view, text) = rendered(&short, 160);
+        assert!(is_table(&view), "{text}");
         let widest = text.lines().map(|line| line.width()).max().unwrap();
         let cells = [7, 7, 5, 12, "2f7f8c0 x".len(), "+120 -40 3f ?2".len(), 6];
         assert_eq!(widest, cells.iter().sum::<usize>() + 7 + 1, "{text}");
+    }
+
+    #[test]
+    fn table_or_list_and_no_line_wider_than_the_width() {
         let long = [
             row(
                 "GUZ-844",
@@ -239,25 +253,32 @@ mod tests {
             ),
             row("GUZ-2", "feat: short"),
         ];
+        for (width, table) in [(60, false), (100, true), (160, true)] {
+            let (view, text) = rendered(&long, width);
+            assert_eq!(is_table(&view), table, "{width} columns: {text}");
+            for line in text.lines() {
+                assert!(line.width() <= width, "{width} columns: {line}");
+            }
+        }
+        let (_, cut) = rendered(&long, 100);
+        assert!(cut.contains('…'), "{cut}");
+        let (_, full) = rendered(&long, 160);
+        assert!(full.contains("stricter help tests"), "{full}");
+    }
+
+    #[test]
+    fn missing_and_failed_cells_draw_literally() {
         let mut gaps = row("GUZ-3", "z");
         gaps.report = Lookup::Missing;
         gaps.behind = Lookup::Missing;
         gaps.diff = Lookup::Failed;
-        let (view, text) = rendered(&[gaps], width);
-        assert!(matches!(view, View::Table(_)), "{text}");
+        let (view, text) = rendered(&[gaps], 160);
+        assert!(is_table(&view), "{text}");
         let drawn = text.lines().find(|l| l.contains("GUZ-3")).unwrap();
         let cells: Vec<&str> = drawn.split('│').map(str::trim).collect();
         assert_eq!(cells[4], "-", "{text}");
         assert_eq!(cells[7], "-", "{text}");
         assert_eq!(cells[6], "?", "{text}");
         assert!(!text.contains('•'), "{text}");
-        for rows in [&short[..], &long[..]] {
-            for columns in [width, width + 40, width + 80] {
-                let (_, text) = rendered(rows, columns.min(width));
-                for line in text.lines() {
-                    assert!(line.width() <= width, "{width} columns: {line}");
-                }
-            }
-        }
     }
 }

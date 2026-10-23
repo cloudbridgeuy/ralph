@@ -8,7 +8,8 @@ use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use termimad::terminal_size;
 
 use super::link::{mark_links, paint_links};
-use super::wrap::{render_prose, wrap_width};
+pub(crate) use super::wrap::render_prose;
+use super::wrap::wrap_width;
 use super::RenderContext;
 use crate::markdown::MarkdownTheme;
 
