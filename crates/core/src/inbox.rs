@@ -151,7 +151,7 @@ pub fn drop_log_line(entry: &Entry, now: DateTime<Utc>) -> String {
     .to_string()
 }
 
-fn age(at: &str, now: DateTime<Utc>) -> String {
+pub fn age(at: &str, now: DateTime<Utc>) -> String {
     let Ok(at) = DateTime::parse_from_rfc3339(at) else {
         return "?".to_string();
     };

@@ -21,6 +21,7 @@ mod statusbar;
 mod terminal;
 mod turn;
 mod watch;
+mod workers;
 
 use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
@@ -363,6 +364,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     display: &inbox_display(color),
                     changes: &config.changes,
                     store: &store_dir,
+                    monitor: &monitor,
                 };
                 run_local(local, &ctx, || {
                     monitor.refresh(true);

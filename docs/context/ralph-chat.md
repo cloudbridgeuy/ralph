@@ -134,7 +134,7 @@ A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat
 
 `/help` is local: it never starts a turn or calls the model. Only the bare command (after trimming) counts: `/help x`, `/help me fix the build` and `/helpfoo` are normal messages. It prints the pure `chat_help::help_text(width)`, word-wrapped to the prompt width (the terminal width, capped by `--wrap-width`); a section whose text column would be under 30 columns puts each text under its label:
 
-- Commands: one row per form of `/help`, `/inbox`, `/watch` and `/diff`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
+- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/diff` and `/workers`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
 - Cells: the `!` shorthand and `!<runtime>` fences.
 - Keys: at the prompt, in vi mode, during a turn, and in the queue editor (`PROMPT_KEYS`, `VI_KEYS`, `TURN_KEYS`, `QUEUE_KEYS`).
 - Status bar: one row per segment `Kind`, the four modes, each part of the thread cell (`T12/30`, `ctx 62%`, `cache 41m`, `!`, `shift ~9`) and the `↻ tokens`, `↻ turns` and `↻ restart` marks.
@@ -171,6 +171,32 @@ diff_args = [] # default git diff args; typed /diff args follow
 - ralph does not write `core.pager`. Snapshot ranges set `GIT_DIR` and the alternate object dir for the spawned git only; `/diff now` sets no environment variables.
 
 The spawn runs only after reedline `read_line` has turned raw mode off, so a full-screen pager returns to a normal prompt. `git diff` exiting 1 (there are changes) is not a chat error. A failure to start git warns and returns to the prompt.
+
+## /workers
+
+`/workers` is local: it never starts a turn or calls the model. Only the bare command and `/workers <id>` (one token) count; `/workers a b` and `/workersfoo` are normal messages. Only live workers appear (`running_workers`); a Codex worker has only what its shared record gives. The shell is `crates/ralph/src/chat/workers.rs`; the pure parsing and layout is `crates/core/src/workers_view.rs`. It never fetches and uses no network.
+
+| Column | Source |
+| --- | --- |
+| ID, HARNESS | the running worker record |
+| STATE | the status bar state (`Monitor::status`) |
+| REPORT | `<status> <age> ago` of the latest real report (`done`, `blocked`, `question`): worker entries in the chat log (read only) and unread inbox reports, newest first |
+| HEAD | `git log -1 --format=%h %s` in the worker worktree (`git worktree list --porcelain`, branch `worker/<id>`) |
+| +/- | `+A -D Nf` over tracked changes of the worktree against `git merge-base HEAD <base>`, plus ` ?N` for untracked files (omitted at 0); binary files count as files with 0 lines; one failed git call makes the whole cell `?` |
+| BEHIND | `git rev-list --count HEAD..origin/<base>` |
+
+BEHIND counts against the local remote-tracking ref `origin/<base>` (base = `[chat] worker_base`, else `origin/HEAD`, else `main`), so it is stale until a fetch; no network is used, and a missing ref shows `?`. +/- uses the merge-base with `<base>`. In the table a `-` cell is wrapped in a code span (backslash escapes are not honored) so termimad does not draw a list bullet. A missing value shows `-`, a failed lookup `?`.
+
+With no live worker it prints `No live workers.`. The list is a markdown table through the chat renderer when it fits the prompt width (columns plus `cols + 1` border cells, as termimad draws them without padding); the HEAD subject is cut with `…` down to 20 characters first. Else each worker is a block, every line cut to the width:
+
+```
+● GUZ-844 · claude · busy
+  report  done 12m ago
+  head    2f7f8c0 fix(chat): exact /help, width-wrapped…
+  diff    +120 -40 in 3 files ?2 · 2 behind origin/main
+```
+
+`/workers <id>` prints that block plus the branch, worktree path, base ref, tmux session (claude only), the set markers among `blocked`, `waiting`, `unreported`, `sent` and `gone`, and the heartbeat from `activity/<id>` (`running|idle <age>`), then the last 5 reports newest first as `<status> <age>  <first line>`. An id that is not live prints `No live worker <id>. /workers lists them.`
 
 ## Process reset
 

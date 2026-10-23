@@ -13,10 +13,17 @@ pub enum Command {
     Inbox,
     Watch,
     Diff,
+    Workers,
 }
 
 impl Command {
-    pub const ALL: [Command; 4] = [Command::Help, Command::Inbox, Command::Watch, Command::Diff];
+    pub const ALL: [Command; 5] = [
+        Command::Help,
+        Command::Inbox,
+        Command::Watch,
+        Command::Diff,
+        Command::Workers,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -24,6 +31,7 @@ impl Command {
             Command::Inbox => "/inbox",
             Command::Watch => "/watch",
             Command::Diff => "/diff",
+            Command::Workers => "/workers",
         }
     }
 
@@ -71,6 +79,16 @@ impl Command {
                 ),
                 ("/diff now", "the working tree against the index"),
                 ("/diff ... <git diff args>", "extra words go to git diff"),
+            ],
+            Command::Workers => &[
+                (
+                    "/workers",
+                    "list live workers: id, harness, state, report, head, +/-, behind; BEHIND counts against local origin/<base>, stale until a fetch; no turn",
+                ),
+                (
+                    "/workers <id>",
+                    "one worker in detail with its last 5 reports",
+                ),
             ],
         }
     }
@@ -502,7 +520,8 @@ mod tests {
                 Help,
                 Inbox,
                 Watch,
-                Diff
+                Diff,
+                Workers
             }
         );
         assert_lists_every!(

@@ -50,3 +50,4 @@ pub mod watch_store;
 pub mod wire;
 pub mod worker;
 pub mod worker_check;
+pub mod workers_view;

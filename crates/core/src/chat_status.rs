@@ -75,6 +75,7 @@ pub enum Route {
     InboxUsage,
     Watch(WatchCommand),
     Diff(DiffArgs),
+    Workers(Option<String>),
     Help,
     Ignore,
 }
@@ -105,12 +106,22 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
                 Command::Inbox => inbox_route(args),
                 Command::Watch => Route::Watch(parse_watch_args(args)),
                 Command::Diff => Route::Diff(parse_diff_args(args)),
+                Command::Workers => workers_route(args, line),
             };
         }
     }
     match line {
         "" => empty_route(unread, empty),
         message => Route::Send(message.to_string()),
+    }
+}
+
+fn workers_route(args: &str, line: &str) -> Route {
+    let mut tokens = args.split_whitespace();
+    match (tokens.next(), tokens.next()) {
+        (None, _) => Route::Workers(None),
+        (Some(id), None) => Route::Workers(Some(id.to_string())),
+        _ => Route::Send(line.to_string()),
     }
 }
 
@@ -421,6 +432,31 @@ mod tests {
             route_input("/difffoo", 0, &EmptySubmit::Inbox),
             Route::Send("/difffoo".into())
         );
+    }
+
+    #[test]
+    fn route_input_parses_workers_commands() {
+        let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+        assert_eq!(route("/workers"), Route::Workers(None));
+        assert_eq!(route("  /workers  "), Route::Workers(None));
+        assert_eq!(
+            route("/workers GUZ-1"),
+            Route::Workers(Some("GUZ-1".into()))
+        );
+        assert_eq!(
+            route(" /workers   GUZ-1 "),
+            Route::Workers(Some("GUZ-1".into()))
+        );
+    }
+
+    #[test]
+    fn only_bare_or_one_token_workers_route_locally() {
+        for line in ["/workers a b", "/workers a b c", "/workersfoo"] {
+            assert_eq!(
+                route_input(line, 0, &EmptySubmit::Inbox),
+                Route::Send(line.into())
+            );
+        }
     }
 
     #[test]

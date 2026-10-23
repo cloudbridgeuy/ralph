@@ -1,7 +1,9 @@
 use crate::chat::diff::{self, DiffContext};
 use crate::chat::inbox::{self, Display};
+use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::watch;
+use crate::chat::workers;
 use crate::config::ChangesSection;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
@@ -17,6 +19,7 @@ pub struct LocalRoute<'a> {
     pub display: &'a Display<'a>,
     pub changes: &'a ChangesSection,
     pub store: &'a Path,
+    pub monitor: &'a Monitor,
 }
 
 pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Result<()> {
@@ -41,6 +44,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         ),
         Route::Diff(DiffArgs::Usage(usage)) => println!("{usage}"),
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
+        Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display),
         Route::Help => print!("{}", help_text(screen_columns())),
         Route::Send(_) | Route::ReadInbox(_) | Route::Ignore => {}
     }
