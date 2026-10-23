@@ -79,6 +79,6 @@ Limits:
 
 ## Using it with chat
 
-Start `ralph wire`, export the printed variable in the shell that will run `ralph chat`, then start the chat. The persistent claude process inherits it at spawn and respawns with ralph's env on a `reset_due` reset, so all turns route through the proxy. Records carry no turn ids; correlate them with `usage.jsonl` by time.
+Start `ralph wire`, export the printed variable in the shell that will run `ralph chat`, then start the chat. The persistent claude process inherits it at spawn and respawns with ralph's env on a reset (`reset_reason` returns a reason), so all turns route through the proxy. Records carry no turn ids; correlate them with `usage.jsonl` by time.
 
 Workers started in tmux get the environment of the tmux server, not the chat shell. Export the variable before the tmux server starts, or their traffic is not recorded.

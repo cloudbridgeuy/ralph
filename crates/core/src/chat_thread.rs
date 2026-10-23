@@ -37,6 +37,7 @@ pub struct UsageLine {
     pub process_turn: Option<u64>,
     pub request_at: Option<String>,
     pub reset: Option<ResetReason>,
+    pub run: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -81,12 +82,16 @@ fn parse_time(text: &str) -> Option<DateTime<Utc>> {
         .map(|time| time.with_timezone(&Utc))
 }
 
-pub fn session_turns(usage_jsonl: &str, since: DateTime<Utc>) -> Vec<UsageLine> {
+pub fn run_id(pid: u32, started: DateTime<Utc>) -> String {
+    format!("{pid}-{}", started.to_rfc3339())
+}
+
+pub fn session_turns(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
     usage_jsonl
         .lines()
         .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
         .filter(|usage| usage.kind == "turn")
-        .filter(|usage| parse_time(&usage.at).is_some_and(|at| at >= since))
+        .filter(|usage| usage.run.as_deref() == Some(run))
         .collect()
 }
 
@@ -141,8 +146,8 @@ pub fn cache_left_minutes(
     (left > 0).then(|| left.div_ceil(60))
 }
 
-pub fn thread_usage(usage_jsonl: &str, since: DateTime<Utc>) -> Option<ThreadUsage> {
-    let turns = session_turns(usage_jsonl, since);
+pub fn thread_usage(usage_jsonl: &str, run: &str) -> Option<ThreadUsage> {
+    let turns = session_turns(usage_jsonl, run);
     let last = turns.last()?;
     Some(ThreadUsage {
         process_turn: last.process_turn.unwrap_or(0),
@@ -230,11 +235,17 @@ mod tests {
         DateTime::from_timestamp(1_700_000_000 + secs, 0).unwrap()
     }
 
-    fn turn_line(secs: i64, process_turn: u64, cost: f64) -> String {
+    const RUN: &str = "7-run";
+
+    fn run_line(run: &str, secs: i64, process_turn: u64, cost: f64) -> String {
         format!(
-            r#"{{"at":"{}","kind":"turn","cost_usd":{cost},"process_turn":{process_turn}}}"#,
+            r#"{{"at":"{}","kind":"turn","cost_usd":{cost},"process_turn":{process_turn},"run":"{run}"}}"#,
             time(secs).to_rfc3339()
         )
+    }
+
+    fn turn_line(secs: i64, process_turn: u64, cost: f64) -> String {
+        run_line(RUN, secs, process_turn, cost)
     }
 
     fn lines(rows: &[String]) -> String {
@@ -282,7 +293,7 @@ mod tests {
             turn_line(3, 1, 0.5),
             turn_line(4, 2, 1.25),
         ]);
-        let cost = session_cost(&session_turns(&text, time(0))).unwrap();
+        let cost = session_cost(&session_turns(&text, RUN)).unwrap();
         assert_eq!(cost.total, 4.25);
         assert_eq!(cost.delta, Some(0.75));
     }
@@ -294,40 +305,59 @@ mod tests {
             turn_line(2, 2, 3.0),
             turn_line(3, 3, 6.0),
         ]);
-        assert_eq!(
-            session_cost(&session_turns(&text, time(0))).unwrap().total,
-            6.0
-        );
+        assert_eq!(session_cost(&session_turns(&text, RUN)).unwrap().total, 6.0);
     }
 
     #[test]
-    fn session_cost_ignores_lines_before_the_start() {
-        let text = lines(&[turn_line(-5, 1, 9.0), turn_line(1, 1, 2.0)]);
-        let turns = session_turns(&text, time(0));
+    fn session_turns_keep_only_the_own_run_when_two_runs_interleave() {
+        let text = lines(&[
+            run_line("other", 1, 1, 9.0),
+            turn_line(2, 1, 2.0),
+            run_line("other", 3, 2, 11.0),
+            turn_line(4, 2, 3.0),
+        ]);
+        let turns = session_turns(&text, RUN);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(session_cost(&turns).unwrap().total, 3.0);
+        assert_eq!(session_turns(&text, "other").len(), 2);
+        assert_eq!(session_turns(&text, "missing").len(), 0);
+    }
+
+    #[test]
+    fn session_turns_exclude_lines_without_a_run() {
+        let bare = format!(
+            r#"{{"at":"{}","kind":"turn","cost_usd":9.0,"process_turn":1}}"#,
+            time(1).to_rfc3339()
+        );
+        let text = lines(&[bare, turn_line(2, 1, 2.0)]);
+        let turns = session_turns(&text, RUN);
         assert_eq!(turns.len(), 1);
         assert_eq!(session_cost(&turns).unwrap().total, 2.0);
-        assert_eq!(session_turns(&text, time(1)).len(), 1);
-        assert_eq!(session_turns(&text, time(2)).len(), 0);
+    }
+
+    #[test]
+    fn run_id_joins_the_pid_and_the_start_time() {
+        assert_eq!(run_id(42, time(0)), format!("42-{}", time(0).to_rfc3339()));
     }
 
     #[test]
     fn session_cost_excludes_nap_lines_and_garbage() {
         let nap = format!(
-            r#"{{"at":"{}","kind":"nap","cost_usd":7.0}}"#,
+            r#"{{"at":"{}","kind":"nap","cost_usd":7.0,"run":"7-run"}}"#,
             time(2).to_rfc3339()
         );
         let text = lines(&[turn_line(1, 1, 2.0), nap, "not json".to_string()]);
-        let turns = session_turns(&text, time(0));
+        let turns = session_turns(&text, RUN);
         assert_eq!(session_cost(&turns).unwrap().total, 2.0);
     }
 
     #[test]
     fn session_cost_is_absent_without_cost() {
         let bare = format!(
-            r#"{{"at":"{}","kind":"turn","process_turn":1}}"#,
+            r#"{{"at":"{}","kind":"turn","process_turn":1,"run":"7-run"}}"#,
             time(1).to_rfc3339()
         );
-        assert_eq!(session_cost(&session_turns(&bare, time(0))), None);
+        assert_eq!(session_cost(&session_turns(&bare, RUN)), None);
         assert_eq!(session_cost(&[]), None);
     }
 
@@ -338,14 +368,14 @@ mod tests {
             turn_line(2, 2, 3.0),
             turn_line(3, 1, 0.4),
         ]);
-        let cost = session_cost(&session_turns(&text, time(0))).unwrap();
+        let cost = session_cost(&session_turns(&text, RUN)).unwrap();
         assert_eq!(cost.delta, Some(0.4));
     }
 
     #[test]
     fn delta_is_absent_when_the_cost_goes_down() {
         let text = lines(&[turn_line(1, 1, 2.0), turn_line(2, 2, 1.0)]);
-        let cost = session_cost(&session_turns(&text, time(0))).unwrap();
+        let cost = session_cost(&session_turns(&text, RUN)).unwrap();
         assert_eq!(cost.delta, None);
     }
 
@@ -392,20 +422,20 @@ mod tests {
     #[test]
     fn thread_usage_reads_the_last_turn_of_this_session() {
         let last = format!(
-            r#"{{"at":"{}","kind":"turn","cost_usd":2.0,"context_tokens":1000,"input_tokens":4,"cache_creation_input_tokens":600,"cache_read_input_tokens":100,"process_turn":1,"request_at":"{}","reset":"turns"}}"#,
+            r#"{{"at":"{}","kind":"turn","cost_usd":2.0,"context_tokens":1000,"input_tokens":4,"cache_creation_input_tokens":600,"cache_read_input_tokens":100,"process_turn":1,"request_at":"{}","reset":"turns","run":"7-run"}}"#,
             time(5).to_rfc3339(),
             time(4).to_rfc3339()
         );
         let text = lines(&[turn_line(1, 4, 1.0), last]);
-        let data = thread_usage(&text, time(0)).unwrap();
+        let data = thread_usage(&text, RUN).unwrap();
         assert_eq!(data.process_turn, 1);
         assert_eq!(data.context_tokens, Some(1000));
         assert!(data.write_heavy);
         assert_eq!(data.request_at, Some(time(4)));
         assert_eq!(data.reset, Some(ResetReason::Turns));
         assert_eq!(data.cost.unwrap().total, 3.0);
-        assert_eq!(thread_usage(&text, time(9)), None);
-        assert_eq!(thread_usage("", time(0)), None);
+        assert_eq!(thread_usage(&text, "other"), None);
+        assert_eq!(thread_usage("", RUN), None);
     }
 
     #[test]

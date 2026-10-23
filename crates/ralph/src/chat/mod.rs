@@ -64,6 +64,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
+use ralph_core::chat_thread::run_id;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
@@ -176,7 +177,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             });
     let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
     let live = Arc::new(AtomicBool::new(false));
-    let started = chrono::Utc::now();
+    let run = run_id(std::process::id(), chrono::Utc::now());
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -193,6 +194,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         recent_history_tokens,
         cancel: signal::interrupt_flag(),
         gate: Arc::new(OutputGate::new()),
+        run: &run,
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -227,7 +229,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             unknown_focus: chat_config.inbox_alert_unknown_focus,
         },
         live,
-        started,
+        run: run.clone(),
         reset_limits,
         thread: Mutex::new(ThreadMemo::default()),
     });

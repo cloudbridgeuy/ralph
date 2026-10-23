@@ -78,6 +78,7 @@ struct Launch {
     config: SpinnerSubprocessConfig,
     split: ViewSplit,
     first_prompt: String,
+    reset: Option<ResetReason>,
 }
 
 pub(super) struct Turn<'a> {
@@ -96,6 +97,7 @@ pub(super) struct Turn<'a> {
     pub(super) recent_history_tokens: usize,
     pub(super) cancel: Arc<AtomicBool>,
     pub(super) gate: Arc<OutputGate>,
+    pub(super) run: &'a str,
 }
 
 impl Turn<'_> {
@@ -172,13 +174,16 @@ impl Turn<'_> {
         };
         let mut session = self.live_or_note(locked(&self.session).take());
         let mut launch: Option<Launch> = None;
+        let mut ran_session = false;
         self.print_rule();
         let result = retry_on_outage(
             "chat turn",
             || {
                 launch = None;
-                let (live, result) = self.attempt(session.take(), pre_log_len, &sent, &mut launch);
+                let (live, result, ran) =
+                    self.attempt(session.take(), pre_log_len, &sent, &mut launch);
                 session = live;
+                ran_session = ran;
                 if self.stopped() {
                     Attempt::Done(result)
                 } else {
@@ -192,11 +197,11 @@ impl Turn<'_> {
             |delay| wait_unless(|| self.stopped(), delay),
         );
         *locked(&self.session) = self.live_or_note(session);
-        let process_turns = if launch.is_some() {
-            1
-        } else {
-            self.process_turns.load(Ordering::SeqCst) + 1
-        };
+        let process_turns = next_process_turns(
+            ran_session,
+            launch.is_some(),
+            self.process_turns.load(Ordering::SeqCst),
+        );
         self.process_turns.store(process_turns, Ordering::SeqCst);
         let end = turn_end(&TurnSignals {
             cancelled: self.cancel.swap(false, Ordering::SeqCst),
@@ -224,11 +229,6 @@ impl Turn<'_> {
                 return Ok(TurnOutcome::Unanswered);
             }
         };
-        let reset = if launch.is_some() {
-            locked(&self.reset).take()
-        } else {
-            None
-        };
         if let Some(mut record) = usage_record(
             CallKind::Turn { trigger },
             chrono::Utc::now().to_rfc3339(),
@@ -245,7 +245,8 @@ impl Turn<'_> {
             }
             record.process_turn = Some(process_turns);
             record.request_at = result.request_at.map(|at| at.to_rfc3339());
-            record.reset = reset;
+            record.reset = launch.as_ref().and_then(|spawned| spawned.reset);
+            record.run = Some(self.run.to_string());
             self.warn_if_err(
                 self.store.append_usage(&record),
                 "Failed to record chat usage",
@@ -295,20 +296,21 @@ impl Turn<'_> {
     ) -> (
         Option<Session>,
         Result<StreamingSubprocessResult, SubprocessError>,
+        bool,
     ) {
         let was_reused = reused.is_some();
         let started = match reused {
             Some(live) => Ok(live),
             None => self.start(pre_log_len, sent, launch),
         };
-        let (session, result) = match started {
-            Err(e) => (None, Err(e)),
+        let (session, result, ran) = match started {
+            Err(e) => (None, Err(e), false),
             Ok(mut live) => {
                 let prompt = launch
                     .as_ref()
                     .map_or(sent, |spawned| spawned.first_prompt.as_str());
                 let result = live.turn(prompt);
-                (Some(live), result)
+                (Some(live), result, true)
             }
         };
         if relaunch(was_reused, &result) {
@@ -316,7 +318,7 @@ impl Turn<'_> {
             self.note_reset(ResetReason::Restart);
             return self.attempt(None, pre_log_len, sent, launch);
         }
-        (session, result)
+        (session, result, ran)
     }
 
     fn start(
@@ -325,8 +327,9 @@ impl Turn<'_> {
         sent: &str,
         launch: &mut Option<Launch>,
     ) -> Result<Session, SubprocessError> {
-        let spawned = self.launch(pre_log_len, sent)?;
+        let mut spawned = self.launch(pre_log_len, sent)?;
         let live = Session::spawn(&spawned.config)?;
+        spawned.reset = locked(&self.reset).take();
         *launch = Some(spawned);
         Ok(live)
     }
@@ -369,6 +372,7 @@ impl Turn<'_> {
             config,
             split,
             first_prompt,
+            reset: None,
         })
     }
 
@@ -391,6 +395,14 @@ fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
         )
 }
 
+fn next_process_turns(ran: bool, launched: bool, current: u64) -> u64 {
+    match (ran, launched) {
+        (false, _) => current,
+        (true, true) => 1,
+        (true, false) => current + 1,
+    }
+}
+
 fn keeps_session(end: &TurnEnd) -> bool {
     !matches!(end, TurnEnd::Cancelled)
 }
@@ -398,6 +410,22 @@ fn keeps_session(end: &TurnEnd) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn process_turns_stay_when_no_session_ran() {
+        assert_eq!(next_process_turns(false, false, 4), 4);
+        assert_eq!(next_process_turns(false, true, 4), 4);
+    }
+
+    #[test]
+    fn process_turns_restart_at_one_on_a_launch() {
+        assert_eq!(next_process_turns(true, true, 4), 1);
+    }
+
+    #[test]
+    fn process_turns_grow_on_a_reused_session() {
+        assert_eq!(next_process_turns(true, false, 4), 5);
+    }
 
     #[test]
     fn completed_turn_keeps_session() {

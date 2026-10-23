@@ -75,6 +75,8 @@ pub struct UsageRecord {
     pub request_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reset: Option<ResetReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
     #[serde(flatten)]
     pub view: Option<ViewStats>,
 }
@@ -103,6 +105,7 @@ pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Optio
         process_turn: None,
         request_at: None,
         reset: None,
+        run: None,
         view: None,
     })
 }
@@ -275,13 +278,15 @@ mod tests {
         )
         .unwrap();
         let value = line(usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap());
-        for key in ["process_turn", "request_at", "reset"] {
+        for key in ["process_turn", "request_at", "reset", "run"] {
             assert!(value.get(key).is_none(), "{key}");
         }
         record.process_turn = Some(3);
         record.request_at = Some("2026-01-02T03:04:05+00:00".into());
         record.reset = Some(ResetReason::Restart);
+        record.run = Some("7-t".into());
         let value = line(record);
+        assert_eq!(value["run"], "7-t");
         assert_eq!(value["process_turn"], 3);
         assert_eq!(value["request_at"], "2026-01-02T03:04:05+00:00");
         assert_eq!(value["reset"], "restart");

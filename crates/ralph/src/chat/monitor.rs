@@ -78,7 +78,7 @@ pub(super) struct Monitor {
     pub(super) warned: Mutex<HashSet<String>>,
     pub(super) alert: AlertConfig,
     pub(super) live: Arc<AtomicBool>,
-    pub(super) started: chrono::DateTime<chrono::Utc>,
+    pub(super) run: String,
     pub(super) reset_limits: ResetLimits,
     pub(super) thread: Mutex<ThreadMemo>,
 }
@@ -249,7 +249,7 @@ impl Monitor {
             .store
             .load_usage()
             .ok()
-            .map(|text| thread_usage(&text, self.started));
+            .map(|text| thread_usage(&text, &self.run));
         let shift = self.measure_shift();
         let mut memo = locked(&self.thread);
         if let Some(usage) = usage {
