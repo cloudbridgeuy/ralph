@@ -113,20 +113,32 @@ fn harness_description() -> String {
         .filter(|harness| capabilities(*harness).headless())
         .map(|harness| {
             let caps = capabilities(harness);
-            let limits = Feature::ALL
+            let partial = Feature::ALL
                 .into_iter()
-                .filter(|feature| caps.support(*feature) != Support::Full)
-                .map(Feature::name)
+                .filter_map(|feature| match caps.support(feature) {
+                    Support::Partial(reason) => Some(format!("{} ({reason})", feature.name())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let unsupported = Feature::ALL
+                .into_iter()
+                .filter(|feature| caps.support(*feature) == Support::None)
+                .map(|feature| feature.name().to_string())
+                .collect::<Vec<_>>();
+            let limits = [("partial", partial), ("unsupported", unsupported)]
+                .into_iter()
+                .filter(|(_, items)| !items.is_empty())
+                .map(|(label, items)| format!("{label}: {}", items.join(", ")))
                 .collect::<Vec<_>>()
-                .join(", ");
+                .join("; ");
             if limits.is_empty() {
                 harness.as_str().to_string()
             } else {
-                format!("{} (partial or unsupported: {limits})", harness.as_str())
+                format!("{} ({limits})", harness.as_str())
             }
         })
         .collect::<Vec<_>>()
-        .join("; ");
+        .join(" | ");
     format!(
         "Agent to run. Default claude. Headless harnesses run without a tmux session and take a reply as a new prompt between turns, or as the answer to a waiting permission request: {headless}."
     )
@@ -345,7 +357,7 @@ mod tests {
     fn harness_description_follows_capability_matrix() {
         let text = harness_description();
         let (_, list) = text.split_once("request: ").unwrap();
-        let entries = list.trim_end_matches('.').split("; ").collect::<Vec<_>>();
+        let entries = list.trim_end_matches('.').split(" | ").collect::<Vec<_>>();
         let headless = HarnessId::ALL
             .into_iter()
             .filter(|harness| capabilities(*harness).headless())
@@ -354,13 +366,29 @@ mod tests {
         for (harness, entry) in headless.into_iter().zip(entries) {
             assert!(entry.starts_with(harness.as_str()));
             for feature in Feature::ALL {
-                assert_eq!(
-                    entry.contains(feature.name()),
-                    capabilities(harness).support(feature) != Support::Full,
-                    "{harness:?} {feature:?}"
-                );
+                let expected = match capabilities(harness).support(feature) {
+                    Support::Full => continue,
+                    Support::Partial(reason) => format!("{} ({reason})", feature.name()),
+                    Support::None => feature.name().to_string(),
+                };
+                assert!(entry.contains(&expected), "{harness:?} {feature:?}");
             }
         }
+    }
+
+    #[test]
+    fn harness_description_separates_partial_from_unsupported() {
+        let text = harness_description();
+        let codex = text
+            .split(" | ")
+            .find(|entry| entry.starts_with("codex"))
+            .unwrap();
+        let (partial, unsupported) = codex.split_once("; unsupported: ").unwrap();
+        assert!(partial.contains("interrupt (outcome unknown after 30 s)"));
+        assert!(partial.contains("close (tool descendants"));
+        assert!(unsupported.contains("resume") && unsupported.contains("heartbeat"));
+        assert!(!unsupported.contains("interrupt") && !unsupported.contains("close"));
+        assert!(!text.contains("partial or unsupported"));
     }
 
     #[test]
