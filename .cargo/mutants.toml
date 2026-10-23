@@ -12,6 +12,7 @@ examine_globs = [
   "crates/core/src/chunk/**/*.rs",
   "crates/core/src/wire/**/*.rs",
   "crates/core/src/worker.rs",
+  "crates/core/src/worker/tools.rs",
   "crates/core/src/worker/worktree.rs",
   "crates/core/src/worker/rollback.rs",
   "crates/core/src/watch.rs",
