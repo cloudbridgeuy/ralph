@@ -102,16 +102,24 @@ fn is_dashed_token(text: &str) -> bool {
     text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
+const TICKET_MAX_LEN: usize = 64;
+
+fn is_ticket_key(text: &str) -> bool {
+    text.len() <= TICKET_MAX_LEN
+        && is_dashed_token(text)
+        && text.chars().any(|c| c.is_ascii_alphanumeric())
+}
+
 fn ticket_arg(args: &Value) -> Result<Option<String>, String> {
     match args.get("ticket") {
         None | Some(Value::Null) => Ok(None),
         Some(_) => {
             let ticket = string_arg(args, "ticket")?;
-            if is_dashed_token(&ticket) {
+            if is_ticket_key(&ticket) {
                 Ok(Some(ticket))
             } else {
                 Err(format!(
-                    "Ticket '{ticket}' may only use letters, digits and dashes."
+                    "Ticket '{ticket}' may only use letters, digits and dashes, must include a letter or digit, and may be at most {TICKET_MAX_LEN} characters."
                 ))
             }
         }
@@ -340,6 +348,26 @@ mod tests {
         ] {
             assert!(spawn_ticket(json!({"ticket": ticket})).is_err());
         }
+    }
+
+    #[test]
+    fn a_ticket_is_capped_at_64_characters() {
+        let longest = "a".repeat(64);
+        assert_eq!(
+            spawn_ticket(json!({"ticket": longest.clone()})),
+            Ok(Some(longest))
+        );
+        assert!(spawn_ticket(json!({"ticket": "a".repeat(65)})).is_err());
+    }
+
+    #[test]
+    fn a_ticket_needs_a_letter_or_digit() {
+        assert!(spawn_ticket(json!({"ticket": "-"})).is_err());
+        assert!(spawn_ticket(json!({"ticket": "---"})).is_err());
+        assert_eq!(
+            spawn_ticket(json!({"ticket": "-7-"})),
+            Ok(Some("-7-".to_string()))
+        );
     }
 
     #[test]

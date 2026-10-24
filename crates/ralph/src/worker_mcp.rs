@@ -55,7 +55,7 @@ impl Inbox {
         let path = status_path(store, worker);
         let dir = path.parent().unwrap_or(store);
         fs::create_dir_all(dir)?;
-        let tmp = dir.join(format!(".{worker}.tmp"));
+        let tmp = dir.join(format!(".{worker}.{}.tmp", std::process::id()));
         let history = fs::read_to_string(&path)
             .map(|raw| decode_statuses(&raw))
             .unwrap_or_default();
@@ -64,7 +64,11 @@ impl Inbox {
             text: text.to_string(),
         };
         fs::write(&tmp, encode_statuses(&append_status(history, status)))?;
-        fs::rename(tmp, path)
+        fs::rename(tmp, &path)?;
+        if !self.accepts_report() {
+            remove_if_present(&path)?;
+        }
+        Ok(())
     }
 
     fn mark_reported(&self, worker: &str) -> io::Result<()> {

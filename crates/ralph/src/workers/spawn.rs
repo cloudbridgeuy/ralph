@@ -136,6 +136,10 @@ impl Workers {
                 self.clear_changes(id, &worktree),
                 "Failed to clear worker snapshots",
             );
+            warn_if_err(
+                clear_marker(&spawn_record_path(&self.store_dir, id)),
+                "Failed to clear worker spawn record",
+            );
             let footprint = SpawnFootprint {
                 created_worktree,
                 created_branch,
@@ -260,7 +264,7 @@ impl Workers {
         let path = spawn_record_path(&self.store_dir, id);
         let dir = path.parent().unwrap_or(&self.store_dir);
         fs::create_dir_all(dir)?;
-        let tmp = dir.join(format!(".{id}.tmp"));
+        let tmp = dir.join(format!(".{id}.{}.tmp", std::process::id()));
         let record = SpawnRecord::new(ticket, now_secs());
         fs::write(&tmp, encode_spawn_record(&record)?)?;
         fs::rename(tmp, path)

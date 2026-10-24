@@ -175,7 +175,9 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
         println!("{}", not_live(id));
         return;
     };
-    let (row, worktree) = row(monitor, worker, &facts);
+    let history = status_history(&monitor.store_dir, id);
+    let (mut row, worktree) = row(monitor, worker, &facts);
+    row.status = history.last().cloned();
     let detail = WorkerDetail {
         row,
         branch: branch_name(id),
@@ -185,7 +187,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
         markers: markers(&monitor.store_dir, id),
         heartbeat: heartbeat(&monitor.store_dir, id),
         ticket: spawn_ticket(&monitor.store_dir, id),
-        history: status_history(&monitor.store_dir, id),
+        history,
         reports: facts
             .reports
             .and_then(|mut reports| reports.remove(id))
