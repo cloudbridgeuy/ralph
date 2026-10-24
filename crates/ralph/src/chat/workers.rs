@@ -13,7 +13,7 @@ use ralph_core::worker::{
 };
 use ralph_core::workers_view::{
     count_untracked, detail_view, not_live, parse_head, parse_numstat, workers_view, Diff, Lookup,
-    ReportLine, View, WorkerDetail, WorkerRow,
+    Remote, ReportLine, View, WorkerDetail, WorkerRow,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -114,6 +114,8 @@ fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, 
             diff,
             behind,
             base,
+            ticket: None,
+            pr: Remote::None,
         },
         worktree,
     )
@@ -203,7 +205,7 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
-    use ralph_core::workers_view::Head;
+    use ralph_core::workers_view::{Head, Pr, PrState, Review, TicketRemote};
     use unicode_width::UnicodeWidthStr;
 
     fn now() -> DateTime<Utc> {
@@ -235,6 +237,8 @@ mod tests {
             }),
             behind: Lookup::Found(2),
             base: Some("main".into()),
+            ticket: None,
+            pr: Remote::None,
         }
     }
 
@@ -261,8 +265,18 @@ mod tests {
         let (view, text) = rendered(&short, 160);
         assert!(is_table(&view), "{text}");
         let widest = text.lines().map(|line| line.width()).max().unwrap();
-        let cells = [7, 7, 5, 12, "2f7f8c0 x".len(), "+120 -40 3f ?2".len(), 6];
-        assert_eq!(widest, cells.iter().sum::<usize>() + 7 + 1, "{text}");
+        let cells = [
+            7,
+            7,
+            5,
+            12,
+            "2f7f8c0 x".len(),
+            "+120 -40 3f ?2".len(),
+            6,
+            6,
+            3,
+        ];
+        assert_eq!(widest, cells.iter().sum::<usize>() + 9 + 1, "{text}");
     }
 
     #[test]
@@ -285,6 +299,48 @@ mod tests {
         assert!(cut.contains('…'), "{cut}");
         let (_, full) = rendered(&long, 160);
         assert!(full.contains("stricter help tests"), "{full}");
+    }
+
+    fn with_remote(mut row: WorkerRow) -> WorkerRow {
+        row.ticket = Some(TicketRemote {
+            key: row.id.clone(),
+            state: Remote::Found("In Progress".into()),
+        });
+        row.pr = Remote::Found(Pr {
+            number: 12,
+            state: PrState::Open,
+            draft: true,
+            review: Review::Other,
+            url: String::new(),
+        });
+        row
+    }
+
+    #[test]
+    fn remote_cells_render_within_the_width_at_80_and_160_columns() {
+        let rows = [
+            with_remote(row(
+                "GUZ-844",
+                "fix(chat): a long subject for the head cell",
+            )),
+            row("GUZ-2", "feat: short"),
+        ];
+        let (view, wide) = rendered(&rows, 160);
+        assert!(is_table(&view), "{wide}");
+        assert!(wide.contains("TICKET") && wide.contains("PR"), "{wide}");
+        assert!(
+            wide.contains("In Progress") && wide.contains("#12 draft"),
+            "{wide}"
+        );
+        let (view, narrow) = rendered(&rows, 80);
+        assert!(!is_table(&view), "{narrow}");
+        assert!(narrow.contains("ticket  In Progress"), "{narrow}");
+        assert!(narrow.contains("pr      #12 draft"), "{narrow}");
+        for (width, text) in [(160, &wide), (80, &narrow)] {
+            for line in text.lines() {
+                assert!(line.width() <= width, "{width} columns: {line}");
+            }
+        }
     }
 
     #[test]

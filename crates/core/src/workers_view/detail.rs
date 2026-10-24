@@ -1,6 +1,6 @@
+use super::remote::{pr_detail, ticket_detail};
 use super::{block, cut, row_lines, title, WorkerDetail, WorkerRow, REPORT_LIMIT};
 use crate::inbox::age;
-use crate::worker::ticket_line;
 use chrono::{DateTime, Utc};
 
 pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> String {
@@ -12,15 +12,19 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
         },
         now,
     );
+    for (name, value) in &mut lines {
+        match *name {
+            "ticket" => *value = ticket_detail(detail.ticket.as_ref(), &row.ticket),
+            "pr" => *value = pr_detail(&row.pr),
+            _ => {}
+        }
+    }
     lines.push(("branch", detail.branch.clone()));
     lines.push((
         "worktree",
         detail.worktree.clone().unwrap_or_else(|| "-".to_string()),
     ));
     lines.push(("base", row.base.clone().unwrap_or_else(|| "-".to_string())));
-    if let Some(ticket) = &detail.ticket {
-        lines.push(("ticket", ticket_line(ticket)));
-    }
     if let Some(session) = &detail.tmux {
         lines.push(("tmux", session.clone()));
     }
@@ -71,7 +75,7 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
 #[cfg(test)]
 mod tests {
     use super::super::tests::{line, now, row};
-    use super::super::{ActivityMark, WorkerDetail};
+    use super::super::{ActivityMark, Pr, PrState, Remote, Review, TicketRemote, WorkerDetail};
     use super::*;
     use crate::worker::{StatusLine, Ticket, Tracker};
     use unicode_width::UnicodeWidthStr;
@@ -244,6 +248,65 @@ mod tests {
         let text = detail_view(&bare_detail(Some(ticket)), now(), 200);
         assert!(text.contains("  ticket    FOO-1\n"), "{text}");
         let text = detail_view(&bare_detail(None), now(), 200);
-        assert!(!text.contains("ticket"), "{text}");
+        assert!(text.contains("  ticket    -\n"), "{text}");
+    }
+
+    fn remote_row(state: Remote<String>, pr: Remote<Pr>) -> WorkerRow {
+        WorkerRow {
+            ticket: Some(TicketRemote {
+                key: "GUZ-846".into(),
+                state,
+            }),
+            pr,
+            ..row("GUZ-846")
+        }
+    }
+
+    fn linear_ticket() -> Ticket {
+        Ticket {
+            key: "GUZ-846".into(),
+            tracker: Some(Tracker::Linear),
+        }
+    }
+
+    #[test]
+    fn detail_shows_the_remote_state_and_the_pr_with_its_url() {
+        let open = Pr {
+            number: 12,
+            state: PrState::Open,
+            draft: false,
+            review: Review::Other,
+            url: "https://github.com/o/r/pull/12".into(),
+        };
+        let detail = WorkerDetail {
+            row: remote_row(Remote::Found("In Progress".into()), Remote::Found(open)),
+            ..bare_detail(Some(linear_ticket()))
+        };
+        let text = detail_view(&detail, now(), 200);
+        assert!(
+            text.contains("  ticket    GUZ-846 (linear) · In Progress\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  pr        #12 open · https://github.com/o/r/pull/12\n"),
+            "{text}"
+        );
+        assert!(text.lines().all(|l| l.width() <= 200), "{text}");
+        let narrow = detail_view(&detail, now(), 80);
+        assert!(narrow.lines().all(|l| l.width() <= 80), "{narrow}");
+    }
+
+    #[test]
+    fn detail_shows_pending_and_failed_lookups() {
+        let detail = WorkerDetail {
+            row: remote_row(Remote::Pending, Remote::Failed),
+            ..bare_detail(Some(linear_ticket()))
+        };
+        let text = detail_view(&detail, now(), 200);
+        assert!(
+            text.contains("  ticket    GUZ-846 (linear) · …\n"),
+            "{text}"
+        );
+        assert!(text.contains("  pr        ?\n"), "{text}");
     }
 }

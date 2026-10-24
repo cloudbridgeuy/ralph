@@ -11,13 +11,23 @@ use std::collections::HashMap;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 mod detail;
+mod remote;
 
 pub use detail::detail_view;
+pub use remote::{
+    parse_jira_status, parse_linear_state, parse_pr_list, Fetched, LookupKey, Pr, PrState, Remote,
+    RemoteCache, Review, TicketRemote,
+};
+use remote::{pr_cell, ticket_cell};
 
 pub const REPORT_LIMIT: usize = 5;
 pub const NO_WORKERS: &str = "No live workers.";
 const MIN_SUBJECT: usize = 20;
-const HEADERS: [&str; 7] = ["ID", "HARNESS", "STATE", "REPORT", "HEAD", "+/-", "BEHIND"];
+const MIN_COLUMN: usize = 3;
+const COLUMNS: usize = 9;
+const HEADERS: [&str; COLUMNS] = [
+    "ID", "HARNESS", "STATE", "REPORT", "HEAD", "+/-", "BEHIND", "TICKET", "PR",
+];
 const SUBJECT_SEPARATOR: &str = "¦";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,6 +79,8 @@ pub struct WorkerRow {
     pub diff: Lookup<Diff>,
     pub behind: Lookup<usize>,
     pub base: Option<String>,
+    pub ticket: Option<TicketRemote>,
+    pub pr: Remote<Pr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,7 +307,7 @@ fn behind_text(row: &WorkerRow) -> String {
     }
 }
 
-fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [String; 7] {
+fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [String; COLUMNS] {
     [
         row.id.clone(),
         row.harness.clone(),
@@ -304,17 +316,19 @@ fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [St
         row.head.cell(|head| head_cell(head, subject_limit)),
         row.diff.cell(diff_cell),
         row.behind.cell(usize::to_string),
+        ticket_cell(&row.id, &row.ticket),
+        pr_cell(&row.pr),
     ]
     .map(|cell| cell.replace('|', SUBJECT_SEPARATOR))
 }
 
-fn table_width(cells: &[[String; 7]]) -> usize {
+fn table_width(cells: &[[String; COLUMNS]]) -> usize {
     let columns: usize = (0..HEADERS.len())
         .map(|i| {
             cells
                 .iter()
                 .map(|row| row[i].width())
-                .chain([HEADERS[i].width()])
+                .chain([HEADERS[i].width(), MIN_COLUMN])
                 .max()
                 .unwrap_or(0)
         })
@@ -322,7 +336,7 @@ fn table_width(cells: &[[String; 7]]) -> usize {
     columns + HEADERS.len() + 1
 }
 
-fn markdown(cells: &[[String; 7]]) -> String {
+fn markdown(cells: &[[String; COLUMNS]]) -> String {
     let line = |row: &[&str]| format!("| {} |", row.join(" | "));
     let separator = vec!["---"; HEADERS.len()];
     let mut lines = vec![line(&HEADERS), line(&separator)];
@@ -337,7 +351,7 @@ fn markdown(cells: &[[String; 7]]) -> String {
 }
 
 fn table(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> Option<String> {
-    let build = |limit| -> Vec<[String; 7]> {
+    let build = |limit| -> Vec<[String; COLUMNS]> {
         rows.iter()
             .map(|row| table_cells(row, now, limit))
             .collect()
@@ -371,6 +385,8 @@ fn row_lines(row: &WorkerRow, now: DateTime<Utc>) -> Vec<(&'static str, String)>
         ("report", activity_cell(row, now, usize::MAX)),
         ("head", row.head.cell(|head| head_cell(head, usize::MAX))),
         ("diff", format!("{diff} · {}", behind_text(row))),
+        ("ticket", ticket_cell(&row.id, &row.ticket)),
+        ("pr", pr_cell(&row.pr)),
     ]
 }
 
@@ -460,6 +476,8 @@ pub(super) mod tests {
             }),
             behind: Lookup::Found(2),
             base: Some("main".into()),
+            ticket: None,
+            pr: Remote::None,
         }
     }
 
@@ -588,7 +606,7 @@ pub(super) mod tests {
         let markdown = table_of(workers_view(&[row("GUZ-1")], now(), 160));
         assert_eq!(
             markdown,
-            "| ID | HARNESS | STATE | REPORT | HEAD | +/- | BEHIND |\n| --- | --- | --- | --- | --- | --- | --- |\n| GUZ-1 | claude | busy | done 12m ago | 2f7f8c0 fix(chat): exact /help, width-wrapped help and stricter help tests | +120 -40 3f ?2 | 2 |"
+            "| ID | HARNESS | STATE | REPORT | HEAD | +/- | BEHIND | TICKET | PR |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| GUZ-1 | claude | busy | done 12m ago | 2f7f8c0 fix(chat): exact /help, width-wrapped help and stricter help tests | +120 -40 3f ?2 | 2 | `-` | `-` |"
         );
     }
 
@@ -606,7 +624,7 @@ pub(super) mod tests {
         };
         assert_eq!(
             text,
-            "● GUZ-1 · claude · busy\n  report  done 12m ago\n  head    2f7f8c0 fix(chat): exact /help, width-wrapped help and stricter help …\n  diff    +120 -40 in 3 files ?2 · 2 behind origin/main"
+            "● GUZ-1 · claude · busy\n  report  done 12m ago\n  head    2f7f8c0 fix(chat): exact /help, width-wrapped help and stricter help …\n  diff    +120 -40 in 3 files ?2 · 2 behind origin/main\n  ticket  -\n  pr      -"
         );
         for width in [10, 30, 80] {
             let View::Text(text) = workers_view(&[row("GUZ-1")], now(), width) else {
@@ -773,6 +791,65 @@ pub(super) mod tests {
             text: text.clone(),
         });
         assert!(table_of(workers_view(&[long], now(), 400)).contains(&text));
+    }
+
+    fn with_remote(mut row: WorkerRow) -> WorkerRow {
+        row.ticket = Some(TicketRemote {
+            key: row.id.clone(),
+            state: Remote::Found("In Progress".into()),
+        });
+        row.pr = Remote::Found(Pr {
+            number: 12,
+            state: PrState::Open,
+            draft: false,
+            review: Review::Approved,
+            url: "https://github.com/o/r/pull/12".into(),
+        });
+        row
+    }
+
+    #[test]
+    fn the_table_at_160_columns_has_the_ticket_and_pr_cells() {
+        let markdown = table_of(workers_view(&[with_remote(row("GUZ-1"))], now(), 160));
+        let last = markdown.lines().last().unwrap();
+        assert!(
+            last.ends_with("| 2 | In Progress | #12 approved |"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("stricter help tests"), "{markdown}");
+    }
+
+    #[test]
+    fn at_130_columns_the_subject_is_cut_before_the_new_columns() {
+        let markdown = table_of(workers_view(&[with_remote(row("GUZ-1"))], now(), 130));
+        assert!(markdown.contains('…'), "{markdown}");
+        assert!(
+            markdown.contains("| In Progress | #12 approved |"),
+            "{markdown}"
+        );
+    }
+
+    #[test]
+    fn the_list_at_80_columns_has_ticket_and_pr_lines_within_the_width() {
+        let View::Text(text) = workers_view(&[with_remote(row("GUZ-1"))], now(), 80) else {
+            panic!("not a list");
+        };
+        assert!(text.contains("\n  ticket  In Progress\n"), "{text}");
+        assert!(text.ends_with("\n  pr      #12 approved"), "{text}");
+        assert!(text.lines().all(|l| l.width() <= 80), "{text}");
+    }
+
+    #[test]
+    fn pending_and_failed_remote_cells_show_in_the_row() {
+        let mut waiting = row("GUZ-1");
+        waiting.ticket = Some(TicketRemote {
+            key: "GUZ-1".into(),
+            state: Remote::Pending,
+        });
+        waiting.pr = Remote::Failed;
+        let cells = table_cells(&waiting, now(), 99);
+        assert_eq!(cells[7], "…");
+        assert_eq!(cells[8], "?");
     }
 
     #[test]
