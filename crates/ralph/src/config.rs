@@ -26,6 +26,7 @@ mod recent_history_tests;
 #[cfg(test)]
 mod reset_limits_tests;
 mod wire;
+mod workers;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
@@ -33,6 +34,7 @@ pub use cursor::CursorSection;
 pub use opencode::OpencodeSection;
 pub use permissions::configured_permission_mode;
 pub use wire::WireSection;
+pub use workers::{PrProvider, WorkersSection};
 
 /// Error type for configuration operations.
 #[derive(Debug, thiserror::Error)]
@@ -109,6 +111,9 @@ pub struct AppConfig {
 
     #[serde(default)]
     pub tickets: TicketKeys,
+
+    #[serde(default)]
+    pub workers: WorkersSection,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
