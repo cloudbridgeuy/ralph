@@ -33,6 +33,7 @@ pub mod diff_command;
 pub mod directive;
 pub mod inbox;
 pub mod inbox_alert;
+pub mod kitty;
 pub mod mcp;
 pub mod retry;
 pub mod sanitize;

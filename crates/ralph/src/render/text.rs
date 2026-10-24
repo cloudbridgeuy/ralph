@@ -7,6 +7,7 @@ use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use termimad::terminal_size;
 
+use super::image::{render_with_markers, ImageBounds};
 use super::link::{mark_links, paint_links};
 pub(crate) use super::wrap::render_prose;
 use super::wrap::wrap_width;
@@ -20,17 +21,25 @@ pub fn render_text_block(
 ) -> String {
     match &chunk.chunk_type {
         ChunkType::Prose => {
-            if ctx.terminal {
-                markdown
-                    .map(|theme| {
-                        let width = wrap_width(terminal_size().0.into());
-                        let rendered =
-                            render_prose(&theme.skin, &mark_links(&chunk.content), width);
-                        paint_links(&enhance_tables(&rendered), &theme.palette)
+            let styled = markdown.filter(|_| ctx.terminal);
+            match ctx.images {
+                None => styled.map_or_else(
+                    || chunk.content.clone(),
+                    |theme| render_styled_prose(theme, &chunk.content),
+                ),
+                Some(images) => {
+                    let (cols, rows) = terminal_size();
+                    let bounds = ImageBounds {
+                        cols: wrap_width(cols.into()).try_into().unwrap_or(u32::MAX),
+                        rows: u32::from(rows.max(1)),
+                    };
+                    render_with_markers(&chunk.content, images, bounds, |text| {
+                        styled.map_or_else(
+                            || text.to_string(),
+                            |theme| render_styled_prose(theme, text),
+                        )
                     })
-                    .unwrap_or_else(|| chunk.content.clone())
-            } else {
-                chunk.content.clone()
+                }
             }
         }
         ChunkType::Code { language } => render_code_block(ctx, &chunk.content, language.as_deref()),
@@ -39,6 +48,12 @@ pub fn render_text_block(
             render_directive_block(ctx, &chunk.content, verb, target)
         }
     }
+}
+
+fn render_styled_prose(theme: &MarkdownTheme, text: &str) -> String {
+    let width = wrap_width(terminal_size().0.into());
+    let rendered = render_prose(&theme.skin, &mark_links(text), width);
+    paint_links(&enhance_tables(&rendered), &theme.palette)
 }
 
 pub fn render_markdown(ctx: &RenderContext<'_>, text: &str, markdown: &MarkdownTheme) -> String {
@@ -197,6 +212,20 @@ mod tests {
         let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
         let skin = MarkdownTheme::default();
         (highlighter, skin)
+    }
+
+    #[test]
+    fn plain_prose_renders_image_markers_when_images_are_on() {
+        let (highlighter, skin) = create_test_context();
+        let mut ctx = RenderContext::plain(&highlighter);
+        ctx.images = Some(crate::render::ImageSettings { cell_px: None });
+        let chunk = ParsedChunk {
+            chunk_type: ChunkType::Prose,
+            content: "see **this** ![x](/no/such.png) ok".to_string(),
+        };
+        let expected = "see **this** \n[image: x (/no/such.png)] ok";
+        assert_eq!(render_text_block(&ctx, &chunk, Some(&skin)), expected);
+        assert_eq!(render_text_block(&ctx, &chunk, None), expected);
     }
 
     #[test]

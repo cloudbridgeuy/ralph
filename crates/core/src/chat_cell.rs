@@ -1,3 +1,4 @@
+use crate::kitty::strip_kitty_apc;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const CELL_OUTPUT_LINES: usize = 200;
@@ -247,7 +248,7 @@ pub fn build_message(message: &str, runs: &[CellRun], limits: CellLimits) -> Str
                 index + 1,
                 run.cell.runtime,
                 fenced(&run.cell.runtime, &run.cell.code),
-                fenced("", &trim_output(&run.output, limits))
+                fenced("", &trim_output(&strip_kitty_apc(&run.output), limits))
             )
         })
         .collect();
@@ -642,6 +643,20 @@ mod tests {
             build_message("go\n```!zsh\necho hi\n```", &[run], NONE),
             "go\n```zsh\necho hi\n```\n\n[cell 1 · zsh · exit 3]\n```zsh\necho hi\n```\noutput:\n```\nhi\n```"
         );
+    }
+
+    #[test]
+    fn message_drops_image_sequences_before_trimming() {
+        let run = CellRun {
+            cell: Cell {
+                runtime: "zsh".into(),
+                code: "icat".into(),
+            },
+            exit: Some(0),
+            output: "a\x1b_Gm=0;QQ==\x1b\\b\x1b_Gm=1;cut".into(),
+        };
+        let message = build_message("```!zsh\nicat\n```", &[run], NONE);
+        assert!(message.ends_with("output:\n```\nab\n```"), "{message}");
     }
 
     fn records(text: &str) -> Vec<u8> {

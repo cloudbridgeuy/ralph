@@ -1,0 +1,191 @@
+use std::io::{IsTerminal, Read};
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
+use ralph_core::kitty::{
+    cell_grid, display_pieces, encode_apc, parse_image_markers, png_size, strip_kitty_apc, Piece,
+    Segment, TerminalSnapshot,
+};
+
+use super::text::render_markdown;
+use super::RenderContext;
+use crate::markdown::MarkdownTheme;
+
+const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageSettings {
+    pub cell_px: Option<(u32, u32)>,
+}
+
+static IMAGES: OnceLock<Option<ImageSettings>> = OnceLock::new();
+
+pub fn enable_images(settings: Option<ImageSettings>) {
+    let _ = IMAGES.set(settings);
+}
+
+pub fn enabled() -> Option<ImageSettings> {
+    IMAGES.get().copied().flatten()
+}
+
+pub fn detect() -> Option<ImageSettings> {
+    let snapshot = TerminalSnapshot {
+        term_program: std::env::var("TERM_PROGRAM").unwrap_or_default(),
+        term: std::env::var("TERM").unwrap_or_default(),
+        kitty_window_id: std::env::var_os("KITTY_WINDOW_ID").is_some(),
+        tmux: std::env::var_os("TMUX").is_some(),
+        stdout_tty: std::io::stdout().is_terminal(),
+    };
+    ralph_core::kitty::supports_images(&snapshot).then(|| ImageSettings {
+        cell_px: crossterm::terminal::window_size()
+            .ok()
+            .and_then(|size| {
+                let width = u32::from(size.width).checked_div(u32::from(size.columns))?;
+                let height = u32::from(size.height).checked_div(u32::from(size.rows))?;
+                Some((width, height))
+            })
+            .filter(|(width, height)| *width > 0 && *height > 0),
+    })
+}
+
+fn resolve(path: &str) -> PathBuf {
+    match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
+        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+        _ => PathBuf::from(path),
+    }
+}
+
+fn read_capped(path: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::fs::File::open(resolve(path))
+        .ok()?
+        .take(MAX_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= MAX_IMAGE_BYTES).then_some(bytes)
+}
+
+fn fallback(alt: &str, path: &str) -> String {
+    format!("[image: {alt} ({path})]")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImageBounds {
+    pub cols: u32,
+    pub rows: u32,
+}
+
+fn render_image(alt: &str, path: &str, images: ImageSettings, bounds: ImageBounds) -> String {
+    let Some(bytes) = read_capped(path) else {
+        return fallback(alt, path);
+    };
+    let Some(size) = png_size(&bytes) else {
+        return fallback(alt, path);
+    };
+    let (cols, rows) = cell_grid(size, images.cell_px, bounds.cols, bounds.rows);
+    let newlines = (0..rows).map(|_| '\n').collect::<String>();
+    format!("{}{newlines}", encode_apc(&bytes, cols, rows))
+}
+
+pub fn render_with_markers(
+    content: &str,
+    images: ImageSettings,
+    bounds: ImageBounds,
+    render_text: impl Fn(&str) -> String,
+) -> String {
+    let mut out = String::new();
+    for segment in parse_image_markers(content) {
+        match segment {
+            Segment::Text(text) => out.push_str(&render_text(&text)),
+            Segment::Image { alt, path } => {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(&render_image(&alt, &path, images, bounds));
+            }
+        }
+    }
+    out
+}
+
+pub fn render_cell_display(
+    ctx: &RenderContext<'_>,
+    text: &str,
+    markdown: &MarkdownTheme,
+) -> String {
+    if ctx.images.is_none() {
+        return render_markdown(ctx, &strip_kitty_apc(text), markdown);
+    }
+    display_pieces(text)
+        .into_iter()
+        .map(|piece| match piece {
+            Piece::Text(text) => render_markdown(ctx, &text, markdown),
+            Piece::Apc(raw) => raw,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SETTINGS: ImageSettings = ImageSettings { cell_px: None };
+    const BOUNDS: ImageBounds = ImageBounds { cols: 80, rows: 50 };
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ralph-image-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn unreadable_path_falls_back_to_text() {
+        assert_eq!(
+            render_image("chart", "/definitely/not/here.png", SETTINGS, BOUNDS),
+            "[image: chart (/definitely/not/here.png)]"
+        );
+    }
+
+    #[test]
+    fn non_png_file_falls_back_to_text() {
+        let dir = temp_dir("non-png");
+        let path = dir.join("a.png");
+        std::fs::write(&path, b"not a png at all, just text bytes").unwrap();
+        let shown = path.to_string_lossy().into_owned();
+        assert_eq!(
+            render_image("a", &shown, SETTINGS, BOUNDS),
+            format!("[image: a ({shown})]")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn markers_render_text_around_the_fallback() {
+        let out = render_with_markers("a ![x](/no/such.png) b", SETTINGS, BOUNDS, |t| {
+            t.to_string()
+        });
+        assert_eq!(out, "a \n[image: x (/no/such.png)] b");
+    }
+
+    #[test]
+    fn valid_png_renders_kitty_apc_and_row_newlines() {
+        let dir = temp_dir("valid");
+        let path = dir.join("tall.png");
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&16u32.to_be_bytes());
+        png.extend_from_slice(&64u32.to_be_bytes());
+        std::fs::write(&path, &png).unwrap();
+        let out = render_image("t", &path.to_string_lossy(), SETTINGS, BOUNDS);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let (cols, rows) = cell_grid((16, 64), None, BOUNDS.cols, BOUNDS.rows);
+        assert!(out.starts_with("\x1b_G"));
+        for key in ["f=100", "C=1", &format!("c={cols}"), &format!("r={rows}")] {
+            assert!(out.contains(key), "{key} missing in {out:?}");
+        }
+        let body = out.trim_end_matches('\n');
+        assert_eq!(out.len() - body.len(), rows as usize);
+        assert!(body.ends_with("\x1b\\"));
+    }
+}
