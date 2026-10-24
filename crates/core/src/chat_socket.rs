@@ -1,11 +1,12 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const WORKER_TOOLS: [&str; 4] = ["spawn_worker", "reply", "close_worker", "watch"];
 const SOCKET_PREFIX: &str = "chat-";
 const SOCKET_FILE: &str = "chat.sock";
+const MCP_CONFIG_FILE: &str = "mcp.json";
 const SIDECAR_SUFFIX: &str = ".owner";
 pub const MAX_SOCKET_PATH_BYTES: usize = 103;
 
@@ -39,6 +40,10 @@ pub fn dir_name(pid: u32) -> String {
 
 pub fn socket_file_name() -> &'static str {
     SOCKET_FILE
+}
+
+pub fn mcp_config_path(socket: &Path) -> PathBuf {
+    socket.with_file_name(MCP_CONFIG_FILE)
 }
 
 pub fn sidecar_name(pid: u32) -> String {
@@ -114,6 +119,15 @@ pub fn orphan_sidecar_fate(facts: SocketFacts) -> SocketFate {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn mcp_config_lives_next_to_each_chats_socket() {
+        let one = mcp_config_path(Path::new("/s/chat-1/chat.sock"));
+        let two = mcp_config_path(Path::new("/s/chat-2/chat.sock"));
+        assert_eq!(one, PathBuf::from("/s/chat-1/mcp.json"));
+        assert_ne!(one, two);
+        assert_ne!(one, PathBuf::from("/s/mcp.json"));
+    }
 
     fn owner(pid: u32, start: &str) -> SocketOwner {
         SocketOwner {

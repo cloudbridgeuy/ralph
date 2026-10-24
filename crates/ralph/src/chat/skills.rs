@@ -2,6 +2,7 @@ use crate::chat::memory::Store;
 use crate::warn::warn;
 use ralph_core::chat::{build_mcp_args, mcp_config, select_servers};
 use ralph_core::chat_skills::{plan_links, plugin_manifest, ChatSkill};
+use ralph_core::chat_socket::mcp_config_path;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
@@ -22,7 +23,7 @@ pub(super) fn write_mcp_config(
         ));
     }
     let config = mcp_config(exe, store_dir, socket, &imported.servers);
-    let path = store.write_mcp_config(&config)?;
+    let path = store.write_mcp_config(mcp_config_path(socket), &config)?;
     Ok(build_mcp_args(&path, &config))
 }
 

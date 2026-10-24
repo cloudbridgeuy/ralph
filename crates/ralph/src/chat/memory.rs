@@ -275,8 +275,11 @@ impl Store {
         Ok(parse_pending_turn(&String::from_utf8_lossy(&marker)))
     }
 
-    pub fn write_mcp_config(&self, config: &serde_json::Value) -> io::Result<PathBuf> {
-        let path = self.dir.join("mcp.json");
+    pub fn write_mcp_config(
+        &self,
+        path: PathBuf,
+        config: &serde_json::Value,
+    ) -> io::Result<PathBuf> {
         check_path(&path)?;
         let mut options = OpenOptions::new();
         options.create(true).write(true).truncate(true);
