@@ -57,7 +57,9 @@ pub fn encode_statuses(history: &[StatusLine]) -> String {
 pub fn decode_statuses(raw: &str) -> Vec<StatusLine> {
     let lines: Vec<&str> = raw.lines().collect();
     lines
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .filter_map(|pair| {
             DateTime::parse_from_rfc3339(pair[0]).ok()?;
             let text = pair[1].trim();
