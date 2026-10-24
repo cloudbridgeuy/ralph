@@ -176,7 +176,7 @@ The spawn runs only after reedline `read_line` has turned raw mode off, so a ful
 
 ## /workers
 
-`/workers` is local: it never starts a turn or calls the model. Only the bare command and `/workers <id>` (one token) count; `/workers a b` and `/workersfoo` are normal messages. Only live workers appear (`running_workers`); a Codex worker has only what its shared record gives. The shell is `crates/ralph/src/chat/workers.rs`; the pure parsing and layout is `crates/core/src/workers_view.rs`, with the detail view in `crates/core/src/workers_view/detail.rs`. It never fetches and uses no network.
+`/workers` is local: it never starts a turn or calls the model. Only the bare command and `/workers <id>` (one token) count; `/workers a b` and `/workersfoo` are normal messages. Only live workers appear (`running_workers`); a Codex worker has only what its shared record gives. The shell is `crates/ralph/src/chat/workers.rs`; the pure parsing and layout is `crates/core/src/workers_view.rs`, with the detail view in `crates/core/src/workers_view/detail.rs`. The ticket and PR lookups run in background threads; `/workers` never waits for them (see [Remote lookups](#remote-lookups)).
 
 | Column | Source |
 | --- | --- |
@@ -186,8 +186,10 @@ The spawn runs only after reedline `read_line` has turned raw mode off, so a ful
 | HEAD | `git log -1 --format=%h %s` in the worker worktree (`git worktree list --porcelain`, branch `worker/<id>`) |
 | +/- | `+A -D Nf` over tracked changes of the worktree against `git merge-base HEAD <base>`, plus ` ?N` for untracked files, each file counted (`git status --porcelain -uall`; omitted at 0). Every git call runs with `--no-optional-locks`, so `/workers` never takes the worktree `index.lock`; binary files count as files with 0 lines; one failed git call makes the whole cell `?` |
 | BEHIND | `git rev-list --count HEAD..origin/<base>` |
+| TICKET | the remote state of the spawn record's ticket (see [Remote lookups](#remote-lookups)); prefixed with the key when the key is not the worker id |
+| PR | the newest PR of branch `worker/<id>`: `#12 draft`, `#12 open`, `#12 approved`, `#12 changes`, `#12 merged`, `#12 closed` |
 
-BEHIND counts against the local remote-tracking ref `origin/<base>` (base = `[chat] worker_base`, else `origin/HEAD`, else `main`), so it is stale until a fetch; no network is used, and a missing ref shows `?`. +/- uses the merge-base with `<base>`. In the table a `-` cell is wrapped in a code span (backslash escapes are not honored) so termimad does not draw a list bullet. A missing value shows `-`, a failed lookup `?`.
+BEHIND counts against the local remote-tracking ref `origin/<base>` (base = `[chat] worker_base`, else `origin/HEAD`, else `main`), so it is stale until a fetch; no network is used, and a missing ref shows `?`. +/- uses the merge-base with `<base>`. In the table a `-` cell is wrapped in a code span (backslash escapes are not honored) so termimad does not draw a list bullet. A missing value shows `-`, a failed lookup `?`, a lookup not done yet `…`.
 
 With no live worker it prints `No live workers.`. The list is a markdown table through the chat renderer when it fits the prompt width (columns plus `cols + 1` border cells, as termimad draws them without padding); the HEAD subject is cut with `…` down to 20 characters first. Else each worker is a block, every line cut to the width:
 
@@ -196,9 +198,17 @@ With no live worker it prints `No live workers.`. The list is a markdown table t
   report  done 12m ago
   head    2f7f8c0 fix(chat): exact /help, width-wrapped…
   diff    +120 -40 in 3 files ?2 · 2 behind origin/main
+  ticket  In Progress
+  pr      #12 open
 ```
 
-`/workers <id>` prints that block plus the branch, worktree path, base ref, tmux session (claude only), the set markers among `blocked`, `waiting`, `unreported`, `sent` and `gone`, and the heartbeat from `activity/<id>` (`running|idle <age>`), the `ticket` line from the spawn record (`GUZ-918 (linear)`, or just the key when the tracker is unknown; no line without a ticket), then one `status: <text> (<age> ago)` line for each kept status, newest first, then the last 5 reports newest first as `<status> <age>  <first line>`. The detail view always shows the status lines above the reports; the table and the REPORT cell use only the newest status. In the table the status text is cut with the HEAD subject to share the width budget, so one long status does not force the list. An id that is not live prints `No live worker <id>. /workers lists them.`
+`/workers <id>` prints that block plus the branch, worktree path, base ref, tmux session (claude only), the set markers among `blocked`, `waiting`, `unreported`, `sent` and `gone`, and the heartbeat from `activity/<id>` (`running|idle <age>`), the `ticket` line from the spawn record (`GUZ-918 (linear) · In Progress`, or just the key when the tracker is unknown; `-` without a ticket), the `pr` line as `#12 open · <url>`, then one `status: <text> (<age> ago)` line for each kept status, newest first, then the last 5 reports newest first as `<status> <age>  <first line>`. The detail view always shows the status lines above the reports; the table and the REPORT cell use only the newest status. In the table the status text is cut with the HEAD subject to share the width budget, so one long status does not force the list. An id that is not live prints `No live worker <id>. /workers lists them.`
+
+### Remote lookups
+
+The pure model is `crates/core/src/workers_view/remote.rs`; the shell is `crates/ralph/src/chat/workers_remote.rs`. A worker has a ticket lookup only when its spawn record has a tracker (`-` otherwise, no lookup): Linear runs `mcptools linear issue get <KEY> --history-limit 0 --json` and reads `state`; Jira runs `mcptools atlassian jira get <KEY> --json` and reads `status`. The PR lookup runs `gh pr list --head worker/<id> --state all --json number,state,isDraft,url,reviewDecision` in the chat's working directory and takes the newest item; an empty list is `-`. `[workers] pr_provider = "none"` skips it. Settings are in [Configuration](../configuration.md#workers---workers-remote-lookups).
+
+`/workers` renders from a cache held by the chat and never waits. A key that is missing or older than `cache_secs` shows `…`, and `/workers` starts one detached thread for it unless one runs already. The thread runs the command with `lookup_timeout_ms` and kills it at the deadline, then stores the result. A timeout, non-zero exit or output that does not parse stores `?`, cached like a result. The next `/workers` shows the result. A result for a worker that has closed is only cached. The threads are never joined, so they do not hold the chat open.
 
 ## Process reset
 

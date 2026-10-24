@@ -292,6 +292,24 @@ jira = ["VP20", "KODA"]
 
 `spawn_worker` records a ticket for each worker. The `ticket` argument wins. Without it, a worker id that is exactly `<KEY>-<digits>` for a key above (case-sensitive) is the ticket, and any other id has none. The tracker is the list that holds the key, Linear first. A `ticket` argument that matches no key is kept with no tracker. `/workers <id>` shows it as `ticket  GUZ-918 (linear)`. The key is read at each spawn. A config that fails to load gives no keys, so only an explicit ticket is recorded, with no tracker.
 
+### `[workers]` - `/workers` remote lookups
+
+`/workers` shows each worker's ticket state and PR from background lookups. See [ralph chat](context/ralph-chat.md#workers).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `pr_provider` | `"github"` | `github` looks up the PR with `gh`. `none` turns PR lookups off and the PR cell shows `-` |
+| `lookup_timeout_ms` | `5000` | Kill one lookup after this many milliseconds. The cell shows `?` |
+| `cache_secs` | `60` | Show a result for this many seconds, failures too. After that the cell shows `…` until a new lookup ends. `0` never shows a result |
+
+```toml
+[workers]
+pr_provider = "none"
+lookup_timeout_ms = 3000
+```
+
+An unknown `pr_provider` fails config load. An unknown key is ignored. Ticket lookups need a tracker, so they follow `[tickets]`.
+
 ### `[mermaid]` - Diagram Rendering
 
 In a terminal, a fenced `mermaid` code block renders as a Unicode text diagram for flowchart/graph, sequenceDiagram, erDiagram, classDiagram, stateDiagram, and stateDiagram-v2. Rendering runs in a child process (`ralph __mermaid`) that ralph kills on timeout or memory overrun. Any refusal, kill, error, or output wider than the terminal shows the highlighted source with no error text. Piped output keeps the raw source.
