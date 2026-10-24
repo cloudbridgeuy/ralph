@@ -4,8 +4,8 @@ This guide covers local development setup and build instructions for ralph.
 
 ## Prerequisites
 
-- **Rust toolchain**: 1.95.0 or later (MSRV)
-  The root `Cargo.toml` sets `rust-version = "1.95.0"` under `[workspace.package]`, and CI and release workflows pin toolchain 1.95.0. Member manifests do not inherit `rust-version`, so Cargo does not enforce it for workspace crates.
+- **Rust toolchain**: 1.95.0
+  `rust-toolchain.toml` selects Rust 1.95.0 with Clippy and rustfmt, matching CI and release workflows. The root `Cargo.toml` also sets `rust-version = "1.95.0"` under `[workspace.package]`. Member manifests do not inherit `rust-version`, so Cargo does not enforce it for workspace crates.
 - **Cargo**: Included with Rust
 - **Git**: For version control and hooks
 
@@ -18,7 +18,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 Verify your installation:
 
 ```bash
-rustc --version  # Should be 1.95.0 or later
+rustc --version
 cargo --version
 ```
 
@@ -107,6 +107,8 @@ The lint command runs these checks in order:
 3. `cargo clippy` - Lint checks (warnings as errors)
 4. `cargo test` - Full test suite
 5. `cargo rail unify --check` - Dependency unification, unused deps, dead features
+
+All workspace crates inherit warning lints for `todo!`, `unimplemented!`, `dbg!`, `mem::forget`, large futures, and suppression attributes without a `reason`. The lint command treats warnings as errors. Core and CLI retain production-only denials for `unwrap`, `expect`, and functions with more than five arguments; test code is exempt from those denials.
 
 ### Git Hooks
 
@@ -198,7 +200,7 @@ The project enforces strict clippy rules:
 - **Maximum 5 function arguments** - use config structs for more
 - **Warnings treated as errors**
 
-These are configured in each crate's `lib.rs` or `main.rs`:
+Core and CLI configure these production denials in `lib.rs` and `main.rs`:
 
 ```rust
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]

@@ -4,9 +4,10 @@ use regex::Regex;
 
 use crate::chunk::ParsedChunk;
 
-/// Regex for matching directive opening tags: `<ralph-{verb} to="{target}">`.
-/// Compiled once at first use since this is a compile-time constant pattern.
-#[allow(clippy::expect_used)]
+#[allow(
+    clippy::expect_used,
+    reason = "the directive regex is a fixed, valid pattern"
+)]
 static OPEN_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"<ralph-(\w+)\s+to="([^"]*)">"#)
         .expect("compile-time invariant: directive regex is valid")

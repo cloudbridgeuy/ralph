@@ -4,9 +4,12 @@ exclude = ["vendor/reedline"]
 resolver = "2"
 
 [workspace.lints.clippy]
-# Note: unwrap_used and expect_used are enabled in lib.rs/main.rs via #![deny(...)]
-# rather than here, so test code can still use .unwrap() for brevity.
-# See crates/*/src/lib.rs and crates/*/src/main.rs for the denials.
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+mem_forget = "warn"
+large_futures = "warn"
+allow_attributes_without_reason = "warn"
 
 [workspace.package]
 version = "0.2.0"

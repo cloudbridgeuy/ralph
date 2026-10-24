@@ -200,30 +200,20 @@ impl Default for StreamProcessor {
 }
 
 impl StreamProcessor {
-    /// Create a new stream processor.
-    ///
-    /// Automatically detects terminal support for highlighting.
-    /// Tool invocations are displayed by default when highlighting is enabled.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use ralph::stream_processor::StreamProcessor;
-    ///
-    /// let processor = StreamProcessor::new();
-    /// ```
-    #[allow(clippy::expect_used)] // Builder with defaults cannot fail
+    #[allow(
+        clippy::expect_used,
+        reason = "building without a theme config has no error path"
+    )]
     pub fn new() -> Self {
         StreamProcessorBuilder::new()
             .build()
             .expect("default builder should not fail")
     }
 
-    /// Create a processor with highlighting explicitly enabled/disabled.
-    ///
-    /// Useful for testing or when output will be displayed later.
-    /// Tool invocations display follows the highlighting setting.
-    #[allow(clippy::expect_used)] // Builder with no theme config cannot fail
+    #[allow(
+        clippy::expect_used,
+        reason = "building without a theme config has no error path"
+    )]
     pub fn with_highlighting(enabled: bool) -> Self {
         StreamProcessorBuilder::new()
             .highlighting(enabled)
@@ -231,13 +221,10 @@ impl StreamProcessor {
             .expect("builder without theme config should not fail")
     }
 
-    /// Create a processor with custom settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `highlighting` - Whether to apply syntax highlighting
-    /// * `show_tools` - Whether to display tool invocations
-    #[allow(clippy::expect_used)] // Builder with no theme config cannot fail
+    #[allow(
+        clippy::expect_used,
+        reason = "building without a theme config has no error path"
+    )]
     pub fn with_options(highlighting: bool, show_tools: bool) -> Self {
         StreamProcessorBuilder::new()
             .highlighting(highlighting)
@@ -246,14 +233,10 @@ impl StreamProcessor {
             .expect("builder without theme config should not fail")
     }
 
-    /// Create a processor with custom settings and verbose tools configuration.
-    ///
-    /// # Arguments
-    ///
-    /// * `highlighting` - Whether to apply syntax highlighting
-    /// * `show_tools` - Whether to display tool invocations
-    /// * `verbose_tools` - Configuration for verbose tool output
-    #[allow(clippy::expect_used)] // Builder with no theme config cannot fail
+    #[allow(
+        clippy::expect_used,
+        reason = "building without a theme config has no error path"
+    )]
     pub fn with_options_and_verbose(
         highlighting: bool,
         show_tools: bool,
