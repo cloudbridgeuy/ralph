@@ -1,4 +1,4 @@
-use crate::worker::{ticket_line, Ticket};
+use crate::worker::{branch_name, ticket_line, Ticket, Tracker};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -124,6 +124,77 @@ impl RemoteCache {
             Some(Fetched::State(_) | Fetched::Failed) => Remote::Failed,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LookupCommand {
+    pub program: &'static str,
+    pub args: Vec<String>,
+}
+
+pub fn ticket_lookup(ticket: &Ticket) -> Option<LookupKey> {
+    match ticket.tracker? {
+        Tracker::Linear => Some(LookupKey::Linear(ticket.key.clone())),
+        Tracker::Jira => Some(LookupKey::Jira(ticket.key.clone())),
+    }
+}
+
+pub fn wanted_keys(id: &str, ticket: Option<&Ticket>, pr_enabled: bool) -> Vec<LookupKey> {
+    ticket
+        .and_then(ticket_lookup)
+        .into_iter()
+        .chain(pr_enabled.then(|| LookupKey::Pr(id.to_string())))
+        .collect()
+}
+
+pub fn lookup_command(key: &LookupKey) -> LookupCommand {
+    let (program, args): (&'static str, Vec<String>) = match key {
+        LookupKey::Linear(ticket) => (
+            "mcptools",
+            [
+                "linear",
+                "issue",
+                "get",
+                ticket,
+                "--history-limit",
+                "0",
+                "--json",
+            ]
+            .map(String::from)
+            .to_vec(),
+        ),
+        LookupKey::Jira(ticket) => (
+            "mcptools",
+            ["atlassian", "jira", "get", ticket, "--json"]
+                .map(String::from)
+                .to_vec(),
+        ),
+        LookupKey::Pr(id) => (
+            "gh",
+            [
+                "pr",
+                "list",
+                "--head",
+                &branch_name(id),
+                "--state",
+                "all",
+                "--json",
+                "number,state,isDraft,url,reviewDecision",
+            ]
+            .map(String::from)
+            .to_vec(),
+        ),
+    };
+    LookupCommand { program, args }
+}
+
+pub fn fetched_of(key: &LookupKey, output: Option<&str>) -> Fetched {
+    let parsed = output.and_then(|raw| match key {
+        LookupKey::Linear(_) => parse_linear_state(raw).map(Fetched::State),
+        LookupKey::Jira(_) => parse_jira_status(raw).map(Fetched::State),
+        LookupKey::Pr(_) => parse_pr_list(raw).map(Fetched::Pr),
+    });
+    parsed.unwrap_or(Fetched::Failed)
 }
 
 fn string_field(raw: &str, field: &str) -> Option<String> {
@@ -511,5 +582,117 @@ mod tests {
             cache.to_start(&[LookupKey::Jira("A-1".into())], 20, 60),
             [LookupKey::Jira("A-1".into())]
         );
+    }
+
+    fn ticket(key: &str, tracker: Option<Tracker>) -> Ticket {
+        Ticket {
+            key: key.into(),
+            tracker,
+        }
+    }
+
+    #[test]
+    fn a_ticket_looks_up_only_with_a_tracker() {
+        assert_eq!(
+            ticket_lookup(&ticket("GUZ-1", Some(Tracker::Linear))),
+            Some(linear("GUZ-1"))
+        );
+        assert_eq!(
+            ticket_lookup(&ticket("VP20-1", Some(Tracker::Jira))),
+            Some(LookupKey::Jira("VP20-1".into()))
+        );
+        assert_eq!(ticket_lookup(&ticket("FOO-1", None)), None);
+    }
+
+    #[test]
+    fn wanted_keys_follow_the_tracker_and_the_pr_switch() {
+        let linear_ticket = ticket("GUZ-1", Some(Tracker::Linear));
+        assert_eq!(
+            wanted_keys("GUZ-1", Some(&linear_ticket), true),
+            [linear("GUZ-1"), LookupKey::Pr("GUZ-1".into())]
+        );
+        assert_eq!(
+            wanted_keys("GUZ-1", Some(&linear_ticket), false),
+            [linear("GUZ-1")]
+        );
+        let jira_ticket = ticket("VP20-5", Some(Tracker::Jira));
+        assert_eq!(
+            wanted_keys("w", Some(&jira_ticket), false),
+            [LookupKey::Jira("VP20-5".into())]
+        );
+        let bare = ticket("FOO-1", None);
+        assert_eq!(
+            wanted_keys("w", Some(&bare), true),
+            [LookupKey::Pr("w".into())]
+        );
+        assert_eq!(wanted_keys("w", None, true), [LookupKey::Pr("w".into())]);
+        assert!(wanted_keys("w", None, false).is_empty());
+    }
+
+    #[test]
+    fn lookup_commands_match_the_cli_contracts() {
+        let command = lookup_command(&linear("GUZ-846"));
+        assert_eq!(command.program, "mcptools");
+        assert_eq!(
+            command.args,
+            [
+                "linear",
+                "issue",
+                "get",
+                "GUZ-846",
+                "--history-limit",
+                "0",
+                "--json"
+            ]
+        );
+        let command = lookup_command(&LookupKey::Jira("VP20-5".into()));
+        assert_eq!(command.program, "mcptools");
+        assert_eq!(
+            command.args,
+            ["atlassian", "jira", "get", "VP20-5", "--json"]
+        );
+        let command = lookup_command(&LookupKey::Pr("GUZ-846".into()));
+        assert_eq!(command.program, "gh");
+        assert_eq!(
+            command.args,
+            [
+                "pr",
+                "list",
+                "--head",
+                "worker/GUZ-846",
+                "--state",
+                "all",
+                "--json",
+                "number,state,isDraft,url,reviewDecision"
+            ]
+        );
+    }
+
+    #[test]
+    fn fetched_of_parses_by_key_kind_and_fails_on_no_output_or_bad_output() {
+        assert_eq!(
+            fetched_of(&linear("A-1"), Some(r#"{"state":"Done"}"#)),
+            Fetched::State("Done".into())
+        );
+        assert_eq!(
+            fetched_of(
+                &LookupKey::Jira("A-1".into()),
+                Some(r#"{"status":"To Do"}"#)
+            ),
+            Fetched::State("To Do".into())
+        );
+        assert_eq!(
+            fetched_of(&LookupKey::Jira("A-1".into()), Some(r#"{"state":"x"}"#)),
+            Fetched::Failed
+        );
+        assert_eq!(
+            fetched_of(&LookupKey::Pr("w".into()), Some("[]")),
+            Fetched::Pr(None)
+        );
+        assert_eq!(
+            fetched_of(&LookupKey::Pr("w".into()), Some("nope")),
+            Fetched::Failed
+        );
+        assert_eq!(fetched_of(&linear("A-1"), None), Fetched::Failed);
     }
 }

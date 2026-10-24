@@ -15,8 +15,8 @@ mod remote;
 
 pub use detail::detail_view;
 pub use remote::{
-    parse_jira_status, parse_linear_state, parse_pr_list, Fetched, LookupKey, Pr, PrState, Remote,
-    RemoteCache, Review, TicketRemote,
+    fetched_of, lookup_command, ticket_lookup, wanted_keys, Fetched, LookupKey, Pr, PrState,
+    Remote, RemoteCache, Review, TicketRemote,
 };
 use remote::{pr_cell, ticket_cell};
 

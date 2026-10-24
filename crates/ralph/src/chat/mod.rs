@@ -22,6 +22,7 @@ mod terminal;
 mod turn;
 mod watch;
 mod workers;
+mod workers_remote;
 
 use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
@@ -41,6 +42,7 @@ use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
+use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
@@ -299,6 +301,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         theme: &agent_theme,
         color,
     };
+    let remote = RemoteStatus::new(config.workers.clone());
     let mut shell_state = cell::ShellState::default();
     let keys = Keys {
         gate: &turn.gate,
@@ -365,6 +368,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     changes: &config.changes,
                     store: &store_dir,
                     monitor: &monitor,
+                    remote: &remote,
                 };
                 run_local(local, &ctx, || {
                     monitor.refresh(true);

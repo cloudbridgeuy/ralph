@@ -1,6 +1,7 @@
 use crate::chat::inbox::Display;
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
+use crate::chat::workers_remote::RemoteStatus;
 use crate::config::AppConfig;
 use crate::render::render_markdown;
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
@@ -13,7 +14,7 @@ use ralph_core::worker::{
 };
 use ralph_core::workers_view::{
     count_untracked, detail_view, not_live, parse_head, parse_numstat, workers_view, Diff, Lookup,
-    Remote, ReportLine, View, WorkerDetail, WorkerRow,
+    ReportLine, View, WorkerDetail, WorkerRow,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -63,7 +64,12 @@ fn spawn_ticket(store: &Path, id: &str) -> Option<Ticket> {
     decode_spawn_record(&std::fs::read_to_string(spawn_record_path(store, id)).ok()?)?.ticket()
 }
 
-fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, Option<String>) {
+fn row(
+    monitor: &Monitor,
+    worker: &RunningWorker,
+    facts: &Facts,
+    remote: &RemoteStatus,
+) -> (WorkerRow, Option<String>) {
     let state = monitor
         .status()
         .workers
@@ -103,6 +109,8 @@ fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, 
         _ => (Lookup::Missing, Lookup::Missing, Lookup::Missing),
     };
     let worktree = tree.map(|tree| tree.display().to_string());
+    let ticket = spawn_ticket(&monitor.store_dir, &worker.id);
+    let cells = remote.cells(&worker.id, ticket.as_ref());
     (
         WorkerRow {
             id: worker.id.clone(),
@@ -114,8 +122,8 @@ fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, 
             diff,
             behind,
             base,
-            ticket: None,
-            pr: Remote::None,
+            ticket: cells.ticket,
+            pr: cells.pr,
         },
         worktree,
     )
@@ -152,7 +160,7 @@ fn facts(monitor: &Monitor) -> Facts {
     }
 }
 
-pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
+pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote: &RemoteStatus) {
     let running = running_workers(&monitor.store_dir);
     let facts = facts(monitor);
     let now = chrono::Utc::now();
@@ -160,7 +168,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
     let Some(id) = id else {
         let rows: Vec<WorkerRow> = running
             .iter()
-            .map(|worker| row(monitor, worker, &facts).0)
+            .map(|worker| row(monitor, worker, &facts, remote).0)
             .collect();
         match workers_view(&rows, now, width) {
             View::Table(markdown) => {
@@ -178,7 +186,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
         return;
     };
     let history = status_history(&monitor.store_dir, id);
-    let (mut row, worktree) = row(monitor, worker, &facts);
+    let (mut row, worktree) = row(monitor, worker, &facts, remote);
     row.status = history.last().cloned();
     let detail = WorkerDetail {
         row,
@@ -205,7 +213,7 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
-    use ralph_core::workers_view::{Head, Pr, PrState, Review, TicketRemote};
+    use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote};
     use unicode_width::UnicodeWidthStr;
 
     fn now() -> DateTime<Utc> {
