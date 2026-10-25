@@ -5,6 +5,7 @@
 
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
+use ralph_core::kitty::{split_apc, Piece};
 use termimad::terminal_size;
 
 use super::image::{render_with_markers, ImageBounds};
@@ -33,11 +34,13 @@ pub fn render_text_block(
                         cols: wrap_width(cols.into()).try_into().unwrap_or(u32::MAX),
                         rows: u32::from(rows.max(1)),
                     };
-                    render_with_markers(&chunk.content, images, bounds, |text| {
-                        styled.map_or_else(
-                            || text.to_string(),
-                            |theme| render_styled_prose(theme, text),
-                        )
+                    apc_in_place(&chunk.content, |piece| {
+                        render_with_markers(piece, images, bounds, |text| {
+                            styled.map_or_else(
+                                || text.to_string(),
+                                |theme| render_styled_prose(theme, text),
+                            )
+                        })
                     })
                 }
             }
@@ -48,6 +51,30 @@ pub fn render_text_block(
             render_directive_block(ctx, &chunk.content, verb, target)
         }
     }
+}
+
+fn apc_in_place(content: &str, render_text: impl Fn(&str) -> String) -> String {
+    let pieces = split_apc(content);
+    let mut out = String::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        match piece {
+            Piece::Text(text) => out.push_str(&render_text(text)),
+            Piece::Apc(raw) => {
+                out.push_str(raw);
+                let control = raw.trim_start_matches("\x1b_G").split(';').next();
+                let continues = control.is_some_and(|c| c.split(',').any(|key| key == "m=1"));
+                let needs_line_end = match pieces.get(index + 1) {
+                    Some(Piece::Text(next)) => !next.starts_with('\n'),
+                    Some(Piece::Apc(_)) => true,
+                    None => false,
+                };
+                if !continues && needs_line_end {
+                    out.push('\n');
+                }
+            }
+        }
+    }
+    out
 }
 
 fn render_styled_prose(theme: &MarkdownTheme, text: &str) -> String {
@@ -152,7 +179,6 @@ fn enhance_tables(rendered: &str) -> String {
 ///
 /// The rendered code block with opening and closing fences.
 pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Option<&str>) -> String {
-    // Format the opening fence with language hint
     let lang_suffix = language.filter(|l| !l.is_empty()).unwrap_or("");
     let opening_fence = format!("```{lang_suffix}");
 
@@ -162,13 +188,19 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
         }
     }
 
-    let highlighted_content = if ctx.terminal {
-        ctx.highlighter.highlight(content, language)
+    let highlight = |text: &str| {
+        if ctx.terminal {
+            ctx.highlighter.highlight(text, language)
+        } else {
+            text.to_string()
+        }
+    };
+    let highlighted_content = if ctx.images.is_some() {
+        apc_in_place(content, highlight)
     } else {
-        content.to_string()
+        highlight(content)
     };
 
-    // Build the full block with fences
     format!("{}\n{}\n```", opening_fence, highlighted_content)
 }
 
@@ -214,6 +246,52 @@ mod tests {
         (highlighter, skin)
     }
 
+    const APC: &str = "\x1b_Gf=100,a=T;QQ==\x1b\\";
+
+    fn cell_display(text: &str, images: bool) -> String {
+        let (highlighter, skin) = create_test_context();
+        let mut ctx = RenderContext::plain(&highlighter);
+        ctx.images = images.then_some(crate::render::ImageSettings { cell_px: None });
+        crate::render::image::render_cell_display(&ctx, text, &skin)
+    }
+
+    #[test]
+    fn cell_apc_renders_inside_the_result_block() {
+        let text = format!("```shell\nprintf x\n```\n```result\n{APC}\n```\n");
+        let out = cell_display(&text, true);
+        assert_eq!(out.matches("```").count(), 4, "{out:?}");
+        assert_eq!(out.matches(APC).count(), 1, "{out:?}");
+        let apc = out.find(APC).unwrap();
+        assert!(out[..apc].ends_with("```result\n"), "{out:?}");
+        assert!(out[apc + APC.len()..].starts_with("\n```"), "{out:?}");
+    }
+
+    #[test]
+    fn cell_apc_without_line_end_gets_one() {
+        let text = format!("```result\n{APC}tail\n```\n");
+        let out = cell_display(&text, true);
+        assert!(out.contains(&format!("{APC}\ntail")), "{out:?}");
+    }
+
+    #[test]
+    fn cell_apc_continuation_chunks_stay_adjacent() {
+        let first = "\x1b_Gm=1;QQ==\x1b\\";
+        let last = "\x1b_Gm=0;QQ==\x1b\\";
+        let text = format!("```result\n{first}{last}\n```\n");
+        let out = cell_display(&text, true);
+        assert!(out.contains(&format!("{first}{last}")), "{out:?}");
+    }
+
+    #[test]
+    fn cell_without_apc_keeps_four_fences() {
+        let text = "```shell\necho hi\n```\n```result\nhi\n```\n";
+        for images in [true, false] {
+            let out = cell_display(text, images);
+            assert_eq!(out.matches("```").count(), 4, "{out:?}");
+            assert_eq!(out.matches("hi").count(), 2, "{out:?}");
+        }
+    }
+
     #[test]
     fn plain_prose_renders_image_markers_when_images_are_on() {
         let (highlighter, skin) = create_test_context();
@@ -223,7 +301,7 @@ mod tests {
             chunk_type: ChunkType::Prose,
             content: "see **this** ![x](/no/such.png) ok".to_string(),
         };
-        let expected = "see **this** \n[image: x (/no/such.png)] ok";
+        let expected = "see **this** \n[image: x (/no/such.png)]\n ok";
         assert_eq!(render_text_block(&ctx, &chunk, Some(&skin)), expected);
         assert_eq!(render_text_block(&ctx, &chunk, None), expected);
     }

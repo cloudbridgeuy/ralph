@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use ralph_core::kitty::{
-    cell_grid, display_pieces, encode_apc, parse_image_markers, png_size, strip_kitty_apc, Piece,
-    Segment, TerminalSnapshot,
+    cell_grid, encode_apc, parse_image_markers, png_size, strip_kitty_apc, Segment,
+    TerminalSnapshot,
 };
 
 use super::text::render_markdown;
@@ -66,7 +66,7 @@ fn read_capped(path: &str) -> Option<Vec<u8>> {
 }
 
 fn fallback(alt: &str, path: &str) -> String {
-    format!("[image: {alt} ({path})]")
+    format!("[image: {alt} ({path})]\n")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,14 +94,24 @@ pub fn render_with_markers(
     render_text: impl Fn(&str) -> String,
 ) -> String {
     let mut out = String::new();
+    let mut after_image = false;
     for segment in parse_image_markers(content) {
         match segment {
-            Segment::Text(text) => out.push_str(&render_text(&text)),
+            Segment::Text(text) => {
+                let text = if after_image {
+                    text.strip_prefix('\n').unwrap_or(&text)
+                } else {
+                    &text
+                };
+                after_image = false;
+                out.push_str(&render_text(text));
+            }
             Segment::Image { alt, path } => {
                 if !out.is_empty() && !out.ends_with('\n') {
                     out.push('\n');
                 }
                 out.push_str(&render_image(&alt, &path, images, bounds));
+                after_image = true;
             }
         }
     }
@@ -113,16 +123,10 @@ pub fn render_cell_display(
     text: &str,
     markdown: &MarkdownTheme,
 ) -> String {
-    if ctx.images.is_none() {
-        return render_markdown(ctx, &strip_kitty_apc(text), markdown);
+    match ctx.images {
+        Some(_) => render_markdown(ctx, text, markdown),
+        None => render_markdown(ctx, &strip_kitty_apc(text), markdown),
     }
-    display_pieces(text)
-        .into_iter()
-        .map(|piece| match piece {
-            Piece::Text(text) => render_markdown(ctx, &text, markdown),
-            Piece::Apc(raw) => raw,
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -142,7 +146,7 @@ mod tests {
     fn unreadable_path_falls_back_to_text() {
         assert_eq!(
             render_image("chart", "/definitely/not/here.png", SETTINGS, BOUNDS),
-            "[image: chart (/definitely/not/here.png)]"
+            "[image: chart (/definitely/not/here.png)]\n"
         );
     }
 
@@ -154,7 +158,7 @@ mod tests {
         let shown = path.to_string_lossy().into_owned();
         assert_eq!(
             render_image("a", &shown, SETTINGS, BOUNDS),
-            format!("[image: a ({shown})]")
+            format!("[image: a ({shown})]\n")
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -164,7 +168,19 @@ mod tests {
         let out = render_with_markers("a ![x](/no/such.png) b", SETTINGS, BOUNDS, |t| {
             t.to_string()
         });
-        assert_eq!(out, "a \n[image: x (/no/such.png)] b");
+        assert_eq!(out, "a \n[image: x (/no/such.png)]\n b");
+    }
+
+    #[test]
+    fn fallback_as_last_segment_ends_with_a_line_end() {
+        let out = render_with_markers("![x](/no.png)", SETTINGS, BOUNDS, |t| t.to_string());
+        assert_eq!(out, "[image: x (/no.png)]\n");
+    }
+
+    #[test]
+    fn marker_line_end_is_not_doubled() {
+        let out = render_with_markers("![x](/no.png)\nnext", SETTINGS, BOUNDS, |t| t.to_string());
+        assert_eq!(out, "[image: x (/no.png)]\nnext");
     }
 
     #[test]

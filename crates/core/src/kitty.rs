@@ -56,10 +56,6 @@ impl FenceState {
             Some(_) => {}
         }
     }
-
-    fn fence(&self) -> Option<String> {
-        self.0.map(|(marker, len)| marker.to_string().repeat(len))
-    }
 }
 
 fn is_remote(path: &str) -> bool {
@@ -231,37 +227,6 @@ pub fn strip_kitty_apc(text: &str) -> String {
         .collect()
 }
 
-pub fn display_pieces(text: &str) -> Vec<Piece> {
-    let mut fence = FenceState::default();
-    let mut reopen: Option<String> = None;
-    let mut pieces = Vec::new();
-    for piece in split_apc(text) {
-        match piece {
-            Piece::Text(mut body) => {
-                if let Some(opener) = reopen.take() {
-                    body.insert_str(0, &format!("{opener}\n"));
-                }
-                body.split_inclusive('\n').for_each(|line| fence.feed(line));
-                pieces.push(Piece::Text(body));
-            }
-            Piece::Apc(raw) => {
-                if let (Some(fence_text), Some(Piece::Text(previous))) =
-                    (fence.fence(), pieces.last_mut())
-                {
-                    if !previous.ends_with('\n') {
-                        previous.push('\n');
-                    }
-                    previous.push_str(&fence_text);
-                    previous.push('\n');
-                    reopen = Some(fence_text);
-                }
-                pieces.push(Piece::Apc(raw));
-            }
-        }
-    }
-    pieces
-}
-
 pub fn supports_images(snapshot: &TerminalSnapshot) -> bool {
     let kitty_like = snapshot.term_program == "ghostty"
         || snapshot.term_program == "rex"
@@ -411,19 +376,6 @@ mod tests {
                 Piece::Text("x".into()),
                 Piece::Apc("\x1b_Gm=0;QQ==\x1b\\".into()),
                 Piece::Text("y".into())
-            ]
-        );
-    }
-
-    #[test]
-    fn display_pieces_rebalance_a_fence_around_an_apc() {
-        let pieces = display_pieces("```result\nab\x1b_Gm=0;QQ==\x1b\\cd\n```\n");
-        assert_eq!(
-            pieces,
-            vec![
-                Piece::Text("```result\nab\n```\n".into()),
-                Piece::Apc("\x1b_Gm=0;QQ==\x1b\\".into()),
-                Piece::Text("```\ncd\n```\n".into()),
             ]
         );
     }
