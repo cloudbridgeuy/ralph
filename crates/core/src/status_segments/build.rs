@@ -173,7 +173,7 @@ mod tests {
             "📬 2 unread",
             ".ralph/chat",
             "workers GUZ-416 running, GUZ-417 question",
-            "T12/30 · ctx 62% · cache 41m · shift ~9",
+            "T12/30 · ctx 62% · cache 41m · shift ~9 msg",
             "$4.12 (+0.31)",
         ] {
             assert!(all.contains(part), "{part}: {all}");
