@@ -202,6 +202,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         cancel: signal::interrupt_flag(),
         gate: Arc::new(OutputGate::new()),
         run: &run,
+        suggestions: suggestions.clone(),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -349,7 +350,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                         let sent = prepared.sent;
-                        suggestions.clear();
                         let (result, queued) = snapshots.around(|| {
                             keys.during(|| {
                                 turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
@@ -368,7 +368,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     continue;
                 };
-                suggestions.clear();
                 let (result, queued) = snapshots.around(|| {
                     keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
                 });

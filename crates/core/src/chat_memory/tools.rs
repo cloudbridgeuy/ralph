@@ -24,7 +24,7 @@ pub enum Outcome {
         id: Value,
         tool: Tool,
     },
-    Worker {
+    Socket {
         id: Value,
         name: String,
         args: Value,
@@ -117,7 +117,7 @@ pub fn handle_request(request: &Value) -> Outcome {
         Dispatch::Silent => Outcome::Silent,
         Dispatch::Respond(v) => Outcome::Respond(v),
         Dispatch::Call { id, name, args } if is_socket_tool(&name) => {
-            Outcome::Worker { id, name, args }
+            Outcome::Socket { id, name, args }
         }
         Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {
             Ok(request) => Outcome::Changes { id, request },
@@ -172,7 +172,7 @@ mod tests {
         match call(name, args) {
             Outcome::Call { id, tool } => finish_call(id, run(entries, tree, &tool)),
             Outcome::Respond(v) => v,
-            Outcome::Silent | Outcome::Worker { .. } | Outcome::Changes { .. } => {
+            Outcome::Silent | Outcome::Socket { .. } | Outcome::Changes { .. } => {
                 panic!("not a memory call")
             }
         }

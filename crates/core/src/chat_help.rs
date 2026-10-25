@@ -134,7 +134,7 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
     },
     KeyHelp {
         keys: "Suggested reply",
-        effect: "the prompt can start filled with a reply the model suggests; Enter sends it, Ctrl-U or Esc Esc clears it",
+        effect: "the prompt can start filled with a reply the model suggests; Enter sends it; Ctrl-U clears it (Esc Esc too in emacs mode)",
     },
     KeyHelp {
         keys: "Ctrl-Z, Ctrl-O",

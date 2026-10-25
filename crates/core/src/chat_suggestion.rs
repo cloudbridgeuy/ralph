@@ -24,8 +24,14 @@ pub fn parse_suggestion(args: &Value) -> Result<String, String> {
     let length = text.chars().count();
     if text.is_empty() {
         Err("Suggested reply is empty. Pass the exact words the user would type.".to_string())
-    } else if text.contains(['\n', '\r']) {
-        Err("Suggested reply has a line break. Pass one line.".to_string())
+    } else if text
+        .chars()
+        .any(|c| c.is_control() || c == '\u{2028}' || c == '\u{2029}')
+    {
+        Err(
+            "Suggested reply has a line break or control character. Pass one line of plain text."
+                .to_string(),
+        )
     } else if length > SUGGESTION_MAX_CHARS {
         Err(format!(
             "Suggested reply is {length} characters; the limit is {SUGGESTION_MAX_CHARS}. Shorten it."
@@ -66,6 +72,14 @@ mod tests {
     fn inner_line_breaks_are_rejected() {
         assert!(parse("one\ntwo").unwrap_err().contains("line break"));
         assert!(parse("one\rtwo").unwrap_err().contains("line break"));
+    }
+
+    #[test]
+    fn unicode_separators_and_control_characters_are_rejected() {
+        assert!(parse("one\u{2028}two").is_err());
+        assert!(parse("one\u{2029}two").is_err());
+        assert!(parse("one\u{0085}two").is_err());
+        assert!(parse("one\ttwo").is_err());
     }
 
     #[test]
