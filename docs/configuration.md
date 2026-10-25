@@ -134,6 +134,15 @@ base_bg = "#303030"       # bar background: filler, store, workers, watches
 
 The default `base_bg` is ANSI color 236, written `#303030` above. `reset` is the terminal's own text color. Powerline glyphs take their colors from the neighbouring blocks, so they have no keys.
 
+#### Input colors: `[theme.input]`
+
+`ralph chat` draws the `suggest_reply` pre-fill in its own color, so you can tell it from your own draft. The text goes back to the normal color on the first edit and stays normal, even if you retype the same words. Held and queued text keeps the normal color. The key is optional and takes the same color values as the role themes. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it.
+
+```toml
+[theme.input]
+suggestion = "cyan"  # suggest_reply pre-fill text
+```
+
 Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.
 
 The old `[theme] agent = "<theme>"` string still works as `[theme.agent] code = "<theme>"`; `ralph chat` prints a deprecation warning for it.
