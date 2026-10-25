@@ -91,7 +91,7 @@ Every Cursor, opencode and Codex cell of the capability matrix (`Capabilities::s
 | `resume` | Partial: only if agent supports session/load | [probed] | After a chat restart the host sent `session/load` and the worker recalled its earlier command |
 | `model` | Full | [probed] | `composer-2.5` became `session/set_config_option` `composer-2.5[fast=true]`; the model keys of `~/.cursor/cli-config.json` were back to the user's default afterwards |
 | `report` | Full | [probed] | `report` reached the inbox and wrote `reported/<id>` |
-| `close` | Partial: cli-config.json not restored | [corrected] | Stale since the model-default restore: close removed the sessions, worktree, branch, `~/.cursor/projects/<worktree>` and `~/.cursor/acp-sessions/<session>`, and `cli-config.json` matched its backup except Cursor's own `privacyCache.updatedAt` |
+| `close` | Full | [probed] | Model keys are restored when a model is set (`acp_worker/model.rs:34-48`). Close removes `~/.cursor/projects/<slug>` and matching `acp-sessions` (`cursor_cleanup.rs:64-75`). Only Cursor's own `privacyCache.updatedAt` changes (inferred from the 2026-10-22 probe, not re-run) |
 | `heartbeat` | Partial: ACP traffic only; exit seen by polling the child every 250 ms | [probed] | `kill -9` of `agent acp` wrote `gone/<id>` within 1 s and posted one Dead message. Its `worker-server` child stayed alive with parent pid 1 |
 
 ### opencode probe (opencode 2.0.29, 2026-10-19 and 2026-10-22)

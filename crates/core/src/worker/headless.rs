@@ -70,11 +70,10 @@ impl Capabilities {
         match (self.harness, feature) {
             (HarnessId::Claude, Model) => Full,
             (HarnessId::Claude, _) => Support::None,
-            (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report | Model) => Full,
+            (HarnessId::Cursor, Spawn | Prompt | PermAsk | Report | Model | Close) => Full,
             (HarnessId::Cursor, Interrupt) => Partial("outcome unknown after 30 s"),
             (HarnessId::Cursor, PermYolo) => Partial("global config, not per spawn"),
             (HarnessId::Cursor, Resume) => Partial("only if agent supports session/load"),
-            (HarnessId::Cursor, Close) => Partial("cli-config.json not restored"),
             (HarnessId::Cursor, Heartbeat) => {
                 Partial("ACP traffic only; exit seen by polling the child every 250 ms")
             }
