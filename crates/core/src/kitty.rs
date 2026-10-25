@@ -264,6 +264,7 @@ pub fn display_pieces(text: &str) -> Vec<Piece> {
 
 pub fn supports_images(snapshot: &TerminalSnapshot) -> bool {
     let kitty_like = snapshot.term_program == "ghostty"
+        || snapshot.term_program == "rex"
         || snapshot.term == "xterm-ghostty"
         || snapshot.term == "xterm-kitty"
         || snapshot.kitty_window_id;
@@ -440,6 +441,10 @@ mod tests {
         };
         assert!(!supports_images(&base));
         assert!(with(|s| s.term_program = "ghostty".into()));
+        assert!(with(|s| {
+            s.term_program = "rex".into();
+            s.term = "xterm-256color".into();
+        }));
         assert!(with(|s| s.term = "xterm-ghostty".into()));
         assert!(with(|s| s.term = "xterm-kitty".into()));
         assert!(with(|s| s.kitty_window_id = true));
