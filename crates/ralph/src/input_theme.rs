@@ -1,4 +1,5 @@
 use crate::markdown::parse_color;
+use reedline::Color as Nu;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
@@ -39,6 +40,30 @@ impl InputTheme {
             }
         }
         (resolved, warnings)
+    }
+}
+
+pub fn to_reedline(color: Color) -> Nu {
+    match color {
+        Color::Reset => Nu::Default,
+        Color::Black => Nu::Black,
+        Color::DarkGrey => Nu::DarkGray,
+        Color::Red => Nu::LightRed,
+        Color::DarkRed => Nu::Red,
+        Color::Green => Nu::LightGreen,
+        Color::DarkGreen => Nu::Green,
+        Color::Yellow => Nu::LightYellow,
+        Color::DarkYellow => Nu::Yellow,
+        Color::Blue => Nu::LightBlue,
+        Color::DarkBlue => Nu::Blue,
+        Color::Magenta => Nu::LightMagenta,
+        Color::DarkMagenta => Nu::Magenta,
+        Color::Cyan => Nu::LightCyan,
+        Color::DarkCyan => Nu::Cyan,
+        Color::White => Nu::White,
+        Color::Grey => Nu::LightGray,
+        Color::AnsiValue(n) => Nu::Fixed(n),
+        Color::Rgb { r, g, b } => Nu::Rgb(r, g, b),
     }
 }
 
@@ -87,6 +112,41 @@ mod tests {
                 "[theme.input] unknown key \"hint\"; ignored",
                 "[theme.input] suggestion = \"nope\" is not a color; using the default"
             ]
+        );
+    }
+
+    #[test]
+    fn named_colors_map_to_matching_reedline_colors() {
+        let cases = [
+            (Color::Reset, Nu::Default),
+            (Color::Black, Nu::Black),
+            (Color::DarkGrey, Nu::DarkGray),
+            (Color::Red, Nu::LightRed),
+            (Color::DarkRed, Nu::Red),
+            (Color::Green, Nu::LightGreen),
+            (Color::DarkGreen, Nu::Green),
+            (Color::Yellow, Nu::LightYellow),
+            (Color::DarkYellow, Nu::Yellow),
+            (Color::Blue, Nu::LightBlue),
+            (Color::DarkBlue, Nu::Blue),
+            (Color::Magenta, Nu::LightMagenta),
+            (Color::DarkMagenta, Nu::Magenta),
+            (Color::Cyan, Nu::LightCyan),
+            (Color::DarkCyan, Nu::Cyan),
+            (Color::White, Nu::White),
+            (Color::Grey, Nu::LightGray),
+        ];
+        for (from, to) in cases {
+            assert_eq!(to_reedline(from), to);
+        }
+    }
+
+    #[test]
+    fn indexed_and_rgb_colors_keep_their_values() {
+        assert_eq!(to_reedline(Color::AnsiValue(236)), Nu::Fixed(236));
+        assert_eq!(
+            to_reedline(Color::Rgb { r: 1, g: 2, b: 3 }),
+            Nu::Rgb(1, 2, 3)
         );
     }
 }

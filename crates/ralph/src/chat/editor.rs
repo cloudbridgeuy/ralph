@@ -1,4 +1,5 @@
 use crate::chat::memory::Store;
+use crate::chat::suggestion::SuggestionHighlighter;
 use crate::clipboard::PASTE_IMAGE;
 use crate::signal::default_sigttou_in;
 use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
@@ -157,11 +158,13 @@ fn edit_mode_with(mode: EditModeConfig, extra: fn(&mut Keybindings)) -> ChatEdit
 pub(super) fn build_editor(
     store_dir: &Path,
     mode: EditModeConfig,
+    highlighter: SuggestionHighlighter,
 ) -> Result<Reedline, Box<dyn std::error::Error>> {
     let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     Ok(Reedline::create()
         .with_history(Box::new(history))
         .with_edit_mode(Box::new(edit_mode(mode)))
+        .with_highlighter(Box::new(highlighter))
         .use_bracketed_paste(true))
 }
 

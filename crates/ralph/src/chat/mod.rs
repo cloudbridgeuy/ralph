@@ -46,13 +46,14 @@ use crate::chat::skills::{
 use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
-use crate::chat::suggestion::SuggestionSlot;
+use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
+use crate::input_theme::to_reedline;
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, RenderContext};
@@ -153,6 +154,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     sweep_stale_server_records();
     let chat_socket = ChatSocket::bind(&store_dir)?;
     let suggestions = SuggestionSlot::default();
+    let shown = SuggestionSlot::default();
     let socket_files = chat_socket.files().clone();
     let _socket_guard = SocketGuard(socket_files.clone());
     let mcp_args = write_mcp_config(
@@ -275,7 +277,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );
-    let mut editor = build_editor(&store_dir, edit_mode)?
+    let suggestion_color = to_reedline(config.theme.input.resolve().0.suggestion);
+    let highlighter = SuggestionHighlighter::new(shown.clone(), suggestion_color);
+    let mut editor = build_editor(&store_dir, edit_mode, highlighter)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
@@ -448,8 +452,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let draft = draft_with_typed(draft, &typed);
         let replied = outcome == TurnOutcome::Replied;
         if let Some(fill) = prefill(replied, draft, suggestion) {
-            let (Prefill::Draft(draft) | Prefill::Suggestion(draft)) = fill;
-            editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
+            let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
+            editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
+            match fill {
+                Prefill::Suggestion(text) => shown.set(text),
+                Prefill::Draft(_) => shown.clear(),
+            }
         }
     }
     Ok(())
