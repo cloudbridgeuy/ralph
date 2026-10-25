@@ -2,7 +2,8 @@ use super::range::{parse_read_args, RangeRequest};
 use super::search::{parse_search_args, SearchRequest};
 use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
-use crate::chat_socket::is_worker_tool;
+use crate::chat_socket::is_socket_tool;
+use crate::chat_suggestion::suggest_reply_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::worker::command_definitions;
 use serde_json::{json, Value};
@@ -23,7 +24,7 @@ pub enum Outcome {
         id: Value,
         tool: Tool,
     },
-    Worker {
+    Socket {
         id: Value,
         name: String,
         args: Value,
@@ -38,6 +39,7 @@ pub fn tool_definitions() -> Value {
     let mut tools = memory_tool_definitions();
     if let Some(list) = tools.as_array_mut() {
         list.extend(command_definitions());
+        list.push(suggest_reply_tool());
     }
     tools
 }
@@ -114,8 +116,8 @@ pub fn handle_request(request: &Value) -> Outcome {
     match dispatch(SERVER_NAME, &tool_definitions(), request) {
         Dispatch::Silent => Outcome::Silent,
         Dispatch::Respond(v) => Outcome::Respond(v),
-        Dispatch::Call { id, name, args } if is_worker_tool(&name) => {
-            Outcome::Worker { id, name, args }
+        Dispatch::Call { id, name, args } if is_socket_tool(&name) => {
+            Outcome::Socket { id, name, args }
         }
         Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {
             Ok(request) => Outcome::Changes { id, request },
@@ -170,7 +172,7 @@ mod tests {
         match call(name, args) {
             Outcome::Call { id, tool } => finish_call(id, run(entries, tree, &tool)),
             Outcome::Respond(v) => v,
-            Outcome::Silent | Outcome::Worker { .. } | Outcome::Changes { .. } => {
+            Outcome::Silent | Outcome::Socket { .. } | Outcome::Changes { .. } => {
                 panic!("not a memory call")
             }
         }
@@ -198,7 +200,8 @@ mod tests {
                 "spawn_worker",
                 "reply",
                 "close_worker",
-                "watch"
+                "watch",
+                "suggest_reply"
             ]
         );
     }

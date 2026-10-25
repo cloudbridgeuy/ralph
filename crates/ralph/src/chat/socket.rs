@@ -1,4 +1,5 @@
 use crate::chat::memory::Store;
+use crate::chat::suggestion::SuggestionSlot;
 use crate::cursor_owner::process_start;
 use crate::warn::warn;
 use crate::watch_requests;
@@ -8,6 +9,7 @@ use ralph_core::chat_socket::{
     sidecar_name, sidecar_pid, socket_fate, socket_file_name, SocketFacts, SocketFate, SocketOwner,
     SocketRequest, SocketResponse,
 };
+use ralph_core::chat_suggestion::parse_suggestion;
 use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, parse_command, Command};
 use std::collections::BTreeSet;
@@ -21,6 +23,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+const SUGGEST_REPLY: &str = "suggest_reply";
 const REQUEST_LIMIT_BYTES: u64 = 1 << 20;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
@@ -119,15 +122,15 @@ impl ChatSocket {
         &self.files
     }
 
-    pub(crate) fn serve(self, store: Store, workers: Workers) {
-        let shared = Arc::new((store, workers));
+    pub(crate) fn serve(self, store: Store, workers: Workers, suggestions: SuggestionSlot) {
+        let shared = Arc::new((store, workers, suggestions));
         thread::spawn(move || {
             for connection in self.listener.incoming() {
                 match connection {
                     Ok(stream) => {
                         let shared = Arc::clone(&shared);
                         thread::spawn(move || {
-                            if let Err(e) = handle_connection(&stream, &shared.0, &shared.1) {
+                            if let Err(e) = handle_connection(&stream, &shared) {
                                 warn(format!("chat socket: connection failed: {e}"));
                             }
                         });
@@ -181,12 +184,16 @@ fn decide_fate(files: &SocketFiles, pid: u32, decide: fn(SocketFacts) -> SocketF
     })
 }
 
-fn handle_connection(stream: &UnixStream, store: &Store, workers: &Workers) -> io::Result<()> {
+fn handle_connection(
+    stream: &UnixStream,
+    shared: &(Store, Workers, SuggestionSlot),
+) -> io::Result<()> {
+    let (store, workers, suggestions) = shared;
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut line = String::new();
     BufReader::new(stream.take(REQUEST_LIMIT_BYTES)).read_line(&mut line)?;
     let response = match decode_line::<SocketRequest>(&line) {
-        Ok(request) => respond(store, workers, &request),
+        Ok(request) => respond(store, workers, suggestions, &request),
         Err(text) => SocketResponse {
             text,
             is_error: true,
@@ -200,8 +207,13 @@ fn handle_connection(stream: &UnixStream, store: &Store, workers: &Workers) -> i
 fn run_command(
     store: &Store,
     workers: &Workers,
+    suggestions: &SuggestionSlot,
     request: &SocketRequest,
 ) -> Result<String, String> {
+    if request.tool == SUGGEST_REPLY {
+        suggestions.set(parse_suggestion(&request.args)?);
+        return Ok("Suggested reply set.".to_string());
+    }
     let command = parse_command(&request.tool, &request.args)
         .ok_or_else(|| format!("Unknown tool '{}'.", request.tool))??;
     let pending = store
@@ -235,8 +247,13 @@ fn run_command(
     .map_err(|e| e.to_string())
 }
 
-pub(crate) fn respond(store: &Store, workers: &Workers, request: &SocketRequest) -> SocketResponse {
-    match run_command(store, workers, request) {
+pub(crate) fn respond(
+    store: &Store,
+    workers: &Workers,
+    suggestions: &SuggestionSlot,
+    request: &SocketRequest,
+) -> SocketResponse {
+    match run_command(store, workers, suggestions, request) {
         Ok(text) => SocketResponse {
             text,
             is_error: false,
@@ -301,7 +318,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
         store.set_pending_turn(Trigger::User).unwrap();
-        let response = respond(&store, &workers(), &request("watch", watch_args()));
+        let response = respond(
+            &store,
+            &workers(),
+            &SuggestionSlot::default(),
+            &request("watch", watch_args()),
+        );
         assert!(!response.is_error);
         let queued = watch_requests::take_all(dir.path());
         assert_eq!(queued.len(), 1);
@@ -316,7 +338,15 @@ mod tests {
         let store = Store::new(dir.path().to_path_buf());
         store.set_pending_turn(Trigger::Worker).unwrap();
         let args = json!({"id":"ci","command":"c","follow_up":"f"});
-        assert!(respond(&store, &workers(), &request("watch", args)).is_error);
+        assert!(
+            respond(
+                &store,
+                &workers(),
+                &SuggestionSlot::default(),
+                &request("watch", args)
+            )
+            .is_error
+        );
         assert!(watch_requests::take_all(dir.path()).is_empty());
     }
 
@@ -333,6 +363,7 @@ mod tests {
         let response = respond(
             &store,
             &workers(),
+            &SuggestionSlot::default(),
             &request("spawn_worker", json!({"id":"A","task":"merge"})),
         );
         assert!(response.is_error);
@@ -346,6 +377,7 @@ mod tests {
         let response = respond(
             &store,
             &workers(),
+            &SuggestionSlot::default(),
             &request("spawn_worker", json!({"id":"A","task":"t"})),
         );
         assert!(response.is_error);
@@ -355,11 +387,48 @@ mod tests {
     fn invalid_arguments_and_unknown_tools_are_errors() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
-        let bad = respond(&store, &workers(), &request("reply", json!({"id":"A"})));
+        let bad = respond(
+            &store,
+            &workers(),
+            &SuggestionSlot::default(),
+            &request("reply", json!({"id":"A"})),
+        );
         assert!(bad.is_error);
-        let unknown = respond(&store, &workers(), &request("zoom", json!({})));
+        let unknown = respond(
+            &store,
+            &workers(),
+            &SuggestionSlot::default(),
+            &request("zoom", json!({})),
+        );
         assert!(unknown.is_error);
         assert!(unknown.text.contains("Unknown tool"));
+    }
+
+    #[test]
+    fn suggest_reply_stores_the_newest_text_without_a_pending_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let slot = SuggestionSlot::default();
+        for text in ["first", " second "] {
+            let call = request("suggest_reply", json!({"text": text}));
+            let response = respond(&store, &workers(), &slot, &call);
+            assert!(!response.is_error);
+            assert_eq!(response.text, "Suggested reply set.");
+        }
+        assert_eq!(slot.take(), Some("second".to_string()));
+    }
+
+    #[test]
+    fn invalid_suggest_reply_is_an_error_and_keeps_the_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let slot = SuggestionSlot::default();
+        slot.set("kept".to_string());
+        let call = request("suggest_reply", json!({"text": "a\nb"}));
+        let response = respond(&store, &workers(), &slot, &call);
+        assert!(response.is_error);
+        assert!(response.text.contains("line break"));
+        assert_eq!(slot.take(), Some("kept".to_string()));
     }
 
     #[test]
@@ -396,7 +465,11 @@ mod tests {
         assert_eq!(sidecar_mode, 0o600);
         let store = Store::new(dir.path().to_path_buf());
         store.set_pending_turn(Trigger::User).unwrap();
-        socket.serve(Store::new(dir.path().to_path_buf()), workers());
+        socket.serve(
+            Store::new(dir.path().to_path_buf()),
+            workers(),
+            SuggestionSlot::default(),
+        );
         let response = forward(&path, &request("watch", watch_args())).unwrap();
         assert!(!response.is_error);
         assert_eq!(watch_requests::take_all(dir.path()).len(), 1);

@@ -42,7 +42,7 @@ pub fn run_stdio_server(
                     Err(message) => tool_result(id, &message, true),
                 }
             }
-            Outcome::Worker { id, name, args } => {
+            Outcome::Socket { id, name, args } => {
                 match forward(socket, &SocketRequest { tool: name, args }) {
                     Ok(reply) => tool_result(id, &reply.text, reply.is_error),
                     Err(message) => tool_result(id, &message, true),

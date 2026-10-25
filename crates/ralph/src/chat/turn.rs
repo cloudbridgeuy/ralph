@@ -1,6 +1,7 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::memory::Store;
 use crate::chat::prompt::screen_columns;
+use crate::chat::suggestion::SuggestionSlot;
 use crate::highlight::ThemeConfig;
 use crate::invoke::build_chat_command;
 use crate::signal;
@@ -98,6 +99,7 @@ pub(super) struct Turn<'a> {
     pub(super) cancel: Arc<AtomicBool>,
     pub(super) gate: Arc<OutputGate>,
     pub(super) run: &'a str,
+    pub(super) suggestions: SuggestionSlot,
 }
 
 impl Turn<'_> {
@@ -180,6 +182,7 @@ impl Turn<'_> {
             "chat turn",
             || {
                 launch = None;
+                self.suggestions.clear();
                 let (live, result, ran) =
                     self.attempt(session.take(), pre_log_len, &sent, &mut launch);
                 session = live;
