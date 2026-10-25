@@ -1,3 +1,4 @@
+use ralph_core::workers_view::Layout;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +20,8 @@ fn default_cache_secs() -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkersSection {
     #[serde(default)]
+    pub view: Layout,
+    #[serde(default)]
     pub pr_provider: PrProvider,
     #[serde(default = "default_lookup_timeout_ms")]
     pub lookup_timeout_ms: u64,
@@ -29,6 +32,7 @@ pub struct WorkersSection {
 impl Default for WorkersSection {
     fn default() -> Self {
         Self {
+            view: Layout::default(),
             pr_provider: PrProvider::default(),
             lookup_timeout_ms: default_lookup_timeout_ms(),
             cache_secs: default_cache_secs(),
@@ -56,6 +60,7 @@ mod tests {
     #[test]
     fn defaults_apply_without_a_table_and_for_missing_keys() {
         let expected = WorkersSection {
+            view: Layout::Table,
             pr_provider: PrProvider::Github,
             lookup_timeout_ms: 5000,
             cache_secs: 60,
@@ -74,6 +79,7 @@ mod tests {
         assert_eq!(
             config.workers,
             WorkersSection {
+                view: Layout::Table,
                 pr_provider: PrProvider::None,
                 lookup_timeout_ms: 250,
                 cache_secs: 1,
@@ -81,6 +87,15 @@ mod tests {
         );
         let github: AppConfig = toml::from_str("[workers]\npr_provider = \"github\"\n").unwrap();
         assert_eq!(github.workers.pr_provider, PrProvider::Github);
+    }
+
+    #[test]
+    fn table_and_list_layouts_parse() {
+        for (value, expected) in [("table", Layout::Table), ("list", Layout::List)] {
+            let config: AppConfig =
+                toml::from_str(&format!("[workers]\nview = \"{value}\"\n")).unwrap();
+            assert_eq!(config.workers.view, expected);
+        }
     }
 
     #[test]
@@ -121,12 +136,13 @@ mod tests {
     }
 
     #[test]
-    fn load_rejects_zero_values_and_names_the_key() {
+    fn load_rejects_invalid_values_and_names_the_key() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         for (body, key) in [
             ("[workers]\ncache_secs = 0\n", "cache_secs"),
             ("[workers]\nlookup_timeout_ms = 0\n", "lookup_timeout_ms"),
+            ("[workers]\nview = \"grid\"\n", "view"),
         ] {
             std::fs::write(&path, body).unwrap();
             let err = AppConfig::load_from(&path).unwrap_err().to_string();
