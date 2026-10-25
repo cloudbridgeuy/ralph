@@ -5,6 +5,7 @@ mod check;
 mod corrupt_tests;
 mod diff;
 mod editor;
+mod hold;
 mod inbox;
 mod index_files;
 mod keys;
@@ -27,6 +28,7 @@ mod workers_remote;
 
 use crate::chat::check::CheckState;
 use crate::chat::editor::build_editor;
+use crate::chat::hold::Held;
 use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::memory::Store;
@@ -73,6 +75,7 @@ use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::prefill;
 use ralph_core::chat_thread::run_id;
+use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
@@ -387,6 +390,16 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 });
                 queue = queued;
                 (result?, None)
+            }
+            Route::Hold(filter) => {
+                match hold::run(&filter, &monitor, &prompt.bar) {
+                    Held::Item(position) => {
+                        pending = Some(Route::ReadInbox(Selection::At(position)));
+                    }
+                    Held::Left => {}
+                    Held::Quit => break,
+                }
+                continue;
             }
             local => {
                 run_local(local, &local_route, || {
