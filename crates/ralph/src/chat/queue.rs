@@ -1,12 +1,12 @@
 use crate::chat::turn::TurnOutcome;
 
-pub(super) const QUEUE_KEY: u8 = 0x11;
 const JOIN: &str = "\n\n";
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct Queue {
     pub(super) entries: Vec<String>,
     pub(super) held: bool,
+    pub(super) typed: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,47 +56,37 @@ pub(super) fn merged(entries: &[String]) -> Option<String> {
     (!entries.is_empty()).then(|| entries.join(JOIN))
 }
 
-pub(super) fn has_queue_key(bytes: &[u8]) -> bool {
-    bytes.contains(&QUEUE_KEY)
-}
-
-pub(super) fn typed_after_queue_key(bytes: &[u8]) -> String {
-    let Some(start) = bytes.iter().position(|byte| *byte == QUEUE_KEY) else {
-        return String::new();
-    };
-    let text = String::from_utf8_lossy(&bytes[start + 1..]);
-    let mut kept = String::new();
-    let mut chars = text.chars();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\u{1b}' => skip_escape(&mut chars),
-            ch if ch.is_control() || ch == char::REPLACEMENT_CHARACTER => {}
-            ch => kept.push(ch),
-        }
-    }
-    kept
-}
-
-fn skip_escape(chars: &mut std::str::Chars) {
-    match chars.next() {
-        Some('[') => {
-            for ch in chars.by_ref() {
-                if ('\u{40}'..='\u{7e}').contains(&ch) {
-                    break;
-                }
-            }
-        }
-        Some('O') => {
-            chars.next();
-        }
-        Some(_) | None => {}
-    }
-}
-
 pub(super) fn draft_with_queue(draft: Option<String>, entries: &[String]) -> Option<String> {
     match (draft, merged(entries)) {
         (Some(draft), Some(queued)) => Some(format!("{draft}{JOIN}{queued}")),
         (draft, queued) => draft.or(queued),
+    }
+}
+
+pub(super) fn unsent(queue: &Queue) -> Vec<String> {
+    queue
+        .entries
+        .iter()
+        .map(String::as_str)
+        .chain(Some(queue.typed.as_str()))
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub(super) fn exit_notice(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some("1 queued message not sent; saved to history.".to_string()),
+        n => Some(format!("{n} queued messages not sent; saved to history.")),
+    }
+}
+
+pub(super) fn draft_with_typed(draft: Option<String>, typed: &str) -> Option<String> {
+    match (draft, typed) {
+        (draft, "") => draft,
+        (Some(draft), typed) => Some(format!("{draft}{JOIN}{typed}")),
+        (None, typed) => Some(typed.to_string()),
     }
 }
 
@@ -119,6 +109,7 @@ mod tests {
         Queue {
             entries: entries(items),
             held: false,
+            typed: String::new(),
         }
     }
 
@@ -198,39 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn finds_ctrl_q_byte() {
-        assert!(has_queue_key(b"ab\x11c"));
-        assert!(!has_queue_key(b"abc\x03"));
-        assert!(!has_queue_key(b""));
-    }
-
-    #[test]
-    fn seed_is_the_printable_text_after_ctrl_q() {
-        assert_eq!(typed_after_queue_key(b"ab\x11hello"), "hello");
-        assert_eq!(typed_after_queue_key(b"\x11h\xc3\xa9y"), "h\u{e9}y");
-    }
-
-    #[test]
-    fn seed_without_ctrl_q_or_text_is_empty() {
-        assert_eq!(typed_after_queue_key(b"abc"), "");
-        assert_eq!(typed_after_queue_key(b"\x11"), "");
-    }
-
-    #[test]
-    fn seed_drops_control_bytes_and_escape_sequences() {
-        assert_eq!(typed_after_queue_key(b"\x11a\x03b\r\n\tc\x11d"), "abcd");
-        assert_eq!(typed_after_queue_key(b"\x11a\x1b[Ab\x1bOPc\x1bxd"), "abcd");
-        assert_eq!(typed_after_queue_key(b"\x11a\x1b[1;5C"), "a");
-        assert_eq!(typed_after_queue_key(b"\x11a\x1b[1;5"), "a");
-        assert_eq!(typed_after_queue_key(b"\x11a\x1b"), "a");
-    }
-
-    #[test]
-    fn seed_drops_invalid_utf8() {
-        assert_eq!(typed_after_queue_key(b"\x11a\xc3"), "a");
-    }
-
-    #[test]
     fn queue_follows_the_restored_draft() {
         assert_eq!(
             draft_with_queue(Some("msg".into()), &entries(&["a", "b"])),
@@ -249,6 +207,35 @@ mod tests {
             Some("msg".to_string())
         );
         assert_eq!(draft_with_queue(None, &[]), None);
+    }
+
+    #[test]
+    fn exit_notice_counts_entries_and_typed_text() {
+        let queue = Queue {
+            entries: entries(&["a", " "]),
+            held: false,
+            typed: "xyz".into(),
+        };
+        assert_eq!(unsent(&queue), entries(&["a", "xyz"]));
+        assert_eq!(exit_notice(0), None);
+        assert_eq!(
+            exit_notice(1),
+            Some("1 queued message not sent; saved to history.".to_string())
+        );
+        assert_eq!(
+            exit_notice(2),
+            Some("2 queued messages not sent; saved to history.".to_string())
+        );
+    }
+
+    #[test]
+    fn typed_text_follows_the_draft_and_is_never_sent() {
+        assert_eq!(draft_with_typed(None, ""), None);
+        assert_eq!(draft_with_typed(None, "xyz"), Some("xyz".to_string()));
+        assert_eq!(
+            draft_with_typed(Some("a".into()), "xyz"),
+            Some("a\n\nxyz".to_string())
+        );
     }
 
     #[test]

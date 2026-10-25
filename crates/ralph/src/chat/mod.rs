@@ -34,7 +34,9 @@ use crate::chat::monitor::{
     ready_ids, watch_headless, watch_input, watch_status, Monitor, ThreadMemo,
 };
 use crate::chat::prompt::{next_route, ChatPrompt};
-use crate::chat::queue::{decide, draft_with_queue, Decision, Queue};
+use crate::chat::queue::{
+    decide, draft_with_queue, draft_with_typed, exit_notice, unsent, Decision, Queue,
+};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
@@ -395,9 +397,23 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         };
         monitor.refresh(true);
         if outcome == TurnOutcome::Exit {
+            let lost = unsent(&queue);
+            for text in &lost {
+                warn_if_err(
+                    editor
+                        .history_mut()
+                        .save(HistoryItem::from_command_line(text.clone())),
+                    "Failed to save chat history",
+                );
+            }
+            if let Some(notice) = exit_notice(lost.len()) {
+                eprintln!("{notice}");
+            }
+            editor.sync_history()?;
             break;
         }
         let suggestion = suggestions.take();
+        let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {
             Decision::Send(text) => {
                 print!("{}", prompt.echo(&text));
@@ -416,6 +432,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
             Decision::Keep(entries) => (draft_with_queue(draft, &entries), suggestion),
         };
+        let draft = draft_with_typed(draft, &typed);
         let replied = outcome == TurnOutcome::Replied;
         if let Some(draft) = prefill(replied, draft, suggestion) {
             editor.run_edit_commands(&[EditCommand::InsertString(draft)]);

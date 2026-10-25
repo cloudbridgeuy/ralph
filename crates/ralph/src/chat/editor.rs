@@ -16,6 +16,7 @@ use std::process::Command;
 
 pub(super) const OPEN_EDITOR: &str = "open-editor";
 pub(super) const BACK_OUT: &str = "back-out-queue";
+pub(super) const QUEUE_CTRL_C: &str = "queue-ctrl-c";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
@@ -124,6 +125,11 @@ pub(super) fn queue_bindings(keybindings: &mut Keybindings) {
         KeyModifiers::CONTROL,
         KeyCode::Char('q'),
         ReedlineEvent::ExecuteHostCommand(BACK_OUT.to_string()),
+    );
+    keybindings.add_binding(
+        KeyModifiers::CONTROL,
+        KeyCode::Char('c'),
+        ReedlineEvent::ExecuteHostCommand(QUEUE_CTRL_C.to_string()),
     );
 }
 

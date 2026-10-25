@@ -62,18 +62,18 @@ ralph                      # same as ralph chat with defaults
 
 ## Queued messages
 
-Ctrl-Q during a turn pauses the display of the turn output and opens a queue editor. The turn keeps running and the output is held.
+Ctrl-Q during a turn, or typing text, pauses the display of the turn output and opens a queue editor. Typed text seeds the editor, so no typing is lost. The turn keeps running and the output is held.
 
 - Enter with text adds the text as a queue entry, except a read-only command (`/help`, `/workers`, `/inbox list`, `/inbox peek N`, `/watch list`, a bare `/watch`, and the usage or unclosed-quote replies of `/inbox`, `/watch` and `/diff`): it runs at once, prints before the held output returns, and is not queued. The turn is not cancelled. Other commands (`/inbox`, `/inbox drop N`, `/watch start`, `/watch stop`, `/diff` with a target) stay queued. Empty Enter or Ctrl-D adds nothing.
 - Ctrl-Q in the editor backs out: a non-blank draft is added as the last entry, and the queue is held. The turn is not cancelled. At turn end ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. Ctrl-Q during the same turn opens the editor again; the queue stays held.
 - Each of these closes the editor, prints the held output, and resumes live output.
-- Ctrl-C in the editor cancels the turn like Ctrl-C does today.
+- Ctrl-C in the editor (a host command, `queue_ctrl_c`) clears a non-empty draft and the turn keeps running; on an empty draft it cancels the turn and holds the queue.
 - While the editor is open, a queue block follows the mode block in the status bar: `turn running · QUEUED N`, or `turn done · QUEUED N` once the turn ended (no `· QUEUED N` part at 0 entries). Compact forms: `running · QN` / `done · QN`, then `▶ QN` / `✓ QN`. A held queue (after a back-out or an editor Ctrl-C) says `HELD` instead: `turn running · HELD N`, `running · HN`, `▶ HN`, and the `done` / `✓` forms likewise. When the bar is too narrow, the block is dropped after mail and before the mode block. The turn's end repaints the editor through its reedline repaint signal, so the block flips without a key press. The mode block keeps `NAP`, `INBOX`, `WORK` or `IDLE`.
 - Nothing sends while the editor is open. A turn that ends meanwhile waits for the editor to close.
 - After a normal reply, ralph joins the entries with a blank line, in typed order, and sends them as one message as if typed at the prompt. Slash commands and `!` cells behave as at the prompt.
 - Only the merged text goes to `history.txt`.
-- After a cancel, a failed turn, an editor Ctrl-C, or a back-out, ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. A restored cancelled message comes first, then a blank line, then the entries. On exit the entries are dropped.
-- Printable text typed right after Ctrl-Q in the same read fills the queue editor. Other keys typed during a turn are discarded. If the input closes, ralph stops reading keys during the turn. Ctrl-Q at the idle prompt does nothing.
+- After a cancel, a failed turn, an editor Ctrl-C, or a back-out, ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. A restored cancelled message comes first, then a blank line, then the entries. On exit (SIGTERM or SIGHUP) the entries and any typed text are saved to the chat history, and one line `N queued message(s) not sent; saved to history.` goes to stderr.
+- Text typed during a turn opens the queue editor seeded with it (`chat_typed::typed`): all printable text of the read, before and after a Ctrl-Q, with Tab and inner line breaks kept. Control bytes, arrows and other escape sequences, Alt keys, bracketed-paste markers (the paste content stays) and invalid UTF-8 are dropped; a read with no text and no Ctrl-Q is ignored. A read that ends inside a UTF-8 character or an escape sequence waits up to two 10 ms polls for the rest. Ctrl-C and Ctrl-Z still signal (the terminal keeps ISIG). Bytes left in stdin when the turn ends are read, not flushed; their text is never sent but joins the next prompt draft, after the draft and the queue entries. If the input closes, ralph stops reading keys during the turn. Ctrl-Q at the idle prompt does nothing.
 
 ## Suggested reply
 
