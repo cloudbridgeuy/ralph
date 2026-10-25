@@ -133,6 +133,10 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
         effect: "clear the whole draft (emacs mode)",
     },
     KeyHelp {
+        keys: "Suggested reply",
+        effect: "the prompt can start filled with a reply the model suggests; Enter sends it, Ctrl-U or Esc Esc clears it",
+    },
+    KeyHelp {
         keys: "Ctrl-Z, Ctrl-O",
         effect: "undo, redo",
     },
