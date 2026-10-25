@@ -1,11 +1,11 @@
 use super::*;
 use crate::worker::Report;
 
-fn entry(source: &str) -> Entry {
+fn entry(worker: &str) -> Entry {
     Entry {
-        source: source.to_string(),
+        source: format!("20261025122100-000003-{worker}.json"),
         report: Report {
-            worker: source.to_string(),
+            worker: worker.to_string(),
             at: "t".to_string(),
             status: "done".to_string(),
             text: String::new(),
@@ -51,6 +51,13 @@ fn source_matches_exactly() {
     assert!(!source("w1").matches(&entry("w10")));
     assert!(!source("w1").matches(&entry("W1")));
     assert!(!source("w1").matches(&entry("watch:w1")));
+}
+
+#[test]
+fn source_matches_the_worker_not_the_file_name() {
+    let held = entry("w2");
+    assert!(source("w2").matches(&held));
+    assert!(!source(&held.source).matches(&held));
 }
 
 #[test]

@@ -29,7 +29,7 @@ impl HoldFilter {
     pub fn matches(&self, entry: &Entry) -> bool {
         match self {
             HoldFilter::Any => true,
-            HoldFilter::Source(source) => entry.source == *source,
+            HoldFilter::Source(source) => entry.report.worker == *source,
         }
     }
 }

@@ -116,7 +116,7 @@ Usage string: `Usage: /inbox [next | N | list | peek N | drop N]`. `/inboxfoo` i
 
 `/hold [<worker-id> | watch:<name>]` waits for an inbox report and runs it as a normal inbox turn. ralph answers it itself; it starts no model turn. It is not a read-only command, so during a turn it is queued like `/inbox`.
 
-- The filter is the exact inbox `source` of a report: a worker id, or `watch:<name>` for a watch report. A bare `/hold` matches any report. Two or more arguments make the line a normal message (`/hold a b`, `/holdfoo`). An unknown id arms the hold anyway; the bar shows the id.
+- The filter is the exact sender of a report (`report.worker`, not the inbox file name): a worker id, or `watch:<name>` for a watch report. A bare `/hold` matches any report. Two or more arguments make the line a normal message (`/hold a b`, `/holdfoo`). An unknown id arms the hold anyway; the bar shows the id.
 - One shot. While held there is no prompt. The first matching unread report starts a turn that sends only that report (the same as `/inbox N` for its position); then the hold is off. Nothing re-arms it. Reports that do not match stay unread in the queue.
 - A matching report that is already unread when `/hold` runs starts its turn at once.
 - Exit keys: Ctrl-Q or Ctrl-D leave the hold and return to the prompt. Ctrl-C also leaves it (the SIGINT sets the interrupt flag, which hold clears) and does not quit the chat. A hangup (stdin closed, SIGTERM, SIGHUP) quits the chat. Hold puts the terminal in the partial mode used by the queue editor (no echo, no line buffering, Ctrl-Q arrives as a key) when stdin is a terminal.
