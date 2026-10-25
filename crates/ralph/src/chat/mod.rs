@@ -73,7 +73,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
-use ralph_core::chat_suggestion::prefill;
+use ralph_core::chat_suggestion::{prefill, Prefill};
 use ralph_core::chat_thread::run_id;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -447,7 +447,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         };
         let draft = draft_with_typed(draft, &typed);
         let replied = outcome == TurnOutcome::Replied;
-        if let Some(draft) = prefill(replied, draft, suggestion) {
+        if let Some(fill) = prefill(replied, draft, suggestion) {
+            let (Prefill::Draft(draft) | Prefill::Suggestion(draft)) = fill;
             editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
         }
     }
