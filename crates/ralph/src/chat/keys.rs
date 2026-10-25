@@ -4,11 +4,14 @@ use crate::chat::prompt::{retry_interrupted, QueuePrompt};
 use crate::chat::queue::{
     has_queue_key, on_exit, typed_after_queue_key, Action, EditorExit, Queue,
 };
+use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::PartialMode;
 use crate::subprocess::OutputGate;
+use crate::warn::warn_if_err;
 use crate::watches::locked;
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
+use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use reedline::{EditCommand, Reedline, Signal};
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +30,8 @@ pub(super) struct Keys<'a> {
     pub(super) monitor: &'a Monitor,
     pub(super) bar: &'a StatusBar,
     pub(super) edit_mode: EditModeConfig,
+    pub(super) local: &'a LocalRoute<'a>,
+    pub(super) empty_submit: &'a EmptySubmit,
 }
 
 /// The turn's end, as the queue editor sees it: `done` feeds the status bar,
@@ -157,6 +162,15 @@ impl Keys<'_> {
         queue
     }
 
+    fn instant_route(&self, text: &str) -> Option<Route> {
+        Some(route_input(
+            text,
+            self.monitor.status().unread,
+            self.empty_submit,
+        ))
+        .filter(Route::runs_mid_turn)
+    }
+
     fn edit(&self, queue: Queue, seed: &str, watch: &TurnWatch) -> Queue {
         self.gate.pause();
         wait_settled(self.gate);
@@ -175,6 +189,21 @@ impl Keys<'_> {
         };
         let exit = read_exit(&mut editor, &prompt);
         locked(&watch.repaint).take();
+        let exit = match exit {
+            EditorExit::Submitted(text) => match self.instant_route(&text) {
+                Some(route) => {
+                    warn_if_err(
+                        run_local(route, self.local, || {
+                            self.monitor.refresh(true);
+                        }),
+                        "Failed to run the command",
+                    );
+                    EditorExit::Submitted(String::new())
+                }
+                None => EditorExit::Submitted(text),
+            },
+            other => other,
+        };
         let (queue, action) = on_exit(queue, exit);
         self.gate.resume();
         if action == Action::Cancel {

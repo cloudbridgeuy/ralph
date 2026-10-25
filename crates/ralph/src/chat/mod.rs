@@ -304,12 +304,24 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     let remote = RemoteStatus::new();
     let mut shell_state = cell::ShellState::default();
+    let display = inbox_display(color);
+    let local_route = LocalRoute {
+        inbox: &monitor.inbox,
+        watches: &monitor.watches,
+        display: &display,
+        changes: &config.changes,
+        store: &store_dir,
+        monitor: &monitor,
+        remote: &remote,
+    };
     let keys = Keys {
         gate: &turn.gate,
         cancel: &turn.cancel,
         monitor: &monitor,
         bar: &prompt.bar,
         edit_mode,
+        local: &local_route,
+        empty_submit: &prompt.empty_submit,
     };
     let mut pending: Option<Route> = None;
     loop {
@@ -369,16 +381,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 (result?, None)
             }
             local => {
-                let ctx = LocalRoute {
-                    inbox: &monitor.inbox,
-                    watches: &monitor.watches,
-                    display: &inbox_display(color),
-                    changes: &config.changes,
-                    store: &store_dir,
-                    monitor: &monitor,
-                    remote: &remote,
-                };
-                run_local(local, &ctx, || {
+                run_local(local, &local_route, || {
                     monitor.refresh(true);
                 })?;
                 continue;
