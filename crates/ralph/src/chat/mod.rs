@@ -18,6 +18,7 @@ mod skills;
 mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
+mod suggestion;
 mod terminal;
 mod turn;
 mod watch;
@@ -41,6 +42,7 @@ use crate::chat::skills::{
 use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
+use crate::chat::suggestion::SuggestionSlot;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::ChatArgs;
@@ -67,6 +69,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
+use ralph_core::chat_suggestion::prefill;
 use ralph_core::chat_thread::run_id;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::snapshot::snapshots_enabled;
@@ -144,6 +147,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     )?;
     sweep_stale_server_records();
     let chat_socket = ChatSocket::bind(&store_dir)?;
+    let suggestions = SuggestionSlot::default();
     let socket_files = chat_socket.files().clone();
     let _socket_guard = SocketGuard(socket_files.clone());
     let mcp_args = write_mcp_config(
@@ -244,6 +248,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             permission_mode.clone(),
             args.worktree_dir.clone(),
         ),
+        suggestions.clone(),
     );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
@@ -344,6 +349,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                         let sent = prepared.sent;
+                        suggestions.clear();
                         let (result, queued) = snapshots.around(|| {
                             keys.during(|| {
                                 turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
@@ -362,6 +368,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     continue;
                 };
+                suggestions.clear();
                 let (result, queued) = snapshots.around(|| {
                     keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
                 });
@@ -388,7 +395,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         if outcome == TurnOutcome::Exit {
             break;
         }
-        let draft = match decide(outcome, queue) {
+        let suggestion = suggestions.take();
+        let (draft, suggestion) = match decide(outcome, queue) {
             Decision::Send(text) => {
                 print!("{}", prompt.echo(&text));
                 warn_if_err(
@@ -402,11 +410,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     monitor.status().unread,
                     &prompt.empty_submit,
                 ));
-                draft
+                (draft, None)
             }
-            Decision::Keep(entries) => draft_with_queue(draft, &entries),
+            Decision::Keep(entries) => (draft_with_queue(draft, &entries), suggestion),
         };
-        if let Some(draft) = draft {
+        let replied = outcome == TurnOutcome::Replied;
+        if let Some(draft) = prefill(replied, draft, suggestion) {
             editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
         }
     }

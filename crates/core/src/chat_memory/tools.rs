@@ -3,6 +3,7 @@ use super::search::{parse_search_args, SearchRequest};
 use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
 use crate::chat_socket::is_socket_tool;
+use crate::chat_suggestion::suggest_reply_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::worker::command_definitions;
 use serde_json::{json, Value};
@@ -38,6 +39,7 @@ pub fn tool_definitions() -> Value {
     let mut tools = memory_tool_definitions();
     if let Some(list) = tools.as_array_mut() {
         list.extend(command_definitions());
+        list.push(suggest_reply_tool());
     }
     tools
 }
@@ -198,7 +200,8 @@ mod tests {
                 "spawn_worker",
                 "reply",
                 "close_worker",
-                "watch"
+                "watch",
+                "suggest_reply"
             ]
         );
     }

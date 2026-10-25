@@ -3,7 +3,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const SOCKET_TOOLS: [&str; 4] = ["spawn_worker", "reply", "close_worker", "watch"];
+const SOCKET_TOOLS: [&str; 5] = [
+    "spawn_worker",
+    "reply",
+    "close_worker",
+    "watch",
+    "suggest_reply",
+];
 const SOCKET_PREFIX: &str = "chat-";
 const SOCKET_FILE: &str = "chat.sock";
 const MCP_CONFIG_FILE: &str = "mcp.json";
@@ -138,7 +144,13 @@ mod tests {
 
     #[test]
     fn socket_tools_route_to_the_socket_and_memory_tools_do_not() {
-        for name in ["spawn_worker", "reply", "close_worker", "watch"] {
+        for name in [
+            "spawn_worker",
+            "reply",
+            "close_worker",
+            "watch",
+            "suggest_reply",
+        ] {
             assert!(is_socket_tool(name));
         }
         for name in ["zoom", "recall", "", "Reply"] {
