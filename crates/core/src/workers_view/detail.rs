@@ -1,7 +1,8 @@
-use super::remote::{pr_detail, ticket_detail};
-use super::{block, cut, row_lines, title, WorkerDetail, WorkerRow, REPORT_LIMIT};
+use super::remote::{pr_cell, pr_detail, ticket_detail};
+use super::{block, cut, row_lines, title, Remote, WorkerDetail, WorkerRow, REPORT_LIMIT};
 use crate::inbox::age;
 use chrono::{DateTime, Utc};
+use unicode_width::UnicodeWidthStr;
 
 pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> String {
     let row = &detail.row;
@@ -12,10 +13,24 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
         },
         now,
     );
+    let label = lines
+        .iter()
+        .map(|(name, _)| name.width())
+        .max()
+        .unwrap_or(0);
+    let mut url_line = None;
     for (name, value) in &mut lines {
         match *name {
             "ticket" => *value = ticket_detail(detail.ticket.as_ref(), &row.ticket),
-            "pr" => *value = pr_detail(&row.pr),
+            "pr" => {
+                *value = pr_detail(&row.pr);
+                if let Remote::Found(pr) = &row.pr {
+                    if !pr.url.is_empty() && 2 + label + 2 + value.width() > width {
+                        *value = pr_cell(&row.pr);
+                        url_line = Some(format!("  {}", pr.url));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -38,7 +53,19 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
         let state = if mark.running { "running" } else { "idle" };
         lines.push(("heartbeat", format!("{state} {}", age(&at, now))));
     }
-    let mut out = block(title(row), &lines, width);
+    let mut out = match url_line {
+        None => block(title(row), &lines, width),
+        Some(url) => {
+            let shown = block(title(row), &lines, width);
+            let mut rows: Vec<&str> = shown.lines().collect();
+            let at = rows
+                .iter()
+                .position(|line| line.trim_start().starts_with("pr "))
+                .map_or(rows.len(), |i| i + 1);
+            rows.insert(at, &url);
+            rows.join("\n")
+        }
+    };
     out.push_str("\n\n");
     for status in detail.history.iter().rev() {
         out.push_str(&cut(
@@ -294,6 +321,32 @@ mod tests {
         assert!(text.lines().all(|l| l.width() <= 200), "{text}");
         let narrow = detail_view(&detail, now(), 80);
         assert!(narrow.lines().all(|l| l.width() <= 80), "{narrow}");
+    }
+
+    #[test]
+    fn a_long_pr_url_is_never_cut_and_moves_to_its_own_line() {
+        let url = format!("https://github.com/org/repo/pull/12/{}", "x".repeat(60));
+        let open = Pr {
+            number: 12,
+            state: PrState::Open,
+            draft: false,
+            review: Review::Other,
+            url: url.clone(),
+        };
+        let detail = WorkerDetail {
+            row: remote_row(Remote::Found("In Progress".into()), Remote::Found(open)),
+            ..bare_detail(Some(linear_ticket()))
+        };
+        let text = detail_view(&detail, now(), 80);
+        let rows: Vec<&str> = text.lines().collect();
+        let at = rows.iter().position(|l| l.starts_with("  pr ")).unwrap();
+        assert_eq!(rows[at].trim_end(), "  pr        #12 open");
+        assert_eq!(rows[at + 1], format!("  {url}"));
+        let wide = detail_view(&detail, now(), 400);
+        assert!(
+            wide.contains(&format!("  pr        #12 open · {url}\n")),
+            "{wide}"
+        );
     }
 
     #[test]

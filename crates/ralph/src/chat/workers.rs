@@ -2,7 +2,7 @@ use crate::chat::inbox::Display;
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, WorkersSection};
 use crate::render::render_markdown;
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
@@ -45,6 +45,7 @@ fn found<T>(value: Option<T>) -> Lookup<T> {
 
 struct Facts {
     config: Result<AppConfig, String>,
+    workers: WorkersSection,
     origin_head: Option<String>,
     reports: Option<HashMap<String, Vec<ReportLine>>>,
     porcelain: Option<String>,
@@ -69,6 +70,7 @@ fn row(
     worker: &RunningWorker,
     facts: &Facts,
     remote: &RemoteStatus,
+    ticket: Option<&Ticket>,
 ) -> (WorkerRow, Option<String>) {
     let state = monitor
         .status()
@@ -109,8 +111,7 @@ fn row(
         _ => (Lookup::Missing, Lookup::Missing, Lookup::Missing),
     };
     let worktree = tree.map(|tree| tree.display().to_string());
-    let ticket = spawn_ticket(&monitor.store_dir, &worker.id);
-    let cells = remote.cells(&worker.id, ticket.as_ref());
+    let cells = remote.cells(&facts.workers, &worker.id, ticket);
     (
         WorkerRow {
             id: worker.id.clone(),
@@ -152,8 +153,13 @@ fn facts(monitor: &Monitor) -> Facts {
         let unread = monitor.inbox.peek().ok()?;
         Some(ralph_core::workers_view::group_reports(&entries, &unread))
     });
+    let config = AppConfig::load().map_err(|e| e.to_string());
     Facts {
-        config: AppConfig::load().map_err(|e| e.to_string()),
+        workers: config
+            .as_ref()
+            .map(|config| config.workers.clone())
+            .unwrap_or_default(),
+        config,
         origin_head: git(None, &ORIGIN_HEAD_ARGS),
         reports,
         porcelain: git(None, &["worktree", "list", "--porcelain"]),
@@ -168,7 +174,10 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote
     let Some(id) = id else {
         let rows: Vec<WorkerRow> = running
             .iter()
-            .map(|worker| row(monitor, worker, &facts, remote).0)
+            .map(|worker| {
+                let ticket = spawn_ticket(&monitor.store_dir, &worker.id);
+                row(monitor, worker, &facts, remote, ticket.as_ref()).0
+            })
             .collect();
         match workers_view(&rows, now, width) {
             View::Table(markdown) => {
@@ -186,7 +195,8 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote
         return;
     };
     let history = status_history(&monitor.store_dir, id);
-    let (mut row, worktree) = row(monitor, worker, &facts, remote);
+    let ticket = spawn_ticket(&monitor.store_dir, id);
+    let (mut row, worktree) = row(monitor, worker, &facts, remote, ticket.as_ref());
     row.status = history.last().cloned();
     let detail = WorkerDetail {
         row,
@@ -196,7 +206,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote
             .then(|| worker.session.clone()),
         markers: markers(&monitor.store_dir, id),
         heartbeat: heartbeat(&monitor.store_dir, id),
-        ticket: spawn_ticket(&monitor.store_dir, id),
+        ticket,
         history,
         reports: facts
             .reports

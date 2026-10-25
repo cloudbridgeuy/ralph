@@ -70,6 +70,9 @@ pub enum ConfigError {
     /// A `[wire.prices]` value is below zero.
     #[error("{0}")]
     InvalidWirePrice(String),
+
+    #[error("{0}")]
+    InvalidWorkers(String),
 }
 
 /// Application configuration.
@@ -371,6 +374,10 @@ impl AppConfig {
         })?;
         ralph_core::wire::price::validate_price_overrides(&config.wire.prices)
             .map_err(ConfigError::InvalidWirePrice)?;
+        config
+            .workers
+            .validate()
+            .map_err(ConfigError::InvalidWorkers)?;
         Ok(config)
     }
 

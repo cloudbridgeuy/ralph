@@ -301,7 +301,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         theme: &agent_theme,
         color,
     };
-    let remote = RemoteStatus::new(config.workers.clone());
+    let remote = RemoteStatus::new();
     let mut shell_state = cell::ShellState::default();
     let keys = Keys {
         gate: &turn.gate,
