@@ -96,7 +96,7 @@ impl Command {
             Command::Hold => &[
                 (
                     "/hold [<worker-id> | watch:<name>]",
-                    "wait with no prompt; the first matching inbox report starts a turn, once; Ctrl-Q or Ctrl-D leaves",
+                    "wait with no prompt; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
         }
@@ -243,7 +243,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
         Kind::Mode(_) => ("mode block", "HOLD, NAP, INBOX, WORK or IDLE (below)"),
         Kind::Hold(_) => (
             "from <source>",
-            "only during /hold: the source it waits for, or any",
+            "only during /hold: the source it waits for, or anyone",
         ),
         Kind::Queue(_) => (
             "turn running · QUEUED N",

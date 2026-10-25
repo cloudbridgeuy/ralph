@@ -21,7 +21,7 @@ impl HoldFilter {
 
     pub fn label(&self) -> &str {
         match self {
-            HoldFilter::Any => "any",
+            HoldFilter::Any => "anyone",
             HoldFilter::Source(source) => source,
         }
     }
@@ -39,6 +39,10 @@ pub fn first_match(entries: &[Entry], filter: &HoldFilter) -> Option<Position> {
         .iter()
         .position(|entry| filter.matches(entry))
         .and_then(Position::at_index)
+}
+
+pub fn redraw(bar: &str) -> String {
+    format!("\r\x1b[2K{}", bar.trim_end_matches('\n'))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

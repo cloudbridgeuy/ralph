@@ -36,7 +36,7 @@ fn parse_rejects_extra_tokens() {
 
 #[test]
 fn label_names_the_source_or_any() {
-    assert_eq!(HoldFilter::Any.label(), "any");
+    assert_eq!(HoldFilter::Any.label(), "anyone");
     assert_eq!(source("watch:ci").label(), "watch:ci");
 }
 
@@ -102,4 +102,10 @@ fn other_keys_do_not_leave() {
     assert_eq!(hold_key(b""), None);
     assert_eq!(hold_key(b"q"), None);
     assert_eq!(hold_key(&[0x03, 0x1b, b'\r']), None);
+}
+
+#[test]
+fn redraw_returns_to_the_line_start_and_drops_the_newline() {
+    assert_eq!(redraw("bar\n"), "\r\x1b[2Kbar");
+    assert_eq!(redraw("bar"), "\r\x1b[2Kbar");
 }

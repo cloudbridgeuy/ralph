@@ -218,7 +218,7 @@ mod tests {
             hold: Some(HoldFilter::Any),
             ..status
         };
-        assert!(line(&any, 200).starts_with(" HOLD  from any "));
+        assert!(line(&any, 200).starts_with(" HOLD  from anyone "));
     }
 
     #[test]
