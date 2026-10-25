@@ -80,6 +80,26 @@ pub enum Route {
     Ignore,
 }
 
+impl Route {
+    pub fn runs_mid_turn(&self) -> bool {
+        match self {
+            Route::Workers(_)
+            | Route::PeekInbox(_)
+            | Route::ListInbox
+            | Route::Help
+            | Route::InboxUsage
+            | Route::Watch(WatchCommand::List | WatchCommand::Usage)
+            | Route::Diff(DiffArgs::Usage(_) | DiffArgs::UnclosedQuote) => true,
+            Route::Send(_)
+            | Route::ReadInbox(_)
+            | Route::DropInbox(_)
+            | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
+            | Route::Diff(DiffArgs::Target(_))
+            | Route::Ignore => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum EmptySubmit {
     #[default]
@@ -365,6 +385,40 @@ mod tests {
         let at = |secs| watch_states(&saved, now + chrono::Duration::seconds(secs));
         assert_eq!(at(2870), at(2871));
         assert_eq!(at(2870)[0].left.as_deref(), Some("12m"));
+    }
+
+    #[test]
+    fn only_read_only_routes_run_mid_turn() {
+        let runs = |line: &str| route_input(line, 0, &EmptySubmit::Inbox).runs_mid_turn();
+        for line in [
+            "/inbox peek 1",
+            "/inbox peek x",
+            "/inbox list",
+            "/inbox bogus a b",
+            "/workers",
+            "/workers w1",
+            "/help",
+            "/watch list",
+            "/watch",
+            "/diff last 0",
+            "/diff \"x",
+        ] {
+            assert!(runs(line), "{line}");
+        }
+        for line in [
+            "/inbox",
+            "/inbox next",
+            "/inbox 2",
+            "/inbox drop 1",
+            "/watch stop w1",
+            "/watch start sleep 5 -- done",
+            "/diff HEAD",
+            "/workers a b",
+            "hello",
+            "",
+        ] {
+            assert!(!runs(line), "{line}");
+        }
     }
 
     #[test]

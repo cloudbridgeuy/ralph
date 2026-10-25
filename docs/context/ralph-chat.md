@@ -64,7 +64,7 @@ ralph                      # same as ralph chat with defaults
 
 Ctrl-Q during a turn pauses the display of the turn output and opens a queue editor. The turn keeps running and the output is held.
 
-- Enter with text adds the text as a queue entry. Empty Enter or Ctrl-D adds nothing.
+- Enter with text adds the text as a queue entry, except a read-only command (`/help`, `/workers`, `/inbox list`, `/inbox peek N`, `/watch list`, a bare `/watch`, and the usage or unclosed-quote replies of `/inbox`, `/watch` and `/diff`): it runs at once, prints before the held output returns, and is not queued. The turn is not cancelled. Other commands (`/inbox`, `/inbox drop N`, `/watch start`, `/watch stop`, `/diff` with a target) stay queued. Empty Enter or Ctrl-D adds nothing.
 - Ctrl-Q in the editor backs out: a non-blank draft is added as the last entry, and the queue is held. The turn is not cancelled. At turn end ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. Ctrl-Q during the same turn opens the editor again; the queue stays held.
 - Each of these closes the editor, prints the held output, and resumes live output.
 - Ctrl-C in the editor cancels the turn like Ctrl-C does today.
