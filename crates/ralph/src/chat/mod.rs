@@ -49,7 +49,7 @@ use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
-use crate::render::{cap_wrap_width, render_markdown, RenderContext};
+use crate::render::{cap_wrap_width, RenderContext};
 use crate::signal;
 use crate::subprocess::OutputGate;
 use crate::warn::{warn, warn_if_err};
@@ -269,6 +269,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    crate::render::image::enable_images(crate::render::image::detect());
     let (configured_editor, config_warning) = chat_config.editor_setting();
     let (editor_cmd, editor_warning) = editor_argv(
         configured_editor,
@@ -333,7 +334,14 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
                             let ctx = RenderContext::new(&agent_highlighter, color);
-                            print!("{}", render_markdown(&ctx, shown, &agent_theme));
+                            print!(
+                                "{}",
+                                crate::render::image::render_cell_display(
+                                    &ctx,
+                                    shown,
+                                    &agent_theme
+                                )
+                            );
                         }
                         let sent = prepared.sent;
                         let (result, queued) = snapshots.around(|| {

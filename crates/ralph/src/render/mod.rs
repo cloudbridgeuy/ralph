@@ -16,6 +16,7 @@
 //! 3. **Single Source of Truth**: No duplication between rendering paths
 //! 4. **Data-Centric**: Renderers accept structured data, not processor references
 
+pub mod image;
 mod link;
 pub mod mermaid;
 pub mod text;
@@ -29,6 +30,7 @@ pub use utils::{
     highlight_grep_match, normalize_cat_n_format,
 };
 
+pub use image::ImageSettings;
 pub use wrap::{cap_wrap_width, wrap_width};
 
 // Re-export text rendering

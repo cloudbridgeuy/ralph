@@ -37,6 +37,7 @@ pub struct RenderContext<'a> {
     pub terminal: bool,
     pub width: usize,
     pub mermaid: fn(&str, usize) -> Option<String>,
+    pub images: Option<crate::render::ImageSettings>,
 }
 
 const DEFAULT_WIDTH: usize = 80;
@@ -59,6 +60,7 @@ impl<'a> RenderContext<'a> {
             terminal,
             width,
             mermaid: crate::mermaid_guard::render,
+            images: crate::render::image::enabled(),
         }
     }
 
