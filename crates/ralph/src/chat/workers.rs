@@ -179,7 +179,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote
                 row(monitor, worker, &facts, remote, ticket.as_ref()).0
             })
             .collect();
-        match workers_view(&rows, now, width) {
+        match workers_view(&rows, now, width, facts.workers.view) {
             View::Table(markdown) => {
                 print!(
                     "{}",
@@ -225,6 +225,10 @@ mod tests {
     use chrono::{DateTime, Utc};
     use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote};
     use unicode_width::UnicodeWidthStr;
+
+    fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> View {
+        super::workers_view(rows, now, width, ralph_core::workers_view::Layout::Table)
+    }
 
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-01-01T01:00:00Z")

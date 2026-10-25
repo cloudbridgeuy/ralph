@@ -298,6 +298,7 @@ jira = ["VP20", "KODA"]
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `view` | `"table"` | `table` shows a table when it fits and worker blocks otherwise. `list` always shows worker blocks |
 | `pr_provider` | `"github"` | `github` looks up the PR with `gh`. `none` turns PR lookups off and the PR cell shows `-` |
 | `lookup_timeout_ms` | `5000` | Kill one lookup, with its child processes, after this many milliseconds. The cell shows `?`. Minimum `1` |
 | `cache_secs` | `60` | Show a result for this many seconds, failures too. After that the cell shows `…` until a new lookup ends. Minimum `1` |
@@ -308,7 +309,7 @@ pr_provider = "none"
 lookup_timeout_ms = 3000
 ```
 
-A `0` for `cache_secs` or `lookup_timeout_ms`, or an unknown `pr_provider`, fails config load. An unknown key is ignored. `/workers` reloads the file on each call, so an edit applies to the next `/workers`; a file that fails to load uses the defaults there. Ticket lookups need a tracker, so they follow `[tickets]`.
+A `0` for `cache_secs` or `lookup_timeout_ms`, or an unknown `pr_provider` or `view`, fails config load. An unknown key is ignored. `/workers` reloads the file on each call, so an edit applies to the next `/workers`; a file that fails to load uses the defaults there. Ticket lookups need a tracker, so they follow `[tickets]`.
 
 ### `[mermaid]` - Diagram Rendering
 

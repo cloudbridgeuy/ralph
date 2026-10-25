@@ -6,6 +6,7 @@ use crate::inbox::age;
 use crate::worker::{ActivityMark, Report, StatusLine, Ticket};
 use crate::worker_check::{is_report_status, message_header};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -100,6 +101,14 @@ pub struct WorkerDetail {
 pub enum View {
     Table(String),
     Text(String),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Layout {
+    #[default]
+    Table,
+    List,
 }
 
 fn entry_reports(text: &str, at: &str) -> Vec<(String, ReportLine)> {
@@ -414,19 +423,21 @@ fn title(row: &WorkerRow) -> String {
     )
 }
 
-pub fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> View {
+pub fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize, layout: Layout) -> View {
     if rows.is_empty() {
         return View::Text(NO_WORKERS.to_string());
     }
-    match table(rows, now, width) {
-        Some(markdown) => View::Table(markdown),
-        None => View::Text(
-            rows.iter()
-                .map(|row| block(title(row), &row_lines(row, now), width))
-                .collect::<Vec<_>>()
-                .join("\n\n"),
-        ),
+    if layout == Layout::Table {
+        if let Some(markdown) = table(rows, now, width) {
+            return View::Table(markdown);
+        }
     }
+    View::Text(
+        rows.iter()
+            .map(|row| block(title(row), &row_lines(row, now), width))
+            .collect::<Vec<_>>()
+            .join("\n\n"),
+    )
 }
 
 #[cfg(test)]
@@ -434,6 +445,10 @@ pub(super) mod tests {
     use super::*;
 
     const NOW: &str = "2026-01-01T01:00:00Z";
+
+    fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> View {
+        super::workers_view(rows, now, width, Layout::Table)
+    }
 
     pub(super) fn now() -> DateTime<Utc> {
         instant(NOW).unwrap()
@@ -588,10 +603,33 @@ pub(super) mod tests {
 
     #[test]
     fn empty_workers_print_a_plain_line() {
+        for layout in [Layout::Table, Layout::List] {
+            assert_eq!(
+                super::workers_view(&[], now(), 80, layout),
+                View::Text(NO_WORKERS.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn layout_selects_a_table_or_blocks_on_wide_screens() {
+        let rows = [row("GUZ-1")];
+        assert!(matches!(
+            super::workers_view(&rows, now(), 160, Layout::Table),
+            View::Table(_)
+        ));
         assert_eq!(
-            workers_view(&[], now(), 80),
-            View::Text(NO_WORKERS.to_string())
+            super::workers_view(&rows, now(), 160, Layout::List),
+            View::Text("● GUZ-1 · claude · busy\n  report  done 12m ago\n  head    2f7f8c0 fix(chat): exact /help, width-wrapped help and stricter help tests\n  diff    +120 -40 in 3 files ?2 · 2 behind origin/main\n  ticket  -\n  pr      -".into())
         );
+    }
+
+    #[test]
+    fn table_fallback_matches_list_layout_on_narrow_screens() {
+        let rows = [row("GUZ-1")];
+        let list = super::workers_view(&rows, now(), 80, Layout::List);
+        assert!(matches!(list, View::Text(_)));
+        assert_eq!(super::workers_view(&rows, now(), 80, Layout::Table), list);
     }
 
     fn table_of(view: View) -> String {
