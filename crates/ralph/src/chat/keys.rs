@@ -4,7 +4,7 @@ use crate::chat::prompt::{retry_interrupted, QueuePrompt};
 use crate::chat::queue::{on_exit, Action, EditorExit, Queue};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::statusbar::StatusBar;
-use crate::chat::terminal::PartialMode;
+use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
 use crate::subprocess::OutputGate;
 use crate::warn::warn_if_err;
 use crate::watches::locked;
@@ -18,10 +18,8 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
-const POLL_MS: libc::c_int = 50;
 const SETTLE_LIMIT: Duration = Duration::from_millis(300);
 const SETTLE_STEP: Duration = Duration::from_millis(10);
-const READ_CHUNK: usize = 256;
 const JOIN_POLL_MS: libc::c_int = 10;
 const JOIN_TRIES: usize = 2;
 
@@ -74,43 +72,6 @@ pub(super) fn exit_for(signal: Signal, buffer: &str) -> Step {
         },
         _ => Step::Continue,
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Input {
-    Ready,
-    Idle,
-    Closed,
-}
-
-fn classify_poll(result: libc::c_int, revents: libc::c_short) -> Input {
-    if result <= 0 {
-        Input::Idle
-    } else if revents & libc::POLLIN != 0 {
-        Input::Ready
-    } else if revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
-        Input::Closed
-    } else {
-        Input::Idle
-    }
-}
-
-fn poll_input(timeout_ms: libc::c_int) -> Input {
-    let mut input = libc::pollfd {
-        fd: libc::STDIN_FILENO,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    let result = unsafe { libc::poll(&mut input, 1, timeout_ms) };
-    classify_poll(result, input.revents)
-}
-
-fn read_input() -> Vec<u8> {
-    let mut buffer = [0u8; READ_CHUNK];
-    let count = unsafe { libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr().cast(), buffer.len()) };
-    usize::try_from(count)
-        .map(|count| buffer[..count].to_vec())
-        .unwrap_or_default()
 }
 
 fn read_whole_input() -> Vec<u8> {
@@ -258,25 +219,6 @@ impl Keys<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn poll_with_data_is_ready_even_when_hung_up() {
-        assert_eq!(classify_poll(1, libc::POLLIN), Input::Ready);
-        assert_eq!(classify_poll(1, libc::POLLIN | libc::POLLHUP), Input::Ready);
-    }
-
-    #[test]
-    fn poll_hangup_error_or_invalid_is_closed() {
-        assert_eq!(classify_poll(1, libc::POLLHUP), Input::Closed);
-        assert_eq!(classify_poll(1, libc::POLLERR), Input::Closed);
-        assert_eq!(classify_poll(1, libc::POLLNVAL), Input::Closed);
-    }
-
-    #[test]
-    fn poll_timeout_or_failure_is_idle() {
-        assert_eq!(classify_poll(0, 0), Input::Idle);
-        assert_eq!(classify_poll(-1, 0), Input::Idle);
-    }
 
     #[test]
     fn enter_submits_the_line() {
