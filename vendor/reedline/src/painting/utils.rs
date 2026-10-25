@@ -215,6 +215,75 @@ pub(crate) fn advance_grapheme(
     }
 }
 
+/// SGR sequences still in effect, in the order they were opened since the last
+/// reset. A continuation prefix painted with `Style::paint` ends in SGR 0, so
+/// the row after it has to re-open this or the highlighter color stops there.
+#[derive(Default)]
+struct ActiveSgr(String);
+
+impl ActiveSgr {
+    fn observe(&mut self, sequence: &str) {
+        let Some(params) = sgr_parameters(sequence) else {
+            return;
+        };
+        let mut kept = Vec::new();
+        let mut reset = false;
+        for param in params {
+            if param.is_empty() || param == "0" {
+                reset = true;
+                kept.clear();
+            } else {
+                kept.push(param);
+            }
+        }
+        if reset {
+            self.0.clear();
+        }
+        if kept.is_empty() {
+            return;
+        }
+        self.0.push_str("\u{1b}[");
+        for (index, param) in kept.iter().enumerate() {
+            if index > 0 {
+                self.0.push(';');
+            }
+            self.0.push_str(param);
+        }
+        self.0.push('m');
+    }
+
+    fn restore(&self) -> String {
+        self.0.clone()
+    }
+}
+
+/// Parameters of an SGR sequence (`\x1b[…m`). `None` for any other escape.
+fn sgr_parameters(sequence: &str) -> Option<Vec<&str>> {
+    let params = sequence.strip_prefix("\u{1b}[")?.strip_suffix('m')?;
+    if !params.chars().all(|c| c.is_ascii_digit() || c == ';') {
+        return None;
+    }
+    if params.is_empty() {
+        return Some(vec![""]);
+    }
+    Some(params.split(';').collect())
+}
+
+fn prefix_resets(prefix: &str) -> bool {
+    ansi_segments(prefix)
+        .into_iter()
+        .any(|(is_escape, sequence)| {
+            is_escape
+                && sgr_parameters(sequence).is_some_and(|params| {
+                    params.iter().any(|param| param.is_empty() || *param == "0")
+                })
+        })
+}
+
+fn continuation_break(prefix: &str, restore: &str) -> String {
+    format!("\r\n{prefix}{restore}")
+}
+
 pub(crate) fn soft_wrap<const N: usize>(
     parts: [&str; N],
     fixed: usize,
@@ -227,7 +296,7 @@ pub(crate) fn soft_wrap<const N: usize>(
         ""
     };
     let prefix_width = line_width(prefix) as u16;
-    let row_break = format!("\r\n{prefix}");
+    let resets = prefix_resets(prefix);
     let plain_prefix = visible_text(prefix);
     let visible: String = parts.iter().map(|part| visible_text(part)).collect();
     let breaks: Vec<usize> = linebreaks(&visible)
@@ -242,22 +311,29 @@ pub(crate) fn soft_wrap<const N: usize>(
     let mut offset = 0;
     let mut row_start = fixed_end;
     let mut col = 0;
-    let mut last_break: Option<(usize, usize, u16, usize)> = None;
+    let mut active = ActiveSgr::default();
+    let mut last_break: Option<(usize, usize, u16, usize, String)> = None;
     for (part, text) in parts.iter().enumerate() {
         let part_start = offset;
         for (is_escape, segment) in ansi_segments(text) {
             if is_escape {
                 out[part].push_str(segment);
+                active.observe(segment);
                 continue;
             }
             for grapheme in segment.graphemes(true) {
-                let slot = if offset == part_start && part > 0 {
+                let mut slot = if offset == part_start && part > 0 {
                     (part - 1, out[part - 1].len())
                 } else {
                     (part, out[part].len())
                 };
                 if offset > row_start && breaks.binary_search(&offset).is_ok() {
-                    last_break = Some((slot.0, slot.1, col, offset));
+                    let restore = if resets {
+                        active.restore()
+                    } else {
+                        String::new()
+                    };
+                    last_break = Some((slot.0, slot.1, col, offset, restore));
                 }
                 let step = if grapheme == "\r\n" { "\n" } else { grapheme };
                 let mut placed = advance_grapheme((0, col), step, columns);
@@ -272,14 +348,27 @@ pub(crate) fn soft_wrap<const N: usize>(
                         };
                     row_start = content.max(fixed_end);
                 } else if placed.0 .0 > 0 {
-                    if let Some((at_part, at, break_col, break_offset)) = last_break.take() {
-                        out[at_part].insert_str(at, &row_break);
+                    if let Some((at_part, at, break_col, break_offset, restore)) = last_break.take()
+                    {
+                        let inserted = continuation_break(prefix, &restore);
+                        out[at_part].insert_str(at, &inserted);
+                        // `slot` was taken before this insert. The current
+                        // grapheme has not been pushed, so an earlier insert
+                        // in the same part moves the index it will occupy.
+                        if slot.0 == at_part && slot.1 > at {
+                            slot.1 += inserted.len();
+                        }
                         col = prefix_width + (col - break_col);
                         row_start = break_offset;
                         placed = advance_grapheme((0, col), step, columns);
                     }
                     if placed.0 .0 > 0 {
-                        out[slot.0].insert_str(slot.1, &row_break);
+                        let restore = if resets {
+                            active.restore()
+                        } else {
+                            String::new()
+                        };
+                        out[slot.0].insert_str(slot.1, &continuation_break(prefix, &restore));
                         col = prefix_width;
                         row_start = offset;
                         placed = advance_grapheme((0, col), step, columns);
@@ -392,6 +481,24 @@ mod test {
     #[test]
     fn soft_wrap_drops_a_prefix_that_leaves_no_room() {
         assert_eq!(soft_wrap(["abcdef"], 0, 4, "::::"), ["abcd\r\nef"]);
+    }
+
+    /// The painter's continuation is `Style::paint`ed, so it ends in SGR 0.
+    /// That reset used to drop the highlighter colour for the rest of the row.
+    #[test]
+    fn soft_wrap_reopens_style_after_a_resetting_continuation() {
+        let prefix = "\u{1b}[94m::: \u{1b}[0m";
+        let [wrapped] = soft_wrap(["\u{1b}[37mone two three four\u{1b}[0m"], 0, 10, prefix);
+        assert_eq!(
+            wrapped,
+            "\u{1b}[37mone two \r\n\u{1b}[94m::: \u{1b}[0m\u{1b}[37mthree \r\n\u{1b}[94m::: \u{1b}[0m\u{1b}[37mfour\u{1b}[0m"
+        );
+        // A reset already closed the style before the break: nothing to reopen.
+        let [wrapped] = soft_wrap(["\u{1b}[37mhi\u{1b}[0m there friend"], 0, 10, prefix);
+        assert_eq!(
+            wrapped,
+            "\u{1b}[37mhi\u{1b}[0m there \r\n\u{1b}[94m::: \u{1b}[0mfriend"
+        );
     }
 
     #[rstest]
