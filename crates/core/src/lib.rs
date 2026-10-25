@@ -20,6 +20,7 @@ pub mod chat_memory;
 pub mod chat_skills;
 pub mod chat_socket;
 pub mod chat_status;
+pub mod chat_suggestion;
 pub mod chat_thread;
 pub mod chunk;
 pub mod claude_leftovers;
