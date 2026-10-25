@@ -4,6 +4,7 @@ use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::watch;
 use crate::chat::workers;
+use crate::chat::workers_remote::RemoteStatus;
 use crate::config::ChangesSection;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
@@ -20,6 +21,7 @@ pub struct LocalRoute<'a> {
     pub changes: &'a ChangesSection,
     pub store: &'a Path,
     pub monitor: &'a Monitor,
+    pub remote: &'a RemoteStatus,
 }
 
 pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Result<()> {
@@ -44,7 +46,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         ),
         Route::Diff(DiffArgs::Usage(usage)) => println!("{usage}"),
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
-        Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display),
+        Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::Help => print!("{}", help_text(screen_columns())),
         Route::Send(_) | Route::ReadInbox(_) | Route::Ignore => {}
     }

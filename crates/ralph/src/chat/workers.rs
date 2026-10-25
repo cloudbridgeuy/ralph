@@ -1,7 +1,8 @@
 use crate::chat::inbox::Display;
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
-use crate::config::AppConfig;
+use crate::chat::workers_remote::RemoteStatus;
+use crate::config::{AppConfig, WorkersSection};
 use crate::render::render_markdown;
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
@@ -44,6 +45,7 @@ fn found<T>(value: Option<T>) -> Lookup<T> {
 
 struct Facts {
     config: Result<AppConfig, String>,
+    workers: WorkersSection,
     origin_head: Option<String>,
     reports: Option<HashMap<String, Vec<ReportLine>>>,
     porcelain: Option<String>,
@@ -63,7 +65,13 @@ fn spawn_ticket(store: &Path, id: &str) -> Option<Ticket> {
     decode_spawn_record(&std::fs::read_to_string(spawn_record_path(store, id)).ok()?)?.ticket()
 }
 
-fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, Option<String>) {
+fn row(
+    monitor: &Monitor,
+    worker: &RunningWorker,
+    facts: &Facts,
+    remote: &RemoteStatus,
+    ticket: Option<&Ticket>,
+) -> (WorkerRow, Option<String>) {
     let state = monitor
         .status()
         .workers
@@ -103,6 +111,7 @@ fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, 
         _ => (Lookup::Missing, Lookup::Missing, Lookup::Missing),
     };
     let worktree = tree.map(|tree| tree.display().to_string());
+    let cells = remote.cells(&facts.workers, &worker.id, ticket);
     (
         WorkerRow {
             id: worker.id.clone(),
@@ -114,6 +123,8 @@ fn row(monitor: &Monitor, worker: &RunningWorker, facts: &Facts) -> (WorkerRow, 
             diff,
             behind,
             base,
+            ticket: cells.ticket,
+            pr: cells.pr,
         },
         worktree,
     )
@@ -142,15 +153,20 @@ fn facts(monitor: &Monitor) -> Facts {
         let unread = monitor.inbox.peek().ok()?;
         Some(ralph_core::workers_view::group_reports(&entries, &unread))
     });
+    let config = AppConfig::load().map_err(|e| e.to_string());
     Facts {
-        config: AppConfig::load().map_err(|e| e.to_string()),
+        workers: config
+            .as_ref()
+            .map(|config| config.workers.clone())
+            .unwrap_or_default(),
+        config,
         origin_head: git(None, &ORIGIN_HEAD_ARGS),
         reports,
         porcelain: git(None, &["worktree", "list", "--porcelain"]),
     }
 }
 
-pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
+pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote: &RemoteStatus) {
     let running = running_workers(&monitor.store_dir);
     let facts = facts(monitor);
     let now = chrono::Utc::now();
@@ -158,7 +174,10 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
     let Some(id) = id else {
         let rows: Vec<WorkerRow> = running
             .iter()
-            .map(|worker| row(monitor, worker, &facts).0)
+            .map(|worker| {
+                let ticket = spawn_ticket(&monitor.store_dir, &worker.id);
+                row(monitor, worker, &facts, remote, ticket.as_ref()).0
+            })
             .collect();
         match workers_view(&rows, now, width) {
             View::Table(markdown) => {
@@ -176,7 +195,8 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
         return;
     };
     let history = status_history(&monitor.store_dir, id);
-    let (mut row, worktree) = row(monitor, worker, &facts);
+    let ticket = spawn_ticket(&monitor.store_dir, id);
+    let (mut row, worktree) = row(monitor, worker, &facts, remote, ticket.as_ref());
     row.status = history.last().cloned();
     let detail = WorkerDetail {
         row,
@@ -186,7 +206,7 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display) {
             .then(|| worker.session.clone()),
         markers: markers(&monitor.store_dir, id),
         heartbeat: heartbeat(&monitor.store_dir, id),
-        ticket: spawn_ticket(&monitor.store_dir, id),
+        ticket,
         history,
         reports: facts
             .reports
@@ -203,7 +223,7 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
-    use ralph_core::workers_view::Head;
+    use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote};
     use unicode_width::UnicodeWidthStr;
 
     fn now() -> DateTime<Utc> {
@@ -235,6 +255,8 @@ mod tests {
             }),
             behind: Lookup::Found(2),
             base: Some("main".into()),
+            ticket: None,
+            pr: Remote::None,
         }
     }
 
@@ -261,8 +283,18 @@ mod tests {
         let (view, text) = rendered(&short, 160);
         assert!(is_table(&view), "{text}");
         let widest = text.lines().map(|line| line.width()).max().unwrap();
-        let cells = [7, 7, 5, 12, "2f7f8c0 x".len(), "+120 -40 3f ?2".len(), 6];
-        assert_eq!(widest, cells.iter().sum::<usize>() + 7 + 1, "{text}");
+        let cells = [
+            7,
+            7,
+            5,
+            12,
+            "2f7f8c0 x".len(),
+            "+120 -40 3f ?2".len(),
+            6,
+            6,
+            3,
+        ];
+        assert_eq!(widest, cells.iter().sum::<usize>() + 9 + 1, "{text}");
     }
 
     #[test]
@@ -285,6 +317,48 @@ mod tests {
         assert!(cut.contains('…'), "{cut}");
         let (_, full) = rendered(&long, 160);
         assert!(full.contains("stricter help tests"), "{full}");
+    }
+
+    fn with_remote(mut row: WorkerRow) -> WorkerRow {
+        row.ticket = Some(TicketRemote {
+            key: row.id.clone(),
+            state: Remote::Found("In Progress".into()),
+        });
+        row.pr = Remote::Found(Pr {
+            number: 12,
+            state: PrState::Open,
+            draft: true,
+            review: Review::Other,
+            url: String::new(),
+        });
+        row
+    }
+
+    #[test]
+    fn remote_cells_render_within_the_width_at_80_and_160_columns() {
+        let rows = [
+            with_remote(row(
+                "GUZ-844",
+                "fix(chat): a long subject for the head cell",
+            )),
+            row("GUZ-2", "feat: short"),
+        ];
+        let (view, wide) = rendered(&rows, 160);
+        assert!(is_table(&view), "{wide}");
+        assert!(wide.contains("TICKET") && wide.contains("PR"), "{wide}");
+        assert!(
+            wide.contains("In Progress") && wide.contains("#12 draft"),
+            "{wide}"
+        );
+        let (view, narrow) = rendered(&rows, 80);
+        assert!(!is_table(&view), "{narrow}");
+        assert!(narrow.contains("ticket  In Progress"), "{narrow}");
+        assert!(narrow.contains("pr      #12 draft"), "{narrow}");
+        for (width, text) in [(160, &wide), (80, &narrow)] {
+            for line in text.lines() {
+                assert!(line.width() <= width, "{width} columns: {line}");
+            }
+        }
     }
 
     #[test]
