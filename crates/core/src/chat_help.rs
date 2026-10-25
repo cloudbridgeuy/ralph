@@ -299,7 +299,7 @@ fn thread_parts() -> Vec<(String, String)> {
             "the last turn wrote at least half of its input to the cache (a cache rebuild)".into(),
         ),
         (
-            "shift ~9".into(),
+            "shift ~9 msg".into(),
             format!(
                 "about 9 entries until the older view moves to the next {OLDER_VIEW_STEP}-entry cut"
             ),

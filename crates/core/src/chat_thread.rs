@@ -203,9 +203,9 @@ pub fn thread_variants(cell: &ThreadCell) -> Vec<String> {
     let ctx = cell
         .ctx_percent
         .map_or(format!("ctx {MISSING}"), |_| format!("ctx {percent}"));
-    let shift = cell
-        .shift
-        .map_or(String::new(), |shift| format!("{SEPARATOR}shift ~{shift}"));
+    let shift = cell.shift.map_or(String::new(), |shift| {
+        format!("{SEPARATOR}shift ~{shift} msg")
+    });
     vec![
         format!("{prefix}T{turns}{SEPARATOR}{ctx}{SEPARATOR}cache {cache}{shift}"),
         format!("{prefix}T{turns}{SEPARATOR}{percent}{SEPARATOR}{cache}"),
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(
             thread_variants(&cell()),
             [
-                "T12/30 · ctx 62% · cache 41m! · shift ~9",
+                "T12/30 · ctx 62% · cache 41m! · shift ~9 msg",
                 "T12/30 · 62% · 41m!",
                 "12/30 62% 41m!",
                 "41m!",

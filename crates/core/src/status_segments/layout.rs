@@ -248,7 +248,7 @@ mod tests {
             ["watch w1 12m, w2", "watch w1, w2", "2 watches", "2wt"]
         );
         assert!(placed_texts(&status, 300)
-            .contains(&"T12/30 · ctx 62% · cache 41m · shift ~9".to_string()));
+            .contains(&"T12/30 · ctx 62% · cache 41m · shift ~9 msg".to_string()));
     }
 
     #[test]
