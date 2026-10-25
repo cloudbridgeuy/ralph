@@ -1,9 +1,7 @@
-use crate::chat::editor::{build_queue_editor, BACK_OUT};
+use crate::chat::editor::{build_queue_editor, BACK_OUT, QUEUE_CTRL_C};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::{retry_interrupted, QueuePrompt};
-use crate::chat::queue::{
-    has_queue_key, on_exit, typed_after_queue_key, Action, EditorExit, Queue,
-};
+use crate::chat::queue::{on_exit, Action, EditorExit, Queue};
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::PartialMode;
@@ -12,6 +10,7 @@ use crate::warn::warn_if_err;
 use crate::watches::locked;
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
+use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
 use reedline::{EditCommand, Reedline, Signal};
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +22,8 @@ const POLL_MS: libc::c_int = 50;
 const SETTLE_LIMIT: Duration = Duration::from_millis(300);
 const SETTLE_STEP: Duration = Duration::from_millis(10);
 const READ_CHUNK: usize = 256;
+const JOIN_POLL_MS: libc::c_int = 10;
+const JOIN_TRIES: usize = 2;
 
 pub(super) struct Keys<'a> {
     pub(super) gate: &'a OutputGate,
@@ -53,15 +54,25 @@ impl Drop for Finished<'_> {
     }
 }
 
-pub(super) fn exit_for(signal: Signal, buffer: &str) -> Option<EditorExit> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Step {
+    Exit(EditorExit),
+    ClearDraft,
+    Continue,
+}
+
+pub(super) fn exit_for(signal: Signal, buffer: &str) -> Step {
     match signal {
-        Signal::Success(line) => Some(EditorExit::Submitted(line)),
-        Signal::CtrlC => Some(EditorExit::Cancelled),
-        Signal::CtrlD => Some(EditorExit::Closed),
+        Signal::Success(line) => Step::Exit(EditorExit::Submitted(line)),
+        Signal::CtrlD => Step::Exit(EditorExit::Closed),
         Signal::HostCommand(command) if command == BACK_OUT => {
-            Some(EditorExit::BackOut(buffer.to_string()))
+            Step::Exit(EditorExit::BackOut(buffer.to_string()))
         }
-        _ => None,
+        Signal::HostCommand(command) if command == QUEUE_CTRL_C => match queue_ctrl_c(buffer) {
+            QueueCtrlC::ClearDraft => Step::ClearDraft,
+            QueueCtrlC::CancelTurn => Step::Exit(EditorExit::Cancelled),
+        },
+        _ => Step::Continue,
     }
 }
 
@@ -84,13 +95,13 @@ fn classify_poll(result: libc::c_int, revents: libc::c_short) -> Input {
     }
 }
 
-fn poll_input() -> Input {
+fn poll_input(timeout_ms: libc::c_int) -> Input {
     let mut input = libc::pollfd {
         fd: libc::STDIN_FILENO,
         events: libc::POLLIN,
         revents: 0,
     };
-    let result = unsafe { libc::poll(&mut input, 1, POLL_MS) };
+    let result = unsafe { libc::poll(&mut input, 1, timeout_ms) };
     classify_poll(result, input.revents)
 }
 
@@ -100,6 +111,32 @@ fn read_input() -> Vec<u8> {
     usize::try_from(count)
         .map(|count| buffer[..count].to_vec())
         .unwrap_or_default()
+}
+
+fn read_whole_input() -> Vec<u8> {
+    let mut bytes = read_input();
+    for _ in 0..JOIN_TRIES {
+        if !incomplete(&bytes) || poll_input(JOIN_POLL_MS) != Input::Ready {
+            break;
+        }
+        bytes.extend(read_input());
+    }
+    bytes
+}
+
+fn drain_input() -> String {
+    let mut bytes = Vec::new();
+    while poll_input(0) == Input::Ready {
+        let chunk = read_input();
+        if chunk.is_empty() {
+            break;
+        }
+        bytes.extend(chunk);
+    }
+    match typed(&bytes) {
+        Typed::Open(text) => text,
+        Typed::Ignore => String::new(),
+    }
 }
 
 fn wait_settled(gate: &OutputGate) {
@@ -112,11 +149,11 @@ fn wait_settled(gate: &OutputGate) {
 fn read_exit(editor: &mut Reedline, prompt: &QueuePrompt) -> EditorExit {
     loop {
         match retry_interrupted(|| editor.read_line(prompt)) {
-            Ok(signal) => {
-                if let Some(exit) = exit_for(signal, editor.current_buffer_contents()) {
-                    return exit;
-                }
-            }
+            Ok(signal) => match exit_for(signal, editor.current_buffer_contents()) {
+                Step::Exit(exit) => return exit,
+                Step::ClearDraft => editor.run_edit_commands(&[EditCommand::Clear]),
+                Step::Continue => {}
+            },
             Err(_) => return EditorExit::Closed,
         }
     }
@@ -132,13 +169,14 @@ impl Keys<'_> {
             return (run(), Queue::default());
         };
         let watch = TurnWatch::default();
-        let (result, queue) = thread::scope(|scope| {
+        let (result, mut queue) = thread::scope(|scope| {
             let finished = Finished(&watch);
             let listener = scope.spawn(|| self.listen(&watch));
             let result = run();
             drop(finished);
             (result, listener.join().unwrap_or_default())
         });
+        queue.typed.push_str(&drain_input());
         self.cancel.store(false, Ordering::SeqCst);
         self.gate.resume();
         (result, queue)
@@ -147,16 +185,20 @@ impl Keys<'_> {
     fn listen(&self, watch: &TurnWatch) -> Queue {
         let mut queue = Queue::default();
         while !watch.done.load(Ordering::SeqCst) {
-            match poll_input() {
+            match poll_input(POLL_MS) {
                 Input::Idle => continue,
                 Input::Closed => break,
                 Input::Ready => {}
             }
-            let bytes = read_input();
+            let bytes = read_whole_input();
             if bytes.is_empty() {
                 thread::sleep(Duration::from_millis(POLL_MS as u64));
-            } else if has_queue_key(&bytes) && !watch.done.load(Ordering::SeqCst) {
-                queue = self.edit(queue, &typed_after_queue_key(&bytes), watch);
+            } else if let Typed::Open(seed) = typed(&bytes) {
+                if watch.done.load(Ordering::SeqCst) {
+                    queue.typed.push_str(&seed);
+                } else {
+                    queue = self.edit(queue, &seed, watch);
+                }
             }
         }
         queue
@@ -240,31 +282,48 @@ mod tests {
     fn enter_submits_the_line() {
         assert_eq!(
             exit_for(Signal::Success("hi".into()), ""),
-            Some(EditorExit::Submitted("hi".into()))
+            Step::Exit(EditorExit::Submitted("hi".into()))
         );
     }
 
     #[test]
-    fn ctrl_c_cancels() {
-        assert_eq!(exit_for(Signal::CtrlC, "x"), Some(EditorExit::Cancelled));
+    fn queue_ctrl_c_clears_a_draft() {
+        assert_eq!(
+            exit_for(Signal::HostCommand(QUEUE_CTRL_C.into()), "x"),
+            Step::ClearDraft
+        );
+    }
+
+    #[test]
+    fn queue_ctrl_c_on_an_empty_draft_cancels() {
+        assert_eq!(
+            exit_for(Signal::HostCommand(QUEUE_CTRL_C.into()), ""),
+            Step::Exit(EditorExit::Cancelled)
+        );
     }
 
     #[test]
     fn ctrl_d_closes() {
-        assert_eq!(exit_for(Signal::CtrlD, "x"), Some(EditorExit::Closed));
+        assert_eq!(exit_for(Signal::CtrlD, "x"), Step::Exit(EditorExit::Closed));
     }
 
     #[test]
     fn ctrl_q_backs_out_with_the_draft() {
         assert_eq!(
             exit_for(Signal::HostCommand(BACK_OUT.into()), "draft"),
-            Some(EditorExit::BackOut("draft".into()))
+            Step::Exit(EditorExit::BackOut("draft".into()))
         );
     }
 
     #[test]
     fn other_host_commands_keep_the_editor_open() {
-        assert_eq!(exit_for(Signal::HostCommand("other".into()), ""), None);
-        assert_eq!(exit_for(Signal::ExternalBreak(String::new()), ""), None);
+        assert_eq!(
+            exit_for(Signal::HostCommand("other".into()), ""),
+            Step::Continue
+        );
+        assert_eq!(
+            exit_for(Signal::ExternalBreak(String::new()), ""),
+            Step::Continue
+        );
     }
 }

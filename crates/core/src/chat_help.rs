@@ -178,6 +178,10 @@ pub const TURN_KEYS: &[KeyHelp] = &[
         keys: "Ctrl-Q",
         effect: "open the queue editor; the turn keeps running, its output is held",
     },
+    KeyHelp {
+        keys: "Any text",
+        effect: "open the queue editor seeded with the text; other keys are dropped",
+    },
 ];
 
 pub const QUEUE_KEYS: &[KeyHelp] = &[
@@ -195,7 +199,7 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
     },
     KeyHelp {
         keys: "Ctrl-C",
-        effect: "cancel the turn",
+        effect: "on a non-empty draft clear it, the turn keeps running; on an empty draft cancel the turn and hold the queue",
     },
     KeyHelp {
         keys: "Ctrl-V, Ctrl-G",

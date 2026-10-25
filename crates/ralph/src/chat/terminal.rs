@@ -29,7 +29,6 @@ impl PartialMode {
 impl Drop for PartialMode {
     fn drop(&mut self) {
         unsafe {
-            libc::tcflush(STDIN, libc::TCIFLUSH);
             libc::tcsetattr(STDIN, libc::TCSANOW, &self.original);
         }
     }
