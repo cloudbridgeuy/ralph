@@ -2,7 +2,7 @@ use super::range::{parse_read_args, RangeRequest};
 use super::search::{parse_search_args, SearchRequest};
 use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
-use crate::chat_socket::is_worker_tool;
+use crate::chat_socket::is_socket_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::worker::command_definitions;
 use serde_json::{json, Value};
@@ -114,7 +114,7 @@ pub fn handle_request(request: &Value) -> Outcome {
     match dispatch(SERVER_NAME, &tool_definitions(), request) {
         Dispatch::Silent => Outcome::Silent,
         Dispatch::Respond(v) => Outcome::Respond(v),
-        Dispatch::Call { id, name, args } if is_worker_tool(&name) => {
+        Dispatch::Call { id, name, args } if is_socket_tool(&name) => {
             Outcome::Worker { id, name, args }
         }
         Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {

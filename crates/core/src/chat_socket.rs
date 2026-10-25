@@ -3,15 +3,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const WORKER_TOOLS: [&str; 4] = ["spawn_worker", "reply", "close_worker", "watch"];
+const SOCKET_TOOLS: [&str; 4] = ["spawn_worker", "reply", "close_worker", "watch"];
 const SOCKET_PREFIX: &str = "chat-";
 const SOCKET_FILE: &str = "chat.sock";
 const MCP_CONFIG_FILE: &str = "mcp.json";
 const SIDECAR_SUFFIX: &str = ".owner";
 pub const MAX_SOCKET_PATH_BYTES: usize = 103;
 
-pub fn is_worker_tool(name: &str) -> bool {
-    WORKER_TOOLS.contains(&name)
+pub fn is_socket_tool(name: &str) -> bool {
+    SOCKET_TOOLS.contains(&name)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -137,12 +137,12 @@ mod tests {
     }
 
     #[test]
-    fn worker_tools_route_to_the_socket_and_memory_tools_do_not() {
+    fn socket_tools_route_to_the_socket_and_memory_tools_do_not() {
         for name in ["spawn_worker", "reply", "close_worker", "watch"] {
-            assert!(is_worker_tool(name));
+            assert!(is_socket_tool(name));
         }
         for name in ["zoom", "recall", "", "Reply"] {
-            assert!(!is_worker_tool(name));
+            assert!(!is_socket_tool(name));
         }
     }
 
