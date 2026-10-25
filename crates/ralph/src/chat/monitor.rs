@@ -327,6 +327,7 @@ impl Monitor {
             thread: Some(thread),
             napping: self.store.napping(),
             queue: None,
+            hold: None,
         };
         let changed = *status != next;
         *status = next;

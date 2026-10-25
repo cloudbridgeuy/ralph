@@ -64,6 +64,7 @@ pub struct Status {
     pub thread: Option<ThreadCell>,
     pub napping: bool,
     pub queue: Option<QueueCell>,
+    pub hold: Option<HoldFilter>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

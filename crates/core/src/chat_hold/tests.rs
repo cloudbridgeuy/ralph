@@ -35,6 +35,12 @@ fn parse_rejects_extra_tokens() {
 }
 
 #[test]
+fn label_names_the_source_or_any() {
+    assert_eq!(HoldFilter::Any.label(), "any");
+    assert_eq!(source("watch:ci").label(), "watch:ci");
+}
+
+#[test]
 fn any_matches_every_entry() {
     assert!(HoldFilter::Any.matches(&entry("w1")));
 }

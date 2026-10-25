@@ -19,6 +19,13 @@ impl HoldFilter {
         }
     }
 
+    pub fn label(&self) -> &str {
+        match self {
+            HoldFilter::Any => "any",
+            HoldFilter::Source(source) => source,
+        }
+    }
+
     pub fn matches(&self, entry: &Entry) -> bool {
         match self {
             HoldFilter::Any => true,
