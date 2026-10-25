@@ -1,4 +1,5 @@
 use crate::chat_help::Command;
+use crate::chat_hold::HoldFilter;
 use crate::chat_thread::ThreadCell;
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -76,6 +77,7 @@ pub enum Route {
     Watch(WatchCommand),
     Diff(DiffArgs),
     Workers(Option<String>),
+    Hold(HoldFilter),
     Help,
     Ignore,
 }
@@ -93,6 +95,7 @@ impl Route {
             Route::Send(_)
             | Route::ReadInbox(_)
             | Route::DropInbox(_)
+            | Route::Hold(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Diff(DiffArgs::Target(_))
             | Route::Ignore => false,
@@ -127,6 +130,7 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
                 Command::Watch => Route::Watch(parse_watch_args(args)),
                 Command::Diff => Route::Diff(parse_diff_args(args)),
                 Command::Workers => workers_route(args, line),
+                Command::Hold => hold_route(args, line),
             };
         }
     }
@@ -143,6 +147,10 @@ fn workers_route(args: &str, line: &str) -> Route {
         (Some(id), None) => Route::Workers(Some(id.to_string())),
         _ => Route::Send(line.to_string()),
     }
+}
+
+fn hold_route(args: &str, line: &str) -> Route {
+    HoldFilter::parse(args).map_or_else(|| Route::Send(line.to_string()), Route::Hold)
 }
 
 fn inbox_route(args: &str) -> Route {

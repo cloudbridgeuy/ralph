@@ -14,15 +14,17 @@ pub enum Command {
     Watch,
     Diff,
     Workers,
+    Hold,
 }
 
 impl Command {
-    pub const ALL: [Command; 5] = [
+    pub const ALL: [Command; 6] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
         Command::Diff,
         Command::Workers,
+        Command::Hold,
     ];
 
     pub fn name(self) -> &'static str {
@@ -32,6 +34,7 @@ impl Command {
             Command::Watch => "/watch",
             Command::Diff => "/diff",
             Command::Workers => "/workers",
+            Command::Hold => "/hold",
         }
     }
 
@@ -88,6 +91,12 @@ impl Command {
                 (
                     "/workers <id>",
                     "one worker in detail with its status and last 5 reports",
+                ),
+            ],
+            Command::Hold => &[
+                (
+                    "/hold [<worker-id> | watch:<name>]",
+                    "wait with no prompt; the first matching inbox report starts a turn, once; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
         }
@@ -529,7 +538,8 @@ mod tests {
                 Inbox,
                 Watch,
                 Diff,
-                Workers
+                Workers,
+                Hold
             }
         );
         assert_lists_every!(

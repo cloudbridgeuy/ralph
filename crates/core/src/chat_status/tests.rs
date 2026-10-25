@@ -88,6 +88,8 @@ fn only_read_only_routes_run_mid_turn() {
         "/watch start sleep 5 -- done",
         "/diff HEAD",
         "/workers a b",
+        "/hold",
+        "/hold w1",
         "hello",
         "",
     ] {
@@ -180,6 +182,31 @@ fn route_input_parses_workers_commands() {
 #[test]
 fn only_bare_or_one_token_workers_route_locally() {
     for line in ["/workers a b", "/workers a b c", "/workersfoo"] {
+        assert_eq!(
+            route_input(line, 0, &EmptySubmit::Inbox),
+            Route::Send(line.into())
+        );
+    }
+}
+
+#[test]
+fn route_input_parses_hold_commands() {
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    assert_eq!(route("/hold"), Route::Hold(HoldFilter::Any));
+    assert_eq!(route("  /hold  "), Route::Hold(HoldFilter::Any));
+    assert_eq!(
+        route("/hold GUZ-1"),
+        Route::Hold(HoldFilter::Source("GUZ-1".into()))
+    );
+    assert_eq!(
+        route(" /hold   watch:ci "),
+        Route::Hold(HoldFilter::Source("watch:ci".into()))
+    );
+}
+
+#[test]
+fn only_bare_or_one_token_hold_routes_locally() {
+    for line in ["/hold a b", "/holdfoo"] {
         assert_eq!(
             route_input(line, 0, &EmptySubmit::Inbox),
             Route::Send(line.into())

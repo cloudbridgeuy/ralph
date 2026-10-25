@@ -48,7 +48,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::Help => print!("{}", help_text(screen_columns())),
-        Route::Send(_) | Route::ReadInbox(_) | Route::Ignore => {}
+        Route::Send(_) | Route::ReadInbox(_) | Route::Hold(_) | Route::Ignore => {}
     }
     Ok(())
 }
