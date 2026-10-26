@@ -1,6 +1,6 @@
 use crate::mcp::string_arg;
-use crate::schedule::{parse_after, parse_at, Task, TaskKind, TaskStatus};
-use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, Utc};
+use crate::schedule::{escape_controls, parse_after, parse_at, Task, TaskKind, TaskStatus};
+use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -22,9 +22,9 @@ pub struct ScheduleRequest {
 }
 
 impl ScheduleRequest {
-    pub fn into_task(self, now: DateTime<Utc>, offset: FixedOffset) -> Result<Task, String> {
+    pub fn into_task<Tz: TimeZone>(self, now: DateTime<Utc>, zone: &Tz) -> Result<Task, String> {
         let at = match &self.when {
-            When::At(raw) => parse_at(raw, now, offset)?,
+            When::At(raw) => parse_at(raw, now, zone)?,
             When::After(delay) => ChronoDuration::from_std(*delay)
                 .ok()
                 .and_then(|delay| now.checked_add_signed(delay))
@@ -64,9 +64,13 @@ pub fn schedule_definition() -> Value {
 
 pub fn parse_schedule_args(args: &Value) -> Result<ScheduleRequest, String> {
     let id = string_arg(args, "id")?;
-    if id.chars().any(|c| c == '/' || c.is_whitespace()) {
+    if id
+        .chars()
+        .any(|c| c == '/' || c.is_whitespace() || c.is_control())
+    {
         return Err(format!(
-            "Schedule id '{id}' must not contain spaces or slashes."
+            "Schedule id '{}' must not contain spaces, slashes or control characters.",
+            escape_controls(&id)
         ));
     }
     Ok(ScheduleRequest {
@@ -117,6 +121,7 @@ pub fn duplicate_message(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::FixedOffset;
 
     fn now() -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-01-01T10:00:00Z")
@@ -184,10 +189,31 @@ mod tests {
     }
 
     #[test]
+    fn an_id_with_a_control_character_is_refused() {
+        for id in ["a\u{1b}[2K", "a\rb", "a\u{7f}"] {
+            let error = request(json!({"after": "5m", "id": id})).unwrap_err();
+            assert!(error.contains("control characters"), "{error}");
+            assert!(
+                !error.contains('\u{1b}') && !error.contains('\r'),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_past_rfc3339_at_fails_when_resolved() {
+        let error = request(json!({"at": "2026-01-01T09:00:00Z"}))
+            .unwrap()
+            .into_task(now(), &offset())
+            .unwrap_err();
+        assert!(error.contains("is in the past"), "{error}");
+    }
+
+    #[test]
     fn after_resolves_from_now_into_a_proposed_task() {
         let task = request(json!({"after": "1h30m", "timeout_secs": 7}))
             .unwrap()
-            .into_task(now(), offset())
+            .into_task(now(), &offset())
             .unwrap();
         assert_eq!(task.id, "nightly");
         assert_eq!(task.kind, TaskKind::Command);
@@ -201,7 +227,7 @@ mod tests {
     fn at_resolves_in_the_local_offset() {
         let task = request(json!({"at": "14:30"}))
             .unwrap()
-            .into_task(now(), offset())
+            .into_task(now(), &offset())
             .unwrap();
         assert_eq!(task.at, now() + ChronoDuration::minutes(150));
     }
@@ -210,7 +236,7 @@ mod tests {
     fn an_unreadable_at_fails_when_resolved() {
         assert!(request(json!({"at": "later"}))
             .unwrap()
-            .into_task(now(), offset())
+            .into_task(now(), &offset())
             .is_err());
     }
 
@@ -223,7 +249,7 @@ mod tests {
             when: When::After(Duration::from_secs(u64::MAX)),
             timeout_secs: None,
         };
-        assert!(huge.into_task(now(), offset()).is_err());
+        assert!(huge.into_task(now(), &offset()).is_err());
     }
 
     #[test]

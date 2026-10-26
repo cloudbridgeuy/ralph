@@ -370,6 +370,16 @@ mod tests {
     }
 
     #[test]
+    fn a_later_day_marker_shows_in_the_long_form_and_fits_at_80_columns() {
+        let mut status = with_schedule(1);
+        status.schedule[0].time = "01:30+1d".into();
+        assert!(line(&status, 200).contains("sched job1 01:30+1d"));
+        let shown = line(&status, 80);
+        assert!(shown.width() <= 80, "{shown}");
+        assert!(shown.contains("job1") || shown.contains("scheduled") || shown.contains("S1"));
+    }
+
+    #[test]
     fn store_label_keeps_the_last_two_components() {
         assert_eq!(store_label("/home/me/.ralph/chat"), ".ralph/chat");
         assert_eq!(store_label("chat"), "chat");

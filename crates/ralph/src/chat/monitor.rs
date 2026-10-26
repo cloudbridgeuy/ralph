@@ -329,7 +329,11 @@ impl Monitor {
             unread: pending.len(),
             workers,
             watches: watch_states(&self.watches.list(), chrono::Utc::now()),
-            schedule: schedule_states(&self.schedule.load_all(), *chrono::Local::now().offset()),
+            schedule: schedule_states(
+                &self.schedule.load_all(),
+                chrono::Utc::now(),
+                *chrono::Local::now().offset(),
+            ),
             thread: Some(thread),
             napping: self.store.napping(),
             queue: None,

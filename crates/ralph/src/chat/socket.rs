@@ -260,8 +260,7 @@ fn propose_schedule(store: &Store, request: &ScheduleRequest) -> Result<String, 
     if schedule.load_all().iter().any(|task| task.id == request.id) {
         return Err(duplicate_message(&request.id));
     }
-    let offset = *Local::now().offset();
-    let task = request.clone().into_task(Utc::now(), offset)?;
+    let task = request.clone().into_task(Utc::now(), &Local)?;
     schedule
         .save(&task)
         .map_err(|e| format!("Could not save the schedule: {e}"))?;

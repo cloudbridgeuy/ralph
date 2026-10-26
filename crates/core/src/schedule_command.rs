@@ -1,4 +1,6 @@
-use crate::schedule::{format_span, watch_id, Task, TaskStatus, SCHEDULE_ID_PREFIX};
+use crate::schedule::{
+    escape_controls, format_span, watch_id, Task, TaskStatus, SCHEDULE_ID_PREFIX,
+};
 use chrono::{DateTime, FixedOffset, Utc};
 
 pub const SCHEDULE_USAGE: &str = "Usage: /schedule [list] | cancel <id>. /schedule does not create tasks: the model proposes them and you arm each one at a y/n prompt.";
@@ -99,7 +101,7 @@ pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> St
         .iter()
         .map(|task| {
             [
-                task.id.clone(),
+                escape_controls(&task.id),
                 status_label(task.status).to_string(),
                 when_label(task, now, offset),
                 relative_label(task, now),
@@ -123,7 +125,7 @@ pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> St
                 row[1],
                 row[2],
                 row[3],
-                task.command,
+                escape_controls(&task.command),
                 w0 = widths[0],
                 w1 = widths[1],
                 w2 = widths[2],
@@ -312,5 +314,15 @@ mod tests {
             false,
         )];
         assert!(list_tasks(&tasks, now, offset()).contains("due"));
+    }
+
+    #[test]
+    fn list_shows_escape_codes_in_the_command() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = task("t", "2026-01-01T10:00:00Z", TaskStatus::Pending, false);
+        t.command = "rm -rf ~\x1b[2K\recho ok".to_string();
+        let text = list_tasks(&[t], now, offset());
+        assert!(!text.contains('\x1b') && !text.contains('\r'), "{text:?}");
+        assert!(text.ends_with("rm -rf ~\\x1b[2K\\recho ok"), "{text}");
     }
 }

@@ -47,14 +47,14 @@ fn approve_with(
 ) {
     for task in proposed(store.load_all()) {
         if decide(&task, default_timeout, read, out) {
-            warn_if_err(
-                store.save(&Task {
-                    status: TaskStatus::Pending,
-                    ..task.clone()
-                }),
-                format!("arming scheduled task {}", task.id),
-            );
-            say(out, &format!("Armed {}.", task.id));
+            let armed = store.save(&Task {
+                status: TaskStatus::Pending,
+                ..task.clone()
+            });
+            match armed {
+                Ok(()) => say(out, &format!("Armed {}.", task.id)),
+                Err(error) => say(out, &format!("Could not arm {}: {error}", task.id)),
+            }
         } else {
             store.remove(&task.id);
             say(out, &format!("Cancelled {}.", task.id));
@@ -103,6 +103,9 @@ pub(super) fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) 
         return;
     }
     let active: Vec<String> = watches.list().into_iter().map(|watch| watch.id).collect();
+    if watches.is_closing() {
+        return;
+    }
     let now = chrono::Utc::now();
     let offset = *chrono::Local::now().offset();
     let plan = plan_tick(&tasks, &active, now);
@@ -296,5 +299,69 @@ mod tests {
                 ("unasked".to_string(), TaskStatus::Proposed, false),
             ]
         );
+    }
+
+    #[test]
+    fn a_failed_save_is_reported_instead_of_armed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        propose(&store, "a", 5);
+        let tmp = dir
+            .path()
+            .join(format!(".{}", ralph_core::watch_store::file_name("a")));
+        std::fs::create_dir(&tmp).unwrap();
+        let out = run(&store, &[Some("y")]);
+        assert!(out.contains("Could not arm a:"), "{out}");
+        assert!(!out.contains("Armed a."), "{out}");
+        assert_eq!(
+            statuses(&store),
+            vec![("a".to_string(), TaskStatus::Proposed)]
+        );
+    }
+
+    fn mark_running(store: &ScheduleStore, id: &str) {
+        let mut task = store.load_all().into_iter().find(|t| t.id == id).unwrap();
+        task.status = TaskStatus::Running;
+        store.save(&task).unwrap();
+    }
+
+    #[test]
+    fn a_running_task_survives_a_tick_during_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().join("schedule"));
+        let inbox = std::sync::Arc::new(Inbox::new(dir.path().join("inbox")));
+        let watches = Watches::new(
+            std::sync::Arc::clone(&inbox),
+            dir.path(),
+            Duration::from_secs(60),
+        );
+        propose(&store, "a", -1);
+        mark_running(&store, "a");
+        watches.kill_all();
+        fire_due(&store, &watches, &inbox);
+        assert_eq!(
+            statuses(&store),
+            vec![("a".to_string(), TaskStatus::Running)]
+        );
+        restore_schedule(&store);
+        let restored = store.load_all();
+        assert_eq!(restored[0].status, TaskStatus::Pending);
+        assert!(restored[0].late);
+    }
+
+    #[test]
+    fn a_running_task_without_its_watch_is_finished_while_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().join("schedule"));
+        let inbox = std::sync::Arc::new(Inbox::new(dir.path().join("inbox")));
+        let watches = Watches::new(
+            std::sync::Arc::clone(&inbox),
+            dir.path(),
+            Duration::from_secs(60),
+        );
+        propose(&store, "a", -1);
+        mark_running(&store, "a");
+        fire_due(&store, &watches, &inbox);
+        assert!(statuses(&store).is_empty());
     }
 }

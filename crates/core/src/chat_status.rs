@@ -192,7 +192,12 @@ pub fn watch_states(saved: &[SavedWatch], now: chrono::DateTime<chrono::Utc>) ->
         .collect()
 }
 
-pub fn schedule_states(tasks: &[Task], offset: chrono::FixedOffset) -> Vec<ScheduleState> {
+pub fn schedule_states(
+    tasks: &[Task],
+    now: chrono::DateTime<chrono::Utc>,
+    offset: chrono::FixedOffset,
+) -> Vec<ScheduleState> {
+    let today = now.with_timezone(&offset).date_naive();
     let mut armed: Vec<&Task> = tasks
         .iter()
         .filter(|task| task.status == TaskStatus::Pending)
@@ -202,9 +207,18 @@ pub fn schedule_states(tasks: &[Task], offset: chrono::FixedOffset) -> Vec<Sched
         .into_iter()
         .map(|task| ScheduleState {
             id: task.id.clone(),
-            time: task.at.with_timezone(&offset).format("%H:%M").to_string(),
+            time: schedule_time(task, today, offset),
         })
         .collect()
+}
+
+fn schedule_time(task: &Task, today: chrono::NaiveDate, offset: chrono::FixedOffset) -> String {
+    let local = task.at.with_timezone(&offset);
+    let time = local.format("%H:%M");
+    match (local.date_naive() - today).num_days() {
+        days if days > 0 => format!("{time}+{days}d"),
+        _ => time.to_string(),
+    }
 }
 
 pub fn store_workers(tmux_sessions: &str, store: &str) -> Vec<RunningWorker> {
