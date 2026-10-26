@@ -2,6 +2,7 @@ use super::range::{parse_read_args, RangeRequest};
 use super::search::{parse_search_args, SearchRequest};
 use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
+use crate::chat_help::{help_tool, help_topic};
 use crate::chat_socket::is_socket_tool;
 use crate::chat_suggestion::suggest_reply_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
@@ -40,6 +41,7 @@ pub fn tool_definitions() -> Value {
     if let Some(list) = tools.as_array_mut() {
         list.extend(command_definitions());
         list.push(suggest_reply_tool());
+        list.push(help_tool());
     }
     tools
 }
@@ -119,6 +121,10 @@ pub fn handle_request(request: &Value) -> Outcome {
         Dispatch::Call { id, name, args } if is_socket_tool(&name) => {
             Outcome::Socket { id, name, args }
         }
+        Dispatch::Call { id, name, args } if name == "help" => Outcome::Respond(finish_call(
+            id,
+            help_topic(args.get("topic").and_then(Value::as_str)),
+        )),
         Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {
             Ok(request) => Outcome::Changes { id, request },
             Err(message) => Outcome::Respond(tool_result(id, &message, true)),
@@ -202,9 +208,23 @@ mod tests {
                 "close_worker",
                 "watch",
                 "schedule",
-                "suggest_reply"
+                "suggest_reply",
+                "help"
             ]
         );
+    }
+
+    #[test]
+    fn help_answers_without_the_store() {
+        let Outcome::Respond(v) = call("help", json!({"topic": "schedule"})) else {
+            panic!("help must answer directly");
+        };
+        assert_eq!(v["result"]["isError"], false);
+        assert!(text_of(&v).starts_with("/schedule\n"));
+        let Outcome::Respond(v) = call("help", json!({"topic": "zap"})) else {
+            panic!("help must answer directly");
+        };
+        assert_eq!(v["result"]["isError"], true);
     }
 
     #[test]
