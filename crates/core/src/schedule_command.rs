@@ -1,5 +1,5 @@
 use crate::schedule::{
-    escape_controls, format_span, watch_id, Task, TaskStatus, SCHEDULE_ID_PREFIX,
+    escape_controls, format_span, watch_id, Task, TaskKind, TaskStatus, SCHEDULE_ID_PREFIX,
 };
 use chrono::{DateTime, FixedOffset, Utc};
 
@@ -91,6 +91,13 @@ fn relative_label(task: &Task, now: DateTime<Utc>) -> String {
     }
 }
 
+fn task_text(task: &Task) -> &str {
+    match &task.kind {
+        TaskKind::Command { command } => command,
+        TaskKind::Worker { brief } => brief.lines().next().unwrap_or_default(),
+    }
+}
+
 pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> String {
     if tasks.is_empty() {
         return NO_TASKS.to_string();
@@ -125,7 +132,7 @@ pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> St
                 row[1],
                 row[2],
                 row[3],
-                escape_controls(&task.command),
+                escape_controls(task_text(task)),
                 w0 = widths[0],
                 w1 = widths[1],
                 w2 = widths[2],
@@ -139,7 +146,6 @@ pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schedule::TaskKind;
 
     fn utc(text: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(text)
@@ -154,8 +160,9 @@ mod tests {
     fn task(id: &str, at: &str, status: TaskStatus, late: bool) -> Task {
         Task {
             id: id.into(),
-            kind: TaskKind::Command,
-            command: format!("echo {id}"),
+            kind: TaskKind::Command {
+                command: format!("echo {id}"),
+            },
             follow_up: None,
             at: utc(at),
             timeout_secs: None,
@@ -320,9 +327,24 @@ mod tests {
     fn list_shows_escape_codes_in_the_command() {
         let now = utc("2026-01-01T10:00:00Z");
         let mut t = task("t", "2026-01-01T10:00:00Z", TaskStatus::Pending, false);
-        t.command = "rm -rf ~\x1b[2K\recho ok".to_string();
+        t.kind = TaskKind::Command {
+            command: "rm -rf ~\x1b[2K\recho ok".to_string(),
+        };
         let text = list_tasks(&[t], now, offset());
         assert!(!text.contains('\x1b') && !text.contains('\r'), "{text:?}");
         assert!(text.ends_with("rm -rf ~\\x1b[2K\\recho ok"), "{text}");
+    }
+
+    #[test]
+    fn list_shows_the_first_line_of_a_worker_brief() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = task("w", "2026-01-01T10:05:00Z", TaskStatus::Pending, false);
+        t.kind = TaskKind::Worker {
+            brief: "fix the build\nthen the tests".to_string(),
+        };
+        assert_eq!(
+            list_tasks(&[t], now, offset()),
+            "w  armed  12:05  in 5m  fix the build"
+        );
     }
 }

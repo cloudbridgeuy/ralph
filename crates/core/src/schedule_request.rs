@@ -1,5 +1,7 @@
 use crate::mcp::string_arg;
-use crate::schedule::{escape_controls, parse_after, parse_at, Task, TaskKind, TaskStatus};
+use crate::schedule::{
+    escape_controls, parse_after, parse_at, Task, TaskKind, TaskStatus, WORKER_MAX_TIMEOUT_SECS,
+};
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -15,7 +17,7 @@ pub enum When {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduleRequest {
     pub id: String,
-    pub command: String,
+    pub kind: TaskKind,
     pub follow_up: Option<String>,
     pub when: When,
     pub timeout_secs: Option<u64>,
@@ -32,8 +34,7 @@ impl ScheduleRequest {
         };
         Ok(Task {
             id: self.id,
-            kind: TaskKind::Command,
-            command: self.command,
+            kind: self.kind,
             follow_up: self.follow_up,
             at,
             timeout_secs: self.timeout_secs,
@@ -46,18 +47,19 @@ impl ScheduleRequest {
 pub fn schedule_definition() -> Value {
     json!({
         "name": "schedule",
-        "description": "Propose a one-shot shell command to run later. This tool only proposes: it records the task as awaiting approval and arms nothing. The chat itself asks the person to approve the exact command and time before anything is armed. Before calling it, tell the person the command and when it should run. When an approved task runs, its report reaches the inbox tagged schedule:<id>. Give exactly one of at or after.",
+        "description": "Propose a one-shot task to run later: either a shell command, or a worker that carries out a brief in its own worktree cut from origin/main at fire time. A scheduled worker never pushes. This tool only proposes: it records the task as awaiting approval and arms nothing. The chat itself asks the person to approve the exact command or brief and the time before anything is armed. Before calling it, tell the person what will run and when. When an approved task runs, its report reaches the inbox tagged schedule:<id>. Give exactly one of command or brief, and exactly one of at or after.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "Short name for the task, without spaces or slashes."},
-                "command": {"type": "string", "description": "The exact shell command to run, as the person will approve it."},
-                "follow_up": {"type": "string", "description": "What to do when the command ends."},
+                "command": {"type": "string", "description": "The exact shell command to run, as the person will approve it. Give this or brief."},
+                "brief": {"type": "string", "description": "The full task for a scheduled worker, as the person will approve it. Give this or command."},
+                "follow_up": {"type": "string", "description": "What to do when the command ends. Commands only."},
                 "at": {"type": "string", "description": "When to run: an RFC 3339 timestamp, or a local time HH:MM meaning its next occurrence."},
                 "after": {"type": "string", "description": "How long to wait before running, such as 90s, 10m, 2h or 1h30m."},
-                "timeout_secs": {"type": "integer", "minimum": 1, "description": "Kill the command after this many seconds. Default: the configured watch timeout, 1 hour unless changed."}
+                "timeout_secs": {"type": "integer", "minimum": 1, "description": "Stop the task after this many seconds. Default for a command: the configured watch timeout, 1 hour unless changed. Default for a worker: 2 hours; the maximum is 8 hours."}
             },
-            "required": ["id", "command"]
+            "required": ["id"]
         }
     })
 }
@@ -73,12 +75,32 @@ pub fn parse_schedule_args(args: &Value) -> Result<ScheduleRequest, String> {
             escape_controls(&id)
         ));
     }
+    let follow_up = optional_string(args, "follow_up")?;
+    let timeout_secs = timeout_arg(args)?;
+    let kind = match (
+        optional_string(args, "command")?,
+        optional_string(args, "brief")?,
+    ) {
+        (Some(command), None) => TaskKind::Command { command },
+        (None, Some(brief)) => {
+            if follow_up.is_some() {
+                return Err("follow_up applies to commands only.".to_string());
+            }
+            if timeout_secs.is_some_and(|secs| secs > WORKER_MAX_TIMEOUT_SECS) {
+                return Err(format!(
+                    "timeout_secs for a worker must be at most {WORKER_MAX_TIMEOUT_SECS} (8 hours)."
+                ));
+            }
+            TaskKind::Worker { brief }
+        }
+        _ => return Err("Give exactly one of command or brief.".to_string()),
+    };
     Ok(ScheduleRequest {
         id,
-        command: string_arg(args, "command")?,
-        follow_up: optional_string(args, "follow_up")?,
+        kind,
+        follow_up,
         when: when_arg(args)?,
-        timeout_secs: timeout_arg(args)?,
+        timeout_secs,
     })
 }
 
@@ -133,6 +155,20 @@ mod tests {
         FixedOffset::east_opt(2 * 3600).unwrap()
     }
 
+    fn command_kind(command: &str) -> TaskKind {
+        TaskKind::Command {
+            command: command.to_string(),
+        }
+    }
+
+    fn worker_request(extra: Value) -> Result<ScheduleRequest, String> {
+        let mut args = json!({"id": "nightly", "brief": "fix it", "after": "5m"});
+        for (key, value) in extra.as_object().unwrap() {
+            args[key] = value.clone();
+        }
+        parse_schedule_args(&args)
+    }
+
     fn request(extra: Value) -> Result<ScheduleRequest, String> {
         let mut args = json!({"id": "nightly", "command": "make test"});
         for (key, value) in extra.as_object().unwrap() {
@@ -147,7 +183,7 @@ mod tests {
             request(json!({"after": "10m"})),
             Ok(ScheduleRequest {
                 id: "nightly".to_string(),
-                command: "make test".to_string(),
+                kind: command_kind("make test"),
                 follow_up: None,
                 when: When::After(Duration::from_secs(600)),
                 timeout_secs: None,
@@ -161,7 +197,7 @@ mod tests {
             request(json!({"at": "14:30", "follow_up": "report", "timeout_secs": 5})),
             Ok(ScheduleRequest {
                 id: "nightly".to_string(),
-                command: "make test".to_string(),
+                kind: command_kind("make test"),
                 follow_up: Some("report".to_string()),
                 when: When::At("14:30".to_string()),
                 timeout_secs: Some(5),
@@ -216,7 +252,7 @@ mod tests {
             .into_task(now(), &offset())
             .unwrap();
         assert_eq!(task.id, "nightly");
-        assert_eq!(task.kind, TaskKind::Command);
+        assert_eq!(task.kind, command_kind("make test"));
         assert_eq!(task.at, now() + ChronoDuration::minutes(90));
         assert_eq!(task.status, TaskStatus::Proposed);
         assert_eq!(task.timeout_secs, Some(7));
@@ -244,7 +280,7 @@ mod tests {
     fn an_overflowing_after_fails_when_resolved() {
         let huge = ScheduleRequest {
             id: "a".to_string(),
-            command: "x".to_string(),
+            kind: command_kind("x"),
             follow_up: None,
             when: When::After(Duration::from_secs(u64::MAX)),
             timeout_secs: None,
@@ -253,19 +289,79 @@ mod tests {
     }
 
     #[test]
-    fn the_definition_requires_id_and_command_and_says_it_only_proposes() {
+    fn the_definition_requires_only_id_and_says_it_only_proposes() {
         let definition = schedule_definition();
         assert_eq!(definition["name"], "schedule");
-        assert_eq!(
-            definition["inputSchema"]["required"],
-            json!(["id", "command"])
-        );
+        assert_eq!(definition["inputSchema"]["required"], json!(["id"]));
         let description = definition["description"].as_str().unwrap();
         assert!(description.contains("only proposes"));
         assert!(description.contains("asks the person to approve"));
-        for key in ["follow_up", "at", "after", "timeout_secs"] {
+        for key in [
+            "command",
+            "brief",
+            "follow_up",
+            "at",
+            "after",
+            "timeout_secs",
+        ] {
             assert!(definition["inputSchema"]["properties"][key].is_object());
         }
+    }
+
+    #[test]
+    fn a_worker_request_carries_its_brief() {
+        assert_eq!(
+            worker_request(json!({})),
+            Ok(ScheduleRequest {
+                id: "nightly".to_string(),
+                kind: TaskKind::Worker {
+                    brief: "fix it".to_string()
+                },
+                follow_up: None,
+                when: When::After(Duration::from_secs(300)),
+                timeout_secs: None,
+            })
+        );
+    }
+
+    #[test]
+    fn exactly_one_of_command_and_brief_is_required() {
+        assert!(worker_request(json!({"command": "make test"})).is_err());
+        assert!(request(json!({"after": "5m", "command": null})).is_err());
+        let neither = parse_schedule_args(&json!({"id": "a", "after": "5m"}));
+        assert_eq!(
+            neither.unwrap_err(),
+            "Give exactly one of command or brief."
+        );
+        assert!(worker_request(json!({"brief": " "})).is_err());
+    }
+
+    #[test]
+    fn a_worker_timeout_is_capped_at_eight_hours() {
+        assert!(worker_request(json!({"timeout_secs": 28800})).is_ok());
+        let error = worker_request(json!({"timeout_secs": 28801})).unwrap_err();
+        assert!(error.contains("at most 28800"), "{error}");
+        assert!(request(json!({"after": "5m", "timeout_secs": 28801})).is_ok());
+    }
+
+    #[test]
+    fn a_worker_request_refuses_a_follow_up() {
+        assert!(worker_request(json!({"follow_up": "report"})).is_err());
+    }
+
+    #[test]
+    fn a_worker_request_resolves_into_a_proposed_worker_task() {
+        let task = worker_request(json!({}))
+            .unwrap()
+            .into_task(now(), &offset())
+            .unwrap();
+        assert_eq!(
+            task.kind,
+            TaskKind::Worker {
+                brief: "fix it".to_string()
+            }
+        );
+        assert_eq!(task.status, TaskStatus::Proposed);
     }
 
     #[test]

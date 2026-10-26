@@ -113,7 +113,10 @@ pub(super) fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) 
         store.remove(&task.id);
     }
     for task in plan.fire {
-        match watches.start(to_watch_spec(task, now, offset)) {
+        let Some(spec) = to_watch_spec(task, now, offset) else {
+            continue;
+        };
+        match watches.start(spec) {
             Ok(()) => warn_if_err(
                 store.save(&Task {
                     status: TaskStatus::Running,
@@ -180,8 +183,9 @@ mod tests {
         store
             .save(&Task {
                 id: id.to_string(),
-                kind: TaskKind::Command,
-                command: format!("echo {id}"),
+                kind: TaskKind::Command {
+                    command: format!("echo {id}"),
+                },
                 follow_up: None,
                 at: Utc::now() + chrono::Duration::minutes(minutes),
                 timeout_secs: None,

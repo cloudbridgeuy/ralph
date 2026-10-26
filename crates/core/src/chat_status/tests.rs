@@ -568,8 +568,9 @@ fn schedule_states_list_armed_tasks_by_time_in_local_hours() {
     use crate::schedule::{Task, TaskKind, TaskStatus};
     let task = |id: &str, at: &str, status| Task {
         id: id.into(),
-        kind: TaskKind::Command,
-        command: "x".into(),
+        kind: TaskKind::Command {
+            command: "x".into(),
+        },
         follow_up: None,
         at: chrono::DateTime::parse_from_rfc3339(at).unwrap().into(),
         timeout_secs: None,
@@ -602,8 +603,9 @@ fn schedule_states_mark_tasks_due_on_a_later_local_day() {
     use crate::schedule::{Task, TaskKind, TaskStatus};
     let task = |id: &str, at: &str| Task {
         id: id.into(),
-        kind: TaskKind::Command,
-        command: "x".into(),
+        kind: TaskKind::Command {
+            command: "x".into(),
+        },
         follow_up: None,
         at: chrono::DateTime::parse_from_rfc3339(at).unwrap().into(),
         timeout_secs: None,

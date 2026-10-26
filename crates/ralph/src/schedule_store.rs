@@ -86,8 +86,9 @@ mod tests {
     fn task(id: &str) -> Task {
         Task {
             id: id.to_string(),
-            kind: TaskKind::Command,
-            command: "echo hi".to_string(),
+            kind: TaskKind::Command {
+                command: "echo hi".to_string(),
+            },
             follow_up: None,
             at: Utc::now(),
             timeout_secs: None,

