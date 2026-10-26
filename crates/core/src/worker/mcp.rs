@@ -4,10 +4,11 @@ use super::{
     CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
 use crate::mcp::string_arg;
+use crate::schedule_request::parse_schedule_args;
 use crate::watch_request::parse_watch_args;
 use serde_json::{json, Value};
 
-pub fn command_definitions() -> [Value; 4] {
+pub fn command_definitions() -> [Value; 5] {
     [
         json!({
             "name": "spawn_worker",
@@ -51,6 +52,7 @@ pub fn command_definitions() -> [Value; 4] {
             }
         }),
         crate::watch_request::watch_definition(),
+        crate::schedule_request::schedule_definition(),
     ]
 }
 
@@ -85,6 +87,7 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
             })
         }),
         "watch" => parse_watch_args(args).map(Command::Watch),
+        "schedule" => parse_schedule_args(args).map(Command::Schedule),
         _ => return None,
     };
     Some(parsed)
@@ -376,6 +379,26 @@ mod tests {
         let schema = &spawn["inputSchema"];
         assert_eq!(schema["properties"]["ticket"]["type"], "string");
         assert_eq!(schema["required"], json!(["id", "task"]));
+    }
+
+    #[test]
+    fn schedule_parses_into_a_schedule_command() {
+        let args = json!({"id": "a", "command": "c", "after": "5m"});
+        assert!(matches!(
+            parse_command("schedule", &args),
+            Some(Ok(Command::Schedule(_)))
+        ));
+        assert!(matches!(
+            parse_command("schedule", &json!({"id": "a", "command": "c"})),
+            Some(Err(_))
+        ));
+    }
+
+    #[test]
+    fn the_schedule_definition_is_listed() {
+        assert!(command_definitions()
+            .iter()
+            .any(|definition| definition["name"] == "schedule"));
     }
 
     fn spawn_harness(args: Value) -> Result<(HarnessId, Option<String>), String> {

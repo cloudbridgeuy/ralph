@@ -1,4 +1,5 @@
 use crate::chat_memory::Trigger;
+use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -173,6 +174,7 @@ pub enum Command {
         force: bool,
     },
     Watch(WatchRequest),
+    Schedule(ScheduleRequest),
 }
 
 /// Workers are directed only in a turn the person started; a worker-triggered turn may only reply.

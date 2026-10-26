@@ -12,16 +12,18 @@ pub enum Command {
     Help,
     Inbox,
     Watch,
+    Schedule,
     Diff,
     Workers,
     Hold,
 }
 
 impl Command {
-    pub const ALL: [Command; 6] = [
+    pub const ALL: [Command; 7] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
+        Command::Schedule,
         Command::Diff,
         Command::Workers,
         Command::Hold,
@@ -32,6 +34,7 @@ impl Command {
             Command::Help => "/help",
             Command::Inbox => "/inbox",
             Command::Watch => "/watch",
+            Command::Schedule => "/schedule",
             Command::Diff => "/diff",
             Command::Workers => "/workers",
             Command::Hold => "/hold",
@@ -74,6 +77,16 @@ impl Command {
                     "kill the watch (also removes a persistent one)",
                 ),
             ],
+            Command::Schedule => &[
+                (
+                    "/schedule [list]",
+                    "list the scheduled tasks: id, state, time, time left, command; starts no turn",
+                ),
+                (
+                    "/schedule cancel <id>",
+                    "remove a task, and stop its watch if it runs; /schedule creates nothing: the model proposes tasks and you arm each at a y/n prompt",
+                ),
+            ],
             Command::Diff => &[
                 ("/diff [last N | ago N]", "changes of the last chat turn(s)"),
                 (
@@ -95,8 +108,8 @@ impl Command {
             ],
             Command::Hold => &[
                 (
-                    "/hold [<worker-id> | watch:<name>]",
-                    "wait with no prompt; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); Ctrl-Q or Ctrl-D leaves",
+                    "/hold [<worker-id> | watch:<name> | schedule:<id>]",
+                    "wait with no prompt; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id>; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
         }
@@ -217,7 +230,7 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
 ];
 
 /// Status bar segments in the order they are explained.
-pub const SEGMENTS: [Kind; 9] = [
+pub const SEGMENTS: [Kind; 10] = [
     Kind::Mode(Mode::Idle),
     Kind::Hold(Mode::Idle),
     Kind::Queue(Mode::Idle),
@@ -225,6 +238,7 @@ pub const SEGMENTS: [Kind; 9] = [
     Kind::Store,
     Kind::Workers,
     Kind::Watches,
+    Kind::Schedule,
     Kind::Thread(Mode::Idle),
     Kind::Cost(Mode::Idle),
 ];
@@ -253,6 +267,10 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
         Kind::Store => ("store", "the chat store path (last two parts)"),
         Kind::Workers => ("workers", "each worker and its state"),
         Kind::Watches => ("watch <id> <left>", "running watches and their time left"),
+        Kind::Schedule => (
+            "sched <id> <HH:MM>",
+            "armed scheduled tasks: the one task and its time, N scheduled, or SN",
+        ),
         Kind::Thread(_) => ("thread cell", "the live claude process (below)"),
         Kind::Cost(_) => (
             "$4.12 (+0.31)",
@@ -476,7 +494,9 @@ pub fn help_text(width: usize) -> String {
 mod tests {
     use super::*;
     use crate::chat_hold::HoldFilter;
-    use crate::chat_status::{route_input, EmptySubmit, Route, Status, WatchState, WorkerState};
+    use crate::chat_status::{
+        route_input, EmptySubmit, Route, ScheduleState, Status, WatchState, WorkerState,
+    };
     use crate::chat_thread::SessionCost;
     use crate::status_mode::mode;
     use crate::status_queue::QueueCell;
@@ -519,6 +539,10 @@ mod tests {
                 id: "watch:w1".into(),
                 left: Some("5m".into()),
             }],
+            schedule: vec![ScheduleState {
+                id: "nightly".into(),
+                time: "23:00".into(),
+            }],
             thread: Some(thread(None)),
             napping: false,
             queue: Some(QueueCell {
@@ -545,6 +569,7 @@ mod tests {
                 Help,
                 Inbox,
                 Watch,
+                Schedule,
                 Diff,
                 Workers,
                 Hold

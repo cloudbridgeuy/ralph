@@ -29,6 +29,7 @@ mod permission_queue;
 mod process_tree;
 pub mod prompt_source;
 pub mod render;
+mod schedule_store;
 pub mod signal;
 mod snapshot;
 pub mod spinner;
