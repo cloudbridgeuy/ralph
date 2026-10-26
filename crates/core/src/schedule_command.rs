@@ -1,6 +1,7 @@
 use crate::schedule::{
     escape_controls, format_span, watch_id, Task, TaskKind, TaskStatus, SCHEDULE_ID_PREFIX,
 };
+use crate::schedule_worker::worker_id;
 use chrono::{DateTime, FixedOffset, Utc};
 
 pub const SCHEDULE_USAGE: &str = "Usage: /schedule [list] | cancel <id>. /schedule does not create tasks: the model proposes them and you arm each one at a y/n prompt.";
@@ -91,10 +92,24 @@ fn relative_label(task: &Task, now: DateTime<Utc>) -> String {
     }
 }
 
-fn task_text(task: &Task) -> &str {
+pub fn kind_label(kind: &TaskKind) -> &'static str {
+    match kind {
+        TaskKind::Command { .. } => "cmd",
+        TaskKind::Worker { .. } => "worker",
+    }
+}
+
+fn task_text(task: &Task) -> String {
     match &task.kind {
-        TaskKind::Command { command } => command,
-        TaskKind::Worker { brief } => brief.lines().next().unwrap_or_default(),
+        TaskKind::Command { command } => command.clone(),
+        TaskKind::Worker { brief } => {
+            let first = brief.lines().next().unwrap_or_default();
+            if task.status == TaskStatus::Running {
+                format!("{}: {first}", worker_id(&task.id))
+            } else {
+                first.to_string()
+            }
+        }
     }
 }
 
@@ -104,18 +119,19 @@ pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> St
     }
     let mut sorted: Vec<&Task> = tasks.iter().collect();
     sorted.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
-    let rows: Vec<[String; 4]> = sorted
+    let rows: Vec<[String; 5]> = sorted
         .iter()
         .map(|task| {
             [
                 escape_controls(&task.id),
+                kind_label(&task.kind).to_string(),
                 status_label(task.status).to_string(),
                 when_label(task, now, offset),
                 relative_label(task, now),
             ]
         })
         .collect();
-    let widths: Vec<usize> = (0..4)
+    let widths: Vec<usize> = (0..5)
         .map(|column| {
             rows.iter()
                 .map(|row| row[column].chars().count())
@@ -127,16 +143,18 @@ pub fn list_tasks(tasks: &[Task], now: DateTime<Utc>, offset: FixedOffset) -> St
         .zip(&sorted)
         .map(|(row, task)| {
             format!(
-                "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {}",
+                "{:<w0$}  {:<w1$}  {:<w2$}  {:<w3$}  {:<w4$}  {}",
                 row[0],
                 row[1],
                 row[2],
                 row[3],
-                escape_controls(task_text(task)),
+                row[4],
+                escape_controls(&task_text(task)),
                 w0 = widths[0],
                 w1 = widths[1],
                 w2 = widths[2],
                 w3 = widths[3],
+                w4 = widths[4],
             )
         })
         .collect::<Vec<_>>()
@@ -290,9 +308,9 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "missed  armed     11:00  due late  echo missed",
-                "soon    proposed  12:05  in 5m     echo soon",
-                "later   armed     13:30  in 1h30m  echo later",
+                "missed  cmd  armed     11:00  due late  echo missed",
+                "soon    cmd  proposed  12:05  in 5m     echo soon",
+                "later   cmd  armed     13:30  in 1h30m  echo later",
             ]
         );
     }
@@ -308,7 +326,7 @@ mod tests {
         )];
         assert_eq!(
             list_tasks(&tasks, now, offset()),
-            "t  running  2026-01-02 10:00  in 22h  echo t"
+            "t  cmd  running  2026-01-02 10:00  in 22h  echo t"
         );
     }
 
@@ -345,7 +363,34 @@ mod tests {
         };
         assert_eq!(
             list_tasks(&[t], now, offset()),
-            "w  armed  12:05  in 5m  fix the build"
+            "w  worker  armed  12:05  in 5m  fix the build"
+        );
+    }
+
+    #[test]
+    fn a_running_worker_shows_its_worker_id() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = task("w", "2026-01-01T09:55:00Z", TaskStatus::Running, false);
+        t.kind = TaskKind::Worker {
+            brief: "fix the build\nthen the tests".to_string(),
+        };
+        assert_eq!(
+            list_tasks(&[t], now, offset()),
+            "w  worker  running  11:55  due  sched-w: fix the build"
+        );
+    }
+
+    #[test]
+    fn kinds_are_labelled_cmd_and_worker() {
+        assert_eq!(
+            kind_label(&TaskKind::Command {
+                command: "x".into()
+            }),
+            "cmd"
+        );
+        assert_eq!(
+            kind_label(&TaskKind::Worker { brief: "x".into() }),
+            "worker"
         );
     }
 }

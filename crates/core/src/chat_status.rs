@@ -207,7 +207,7 @@ pub fn schedule_states(
     let today = now.with_timezone(&offset).date_naive();
     let mut armed: Vec<&Task> = tasks
         .iter()
-        .filter(|task| task.status == TaskStatus::Pending)
+        .filter(|task| task.status != TaskStatus::Proposed)
         .collect();
     armed.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
     armed

@@ -577,7 +577,7 @@ fn a_pending_permission_overrides_a_report_and_counts_as_running() {
 }
 
 #[test]
-fn schedule_states_list_armed_tasks_by_time_in_local_hours() {
+fn schedule_states_list_armed_and_running_tasks_by_time_in_local_hours() {
     use crate::schedule::{Task, TaskKind, TaskStatus};
     let task = |id: &str, at: &str, status| Task {
         id: id.into(),
@@ -607,7 +607,11 @@ fn schedule_states_list_armed_tasks_by_time_in_local_hours() {
     };
     assert_eq!(
         schedule_states(&tasks, now, offset),
-        [state("a", "11:00"), state("b", "13:00")]
+        [
+            state("r", "09:00"),
+            state("a", "11:00"),
+            state("b", "13:00")
+        ]
     );
     assert!(schedule_states(&[], now, offset).is_empty());
 }
