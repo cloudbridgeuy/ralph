@@ -329,6 +329,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let local_route = LocalRoute {
         inbox: &monitor.inbox,
         watches: &monitor.watches,
+        schedule: &monitor.schedule,
         display: &display,
         changes: &config.changes,
         store: &store_dir,

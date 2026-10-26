@@ -1,4 +1,5 @@
 use super::*;
+use crate::chat_status::ScheduleState;
 use crate::chat_thread::{cost_variants, thread_variants};
 
 pub(super) const MODE_PRIORITY: u8 = 0;
@@ -8,7 +9,8 @@ const THREAD_PRIORITY: u8 = 3;
 const COST_PRIORITY: u8 = 4;
 const WORKERS_PRIORITY: u8 = 5;
 const WATCHES_PRIORITY: u8 = 6;
-const STORE_PRIORITY: u8 = 7;
+const SCHEDULE_PRIORITY: u8 = 7;
+const STORE_PRIORITY: u8 = 8;
 
 pub fn store_label(path: &str) -> String {
     let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
@@ -74,6 +76,19 @@ fn watches_variants(status: &Status) -> Vec<String> {
     ]
 }
 
+pub(super) fn schedule_variants(schedule: &[ScheduleState]) -> Vec<String> {
+    let count = schedule.len();
+    let counted = [format!("{count} scheduled"), format!("S{count}")];
+    match schedule {
+        [] => Vec::new(),
+        [only] => [format!("sched {} {}", only.id, only.time)]
+            .into_iter()
+            .chain(counted)
+            .collect(),
+        _ => counted.to_vec(),
+    }
+}
+
 pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
     let unread = status.unread;
     let current = mode(status);
@@ -132,6 +147,14 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             watches_variants(status),
         )
     });
+    let schedule = (!status.schedule.is_empty()).then(|| {
+        Segment::new(
+            Side::Right,
+            Kind::Schedule,
+            SCHEDULE_PRIORITY,
+            schedule_variants(&status.schedule),
+        )
+    });
     let thread = status.thread.as_ref().map(|cell| {
         Segment::new(
             Side::Right,
@@ -160,6 +183,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         store,
         workers,
         watches,
+        schedule,
         thread,
         cost,
     ]
@@ -300,6 +324,49 @@ mod tests {
         );
         assert_eq!(all[0].kind, Kind::Mode(Mode::Inbox));
         assert_eq!(all[0].priority, 0);
+    }
+
+    #[test]
+    fn one_scheduled_task_shows_its_id_and_time() {
+        assert_eq!(
+            schedule_variants(&with_schedule(1).schedule),
+            ["sched job1 01:30", "1 scheduled", "S1"]
+        );
+    }
+
+    #[test]
+    fn several_scheduled_tasks_show_a_count() {
+        assert_eq!(
+            schedule_variants(&with_schedule(3).schedule),
+            ["3 scheduled", "S3"]
+        );
+        assert!(schedule_variants(&[]).is_empty());
+    }
+
+    #[test]
+    fn schedule_cell_is_absent_without_armed_tasks() {
+        assert!(!line(&with_watches(), 200).contains("sched"));
+    }
+
+    #[test]
+    fn schedule_cell_sits_between_watches_and_store_in_priority() {
+        let all = segments(&with_schedule(1), &context());
+        let priority = |kind| all.iter().find(|s| s.kind == kind).unwrap().priority;
+        assert!(priority(Kind::Watches) < priority(Kind::Schedule));
+        assert!(priority(Kind::Schedule) < priority(Kind::Store));
+        let mut priorities: Vec<u8> = all.iter().map(|s| s.priority).collect();
+        priorities.sort_unstable();
+        priorities.dedup();
+        assert_eq!(priorities.len(), all.len());
+    }
+
+    #[test]
+    fn schedule_cell_shows_in_the_long_form_and_fits_at_80_columns() {
+        let status = with_schedule(1);
+        assert!(line(&status, 200).contains("sched job1 01:30"));
+        let shown = line(&status, 80);
+        assert!(shown.width() <= 80, "{shown}");
+        assert!(shown.contains("job1") || shown.contains("scheduled") || shown.contains("S1"));
     }
 
     #[test]

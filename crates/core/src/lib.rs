@@ -36,6 +36,7 @@ pub mod mcp;
 pub mod retry;
 pub mod sanitize;
 pub mod schedule;
+pub mod schedule_command;
 pub mod schedule_request;
 pub mod semver;
 pub mod shell_format;

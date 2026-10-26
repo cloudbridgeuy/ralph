@@ -3,6 +3,8 @@ use crate::chat_hold::HoldFilter;
 use crate::chat_thread::ThreadCell;
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
+use crate::schedule::{Task, TaskStatus};
+use crate::schedule_command::{parse_schedule_args, ScheduleCommand};
 use crate::status_queue::QueueCell;
 use crate::watch_command::{format_left, parse_watch_args, time_left, WatchCommand};
 use crate::watch_store::SavedWatch;
@@ -38,6 +40,12 @@ pub struct WatchState {
     pub left: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleState {
+    pub id: String,
+    pub time: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunningWorker {
     pub id: String,
@@ -61,6 +69,7 @@ pub struct Status {
     pub unread: usize,
     pub workers: Vec<WorkerState>,
     pub watches: Vec<WatchState>,
+    pub schedule: Vec<ScheduleState>,
     pub thread: Option<ThreadCell>,
     pub napping: bool,
     pub queue: Option<QueueCell>,
@@ -76,6 +85,7 @@ pub enum Route {
     DropInbox(Position),
     InboxUsage,
     Watch(WatchCommand),
+    Schedule(ScheduleCommand),
     Diff(DiffArgs),
     Workers(Option<String>),
     Hold(HoldFilter),
@@ -92,12 +102,14 @@ impl Route {
             | Route::Help
             | Route::InboxUsage
             | Route::Watch(WatchCommand::List | WatchCommand::Usage)
+            | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
             | Route::Diff(DiffArgs::Usage(_) | DiffArgs::UnclosedQuote) => true,
             Route::Send(_)
             | Route::ReadInbox(_)
             | Route::DropInbox(_)
             | Route::Hold(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
+            | Route::Schedule(ScheduleCommand::Cancel(_))
             | Route::Diff(DiffArgs::Target(_))
             | Route::Ignore => false,
         }
@@ -129,6 +141,7 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
                 Command::Help => Route::Help,
                 Command::Inbox => inbox_route(args),
                 Command::Watch => Route::Watch(parse_watch_args(args)),
+                Command::Schedule => Route::Schedule(parse_schedule_args(args)),
                 Command::Diff => Route::Diff(parse_diff_args(args)),
                 Command::Workers => workers_route(args, line),
                 Command::Hold => hold_route(args, line),
@@ -175,6 +188,21 @@ pub fn watch_states(saved: &[SavedWatch], now: chrono::DateTime<chrono::Utc>) ->
         .map(|watch| WatchState {
             id: watch.id.clone(),
             left: time_left(watch, now).map(format_left),
+        })
+        .collect()
+}
+
+pub fn schedule_states(tasks: &[Task], offset: chrono::FixedOffset) -> Vec<ScheduleState> {
+    let mut armed: Vec<&Task> = tasks
+        .iter()
+        .filter(|task| task.status == TaskStatus::Pending)
+        .collect();
+    armed.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+    armed
+        .into_iter()
+        .map(|task| ScheduleState {
+            id: task.id.clone(),
+            time: task.at.with_timezone(&offset).format("%H:%M").to_string(),
         })
         .collect()
 }

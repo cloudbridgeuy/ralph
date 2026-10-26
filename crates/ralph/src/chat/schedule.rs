@@ -8,6 +8,9 @@ use ralph_core::schedule::{
     approval_question, parse_answer, plan_restore, plan_tick, proposed, to_watch_spec, Answer,
     Task, TaskStatus,
 };
+use ralph_core::schedule_command::{
+    cancel_message, list_tasks, plan_cancel, CancelPlan, ScheduleCommand, SCHEDULE_USAGE,
+};
 use ralph_core::watch_request::start_failure_report;
 use std::io::{self, Write};
 use std::sync::atomic::Ordering;
@@ -128,6 +131,30 @@ pub(super) fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) 
                 store.remove(&task.id);
             }
         }
+    }
+}
+
+pub(super) fn run(command: ScheduleCommand, store: &ScheduleStore, watches: &Watches) {
+    match command {
+        ScheduleCommand::List => println!(
+            "{}",
+            list_tasks(
+                &store.load_all(),
+                chrono::Utc::now(),
+                *chrono::Local::now().offset()
+            )
+        ),
+        ScheduleCommand::Cancel(id) => {
+            let plan = plan_cancel(&id, &store.load_all());
+            if let CancelPlan::Remove { id, stop_watch } = &plan {
+                store.remove(id);
+                if let Some(watch) = stop_watch {
+                    watches.stop(watch);
+                }
+            }
+            println!("{}", cancel_message(&plan));
+        }
+        ScheduleCommand::Usage => println!("{SCHEDULE_USAGE}"),
     }
 }
 

@@ -15,7 +15,9 @@ use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_memory::entries_to_shift;
-use ralph_core::chat_status::{latest_states, watch_states, worker_states, RunningWorker, Status};
+use ralph_core::chat_status::{
+    latest_states, schedule_states, watch_states, worker_states, RunningWorker, Status,
+};
 use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
@@ -327,6 +329,7 @@ impl Monitor {
             unread: pending.len(),
             workers,
             watches: watch_states(&self.watches.list(), chrono::Utc::now()),
+            schedule: schedule_states(&self.schedule.load_all(), *chrono::Local::now().offset()),
             thread: Some(thread),
             napping: self.store.napping(),
             queue: None,

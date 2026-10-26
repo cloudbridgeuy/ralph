@@ -562,3 +562,45 @@ fn a_pending_permission_overrides_a_report_and_counts_as_running() {
     assert_eq!(states[0].state, "permission");
     assert!(states[0].is_running());
 }
+
+#[test]
+fn schedule_states_list_armed_tasks_by_time_in_local_hours() {
+    use crate::schedule::{Task, TaskKind, TaskStatus};
+    let task = |id: &str, at: &str, status| Task {
+        id: id.into(),
+        kind: TaskKind::Command,
+        command: "x".into(),
+        follow_up: None,
+        at: chrono::DateTime::parse_from_rfc3339(at).unwrap().into(),
+        timeout_secs: None,
+        status,
+        late: false,
+    };
+    let tasks = [
+        task("b", "2026-01-01T12:00:00Z", TaskStatus::Pending),
+        task("a", "2026-01-01T10:00:00Z", TaskStatus::Pending),
+        task("p", "2026-01-01T09:00:00Z", TaskStatus::Proposed),
+        task("r", "2026-01-01T08:00:00Z", TaskStatus::Running),
+    ];
+    let offset = chrono::FixedOffset::east_opt(3600).unwrap();
+    let state = |id: &str, time: &str| ScheduleState {
+        id: id.into(),
+        time: time.into(),
+    };
+    assert_eq!(
+        schedule_states(&tasks, offset),
+        [state("a", "11:00"), state("b", "13:00")]
+    );
+    assert!(schedule_states(&[], offset).is_empty());
+}
+
+#[test]
+fn schedule_routes_locally_and_only_list_runs_mid_turn() {
+    use crate::schedule_command::ScheduleCommand;
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    assert_eq!(route("/schedule"), Route::Schedule(ScheduleCommand::List));
+    assert!(route("/schedule list").runs_mid_turn());
+    assert!(route("/schedule x").runs_mid_turn());
+    assert!(!route("/schedule cancel a").runs_mid_turn());
+    assert_eq!(route("/schedulefoo"), Route::Send("/schedulefoo".into()));
+}
