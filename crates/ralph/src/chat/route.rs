@@ -41,7 +41,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
             refresh();
         }
         Route::Schedule(command) => {
-            schedule::run(command, ctx.schedule, ctx.watches);
+            schedule::run(command, ctx.schedule, ctx.watches, &ctx.monitor.workers);
             refresh();
         }
         Route::Diff(DiffArgs::Target(target)) => diff::run(

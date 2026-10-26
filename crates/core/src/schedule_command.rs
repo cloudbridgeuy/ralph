@@ -15,10 +15,16 @@ pub enum ScheduleCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CancelStop {
+    Watch(String),
+    Worker(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CancelPlan {
     Remove {
         id: String,
-        stop_watch: Option<String>,
+        stop: Option<CancelStop>,
     },
     Unknown(String),
 }
@@ -39,7 +45,10 @@ pub fn plan_cancel(id: &str, tasks: &[Task]) -> CancelPlan {
     match tasks.iter().find(|task| task.id == id) {
         Some(task) => CancelPlan::Remove {
             id: task.id.clone(),
-            stop_watch: (task.status == TaskStatus::Running).then(|| watch_id(&task.id)),
+            stop: (task.status == TaskStatus::Running).then(|| match task.kind {
+                TaskKind::Command { .. } => CancelStop::Watch(watch_id(&task.id)),
+                TaskKind::Worker { .. } => CancelStop::Worker(worker_id(&task.id)),
+            }),
         },
         None => CancelPlan::Unknown(id.to_string()),
     }
@@ -47,14 +56,17 @@ pub fn plan_cancel(id: &str, tasks: &[Task]) -> CancelPlan {
 
 pub fn cancel_message(plan: &CancelPlan) -> String {
     match plan {
+        CancelPlan::Remove { id, stop: None } => format!("Cancelled scheduled task {id}."),
         CancelPlan::Remove {
             id,
-            stop_watch: None,
-        } => format!("Cancelled scheduled task {id}."),
-        CancelPlan::Remove {
-            id,
-            stop_watch: Some(_),
+            stop: Some(CancelStop::Watch(_)),
         } => format!("Cancelled scheduled task {id} and stopped its running watch."),
+        CancelPlan::Remove {
+            id,
+            stop: Some(CancelStop::Worker(worker)),
+        } => format!(
+            "Cancelled scheduled task {id}: stopped worker {worker}, kept its branch worker/{worker}."
+        ),
         CancelPlan::Unknown(id) => {
             format!("No scheduled task {id}. /schedule list shows the tasks.")
         }
@@ -235,17 +247,48 @@ mod tests {
             plan_cancel("a", &tasks),
             CancelPlan::Remove {
                 id: "a".into(),
-                stop_watch: None
+                stop: None
             }
         );
         assert_eq!(
             plan_cancel("b", &tasks),
             CancelPlan::Remove {
                 id: "b".into(),
-                stop_watch: Some("schedule:b".into())
+                stop: Some(CancelStop::Watch("schedule:b".into()))
             }
         );
         assert_eq!(plan_cancel("c", &tasks), CancelPlan::Unknown("c".into()));
+    }
+
+    #[test]
+    fn cancel_plan_stops_the_worker_of_a_running_worker_task() {
+        let mut running = task("w", "2026-01-01T10:00:00Z", TaskStatus::Running, false);
+        running.kind = TaskKind::Worker {
+            brief: "do it".into(),
+        };
+        let mut pending = running.clone();
+        pending.status = TaskStatus::Pending;
+        assert_eq!(
+            plan_cancel("w", &[running]),
+            CancelPlan::Remove {
+                id: "w".into(),
+                stop: Some(CancelStop::Worker("sched-w".into()))
+            }
+        );
+        assert_eq!(
+            plan_cancel("w", &[pending]),
+            CancelPlan::Remove {
+                id: "w".into(),
+                stop: None
+            }
+        );
+        assert_eq!(
+            cancel_message(&CancelPlan::Remove {
+                id: "w".into(),
+                stop: Some(CancelStop::Worker("sched-w".into()))
+            }),
+            "Cancelled scheduled task w: stopped worker sched-w, kept its branch worker/sched-w."
+        );
     }
 
     #[test]

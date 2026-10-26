@@ -4,12 +4,14 @@ use crate::signal;
 use crate::warn::warn_if_err;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
+use crate::workers::Workers;
 use ralph_core::schedule::{
     approval_question, parse_answer, plan_restore, plan_tick, proposed, to_watch_spec, Answer,
     Task, TaskStatus,
 };
 use ralph_core::schedule_command::{
-    cancel_message, list_tasks, plan_cancel, CancelPlan, ScheduleCommand, SCHEDULE_USAGE,
+    cancel_message, list_tasks, plan_cancel, CancelPlan, CancelStop, ScheduleCommand,
+    SCHEDULE_USAGE,
 };
 use ralph_core::watch_request::start_failure_report;
 use std::io::{self, Write};
@@ -140,7 +142,12 @@ pub(super) fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) 
     }
 }
 
-pub(super) fn run(command: ScheduleCommand, store: &ScheduleStore, watches: &Watches) {
+pub(super) fn run(
+    command: ScheduleCommand,
+    store: &ScheduleStore,
+    watches: &Watches,
+    workers: &Workers,
+) {
     match command {
         ScheduleCommand::List => println!(
             "{}",
@@ -152,10 +159,17 @@ pub(super) fn run(command: ScheduleCommand, store: &ScheduleStore, watches: &Wat
         ),
         ScheduleCommand::Cancel(id) => {
             let plan = plan_cancel(&id, &store.load_all());
-            if let CancelPlan::Remove { id, stop_watch } = &plan {
+            if let CancelPlan::Remove { id, stop } = &plan {
                 store.remove(id);
-                if let Some(watch) = stop_watch {
-                    watches.stop(watch);
+                match stop {
+                    Some(CancelStop::Watch(watch)) => {
+                        watches.stop(watch);
+                    }
+                    Some(CancelStop::Worker(worker)) => warn_if_err(
+                        workers.stop_harness(worker),
+                        format!("stopping cancelled worker {worker}"),
+                    ),
+                    None => {}
                 }
             }
             println!("{}", cancel_message(&plan));
