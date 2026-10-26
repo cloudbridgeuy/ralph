@@ -1,16 +1,28 @@
-use super::{git_value, run};
-use ralph_core::worker::{guard_config_steps, hook_scripts, HOOKS_DIR};
+use super::{check, git_value};
+use ralph_core::worker::{guard_config_steps, hook_scripts, HOOKS_DIR, UNSET_ALL_FLAG};
 use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+
+const KEY_ABSENT_EXIT: i32 = 5;
 
 pub(super) fn apply(repo: &Path, worktree: &Path, store_dir: &Path) -> io::Result<()> {
     let hooks_dir = store_dir.join(HOOKS_DIR);
     write_hooks(&hooks_dir, &common_hooks_dir(repo)?)?;
     for step in guard_config_steps(&hooks_dir) {
-        run(Command::new("git").arg("-C").arg(worktree).args(step))?;
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(&step)
+            .stdin(Stdio::null())
+            .output()?;
+        let key_absent = step.iter().any(|arg| arg == UNSET_ALL_FLAG)
+            && output.status.code() == Some(KEY_ABSENT_EXIT);
+        if !key_absent {
+            check(output)?;
+        }
     }
     Ok(())
 }

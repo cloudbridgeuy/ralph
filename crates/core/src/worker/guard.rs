@@ -3,7 +3,10 @@ use std::path::Path;
 pub const HOOKS_DIR: &str = "schedule-hooks";
 pub const REFUSED_PUSH_URL: &str = "ralph-refused://origin";
 pub const REFUSED_URL_BASE: &str = "ralph-refused://";
-pub const REFUSED_PREFIXES: [&str; 2] = ["git@github.com:", "https://github.com/"];
+pub const REFUSED_PREFIXES: [&str; 9] = [
+    "/", "./", "../", "file://", "ssh://", "git@", "git://", "http://", "https://",
+];
+pub const UNSET_ALL_FLAG: &str = "--unset-all";
 pub const DISALLOWED_TOOLS: [&str; 3] = ["Bash(git push:*)", "Bash(gh pr:*)", "Bash(gh api:*)"];
 pub const PRE_PUSH_HOOK: &str = "pre-push";
 
@@ -38,28 +41,13 @@ pub fn guard_config_steps(hooks_dir: &Path) -> Vec<Vec<String>> {
         ]),
     ];
     let key = format!("url.{REFUSED_URL_BASE}.pushInsteadOf");
-    steps.extend(REFUSED_PREFIXES.iter().map(|prefix| {
-        step(&[
-            "config",
-            "--worktree",
-            "--replace-all",
-            &key,
-            prefix,
-            &anchored_pattern(prefix),
-        ])
-    }));
+    steps.push(step(&["config", "--worktree", UNSET_ALL_FLAG, &key]));
+    steps.extend(
+        REFUSED_PREFIXES
+            .iter()
+            .map(|prefix| step(&["config", "--worktree", "--add", &key, prefix])),
+    );
     steps
-}
-
-pub fn anchored_pattern(text: &str) -> String {
-    let escaped: String = text
-        .chars()
-        .flat_map(|c| {
-            let prefix = "\\.[]{}()*+?^$|".contains(c).then_some('\\');
-            prefix.into_iter().chain(std::iter::once(c))
-        })
-        .collect();
-    format!("^{escaped}$")
 }
 
 pub fn refusing_pre_push() -> String {
@@ -128,31 +116,82 @@ mod tests {
                 &[
                     "config",
                     "--worktree",
-                    "--replace-all",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "git@github.com:",
-                    "^git@github\\.com:$"
+                    "--unset-all",
+                    "url.ralph-refused://.pushInsteadOf"
                 ],
                 &[
                     "config",
                     "--worktree",
-                    "--replace-all",
+                    "--add",
                     "url.ralph-refused://.pushInsteadOf",
-                    "https://github.com/",
-                    "^https://github\\.com/$"
+                    "/"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "./"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "../"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "file://"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "ssh://"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "git@"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "git://"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "http://"
+                ],
+                &[
+                    "config",
+                    "--worktree",
+                    "--add",
+                    "url.ralph-refused://.pushInsteadOf",
+                    "https://"
                 ],
             ])
         );
     }
 
     #[test]
-    fn anchored_pattern_escapes_regex_characters() {
-        assert_eq!(anchored_pattern("a.b"), "^a\\.b$");
-        assert_eq!(
-            anchored_pattern("x[1]*+?^$|(){}\\"),
-            "^x\\[1\\]\\*\\+\\?\\^\\$\\|\\(\\)\\{\\}\\\\$"
-        );
-        assert_eq!(anchored_pattern("plain"), "^plain$");
+    fn every_refused_prefix_is_added_once() {
+        let mut prefixes = REFUSED_PREFIXES.to_vec();
+        prefixes.sort();
+        prefixes.dedup();
+        assert_eq!(prefixes.len(), REFUSED_PREFIXES.len());
     }
 
     #[test]
