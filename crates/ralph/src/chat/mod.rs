@@ -46,13 +46,14 @@ use crate::chat::skills::{
 use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
-use crate::chat::suggestion::SuggestionSlot;
+use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
+use crate::input_theme::suggestion_color;
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, RenderContext};
@@ -73,7 +74,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
-use ralph_core::chat_suggestion::prefill;
+use ralph_core::chat_suggestion::{prefill, Prefill};
 use ralph_core::chat_thread::run_id;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -153,6 +154,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     sweep_stale_server_records();
     let chat_socket = ChatSocket::bind(&store_dir)?;
     let suggestions = SuggestionSlot::default();
+    let shown = SuggestionSlot::default();
     let socket_files = chat_socket.files().clone();
     let _socket_guard = SocketGuard(socket_files.clone());
     let mcp_args = write_mcp_config(
@@ -275,11 +277,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );
-    let mut editor = build_editor(&store_dir, edit_mode)?
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
+        .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
+    let mut editor = build_editor(&store_dir, edit_mode, highlighter)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
-    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     crate::render::image::enable_images(crate::render::image::detect());
     let (configured_editor, config_warning) = chat_config.editor_setting();
     let (editor_cmd, editor_warning) = editor_argv(
@@ -447,8 +451,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         };
         let draft = draft_with_typed(draft, &typed);
         let replied = outcome == TurnOutcome::Replied;
-        if let Some(draft) = prefill(replied, draft, suggestion) {
-            editor.run_edit_commands(&[EditCommand::InsertString(draft)]);
+        shown.clear();
+        if let Some(fill) = prefill(replied, draft, suggestion) {
+            let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
+            editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
+            if let Prefill::Suggestion(text) = fill {
+                shown.set(text);
+            }
         }
     }
     Ok(())

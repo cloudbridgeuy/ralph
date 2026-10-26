@@ -41,12 +41,26 @@ pub fn parse_suggestion(args: &Value) -> Result<String, String> {
     }
 }
 
-pub fn prefill(replied: bool, draft: Option<String>, suggestion: Option<String>) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Prefill {
+    Draft(String),
+    Suggestion(String),
+}
+
+pub fn prefill(
+    replied: bool,
+    draft: Option<String>,
+    suggestion: Option<String>,
+) -> Option<Prefill> {
     match draft {
-        Some(draft) => Some(draft),
-        None if replied => suggestion,
+        Some(draft) => Some(Prefill::Draft(draft)),
+        None if replied => suggestion.map(Prefill::Suggestion),
         None => None,
     }
+}
+
+pub fn untouched(suggestion: &str, buffer: &str) -> bool {
+    suggestion == buffer
 }
 
 #[cfg(test)]
@@ -113,17 +127,25 @@ mod tests {
         Some(text.to_string())
     }
 
+    fn draft(text: &str) -> Option<Prefill> {
+        Some(Prefill::Draft(text.to_string()))
+    }
+
+    fn suggestion(text: &str) -> Option<Prefill> {
+        Some(Prefill::Suggestion(text.to_string()))
+    }
+
     #[test]
     fn a_draft_always_wins() {
-        assert_eq!(prefill(true, some("d"), some("s")), some("d"));
-        assert_eq!(prefill(false, some("d"), some("s")), some("d"));
-        assert_eq!(prefill(true, some("d"), None), some("d"));
-        assert_eq!(prefill(false, some("d"), None), some("d"));
+        assert_eq!(prefill(true, some("d"), some("s")), draft("d"));
+        assert_eq!(prefill(false, some("d"), some("s")), draft("d"));
+        assert_eq!(prefill(true, some("d"), None), draft("d"));
+        assert_eq!(prefill(false, some("d"), None), draft("d"));
     }
 
     #[test]
     fn a_suggestion_fills_only_after_a_reply_without_a_draft() {
-        assert_eq!(prefill(true, None, some("s")), some("s"));
+        assert_eq!(prefill(true, None, some("s")), suggestion("s"));
         assert_eq!(prefill(false, None, some("s")), None);
     }
 
@@ -131,5 +153,15 @@ mod tests {
     fn nothing_in_nothing_out() {
         assert_eq!(prefill(true, None, None), None);
         assert_eq!(prefill(false, None, None), None);
+    }
+
+    #[test]
+    fn untouched_needs_exact_equality() {
+        assert!(untouched("yes", "yes"));
+        assert!(untouched("", ""));
+        assert!(!untouched("yes", "ye"));
+        assert!(!untouched("yes", "yes "));
+        assert!(!untouched("yes", "Yes"));
+        assert!(!untouched("yes", ""));
     }
 }

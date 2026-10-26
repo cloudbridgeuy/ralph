@@ -1,5 +1,6 @@
 //! Loads `config.toml`. Locations, precedence, and keys are in `docs/configuration.md`.
 
+use crate::input_theme::InputTheme;
 use crate::invoke::{
     resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
 };
@@ -280,6 +281,9 @@ pub struct ThemeSection {
 
     #[serde(default)]
     pub status: StatusTheme,
+
+    #[serde(default)]
+    pub input: InputTheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -313,6 +317,7 @@ impl ThemeSection {
             .chain(self.assistant.palette(ThemeRole::Assistant).1)
             .chain(self.agent().palette(ThemeRole::Agent).1)
             .chain(self.status.resolve().1)
+            .chain(self.input.resolve().1)
             .collect()
     }
 }

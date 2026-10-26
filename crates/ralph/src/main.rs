@@ -19,6 +19,7 @@ pub mod formatting;
 mod frame;
 pub mod highlight;
 mod inbox_alert;
+mod input_theme;
 mod invoke;
 pub mod markdown;
 mod mermaid_guard;

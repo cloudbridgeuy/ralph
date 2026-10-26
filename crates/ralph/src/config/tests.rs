@@ -178,6 +178,22 @@ fn theme_status_table_loads_and_reports_warnings() {
 }
 
 #[test]
+fn theme_input_table_loads_and_reports_warnings() {
+    let config: AppConfig =
+        toml::from_str("[theme.input]\nsuggestion = \"#102030\"\nhint = \"red\"\n").unwrap();
+    assert_eq!(config.theme.input.colors.len(), 2);
+    assert_eq!(
+        config.theme.warnings(),
+        ["[theme.input] unknown key \"hint\"; ignored"]
+    );
+    let bad: AppConfig = toml::from_str("[theme.input]\nsuggestion = \"nope\"\n").unwrap();
+    assert_eq!(
+        bad.theme.warnings(),
+        ["[theme.input] suggestion = \"nope\" is not a color; using the default"]
+    );
+}
+
+#[test]
 fn chat_section_parses_status_powerline() {
     assert!(!AppConfig::new().chat.status_powerline);
     let temp_dir = TempDir::new().unwrap();
@@ -388,6 +404,7 @@ fn test_save_and_load() {
             assistant: RoleTheme::default(),
             agent: None,
             status: StatusTheme::default(),
+            input: InputTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -444,6 +461,7 @@ fn test_serialize_omits_none() {
             assistant: RoleTheme::default(),
             agent: None,
             status: StatusTheme::default(),
+            input: InputTheme::default(),
         },
         ..AppConfig::new()
     };

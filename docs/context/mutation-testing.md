@@ -58,7 +58,7 @@ Examined:
 - `crates/core/src/watch.rs`, `crates/core/src/watch_store.rs` (time is passed in, not read)
 - `crates/ralph/src/stream_processor/{types,output_block,block_builders,utils}.rs`
 - `crates/ralph/src/render/{wrap,utils}.rs`
-- `crates/ralph/src/{markdown,ansi,frame,formatting,status_theme}.rs`
+- `crates/ralph/src/{markdown,ansi,frame,formatting,status_theme,input_theme}.rs`
 
 Excluded: `.worktrees/**`, `.claude/worktrees/**`, `vendor/**`, `target/**`, `xtask/**`, `**/tests/**`, `**/tests.rs`. Test files are not mutated but still run. `exclude_re` holds five line-pinned equivalents and two name-pinned global-state patterns, all listed in the [Ledger](#ledger).
 

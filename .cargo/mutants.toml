@@ -34,6 +34,7 @@ examine_globs = [
   "crates/ralph/src/frame.rs",
   "crates/ralph/src/formatting.rs",
   "crates/ralph/src/status_theme.rs",
+  "crates/ralph/src/input_theme.rs",
 ]
 exclude_globs = [
   ".worktrees/**", ".claude/worktrees/**",
