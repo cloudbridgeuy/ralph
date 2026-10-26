@@ -8,9 +8,11 @@ use std::time::{Duration, Instant};
 use ralph_core::attachment::attachment_paths;
 use ralph_core::kitty::{
     cell_grid, clamp_placeholder_grid, encode_apc, encode_virtual, graphics_probe, graphics_query,
-    graphics_reply, parse_image_markers, placeholder_rows, png_size, strip_kitty_apc,
-    GraphicsReply, Placement, Segment, TerminalSnapshot, GRAPHICS_QUERY_TIMEOUT,
+    graphics_reply, parse_image_markers, placeholder_rows, strip_kitty_apc, GraphicsReply,
+    Placement, Segment, TerminalSnapshot, GRAPHICS_QUERY_TIMEOUT,
 };
+
+use ralph_core::kitty_image::prepare;
 
 use super::text::render_markdown;
 use super::wrap::wrap_width;
@@ -183,20 +185,20 @@ pub fn render_attachments(text: &str, images: ImageSettings, bounds: ImageBounds
 
 fn draw_image(path: &str, images: ImageSettings, bounds: ImageBounds) -> Option<String> {
     let bytes = read_capped(path)?;
-    let size = png_size(&bytes)?;
-    let grid = cell_grid(size, images.cell_px, bounds.cols, bounds.rows);
+    let image = prepare(&bytes)?;
+    let grid = cell_grid(image.size, images.cell_px, bounds.cols, bounds.rows);
     match images.placement {
         Placement::Direct => {
             let (cols, rows) = grid;
             let newlines = (0..rows).map(|_| '\n').collect::<String>();
-            Some(format!("{}{newlines}", encode_apc(&bytes, cols, rows)))
+            Some(format!("{}{newlines}", encode_apc(&image, cols, rows)))
         }
         Placement::Tmux => {
             let (cols, rows) = clamp_placeholder_grid(grid);
             let id = next_image_id();
             Some(format!(
                 "{}{}",
-                encode_virtual(&bytes, id, cols, rows),
+                encode_virtual(&image, id, cols, rows),
                 placeholder_rows(id, cols, rows)
             ))
         }

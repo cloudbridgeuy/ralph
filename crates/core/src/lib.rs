@@ -32,6 +32,7 @@ pub mod directive;
 pub mod inbox;
 pub mod inbox_alert;
 pub mod kitty;
+pub mod kitty_image;
 pub mod mcp;
 pub mod retry;
 pub mod sanitize;

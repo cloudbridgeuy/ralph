@@ -1,3 +1,4 @@
+use crate::kitty_image::KittyImage;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use std::time::Duration;
@@ -5,7 +6,6 @@ use std::time::Duration;
 const APC_START: &str = "\x1b_G";
 const APC_END: &str = "\x1b\\";
 const CHUNK_BYTES: usize = 4096;
-const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 const ASSUMED_CELL_PX: (u32, u32) = (8, 16);
 const PLACEHOLDER: char = '\u{10EEEE}';
 const MAX_PLACEHOLDER_CELLS: u32 = 297;
@@ -451,15 +451,6 @@ pub fn parse_image_markers(text: &str) -> Vec<Segment> {
     segments
 }
 
-pub fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
-    if bytes.len() < 24 || bytes[..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
-        return None;
-    }
-    let width = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
-    let height = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
-    (width > 0 && height > 0).then_some((width, height))
-}
-
 pub fn cell_grid(
     png: (u32, u32),
     cell_px: Option<(u32, u32)>,
@@ -503,14 +494,19 @@ fn encode_chunks(png: &[u8], first_keys: &str, later_keys: &str) -> Vec<String> 
         .collect()
 }
 
-pub fn encode_apc(png: &[u8], cols: u32, rows: u32) -> String {
-    encode_chunks(png, &format!("a=T,f=100,c={cols},r={rows},C=1,q=2,"), "").concat()
+pub fn encode_apc(image: &KittyImage, cols: u32, rows: u32) -> String {
+    encode_chunks(
+        &image.payload,
+        &format!("a=T,{}c={cols},r={rows},C=1,q=2,", image.keys),
+        "",
+    )
+    .concat()
 }
 
-pub fn encode_virtual(png: &[u8], id: u8, cols: u32, rows: u32) -> String {
+pub fn encode_virtual(image: &KittyImage, id: u8, cols: u32, rows: u32) -> String {
     encode_chunks(
-        png,
-        &format!("a=T,U=1,i={id},f=100,c={cols},r={rows},q=2,"),
+        &image.payload,
+        &format!("a=T,U=1,i={id},{}c={cols},r={rows},q=2,", image.keys),
         &format!("i={id},"),
     )
     .iter()
@@ -682,21 +678,12 @@ mod tests {
         );
     }
 
-    fn png_header(width: u32, height: u32) -> Vec<u8> {
-        let mut bytes = PNG_SIGNATURE.to_vec();
-        bytes.extend_from_slice(&13u32.to_be_bytes());
-        bytes.extend_from_slice(b"IHDR");
-        bytes.extend_from_slice(&width.to_be_bytes());
-        bytes.extend_from_slice(&height.to_be_bytes());
-        bytes
-    }
-
-    #[test]
-    fn png_size_reads_ihdr() {
-        assert_eq!(png_size(&png_header(640, 480)), Some((640, 480)));
-        assert_eq!(png_size(&png_header(0, 480)), None);
-        assert_eq!(png_size(&png_header(1, 1)[..20]), None);
-        assert_eq!(png_size(b"GIF89a................................"), None);
+    fn png(payload: &[u8]) -> KittyImage {
+        KittyImage {
+            size: (1, 1),
+            keys: "f=100,".to_string(),
+            payload: payload.to_vec(),
+        }
     }
 
     #[test]
@@ -726,13 +713,13 @@ mod tests {
 
     #[test]
     fn single_chunk_carries_all_keys_and_finishes() {
-        let apc = encode_apc(b"abc", 3, 2);
+        let apc = encode_apc(&png(b"abc"), 3, 2);
         assert_eq!(apc, "\x1b_Ga=T,f=100,c=3,r=2,C=1,q=2,m=0;YWJj\x1b\\");
     }
 
     #[test]
     fn chunk_boundary_at_4096_stays_single() {
-        let apc = encode_apc(&[7u8; 3072], 1, 1);
+        let apc = encode_apc(&png(&[7u8; 3072]), 1, 1);
         assert_eq!(apc.matches(APC_START).count(), 1);
         assert_eq!(payload_len(&apc), 4096);
         assert!(apc.contains("m=0;"));
@@ -740,14 +727,14 @@ mod tests {
 
     #[test]
     fn multi_chunk_puts_keys_only_on_first() {
-        let apc = encode_apc(&[7u8; 3073], 5, 4);
+        let apc = encode_apc(&png(&[7u8; 3073]), 5, 4);
         let parts: Vec<&str> = apc.split_inclusive(APC_END).collect();
         assert_eq!(parts.len(), 2);
         assert!(parts[0].starts_with("\x1b_Ga=T,f=100,c=5,r=4,C=1,q=2,m=1;"));
         assert_eq!(payload_len(parts[0]), 4096);
         assert!(parts[1].starts_with("\x1b_Gm=0;"));
         assert!(!parts[1].contains("a=T"));
-        let long = encode_apc(&[7u8; 9000], 1, 1);
+        let long = encode_apc(&png(&[7u8; 9000]), 1, 1);
         let marks: Vec<&str> = long
             .split_inclusive(APC_END)
             .map(|p| &p[APC_START.len()..p.find(';').unwrap_or(0)])
@@ -879,12 +866,12 @@ mod tests {
 
     #[test]
     fn virtual_encoding_wraps_each_chunk_and_repeats_the_id() {
-        let single = encode_virtual(b"abc", 7, 3, 2);
+        let single = encode_virtual(&png(b"abc"), 7, 3, 2);
         assert_eq!(
             single,
             "\x1bPtmux;\x1b\x1b_Ga=T,U=1,i=7,f=100,c=3,r=2,q=2,m=0;YWJj\x1b\x1b\\\x1b\\"
         );
-        let multi = encode_virtual(&[7u8; 3073], 7, 3, 2);
+        let multi = encode_virtual(&png(&[7u8; 3073]), 7, 3, 2);
         let parts: Vec<&str> = multi.split_inclusive("\x1b\x1b\\\x1b\\").collect();
         assert_eq!(parts.len(), 2);
         assert!(parts[0].contains("U=1,i=7,f=100,c=3,r=2,q=2,m=1;"));
