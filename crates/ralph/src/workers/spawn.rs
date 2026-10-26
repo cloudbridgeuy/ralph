@@ -5,24 +5,28 @@ use super::{
 use crate::chat::cell::detach_from_terminal;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
+use crate::subprocess::kill_process_group;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
-    fetch_origin_args, fetch_timeout_text, opencode_config, project_slug, resolve_claude_model,
-    resolve_cursor_model, resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report,
-    session_name, spawn_handoff, spawn_record_path, startup_state, worker_command, worker_mcp_args,
-    worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles,
-    HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup,
-    Ticket, TicketKeys, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND,
-    CURSOR_AGENT, FETCH_ENV, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, opencode_config,
+    project_slug, resolve_claude_model, resolve_cursor_model, resolve_opencode_model,
+    resolve_ticket, rollback_plan, rollback_report, session_name, spawn_handoff, spawn_record_path,
+    startup_state, worker_command, worker_mcp_args, worker_mcp_config, worktree_add_args,
+    wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner,
+    Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys,
+    WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
+    FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
+    STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -561,36 +565,41 @@ pub(super) fn session_exists(session: &str) -> io::Result<bool> {
 
 fn fetch_origin(repo: &Path) -> io::Result<()> {
     let _setup = guard::lock_setup();
+    let ssh_command = fetch_ssh_command(
+        std::env::var("GIT_SSH_COMMAND").ok().as_deref(),
+        git_value(repo, &["config", "--get", "core.sshCommand"])?.as_deref(),
+    );
     let mut child = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(fetch_origin_args())
-        .envs(FETCH_ENV)
+        .envs(fetch_env(&ssh_command))
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()?;
-    let stderr = child.stderr.take().map(|mut pipe| {
+    let (sender, receiver) = mpsc::channel();
+    if let Some(mut pipe) = child.stderr.take() {
         thread::spawn(move || {
             let mut text = String::new();
             let _ = io::Read::read_to_string(&mut pipe, &mut text);
-            text
-        })
-    });
+            let _ = sender.send(text);
+        });
+    }
     let deadline = Instant::now() + Duration::from_secs(FETCH_TIMEOUT_SECS);
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
         if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_process_group(&mut child);
             break None;
         }
         thread::sleep(FETCH_POLL);
     };
-    let text = stderr
-        .and_then(|reader| reader.join().ok())
+    let text = receiver
+        .recv_timeout(Duration::from_secs(FETCH_GRACE_SECS))
         .unwrap_or_default();
     match status {
         Some(status) if status.success() => Ok(()),

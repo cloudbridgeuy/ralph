@@ -1,7 +1,7 @@
 use super::{check, git_value};
 use ralph_core::worker::{
-    guard_config_steps, hook_scripts, hooks_dir_in, parse_remote_urls, stale_hook_names,
-    HookScript, RemoteUrls, UNSET_ALL_FLAG,
+    abandoned_temp_hooks, guard_config_steps, hook_scripts, hooks_dir_in, parse_remote_urls,
+    stale_hook_names, temp_hook_name, HookScript, RemoteUrls, UNSET_ALL_FLAG,
 };
 use std::fs;
 use std::io;
@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::SystemTime;
 
 const KEY_ABSENT_EXIT: i32 = 5;
 const NO_MATCH_EXIT: i32 = 1;
@@ -94,19 +95,39 @@ fn write_hooks(hooks_dir: &Path, common_hooks: &Path) -> io::Result<()> {
     for stale in stale_hook_names(&installed_names(hooks_dir)?, &scripts) {
         fs::remove_file(hooks_dir.join(stale))?;
     }
+    for temp in abandoned_temp_hooks(&temp_entries(hooks_dir)?) {
+        let _ = fs::remove_file(hooks_dir.join(temp));
+    }
     Ok(())
 }
 
+fn temp_entries(hooks_dir: &Path) -> io::Result<Vec<(String, u64)>> {
+    let now = SystemTime::now();
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(hooks_dir)? {
+        let entry = entry?;
+        let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+            continue;
+        };
+        let age = now.duration_since(modified).map_or(0, |age| age.as_secs());
+        entries.push((entry.file_name().to_string_lossy().into_owned(), age));
+    }
+    Ok(entries)
+}
+
 fn write_hook(hooks_dir: &Path, script: &HookScript) -> io::Result<()> {
-    let tmp = hooks_dir.join(format!(
-        ".{}.{}.{}.tmp",
-        script.name,
+    let tmp = hooks_dir.join(temp_hook_name(
+        &script.name,
         std::process::id(),
-        TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed),
     ));
-    fs::write(&tmp, &script.content)?;
-    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))?;
-    fs::rename(&tmp, hooks_dir.join(&script.name))
+    let written = fs::write(&tmp, &script.content)
+        .and_then(|()| fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)))
+        .and_then(|()| fs::rename(&tmp, hooks_dir.join(&script.name)));
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
 }
 
 fn installed_names(hooks_dir: &Path) -> io::Result<Vec<String>> {

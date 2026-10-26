@@ -145,6 +145,36 @@ pub fn stale_hook_names(present: &[String], scripts: &[HookScript]) -> Vec<Strin
         .collect()
 }
 
+pub const TEMP_HOOK_MIN_AGE_SECS: u64 = 60;
+const TEMP_HOOK_PREFIX: char = '.';
+const TEMP_HOOK_SUFFIX: &str = ".tmp";
+
+pub fn temp_hook_name(name: &str, pid: u32, sequence: u64) -> String {
+    format!("{TEMP_HOOK_PREFIX}{name}.{pid}.{sequence}{TEMP_HOOK_SUFFIX}")
+}
+
+pub fn is_temp_hook(file_name: &str) -> bool {
+    let Some(stem) = file_name
+        .strip_prefix(TEMP_HOOK_PREFIX)
+        .and_then(|rest| rest.strip_suffix(TEMP_HOOK_SUFFIX))
+    else {
+        return false;
+    };
+    let mut parts = stem.rsplitn(3, '.');
+    let numeric = |part: Option<&str>| {
+        part.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    };
+    numeric(parts.next()) && numeric(parts.next()) && parts.next().is_some_and(|n| !n.is_empty())
+}
+
+pub fn abandoned_temp_hooks(entries: &[(String, u64)]) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|(name, age)| is_temp_hook(name) && *age >= TEMP_HOOK_MIN_AGE_SECS)
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
 pub fn refusing_pre_push() -> String {
     "#!/bin/sh\necho 'ralph: a scheduled worker never pushes.' >&2\nexit 1\n".to_string()
 }
@@ -365,6 +395,51 @@ garbage
             .to_vec();
         assert_eq!(stale_hook_names(&present, &scripts), ["pre-commit"]);
         assert!(stale_hook_names(&[], &scripts).is_empty());
+    }
+
+    #[test]
+    fn temp_hook_names_round_trip_through_the_matcher() {
+        assert_eq!(temp_hook_name("pre-push", 42, 7), ".pre-push.42.7.tmp");
+        assert!(is_temp_hook(&temp_hook_name("pre-push", 42, 7)));
+        assert!(is_temp_hook(".a.b.1.2.tmp"));
+    }
+
+    #[test]
+    fn only_temp_shaped_names_match() {
+        for name in [
+            "pre-push",
+            ".pre-push",
+            ".pre-push.tmp",
+            ".pre-push.42.tmp",
+            ".pre-push.x.7.tmp",
+            ".pre-push.42.x.tmp",
+            "..42.7.tmp",
+            "pre-push.42.7.tmp",
+            ".pre-push.42.7",
+            ".pre-push.42.7.tmp.bak",
+            ".pre-push.42..tmp",
+        ] {
+            assert!(!is_temp_hook(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn only_old_temp_hooks_are_abandoned() {
+        let entries: Vec<(String, u64)> = [
+            (".pre-push.1.1.tmp", 59),
+            (".pre-push.1.2.tmp", 60),
+            (".commit-msg.1.3.tmp", 3600),
+            ("pre-push", 9999),
+            (".notes", 9999),
+        ]
+        .iter()
+        .map(|(name, age)| (name.to_string(), *age))
+        .collect();
+        assert_eq!(
+            abandoned_temp_hooks(&entries),
+            [".pre-push.1.2.tmp", ".commit-msg.1.3.tmp"]
+        );
+        assert!(abandoned_temp_hooks(&[]).is_empty());
     }
 
     #[test]

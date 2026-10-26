@@ -46,10 +46,26 @@ pub fn fetch_origin_args() -> Vec<OsString> {
 
 pub const FETCH_TIMEOUT_SECS: u64 = 60;
 
-pub const FETCH_ENV: [(&str, &str); 2] = [
-    ("GIT_TERMINAL_PROMPT", "0"),
-    ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes"),
-];
+pub const FETCH_GRACE_SECS: u64 = 2;
+
+const DEFAULT_SSH: &str = "ssh";
+const BATCH_MODE_OPTION: &str = "-o BatchMode=yes";
+
+fn present(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|v| !v.is_empty())
+}
+
+pub fn fetch_ssh_command(env: Option<&str>, config: Option<&str>) -> String {
+    let base = present(env).or(present(config)).unwrap_or(DEFAULT_SSH);
+    format!("{base} {BATCH_MODE_OPTION}")
+}
+
+pub fn fetch_env(ssh_command: &str) -> [(&'static str, String); 2] {
+    [
+        ("GIT_TERMINAL_PROMPT", "0".to_string()),
+        ("GIT_SSH_COMMAND", ssh_command.to_string()),
+    ]
+}
 
 pub fn fetch_timeout_text() -> String {
     format!("git fetch origin timed out after {FETCH_TIMEOUT_SECS}s")
@@ -175,13 +191,53 @@ mod tests {
     #[test]
     fn the_fetch_never_prompts_and_has_a_timeout_text() {
         assert_eq!(
-            FETCH_ENV,
+            fetch_env("ssh -o BatchMode=yes"),
             [
-                ("GIT_TERMINAL_PROMPT", "0"),
-                ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+                ("GIT_TERMINAL_PROMPT", "0".to_string()),
+                ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes".to_string())
             ]
         );
         assert_eq!(fetch_timeout_text(), "git fetch origin timed out after 60s");
+    }
+
+    #[test]
+    fn the_ssh_command_prefers_env_then_config_then_plain_ssh() {
+        assert_eq!(
+            fetch_ssh_command(Some("ssh -i /k"), Some("ssh -F /c")),
+            "ssh -i /k -o BatchMode=yes"
+        );
+        assert_eq!(
+            fetch_ssh_command(None, Some("ssh -F /c")),
+            "ssh -F /c -o BatchMode=yes"
+        );
+        assert_eq!(fetch_ssh_command(None, None), "ssh -o BatchMode=yes");
+    }
+
+    #[test]
+    fn blank_ssh_values_count_as_absent() {
+        assert_eq!(
+            fetch_ssh_command(Some(""), Some("ssh -F /c")),
+            "ssh -F /c -o BatchMode=yes"
+        );
+        assert_eq!(
+            fetch_ssh_command(Some("  "), Some(" \t")),
+            "ssh -o BatchMode=yes"
+        );
+        assert_eq!(
+            fetch_ssh_command(None, Some("  ssh -F /c \n")),
+            "ssh -F /c -o BatchMode=yes"
+        );
+    }
+
+    #[test]
+    fn the_repo_ssh_key_survives_in_the_fetch_command() {
+        assert_eq!(
+            fetch_ssh_command(
+                None,
+                Some("ssh -i ~/.ssh/id_cloudbridge_admin -F /dev/null")
+            ),
+            "ssh -i ~/.ssh/id_cloudbridge_admin -F /dev/null -o BatchMode=yes"
+        );
     }
 
     #[test]
