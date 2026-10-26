@@ -43,7 +43,7 @@ impl InputTheme {
     }
 }
 
-pub fn to_reedline(color: Color) -> Nu {
+fn to_reedline(color: Color) -> Nu {
     match color {
         Color::Reset => Nu::Default,
         Color::Black => Nu::Black,
@@ -60,11 +60,15 @@ pub fn to_reedline(color: Color) -> Nu {
         Color::DarkMagenta => Nu::Magenta,
         Color::Cyan => Nu::LightCyan,
         Color::DarkCyan => Nu::Cyan,
-        Color::White => Nu::White,
-        Color::Grey => Nu::LightGray,
+        Color::White => Nu::LightGray,
+        Color::Grey => Nu::White,
         Color::AnsiValue(n) => Nu::Fixed(n),
         Color::Rgb { r, g, b } => Nu::Rgb(r, g, b),
     }
+}
+
+pub fn suggestion_color(colors: &InputColors, color: bool) -> Option<Nu> {
+    color.then(|| to_reedline(colors.suggestion))
 }
 
 #[cfg(test)]
@@ -133,8 +137,8 @@ mod tests {
             (Color::DarkMagenta, Nu::Magenta),
             (Color::Cyan, Nu::LightCyan),
             (Color::DarkCyan, Nu::Cyan),
-            (Color::White, Nu::White),
-            (Color::Grey, Nu::LightGray),
+            (Color::White, Nu::LightGray),
+            (Color::Grey, Nu::White),
         ];
         for (from, to) in cases {
             assert_eq!(to_reedline(from), to);
@@ -148,5 +152,18 @@ mod tests {
             to_reedline(Color::Rgb { r: 1, g: 2, b: 3 }),
             Nu::Rgb(1, 2, 3)
         );
+    }
+
+    #[test]
+    fn white_and_grey_keep_their_sgr_codes() {
+        assert_eq!(Nu::LightGray.prefix().to_string(), "\x1b[97m");
+        assert_eq!(Nu::White.prefix().to_string(), "\x1b[37m");
+    }
+
+    #[test]
+    fn suggestion_color_is_set_only_when_color_is_on() {
+        let colors = InputColors::default();
+        assert_eq!(suggestion_color(&colors, true), Some(Nu::LightCyan));
+        assert_eq!(suggestion_color(&colors, false), None);
     }
 }

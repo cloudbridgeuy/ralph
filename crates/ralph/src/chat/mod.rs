@@ -53,7 +53,7 @@ use crate::cli::ChatArgs;
 use crate::config::AppConfig;
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
-use crate::input_theme::to_reedline;
+use crate::input_theme::suggestion_color;
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, RenderContext};
@@ -277,13 +277,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );
-    let suggestion_color = to_reedline(config.theme.input.resolve().0.suggestion);
-    let highlighter = SuggestionHighlighter::new(shown.clone(), suggestion_color);
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
+        .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
     let mut editor = build_editor(&store_dir, edit_mode, highlighter)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
-    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     crate::render::image::enable_images(crate::render::image::detect());
     let (configured_editor, config_warning) = chat_config.editor_setting();
     let (editor_cmd, editor_warning) = editor_argv(
@@ -451,12 +451,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         };
         let draft = draft_with_typed(draft, &typed);
         let replied = outcome == TurnOutcome::Replied;
+        shown.clear();
         if let Some(fill) = prefill(replied, draft, suggestion) {
             let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
             editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
-            match fill {
-                Prefill::Suggestion(text) => shown.set(text),
-                Prefill::Draft(_) => shown.clear(),
+            if let Prefill::Suggestion(text) = fill {
+                shown.set(text);
             }
         }
     }
