@@ -1,5 +1,6 @@
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use std::time::Duration;
 
 const APC_START: &str = "\x1b_G";
 const APC_END: &str = "\x1b\\";
@@ -21,11 +22,9 @@ pub enum Piece {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TerminalSnapshot {
-    pub term_program: String,
-    pub term: String,
-    pub kitty_window_id: bool,
-    pub tmux: bool,
+    pub stdin_tty: bool,
     pub stdout_tty: bool,
+    pub tmux: bool,
 }
 
 #[derive(Default)]
@@ -227,13 +226,41 @@ pub fn strip_kitty_apc(text: &str) -> String {
         .collect()
 }
 
-pub fn supports_images(snapshot: &TerminalSnapshot) -> bool {
-    let kitty_like = snapshot.term_program == "ghostty"
-        || snapshot.term_program == "rex"
-        || snapshot.term == "xterm-ghostty"
-        || snapshot.term == "xterm-kitty"
-        || snapshot.kitty_window_id;
-    snapshot.stdout_tty && !snapshot.tmux && kitty_like
+pub const GRAPHICS_QUERY: &str = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c";
+pub const GRAPHICS_QUERY_TIMEOUT: Duration = Duration::from_millis(200);
+
+const GRAPHICS_OK: &[u8] = b"\x1b_Gi=31;OK\x1b\\";
+const DA_START: &[u8] = b"\x1b[?";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphicsReply {
+    Pending,
+    Supported,
+    Unsupported,
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+pub fn graphics_reply(bytes: &[u8]) -> GraphicsReply {
+    let Some(start) = find(bytes, DA_START) else {
+        return GraphicsReply::Pending;
+    };
+    if !bytes[start..].contains(&b'c') {
+        return GraphicsReply::Pending;
+    }
+    if find(&bytes[..start], GRAPHICS_OK).is_some() {
+        GraphicsReply::Supported
+    } else {
+        GraphicsReply::Unsupported
+    }
+}
+
+pub fn should_query_graphics(snapshot: &TerminalSnapshot) -> bool {
+    snapshot.stdin_tty && snapshot.stdout_tty && !snapshot.tmux
 }
 
 #[cfg(test)]
@@ -380,34 +407,52 @@ mod tests {
         );
     }
 
+    const OK: &str = "\x1b_Gi=31;OK\x1b\\";
+    const DA: &str = "\x1b[?62;4c";
+
+    fn reply(text: &str) -> GraphicsReply {
+        graphics_reply(text.as_bytes())
+    }
+
     #[test]
-    fn supports_images_table() {
+    fn graphics_reply_decides_only_at_the_device_attributes_end() {
+        assert_eq!(reply(&format!("{OK}{DA}")), GraphicsReply::Supported);
+        assert_eq!(
+            reply(&format!("\x1b_Gi=31;ENOENT:bad\x1b\\{DA}")),
+            GraphicsReply::Unsupported
+        );
+        assert_eq!(reply(DA), GraphicsReply::Unsupported);
+        assert_eq!(reply(OK), GraphicsReply::Pending);
+        assert_eq!(reply(""), GraphicsReply::Pending);
+    }
+
+    #[test]
+    fn graphics_reply_handles_split_and_typed_bytes() {
+        let full = format!("{OK}{DA}");
+        assert_eq!(reply(&full[..full.len() - 1]), GraphicsReply::Pending);
+        assert_eq!(reply(&full), GraphicsReply::Supported);
+        assert_eq!(reply(&format!("ab{OK}{DA}")), GraphicsReply::Supported);
+    }
+
+    #[test]
+    fn should_query_graphics_needs_both_ttys_and_no_tmux() {
         let base = TerminalSnapshot {
+            stdin_tty: true,
             stdout_tty: true,
-            ..TerminalSnapshot::default()
+            tmux: false,
         };
-        let with = |f: fn(&mut TerminalSnapshot)| {
-            let mut s = base.clone();
-            f(&mut s);
-            supports_images(&s)
-        };
-        assert!(!supports_images(&base));
-        assert!(with(|s| s.term_program = "ghostty".into()));
-        assert!(with(|s| {
-            s.term_program = "rex".into();
-            s.term = "xterm-256color".into();
+        assert!(should_query_graphics(&base));
+        assert!(!should_query_graphics(&TerminalSnapshot {
+            tmux: true,
+            ..base.clone()
         }));
-        assert!(with(|s| s.term = "xterm-ghostty".into()));
-        assert!(with(|s| s.term = "xterm-kitty".into()));
-        assert!(with(|s| s.kitty_window_id = true));
-        assert!(!with(|s| {
-            s.kitty_window_id = true;
-            s.tmux = true;
+        assert!(!should_query_graphics(&TerminalSnapshot {
+            stdin_tty: false,
+            ..base.clone()
         }));
-        assert!(!with(|s| {
-            s.kitty_window_id = true;
-            s.stdout_tty = false;
+        assert!(!should_query_graphics(&TerminalSnapshot {
+            stdout_tty: false,
+            ..base
         }));
-        assert!(!with(|s| s.term = "xterm-256color".into()));
     }
 }
