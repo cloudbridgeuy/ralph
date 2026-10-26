@@ -19,6 +19,7 @@ examine_globs = [
   "crates/core/src/worker/status.rs",
   "crates/core/src/worker/worktree.rs",
   "crates/core/src/worker/rollback.rs",
+  "crates/core/src/worker/scheduled.rs",
   "crates/core/src/worker/ticket.rs",
   "crates/core/src/workers_view/remote.rs",
   "crates/core/src/schedule.rs",

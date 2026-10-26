@@ -240,6 +240,7 @@ fn run_command(
             harness: *harness,
             model: model.as_deref(),
             ticket: ticket.as_deref(),
+            scheduled: false,
         }),
         Command::Reply {
             id,

@@ -10,14 +10,14 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
-    opencode_config, project_slug, resolve_claude_model, resolve_cursor_model,
+    fetch_origin_args, opencode_config, project_slug, resolve_claude_model, resolve_cursor_model,
     resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report, session_name,
     spawn_handoff, spawn_record_path, startup_state, worker_command, worker_mcp_args,
     worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles,
     HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup,
-    Ticket, TicketKeys, WorkerMarkers, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
-    HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS,
-    WORKERS_DIR,
+    Ticket, TicketKeys, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND,
+    CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
+    TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -42,6 +42,7 @@ impl Workers {
             harness,
             model,
             ticket,
+            scheduled,
         } = *args;
         let repo = repo_root()?;
         let project = project_slug(&repo);
@@ -67,7 +68,12 @@ impl Workers {
         let branch = branch_name(id);
         let created_worktree = !worktree.join(".git").exists();
         let created_branch = !branch_exists(&repo, &branch)?;
-        let via = ensure_worktree(&repo, &worktree, &branch)?;
+        let via = ensure_worktree(
+            &repo,
+            &worktree,
+            &branch,
+            WorktreeBase::scheduled(scheduled),
+        )?;
         let created_at = git_value(
             &repo,
             &[
@@ -123,6 +129,7 @@ impl Workers {
             harness,
             model: model.as_deref(),
             worktree: &worktree,
+            scheduled,
             site: site.as_ref(),
             session: &session,
             ticket,
@@ -188,6 +195,7 @@ impl Workers {
             task,
             harness,
             model,
+            scheduled,
             worktree,
             site,
             session,
@@ -212,6 +220,7 @@ impl Workers {
                     attachments: &attachments,
                     task,
                     model: *model,
+                    scheduled: *scheduled,
                 })
             }
             HarnessId::Opencode => {
@@ -423,6 +432,7 @@ struct Launch<'a> {
     task: &'a str,
     harness: HarnessId,
     model: Option<&'a str>,
+    scheduled: bool,
     worktree: &'a Path,
     site: Option<&'a WorkerSite>,
     session: &'a str,
@@ -437,6 +447,7 @@ pub(crate) struct SpawnArgs<'a> {
     pub harness: HarnessId,
     pub model: Option<&'a str>,
     pub ticket: Option<&'a str>,
+    pub scheduled: bool,
 }
 
 fn require_on_path(program: &str) -> io::Result<()> {
@@ -542,9 +553,20 @@ pub(super) fn session_exists(session: &str) -> io::Result<bool> {
         .success())
 }
 
-fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<WorktreeVia> {
+fn ensure_worktree(
+    repo: &Path,
+    worktree: &Path,
+    branch: &str,
+    base: WorktreeBase,
+) -> io::Result<WorktreeVia> {
     if worktree.join(".git").exists() {
         return Ok(WorktreeVia::Existing);
+    }
+    if base == WorktreeBase::OriginMain {
+        run(Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(fetch_origin_args()))?;
     }
     let wt_error = match Command::new("wt")
         .args(wt_switch_args(
@@ -552,6 +574,7 @@ fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<Wor
             worktree,
             branch,
             branch_exists(repo, branch)?,
+            base,
         ))
         .stdin(Stdio::null())
         .output()
@@ -570,6 +593,7 @@ fn ensure_worktree(repo: &Path, worktree: &Path, branch: &str) -> io::Result<Wor
             worktree,
             branch,
             branch_exists(repo, branch)?,
+            base,
         )))?;
     Ok(WorktreeVia::Git { wt_error })
 }

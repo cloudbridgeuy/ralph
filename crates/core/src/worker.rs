@@ -20,6 +20,7 @@ mod ownership;
 mod permissions;
 mod process_tree;
 mod rollback;
+mod scheduled;
 mod status;
 mod ticket;
 mod tools;
@@ -42,6 +43,7 @@ pub use ownership::*;
 pub use permissions::*;
 pub use process_tree::*;
 pub use rollback::*;
+pub use scheduled::*;
 pub use status::*;
 pub use ticket::*;
 pub use tools::*;
@@ -214,12 +216,19 @@ pub fn worktree_path(dir: &Path, id: &str) -> PathBuf {
 }
 
 /// Arguments for `git worktree add`: reuse the worker branch if an earlier spawn created it.
-pub fn worktree_add_args(path: &Path, branch: &str, branch_exists: bool) -> Vec<OsString> {
+pub fn worktree_add_args(
+    path: &Path,
+    branch: &str,
+    branch_exists: bool,
+    base: WorktreeBase,
+) -> Vec<OsString> {
     let mut args: Vec<OsString> = vec!["worktree".into(), "add".into()];
-    if branch_exists {
-        args.extend([path.into(), branch.into()]);
-    } else {
-        args.extend(["-b".into(), branch.into(), path.into()]);
+    match (branch_exists, base) {
+        (true, _) => args.extend([path.into(), branch.into()]),
+        (false, WorktreeBase::Head) => args.extend(["-b".into(), branch.into(), path.into()]),
+        (false, WorktreeBase::OriginMain) => {
+            args.extend(["-b".into(), branch.into(), path.into(), ORIGIN_MAIN.into()])
+        }
     }
     args
 }
@@ -229,6 +238,7 @@ pub fn wt_switch_args(
     path: &Path,
     branch: &str,
     branch_exists: bool,
+    base: WorktreeBase,
 ) -> Vec<OsString> {
     let pinned_path = Value::from(path.to_string_lossy()).to_string();
     let mut args: Vec<OsString> = vec![
@@ -239,7 +249,11 @@ pub fn wt_switch_args(
         "switch".into(),
     ];
     if !branch_exists {
-        args.extend(["--create".into(), "--base".into(), "@".into()]);
+        let rev = match base {
+            WorktreeBase::Head => "@",
+            WorktreeBase::OriginMain => ORIGIN_MAIN,
+        };
+        args.extend(["--create".into(), "--base".into(), rev.into()]);
     }
     args.extend([branch.into(), "--no-cd".into()]);
     args
@@ -321,6 +335,7 @@ pub struct ClaudeWorkerArgs<'a> {
     pub attachments: &'a Path,
     pub task: &'a str,
     pub model: Option<&'a str>,
+    pub scheduled: bool,
 }
 
 pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
@@ -338,7 +353,7 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
         "--add-dir",
         &args.attachments.to_string_lossy(),
         "--append-system-prompt",
-        WORKER_PROMPT,
+        worker_prompt(args.scheduled),
     ]
     .map(str::to_string)
     .to_vec();
@@ -606,6 +621,7 @@ mod tests {
             attachments: Path::new("/s/attachments"),
             task: "do it",
             model,
+            scheduled: false,
         }
     }
 
@@ -724,7 +740,7 @@ mod tests {
     fn worktree_add_args_reuses_an_existing_branch() {
         let path = Path::new("/repo/.worktrees/GUZ-1");
         assert_eq!(
-            worktree_add_args(path, "worker/GUZ-1", false),
+            worktree_add_args(path, "worker/GUZ-1", false, WorktreeBase::Head),
             [
                 "worktree",
                 "add",
@@ -734,7 +750,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            worktree_add_args(path, "worker/GUZ-1", true),
+            worktree_add_args(path, "worker/GUZ-1", true, WorktreeBase::Head),
             ["worktree", "add", "/repo/.worktrees/GUZ-1", "worker/GUZ-1"]
         );
     }
@@ -744,7 +760,7 @@ mod tests {
         let repo = Path::new("/repo");
         let path = Path::new("/repo/.worktrees/GUZ-1");
         assert_eq!(
-            wt_switch_args(repo, path, "worker/GUZ-1", false),
+            wt_switch_args(repo, path, "worker/GUZ-1", false, WorktreeBase::Head),
             [
                 "-C",
                 "/repo",
@@ -759,7 +775,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            wt_switch_args(repo, path, "worker/GUZ-1", true),
+            wt_switch_args(repo, path, "worker/GUZ-1", true, WorktreeBase::Head),
             [
                 "-C",
                 "/repo",
@@ -774,7 +790,13 @@ mod tests {
 
     #[test]
     fn wt_switch_args_escape_quotes_in_the_path() {
-        let args = wt_switch_args(Path::new("/r"), Path::new("/r/a\"b"), "worker/A", true);
+        let args = wt_switch_args(
+            Path::new("/r"),
+            Path::new("/r/a\"b"),
+            "worker/A",
+            true,
+            WorktreeBase::Head,
+        );
         assert_eq!(args[3], "worktree-path=\"/r/a\\\"b\"");
     }
 

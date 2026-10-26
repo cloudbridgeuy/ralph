@@ -1,0 +1,136 @@
+use super::WORKER_PROMPT;
+use std::ffi::OsString;
+
+pub const SCHEDULED_WORKER_PROMPT: &str = "\
+You work for one person on the task you were given, in your own git worktree. The task was scheduled and nobody is watching it run. Act, don't ask: make reasonable decisions yourself and keep going until the task is done. Never ask for confirmation or permission, and never ask questions in your reply text or with a built-in question tool; nobody reads them.
+
+Never push, merge, open a pull request, or change Linear. Commit only on your own branch.
+
+Finish with one report tool call: status done when the task is finished, or status blocked with the reason when you cannot go on. Then stop. Never wait for an answer and never send progress updates.
+
+Call set_status with one sentence about what you are doing when you start and whenever your current activity changes; it is not a report and costs no turn.
+
+A reference like [Image #N: <path>] in a message is an image file: read it at that path.";
+
+pub fn worker_prompt(scheduled: bool) -> &'static str {
+    if scheduled {
+        SCHEDULED_WORKER_PROMPT
+    } else {
+        WORKER_PROMPT
+    }
+}
+
+pub const ORIGIN_MAIN: &str = "origin/main";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeBase {
+    Head,
+    OriginMain,
+}
+
+impl WorktreeBase {
+    pub fn scheduled(scheduled: bool) -> Self {
+        if scheduled {
+            Self::OriginMain
+        } else {
+            Self::Head
+        }
+    }
+}
+
+pub fn fetch_origin_args() -> Vec<OsString> {
+    vec!["fetch".into(), "origin".into()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{worker_command, worktree_add_args, wt_switch_args, ClaudeWorkerArgs};
+    use super::*;
+    use std::path::Path;
+
+    fn claude_args() -> ClaudeWorkerArgs<'static> {
+        ClaudeWorkerArgs {
+            mcp_config: Path::new("/s/workers/A.json"),
+            settings: Path::new("/s/workers/A.settings.json"),
+            permission_mode: "auto",
+            attachments: Path::new("/s/attachments"),
+            task: "do it",
+            model: None,
+            scheduled: false,
+        }
+    }
+
+    #[test]
+    fn scheduled_worktree_add_branches_from_origin_main() {
+        let path = Path::new("/repo/.worktrees/sched-n");
+        assert_eq!(
+            worktree_add_args(path, "worker/sched-n", false, WorktreeBase::OriginMain),
+            [
+                "worktree",
+                "add",
+                "-b",
+                "worker/sched-n",
+                "/repo/.worktrees/sched-n",
+                "origin/main"
+            ]
+        );
+        assert_eq!(
+            worktree_add_args(path, "worker/sched-n", true, WorktreeBase::OriginMain),
+            [
+                "worktree",
+                "add",
+                "/repo/.worktrees/sched-n",
+                "worker/sched-n"
+            ]
+        );
+    }
+
+    #[test]
+    fn scheduled_wt_switch_bases_a_new_branch_on_origin_main() {
+        let args = wt_switch_args(
+            Path::new("/repo"),
+            Path::new("/repo/.worktrees/sched-n"),
+            "worker/sched-n",
+            false,
+            WorktreeBase::OriginMain,
+        );
+        assert_eq!(
+            args[5..9],
+            ["--create", "--base", "origin/main", "worker/sched-n"]
+        );
+    }
+
+    #[test]
+    fn the_base_follows_the_scheduled_flag() {
+        assert_eq!(WorktreeBase::scheduled(false), WorktreeBase::Head);
+        assert_eq!(WorktreeBase::scheduled(true), WorktreeBase::OriginMain);
+    }
+
+    #[test]
+    fn fetch_origin_args_fetch_only_origin() {
+        assert_eq!(fetch_origin_args(), ["fetch", "origin"]);
+    }
+
+    #[test]
+    fn the_flag_selects_the_prompt() {
+        assert_eq!(worker_prompt(false), WORKER_PROMPT);
+        assert_eq!(worker_prompt(true), SCHEDULED_WORKER_PROMPT);
+        assert!(SCHEDULED_WORKER_PROMPT.contains("Never push, merge, open a pull request"));
+        assert!(SCHEDULED_WORKER_PROMPT.contains("Never wait for an answer"));
+        assert!(!SCHEDULED_WORKER_PROMPT.contains("wait for it"));
+        assert!(!SCHEDULED_WORKER_PROMPT.contains("status question"));
+    }
+
+    #[test]
+    fn a_scheduled_worker_command_carries_the_scheduled_prompt() {
+        let args = worker_command(&ClaudeWorkerArgs {
+            scheduled: true,
+            ..claude_args()
+        });
+        let at = args
+            .iter()
+            .position(|a| a == "--append-system-prompt")
+            .unwrap();
+        assert_eq!(args[at + 1], SCHEDULED_WORKER_PROMPT);
+    }
+}
