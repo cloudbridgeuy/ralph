@@ -27,6 +27,8 @@ export RALPH_CONFIG_DIR=/path/to/custom/config
 ralph ask 'your prompt'
 ```
 
+Run `ralph config check` to find unknown keys and invalid values in this file (see [CLI reference](cli-reference.md#ralph-config)).
+
 ## Configuration Precedence
 
 Settings are resolved in this order (highest priority first):

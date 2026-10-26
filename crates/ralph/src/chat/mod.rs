@@ -182,6 +182,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .map(|plugin| build_plugin_args(plugin.path()))
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
+    config.theme.deprecations().into_iter().for_each(warn);
     config.theme.warnings().into_iter().for_each(warn);
     config.changes.warnings().into_iter().for_each(warn);
     let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());

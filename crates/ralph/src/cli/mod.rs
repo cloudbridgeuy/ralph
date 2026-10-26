@@ -60,6 +60,12 @@ harness; ralph never sets it."
     )]
     Wire(WireArgs),
 
+    #[command(
+        about = "Inspect ralph's config file.",
+        long_about = "Subcommands inspect config.toml without starting a chat."
+    )]
+    Config(ConfigArgs),
+
     #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
 
@@ -74,6 +80,26 @@ harness; ralph never sets it."
 
     #[command(hide = true)]
     WorkerStopHook(WorkerStopHookArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub command: ConfigCommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommand {
+    #[command(
+        about = "Check config.toml for errors, unknown keys, and bad values.",
+        long_about = "Parses config.toml and reports unknown keys, invalid values, and settings \
+that chat would reject or ignore at startup. Exits 1 when any error is found. A missing file at \
+the default path is fine; defaults apply."
+    )]
+    Check {
+        #[arg(long, help = "Config file to check instead of the default path")]
+        path: Option<PathBuf>,
+    },
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

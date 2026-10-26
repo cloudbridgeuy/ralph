@@ -76,6 +76,7 @@ fn main() -> ExitCode {
         Commands::Ask(args) => execute_ask(args),
         Commands::Chat(args) => chat::run(args),
         Commands::Wire(args) => wire::run(args),
+        Commands::Config(args) => execute_config(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::Mermaid(args) => execute_mermaid(args),
@@ -90,6 +91,30 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn execute_config(args: cli::ConfigArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let cli::ConfigCommand::Check { path } = args.command;
+    let explicit = path.is_some();
+    let path = path.unwrap_or_else(config::config_path);
+    let label = path.display().to_string();
+    if !path.exists() && !explicit {
+        println!("no config at {label}; defaults apply");
+        return Ok(());
+    }
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("cannot read {label}: {e}"))?;
+    let report = config::check(&content, &label)?;
+    report
+        .notes
+        .iter()
+        .for_each(|note| eprintln!("note: {note}"));
+    report.errors.iter().for_each(|error| eprintln!("{error}"));
+    if !report.errors.is_empty() {
+        return Err(format!("{} problem(s) in {label}", report.errors.len()).into());
+    }
+    println!("ok: {label}");
+    Ok(())
 }
 
 /// Execute the themes command.

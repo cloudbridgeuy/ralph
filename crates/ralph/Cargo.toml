@@ -25,6 +25,7 @@ libc = { workspace = true }
 mermaid-text = { workspace = true }
 ralph_core = { workspace = true }
 serde = { workspace = true }
+serde_ignored = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }
 syntect = { workspace = true }
