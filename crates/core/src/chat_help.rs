@@ -6,6 +6,7 @@ use crate::chat_thread::{thread_variants, ResetReason, ThreadCell, CACHE_TTL_SEC
 use crate::status_mode::Mode;
 use crate::status_segments::Kind;
 use serde_json::{json, Value};
+use std::path::Path;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -493,6 +494,8 @@ pub fn help_text(width: usize) -> String {
 
 const TOOL_WIDTH: usize = 1000;
 
+const CONFIG_DOC: &str = include_str!("../../../docs/configuration.md");
+
 fn topic_name(command: Command) -> &'static str {
     command.name().trim_start_matches('/')
 }
@@ -501,14 +504,91 @@ fn topic_list() -> String {
     Command::ALL.map(topic_name).join(", ")
 }
 
+fn config_sections(doc: &str) -> Vec<(String, String)> {
+    let mut sections: Vec<(String, String)> = Vec::new();
+    let mut open = false;
+    for line in doc.lines() {
+        if line.starts_with("## ") || line.starts_with("### ") {
+            open = false;
+            if let Some(name) = line
+                .strip_prefix("### `[")
+                .and_then(|rest| rest.split_once("]`"))
+                .map(|(name, _)| name)
+            {
+                sections.push((name.to_string(), String::new()));
+                open = true;
+            }
+        }
+        if let (true, Some((_, body))) = (open, sections.last_mut()) {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    sections
+        .into_iter()
+        .map(|(name, body)| (name, body.trim_end().to_string()))
+        .collect()
+}
+
+fn doc_block(doc: &str, title: &str) -> String {
+    let heading = format!("## {title}");
+    let mut lines = doc.lines().skip_while(|line| *line != heading);
+    let first = lines.next().into_iter();
+    first
+        .chain(lines.take_while(|line| !line.starts_with("## ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
+fn section_list(sections: &[(String, String)]) -> String {
+    sections
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub fn config_topic(topic: Option<&str>) -> Option<Option<&str>> {
+    let topic = topic?.trim();
+    let (head, rest) = topic.split_once(char::is_whitespace).unwrap_or((topic, ""));
+    head.eq_ignore_ascii_case("config")
+        .then(|| Some(rest.trim()).filter(|section| !section.is_empty()))
+}
+
+pub fn config_help(path: &Path, section: Option<&str>) -> Result<String, String> {
+    let sections = config_sections(CONFIG_DOC);
+    let Some(section) = section.map(str::trim).filter(|section| !section.is_empty()) else {
+        return Ok(format!(
+            "Config file: {}\n\n{}\n\n{}\n\nSections: {}. Ask for one with topic `config <section>`.",
+            path.display(),
+            doc_block(CONFIG_DOC, "Configuration File Location"),
+            doc_block(CONFIG_DOC, "Configuration Precedence"),
+            section_list(&sections),
+        ));
+    };
+    let wanted = section.trim_start_matches('[').trim_end_matches(']');
+    sections
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(wanted))
+        .map(|(_, body)| body.clone())
+        .ok_or_else(|| {
+            format!(
+                "Unknown config section '{section}'. Sections: {}.",
+                section_list(&sections)
+            )
+        })
+}
+
 pub fn help_tool() -> Value {
     json!({
         "name": "help",
-        "description": format!("ralph chat's own /help: its commands, cells, keys and status bar legend. Call it when the user asks how ralph itself works, then answer from its text. Without topic it returns the full help; topic returns one command's section: {}.", topic_list()),
+        "description": format!("ralph chat's own /help: its commands, cells, keys and status bar legend. Call it when the user asks how ralph itself works, then answer from its text. Without topic it returns the full help; topic returns one command's section: {}. Topic `config` explains ralph's settings file (path, precedence, sections); `config <section>` returns one section such as `config chat`.", topic_list()),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "topic": {"type": "string", "description": "A command name such as diff or /diff. Omit it for the full help."}
+                "topic": {"type": "string", "description": "A command name such as diff or /diff, `config`, or `config <section>`. Omit it for the full help."}
             }
         }
     })
@@ -522,9 +602,21 @@ pub fn help_topic(topic: Option<&str>) -> Result<String, String> {
     let command = Command::ALL
         .into_iter()
         .find(|command| topic_name(*command).eq_ignore_ascii_case(wanted))
-        .ok_or_else(|| format!("Unknown help topic '{topic}'. Topics: {}.", topic_list()))?;
+        .ok_or_else(|| {
+            format!(
+                "Unknown help topic '{topic}'. Topics: {}, config, config <section>.",
+                topic_list()
+            )
+        })?;
     let mut out = String::new();
     section(&mut out, command.name(), pairs(command.usage()), TOOL_WIDTH);
+    let name = topic_name(command);
+    if config_sections(CONFIG_DOC)
+        .iter()
+        .any(|(section, _)| section == name)
+    {
+        out.push_str(&format!("Settings: help topic \"config {name}\"\n"));
+    }
     Ok(out)
 }
 
@@ -761,9 +853,18 @@ mod tests {
                 for (label, _) in command.usage() {
                     assert!(has_row(&text, label), "{topic} lacks {label}");
                 }
-                assert_eq!(text.lines().count(), command.usage().len() + 1);
+                let settings = usize::from(text.contains("Settings: "));
+                assert_eq!(text.lines().count(), command.usage().len() + 1 + settings);
             }
         }
+    }
+
+    #[test]
+    fn help_topic_points_to_matching_config_section() {
+        assert!(help_topic(Some("workers"))
+            .unwrap()
+            .contains("Settings: help topic \"config workers\""));
+        assert!(!help_topic(Some("inbox")).unwrap().contains("Settings:"));
     }
 
     #[test]
@@ -782,5 +883,64 @@ mod tests {
         let description = tool["description"].as_str().unwrap();
         assert!(description.contains(&topic_list()));
         assert!(tool["inputSchema"].get("required").is_none());
+    }
+
+    #[test]
+    fn config_sections_split_on_headings() {
+        let doc = "## A\n### `[x]` - X\nbody\n#### sub\nmore\n### Other\nno\n### `[y.z]`\nyy\n";
+        assert_eq!(
+            config_sections(doc),
+            [
+                (
+                    "x".to_string(),
+                    "### `[x]` - X\nbody\n#### sub\nmore".to_string()
+                ),
+                ("y.z".to_string(), "### `[y.z]`\nyy".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn config_sections_cover_every_config_field() {
+        let names: Vec<String> = config_sections(CONFIG_DOC)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        for field in [
+            "theme", "ask", "chat", "mermaid", "cursor", "codex", "claude", "opencode", "changes",
+            "wire", "tickets", "workers",
+        ] {
+            assert!(
+                names
+                    .iter()
+                    .any(|name| name == field || name.starts_with(&format!("{field}."))),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn config_help_selects_a_section_or_lists_them() {
+        let path = Path::new("/x/ralph/config.toml");
+        let overview = config_help(path, None).unwrap();
+        assert!(overview.contains("/x/ralph/config.toml"));
+        assert!(overview.contains("RALPH_CONFIG_DIR"));
+        assert!(overview.contains("Configuration Precedence"));
+        for (name, _) in config_sections(CONFIG_DOC) {
+            assert!(overview.contains(&name), "{name}");
+        }
+        let chat = config_help(path, Some("[Chat]")).unwrap();
+        assert!(chat.starts_with("### `[chat]`"));
+        assert!(!chat.contains("`[cursor]`"));
+        let error = config_help(path, Some("nope")).unwrap_err();
+        assert!(error.contains("Unknown config section 'nope'") && error.contains("workers"));
+    }
+
+    #[test]
+    fn config_topic_parses_section() {
+        assert_eq!(config_topic(Some("config")), Some(None));
+        assert_eq!(config_topic(Some(" Config  chat ")), Some(Some("chat")));
+        assert_eq!(config_topic(Some("diff")), None);
+        assert_eq!(config_topic(None), None);
     }
 }

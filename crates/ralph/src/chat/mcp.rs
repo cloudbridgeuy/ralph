@@ -1,6 +1,7 @@
 use crate::chat::changes::run_changes;
 use crate::chat::memory::Store;
 use crate::chat::socket::forward;
+use ralph_core::chat_help::config_help;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome, Tool};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::mcp::tool_result;
@@ -42,6 +43,10 @@ pub fn run_stdio_server(
                     Err(message) => tool_result(id, &message, true),
                 }
             }
+            Outcome::ConfigHelp { id, section } => finish_call(
+                id,
+                config_help(&crate::config::config_path(), section.as_deref()),
+            ),
             Outcome::Socket { id, name, args } => {
                 match forward(socket, &SocketRequest { tool: name, args }) {
                     Ok(reply) => tool_result(id, &reply.text, reply.is_error),
