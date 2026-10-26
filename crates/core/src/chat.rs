@@ -90,6 +90,8 @@ Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one
 
 Ralph help: when the person asks how ralph chat itself works (its commands, keys, or status bar), call `help` first and answer from its text, not from the ralph source.
 
+Ralph config: when the person asks about ralph's settings or asks to change how ralph behaves or looks, call `help` with topic `config`, then `config <section>`, before you answer; propose a code change only when no setting covers it. Before you edit config.toml, copy it to config.toml.bak in the same directory.
+
 Ask first: when two readings of a request lead to different work, show a 3-5 line plan and wait for a go.
 
 Verify: never state as fact what you have not checked. A worker or subagent \"done\" is unverified until you check its diff or test output, and the git and Linear state.
@@ -379,6 +381,10 @@ mod tests {
             "call `suggest_reply` first, before you write any reply text",
             "never mention the suggestion",
             "call `help` first and answer from its text",
+            "call `help` with topic `config`, then `config <section>`",
+            "asks to change how ralph behaves or looks",
+            "propose a code change only when no setting covers it",
+            "copy it to config.toml.bak",
             "3-5 line plan",
             "never state as fact what you have not checked",
             "unverified until you check its diff or test output",

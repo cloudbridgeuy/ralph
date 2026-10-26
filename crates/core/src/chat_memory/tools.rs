@@ -2,7 +2,7 @@ use super::range::{parse_read_args, RangeRequest};
 use super::search::{parse_search_args, SearchRequest};
 use super::{Node, SERVER_NAME};
 use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest, ScopeQuery};
-use crate::chat_help::{help_tool, help_topic};
+use crate::chat_help::{config_topic, help_tool, help_topic};
 use crate::chat_socket::is_socket_tool;
 use crate::chat_suggestion::suggest_reply_tool;
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
@@ -33,6 +33,10 @@ pub enum Outcome {
     Changes {
         id: Value,
         request: ChangeRequest<ScopeQuery>,
+    },
+    ConfigHelp {
+        id: Value,
+        section: Option<String>,
     },
 }
 
@@ -121,10 +125,16 @@ pub fn handle_request(request: &Value) -> Outcome {
         Dispatch::Call { id, name, args } if is_socket_tool(&name) => {
             Outcome::Socket { id, name, args }
         }
-        Dispatch::Call { id, name, args } if name == "help" => Outcome::Respond(finish_call(
-            id,
-            help_topic(args.get("topic").and_then(Value::as_str)),
-        )),
+        Dispatch::Call { id, name, args } if name == "help" => {
+            let topic = args.get("topic").and_then(Value::as_str);
+            match config_topic(topic) {
+                Some(section) => Outcome::ConfigHelp {
+                    id,
+                    section: section.map(str::to_string),
+                },
+                None => Outcome::Respond(finish_call(id, help_topic(topic))),
+            }
+        }
         Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {
             Ok(request) => Outcome::Changes { id, request },
             Err(message) => Outcome::Respond(tool_result(id, &message, true)),
@@ -178,7 +188,10 @@ mod tests {
         match call(name, args) {
             Outcome::Call { id, tool } => finish_call(id, run(entries, tree, &tool)),
             Outcome::Respond(v) => v,
-            Outcome::Silent | Outcome::Socket { .. } | Outcome::Changes { .. } => {
+            Outcome::Silent
+            | Outcome::Socket { .. }
+            | Outcome::Changes { .. }
+            | Outcome::ConfigHelp { .. } => {
                 panic!("not a memory call")
             }
         }
@@ -225,6 +238,24 @@ mod tests {
             panic!("help must answer directly");
         };
         assert_eq!(v["result"]["isError"], true);
+    }
+
+    #[test]
+    fn help_routes_config_topics_to_the_shell() {
+        assert_eq!(
+            call("help", json!({"topic": "config"})),
+            Outcome::ConfigHelp {
+                id: json!(7),
+                section: None
+            }
+        );
+        assert_eq!(
+            call("help", json!({"topic": "config chat"})),
+            Outcome::ConfigHelp {
+                id: json!(7),
+                section: Some("chat".into())
+            }
+        );
     }
 
     #[test]
