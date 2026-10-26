@@ -40,6 +40,7 @@ impl ScheduleRequest {
             timeout_secs: self.timeout_secs,
             status: TaskStatus::Proposed,
             late: false,
+            deadline: None,
         })
     }
 }

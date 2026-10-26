@@ -54,6 +54,14 @@ fn source_matches_exactly() {
 }
 
 #[test]
+fn a_schedule_tag_matches_its_scheduled_worker_too() {
+    assert!(source("schedule:a").matches(&entry("schedule:a")));
+    assert!(source("schedule:a").matches(&entry("sched-a")));
+    assert!(!source("schedule:a").matches(&entry("sched-ab")));
+    assert!(!source("sched-a").matches(&entry("schedule:a")));
+}
+
+#[test]
 fn source_matches_the_worker_not_the_file_name() {
     let held = entry("w2");
     assert!(source("w2").matches(&held));

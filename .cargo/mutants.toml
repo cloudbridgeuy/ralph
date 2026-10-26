@@ -26,6 +26,7 @@ examine_globs = [
   "crates/core/src/schedule.rs",
   "crates/core/src/schedule_request.rs",
   "crates/core/src/schedule_command.rs",
+  "crates/core/src/schedule_worker.rs",
   "crates/core/src/watch.rs",
   "crates/core/src/watch_store.rs",
   "crates/ralph/src/stream_processor/types.rs",

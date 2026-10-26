@@ -1,4 +1,5 @@
 use crate::inbox::{Entry, Position};
+use crate::schedule_worker::source_matches_worker;
 
 const CTRL_Q: u8 = 0x11;
 const CTRL_D: u8 = 0x04;
@@ -29,7 +30,7 @@ impl HoldFilter {
     pub fn matches(&self, entry: &Entry) -> bool {
         match self {
             HoldFilter::Any => true,
-            HoldFilter::Source(source) => entry.report.worker == *source,
+            HoldFilter::Source(source) => source_matches_worker(source, &entry.report.worker),
         }
     }
 }

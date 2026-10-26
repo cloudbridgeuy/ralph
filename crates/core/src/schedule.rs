@@ -1,3 +1,4 @@
+use crate::schedule_worker::worker_id;
 use crate::watch::{WatchKind, WatchSpec};
 use chrono::{
     DateTime, Duration as ChronoDuration, FixedOffset, LocalResult, NaiveTime, SecondsFormat,
@@ -35,6 +36,8 @@ pub struct Task {
     pub timeout_secs: Option<u64>,
     pub status: TaskStatus,
     pub late: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<DateTime<Utc>>,
 }
 
 pub fn parse_after(raw: &str) -> Result<Duration, String> {
@@ -139,13 +142,20 @@ pub fn due(tasks: &[Task], now: DateTime<Utc>) -> Vec<&Task> {
         .collect()
 }
 
-pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>) -> Vec<Task> {
+pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>, alive_workers: &[String]) -> Vec<Task> {
     tasks
         .into_iter()
         .map(|task| match task.status {
+            TaskStatus::Running
+                if matches!(task.kind, TaskKind::Worker { .. })
+                    && alive_workers.contains(&worker_id(&task.id)) =>
+            {
+                task
+            }
             TaskStatus::Running => Task {
                 status: TaskStatus::Pending,
                 late: task.late || task.at < now,
+                deadline: None,
                 ..task
             },
             TaskStatus::Pending => Task {
@@ -169,9 +179,13 @@ pub fn plan_tick<'a>(
     now: DateTime<Utc>,
 ) -> TickPlan<'a> {
     TickPlan {
-        fire: due(tasks, now),
+        fire: due(tasks, now)
+            .into_iter()
+            .filter(|task| matches!(task.kind, TaskKind::Command { .. }))
+            .collect(),
         finished: tasks
             .iter()
+            .filter(|task| matches!(task.kind, TaskKind::Command { .. }))
             .filter(|task| task.status == TaskStatus::Running)
             .filter(|task| !active_watch_ids.contains(&watch_id(&task.id)))
             .collect(),
@@ -328,6 +342,7 @@ mod tests {
             timeout_secs: None,
             status,
             late: false,
+            deadline: None,
         }
     }
 
@@ -549,6 +564,7 @@ mod tests {
                 task("prop-past", "2026-01-01T09:00:00Z", TaskStatus::Proposed),
             ],
             now,
+            &[],
         );
         let view: Vec<(TaskStatus, bool)> = restored.iter().map(|t| (t.status, t.late)).collect();
         assert_eq!(
@@ -564,11 +580,71 @@ mod tests {
         );
     }
 
+    fn worker_in(id: &str, status: TaskStatus) -> Task {
+        Task {
+            kind: TaskKind::Worker {
+                brief: "do it".to_string(),
+            },
+            deadline: Some(utc("2026-01-01T11:00:00Z")),
+            ..task(id, "2026-01-01T09:00:00Z", status)
+        }
+    }
+
+    #[test]
+    fn restore_keeps_a_running_worker_whose_harness_is_alive() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let running = worker_in("a", TaskStatus::Running);
+        let restored = plan_restore(vec![running.clone()], now, &["sched-a".to_string()]);
+        assert_eq!(restored, vec![running]);
+    }
+
+    #[test]
+    fn restore_requeues_a_running_worker_whose_harness_is_gone() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let restored = plan_restore(
+            vec![
+                worker_in("a", TaskStatus::Running),
+                worker_in("b", TaskStatus::Running),
+            ],
+            now,
+            &["sched-b".to_string()],
+        );
+        assert_eq!(restored[0].status, TaskStatus::Pending);
+        assert!(restored[0].late);
+        assert_eq!(restored[0].deadline, None);
+        assert_eq!(restored[1].status, TaskStatus::Running);
+    }
+
+    #[test]
+    fn restore_requeues_a_running_command_even_if_a_worker_has_its_id() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let restored = plan_restore(
+            vec![task("a", "2026-01-01T09:00:00Z", TaskStatus::Running)],
+            now,
+            &["sched-a".to_string()],
+        );
+        assert_eq!(restored[0].status, TaskStatus::Pending);
+    }
+
+    #[test]
+    fn the_command_tick_ignores_worker_tasks() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let tasks = [
+            worker_in("pending", TaskStatus::Pending),
+            worker_in("running", TaskStatus::Running),
+            task("cmd", "2026-01-01T09:00:00Z", TaskStatus::Pending),
+        ];
+        let plan = plan_tick(&tasks, &[], now);
+        let fired: Vec<&str> = plan.fire.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(fired, ["cmd"]);
+        assert!(plan.finished.is_empty());
+    }
+
     #[test]
     fn restore_keeps_an_existing_late_flag() {
         let mut already = task("x", "2026-01-01T11:00:00Z", TaskStatus::Pending);
         already.late = true;
-        let restored = plan_restore(vec![already], utc("2026-01-01T10:00:00Z"));
+        let restored = plan_restore(vec![already], utc("2026-01-01T10:00:00Z"), &[]);
         assert!(restored[0].late);
     }
 

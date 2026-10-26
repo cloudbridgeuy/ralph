@@ -32,6 +32,7 @@ pub(crate) mod headless;
 mod spawn;
 pub(crate) use spawn::SpawnArgs;
 
+#[derive(Clone)]
 pub struct Workers {
     store_dir: PathBuf,
     exe: PathBuf,
@@ -320,6 +321,24 @@ impl Workers {
             )),
             |text, warning| format!("{text} {warning}"),
         ))
+    }
+
+    pub fn stop_harness(&self, id: &str) -> io::Result<String> {
+        let repo = repo_root()?;
+        match self.owner(&project_slug(&repo), id) {
+            Owner::Mine(session) => {
+                self.close_step(&CloseStep::KillSession(session.name), &repo, &repo, id)?;
+                Ok(format!(
+                    "Stopped worker {id}: kept its worktree and branch {}.",
+                    branch_name(id)
+                ))
+            }
+            Owner::Missing => Ok(format!("Worker {id} is not running.")),
+            Owner::Foreign(session) => Err(io::Error::other(format!(
+                "worker {id} belongs to another chat (store {})",
+                session.store
+            ))),
+        }
     }
 
     fn close_step(

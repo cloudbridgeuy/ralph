@@ -168,6 +168,7 @@ mod tests {
             timeout_secs: None,
             status,
             late,
+            deadline: None,
         }
     }
 

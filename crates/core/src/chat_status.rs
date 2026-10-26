@@ -158,8 +158,15 @@ fn workers_route(args: &str, line: &str) -> Route {
     let mut tokens = args.split_whitespace();
     match (tokens.next(), tokens.next()) {
         (None, _) => Route::Workers(None),
-        (Some(id), None) => Route::Workers(Some(id.to_string())),
+        (Some(id), None) => Route::Workers(Some(scheduled_worker_id(id))),
         _ => Route::Send(line.to_string()),
+    }
+}
+
+fn scheduled_worker_id(id: &str) -> String {
+    match id.strip_prefix(crate::schedule::SCHEDULE_ID_PREFIX) {
+        Some(task) if !task.is_empty() => crate::schedule_worker::worker_id(task),
+        _ => id.to_string(),
     }
 }
 

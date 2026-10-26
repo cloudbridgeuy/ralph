@@ -16,6 +16,7 @@ mod prompt;
 mod queue;
 mod route;
 mod schedule;
+mod schedule_worker;
 mod skills;
 mod snapshots;
 pub(crate) mod socket;
@@ -243,6 +244,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         ),
         check: Mutex::new(CheckState::seeded(&store)),
         known: Mutex::new(known),
+        scheduled_reports: Mutex::new(Vec::new()),
         warned: Mutex::new(HashSet::new()),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
@@ -266,7 +268,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
-    restore_schedule(&monitor.schedule);
+    restore_schedule(
+        &monitor.schedule,
+        &schedule_worker::alive_worker_ids(&monitor.store_dir),
+    );
     monitor.refresh(true);
     if let Some(hint) = orphan_hint(
         &ready_ids(&monitor.store_dir),

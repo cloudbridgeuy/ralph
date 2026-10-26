@@ -84,9 +84,9 @@ fn decide(
     }
 }
 
-pub(super) fn restore_schedule(store: &ScheduleStore) {
+pub(super) fn restore_schedule(store: &ScheduleStore, alive_workers: &[String]) {
     let tasks = store.load_all();
-    for task in plan_restore(tasks.clone(), chrono::Utc::now())
+    for task in plan_restore(tasks.clone(), chrono::Utc::now(), alive_workers)
         .into_iter()
         .filter(|restored| !tasks.contains(restored))
     {
@@ -191,6 +191,7 @@ mod tests {
                 timeout_secs: None,
                 status: TaskStatus::Proposed,
                 late: false,
+                deadline: None,
             })
             .unwrap();
     }
@@ -287,7 +288,7 @@ mod tests {
             task.status = status;
             store.save(&task).unwrap();
         }
-        restore_schedule(&store);
+        restore_schedule(&store, &[]);
         let mut view: Vec<(String, TaskStatus, bool)> = store
             .load_all()
             .into_iter()
@@ -347,7 +348,7 @@ mod tests {
             statuses(&store),
             vec![("a".to_string(), TaskStatus::Running)]
         );
-        restore_schedule(&store);
+        restore_schedule(&store, &[]);
         let restored = store.load_all();
         assert_eq!(restored[0].status, TaskStatus::Pending);
         assert!(restored[0].late);

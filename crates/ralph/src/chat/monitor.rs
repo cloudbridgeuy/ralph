@@ -1,6 +1,7 @@
 use crate::chat::check::CheckState;
 use crate::chat::memory::Store;
 use crate::chat::schedule::fire_due;
+use crate::chat::schedule_worker::tick_workers;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::inbox_alert;
 use crate::schedule_store::ScheduleStore;
@@ -21,6 +22,7 @@ use ralph_core::chat_status::{
 use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
+use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
     marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
@@ -37,7 +39,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const POLL: Duration = Duration::from_millis(500);
+pub(super) const POLL: Duration = Duration::from_millis(500);
 const MEMORY_EVERY_POLLS: u64 = 10;
 const INPUT_LOST_EXIT: i32 = 129;
 
@@ -80,6 +82,7 @@ pub(super) struct Monitor {
     pub(super) workers: Workers,
     pub(super) check: Mutex<CheckState>,
     pub(super) known: Mutex<Vec<Report>>,
+    pub(super) scheduled_reports: Mutex<Vec<Report>>,
     pub(super) warned: Mutex<HashSet<String>>,
     pub(super) alert: AlertConfig,
     pub(super) live: Arc<AtomicBool>,
@@ -95,6 +98,7 @@ impl Monitor {
 
     pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
         let reports = self.inbox.drain(selection)?;
+        self.note_scheduled(&reports);
         locked(&self.seen).extend(latest_states(&reports));
         locked(&self.check).reports.extend(last_reports(&reports));
         Ok(reports)
@@ -274,10 +278,17 @@ impl Monitor {
         *known = pending.to_vec();
     }
 
+    fn note_scheduled(&self, reports: &[Report]) {
+        let mut known = locked(&self.scheduled_reports);
+        let fresh = new_scheduled_reports(&known, reports);
+        known.extend(fresh);
+    }
+
     pub(super) fn refresh(&self, with_memory: bool) -> bool {
         let peeked = self.inbox.peek();
         if let Ok(pending) = &peeked {
             self.alert_fresh(pending);
+            self.note_scheduled(pending);
         }
         let pending = peeked.unwrap_or_default();
         locked(&self.check).reports.extend(last_reports(&pending));
@@ -356,6 +367,7 @@ pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 's
             tick += 1;
             watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
             fire_due(&monitor.schedule, &monitor.watches, &monitor.inbox);
+            tick_workers(&monitor);
             if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
                 repaint();
             }

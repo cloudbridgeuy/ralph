@@ -94,6 +94,7 @@ mod tests {
             timeout_secs: None,
             status: TaskStatus::Proposed,
             late: false,
+            deadline: None,
         }
     }
 

@@ -180,6 +180,19 @@ fn route_input_parses_workers_commands() {
 }
 
 #[test]
+fn a_schedule_tag_routes_to_its_scheduled_worker() {
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    assert_eq!(
+        route("/workers schedule:nightly"),
+        Route::Workers(Some("sched-nightly".into()))
+    );
+    assert_eq!(
+        route("/workers schedule:"),
+        Route::Workers(Some("schedule:".into()))
+    );
+}
+
+#[test]
 fn only_bare_or_one_token_workers_route_locally() {
     for line in ["/workers a b", "/workers a b c", "/workersfoo"] {
         assert_eq!(
@@ -576,6 +589,7 @@ fn schedule_states_list_armed_tasks_by_time_in_local_hours() {
         timeout_secs: None,
         status,
         late: false,
+        deadline: None,
     };
     let tasks = [
         task("b", "2026-01-01T12:00:00Z", TaskStatus::Pending),
@@ -611,6 +625,7 @@ fn schedule_states_mark_tasks_due_on_a_later_local_day() {
         timeout_secs: None,
         status: TaskStatus::Pending,
         late: false,
+        deadline: None,
     };
     let tasks = [
         task("today", "2026-01-01T22:30:00Z"),
