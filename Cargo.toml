@@ -30,7 +30,7 @@ debug = 0
 [workspace.dependencies]
 
 # Agent Client Protocol (cursor worker harness)
-agent-client-protocol = "=3.3.0"
+agent-client-protocol = "=3.5.0"
 blocking = "1"
 flate2 = "1"
 futures = "0.3"
