@@ -97,9 +97,40 @@ pub fn next_number(draft: &str) -> usize {
         .map_or(1, |largest| largest + 1)
 }
 
+pub fn attachment_paths(text: &str) -> Vec<String> {
+    text.split("[Image #")
+        .skip(1)
+        .filter_map(|rest| {
+            let (digits, rest) = rest.split_once(": ")?;
+            if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            let (path, _) = rest.split_once(']')?;
+            let path = path.trim();
+            (!path.is_empty()).then(|| path.to_string())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attachment_paths_cover_shapes() {
+        assert_eq!(attachment_paths(&placeholder(1, "/a/b.png")), ["/a/b.png"]);
+        let two = format!(
+            "see {} and {} ok",
+            placeholder(1, "/a.png"),
+            placeholder(2, "/b c.png")
+        );
+        assert_eq!(attachment_paths(&two), ["/a.png", "/b c.png"]);
+        assert!(attachment_paths("[Image #x: /a.png]").is_empty());
+        assert!(attachment_paths("[Image #: /a.png]").is_empty());
+        assert!(attachment_paths("[Image #1: /a.png").is_empty());
+        assert!(attachment_paths("[Image #1:  ]").is_empty());
+        assert!(attachment_paths("no markers").is_empty());
+    }
 
     const PNG: [u8; 8] = PNG_MAGIC;
 

@@ -284,7 +284,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
-    crate::render::image::enable_images(crate::render::image::detect());
+    crate::render::image::enable_images(crate::render::image::detect(color));
     let (configured_editor, config_warning) = chat_config.editor_setting();
     let (editor_cmd, editor_warning) = editor_argv(
         configured_editor,
@@ -357,6 +357,16 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let (outcome, draft) = match route {
             Route::Ignore => continue,
             Route::Send(message) => {
+                if let Some(images) = crate::render::image::enabled() {
+                    print!(
+                        "{}",
+                        crate::render::image::render_attachments(
+                            &message,
+                            images,
+                            crate::render::image::ImageBounds::current()
+                        )
+                    );
+                }
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {

@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+use ralph_core::attachment::attachment_paths;
 use ralph_core::kitty::{
     cell_grid, clamp_placeholder_grid, encode_apc, encode_virtual, graphics_probe, graphics_query,
     graphics_reply, parse_image_markers, placeholder_rows, png_size, strip_kitty_apc,
@@ -12,9 +13,11 @@ use ralph_core::kitty::{
 };
 
 use super::text::render_markdown;
+use super::wrap::wrap_width;
 use super::RenderContext;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode};
 use crate::markdown::MarkdownTheme;
+use termimad::terminal_size;
 
 const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 const TMUX_PROBE_TIMEOUT: Duration = Duration::from_millis(300);
@@ -103,13 +106,14 @@ fn tmux_passthrough() -> Option<String> {
     status.success().then(|| out.trim().to_string())
 }
 
-pub fn detect() -> Option<ImageSettings> {
+pub fn detect(color: bool) -> Option<ImageSettings> {
     let stdin_tty = std::io::stdin().is_terminal();
     let stdout_tty = std::io::stdout().is_terminal();
     let tmux = std::env::var_os("TMUX").is_some();
     let snapshot = TerminalSnapshot {
         stdin_tty,
         stdout_tty,
+        color,
         tmux,
         passthrough: (stdin_tty && stdout_tty && tmux)
             .then(tmux_passthrough)
@@ -156,28 +160,45 @@ pub struct ImageBounds {
     pub rows: u32,
 }
 
+impl ImageBounds {
+    pub fn current() -> Self {
+        let (cols, rows) = terminal_size();
+        Self {
+            cols: wrap_width(cols.into()).try_into().unwrap_or(u32::MAX),
+            rows: u32::from(rows.max(1)),
+        }
+    }
+}
+
 fn render_image(alt: &str, path: &str, images: ImageSettings, bounds: ImageBounds) -> String {
-    let Some(bytes) = read_capped(path) else {
-        return fallback(alt, path);
-    };
-    let Some(size) = png_size(&bytes) else {
-        return fallback(alt, path);
-    };
+    draw_image(path, images, bounds).unwrap_or_else(|| fallback(alt, path))
+}
+
+pub fn render_attachments(text: &str, images: ImageSettings, bounds: ImageBounds) -> String {
+    attachment_paths(text)
+        .iter()
+        .filter_map(|path| draw_image(path, images, bounds))
+        .collect()
+}
+
+fn draw_image(path: &str, images: ImageSettings, bounds: ImageBounds) -> Option<String> {
+    let bytes = read_capped(path)?;
+    let size = png_size(&bytes)?;
     let grid = cell_grid(size, images.cell_px, bounds.cols, bounds.rows);
     match images.placement {
         Placement::Direct => {
             let (cols, rows) = grid;
             let newlines = (0..rows).map(|_| '\n').collect::<String>();
-            format!("{}{newlines}", encode_apc(&bytes, cols, rows))
+            Some(format!("{}{newlines}", encode_apc(&bytes, cols, rows)))
         }
         Placement::Tmux => {
             let (cols, rows) = clamp_placeholder_grid(grid);
             let id = next_image_id();
-            format!(
+            Some(format!(
                 "{}{}",
                 encode_virtual(&bytes, id, cols, rows),
                 placeholder_rows(id, cols, rows)
-            )
+            ))
         }
     }
 }
@@ -248,6 +269,33 @@ mod tests {
             render_image("chart", "/definitely/not/here.png", SETTINGS, BOUNDS),
             "[image: chart (/definitely/not/here.png)]\n"
         );
+    }
+
+    fn tall_png(dir: &std::path::Path) -> PathBuf {
+        let path = dir.join("tall.png");
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&16u32.to_be_bytes());
+        png.extend_from_slice(&64u32.to_be_bytes());
+        std::fs::write(&path, &png).unwrap();
+        path
+    }
+
+    #[test]
+    fn attachments_draw_only_drawable_pngs() {
+        let dir = temp_dir("attach");
+        let good = tall_png(&dir);
+        let bad = dir.join("bad.png");
+        std::fs::write(&bad, b"not a png at all, just text bytes").unwrap();
+        let text = |path: &std::path::Path| format!("hi [Image #1: {}]", path.display());
+        let drawn = render_attachments(&text(&good), SETTINGS, BOUNDS);
+        let plain = render_attachments(&text(&bad), SETTINGS, BOUNDS);
+        let missing = render_attachments("[Image #1: /no/such.png]", SETTINGS, BOUNDS);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(drawn.contains("\x1b_G"));
+        assert_eq!(plain, "");
+        assert_eq!(missing, "");
     }
 
     #[test]

@@ -335,6 +335,7 @@ pub enum Piece {
 pub struct TerminalSnapshot {
     pub stdin_tty: bool,
     pub stdout_tty: bool,
+    pub color: bool,
     pub tmux: bool,
     pub passthrough: Option<String>,
 }
@@ -617,7 +618,7 @@ pub fn graphics_reply(bytes: &[u8], placement: Placement) -> GraphicsReply {
 }
 
 pub fn graphics_probe(snapshot: &TerminalSnapshot) -> Option<Placement> {
-    if !(snapshot.stdin_tty && snapshot.stdout_tty) {
+    if !(snapshot.stdin_tty && snapshot.stdout_tty && snapshot.color) {
         return None;
     }
     if !snapshot.tmux {
@@ -842,6 +843,7 @@ mod tests {
         let snap = |stdin_tty, stdout_tty, tmux, passthrough: Option<&str>| TerminalSnapshot {
             stdin_tty,
             stdout_tty,
+            color: true,
             tmux,
             passthrough: passthrough.map(str::to_string),
         };
@@ -855,6 +857,20 @@ mod tests {
             (snap(true, true, true, Some("")), None),
             (snap(true, true, true, None), None),
             (snap(false, true, true, Some("on")), None),
+            (
+                TerminalSnapshot {
+                    color: false,
+                    ..snap(true, true, false, None)
+                },
+                None,
+            ),
+            (
+                TerminalSnapshot {
+                    color: false,
+                    ..snap(true, true, true, Some("on"))
+                },
+                None,
+            ),
         ];
         for (snapshot, expected) in cases {
             assert_eq!(graphics_probe(&snapshot), expected, "{snapshot:?}");
