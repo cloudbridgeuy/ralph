@@ -10,14 +10,14 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
-    fetch_origin_args, opencode_config, project_slug, resolve_claude_model, resolve_cursor_model,
-    resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report, session_name,
-    spawn_handoff, spawn_record_path, startup_state, worker_command, worker_mcp_args,
+    fetch_origin_args, fetch_timeout_text, opencode_config, project_slug, resolve_claude_model,
+    resolve_cursor_model, resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report,
+    session_name, spawn_handoff, spawn_record_path, startup_state, worker_command, worker_mcp_args,
     worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles,
     HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup,
     Ticket, TicketKeys, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND,
-    CURSOR_AGENT, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
-    TRUST_KEYS, WORKERS_DIR,
+    CURSOR_AGENT, FETCH_ENV, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STARTUP_POLL: Duration = Duration::from_millis(250);
+const FETCH_POLL: Duration = Duration::from_millis(100);
 
 impl Workers {
     pub fn spawn(&self, args: &SpawnArgs) -> io::Result<String> {
@@ -139,7 +140,7 @@ impl Workers {
             changes.snapshot_turn_or_warn();
         }
         let launched = if scheduled {
-            guard::apply(&repo, &worktree, &self.store_dir).and_then(|()| self.launch(&launch))
+            guard::apply(&repo, &worktree).and_then(|()| self.launch(&launch))
         } else {
             self.launch(&launch)
         };
@@ -558,6 +559,46 @@ pub(super) fn session_exists(session: &str) -> io::Result<bool> {
         .success())
 }
 
+fn fetch_origin(repo: &Path) -> io::Result<()> {
+    let _setup = guard::lock_setup();
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(fetch_origin_args())
+        .envs(FETCH_ENV)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stderr = child.stderr.take().map(|mut pipe| {
+        thread::spawn(move || {
+            let mut text = String::new();
+            let _ = io::Read::read_to_string(&mut pipe, &mut text);
+            text
+        })
+    });
+    let deadline = Instant::now() + Duration::from_secs(FETCH_TIMEOUT_SECS);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break Some(status);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        thread::sleep(FETCH_POLL);
+    };
+    let text = stderr
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    match status {
+        Some(status) if status.success() => Ok(()),
+        Some(_) => Err(io::Error::other(text.trim().to_string())),
+        None => Err(io::Error::other(fetch_timeout_text())),
+    }
+}
+
 fn ensure_worktree(
     repo: &Path,
     worktree: &Path,
@@ -568,10 +609,7 @@ fn ensure_worktree(
         return Ok(WorktreeVia::Existing);
     }
     if base == WorktreeBase::OriginMain {
-        run(Command::new("git")
-            .arg("-C")
-            .arg(repo)
-            .args(fetch_origin_args()))?;
+        fetch_origin(repo)?;
     }
     let wt_error = match Command::new("wt")
         .args(wt_switch_args(

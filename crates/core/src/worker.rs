@@ -341,13 +341,18 @@ pub struct ClaudeWorkerArgs<'a> {
 }
 
 pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
+    let permission_mode = if args.scheduled {
+        SCHEDULED_PERMISSION_MODE
+    } else {
+        args.permission_mode
+    };
     let mut command: Vec<String> = [
         "zsh",
         "-lic",
         r#"exec "$0" "$@""#,
         "claude",
         "--permission-mode",
-        args.permission_mode,
+        permission_mode,
         "--mcp-config",
         &args.mcp_config.to_string_lossy(),
         "--settings",

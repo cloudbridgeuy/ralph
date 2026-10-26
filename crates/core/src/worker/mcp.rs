@@ -5,6 +5,7 @@ use super::{
 };
 use crate::mcp::string_arg;
 use crate::schedule_request::parse_schedule_args;
+use crate::schedule_worker::{is_scheduled_worker_id, WORKER_ID_PREFIX};
 use crate::watch_request::parse_watch_args;
 use serde_json::{json, Value};
 
@@ -60,6 +61,11 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
     let parsed = match name {
         "spawn_worker" => string_arg(args, "task").and_then(|task| {
             let id = worker_id(args)?;
+            if is_scheduled_worker_id(&id) {
+                return Err(format!(
+                    "Worker ids starting with '{WORKER_ID_PREFIX}' are reserved for scheduled workers."
+                ));
+            }
             let spawn = harness(args)?;
             Ok(Command::Spawn {
                 id,
@@ -101,7 +107,7 @@ fn bool_flag(args: &Value, name: &str) -> Result<bool, String> {
     }
 }
 
-fn is_dashed_token(text: &str) -> bool {
+pub fn is_dashed_token(text: &str) -> bool {
     text.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
@@ -328,6 +334,16 @@ mod tests {
             Some(Err(e)) => Err(e),
             None => panic!("not a worker command"),
         }
+    }
+
+    #[test]
+    fn spawn_refuses_the_reserved_scheduled_prefix() {
+        let refused = parse_command("spawn_worker", &json!({"id": "sched-a", "task": "t"}));
+        assert!(matches!(refused, Some(Err(message)) if message.contains("reserved")));
+        assert!(matches!(
+            parse_command("spawn_worker", &json!({"id": "scheduled", "task": "t"})),
+            Some(Ok(Command::Spawn { .. }))
+        ));
     }
 
     #[test]

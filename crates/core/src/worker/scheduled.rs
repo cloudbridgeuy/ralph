@@ -20,6 +20,8 @@ pub fn worker_prompt(scheduled: bool) -> &'static str {
     }
 }
 
+pub const SCHEDULED_PERMISSION_MODE: &str = "auto";
+
 pub const ORIGIN_MAIN: &str = "origin/main";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +42,17 @@ impl WorktreeBase {
 
 pub fn fetch_origin_args() -> Vec<OsString> {
     vec!["fetch".into(), "origin".into()]
+}
+
+pub const FETCH_TIMEOUT_SECS: u64 = 60;
+
+pub const FETCH_ENV: [(&str, &str); 2] = [
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes"),
+];
+
+pub fn fetch_timeout_text() -> String {
+    format!("git fetch origin timed out after {FETCH_TIMEOUT_SECS}s")
 }
 
 #[cfg(test)]
@@ -139,6 +152,45 @@ mod tests {
             ]
         );
         assert_eq!(args.last().unwrap(), "do it");
+    }
+
+    fn mode_after_flag(args: &[String]) -> &str {
+        let at = args.iter().position(|a| a == "--permission-mode").unwrap();
+        &args[at + 1]
+    }
+
+    #[test]
+    fn a_scheduled_worker_forces_auto_mode_whatever_the_chat_uses() {
+        let chat = ClaudeWorkerArgs {
+            permission_mode: "bypassPermissions",
+            ..claude_args()
+        };
+        let scheduled = ClaudeWorkerArgs {
+            scheduled: true,
+            ..chat
+        };
+        assert_eq!(mode_after_flag(&worker_command(&scheduled)), "auto");
+    }
+
+    #[test]
+    fn the_fetch_never_prompts_and_has_a_timeout_text() {
+        assert_eq!(
+            FETCH_ENV,
+            [
+                ("GIT_TERMINAL_PROMPT", "0"),
+                ("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+            ]
+        );
+        assert_eq!(fetch_timeout_text(), "git fetch origin timed out after 60s");
+    }
+
+    #[test]
+    fn an_unscheduled_worker_keeps_the_chat_mode() {
+        let chat = ClaudeWorkerArgs {
+            permission_mode: "acceptEdits",
+            ..claude_args()
+        };
+        assert_eq!(mode_after_flag(&worker_command(&chat)), "acceptEdits");
     }
 
     #[test]

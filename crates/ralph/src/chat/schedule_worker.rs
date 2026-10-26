@@ -4,12 +4,30 @@ use crate::watches::locked;
 use crate::workers::{running_workers, SpawnArgs, Workers};
 use ralph_core::schedule::{Task, TaskStatus};
 use ralph_core::schedule_worker::{
-    chat_report, is_worker_task, plan_worker_tick, start_failure_text, timed_out_text,
-    vanished_text, worker_brief, worker_deadline, worker_id, WorkerEnd, WorkerFire,
+    alive_with_starting, chat_report, is_still_running, is_worker_task, plan_worker_tick,
+    start_failure_text, timed_out_text, vanished_text, worker_brief, worker_deadline, worker_id,
+    WorkerEnd, WorkerFire,
 };
 use ralph_core::worker::HarnessId;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+static STARTING: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+struct Starting(String);
+
+impl Starting {
+    fn enter(id: &str) -> Self {
+        locked(&STARTING).push(id.to_string());
+        Self(id.to_string())
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        locked(&STARTING).retain(|id| id != &self.0);
+    }
+}
 
 pub(super) fn alive_worker_ids(store_dir: &Path) -> Vec<String> {
     running_workers(store_dir)
@@ -27,7 +45,10 @@ pub(super) fn tick_workers(monitor: &Monitor) {
         .iter()
         .any(|task| is_worker_task(task) && task.status == TaskStatus::Running);
     let alive = if any_running {
-        alive_worker_ids(&monitor.store_dir)
+        alive_with_starting(
+            &alive_worker_ids(&monitor.store_dir),
+            &locked(&STARTING).clone(),
+        )
     } else {
         Vec::new()
     };
@@ -56,11 +77,20 @@ fn end_task(monitor: &Monitor, task: &Task, end: &WorkerEnd, now: chrono::DateTi
         WorkerEnd::Done => settle_done(&monitor.workers, &worker),
         WorkerEnd::Attention => {}
         WorkerEnd::TimedOut => {
-            warn_if_err(
-                monitor.workers.stop_harness(&worker),
-                format!("stopping timed out worker {worker}"),
+            let stop_error = monitor
+                .workers
+                .stop_harness(&worker)
+                .err()
+                .map(|error| error.to_string());
+            if let Some(error) = &stop_error {
+                crate::warn::warn(format!("stopping timed out worker {worker}: {error}"));
+            }
+            post_report(
+                monitor,
+                task,
+                timed_out_text(task, stop_error.as_deref()),
+                now,
             );
-            post_report(monitor, task, timed_out_text(task), now);
         }
         WorkerEnd::Vanished => post_report(monitor, task, vanished_text(task), now),
     }
@@ -97,8 +127,13 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
     let workers = monitor.workers.clone();
     let store = monitor.schedule.clone();
     let inbox = Arc::clone(&monitor.inbox);
+    let starting = Starting::enter(&task.id);
     std::thread::spawn(move || {
+        let _starting = starting;
         let worker = worker_id(&task.id);
+        if !is_still_running(&store.load_all(), &task.id) {
+            return;
+        }
         let args = SpawnArgs {
             id: &worker,
             task: &brief,
@@ -107,14 +142,23 @@ fn start_task(monitor: &Monitor, fire: WorkerFire, now: chrono::DateTime<chrono:
             ticket: None,
             scheduled: true,
         };
-        if let Err(error) = workers.spawn(&args) {
-            let text = start_failure_text(&task.id, &error.to_string());
-            let report = chat_report(&task.id, text, &now.to_rfc3339());
-            warn_if_err(
-                inbox.post(&report, 0),
-                format!("posting schedule {}", task.id),
-            );
-            store.remove(&task.id);
+        let spawned = workers.spawn(&args);
+        let wanted = is_still_running(&store.load_all(), &task.id);
+        match (spawned, wanted) {
+            (Ok(_), false) => warn_if_err(
+                workers.stop_harness(&worker),
+                format!("stopping orphaned worker {worker}"),
+            ),
+            (Err(_), false) | (Ok(_), true) => {}
+            (Err(error), true) => {
+                let text = start_failure_text(&task.id, &error.to_string());
+                let report = chat_report(&task.id, text, &now.to_rfc3339());
+                warn_if_err(
+                    inbox.post(&report, 0),
+                    format!("posting schedule {}", task.id),
+                );
+                store.remove(&task.id);
+            }
         }
     });
 }

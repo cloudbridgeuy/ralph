@@ -35,6 +35,36 @@ pub fn worker_id(id: &str) -> String {
     format!("{WORKER_ID_PREFIX}{id}")
 }
 
+pub fn alive_with_starting(alive: &[String], starting: &[String]) -> Vec<String> {
+    alive
+        .iter()
+        .cloned()
+        .chain(starting.iter().map(|id| worker_id(id)))
+        .collect()
+}
+
+pub fn is_still_running(tasks: &[Task], id: &str) -> bool {
+    tasks
+        .iter()
+        .any(|task| task.id == id && task.status == TaskStatus::Running)
+}
+
+pub fn is_scheduled_worker_id(id: &str) -> bool {
+    id.starts_with(WORKER_ID_PREFIX)
+}
+
+pub fn reply_refusal(id: &str, tasks: &[Task]) -> Option<String> {
+    tasks
+        .iter()
+        .find(|task| is_worker_task(task) && worker_id(&task.id) == id)
+        .map(|task| {
+            format!(
+                "Worker {id} belongs to scheduled task `{}`; it takes no replies. Cancel the task with /schedule cancel {}.",
+                task.id, task.id
+            )
+        })
+}
+
 pub fn is_worker_task(task: &Task) -> bool {
     matches!(task.kind, TaskKind::Worker { .. })
 }
@@ -175,9 +205,13 @@ pub fn start_failure_text(task_id: &str, error: &str) -> String {
     format!("Scheduled worker `{task_id}` did not start: {error}.")
 }
 
-pub fn timed_out_text(task: &Task) -> String {
+pub fn timed_out_text(task: &Task, stop_error: Option<&str>) -> String {
+    let stop = match stop_error {
+        None => "Its harness was stopped.".to_string(),
+        Some(error) => format!("Its harness could not be stopped: {error}."),
+    };
     format!(
-        "Scheduled worker `{}` timed out after {}. Its harness was stopped. Worktree and branch {} are kept.",
+        "Scheduled worker `{}` timed out after {}. {stop} Worktree and branch {} are kept.",
         task.id,
         format_span(task.timeout_secs.unwrap_or(WORKER_DEFAULT_TIMEOUT_SECS)),
         crate::worker::branch_name(&worker_id(&task.id)),

@@ -2,6 +2,7 @@ use crate::mcp::string_arg;
 use crate::schedule::{
     escape_controls, parse_after, parse_at, Task, TaskKind, TaskStatus, WORKER_MAX_TIMEOUT_SECS,
 };
+use crate::worker::is_dashed_token;
 use chrono::{DateTime, Duration as ChronoDuration, TimeZone, Utc};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -86,6 +87,12 @@ pub fn parse_schedule_args(args: &Value) -> Result<ScheduleRequest, String> {
         (None, Some(brief)) => {
             if follow_up.is_some() {
                 return Err("follow_up applies to commands only.".to_string());
+            }
+            if !is_dashed_token(&id) {
+                return Err(format!(
+                    "Schedule id '{}' for a worker may only use letters, digits and dashes.",
+                    escape_controls(&id)
+                ));
             }
             if timeout_secs.is_some_and(|secs| secs > WORKER_MAX_TIMEOUT_SECS) {
                 return Err(format!(
@@ -323,6 +330,19 @@ mod tests {
                 timeout_secs: None,
             })
         );
+    }
+
+    #[test]
+    fn a_worker_id_follows_the_dashed_token_rule_but_a_command_id_does_not() {
+        assert!(worker_request(json!({"id": "night_ly"})).is_err());
+        assert!(worker_request(json!({"id": "night.ly"})).is_err());
+        assert!(worker_request(json!({"id": "night-ly"})).is_ok());
+        assert!(parse_schedule_args(&json!({
+            "id": "night_ly",
+            "command": "make test",
+            "after": "5m"
+        }))
+        .is_ok());
     }
 
     #[test]

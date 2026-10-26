@@ -1,7 +1,7 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub const HOOKS_DIR: &str = "schedule-hooks";
-pub const REFUSED_PUSH_URL: &str = "ralph-refused://origin";
+pub const HOOKS_DIR: &str = "ralph-schedule-hooks";
+pub const DEFAULT_REMOTE: &str = "origin";
 pub const REFUSED_URL_BASE: &str = "ralph-refused://";
 pub const REFUSED_PREFIXES: [&str; 9] = [
     "/", "./", "../", "file://", "ssh://", "git@", "git://", "http://", "https://",
@@ -23,7 +23,85 @@ pub fn disallowed_tool_args() -> Vec<String> {
         .collect()
 }
 
-pub fn guard_config_steps(hooks_dir: &Path) -> Vec<Vec<String>> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RemoteUrls {
+    pub fetch: Vec<(String, String)>,
+    pub push: Vec<(String, String)>,
+}
+
+pub fn hooks_dir_in(common_dir: &Path) -> PathBuf {
+    common_dir.join(HOOKS_DIR)
+}
+
+pub fn parse_remote_urls(config_listing: &str) -> RemoteUrls {
+    let mut urls = RemoteUrls::default();
+    for line in config_listing.lines() {
+        let Some((key, value)) = line.split_once(' ') else {
+            continue;
+        };
+        let Some(rest) = key.strip_prefix("remote.") else {
+            continue;
+        };
+        let value = value.to_string();
+        if let Some(name) = rest.strip_suffix(".pushurl") {
+            urls.push.push((name.to_string(), value));
+        } else if let Some(name) = rest.strip_suffix(".url") {
+            urls.fetch.push((name.to_string(), value));
+        }
+    }
+    urls
+}
+
+pub fn refused_push_url(remote: &str) -> String {
+    format!("{REFUSED_URL_BASE}{remote}")
+}
+
+fn guarded_remotes(remotes: &RemoteUrls) -> Vec<&str> {
+    let mut names: Vec<&str> = remotes
+        .fetch
+        .iter()
+        .chain(&remotes.push)
+        .map(|(name, _)| name.as_str())
+        .chain(std::iter::once(DEFAULT_REMOTE))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+fn shared_push_urls(remotes: &RemoteUrls) -> Vec<&str> {
+    let mut urls: Vec<&str> = remotes
+        .push
+        .iter()
+        .map(|(_, url)| url.as_str())
+        .filter(|url| !url.is_empty())
+        .collect();
+    urls.sort_unstable();
+    urls.dedup();
+    urls
+}
+
+fn rewritten_fetch(remotes: &RemoteUrls, push_urls: &[&str]) -> Option<String> {
+    remotes.fetch.iter().find_map(|(name, url)| {
+        push_urls
+            .iter()
+            .find(|push| url.starts_with(**push))
+            .map(|push| {
+                format!(
+                    "remote {name} fetches from {url}, which starts with the shared push url {push}; refusing that push url would break fetching"
+                )
+            })
+    })
+}
+
+pub fn guard_config_steps(
+    hooks_dir: &Path,
+    remotes: &RemoteUrls,
+) -> Result<Vec<Vec<String>>, String> {
+    let push_urls = shared_push_urls(remotes);
+    if let Some(refusal) = rewritten_fetch(remotes, &push_urls) {
+        return Err(refusal);
+    }
     let step = |args: &[&str]| args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
     let mut steps = vec![
         step(&["config", "extensions.worktreeConfig", "true"]),
@@ -33,13 +111,22 @@ pub fn guard_config_steps(hooks_dir: &Path) -> Vec<Vec<String>> {
             "core.hooksPath".to_string(),
             hooks_dir.to_string_lossy().into_owned(),
         ],
-        step(&[
+    ];
+    for remote in guarded_remotes(remotes) {
+        steps.push(step(&[
             "config",
             "--worktree",
-            "remote.origin.pushurl",
-            REFUSED_PUSH_URL,
-        ]),
-    ];
+            &format!("remote.{remote}.pushurl"),
+            &refused_push_url(remote),
+        ]));
+    }
+    let instead_of = format!("url.{REFUSED_URL_BASE}.insteadOf");
+    steps.push(step(&["config", "--worktree", UNSET_ALL_FLAG, &instead_of]));
+    steps.extend(
+        push_urls
+            .iter()
+            .map(|url| step(&["config", "--worktree", "--add", &instead_of, url])),
+    );
     let key = format!("url.{REFUSED_URL_BASE}.pushInsteadOf");
     steps.push(step(&["config", "--worktree", UNSET_ALL_FLAG, &key]));
     steps.extend(
@@ -47,7 +134,15 @@ pub fn guard_config_steps(hooks_dir: &Path) -> Vec<Vec<String>> {
             .iter()
             .map(|prefix| step(&["config", "--worktree", "--add", &key, prefix])),
     );
-    steps
+    Ok(steps)
+}
+
+pub fn stale_hook_names(present: &[String], scripts: &[HookScript]) -> Vec<String> {
+    present
+        .iter()
+        .filter(|name| !scripts.iter().any(|script| &script.name == *name))
+        .cloned()
+        .collect()
 }
 
 pub fn refusing_pre_push() -> String {
@@ -95,112 +190,181 @@ mod tests {
             .collect()
     }
 
+    fn remotes(fetch: &[(&str, &str)], push: &[(&str, &str)]) -> RemoteUrls {
+        let owned = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(name, url)| (name.to_string(), url.to_string()))
+                .collect()
+        };
+        RemoteUrls {
+            fetch: owned(fetch),
+            push: owned(push),
+        }
+    }
+
+    fn pushinsteadof_steps() -> Vec<Vec<String>> {
+        let key = "url.ralph-refused://.pushInsteadOf";
+        std::iter::once(vec!["config", "--worktree", "--unset-all", key].into_iter())
+            .map(|step| step.map(str::to_string).collect())
+            .chain(REFUSED_PREFIXES.iter().map(|prefix| {
+                ["config", "--worktree", "--add", key, prefix]
+                    .map(str::to_string)
+                    .to_vec()
+            }))
+            .collect()
+    }
+
     #[test]
-    fn config_steps_are_exactly_the_plan() {
+    fn config_steps_refuse_every_remote_and_every_shared_push_url() {
+        let config = remotes(
+            &[
+                ("origin", "git@github.com:me/repo.git"),
+                ("up", "https://example.com/up.git"),
+            ],
+            &[("origin", "git@push.example.com:me/repo.git")],
+        );
+        let steps = guard_config_steps(Path::new("/c/ralph-schedule-hooks"), &config).unwrap();
+        let mut expected = strings(&[
+            &["config", "extensions.worktreeConfig", "true"],
+            &[
+                "config",
+                "--worktree",
+                "core.hooksPath",
+                "/c/ralph-schedule-hooks",
+            ],
+            &[
+                "config",
+                "--worktree",
+                "remote.origin.pushurl",
+                "ralph-refused://origin",
+            ],
+            &[
+                "config",
+                "--worktree",
+                "remote.up.pushurl",
+                "ralph-refused://up",
+            ],
+            &[
+                "config",
+                "--worktree",
+                "--unset-all",
+                "url.ralph-refused://.insteadOf",
+            ],
+            &[
+                "config",
+                "--worktree",
+                "--add",
+                "url.ralph-refused://.insteadOf",
+                "git@push.example.com:me/repo.git",
+            ],
+        ]);
+        expected.extend(pushinsteadof_steps());
+        assert_eq!(steps, expected);
+    }
+
+    #[test]
+    fn without_remotes_origin_is_still_refused_and_no_insteadof_is_added() {
+        let steps = guard_config_steps(Path::new("/h"), &RemoteUrls::default()).unwrap();
+        assert!(steps.contains(
+            &strings(&[&[
+                "config",
+                "--worktree",
+                "remote.origin.pushurl",
+                "ralph-refused://origin"
+            ]])[0]
+        ));
+        assert!(!steps.iter().any(|step| step.contains(&"--add".to_string())
+            && step.contains(&"url.ralph-refused://.insteadOf".to_string())));
+    }
+
+    #[test]
+    fn duplicate_push_urls_and_remote_names_are_planned_once() {
+        let config = remotes(
+            &[("origin", "a"), ("origin", "b")],
+            &[("origin", "P"), ("up", "P"), ("odd", "")],
+        );
+        let steps = guard_config_steps(Path::new("/h"), &config).unwrap();
+        let adds = steps
+            .iter()
+            .filter(|step| step.last().is_some_and(|last| last == "P"))
+            .count();
+        assert_eq!(adds, 1);
+        let pushurls = steps
+            .iter()
+            .filter(|step| step.iter().any(|arg| arg.ends_with(".pushurl")))
+            .count();
+        assert_eq!(pushurls, 3);
+    }
+
+    #[test]
+    fn a_fetch_url_under_a_shared_push_url_refuses_the_task() {
+        let config = remotes(
+            &[("up", "https://example.com/org/repo.git")],
+            &[("origin", "https://example.com/org")],
+        );
+        let refusal = guard_config_steps(Path::new("/h"), &config).unwrap_err();
         assert_eq!(
-            guard_config_steps(Path::new("/store/schedule-hooks")),
-            strings(&[
-                &["config", "extensions.worktreeConfig", "true"],
-                &[
-                    "config",
-                    "--worktree",
-                    "core.hooksPath",
-                    "/store/schedule-hooks"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "remote.origin.pushurl",
-                    "ralph-refused://origin"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--unset-all",
-                    "url.ralph-refused://.pushInsteadOf"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "/"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "./"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "../"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "file://"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "ssh://"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "git@"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "git://"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "http://"
-                ],
-                &[
-                    "config",
-                    "--worktree",
-                    "--add",
-                    "url.ralph-refused://.pushInsteadOf",
-                    "https://"
-                ],
-            ])
+            refusal,
+            "remote up fetches from https://example.com/org/repo.git, which starts with the shared push url https://example.com/org; refusing that push url would break fetching"
         );
     }
 
     #[test]
-    fn every_refused_prefix_is_added_once() {
-        let mut prefixes = REFUSED_PREFIXES.to_vec();
-        prefixes.sort();
-        prefixes.dedup();
-        assert_eq!(prefixes.len(), REFUSED_PREFIXES.len());
+    fn a_fetch_url_outside_every_push_url_is_allowed() {
+        let config = remotes(
+            &[("origin", "https://example.com/a.git")],
+            &[("origin", "git@example.com:a.git")],
+        );
+        assert!(guard_config_steps(Path::new("/h"), &config).is_ok());
     }
 
     #[test]
     fn the_shared_config_step_comes_before_any_worktree_step() {
-        let steps = guard_config_steps(Path::new("/h"));
+        let steps = guard_config_steps(Path::new("/h"), &RemoteUrls::default()).unwrap();
         assert!(!steps[0].contains(&"--worktree".to_string()));
         assert!(steps[1..]
             .iter()
             .all(|step| step.contains(&"--worktree".to_string())));
+    }
+
+    #[test]
+    fn remote_urls_are_read_from_a_config_listing() {
+        let listing = "remote.origin.url git@github.com:me/repo.git
+remote.origin.pushurl git@push.example.com:me/repo.git
+remote.my.fork.url https://example.com/fork.git
+remote.origin.fetch +refs/heads/*:refs/remotes/origin/*
+garbage
+";
+        assert_eq!(
+            parse_remote_urls(listing),
+            remotes(
+                &[
+                    ("origin", "git@github.com:me/repo.git"),
+                    ("my.fork", "https://example.com/fork.git")
+                ],
+                &[("origin", "git@push.example.com:me/repo.git")]
+            )
+        );
+        assert_eq!(parse_remote_urls(""), RemoteUrls::default());
+    }
+
+    #[test]
+    fn the_hooks_dir_lives_in_the_common_git_dir() {
+        assert_eq!(
+            hooks_dir_in(Path::new("/repo/.git")),
+            Path::new("/repo/.git/ralph-schedule-hooks")
+        );
+    }
+
+    #[test]
+    fn forwarders_without_a_matching_real_hook_are_stale() {
+        let scripts = hook_scripts(Path::new("/c/hooks"), &["commit-msg".to_string()]);
+        let present: Vec<String> = ["pre-push", "commit-msg", "pre-commit"]
+            .map(str::to_string)
+            .to_vec();
+        assert_eq!(stale_hook_names(&present, &scripts), ["pre-commit"]);
+        assert!(stale_hook_names(&[], &scripts).is_empty());
     }
 
     #[test]

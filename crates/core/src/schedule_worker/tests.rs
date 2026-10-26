@@ -310,8 +310,12 @@ fn report_texts_name_the_task_and_the_kept_branch() {
         "Scheduled worker `a` did not start: boom."
     );
     assert_eq!(
-        timed_out_text(&task),
+        timed_out_text(&task, None),
         "Scheduled worker `a` timed out after 1h. Its harness was stopped. Worktree and branch worker/sched-a are kept."
+    );
+    assert_eq!(
+        timed_out_text(&task, Some("tmux gone")),
+        "Scheduled worker `a` timed out after 1h. Its harness could not be stopped: tmux gone. Worktree and branch worker/sched-a are kept."
     );
     assert_eq!(
         vanished_text(&task),
@@ -334,4 +338,51 @@ fn only_new_scheduled_worker_reports_are_kept() {
         new_scheduled_reports(&known, &incoming),
         [report("sched-a", "t2", "question")]
     );
+}
+
+#[test]
+fn a_starting_task_counts_as_alive_under_its_worker_id() {
+    assert_eq!(
+        alive_with_starting(&alive(&["sched-a"]), &alive(&["b"])),
+        alive(&["sched-a", "sched-b"])
+    );
+    assert!(alive_with_starting(&[], &[]).is_empty());
+}
+
+#[test]
+fn a_slow_start_does_not_vanish_while_it_is_starting() {
+    let tasks = [running("a", "2026-01-01T09:00:00Z")];
+    let alive = alive_with_starting(&[], &alive(&["a"]));
+    let plan = plan_worker_tick(&tasks, &[], &alive, utc("2026-01-01T09:05:00Z"), TICK);
+    assert!(plan.ended.is_empty());
+}
+
+#[test]
+fn only_a_running_record_with_that_id_is_still_running() {
+    let tasks = [
+        running("a", "2026-01-01T09:00:00Z"),
+        worker("b", "2026-01-01T09:00:00Z", TaskStatus::Pending),
+    ];
+    assert!(is_still_running(&tasks, "a"));
+    assert!(!is_still_running(&tasks, "b"));
+    assert!(!is_still_running(&tasks, "c"));
+    assert!(!is_still_running(&[], "a"));
+}
+
+#[test]
+fn the_sched_prefix_marks_a_scheduled_worker_id() {
+    assert!(is_scheduled_worker_id("sched-a"));
+    assert!(!is_scheduled_worker_id("GUZ-1"));
+    assert!(!is_scheduled_worker_id("scheduled"));
+}
+
+#[test]
+fn a_reply_to_a_scheduled_worker_is_refused_while_its_record_exists() {
+    let tasks = [worker("a", "2026-01-01T09:00:00Z", TaskStatus::Pending)];
+    let refusal = reply_refusal("sched-a", &tasks).unwrap();
+    assert!(refusal.contains("`a`"));
+    assert!(refusal.contains("/schedule cancel a"));
+    assert_eq!(reply_refusal("sched-b", &tasks), None);
+    assert_eq!(reply_refusal("sched-a", &[]), None);
+    assert_eq!(reply_refusal("a", &tasks), None);
 }

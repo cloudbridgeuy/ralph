@@ -15,6 +15,7 @@ use ralph_core::chat_suggestion::parse_suggestion;
 use ralph_core::schedule_request::{
     duplicate_message, proposed_message, ScheduleRequest, SCHEDULE_DIR,
 };
+use ralph_core::schedule_worker::reply_refusal;
 use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, parse_command, Command};
 use std::collections::BTreeSet;
@@ -246,7 +247,13 @@ fn run_command(
             id,
             text,
             interrupt,
-        } => workers.reply(id, text, *interrupt),
+        } => {
+            let schedule = ScheduleStore::new(store.dir().join(SCHEDULE_DIR));
+            if let Some(refusal) = reply_refusal(id, &schedule.load_all()) {
+                return Err(refusal);
+            }
+            workers.reply(id, text, *interrupt)
+        }
         Command::Close { id, abandon, force } => workers.close(id, *abandon, *force),
         Command::Watch(request) => {
             watch_requests::queue(store.dir(), request).map(|()| queued_message(&request.id))
