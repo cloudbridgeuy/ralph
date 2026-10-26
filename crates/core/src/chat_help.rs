@@ -58,25 +58,29 @@ impl Command {
             Command::Inbox => &[
                 (
                     "/inbox",
-                    "send every unread worker report to the model (starts a turn)",
+                    "send every unread worker report to the model, oldest first, in one turn",
                 ),
                 (
                     "/inbox next | N",
-                    "send only the oldest report, or report N",
+                    "send only report N, its position in /inbox list: oldest first, from 1; next is 1; later positions move up after a send or a drop",
                 ),
-                ("/inbox list", "list the unread reports; starts no turn"),
+                ("/inbox list", "list the unread reports with their positions; starts no turn"),
                 ("/inbox peek N", "print report N; removes nothing"),
                 ("/inbox drop N", "remove report N without sending it"),
             ],
             Command::Watch => &[
                 (
                     "/watch start [--persistent] <cmd> -- <follow-up>",
-                    "run <cmd>; its exit posts a watch report",
+                    "run <cmd> with sh -c as watch:wN (the lowest free N); the input splits at the last ` -- ` and both parts are required; when <cmd> exits, times out ([chat] watch_timeout_secs, default 1 hour) or is stopped, one report from watch:wN goes to the inbox with the exit code, the last 50 lines of output and the follow-up; it starts a turn only through /inbox or /hold; closing the chat kills every watch and posts nothing",
+                ),
+                (
+                    "/watch start --persistent ...",
+                    "save the watch so it runs again with its time left when ralph chat restarts; only /watch stop removes it",
                 ),
                 ("/watch list", "list the active watches and their time left"),
                 (
                     "/watch stop <id>",
-                    "kill the watch (also removes a persistent one)",
+                    "kill the watch and post its stopped report; <id> is w1 or watch:w1; also removes a persistent one",
                 ),
             ],
             Command::Schedule => &[
@@ -90,13 +94,27 @@ impl Command {
                 ),
             ],
             Command::Diff => &[
-                ("/diff [last N | ago N]", "changes of the last chat turn(s)"),
                 (
-                    "/diff worker <id> [last N | ago N]",
-                    "a worker's changes since spawn, or of its turns",
+                    "/diff [last N]",
+                    "the newest N finished chat turns combined; N defaults to 1; ralph keeps the last 20 turns",
+                ),
+                (
+                    "/diff ago N",
+                    "only the one chat turn N back; ago 1 is the same as last 1",
+                ),
+                (
+                    "/diff worker <id>",
+                    "a worker's changes from its spawn to its last turn snapshot, not the live tree",
+                ),
+                (
+                    "/diff worker <id> last N | ago N",
+                    "the same windows over the worker's turns",
                 ),
                 ("/diff now", "the working tree against the index"),
-                ("/diff ... <git diff args>", "extra words go to git diff"),
+                (
+                    "/diff ... <git diff args>",
+                    "words that are not now, last N, ago N or worker <id> go to git diff: /diff turn 3 passes turn 3 to git",
+                ),
             ],
             Command::Workers => &[
                 (
@@ -856,6 +874,42 @@ mod tests {
                 let settings = usize::from(text.contains("Settings: "));
                 assert_eq!(text.lines().count(), command.usage().len() + 1 + settings);
             }
+        }
+    }
+
+    #[test]
+    fn inbox_help_explains_positions() {
+        let text = help_topic(Some("inbox")).unwrap();
+        assert!(text.contains("oldest first, from 1"));
+        assert!(text.contains("move up after a send or a drop"));
+    }
+
+    #[test]
+    fn watch_help_explains_reports() {
+        let text = help_topic(Some("watch")).unwrap();
+        assert!(text.contains(&format!("last {} lines", crate::watch::TAIL_MAX_LINES)));
+        for part in [
+            "watch_timeout_secs",
+            "watch:wN",
+            "/inbox or /hold",
+            "w1 or watch:w1",
+        ] {
+            assert!(text.contains(part), "{part}");
+        }
+        assert!(has_row(&text, "/watch start --persistent ..."));
+    }
+
+    #[test]
+    fn diff_help_tells_last_from_ago() {
+        let text = help_topic(Some("diff")).unwrap();
+        assert!(has_row(&text, "/diff [last N]") && has_row(&text, "/diff ago N"));
+        assert!(text.contains(&format!("last {} turns", crate::snapshot::KEEP_TURNS)));
+        for part in [
+            "ago 1 is the same as last 1",
+            "not the live tree",
+            "/diff turn 3",
+        ] {
+            assert!(text.contains(part), "{part}");
         }
     }
 
