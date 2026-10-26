@@ -12,12 +12,12 @@ pub(super) fn partial_mode(mut mode: libc::termios) -> libc::termios {
     mode
 }
 
-pub(super) struct PartialMode {
+pub(crate) struct PartialMode {
     original: libc::termios,
 }
 
 impl PartialMode {
-    pub(super) fn enter() -> Option<Self> {
+    pub(crate) fn enter() -> Option<Self> {
         let mut slot = MaybeUninit::<libc::termios>::uninit();
         let original = unsafe {
             (libc::tcgetattr(STDIN, slot.as_mut_ptr()) == 0).then(|| slot.assume_init())?
@@ -37,7 +37,7 @@ impl Drop for PartialMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Input {
+pub(crate) enum Input {
     Ready,
     Idle,
     Closed,
@@ -55,7 +55,7 @@ pub(super) fn classify_poll(result: libc::c_int, revents: libc::c_short) -> Inpu
     }
 }
 
-pub(super) fn poll_input(timeout_ms: libc::c_int) -> Input {
+pub(crate) fn poll_input(timeout_ms: libc::c_int) -> Input {
     let mut input = libc::pollfd {
         fd: libc::STDIN_FILENO,
         events: libc::POLLIN,
@@ -65,7 +65,7 @@ pub(super) fn poll_input(timeout_ms: libc::c_int) -> Input {
     classify_poll(result, input.revents)
 }
 
-pub(super) fn read_input() -> Vec<u8> {
+pub(crate) fn read_input() -> Vec<u8> {
     let mut buffer = [0u8; READ_CHUNK];
     let count = unsafe { libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr().cast(), buffer.len()) };
     usize::try_from(count)

@@ -20,7 +20,7 @@ mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
 mod suggestion;
-mod terminal;
+pub(crate) mod terminal;
 mod turn;
 mod watch;
 mod workers;

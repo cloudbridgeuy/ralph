@@ -5,7 +5,7 @@
 
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
-use ralph_core::kitty::{split_apc, Piece};
+use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
 use termimad::terminal_size;
 
 use super::image::{render_with_markers, ImageBounds};
@@ -34,7 +34,12 @@ pub fn render_text_block(
                         cols: wrap_width(cols.into()).try_into().unwrap_or(u32::MAX),
                         rows: u32::from(rows.max(1)),
                     };
-                    apc_in_place(&chunk.content, |piece| {
+                    let content = if images.placement == Placement::Tmux {
+                        strip_kitty_apc(&chunk.content)
+                    } else {
+                        chunk.content.clone()
+                    };
+                    apc_in_place(&content, |piece| {
                         render_with_markers(piece, images, bounds, |text| {
                             styled.map_or_else(
                                 || text.to_string(),
@@ -251,7 +256,10 @@ mod tests {
     fn cell_display(text: &str, images: bool) -> String {
         let (highlighter, skin) = create_test_context();
         let mut ctx = RenderContext::plain(&highlighter);
-        ctx.images = images.then_some(crate::render::ImageSettings { cell_px: None });
+        ctx.images = images.then_some(crate::render::ImageSettings {
+            placement: Placement::Direct,
+            cell_px: None,
+        });
         crate::render::image::render_cell_display(&ctx, text, &skin)
     }
 
@@ -296,7 +304,10 @@ mod tests {
     fn plain_prose_renders_image_markers_when_images_are_on() {
         let (highlighter, skin) = create_test_context();
         let mut ctx = RenderContext::plain(&highlighter);
-        ctx.images = Some(crate::render::ImageSettings { cell_px: None });
+        ctx.images = Some(crate::render::ImageSettings {
+            placement: Placement::Direct,
+            cell_px: None,
+        });
         let chunk = ParsedChunk {
             chunk_type: ChunkType::Prose,
             content: "see **this** ![x](/no/such.png) ok".to_string(),
