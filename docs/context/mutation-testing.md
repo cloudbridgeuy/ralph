@@ -55,7 +55,7 @@ Examined:
 - `crates/core/src/wire/**/*.rs`
 - `crates/core/src/worker.rs`, `worker/tools.rs`, `worker/status.rs`, `worker/worktree.rs`, `worker/rollback.rs`, `worker/ticket.rs`
 - `crates/core/src/workers_view/remote.rs`
-- `crates/core/src/schedule.rs`
+- `crates/core/src/schedule.rs`, `crates/core/src/schedule_request.rs`
 - `crates/core/src/watch.rs`, `crates/core/src/watch_store.rs` (time is passed in, not read)
 - `crates/ralph/src/stream_processor/{types,output_block,block_builders,utils}.rs`
 - `crates/ralph/src/render/{wrap,utils}.rs`

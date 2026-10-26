@@ -1,15 +1,20 @@
 use crate::chat::memory::Store;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::cursor_owner::process_start;
+use crate::schedule_store::ScheduleStore;
 use crate::warn::warn;
 use crate::watch_requests;
 use crate::workers::{SpawnArgs, Workers};
+use chrono::{Local, Utc};
 use ralph_core::chat_socket::{
     check_socket_path, decode_line, dir_name, dir_pid, encode_line, orphan_sidecar_fate,
     sidecar_name, sidecar_pid, socket_fate, socket_file_name, SocketFacts, SocketFate, SocketOwner,
     SocketRequest, SocketResponse,
 };
 use ralph_core::chat_suggestion::parse_suggestion;
+use ralph_core::schedule_request::{
+    duplicate_message, proposed_message, ScheduleRequest, SCHEDULE_DIR,
+};
 use ralph_core::watch_request::queued_message;
 use ralph_core::worker::{command_allowed, parse_command, Command};
 use std::collections::BTreeSet;
@@ -245,8 +250,22 @@ fn run_command(
         Command::Watch(request) => {
             watch_requests::queue(store.dir(), request).map(|()| queued_message(&request.id))
         }
+        Command::Schedule(request) => propose_schedule(store, request).map_err(io::Error::other),
     }
     .map_err(|e| e.to_string())
+}
+
+fn propose_schedule(store: &Store, request: &ScheduleRequest) -> Result<String, String> {
+    let schedule = ScheduleStore::new(store.dir().join(SCHEDULE_DIR));
+    if schedule.load_all().iter().any(|task| task.id == request.id) {
+        return Err(duplicate_message(&request.id));
+    }
+    let offset = *Local::now().offset();
+    let task = request.clone().into_task(Utc::now(), offset)?;
+    schedule
+        .save(&task)
+        .map_err(|e| format!("Could not save the schedule: {e}"))?;
+    Ok(proposed_message(&task.id))
 }
 
 pub(crate) fn respond(
@@ -350,6 +369,70 @@ mod tests {
             .is_error
         );
         assert!(watch_requests::take_all(dir.path()).is_empty());
+    }
+
+    fn schedule_response(store: &Store, args: Value) -> SocketResponse {
+        respond(
+            store,
+            &workers(),
+            &SuggestionSlot::default(),
+            &request("schedule", args),
+        )
+    }
+
+    fn schedule_args() -> Value {
+        json!({"id":"nightly","command":"make test","after":"10m"})
+    }
+
+    #[test]
+    fn schedule_call_writes_one_proposed_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::User).unwrap();
+        let response = schedule_response(&store, schedule_args());
+        assert!(!response.is_error, "{}", response.text);
+        assert!(response.text.contains("proposed"));
+        let saved = ScheduleStore::new(dir.path().join(SCHEDULE_DIR)).load_all();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].id, "nightly");
+        assert_eq!(saved[0].status, ralph_core::schedule::TaskStatus::Proposed);
+    }
+
+    #[test]
+    fn schedule_rejects_a_duplicate_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::User).unwrap();
+        assert!(!schedule_response(&store, schedule_args()).is_error);
+        let second = schedule_response(&store, schedule_args());
+        assert!(second.is_error);
+        assert!(second.text.contains("already exists"));
+        assert_eq!(
+            ScheduleStore::new(dir.path().join(SCHEDULE_DIR))
+                .load_all()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn schedule_is_refused_on_a_worker_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::Worker).unwrap();
+        assert!(schedule_response(&store, schedule_args()).is_error);
+        assert!(ScheduleStore::new(dir.path().join(SCHEDULE_DIR))
+            .load_all()
+            .is_empty());
+    }
+
+    #[test]
+    fn schedule_with_an_unreadable_time_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        store.set_pending_turn(Trigger::User).unwrap();
+        let args = json!({"id":"a","command":"c","at":"later"});
+        assert!(schedule_response(&store, args).is_error);
     }
 
     #[test]

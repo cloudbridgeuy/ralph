@@ -201,6 +201,7 @@ mod tests {
                 "reply",
                 "close_worker",
                 "watch",
+                "schedule",
                 "suggest_reply"
             ]
         );
