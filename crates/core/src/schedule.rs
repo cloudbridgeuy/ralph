@@ -119,6 +119,27 @@ pub fn plan_restore(tasks: Vec<Task>, now: DateTime<Utc>) -> Vec<Task> {
         .collect()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct TickPlan<'a> {
+    pub fire: Vec<&'a Task>,
+    pub finished: Vec<&'a Task>,
+}
+
+pub fn plan_tick<'a>(
+    tasks: &'a [Task],
+    active_watch_ids: &[String],
+    now: DateTime<Utc>,
+) -> TickPlan<'a> {
+    TickPlan {
+        fire: due(tasks, now),
+        finished: tasks
+            .iter()
+            .filter(|task| task.status == TaskStatus::Running)
+            .filter(|task| !active_watch_ids.contains(&watch_id(&task.id)))
+            .collect(),
+    }
+}
+
 pub fn watch_id(id: &str) -> String {
     format!("{SCHEDULE_ID_PREFIX}{id}")
 }
@@ -529,5 +550,37 @@ mod tests {
         let t = task("a", "2026-01-01T09:00:00Z", TaskStatus::Proposed);
         let text = approval_question(&t, now, offset(), Duration::from_secs(60));
         assert!(text.contains("(now)"));
+    }
+
+    #[test]
+    fn tick_fires_due_pending_and_finishes_running_without_a_watch() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let tasks = vec![
+            task("due", "2026-01-01T09:00:00Z", TaskStatus::Pending),
+            task("later", "2026-01-01T11:00:00Z", TaskStatus::Pending),
+            task("alive", "2026-01-01T08:00:00Z", TaskStatus::Running),
+            task("gone", "2026-01-01T08:00:00Z", TaskStatus::Running),
+            task("prop", "2026-01-01T08:00:00Z", TaskStatus::Proposed),
+        ];
+        let plan = plan_tick(&tasks, &["schedule:alive".to_string()], now);
+        let fire: Vec<&str> = plan.fire.iter().map(|t| t.id.as_str()).collect();
+        let finished: Vec<&str> = plan.finished.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(fire, vec!["due"]);
+        assert_eq!(finished, vec!["gone"]);
+    }
+
+    #[test]
+    fn tick_with_nothing_to_do_is_empty() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let plan = plan_tick(&[], &[], now);
+        assert!(plan.fire.is_empty() && plan.finished.is_empty());
+    }
+
+    #[test]
+    fn tick_ignores_a_pending_task_even_when_a_same_named_watch_runs() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let tasks = vec![task("a", "2026-01-01T12:00:00Z", TaskStatus::Pending)];
+        let plan = plan_tick(&tasks, &["schedule:a".to_string()], now);
+        assert!(plan.fire.is_empty() && plan.finished.is_empty());
     }
 }

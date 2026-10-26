@@ -1,7 +1,9 @@
 use crate::chat::check::CheckState;
 use crate::chat::memory::Store;
+use crate::chat::schedule::fire_due;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::inbox_alert;
+use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use crate::subprocess::Session;
 use crate::warn::{warn, warn_if_err};
@@ -64,6 +66,7 @@ pub(super) struct ThreadMemo {
 pub(super) struct Monitor {
     pub(super) inbox: Arc<Inbox>,
     pub(super) watches: Watches,
+    pub(super) schedule: ScheduleStore,
     pub(super) store: Store,
     pub(super) store_dir: PathBuf,
     pub(super) status: Mutex<Status>,
@@ -345,6 +348,7 @@ pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 's
             std::thread::sleep(POLL);
             tick += 1;
             watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
+            fire_due(&monitor.schedule, &monitor.watches, &monitor.inbox);
             if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
                 repaint();
             }

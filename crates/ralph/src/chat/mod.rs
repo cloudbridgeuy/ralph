@@ -41,7 +41,7 @@ use crate::chat::queue::{
     decide, draft_with_queue, draft_with_typed, exit_notice, unsent, Decision, Queue,
 };
 use crate::chat::route::{run_local, LocalRoute};
-use crate::chat::schedule::approve_proposed;
+use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
@@ -224,6 +224,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let known = inbox.peek().unwrap_or_default();
     let monitor = Arc::new(Monitor {
         watches: Watches::new(Arc::clone(&inbox), &store_dir, watch_timeout),
+        schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
         inbox,
         store: Store::new(store_dir.clone()),
         store_dir: canonical_store(store_dir.clone()),
@@ -264,6 +265,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();
+    restore_schedule(&monitor.schedule);
     monitor.refresh(true);
     if let Some(hint) = orphan_hint(
         &ready_ids(&monitor.store_dir),
@@ -342,7 +344,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         local: &local_route,
         empty_submit: &prompt.empty_submit,
     };
-    let schedule_store = ScheduleStore::new(store_dir.join(SCHEDULE_DIR));
+    let schedule_store = monitor.schedule.clone();
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
     loop {
