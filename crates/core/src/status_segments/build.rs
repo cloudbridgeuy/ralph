@@ -91,6 +91,15 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             queue_variants(cell),
         )
     });
+    let hold = status.hold.as_ref().map(|filter| {
+        let label = filter.label();
+        Segment::new(
+            Side::Left,
+            Kind::Hold(current),
+            QUEUE_PRIORITY,
+            vec![format!("from {label}"), label.to_string()],
+        )
+    });
     let mail = (unread > 0).then(|| {
         Segment::new(
             Side::Left,
@@ -146,6 +155,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
     [
         Some(mode),
         queue,
+        hold,
         mail,
         store,
         workers,
@@ -162,6 +172,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
 mod tests {
     use super::super::fixtures::*;
     use super::*;
+    use crate::chat_hold::HoldFilter;
     use crate::chat_thread::ThreadCell;
     use crate::status_queue::QueueCell;
 
@@ -193,6 +204,26 @@ mod tests {
         assert!(line(&status, 200).starts_with(" INBOX  turn running · QUEUED 2  📬 2 unread"));
         assert_eq!(placed_texts(&status, 20), ["INBOX", "▶ Q2", "📬 2"]);
         assert_eq!(placed_texts(&status, 14), ["INBOX", "▶ Q2"]);
+    }
+
+    #[test]
+    fn hold_cell_names_the_source_in_hold_mode() {
+        let status = Status {
+            hold: Some(HoldFilter::Source("GUZ-9".into())),
+            ..status()
+        };
+        assert!(line(&status, 200).starts_with(" HOLD  from GUZ-9  📬 2 unread"));
+        assert_eq!(placed_texts(&status, 20), ["HOLD", "GUZ-9", "📬 2"]);
+        let any = Status {
+            hold: Some(HoldFilter::Any),
+            ..status
+        };
+        assert!(line(&any, 200).starts_with(" HOLD  from anyone "));
+    }
+
+    #[test]
+    fn no_hold_cell_without_a_hold() {
+        assert!(!line(&status(), 200).contains("from"));
     }
 
     #[test]

@@ -19,6 +19,7 @@ pub(super) fn status() -> Status {
         thread: None,
         napping: false,
         queue: None,
+        hold: None,
     }
 }
 

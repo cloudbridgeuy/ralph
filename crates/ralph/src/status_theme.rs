@@ -4,9 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
-const SLOTS: [(&str, Shade, Color); 12] = [
+const SLOTS: [(&str, Shade, Color); 14] = [
     ("mode_idle_fg", Shade::ModeIdleFg, Color::Black),
     ("mode_idle_bg", Shade::ModeIdleBg, Color::Green),
+    ("mode_hold_fg", Shade::ModeHoldFg, Color::Black),
+    ("mode_hold_bg", Shade::ModeHoldBg, Color::Cyan),
     ("mode_nap_fg", Shade::ModeNapFg, Color::Black),
     ("mode_nap_bg", Shade::ModeNapBg, Color::Magenta),
     ("mode_inbox_fg", Shade::ModeInboxFg, Color::Black),
@@ -21,7 +23,7 @@ const SLOTS: [(&str, Shade, Color); 12] = [
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusColors {
-    colors: [(&'static str, Shade, Color); 12],
+    colors: [(&'static str, Shade, Color); 14],
 }
 
 impl Default for StatusColors {
@@ -104,6 +106,7 @@ mod tests {
         let (colors, _) = StatusTheme::default().resolve();
         let shades = [
             Shade::ModeIdleBg,
+            Shade::ModeHoldBg,
             Shade::ModeNapBg,
             Shade::ModeInboxBg,
             Shade::ModeWorkBg,

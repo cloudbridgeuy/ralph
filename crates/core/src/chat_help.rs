@@ -14,15 +14,17 @@ pub enum Command {
     Watch,
     Diff,
     Workers,
+    Hold,
 }
 
 impl Command {
-    pub const ALL: [Command; 5] = [
+    pub const ALL: [Command; 6] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
         Command::Diff,
         Command::Workers,
+        Command::Hold,
     ];
 
     pub fn name(self) -> &'static str {
@@ -32,6 +34,7 @@ impl Command {
             Command::Watch => "/watch",
             Command::Diff => "/diff",
             Command::Workers => "/workers",
+            Command::Hold => "/hold",
         }
     }
 
@@ -88,6 +91,12 @@ impl Command {
                 (
                     "/workers <id>",
                     "one worker in detail with its status and last 5 reports",
+                ),
+            ],
+            Command::Hold => &[
+                (
+                    "/hold [<worker-id> | watch:<name>]",
+                    "wait with no prompt; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
         }
@@ -208,8 +217,9 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
 ];
 
 /// Status bar segments in the order they are explained.
-pub const SEGMENTS: [Kind; 8] = [
+pub const SEGMENTS: [Kind; 9] = [
     Kind::Mode(Mode::Idle),
+    Kind::Hold(Mode::Idle),
     Kind::Queue(Mode::Idle),
     Kind::Mail(Mode::Idle),
     Kind::Store,
@@ -220,7 +230,7 @@ pub const SEGMENTS: [Kind; 8] = [
 ];
 
 /// Modes in the order `status_mode::mode` tries them.
-pub const MODES: [Mode; 4] = [Mode::Nap, Mode::Inbox, Mode::Work, Mode::Idle];
+pub const MODES: [Mode; 5] = [Mode::Hold, Mode::Nap, Mode::Inbox, Mode::Work, Mode::Idle];
 
 pub const RESETS: [ResetReason; 3] = [
     ResetReason::Tokens,
@@ -230,7 +240,11 @@ pub const RESETS: [ResetReason; 3] = [
 
 fn segment_help(kind: Kind) -> (&'static str, &'static str) {
     match kind {
-        Kind::Mode(_) => ("mode block", "NAP, INBOX, WORK or IDLE (below)"),
+        Kind::Mode(_) => ("mode block", "HOLD, NAP, INBOX, WORK or IDLE (below)"),
+        Kind::Hold(_) => (
+            "from <source>",
+            "only during /hold: the source it waits for, or anyone",
+        ),
         Kind::Queue(_) => (
             "turn running · QUEUED N",
             "only in the queue editor: turn state and queued entries; HELD N after a back-out; short forms running · QN, ▶ QN, done · QN, ✓ QN",
@@ -249,6 +263,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
 
 fn mode_help(mode: Mode) -> &'static str {
     match mode {
+        Mode::Hold => "/hold waits for a matching inbox report",
         Mode::Nap => "a nap compresses the memory tree",
         Mode::Inbox => "worker reports are unread",
         Mode::Work => "a worker is running, busy or waits for permission, or a watch exists",
@@ -460,6 +475,7 @@ pub fn help_text(width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat_hold::HoldFilter;
     use crate::chat_status::{route_input, EmptySubmit, Route, Status, WatchState, WorkerState};
     use crate::chat_thread::SessionCost;
     use crate::status_mode::mode;
@@ -510,6 +526,7 @@ mod tests {
                 count: 1,
                 held: false,
             }),
+            hold: None,
         }
     }
 
@@ -529,12 +546,14 @@ mod tests {
                 Inbox,
                 Watch,
                 Diff,
-                Workers
+                Workers,
+                Hold
             }
         );
         assert_lists_every!(
             MODES,
             Mode {
+                Hold,
                 Nap,
                 Inbox,
                 Work,
@@ -626,6 +645,10 @@ mod tests {
     #[test]
     fn every_mode_has_a_legend() {
         let statuses = [
+            Status {
+                hold: Some(HoldFilter::Any),
+                ..full_status()
+            },
             Status {
                 napping: true,
                 ..full_status()

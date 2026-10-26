@@ -11,6 +11,10 @@ pub struct Position(NonZeroUsize);
 impl Position {
     pub const FIRST: Position = Position(NonZeroUsize::MIN);
 
+    pub fn at_index(index: usize) -> Option<Self> {
+        NonZeroUsize::new(index.checked_add(1)?).map(Self)
+    }
+
     fn index(self) -> usize {
         self.0.get() - 1
     }
@@ -245,6 +249,13 @@ mod tests {
         ledger.ingest(vec![arrival("a"), arrival("b")]);
         ledger.ingest(vec![arrival("b"), arrival("c")]);
         assert_eq!(sources(&ledger), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn at_index_is_one_based_and_total() {
+        assert_eq!(Position::at_index(0), Some(Position::FIRST));
+        assert_eq!(Position::at_index(4).unwrap().to_string(), "5");
+        assert_eq!(Position::at_index(usize::MAX), None);
     }
 
     #[test]

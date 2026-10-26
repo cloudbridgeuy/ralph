@@ -385,12 +385,19 @@ mod tests {
     fn mail_thread_and_cost_take_the_mode_colours() {
         let expected = [
             (Mode::Idle, Shade::ModeIdleBg, Shade::ModeIdleFg),
+            (Mode::Hold, Shade::ModeHoldBg, Shade::ModeHoldFg),
             (Mode::Nap, Shade::ModeNapBg, Shade::ModeNapFg),
             (Mode::Inbox, Shade::ModeInboxBg, Shade::ModeInboxFg),
             (Mode::Work, Shade::ModeWorkBg, Shade::ModeWorkFg),
         ];
         for (mode, bg, fg) in expected {
-            for kind in [Kind::Mail(mode), Kind::Thread(mode), Kind::Cost(mode)] {
+            for kind in [
+                Kind::Mail(mode),
+                Kind::Hold(mode),
+                Kind::Queue(mode),
+                Kind::Thread(mode),
+                Kind::Cost(mode),
+            ] {
                 assert_eq!((kind.bg(), kind.fg()), (bg, fg));
             }
         }

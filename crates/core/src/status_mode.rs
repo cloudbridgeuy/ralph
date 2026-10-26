@@ -2,6 +2,7 @@ use crate::chat_status::Status;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
+    Hold,
     Nap,
     Inbox,
     Work,
@@ -11,6 +12,7 @@ pub enum Mode {
 impl Mode {
     pub fn label(self) -> &'static str {
         match self {
+            Mode::Hold => "HOLD",
             Mode::Nap => "NAP",
             Mode::Inbox => "INBOX",
             Mode::Work => "WORK",
@@ -20,7 +22,9 @@ impl Mode {
 }
 
 pub fn mode(status: &Status) -> Mode {
-    if status.napping {
+    if status.hold.is_some() {
+        Mode::Hold
+    } else if status.napping {
         Mode::Nap
     } else if status.unread > 0 {
         Mode::Inbox
@@ -34,6 +38,7 @@ pub fn mode(status: &Status) -> Mode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat_hold::HoldFilter;
     use crate::chat_status::{WatchState, WorkerState};
 
     fn worker(state: &str) -> WorkerState {
@@ -62,6 +67,28 @@ mod tests {
             ..Status::default()
         };
         assert_eq!(mode(&status), Mode::Nap);
+    }
+
+    #[test]
+    fn holding_is_hold() {
+        let status = Status {
+            hold: Some(HoldFilter::Any),
+            ..Status::default()
+        };
+        assert_eq!(mode(&status), Mode::Hold);
+    }
+
+    #[test]
+    fn hold_beats_nap_inbox_and_work() {
+        let status = Status {
+            hold: Some(HoldFilter::Source("w1".into())),
+            napping: true,
+            unread: 3,
+            workers: vec![worker("running")],
+            watches: vec![watch()],
+            ..Status::default()
+        };
+        assert_eq!(mode(&status), Mode::Hold);
     }
 
     #[test]
@@ -129,6 +156,7 @@ mod tests {
 
     #[test]
     fn labels_are_upper_case_names() {
+        assert_eq!(Mode::Hold.label(), "HOLD");
         assert_eq!(Mode::Nap.label(), "NAP");
         assert_eq!(Mode::Inbox.label(), "INBOX");
         assert_eq!(Mode::Work.label(), "WORK");

@@ -21,6 +21,7 @@ pub enum Side {
 pub enum Kind {
     Mode(Mode),
     Queue(Mode),
+    Hold(Mode),
     Mail(Mode),
     Store,
     Workers,
@@ -33,6 +34,8 @@ pub enum Kind {
 pub enum Shade {
     ModeIdleFg,
     ModeIdleBg,
+    ModeHoldFg,
+    ModeHoldBg,
     ModeNapFg,
     ModeNapBg,
     ModeInboxFg,
@@ -88,6 +91,7 @@ pub(super) enum Edge {
 fn mode_bg(mode: Mode) -> Shade {
     match mode {
         Mode::Idle => Shade::ModeIdleBg,
+        Mode::Hold => Shade::ModeHoldBg,
         Mode::Nap => Shade::ModeNapBg,
         Mode::Inbox => Shade::ModeInboxBg,
         Mode::Work => Shade::ModeWorkBg,
@@ -97,6 +101,7 @@ fn mode_bg(mode: Mode) -> Shade {
 fn mode_fg(mode: Mode) -> Shade {
     match mode {
         Mode::Idle => Shade::ModeIdleFg,
+        Mode::Hold => Shade::ModeHoldFg,
         Mode::Nap => Shade::ModeNapFg,
         Mode::Inbox => Shade::ModeInboxFg,
         Mode::Work => Shade::ModeWorkFg,
@@ -108,6 +113,7 @@ impl Kind {
         match self {
             Kind::Mode(mode)
             | Kind::Queue(mode)
+            | Kind::Hold(mode)
             | Kind::Mail(mode)
             | Kind::Thread(mode)
             | Kind::Cost(mode) => mode_bg(mode),
@@ -119,6 +125,7 @@ impl Kind {
         match self {
             Kind::Mode(mode)
             | Kind::Queue(mode)
+            | Kind::Hold(mode)
             | Kind::Mail(mode)
             | Kind::Thread(mode)
             | Kind::Cost(mode) => mode_fg(mode),

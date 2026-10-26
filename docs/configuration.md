@@ -118,6 +118,8 @@ A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
 [theme.status]
 mode_idle_fg = "black"    # IDLE block text
 mode_idle_bg = "green"    # IDLE block background
+mode_hold_fg = "black"    # HOLD block text
+mode_hold_bg = "cyan"     # HOLD block background
 mode_nap_fg = "black"     # NAP block text
 mode_nap_bg = "magenta"   # NAP block background
 mode_inbox_fg = "black"   # INBOX block text
