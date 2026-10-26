@@ -1456,7 +1456,7 @@ dependencies = [
 name = "ralph_core"
 version = "0.2.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "flate2",
  "gif",

@@ -43,7 +43,7 @@ zune-jpeg = "0.5"
 anstream = "1.0.0"
 
 # Base64 encoding
-base64 = "0.22"
+base64 = "0.23"
 
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
