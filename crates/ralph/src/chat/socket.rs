@@ -212,7 +212,9 @@ fn run_command(
 ) -> Result<String, String> {
     if request.tool == SUGGEST_REPLY {
         suggestions.set(parse_suggestion(&request.args)?);
-        return Ok("Suggested reply set.".to_string());
+        return Ok(
+            "Suggested reply set. Now write your reply; do not mention the suggestion.".to_string(),
+        );
     }
     let command = parse_command(&request.tool, &request.args)
         .ok_or_else(|| format!("Unknown tool '{}'.", request.tool))??;
@@ -413,7 +415,10 @@ mod tests {
             let call = request("suggest_reply", json!({"text": text}));
             let response = respond(&store, &workers(), &slot, &call);
             assert!(!response.is_error);
-            assert_eq!(response.text, "Suggested reply set.");
+            assert_eq!(
+                response.text,
+                "Suggested reply set. Now write your reply; do not mention the suggestion."
+            );
         }
         assert_eq!(slot.take(), Some("second".to_string()));
     }
