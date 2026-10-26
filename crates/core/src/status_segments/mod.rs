@@ -26,6 +26,7 @@ pub enum Kind {
     Store,
     Workers,
     Watches,
+    Schedule,
     Thread(Mode),
     Cost(Mode),
 }
@@ -117,7 +118,7 @@ impl Kind {
             | Kind::Mail(mode)
             | Kind::Thread(mode)
             | Kind::Cost(mode) => mode_bg(mode),
-            Kind::Store | Kind::Workers | Kind::Watches => Shade::BaseBg,
+            Kind::Store | Kind::Workers | Kind::Watches | Kind::Schedule => Shade::BaseBg,
         }
     }
 
@@ -131,7 +132,7 @@ impl Kind {
             | Kind::Cost(mode) => mode_fg(mode),
             Kind::Store => Shade::StoreFg,
             Kind::Workers => Shade::WorkersFg,
-            Kind::Watches => Shade::WatchesFg,
+            Kind::Watches | Kind::Schedule => Shade::WatchesFg,
         }
     }
 

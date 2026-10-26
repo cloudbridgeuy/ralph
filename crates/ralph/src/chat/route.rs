@@ -2,10 +2,12 @@ use crate::chat::diff::{self, DiffContext};
 use crate::chat::inbox::{self, Display};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
+use crate::chat::schedule;
 use crate::chat::watch;
 use crate::chat::workers;
 use crate::chat::workers_remote::RemoteStatus;
 use crate::config::ChangesSection;
+use crate::schedule_store::ScheduleStore;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use ralph_core::chat_help::help_text;
@@ -17,6 +19,7 @@ use std::path::Path;
 pub struct LocalRoute<'a> {
     pub inbox: &'a Inbox,
     pub watches: &'a Watches,
+    pub schedule: &'a ScheduleStore,
     pub display: &'a Display<'a>,
     pub changes: &'a ChangesSection,
     pub store: &'a Path,
@@ -35,6 +38,10 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::InboxUsage => inbox::usage(),
         Route::Watch(command) => {
             watch::run(command, ctx.watches);
+            refresh();
+        }
+        Route::Schedule(command) => {
+            schedule::run(command, ctx.schedule, ctx.watches);
             refresh();
         }
         Route::Diff(DiffArgs::Target(target)) => diff::run(

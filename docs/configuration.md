@@ -128,7 +128,7 @@ mode_work_fg = "white"    # WORK block text
 mode_work_bg = "blue"     # WORK block background
 store_fg = "reset"        # store path text
 workers_fg = "reset"      # workers text
-watches_fg = "reset"      # watches text
+watches_fg = "reset"      # watches and scheduled-task text
 base_bg = "#303030"       # bar background: filler, store, workers, watches
 ```
 

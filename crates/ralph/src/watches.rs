@@ -15,6 +15,7 @@ use std::io::{self, BufRead, BufReader};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -57,6 +58,7 @@ pub struct Watches {
     inbox: Arc<Inbox>,
     store: WatchStore,
     active: Arc<Mutex<HashMap<String, Active>>>,
+    closing: Arc<AtomicBool>,
     default_timeout: Duration,
 }
 
@@ -151,6 +153,7 @@ impl Watches {
             inbox,
             store: WatchStore::new(store_dir.join(WATCHES_DIR)),
             active: Arc::new(Mutex::new(HashMap::new())),
+            closing: Arc::new(AtomicBool::new(false)),
             default_timeout,
         }
     }
@@ -284,7 +287,15 @@ impl Watches {
         CloseGuard(self.clone())
     }
 
+    /// True once `kill_all` began: watches that end from here on were
+    /// stopped by shutdown, not finished, so callers must not treat a
+    /// missing watch as a finished one.
+    pub fn is_closing(&self) -> bool {
+        self.closing.load(Ordering::SeqCst)
+    }
+
     pub fn kill_all(&self) {
+        self.closing.store(true, Ordering::SeqCst);
         let entries: Vec<Active> = locked(&self.active).drain().map(|(_, e)| e).collect();
         for entry in entries {
             self.end(Some(entry), StopReason::Shutdown);

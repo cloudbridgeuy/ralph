@@ -266,6 +266,7 @@ mod tests {
     fn everything() -> Status {
         Status {
             watches: with_watches().watches,
+            schedule: with_schedule(2).schedule,
             queue: Some(QueueCell {
                 running: true,
                 count: 2,
@@ -297,6 +298,7 @@ mod tests {
             dropped,
             [
                 Kind::Store,
+                Kind::Schedule,
                 Kind::Watches,
                 Kind::Workers,
                 Kind::Cost(Mode::Inbox),
@@ -406,10 +408,11 @@ mod tests {
     #[test]
     fn middle_blocks_keep_the_base_background_and_their_own_text() {
         assert_eq!(
-            [Kind::Store, Kind::Workers, Kind::Watches].map(|k| (k.bg(), k.fg())),
+            [Kind::Store, Kind::Workers, Kind::Watches, Kind::Schedule].map(|k| (k.bg(), k.fg())),
             [
                 (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::WorkersFg),
+                (Shade::BaseBg, Shade::WatchesFg),
                 (Shade::BaseBg, Shade::WatchesFg),
             ]
         );

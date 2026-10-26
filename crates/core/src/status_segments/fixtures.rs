@@ -1,5 +1,5 @@
 use super::*;
-use crate::chat_status::{WatchState, WorkerState};
+use crate::chat_status::{ScheduleState, WatchState, WorkerState};
 use crate::chat_thread::{SessionCost, ThreadCell};
 
 pub(super) fn status() -> Status {
@@ -16,6 +16,7 @@ pub(super) fn status() -> Status {
             },
         ],
         watches: Vec::new(),
+        schedule: Vec::new(),
         thread: None,
         napping: false,
         queue: None,
@@ -59,6 +60,18 @@ pub(super) fn with_watches() -> Status {
             },
         ],
         ..with_thread()
+    }
+}
+
+pub(super) fn with_schedule(count: usize) -> Status {
+    Status {
+        schedule: (1..=count)
+            .map(|n| ScheduleState {
+                id: format!("job{n}"),
+                time: format!("0{n}:30"),
+            })
+            .collect(),
+        ..with_watches()
     }
 }
 
