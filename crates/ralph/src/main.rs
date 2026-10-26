@@ -29,10 +29,6 @@ mod permission_queue;
 mod process_tree;
 pub mod prompt_source;
 pub mod render;
-#[allow(
-    dead_code,
-    reason = "the schedule socket tool wires this store in the next commit"
-)]
 mod schedule_store;
 pub mod signal;
 mod snapshot;

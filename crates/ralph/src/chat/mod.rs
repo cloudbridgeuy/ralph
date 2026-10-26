@@ -15,6 +15,7 @@ mod monitor;
 mod prompt;
 mod queue;
 mod route;
+mod schedule;
 mod skills;
 mod snapshots;
 pub(crate) mod socket;
@@ -40,6 +41,7 @@ use crate::chat::queue::{
     decide, draft_with_queue, draft_with_typed, exit_notice, unsent, Decision, Queue,
 };
 use crate::chat::route::{run_local, LocalRoute};
+use crate::chat::schedule::approve_proposed;
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
@@ -57,6 +59,7 @@ use crate::input_theme::suggestion_color;
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, RenderContext};
+use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use crate::subprocess::OutputGate;
 use crate::warn::{warn, warn_if_err};
@@ -78,6 +81,7 @@ use ralph_core::chat_suggestion::{prefill, Prefill};
 use ralph_core::chat_thread::run_id;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
+use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
 use reedline::{EditCommand, HistoryItem};
@@ -338,6 +342,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         local: &local_route,
         empty_submit: &prompt.empty_submit,
     };
+    let schedule_store = ScheduleStore::new(store_dir.join(SCHEDULE_DIR));
+    approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
@@ -439,6 +445,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             editor.sync_history()?;
             break;
         }
+        approve_proposed(&schedule_store, watch_timeout);
         let suggestion = suggestions.take();
         let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {

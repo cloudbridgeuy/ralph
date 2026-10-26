@@ -150,6 +150,72 @@ fn follow_up(task: &Task, now: DateTime<Utc>, offset: FixedOffset) -> Option<Str
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    Yes,
+    No,
+    Ask,
+}
+
+pub fn parse_answer(raw: &str) -> Answer {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => Answer::Yes,
+        "n" | "no" => Answer::No,
+        _ => Answer::Ask,
+    }
+}
+
+pub fn proposed(tasks: Vec<Task>) -> Vec<Task> {
+    let mut proposed: Vec<Task> = tasks
+        .into_iter()
+        .filter(|task| task.status == TaskStatus::Proposed)
+        .collect();
+    proposed.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.id.cmp(&b.id)));
+    proposed
+}
+
+pub fn format_span(secs: u64) -> String {
+    let (hours, minutes, seconds) = (secs / 3600, secs % 3600 / 60, secs % 60);
+    let parts: String = [(hours, 'h'), (minutes, 'm'), (seconds, 's')]
+        .into_iter()
+        .filter(|(amount, _)| *amount > 0)
+        .map(|(amount, unit)| format!("{amount}{unit}"))
+        .collect();
+    if parts.is_empty() {
+        "0s".to_string()
+    } else {
+        parts
+    }
+}
+
+pub fn approval_question(
+    task: &Task,
+    now: DateTime<Utc>,
+    offset: FixedOffset,
+    default_timeout: Duration,
+) -> String {
+    let local = task.at.with_timezone(&offset);
+    let when = if local.date_naive() == now.with_timezone(&offset).date_naive() {
+        local.format("%H:%M").to_string()
+    } else {
+        local.format("%Y-%m-%d %H:%M").to_string()
+    };
+    let remaining = (task.at - now).num_seconds();
+    let relative = if remaining > 0 {
+        format!("in {}", format_span(remaining.unsigned_abs()))
+    } else {
+        "now".to_string()
+    };
+    let timeout = match task.timeout_secs {
+        Some(secs) => format!("timeout {}", format_span(secs)),
+        None => format!("default timeout {}", format_span(default_timeout.as_secs())),
+    };
+    format!(
+        "Scheduled command {}:\n  {}\nRuns at {when} ({relative}), {timeout}.\nArm it? [y/n] ",
+        task.id, task.command
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +440,94 @@ mod tests {
         let t = task("a", "2026-01-01T10:00:00Z", TaskStatus::Proposed);
         let back: Task = serde_json::from_slice(&serde_json::to_vec(&t).unwrap()).unwrap();
         assert_eq!(back, t);
+    }
+
+    #[test]
+    fn answer_accepts_yes_in_any_case() {
+        for yes in ["y", "Y", "yes", "YES", " Yes \n"] {
+            assert_eq!(parse_answer(yes), Answer::Yes, "{yes}");
+        }
+    }
+
+    #[test]
+    fn answer_accepts_no_in_any_case() {
+        for no in ["n", "N", "no", "NO", " no\n"] {
+            assert_eq!(parse_answer(no), Answer::No, "{no}");
+        }
+    }
+
+    #[test]
+    fn anything_else_asks_again() {
+        for other in ["go", "", "  ", "\n", "yep", "yes please", "nope", "ok"] {
+            assert_eq!(parse_answer(other), Answer::Ask, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn proposed_keeps_only_proposed_ordered_by_time_then_id() {
+        let kept = proposed(vec![
+            task("late", "2026-01-01T12:00:00Z", TaskStatus::Proposed),
+            task("armed", "2026-01-01T08:00:00Z", TaskStatus::Pending),
+            task("b", "2026-01-01T09:00:00Z", TaskStatus::Proposed),
+            task("a", "2026-01-01T09:00:00Z", TaskStatus::Proposed),
+            task("run", "2026-01-01T07:00:00Z", TaskStatus::Running),
+        ]);
+        let ids: Vec<&str> = kept.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "b", "late"]);
+    }
+
+    #[test]
+    fn span_formats_hours_minutes_seconds() {
+        assert_eq!(format_span(0), "0s");
+        assert_eq!(format_span(45), "45s");
+        assert_eq!(format_span(60), "1m");
+        assert_eq!(format_span(1800), "30m");
+        assert_eq!(format_span(5400), "1h30m");
+        assert_eq!(format_span(3661), "1h1m1s");
+        assert_eq!(format_span(7200), "2h");
+    }
+
+    #[test]
+    fn question_shows_command_time_remaining_and_timeout() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let mut t = task("nightly", "2026-01-01T12:30:00Z", TaskStatus::Proposed);
+        t.command = "make deploy".to_string();
+        t.timeout_secs = Some(1800);
+        let text = approval_question(&t, now, offset(), Duration::from_secs(600));
+        assert!(text.contains("\n  make deploy\n"));
+        assert!(text.contains("Runs at 14:30 (in 2h30m), timeout 30m."));
+        assert!(text.ends_with("[y/n] "));
+    }
+
+    #[test]
+    fn question_shows_the_date_when_not_today() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let t = task("a", "2026-01-02T07:00:00Z", TaskStatus::Proposed);
+        let text = approval_question(&t, now, offset(), Duration::from_secs(600));
+        assert!(text.contains("Runs at 2026-01-02 09:00 (in 21h)"));
+    }
+
+    #[test]
+    fn question_uses_the_local_date_for_today() {
+        let now = utc("2026-01-01T23:00:00Z");
+        let t = task("a", "2026-01-02T00:30:00Z", TaskStatus::Proposed);
+        let text = approval_question(&t, now, offset(), Duration::from_secs(600));
+        assert!(text.contains("Runs at 02:30 (in 1h30m)"));
+    }
+
+    #[test]
+    fn question_names_the_default_timeout_when_none_is_set() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let t = task("a", "2026-01-01T10:10:00Z", TaskStatus::Proposed);
+        let text = approval_question(&t, now, offset(), Duration::from_secs(3600));
+        assert!(text.contains("(in 10m), default timeout 1h."));
+    }
+
+    #[test]
+    fn question_for_a_past_time_says_now() {
+        let now = utc("2026-01-01T10:00:00Z");
+        let t = task("a", "2026-01-01T09:00:00Z", TaskStatus::Proposed);
+        let text = approval_question(&t, now, offset(), Duration::from_secs(60));
+        assert!(text.contains("(now)"));
     }
 }
