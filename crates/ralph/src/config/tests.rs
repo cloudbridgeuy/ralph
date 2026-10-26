@@ -295,7 +295,7 @@ fn legacy_agent_key_keeps_working_with_a_warning() {
         Some("Solarized (dark)")
     );
     assert_eq!(
-        config.theme.warnings(),
+        config.theme.deprecations(),
         ["[theme] agent = \"Solarized (dark)\" is deprecated; move it to [theme.agent] code = \"Solarized (dark)\""]
     );
 }

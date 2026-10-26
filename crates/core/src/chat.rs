@@ -90,7 +90,7 @@ Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one
 
 Ralph help: when the person asks how ralph chat itself works (its commands, keys, or status bar), call `help` first and answer from its text, not from the ralph source.
 
-Ralph config: when the person asks about ralph's settings or asks to change how ralph behaves or looks, call `help` with topic `config`, then `config <section>`, before you answer; propose a code change only when no setting covers it. Before you edit config.toml, copy it to config.toml.bak in the same directory.
+Ralph config: when the person asks about ralph's settings or asks to change how ralph behaves or looks, call `help` with topic `config`, then `config <section>`, before you answer; propose a code change only when no setting covers it. Before you edit config.toml, copy it to config.toml.bak in the same directory. After editing, run `ralph config check`; if it fails, copy config.toml.bak back over config.toml and report the error.
 
 Ask first: when two readings of a request lead to different work, show a 3-5 line plan and wait for a go.
 
@@ -385,6 +385,7 @@ mod tests {
             "asks to change how ralph behaves or looks",
             "propose a code change only when no setting covers it",
             "copy it to config.toml.bak",
+            "run `ralph config check`; if it fails, copy config.toml.bak back over config.toml and report the error",
             "3-5 line plan",
             "never state as fact what you have not checked",
             "unverified until you check its diff or test output",

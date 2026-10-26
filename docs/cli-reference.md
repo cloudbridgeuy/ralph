@@ -23,6 +23,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `ask` | Send a single-shot prompt to the LLM ([details](context/ralph-ask.md)) |
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
 | `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
+| `config` | Check `config.toml` for errors and unknown keys |
 
 ---
 
@@ -116,6 +117,26 @@ ralph wire sessions [--dir PATH] [--json]
 | `N` | `show` | Call number (`seq`) from `ls` |
 | `A`, `B` | `diff` | Call numbers (`seq`); with only `A`, diff `A` against the earlier call sharing its longest prompt prefix |
 | `--json` | `ls`, `show`, `diff`, `sessions` | Print JSON instead of a table |
+
+---
+
+## ralph config
+
+```bash
+ralph config check [--path FILE]
+```
+
+Parses the config file and reports every problem on stderr. Without `--path` it checks the default `config.toml` (honours `RALPH_CONFIG_DIR`); a missing default file prints `no config at <path>; defaults apply` and exits 0. A missing `--path` file is an error.
+
+| Line | Meaning |
+|------|---------|
+| `unknown key: chat.wrap_widh` | Key that no setting uses; chat ignores it |
+| `[chat] edit_mode = "nano" is not "emacs" or "vi"; using "emacs"` | Invalid value that chat warns about and replaces with a default |
+| `watch_timeout_secs must be above 0.` | Value chat rejects at startup |
+| `note: ...` | Deprecation; does not fail the check |
+| `ok: <path>` | No errors |
+
+Parse failures and invalid `[workers]` or `[wire.prices]` values also fail the check. Exit code is 1 when any error is found. Environment variables and `$EDITOR` are not consulted.
 
 ---
 

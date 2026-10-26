@@ -15,6 +15,8 @@ use std::fs;
 use std::path::PathBuf;
 
 mod changes;
+mod check;
+pub use check::check;
 mod chat_settings;
 mod claude;
 mod codex;
@@ -305,16 +307,20 @@ impl ThemeSection {
         }
     }
 
-    pub fn warnings(&self) -> Vec<String> {
-        let legacy = match &self.agent {
-            Some(AgentTheme::Legacy(code)) => Some(format!(
+    pub fn deprecations(&self) -> Vec<String> {
+        match &self.agent {
+            Some(AgentTheme::Legacy(code)) => vec![format!(
                 "[theme] agent = \"{code}\" is deprecated; move it to [theme.agent] code = \"{code}\""
-            )),
-            _ => None,
-        };
-        legacy
+            )],
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn warnings(&self) -> Vec<String> {
+        self.assistant
+            .palette(ThemeRole::Assistant)
+            .1
             .into_iter()
-            .chain(self.assistant.palette(ThemeRole::Assistant).1)
             .chain(self.agent().palette(ThemeRole::Agent).1)
             .chain(self.status.resolve().1)
             .chain(self.input.resolve().1)
@@ -359,10 +365,6 @@ impl AppConfig {
         Self::load_from(&path)
     }
 
-    /// Load configuration from a specific path.
-    ///
-    /// Returns the loaded configuration if the file exists, or
-    /// the default configuration if it doesn't exist.
     pub fn load_from(path: &PathBuf) -> Result<Self, ConfigError> {
         if !path.exists() {
             return Ok(Self::default());
@@ -373,17 +375,41 @@ impl AppConfig {
             source: e,
         })?;
 
-        let config: Self = toml::from_str(&content).map_err(|e| ConfigError::ParseConfig {
-            path: path.display().to_string(),
-            source: e,
-        })?;
-        ralph_core::wire::price::validate_price_overrides(&config.wire.prices)
+        Self::parse(&content, &path.display().to_string())
+    }
+
+    pub fn parse(content: &str, path: &str) -> Result<Self, ConfigError> {
+        toml::from_str::<Self>(content)
+            .map_err(|source| ConfigError::ParseConfig {
+                path: path.to_string(),
+                source,
+            })?
+            .validated()
+    }
+
+    pub fn parse_reporting_unknown(
+        content: &str,
+        path: &str,
+    ) -> Result<(Self, Vec<String>), ConfigError> {
+        let parse_error = |source| ConfigError::ParseConfig {
+            path: path.to_string(),
+            source,
+        };
+        let mut unknown = Vec::new();
+        let deserializer = toml::de::Deserializer::parse(content).map_err(parse_error)?;
+        let config: Self =
+            serde_ignored::deserialize(deserializer, |key| unknown.push(key.to_string()))
+                .map_err(parse_error)?;
+        Ok((config.validated()?, unknown))
+    }
+
+    fn validated(self) -> Result<Self, ConfigError> {
+        ralph_core::wire::price::validate_price_overrides(&self.wire.prices)
             .map_err(ConfigError::InvalidWirePrice)?;
-        config
-            .workers
+        self.workers
             .validate()
             .map_err(ConfigError::InvalidWorkers)?;
-        Ok(config)
+        Ok(self)
     }
 
     /// Save configuration to the default config file path.
