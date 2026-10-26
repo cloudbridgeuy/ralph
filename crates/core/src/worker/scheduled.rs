@@ -122,6 +122,33 @@ mod tests {
     }
 
     #[test]
+    fn a_scheduled_worker_command_blocks_push_tools_before_a_flag() {
+        let args = worker_command(&ClaudeWorkerArgs {
+            scheduled: true,
+            ..claude_args()
+        });
+        let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
+        assert_eq!(
+            args[at..at + 5],
+            [
+                "--disallowedTools",
+                "Bash(git push:*)",
+                "Bash(gh pr:*)",
+                "Bash(gh api:*)",
+                "--append-system-prompt"
+            ]
+        );
+        assert_eq!(args.last().unwrap(), "do it");
+    }
+
+    #[test]
+    fn an_unscheduled_worker_command_blocks_nothing() {
+        assert!(!worker_command(&claude_args())
+            .iter()
+            .any(|a| a == "--disallowedTools"));
+    }
+
+    #[test]
     fn a_scheduled_worker_command_carries_the_scheduled_prompt() {
         let args = worker_command(&ClaudeWorkerArgs {
             scheduled: true,

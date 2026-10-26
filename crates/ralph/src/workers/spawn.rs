@@ -1,5 +1,5 @@
 use super::{
-    branch_exists, check, clear_marker, exclude, git_value, locate_worktree, repo_root, run,
+    branch_exists, check, clear_marker, exclude, git_value, guard, locate_worktree, repo_root, run,
     Workers,
 };
 use crate::chat::cell::detach_from_terminal;
@@ -138,7 +138,12 @@ impl Workers {
         if let Some(changes) = site.as_ref().and_then(WorkerChanges::open) {
             changes.snapshot_turn_or_warn();
         }
-        self.launch(&launch).map_err(|error| {
+        let launched = if scheduled {
+            guard::apply(&repo, &worktree, &self.store_dir).and_then(|()| self.launch(&launch))
+        } else {
+            self.launch(&launch)
+        };
+        launched.map_err(|error| {
             warn_if_err(
                 self.clear_changes(id, &worktree),
                 "Failed to clear worker snapshots",

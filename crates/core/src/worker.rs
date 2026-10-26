@@ -10,6 +10,7 @@ mod acp;
 mod codex;
 mod cursor_model;
 mod files;
+mod guard;
 mod headless;
 mod hooks;
 mod kind;
@@ -33,6 +34,7 @@ pub use cursor_model::{
     CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
 };
 pub use files::*;
+pub use guard::*;
 pub use headless::*;
 pub use hooks::*;
 pub use kind::*;
@@ -352,11 +354,13 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
         &args.settings.to_string_lossy(),
         "--add-dir",
         &args.attachments.to_string_lossy(),
-        "--append-system-prompt",
-        worker_prompt(args.scheduled),
     ]
     .map(str::to_string)
     .to_vec();
+    if args.scheduled {
+        command.extend(disallowed_tool_args());
+    }
+    command.extend(["--append-system-prompt", worker_prompt(args.scheduled)].map(str::to_string));
     if let Some(model) = args.model {
         command.extend(["--model".to_string(), model.to_string()]);
     }

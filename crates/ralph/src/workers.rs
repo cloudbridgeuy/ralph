@@ -27,6 +27,7 @@ use std::process::{self, Command, Output, Stdio};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+mod guard;
 pub(crate) mod headless;
 mod spawn;
 pub(crate) use spawn::SpawnArgs;
