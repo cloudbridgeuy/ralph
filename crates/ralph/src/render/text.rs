@@ -29,11 +29,7 @@ pub fn render_text_block(
                     |theme| render_styled_prose(theme, &chunk.content),
                 ),
                 Some(images) => {
-                    let (cols, rows) = terminal_size();
-                    let bounds = ImageBounds {
-                        cols: wrap_width(cols.into()).try_into().unwrap_or(u32::MAX),
-                        rows: u32::from(rows.max(1)),
-                    };
+                    let bounds = ImageBounds::current();
                     let content = if images.placement == Placement::Tmux {
                         strip_kitty_apc(&chunk.content)
                     } else {
