@@ -1,10 +1,12 @@
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use ralph_core::kitty::{
-    cell_grid, encode_apc, parse_image_markers, png_size, strip_kitty_apc, Segment,
-    TerminalSnapshot,
+    cell_grid, encode_apc, graphics_reply, parse_image_markers, png_size, should_query_graphics,
+    strip_kitty_apc, GraphicsReply, Segment, TerminalSnapshot, GRAPHICS_QUERY,
+    GRAPHICS_QUERY_TIMEOUT,
 };
 
 use super::text::render_markdown;
@@ -28,15 +30,70 @@ pub fn enabled() -> Option<ImageSettings> {
     IMAGES.get().copied().flatten()
 }
 
+struct RawMode;
+
+impl RawMode {
+    fn enter() -> Option<Self> {
+        crossterm::terminal::enable_raw_mode().ok().map(|()| Self)
+    }
+}
+
+impl Drop for RawMode {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+fn read_ready(timeout_ms: libc::c_int, into: &mut Vec<u8>) -> bool {
+    let mut input = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    if unsafe { libc::poll(&mut input, 1, timeout_ms) } <= 0 || input.revents & libc::POLLIN == 0 {
+        return false;
+    }
+    let mut buffer = [0u8; 256];
+    let count = unsafe { libc::read(libc::STDIN_FILENO, buffer.as_mut_ptr().cast(), buffer.len()) };
+    match usize::try_from(count) {
+        Ok(count) if count > 0 => {
+            into.extend_from_slice(&buffer[..count]);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn query_graphics() -> Option<GraphicsReply> {
+    let _raw = RawMode::enter()?;
+    let mut stdout = std::io::stdout();
+    stdout.write_all(GRAPHICS_QUERY.as_bytes()).ok()?;
+    stdout.flush().ok()?;
+    let started = Instant::now();
+    let mut bytes = Vec::new();
+    loop {
+        match graphics_reply(&bytes) {
+            GraphicsReply::Pending => {}
+            decided => return Some(decided),
+        }
+        let remaining = GRAPHICS_QUERY_TIMEOUT.checked_sub(started.elapsed())?;
+        let wait = libc::c_int::try_from(remaining.as_millis().max(1)).ok()?;
+        if !read_ready(wait, &mut bytes) {
+            return None;
+        }
+    }
+}
+
 pub fn detect() -> Option<ImageSettings> {
     let snapshot = TerminalSnapshot {
-        term_program: std::env::var("TERM_PROGRAM").unwrap_or_default(),
-        term: std::env::var("TERM").unwrap_or_default(),
-        kitty_window_id: std::env::var_os("KITTY_WINDOW_ID").is_some(),
-        tmux: std::env::var_os("TMUX").is_some(),
+        stdin_tty: std::io::stdin().is_terminal(),
         stdout_tty: std::io::stdout().is_terminal(),
+        tmux: std::env::var_os("TMUX").is_some(),
     };
-    ralph_core::kitty::supports_images(&snapshot).then(|| ImageSettings {
+    if !should_query_graphics(&snapshot) {
+        return None;
+    }
+    (query_graphics()? == GraphicsReply::Supported).then(|| ImageSettings {
         cell_px: crossterm::terminal::window_size()
             .ok()
             .and_then(|size| {
