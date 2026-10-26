@@ -7,6 +7,317 @@ const APC_END: &str = "\x1b\\";
 const CHUNK_BYTES: usize = 4096;
 const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 const ASSUMED_CELL_PX: (u32, u32) = (8, 16);
+const PLACEHOLDER: char = '\u{10EEEE}';
+const MAX_PLACEHOLDER_CELLS: u32 = 297;
+const ROW_DIACRITICS: [char; 297] = [
+    '\u{0305}',
+    '\u{030d}',
+    '\u{030e}',
+    '\u{0310}',
+    '\u{0312}',
+    '\u{033d}',
+    '\u{033e}',
+    '\u{033f}',
+    '\u{0346}',
+    '\u{034a}',
+    '\u{034b}',
+    '\u{034c}',
+    '\u{0350}',
+    '\u{0351}',
+    '\u{0352}',
+    '\u{0357}',
+    '\u{035b}',
+    '\u{0363}',
+    '\u{0364}',
+    '\u{0365}',
+    '\u{0366}',
+    '\u{0367}',
+    '\u{0368}',
+    '\u{0369}',
+    '\u{036a}',
+    '\u{036b}',
+    '\u{036c}',
+    '\u{036d}',
+    '\u{036e}',
+    '\u{036f}',
+    '\u{0483}',
+    '\u{0484}',
+    '\u{0485}',
+    '\u{0486}',
+    '\u{0487}',
+    '\u{0592}',
+    '\u{0593}',
+    '\u{0594}',
+    '\u{0595}',
+    '\u{0597}',
+    '\u{0598}',
+    '\u{0599}',
+    '\u{059c}',
+    '\u{059d}',
+    '\u{059e}',
+    '\u{059f}',
+    '\u{05a0}',
+    '\u{05a1}',
+    '\u{05a8}',
+    '\u{05a9}',
+    '\u{05ab}',
+    '\u{05ac}',
+    '\u{05af}',
+    '\u{05c4}',
+    '\u{0610}',
+    '\u{0611}',
+    '\u{0612}',
+    '\u{0613}',
+    '\u{0614}',
+    '\u{0615}',
+    '\u{0616}',
+    '\u{0617}',
+    '\u{0657}',
+    '\u{0658}',
+    '\u{0659}',
+    '\u{065a}',
+    '\u{065b}',
+    '\u{065d}',
+    '\u{065e}',
+    '\u{06d6}',
+    '\u{06d7}',
+    '\u{06d8}',
+    '\u{06d9}',
+    '\u{06da}',
+    '\u{06db}',
+    '\u{06dc}',
+    '\u{06df}',
+    '\u{06e0}',
+    '\u{06e1}',
+    '\u{06e2}',
+    '\u{06e4}',
+    '\u{06e7}',
+    '\u{06e8}',
+    '\u{06eb}',
+    '\u{06ec}',
+    '\u{0730}',
+    '\u{0732}',
+    '\u{0733}',
+    '\u{0735}',
+    '\u{0736}',
+    '\u{073a}',
+    '\u{073d}',
+    '\u{073f}',
+    '\u{0740}',
+    '\u{0741}',
+    '\u{0743}',
+    '\u{0745}',
+    '\u{0747}',
+    '\u{0749}',
+    '\u{074a}',
+    '\u{07eb}',
+    '\u{07ec}',
+    '\u{07ed}',
+    '\u{07ee}',
+    '\u{07ef}',
+    '\u{07f0}',
+    '\u{07f1}',
+    '\u{07f3}',
+    '\u{0816}',
+    '\u{0817}',
+    '\u{0818}',
+    '\u{0819}',
+    '\u{081b}',
+    '\u{081c}',
+    '\u{081d}',
+    '\u{081e}',
+    '\u{081f}',
+    '\u{0820}',
+    '\u{0821}',
+    '\u{0822}',
+    '\u{0823}',
+    '\u{0825}',
+    '\u{0826}',
+    '\u{0827}',
+    '\u{0829}',
+    '\u{082a}',
+    '\u{082b}',
+    '\u{082c}',
+    '\u{082d}',
+    '\u{0951}',
+    '\u{0953}',
+    '\u{0954}',
+    '\u{0f82}',
+    '\u{0f83}',
+    '\u{0f86}',
+    '\u{0f87}',
+    '\u{135d}',
+    '\u{135e}',
+    '\u{135f}',
+    '\u{17dd}',
+    '\u{193a}',
+    '\u{1a17}',
+    '\u{1a75}',
+    '\u{1a76}',
+    '\u{1a77}',
+    '\u{1a78}',
+    '\u{1a79}',
+    '\u{1a7a}',
+    '\u{1a7b}',
+    '\u{1a7c}',
+    '\u{1b6b}',
+    '\u{1b6d}',
+    '\u{1b6e}',
+    '\u{1b6f}',
+    '\u{1b70}',
+    '\u{1b71}',
+    '\u{1b72}',
+    '\u{1b73}',
+    '\u{1cd0}',
+    '\u{1cd1}',
+    '\u{1cd2}',
+    '\u{1cda}',
+    '\u{1cdb}',
+    '\u{1ce0}',
+    '\u{1dc0}',
+    '\u{1dc1}',
+    '\u{1dc3}',
+    '\u{1dc4}',
+    '\u{1dc5}',
+    '\u{1dc6}',
+    '\u{1dc7}',
+    '\u{1dc8}',
+    '\u{1dc9}',
+    '\u{1dcb}',
+    '\u{1dcc}',
+    '\u{1dd1}',
+    '\u{1dd2}',
+    '\u{1dd3}',
+    '\u{1dd4}',
+    '\u{1dd5}',
+    '\u{1dd6}',
+    '\u{1dd7}',
+    '\u{1dd8}',
+    '\u{1dd9}',
+    '\u{1dda}',
+    '\u{1ddb}',
+    '\u{1ddc}',
+    '\u{1ddd}',
+    '\u{1dde}',
+    '\u{1ddf}',
+    '\u{1de0}',
+    '\u{1de1}',
+    '\u{1de2}',
+    '\u{1de3}',
+    '\u{1de4}',
+    '\u{1de5}',
+    '\u{1de6}',
+    '\u{1dfe}',
+    '\u{20d0}',
+    '\u{20d1}',
+    '\u{20d4}',
+    '\u{20d5}',
+    '\u{20d6}',
+    '\u{20d7}',
+    '\u{20db}',
+    '\u{20dc}',
+    '\u{20e1}',
+    '\u{20e7}',
+    '\u{20e9}',
+    '\u{20f0}',
+    '\u{2cef}',
+    '\u{2cf0}',
+    '\u{2cf1}',
+    '\u{2de0}',
+    '\u{2de1}',
+    '\u{2de2}',
+    '\u{2de3}',
+    '\u{2de4}',
+    '\u{2de5}',
+    '\u{2de6}',
+    '\u{2de7}',
+    '\u{2de8}',
+    '\u{2de9}',
+    '\u{2dea}',
+    '\u{2deb}',
+    '\u{2dec}',
+    '\u{2dEd}',
+    '\u{2dee}',
+    '\u{2def}',
+    '\u{2df0}',
+    '\u{2df1}',
+    '\u{2df2}',
+    '\u{2df3}',
+    '\u{2df4}',
+    '\u{2df5}',
+    '\u{2df6}',
+    '\u{2df7}',
+    '\u{2df8}',
+    '\u{2df9}',
+    '\u{2dfa}',
+    '\u{2dfb}',
+    '\u{2dfc}',
+    '\u{2dfd}',
+    '\u{2dfe}',
+    '\u{2dff}',
+    '\u{a66f}',
+    '\u{a67c}',
+    '\u{a67d}',
+    '\u{a6f0}',
+    '\u{a6f1}',
+    '\u{a8e0}',
+    '\u{a8e1}',
+    '\u{a8e2}',
+    '\u{a8e3}',
+    '\u{a8e4}',
+    '\u{a8e5}',
+    '\u{a8e6}',
+    '\u{a8e7}',
+    '\u{a8e8}',
+    '\u{a8e9}',
+    '\u{a8ea}',
+    '\u{a8eb}',
+    '\u{a8ec}',
+    '\u{a8ed}',
+    '\u{a8ee}',
+    '\u{a8ef}',
+    '\u{a8f0}',
+    '\u{a8f1}',
+    '\u{aab0}',
+    '\u{aab2}',
+    '\u{aab3}',
+    '\u{aab7}',
+    '\u{aab8}',
+    '\u{aabe}',
+    '\u{aabf}',
+    '\u{aac1}',
+    '\u{fe20}',
+    '\u{fe21}',
+    '\u{fe22}',
+    '\u{fe23}',
+    '\u{fe24}',
+    '\u{fe25}',
+    '\u{fe26}',
+    '\u{10a0f}',
+    '\u{10a38}',
+    '\u{1d185}',
+    '\u{1d186}',
+    '\u{1d187}',
+    '\u{1d188}',
+    '\u{1d189}',
+    '\u{1d1aa}',
+    '\u{1d1ab}',
+    '\u{1d1ac}',
+    '\u{1d1ad}',
+    '\u{1d242}',
+    '\u{1d243}',
+    '\u{1d244}',
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    Direct,
+    Tmux,
+}
+
+pub fn tmux_wrap(seq: &str) -> String {
+    format!("\x1bPtmux;{}\x1b\\", seq.replace('\x1b', "\x1b\x1b"))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Segment {
@@ -25,6 +336,7 @@ pub struct TerminalSnapshot {
     pub stdin_tty: bool,
     pub stdout_tty: bool,
     pub tmux: bool,
+    pub passthrough: Option<String>,
 }
 
 #[derive(Default)]
@@ -174,7 +486,7 @@ pub fn cell_grid(
     )
 }
 
-pub fn encode_apc(png: &[u8], cols: u32, rows: u32) -> String {
+fn encode_chunks(png: &[u8], first_keys: &str, later_keys: &str) -> Vec<String> {
     let encoded = STANDARD.encode(png);
     let chunks: Vec<&[u8]> = encoded.as_bytes().chunks(CHUNK_BYTES).collect();
     let last = chunks.len().saturating_sub(1);
@@ -184,15 +496,45 @@ pub fn encode_apc(png: &[u8], cols: u32, rows: u32) -> String {
         .map(|(index, chunk)| {
             let more = u8::from(index < last);
             let payload = String::from_utf8_lossy(chunk);
-            if index == 0 {
-                format!(
-                    "{APC_START}a=T,f=100,c={cols},r={rows},C=1,q=2,m={more};{payload}{APC_END}"
-                )
-            } else {
-                format!("{APC_START}m={more};{payload}{APC_END}")
-            }
+            let keys = if index == 0 { first_keys } else { later_keys };
+            format!("{APC_START}{keys}m={more};{payload}{APC_END}")
         })
         .collect()
+}
+
+pub fn encode_apc(png: &[u8], cols: u32, rows: u32) -> String {
+    encode_chunks(png, &format!("a=T,f=100,c={cols},r={rows},C=1,q=2,"), "").concat()
+}
+
+pub fn encode_virtual(png: &[u8], id: u8, cols: u32, rows: u32) -> String {
+    encode_chunks(
+        png,
+        &format!("a=T,U=1,i={id},f=100,c={cols},r={rows},q=2,"),
+        &format!("i={id},"),
+    )
+    .iter()
+    .map(|chunk| tmux_wrap(chunk))
+    .collect()
+}
+
+pub fn placeholder_rows(id: u8, cols: u32, rows: u32) -> String {
+    let extra = (1..cols).map(|_| PLACEHOLDER).collect::<String>();
+    (0..rows as usize)
+        .map(|row| {
+            let diacritic = ROW_DIACRITICS[row.min(ROW_DIACRITICS.len() - 1)];
+            format!(
+                "\x1b[38;5;{id}m{PLACEHOLDER}{diacritic}{}{extra}\x1b[39m\n",
+                ROW_DIACRITICS[0]
+            )
+        })
+        .collect()
+}
+
+pub fn clamp_placeholder_grid((cols, rows): (u32, u32)) -> (u32, u32) {
+    (
+        cols.min(MAX_PLACEHOLDER_CELLS),
+        rows.min(MAX_PLACEHOLDER_CELLS),
+    )
 }
 
 pub fn split_apc(text: &str) -> Vec<Piece> {
@@ -226,11 +568,12 @@ pub fn strip_kitty_apc(text: &str) -> String {
         .collect()
 }
 
-pub const GRAPHICS_QUERY: &str = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c";
+const GRAPHICS_PROBE: &str = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
 pub const GRAPHICS_QUERY_TIMEOUT: Duration = Duration::from_millis(200);
 
 const GRAPHICS_OK: &[u8] = b"\x1b_Gi=31;OK\x1b\\";
 const DA_START: &[u8] = b"\x1b[?";
+const STATUS_OK: &[u8] = b"\x1b[0n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphicsReply {
@@ -239,28 +582,52 @@ pub enum GraphicsReply {
     Unsupported,
 }
 
+pub fn graphics_query(placement: Placement) -> String {
+    match placement {
+        Placement::Direct => format!("{GRAPHICS_PROBE}\x1b[c"),
+        Placement::Tmux => tmux_wrap(&format!("{GRAPHICS_PROBE}\x1b[5n")),
+    }
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
 }
 
-pub fn graphics_reply(bytes: &[u8]) -> GraphicsReply {
-    let Some(start) = find(bytes, DA_START) else {
+fn reply_end(bytes: &[u8], placement: Placement) -> Option<usize> {
+    match placement {
+        Placement::Direct => {
+            let start = find(bytes, DA_START)?;
+            bytes[start..].contains(&b'c').then_some(start)
+        }
+        Placement::Tmux => find(bytes, STATUS_OK),
+    }
+}
+
+pub fn graphics_reply(bytes: &[u8], placement: Placement) -> GraphicsReply {
+    let Some(end) = reply_end(bytes, placement) else {
         return GraphicsReply::Pending;
     };
-    if !bytes[start..].contains(&b'c') {
-        return GraphicsReply::Pending;
-    }
-    if find(&bytes[..start], GRAPHICS_OK).is_some() {
+    if find(&bytes[..end], GRAPHICS_OK).is_some() {
         GraphicsReply::Supported
     } else {
         GraphicsReply::Unsupported
     }
 }
 
-pub fn should_query_graphics(snapshot: &TerminalSnapshot) -> bool {
-    snapshot.stdin_tty && snapshot.stdout_tty && !snapshot.tmux
+pub fn graphics_probe(snapshot: &TerminalSnapshot) -> Option<Placement> {
+    if !(snapshot.stdin_tty && snapshot.stdout_tty) {
+        return None;
+    }
+    if !snapshot.tmux {
+        return Some(Placement::Direct);
+    }
+    matches!(
+        snapshot.passthrough.as_deref().map(str::trim),
+        Some("on" | "all")
+    )
+    .then_some(Placement::Tmux)
 }
 
 #[cfg(test)]
@@ -411,7 +778,11 @@ mod tests {
     const DA: &str = "\x1b[?62;4c";
 
     fn reply(text: &str) -> GraphicsReply {
-        graphics_reply(text.as_bytes())
+        graphics_reply(text.as_bytes(), Placement::Direct)
+    }
+
+    fn tmux_reply(text: &str) -> GraphicsReply {
+        graphics_reply(text.as_bytes(), Placement::Tmux)
     }
 
     #[test]
@@ -435,24 +806,87 @@ mod tests {
     }
 
     #[test]
-    fn should_query_graphics_needs_both_ttys_and_no_tmux() {
-        let base = TerminalSnapshot {
-            stdin_tty: true,
-            stdout_tty: true,
-            tmux: false,
+    fn tmux_reply_decides_at_the_status_report() {
+        assert_eq!(
+            tmux_reply(&format!("{OK}\x1b[0n")),
+            GraphicsReply::Supported
+        );
+        assert_eq!(tmux_reply("\x1b[0n"), GraphicsReply::Unsupported);
+        assert_eq!(tmux_reply(OK), GraphicsReply::Pending);
+        assert_eq!(tmux_reply(&format!("{DA}{OK}")), GraphicsReply::Pending);
+        assert_eq!(
+            tmux_reply(&format!("{DA}{OK}\x1b[0n")),
+            GraphicsReply::Supported
+        );
+    }
+
+    #[test]
+    fn queries_match_placement() {
+        assert!(graphics_query(Placement::Direct).ends_with("\x1b[c"));
+        let tmux = graphics_query(Placement::Tmux);
+        assert!(tmux.starts_with("\x1bPtmux;\x1b\x1b_G"));
+        assert!(tmux.ends_with("\x1b\x1b[5n\x1b\\"));
+        assert!(!tmux.contains("[c"));
+    }
+
+    #[test]
+    fn tmux_wrap_doubles_every_escape() {
+        assert_eq!(
+            tmux_wrap("a\x1bb\x1b\\"),
+            "\x1bPtmux;a\x1b\x1bb\x1b\x1b\\\x1b\\"
+        );
+    }
+
+    #[test]
+    fn graphics_probe_decision_table() {
+        let snap = |stdin_tty, stdout_tty, tmux, passthrough: Option<&str>| TerminalSnapshot {
+            stdin_tty,
+            stdout_tty,
+            tmux,
+            passthrough: passthrough.map(str::to_string),
         };
-        assert!(should_query_graphics(&base));
-        assert!(!should_query_graphics(&TerminalSnapshot {
-            tmux: true,
-            ..base.clone()
-        }));
-        assert!(!should_query_graphics(&TerminalSnapshot {
-            stdin_tty: false,
-            ..base.clone()
-        }));
-        assert!(!should_query_graphics(&TerminalSnapshot {
-            stdout_tty: false,
-            ..base
-        }));
+        let cases = [
+            (snap(true, true, false, None), Some(Placement::Direct)),
+            (snap(false, true, false, None), None),
+            (snap(true, false, false, None), None),
+            (snap(true, true, true, Some("on\n")), Some(Placement::Tmux)),
+            (snap(true, true, true, Some("all")), Some(Placement::Tmux)),
+            (snap(true, true, true, Some("off")), None),
+            (snap(true, true, true, Some("")), None),
+            (snap(true, true, true, None), None),
+            (snap(false, true, true, Some("on")), None),
+        ];
+        for (snapshot, expected) in cases {
+            assert_eq!(graphics_probe(&snapshot), expected, "{snapshot:?}");
+        }
+    }
+
+    #[test]
+    fn virtual_encoding_wraps_each_chunk_and_repeats_the_id() {
+        let single = encode_virtual(b"abc", 7, 3, 2);
+        assert_eq!(
+            single,
+            "\x1bPtmux;\x1b\x1b_Ga=T,U=1,i=7,f=100,c=3,r=2,q=2,m=0;YWJj\x1b\x1b\\\x1b\\"
+        );
+        let multi = encode_virtual(&[7u8; 3073], 7, 3, 2);
+        let parts: Vec<&str> = multi.split_inclusive("\x1b\x1b\\\x1b\\").collect();
+        assert_eq!(parts.len(), 2);
+        assert!(parts[0].contains("U=1,i=7,f=100,c=3,r=2,q=2,m=1;"));
+        assert!(parts[1].starts_with("\x1bPtmux;\x1b\x1b_Gi=7,m=0;"));
+    }
+
+    #[test]
+    fn placeholder_rows_have_exact_bytes() {
+        let row0 = "\x1b[38;5;7m\u{10EEEE}\u{305}\u{305}\u{10EEEE}\x1b[39m\n";
+        let row1 = "\x1b[38;5;7m\u{10EEEE}\u{30D}\u{305}\u{10EEEE}\x1b[39m\n";
+        assert_eq!(placeholder_rows(7, 2, 2), format!("{row0}{row1}"));
+        assert_eq!(placeholder_rows(7, 4, 5).matches('\n').count(), 5);
+    }
+
+    #[test]
+    fn placeholder_grid_is_clamped_to_the_diacritic_table() {
+        assert_eq!(clamp_placeholder_grid((400, 500)), (297, 297));
+        assert_eq!(clamp_placeholder_grid((80, 10)), (80, 10));
+        assert_eq!(ROW_DIACRITICS.len(), MAX_PLACEHOLDER_CELLS as usize);
     }
 }
