@@ -88,6 +88,8 @@ Messages that start with [worker watch:<name> · watch] are watch reports: a com
 
 Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options. When the reply will end with a Next step the user can say, call `suggest_reply` first, before you write any reply text, with the exact quoted words of that line. Then write the reply once and never mention the suggestion.
 
+Ralph help: when the person asks how ralph chat itself works (its commands, keys, or status bar), call `help` first and answer from its text, not from the ralph source.
+
 Ask first: when two readings of a request lead to different work, show a 3-5 line plan and wait for a go.
 
 Verify: never state as fact what you have not checked. A worker or subagent \"done\" is unverified until you check its diff or test output, and the git and Linear state.
@@ -376,6 +378,7 @@ mod tests {
             "one recommended next step",
             "call `suggest_reply` first, before you write any reply text",
             "never mention the suggestion",
+            "call `help` first and answer from its text",
             "3-5 line plan",
             "never state as fact what you have not checked",
             "unverified until you check its diff or test output",

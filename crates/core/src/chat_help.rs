@@ -5,6 +5,7 @@ use crate::chat::OLDER_VIEW_STEP;
 use crate::chat_thread::{thread_variants, ResetReason, ThreadCell, CACHE_TTL_SECS};
 use crate::status_mode::Mode;
 use crate::status_segments::Kind;
+use serde_json::{json, Value};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -490,6 +491,43 @@ pub fn help_text(width: usize) -> String {
     out
 }
 
+const TOOL_WIDTH: usize = 1000;
+
+fn topic_name(command: Command) -> &'static str {
+    command.name().trim_start_matches('/')
+}
+
+fn topic_list() -> String {
+    Command::ALL.map(topic_name).join(", ")
+}
+
+pub fn help_tool() -> Value {
+    json!({
+        "name": "help",
+        "description": format!("ralph chat's own /help: its commands, cells, keys and status bar legend. Call it when the user asks how ralph itself works, then answer from its text. Without topic it returns the full help; topic returns one command's section: {}.", topic_list()),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "A command name such as diff or /diff. Omit it for the full help."}
+            }
+        }
+    })
+}
+
+pub fn help_topic(topic: Option<&str>) -> Result<String, String> {
+    let Some(topic) = topic.map(str::trim).filter(|topic| !topic.is_empty()) else {
+        return Ok(help_text(TOOL_WIDTH));
+    };
+    let wanted = topic.strip_prefix('/').unwrap_or(topic);
+    let command = Command::ALL
+        .into_iter()
+        .find(|command| topic_name(*command).eq_ignore_ascii_case(wanted))
+        .ok_or_else(|| format!("Unknown help topic '{topic}'. Topics: {}.", topic_list()))?;
+    let mut out = String::new();
+    section(&mut out, command.name(), pairs(command.usage()), TOOL_WIDTH);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,5 +742,45 @@ mod tests {
                 assert!(!rebuild || has_row(&text, "!"), "! has no legend row");
             }
         }
+    }
+
+    #[test]
+    fn help_topic_without_topic_is_the_full_help() {
+        let full = help_text(TOOL_WIDTH);
+        assert_eq!(help_topic(None), Ok(full.clone()));
+        assert_eq!(help_topic(Some("  ")), Ok(full));
+    }
+
+    #[test]
+    fn help_topic_selects_one_command_section() {
+        for command in Command::ALL {
+            let name = command.name();
+            for topic in [name, topic_name(command), &name.to_uppercase()] {
+                let text = help_topic(Some(topic)).unwrap();
+                assert!(text.starts_with(&format!("{name}\n")), "{topic}");
+                for (label, _) in command.usage() {
+                    assert!(has_row(&text, label), "{topic} lacks {label}");
+                }
+                assert_eq!(text.lines().count(), command.usage().len() + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_help_topic_lists_every_command() {
+        let error = help_topic(Some("nope")).unwrap_err();
+        assert!(error.starts_with("Unknown help topic 'nope'."));
+        for command in Command::ALL {
+            assert!(error.contains(topic_name(command)));
+        }
+    }
+
+    #[test]
+    fn help_tool_names_every_topic() {
+        let tool = help_tool();
+        assert_eq!(tool["name"], "help");
+        let description = tool["description"].as_str().unwrap();
+        assert!(description.contains(&topic_list()));
+        assert!(tool["inputSchema"].get("required").is_none());
     }
 }
