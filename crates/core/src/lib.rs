@@ -35,6 +35,7 @@ pub mod kitty;
 pub mod mcp;
 pub mod retry;
 pub mod sanitize;
+pub mod schedule;
 pub mod semver;
 pub mod shell_format;
 pub mod snapshot;
