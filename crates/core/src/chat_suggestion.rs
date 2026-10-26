@@ -5,7 +5,7 @@ pub const SUGGESTION_MAX_CHARS: usize = 200;
 pub fn suggest_reply_tool() -> Value {
     json!({
         "name": "suggest_reply",
-        "description": "Pre-fill the user's next prompt with the exact words they would type. One line, at most 200 characters. A later call in the same turn replaces the earlier one.",
+        "description": "Pre-fill the user's next prompt with the exact words they would type. Call it before any reply text and never mention it. One line, at most 200 characters. A later call replaces the earlier one.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -121,6 +121,8 @@ mod tests {
         assert_eq!(tool["inputSchema"]["properties"]["text"]["maxLength"], 200);
         let description = tool["description"].as_str().unwrap();
         assert!(description.chars().count() <= 200);
+        assert!(description.contains("before any reply text"));
+        assert!(description.contains("never mention it"));
     }
 
     fn some(text: &str) -> Option<String> {

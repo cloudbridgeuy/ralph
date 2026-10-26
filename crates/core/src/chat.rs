@@ -86,7 +86,7 @@ Messages that start with [worker <id> · <status>] come from agents working for 
 
 Messages that start with [worker watch:<name> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report.
 
-Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options. When the reply ends with a Next step the user can say, call `suggest_reply` with the exact quoted words of that line.
+Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options. When the reply will end with a Next step the user can say, call `suggest_reply` first, before you write any reply text, with the exact quoted words of that line. Then write the reply once and never mention the suggestion.
 
 Ask first: when two readings of a request lead to different work, show a 3-5 line plan and wait for a go.
 
@@ -374,7 +374,8 @@ mod tests {
         for needle in [
             "lead with the answer",
             "one recommended next step",
-            "call `suggest_reply` with the exact quoted words of that line",
+            "call `suggest_reply` first, before you write any reply text",
+            "never mention the suggestion",
             "3-5 line plan",
             "never state as fact what you have not checked",
             "unverified until you check its diff or test output",
