@@ -10,7 +10,7 @@ fn reset_limits_default_and_warn_on_bad_values() {
     assert_eq!((limits.turns, limits.tokens), (30, 140_000));
     assert!(warnings.is_empty());
     fs::write(&path, "[chat]\nreset_turns = 2\nreset_tokens = 5000\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     let (limits, warnings) = config.chat.reset_limits_setting();
     assert_eq!((limits.turns, limits.tokens), (2, 5000));
     assert!(warnings.is_empty());
@@ -20,7 +20,7 @@ fn reset_limits_default_and_warn_on_bad_values() {
             format!("[chat]\nreset_turns = {value}\nreset_tokens = {value}\n"),
         )
         .unwrap();
-        let config = AppConfig::load_from(&path).unwrap();
+        let config = AppConfig::load_layers(&path, None).unwrap();
         let (limits, warnings) = config.chat.reset_limits_setting();
         assert_eq!((limits.turns, limits.tokens), (30, 140_000));
         assert_eq!(warnings.len(), 2);

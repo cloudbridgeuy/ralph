@@ -94,11 +94,30 @@ pub enum ConfigCommand {
         about = "Check config.toml for errors, unknown keys, and bad values.",
         long_about = "Parses config.toml and reports unknown keys, invalid values, and settings \
 that chat would reject or ignore at startup. Exits 1 when any error is found. A missing file at \
-the default path is fine; defaults apply."
+the default path is fine; defaults apply. With --store, also checks <DIR>/config.toml on its own \
+and then the merged result."
     )]
     Check {
         #[arg(long, help = "Config file to check instead of the default path")]
         path: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Chat store directory; also check its config.toml and the merged result"
+        )]
+        store: Option<PathBuf>,
+    },
+    #[command(
+        about = "Show the merged config with the source of each value.",
+        long_about = "Prints every setting of the merged config with its source: default, global \
+(config.toml in the config directory) or store (<DIR>/config.toml). A setting whose environment \
+variable is set is marked. Command-line flags do not apply to this command, so they are not shown."
+    )]
+    Show {
+        #[arg(
+            long,
+            help = "Chat store directory whose config.toml overrides the global file"
+        )]
+        store: Option<PathBuf>,
     },
 }
 

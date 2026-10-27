@@ -334,17 +334,20 @@ fn config_sections_cover_every_config_field() {
 #[test]
 fn config_help_selects_a_section_or_lists_them() {
     let path = Path::new("/x/ralph/config.toml");
-    let overview = config_help(path, None).unwrap();
+    let overview = config_help(path, None, None).unwrap();
     assert!(overview.contains("/x/ralph/config.toml"));
+    assert!(!overview.contains("Store config file:"));
+    let layered = config_help(path, Some(Path::new("/s/config.toml")), None).unwrap();
+    assert!(layered.contains("Store config file: /s/config.toml"));
     assert!(overview.contains("RALPH_CONFIG_DIR"));
     assert!(overview.contains("Configuration Precedence"));
     for (name, _) in config_sections(CONFIG_DOC) {
         assert!(overview.contains(&name), "{name}");
     }
-    let chat = config_help(path, Some("[Chat]")).unwrap();
+    let chat = config_help(path, None, Some("[Chat]")).unwrap();
     assert!(chat.starts_with("### `[chat]`"));
     assert!(!chat.contains("`[cursor]`"));
-    let error = config_help(path, Some("nope")).unwrap_err();
+    let error = config_help(path, None, Some("nope")).unwrap_err();
     assert!(error.contains("Unknown config section 'nope'") && error.contains("workers"));
 }
 

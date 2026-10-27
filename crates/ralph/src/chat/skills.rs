@@ -6,7 +6,7 @@ use ralph_core::chat_socket::mcp_config_path;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
-const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
+pub(crate) const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 
 pub(super) fn write_mcp_config(
     store: &Store,

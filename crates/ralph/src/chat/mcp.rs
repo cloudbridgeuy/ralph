@@ -45,7 +45,11 @@ pub fn run_stdio_server(
             }
             Outcome::ConfigHelp { id, section } => finish_call(
                 id,
-                config_help(&crate::config::config_path(), section.as_deref()),
+                config_help(
+                    &crate::config::config_path(),
+                    Some(&store.dir().join("config.toml")),
+                    section.as_deref(),
+                ),
             ),
             Outcome::Socket { id, name, args } => {
                 match forward(socket, &SocketRequest { tool: name, args }) {
