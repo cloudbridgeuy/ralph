@@ -474,16 +474,21 @@ impl AppConfig {
             });
             match culprit {
                 Some((path, source)) => parse_error(path, source),
-                None => parse_error(global, source),
+                None => {
+                    let last = layers.last().map_or(global, |(path, _)| *path);
+                    parse_error(last, source)
+                }
             }
         })?;
-        let culprit = layers::culprit_path(&layers, global, |layer| {
-            layer
-                .clone()
-                .try_into::<Self>()
-                .is_ok_and(|alone| alone.check_values("").is_err())
-        });
-        config.validated(&culprit.display().to_string())
+        config.check_values("").or_else(|merged_error| {
+            let culprit =
+                layers::culprit_path(&layers, global, &merged_error.to_string(), |layer| {
+                    let alone = layer.clone().try_into::<Self>().ok()?;
+                    alone.check_values("").err().map(|e| e.to_string())
+                });
+            config.check_values(&culprit.display().to_string())
+        })?;
+        Ok(config)
     }
 
     pub fn parse_reporting_unknown(

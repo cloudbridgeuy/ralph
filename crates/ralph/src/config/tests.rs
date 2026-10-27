@@ -671,3 +671,25 @@ fn store_security_key_yields_a_notice() {
         )
     );
 }
+
+#[test]
+fn value_errors_name_the_layer_that_owns_the_merged_error() {
+    let dir = TempDir::new().unwrap();
+    let global = write_layer(&dir, "g.toml", "[wire.prices.m]\ninput = -1\n");
+    let store = write_layer(&dir, "s.toml", "[workers]\ncache_secs = 0\n");
+    let message = AppConfig::load_layers(&global, Some(&store))
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains(&global.display().to_string()));
+    assert!(!message.contains(&store.display().to_string()));
+    assert!(message.contains("must be zero or positive"));
+}
+
+#[test]
+fn valid_layers_load_without_value_errors() {
+    let dir = TempDir::new().unwrap();
+    let global = write_layer(&dir, "g.toml", "[wire.prices.m]\ninput = 1\n");
+    let store = write_layer(&dir, "s.toml", "[chat]\nwrap_width = 100\n");
+    let config = AppConfig::load_layers(&global, Some(&store)).unwrap();
+    assert_eq!(config.chat.wrap_width, Some(100));
+}

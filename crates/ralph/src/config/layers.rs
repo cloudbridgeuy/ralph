@@ -58,15 +58,16 @@ pub fn anchor_chat_paths(mut table: Table, dir: &Path) -> Table {
     table
 }
 
-pub fn culprit_path<'a>(
+pub fn culprit_path<'a, E: PartialEq>(
     layers: &[(&'a Path, Table)],
     fallback: &'a Path,
-    fails: impl Fn(&Table) -> bool,
+    merged: &E,
+    error_of: impl Fn(&Table) -> Option<E>,
 ) -> &'a Path {
     layers
         .iter()
         .rev()
-        .find(|(_, layer)| fails(layer))
+        .find(|(_, layer)| error_of(layer).as_ref() == Some(merged))
         .or(layers.last())
         .map_or(fallback, |(path, _)| path)
 }
@@ -193,25 +194,63 @@ mod tests {
         );
     }
 
+    fn error_by_key(layer: &Table) -> Option<String> {
+        layer.get("bad").map(|value| value.to_string())
+    }
+
     #[test]
-    fn culprit_prefers_the_store_and_falls_back_to_the_last_layer() {
+    fn culprit_is_the_layer_whose_error_matches_the_merged_error() {
         let layers = [
-            (Path::new("/g"), table("a = 1\n")),
-            (Path::new("/s"), table("a = 2\n")),
+            (Path::new("/g"), table("bad = \"price\"\n")),
+            (Path::new("/s"), table("bad = \"workers\"\n")),
         ];
-        let any = |_: &Table| true;
-        let none = |_: &Table| false;
-        let global_only = |layer: &Table| layer.get("a") == Some(&Value::Integer(1));
-        assert_eq!(culprit_path(&layers, Path::new("/f"), any), Path::new("/s"));
+        let merged = "\"price\"".to_string();
         assert_eq!(
-            culprit_path(&layers, Path::new("/f"), global_only),
+            culprit_path(&layers, Path::new("/f"), &merged, error_by_key),
             Path::new("/g")
         );
+        let merged = "\"workers\"".to_string();
         assert_eq!(
-            culprit_path(&layers, Path::new("/f"), none),
+            culprit_path(&layers, Path::new("/f"), &merged, error_by_key),
             Path::new("/s")
         );
-        assert_eq!(culprit_path(&[], Path::new("/f"), none), Path::new("/f"));
+    }
+
+    #[test]
+    fn culprit_prefers_the_store_when_both_layers_match() {
+        let layers = [
+            (Path::new("/g"), table("bad = 1\n")),
+            (Path::new("/s"), table("bad = 1\n")),
+        ];
+        assert_eq!(
+            culprit_path(&layers, Path::new("/f"), &"1".to_string(), error_by_key),
+            Path::new("/s")
+        );
+    }
+
+    #[test]
+    fn culprit_falls_back_to_the_last_layer_when_nothing_matches() {
+        let layers = [
+            (Path::new("/g"), table("a = 1\n")),
+            (Path::new("/s"), table("bad = 2\n")),
+        ];
+        assert_eq!(
+            culprit_path(
+                &layers,
+                Path::new("/f"),
+                &"merge-only".to_string(),
+                error_by_key
+            ),
+            Path::new("/s")
+        );
+    }
+
+    #[test]
+    fn culprit_with_no_layers_is_the_fallback() {
+        assert_eq!(
+            culprit_path(&[], Path::new("/f"), &"x".to_string(), error_by_key),
+            Path::new("/f")
+        );
     }
 
     #[test]
