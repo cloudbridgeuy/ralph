@@ -123,15 +123,17 @@ impl Session {
         result
     }
 
-    pub fn ping(&mut self, prompt: &str, timeout: Duration) -> Result<(), SubprocessError> {
-        let outcome = match self.drive(prompt, Display::Silent, Some(timeout)) {
-            Ok(result) if result.exit_code == 0 => return Ok(()),
-            Ok(_) => SubprocessError::Stale,
-            Err(e) => e,
-        };
+    pub fn ping(
+        &mut self,
+        prompt: &str,
+        timeout: Duration,
+    ) -> Result<StreamingSubprocessResult, SubprocessError> {
+        self.drive(prompt, Display::Silent, Some(timeout))
+    }
+
+    pub fn discard(&mut self) {
         self.reap();
         self.alive = false;
-        Err(outcome)
     }
 
     fn drive(
