@@ -1,4 +1,4 @@
-use crate::worker::{Selection, SessionRecord, SERVER_NAME};
+use crate::worker::{verify_hint, Selection, SessionRecord, VerifiedAgents, SERVER_NAME};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -10,6 +10,7 @@ pub const MODEL_LIST: &str = "model/list";
 pub const THREAD_START: &str = "thread/start";
 pub const THREAD_RESUME: &str = "thread/resume";
 pub const TURN_START: &str = "turn/start";
+pub const THREAD_ARCHIVE: &str = "thread/archive";
 pub const TURN_INTERRUPT: &str = "turn/interrupt";
 pub const MCP_STARTUP_STATUS: &str = "mcpServer/startupStatus/updated";
 pub const PROBED_VERSION: &str = "0.164.0";
@@ -66,6 +67,19 @@ pub fn thread_start_params(cwd: &Path, selection: &Selection, mcp_server: &Value
     params
 }
 
+pub fn verify_thread_start_params(cwd: &Path) -> Value {
+    let mut params = thread_start_params(cwd, &Selection::default(), &Value::Null);
+    params["sandbox"] = json!("read-only");
+    if let Some(config) = params["config"].as_object_mut() {
+        config.remove("mcp_servers");
+    }
+    params
+}
+
+pub fn thread_archive_params(thread_id: &str) -> Value {
+    json!({"threadId": thread_id})
+}
+
 pub fn record_selection(record: &SessionRecord) -> Selection {
     Selection {
         model: record.model.clone(),
@@ -118,7 +132,7 @@ fn parse_version(version: &str) -> Option<(u64, u64)> {
         .map(|_| (major, minor))
 }
 
-pub fn check_version(found: &str) -> Result<Option<String>, String> {
+pub fn check_version(found: &str, verified: &VerifiedAgents) -> Result<Option<String>, String> {
     let parsed = parse_version(found)
         .ok_or_else(|| format!("could not read the codex version from `{found}`"))?;
     let probed = parse_version(PROBED_VERSION).unwrap_or(MIN_VERSION);
@@ -127,8 +141,10 @@ pub fn check_version(found: &str) -> Result<Option<String>, String> {
             "codex {found} is too old; needs codex-cli >= {}.{} (probed {PROBED_VERSION})",
             MIN_VERSION.0, MIN_VERSION.1
         )),
+        (_, std::cmp::Ordering::Greater) if verified.is_verified("codex", found) => Ok(None),
         (_, std::cmp::Ordering::Greater) => Ok(Some(format!(
-            "codex {found} is newer than the probed {PROBED_VERSION}; the app-server protocol may differ."
+            "codex {found} is newer than the probed {PROBED_VERSION}; the app-server protocol may differ; {}",
+            verify_hint("codex")
         ))),
         _ => Ok(None),
     }
@@ -244,6 +260,7 @@ impl McpStartup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::verified_entry;
 
     fn frame(line: &str) -> Value {
         serde_json::from_str(line).unwrap()
@@ -260,17 +277,41 @@ mod tests {
 
     #[test]
     fn versions_older_than_the_probe_are_refused_and_newer_ones_warn() {
-        assert_eq!(check_version("0.162.1"), Ok(None));
-        assert_eq!(check_version("0.162.0"), Ok(None));
-        assert_eq!(check_version("0.162.9-alpha.1"), Ok(None));
-        let old = check_version("0.161.4").unwrap_err();
+        let none = VerifiedAgents::default();
+        assert_eq!(check_version("0.162.1", &none), Ok(None));
+        assert_eq!(check_version("0.162.0", &none), Ok(None));
+        assert_eq!(check_version("0.162.9-alpha.1", &none), Ok(None));
+        let old = check_version("0.161.4", &none).unwrap_err();
         assert!(old.contains("0.161.4") && old.contains(">= 0.162"));
-        assert_eq!(check_version("0.164.0"), Ok(None));
-        assert_eq!(check_version("0.163.0"), Ok(None));
-        let warning = check_version("0.165.0").unwrap().unwrap();
+        assert_eq!(check_version("0.164.0", &none), Ok(None));
+        assert_eq!(check_version("0.163.0", &none), Ok(None));
+        let warning = check_version("0.165.0", &none).unwrap().unwrap();
         assert!(warning.contains("0.165.0") && warning.contains("0.164.0"));
-        assert!(check_version("1.0.0").unwrap().is_some());
-        assert!(check_version("garbage").is_err());
+        assert!(warning.ends_with("run `ralph worker verify codex` to check this version."));
+        assert!(check_version("1.0.0", &none).unwrap().is_some());
+        assert!(check_version("garbage", &none).is_err());
+    }
+
+    #[test]
+    fn the_verify_thread_has_no_mcp_server_and_a_read_only_sandbox() {
+        let params = verify_thread_start_params(Path::new("/w"));
+        assert_eq!(params["sandbox"], "read-only");
+        assert_eq!(params["approvalPolicy"], "on-request");
+        assert!(params["config"].get("mcp_servers").is_none());
+        assert_eq!(params["config"]["projects"]["/w"]["trust_level"], "trusted");
+        assert_eq!(thread_archive_params("t"), json!({"threadId": "t"}));
+    }
+
+    #[test]
+    fn a_verified_newer_version_is_silent() {
+        let verified = VerifiedAgents::default().record(verified_entry(
+            "codex",
+            "0.165.0",
+            false,
+            "2026-11-02",
+        ));
+        assert_eq!(check_version("0.165.0", &verified), Ok(None));
+        assert!(check_version("0.166.0", &verified).unwrap().is_some());
     }
 
     #[test]

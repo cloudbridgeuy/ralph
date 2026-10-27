@@ -1,4 +1,4 @@
-use crate::worker::SERVER_NAME;
+use crate::worker::{verify_hint, VerifiedAgents, SERVER_NAME};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -16,7 +16,7 @@ pub const CURSOR_AGENT: AcpAgent = AcpAgent {
     command: "agent",
     tested_version: "2026.10.14",
 };
-const AUTH_REQUIRED_CODE: i32 = -32000;
+pub const AUTH_REQUIRED_CODE: i32 = -32000;
 
 pub fn parse_agent_version(output: &str) -> Option<&str> {
     let token = output.split_whitespace().next()?;
@@ -24,16 +24,21 @@ pub fn parse_agent_version(output: &str) -> Option<&str> {
     version.chars().next()?.is_ascii_digit().then_some(version)
 }
 
-pub fn version_warning(agent: &AcpAgent, output: &str) -> Option<String> {
+pub fn version_warning(
+    agent: &AcpAgent,
+    output: &str,
+    verified: &VerifiedAgents,
+) -> Option<String> {
     let AcpAgent {
         name,
         tested_version,
         ..
     } = agent;
     match parse_agent_version(output) {
-        Some(version) if version == *tested_version => None,
+        Some(version) if version == *tested_version || verified.is_verified(name, version) => None,
         Some(other) => Some(format!(
-            "{name} agent {other} differs from the tested {tested_version}; the {name} worker may misbehave."
+            "{name} agent {other} differs from the tested {tested_version}; the {name} worker may misbehave; {}",
+            verify_hint(name)
         )),
         None => Some(format!(
             "could not read the {name} agent version from '{}'; tested with {tested_version}.",
@@ -107,6 +112,7 @@ pub fn cursor_model_rejection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::verified_entry;
 
     #[test]
     fn cursor_model_rejection_prefers_the_agent_data_message() {
@@ -137,13 +143,32 @@ mod tests {
 
     #[test]
     fn version_warning_only_when_the_version_differs() {
-        assert_eq!(version_warning(&CURSOR_AGENT, "2026.10.14-0f9edde"), None);
-        assert!(version_warning(&CURSOR_AGENT, "2026.11.01-abc")
-            .unwrap()
-            .contains("2026.11.01"));
-        assert!(version_warning(&CURSOR_AGENT, "???")
+        let none = VerifiedAgents::default();
+        assert_eq!(
+            version_warning(&CURSOR_AGENT, "2026.10.14-0f9edde", &none),
+            None
+        );
+        let warning = version_warning(&CURSOR_AGENT, "2026.11.01-abc", &none).unwrap();
+        assert!(warning.contains("2026.11.01"));
+        assert!(warning.ends_with("run `ralph worker verify cursor` to check this version."));
+        assert!(version_warning(&CURSOR_AGENT, "???", &none)
             .unwrap()
             .contains("could not read"));
+    }
+
+    #[test]
+    fn a_verified_version_is_silent_for_its_agent_only() {
+        let verified = VerifiedAgents::default().record(verified_entry(
+            "cursor",
+            "2026.11.01",
+            false,
+            "2026-11-02",
+        ));
+        assert_eq!(
+            version_warning(&CURSOR_AGENT, "2026.11.01-abc", &verified),
+            None
+        );
+        assert!(version_warning(&CURSOR_AGENT, "2026.11.02-abc", &verified).is_some());
     }
 
     #[test]

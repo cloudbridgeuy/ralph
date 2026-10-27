@@ -24,6 +24,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
 | `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
 | `config` | Check `config.toml` for errors and unknown keys |
+| `worker` | Verify an installed headless agent against ralph's local spec ([details](context/headless-workers.md#verify-an-agent-version)) |
 
 ---
 
@@ -143,6 +144,18 @@ With `--store DIR` it also checks `DIR/config.toml` on its own, then the merged 
 | `ok: <path>` | No errors |
 
 Parse failures and invalid `[workers]` or `[wire.prices]` values also fail the check. Exit code is 1 when any error is found. Environment variables and `$EDITOR` are not consulted.
+
+---
+
+## ralph worker
+
+```bash
+ralph worker verify <cursor|codex> [--live]
+```
+
+Runs the installed headless agent in a fresh temporary directory and prints `PASS`, `FAIL` or `UNKNOWN` per check, then a summary line that says whether `--live` ran. Exit code is 0 when every blocking check passes and 1 otherwise. A full pass records the agent version in `verified-agents.json` in the config directory (honours `RALPH_CONFIG_DIR`), which stops the "differs from the tested" warning for that version.
+
+Without `--live` no prompt is sent and no model is called. `--live` adds one reply, one permission round-trip and one cancel, which use model calls. A failed or unknown cancel is printed but never fails the spec. See [Headless workers](context/headless-workers.md#verify-an-agent-version) for the checks.
 
 ---
 

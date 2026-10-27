@@ -21,6 +21,7 @@ pub mod highlight;
 mod inbox_alert;
 mod input_theme;
 mod invoke;
+mod json_file;
 pub mod markdown;
 mod mermaid_guard;
 mod opencode_worker;
@@ -39,6 +40,7 @@ mod status_theme;
 pub mod stream_processor;
 pub mod subprocess;
 mod transport;
+mod verified_agents;
 mod version;
 pub mod warn;
 mod watch_requests;
@@ -47,12 +49,13 @@ mod watches;
 mod wire;
 mod worker_changes;
 mod worker_mcp;
+mod worker_verify;
 mod workers;
 
 use clap::Parser;
 use cli::{
-    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, MermaidArgs, WorkerMcpArgs,
-    WorkerStopHookArgs,
+    AskArgs, ChatArgs, ChatMcpArgs, ChatNapArgs, Cli, Commands, MermaidArgs, WorkerArgs,
+    WorkerCommand, WorkerMcpArgs, WorkerStopHookArgs,
 };
 use invoke::InvocationConfig;
 use std::process::ExitCode;
@@ -77,6 +80,7 @@ fn main() -> ExitCode {
         Commands::Chat(args) => chat::run(args),
         Commands::Wire(args) => wire::run(args),
         Commands::Config(args) => execute_config(args),
+        Commands::Worker(args) => execute_worker(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::Mermaid(args) => execute_mermaid(args),
@@ -90,6 +94,12 @@ fn main() -> ExitCode {
             eprintln!("Error: {}", e);
             ExitCode::FAILURE
         }
+    }
+}
+
+fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
+    match args.command {
+        WorkerCommand::Verify { agent, live } => worker_verify::run(agent, live),
     }
 }
 

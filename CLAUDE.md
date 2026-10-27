@@ -16,6 +16,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `ralph` / `ralph chat` - persistent chat with a compressed memory tree ([details](docs/context/ralph-chat.md))
 - `ralph ask` - single-shot prompt; nothing is stored ([details](docs/context/ralph-ask.md))
 - `ralph wire` - local proxy that records harness-to-provider traffic; `wire ls`/`wire show`/`wire sessions` inspect it ([details](docs/context/ralph-wire.md))
+- `ralph worker verify <cursor|codex> [--live]` - check an installed headless agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))
 - `ralph themes` - list syntax highlighting themes ([CLI reference](docs/cli-reference.md))
 
 ## Unnegotiables

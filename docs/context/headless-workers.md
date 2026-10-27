@@ -49,7 +49,7 @@ The shared trait unifies lifecycle orchestration only; it is not a plugin regist
 
 `CodexHost` (`crates/ralph/src/codex_worker.rs`) mirrors `CursorHost`. Spawn writes `<store>/codex-spawn/<id>`; the host starts `codex app-server --listen stdio://` in the worktree and writes the owner file `<store>/codex/<id>` at once. Pure protocol lives in `crates/core/src/worker/codex/` (`rpc.rs`: framing and request ids; `protocol.rs`: params, version, login and model checks, MCP startup verdict).
 
-Start order, all inside a 20 s deadline: `initialize` (`experimentalApi`), `initialized`, version check, `account/read`, `model/list` (always, paged; checks model and effort), `thread/start` or `thread/resume`, wait for `mcpServer/startupStatus/updated` of `ralph-worker` to reach `ready`, `turn/start` with the task as the first turn, then `ready/<id>`. The session record is written after the first turn ends ok, not before it. Version rule: older than 0.162 fails; 0.162 up to the probed 0.164.x passes; a newer minor passes with a warning through `crate::warn::warn` (probed 0.164.0; 0.162.1 earlier).
+Start order, all inside a 20 s deadline: `initialize` (`experimentalApi`), `initialized`, version check, `account/read`, `model/list` (always, paged; checks model and effort), `thread/start` or `thread/resume`, wait for `mcpServer/startupStatus/updated` of `ralph-worker` to reach `ready`, `turn/start` with the task as the first turn, then `ready/<id>`. The session record is written after the first turn ends ok, not before it. Version rule: older than 0.162 fails; 0.162 up to the probed 0.164.x passes; a newer minor passes with a warning through `crate::warn::warn` unless `ralph worker verify codex` recorded that version (probed 0.164.0; 0.162.1 earlier).
 
 `thread/start` sets `approvalPolicy: "on-request"`, `approvalsReviewer: "user"`, `sandbox: "workspace-write"` and a runtime `config.mcp_servers.ralph-worker` entry (`required: true`, `default_tools_approval_mode: "approve"`, so the `report` tool needs no elicitation). Server requests that are not approvals (and approvals of a stale `turnId`) are answered with JSON-RPC error -32601, so they fail closed. Approvals follow the permission flow below.
 
@@ -74,6 +74,25 @@ Resume runs on chat start (`CodexHost::resume_all`, `crates/ralph/src/codex_work
 Close order (`codex_close_plan`): wind down (mark closing, drain pending permission requests and RPCs), wait up to 3 s (`CODEX_CLOSE_TURN_WAIT`) for a running turn to end after `turn/interrupt`, drop stdin, snapshot the descendant tree with each start time, TERM then KILL the app-server group, sweep the snapshot entries whose pid and start time still match, then check again after KILL and log any survivor to `acp-logs` with tag `sweep`, remove the owner file. Close then removes `ready/<id>`, the session record and the close marker.
 
 `thread/start` writes a global `[projects."<repo>"] trust_level = "trusted"` entry to `~/.codex/config.toml` unless the project is already trusted. Ralph passes an in-memory `projects."<cwd>".trust_level = "trusted"` override on `thread/start` and `thread/resume`, so Codex writes no trust entry (GUZ-847). The /tmp and /private/tmp forms both matched.
+
+## Verify an agent version
+
+`ralph worker verify <cursor|codex> [--live]` (`crates/ralph/src/worker_verify.rs`, `acp_worker/verify.rs`, `codex_worker/verify.rs`) runs a local spec against the installed agent in a temporary directory and exits 0 only when every blocking check passes. Pure types, verdicts and rendering are in `crates/core/src/worker/verify.rs`. The command spawns its own child and stops only that child. It does not touch worker stores or the ralph MCP server.
+
+A full pass writes `{agent, version, live, verified_at}` to `verified-agents.json` in the config directory. Both version warnings (`version_warning` for Cursor, `check_version` for Codex) stay silent for the pinned version and for any recorded version, and their text ends with the verify command. A free pass records `live: false`; it never replaces a `live: true` record of the same version. A missing or unreadable file counts as empty.
+
+| Check | Cursor | Codex | Mode |
+| --- | --- | --- | --- |
+| version | `agent --version` is readable | `initialize` user agent is readable and not older than 0.162 | free |
+| spawn, initialize | `agent acp` starts; ACP protocol 1 | `codex app-server` starts; `initialize` answers | free |
+| login | `session/new` raises no -32000 | `account/read` shows a usable account | free |
+| session | `session/new` returns a session; `loadSession` capability is advertised | `model/list` lists models; `thread/start` returns a thread, then `thread/archive` removes it | free |
+| prompt/reply | one short prompt ends `end_turn` with reply updates | one short prompt ends `completed` with reply deltas | `--live` |
+| session/reload | the prompted session loads again | none | `--live` |
+| permission | a file-creating prompt raises a request with an `allow_once` option, which is allowed | the same prompt raises an approval with an `accept` option, which is accepted | `--live` |
+| cancel | `session/cancel` after the first update ends the turn `cancelled` | `turn/interrupt` after the first delta ends the turn `interrupted` | `--live`, advisory |
+
+Cancel prints `PASS`, `FAIL` or `UNKNOWN` and never fails the spec; `UNKNOWN` means the turn ended before the cancel could be judged. The Codex spec starts its thread read-only without the ralph MCP server, so the file-creating prompt needs approval. `session/load` of a never-prompted Cursor session answers `Invalid params` (cursor-agent 2026.10.22), so the load itself runs after the live prompt. Cursor offers no way to delete a session, so each run leaves one Cursor chat behind. The permission and cancel prompts never ask the agent to stop, kill or signal anything.
 
 ## Capability probes
 

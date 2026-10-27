@@ -1,4 +1,5 @@
 use super::Opening;
+use crate::json_file::{read_json, write_json};
 use crate::paths::config_dir;
 use agent_client_protocol::schema::v1::{
     SessionConfigKind, SessionConfigOption, SessionConfigSelectOptions, SessionId,
@@ -171,25 +172,6 @@ fn clear_snapshot() {
 
 fn snapshot_path() -> PathBuf {
     config_dir().join(SNAPSHOT_FILE)
-}
-
-fn read_json(path: &Path) -> Result<Value, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    serde_json::from_str(&text)
-        .map_err(|error| format!("could not parse {}: {error}", path.display()))
-}
-
-fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|error| format!("could not encode {}: {error}", path.display()))?;
-    let temporary = path.with_extension("json.ralph-tmp");
-    fs::write(&temporary, format!("{text}\n"))
-        .map_err(|error| format!("could not write {}: {error}", temporary.display()))?;
-    fs::rename(&temporary, path).map_err(|error| {
-        fs::remove_file(&temporary).ok();
-        format!("could not replace {}: {error}", path.display())
-    })
 }
 
 fn cursor_dir() -> Result<PathBuf, String> {
