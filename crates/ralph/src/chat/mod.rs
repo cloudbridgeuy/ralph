@@ -38,7 +38,7 @@ use crate::chat::memory::Store;
 use crate::chat::monitor::{
     ready_ids, watch_headless, watch_input, watch_status, Monitor, ThreadMemo,
 };
-use crate::chat::prompt::{next_route, ChatPrompt};
+use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
     decide, draft_with_queue, draft_with_typed, exit_notice, unsent, Decision, Queue,
 };
@@ -80,7 +80,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
-use ralph_core::chat_suggestion::{prefill, Prefill};
+use ralph_core::chat_suggestion::{prefill, Prefill, SuggestionRecord};
 use ralph_core::chat_thread::run_id;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -391,15 +391,31 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let schedule_store = monitor.schedule.clone();
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
+    let mut offered: Option<(String, u64)> = None;
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
         let route = match pending.take() {
             Some(route) => Some(route),
             None => {
                 at_prompt.store(true, Ordering::SeqCst);
-                let route = next_route(&mut editor, &prompt);
+                let submitted = next_route(&mut editor, &prompt);
                 at_prompt.store(false, Ordering::SeqCst);
-                route?
+                submitted?.map(|Submitted { line, route }| {
+                    if let Some((suggestion, turn_number)) = offered.take() {
+                        let record = SuggestionRecord::new(
+                            chrono::Utc::now().to_rfc3339(),
+                            &run,
+                            turn_number,
+                            &suggestion,
+                            &line,
+                        );
+                        warn_if_err(
+                            store.append_suggestion(&record),
+                            "Failed to record suggestion outcome",
+                        );
+                    }
+                    route
+                })
             }
         };
         let Some(route) = route else {
@@ -515,10 +531,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let draft = draft_with_typed(draft, &typed);
         let replied = outcome == TurnOutcome::Replied;
         shown.clear();
+        offered = None;
         if let Some(fill) = prefill(replied, draft, suggestion) {
             let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
             editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
             if let Prefill::Suggestion(text) = fill {
+                offered = Some((text.clone(), turn.process_turns.load(Ordering::SeqCst)));
                 shown.set(text);
             }
         }

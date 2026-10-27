@@ -1,3 +1,4 @@
+use serde::Serialize;
 use serde_json::{json, Value};
 
 pub const SUGGESTION_MAX_CHARS: usize = 200;
@@ -61,6 +62,49 @@ pub fn prefill(
 
 pub fn untouched(suggestion: &str, buffer: &str) -> bool {
     suggestion == buffer
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Outcome {
+    Accepted,
+    Extended,
+    Discarded,
+}
+
+pub fn outcome(suggestion: &str, sent: &str) -> Outcome {
+    let sent = sent.trim();
+    if sent == suggestion {
+        Outcome::Accepted
+    } else if sent.starts_with(suggestion) {
+        Outcome::Extended
+    } else {
+        Outcome::Discarded
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SuggestionRecord {
+    pub ts: String,
+    pub run: String,
+    pub turn: u64,
+    pub outcome: Outcome,
+    pub suggestion: String,
+    pub sent: String,
+}
+
+impl SuggestionRecord {
+    pub fn new(ts: String, run: &str, turn: u64, suggestion: &str, sent: &str) -> Self {
+        let sent = sent.trim();
+        Self {
+            ts,
+            run: run.to_string(),
+            turn,
+            outcome: outcome(suggestion, sent),
+            suggestion: suggestion.to_string(),
+            sent: sent.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -165,5 +209,73 @@ mod tests {
         assert!(!untouched("yes", "yes "));
         assert!(!untouched("yes", "Yes"));
         assert!(!untouched("yes", ""));
+    }
+
+    #[test]
+    fn identical_send_is_accepted() {
+        assert_eq!(outcome("yes", "yes"), Outcome::Accepted);
+    }
+
+    #[test]
+    fn longer_send_with_the_suggestion_as_prefix_is_extended() {
+        assert_eq!(outcome("yes", "yes, and more"), Outcome::Extended);
+    }
+
+    #[test]
+    fn replaced_text_is_discarded() {
+        assert_eq!(outcome("yes", "no way"), Outcome::Discarded);
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_trimmed_before_comparing() {
+        assert_eq!(outcome("yes", "  yes \n"), Outcome::Accepted);
+        assert_eq!(outcome("yes", " yes please "), Outcome::Extended);
+    }
+
+    #[test]
+    fn empty_send_is_discarded() {
+        assert_eq!(outcome("yes", ""), Outcome::Discarded);
+        assert_eq!(outcome("yes", "   "), Outcome::Discarded);
+    }
+
+    #[test]
+    fn case_only_change_is_discarded() {
+        assert_eq!(outcome("yes", "Yes"), Outcome::Discarded);
+    }
+
+    #[test]
+    fn accepted_command_counts_as_accepted() {
+        assert_eq!(outcome("/help", "/help"), Outcome::Accepted);
+    }
+
+    #[test]
+    fn shorter_prefix_of_the_suggestion_is_discarded() {
+        assert_eq!(outcome("yes please", "yes"), Outcome::Discarded);
+    }
+
+    #[test]
+    fn record_trims_sent_and_serializes_exact_keys() {
+        let record = SuggestionRecord::new(
+            "2026-01-01T00:00:00+00:00".to_string(),
+            "7-t",
+            7,
+            "yes",
+            " yes ok ",
+        );
+        assert_eq!(
+            serde_json::to_value(&record).unwrap(),
+            json!({
+                "ts": "2026-01-01T00:00:00+00:00",
+                "run": "7-t",
+                "turn": 7,
+                "outcome": "extended",
+                "suggestion": "yes",
+                "sent": "yes ok"
+            })
+        );
+        assert_eq!(
+            serde_json::to_string(&record).unwrap(),
+            r#"{"ts":"2026-01-01T00:00:00+00:00","run":"7-t","turn":7,"outcome":"extended","suggestion":"yes","sent":"yes ok"}"#
+        );
     }
 }

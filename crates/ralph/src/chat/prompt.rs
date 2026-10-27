@@ -158,17 +158,23 @@ impl Prompt for ChatPrompt {
     }
 }
 
-pub(super) fn next_route(editor: &mut Reedline, prompt: &ChatPrompt) -> io::Result<Option<Route>> {
+pub(super) struct Submitted {
+    pub line: String,
+    pub route: Route,
+}
+
+pub(super) fn next_route(
+    editor: &mut Reedline,
+    prompt: &ChatPrompt,
+) -> io::Result<Option<Submitted>> {
     let attachments = prompt.monitor.store_dir.join(ATTACHMENTS_DIR);
     loop {
         match retry_interrupted(|| editor.read_line(prompt))? {
             Signal::Success(line) => {
                 prompt.notice.take();
-                return Ok(Some(route_input(
-                    &line,
-                    prompt.monitor.status().unread,
-                    &prompt.empty_submit,
-                )));
+                let route =
+                    route_input(&line, prompt.monitor.status().unread, &prompt.empty_submit);
+                return Ok(Some(Submitted { line, route }));
             }
             Signal::HostCommand(command) if command == PASTE_IMAGE => {
                 *prompt.notice.borrow_mut() = paste_image(editor, &attachments)

@@ -8,6 +8,7 @@ use ralph_core::chat_memory::{
     Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, RangeRequest, Role,
     SearchRequest, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
+use ralph_core::chat_suggestion::SuggestionRecord;
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -18,6 +19,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
+const SUGGESTIONS_FILE: &str = "suggestions.jsonl";
 
 pub struct Store {
     dir: PathBuf,
@@ -253,6 +255,15 @@ impl Store {
     pub fn append_usage(&self, record: &UsageRecord) -> io::Result<()> {
         let line = encode_usage(record).map_err(io::Error::other)?;
         let path = self.dir.join("usage.jsonl");
+        check_path(&path)?;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        file.write_all(line.as_bytes())
+    }
+
+    pub fn append_suggestion(&self, record: &SuggestionRecord) -> io::Result<()> {
+        let mut line = serde_json::to_string(record).map_err(io::Error::other)?;
+        line.push('\n');
+        let path = self.dir.join(SUGGESTIONS_FILE);
         check_path(&path)?;
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         file.write_all(line.as_bytes())
