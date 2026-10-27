@@ -404,6 +404,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     if let Some((suggestion, turn_number)) = offered.take() {
                         let record = SuggestionRecord::new(
                             chrono::Utc::now().to_rfc3339(),
+                            &run,
                             turn_number,
                             &suggestion,
                             &line,

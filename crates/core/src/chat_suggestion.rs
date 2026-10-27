@@ -86,6 +86,7 @@ pub fn outcome(suggestion: &str, sent: &str) -> Outcome {
 #[derive(Debug, Serialize)]
 pub struct SuggestionRecord {
     pub ts: String,
+    pub run: String,
     pub turn: u64,
     pub outcome: Outcome,
     pub suggestion: String,
@@ -93,10 +94,11 @@ pub struct SuggestionRecord {
 }
 
 impl SuggestionRecord {
-    pub fn new(ts: String, turn: u64, suggestion: &str, sent: &str) -> Self {
+    pub fn new(ts: String, run: &str, turn: u64, suggestion: &str, sent: &str) -> Self {
         let sent = sent.trim();
         Self {
             ts,
+            run: run.to_string(),
             turn,
             outcome: outcome(suggestion, sent),
             suggestion: suggestion.to_string(),
@@ -255,6 +257,7 @@ mod tests {
     fn record_trims_sent_and_serializes_exact_keys() {
         let record = SuggestionRecord::new(
             "2026-01-01T00:00:00+00:00".to_string(),
+            "7-t",
             7,
             "yes",
             " yes ok ",
@@ -263,11 +266,16 @@ mod tests {
             serde_json::to_value(&record).unwrap(),
             json!({
                 "ts": "2026-01-01T00:00:00+00:00",
+                "run": "7-t",
                 "turn": 7,
                 "outcome": "extended",
                 "suggestion": "yes",
                 "sent": "yes ok"
             })
+        );
+        assert_eq!(
+            serde_json::to_string(&record).unwrap(),
+            r#"{"ts":"2026-01-01T00:00:00+00:00","run":"7-t","turn":7,"outcome":"extended","suggestion":"yes","sent":"yes ok"}"#
         );
     }
 }
