@@ -40,16 +40,20 @@ fn anchored(entry: &str, dir: &Path) -> String {
     }
 }
 
-pub fn anchor_skills(mut table: Table, dir: &Path) -> Table {
-    let skills = table
-        .get_mut("chat")
-        .and_then(Value::as_table_mut)
-        .and_then(|chat| chat.get_mut("skills"))
-        .and_then(Value::as_array_mut);
-    for entry in skills.into_iter().flatten() {
-        if let Value::String(text) = entry {
-            *text = anchored(text, dir);
+pub fn anchor_chat_paths(mut table: Table, dir: &Path) -> Table {
+    let Some(chat) = table.get_mut("chat").and_then(Value::as_table_mut) else {
+        return table;
+    };
+    for key in ["skills", "append_prompt_files"] {
+        let entries = chat.get_mut(key).and_then(Value::as_array_mut);
+        for entry in entries.into_iter().flatten() {
+            if let Value::String(text) = entry {
+                *text = anchored(text, dir);
+            }
         }
+    }
+    if let Some(Value::String(text)) = chat.get_mut("prompt_file") {
+        *text = anchored(text, dir);
     }
     table
 }
@@ -127,7 +131,7 @@ mod tests {
 
     #[test]
     fn relative_skills_anchor_to_the_file_directory() {
-        let anchored = anchor_skills(
+        let anchored = anchor_chat_paths(
             table("[chat]\nskills = [\"rel/x\", \"~/y\", \"/abs/z\"]\nworktree_dir = \"wt\"\n"),
             Path::new("/cfg"),
         );
@@ -136,6 +140,22 @@ mod tests {
             table(
                 "[chat]\nskills = [\"/cfg/rel/x\", \"~/y\", \"/abs/z\"]\nworktree_dir = \"wt\"\n"
             )
+        );
+    }
+
+    #[test]
+    fn prompt_files_anchor_like_skills() {
+        let anchored = anchor_chat_paths(
+            table("[chat]\nprompt_file = \"p.md\"\nappend_prompt_files = [\"a.md\", \"~/b.md\", \"/c.md\"]\n"),
+            Path::new("/cfg"),
+        );
+        assert_eq!(
+            anchored,
+            table("[chat]\nprompt_file = \"/cfg/p.md\"\nappend_prompt_files = [\"/cfg/a.md\", \"~/b.md\", \"/c.md\"]\n")
+        );
+        assert_eq!(
+            anchor_chat_paths(table("x = 1\n"), Path::new("/cfg")),
+            table("x = 1\n")
         );
     }
 

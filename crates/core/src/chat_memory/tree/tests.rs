@@ -432,8 +432,8 @@ fn turn_system_prompt_is_identical_when_appends_stay_in_one_step() {
     let before = split_view(&shorter, &tree, 200, 100);
     let after = split_view(&longer, &tree, 200, 100);
     assert_eq!(
-        crate::chat::turn_system_prompt(&before.older),
-        crate::chat::turn_system_prompt(&after.older)
+        crate::chat::turn_system_prompt(&crate::chat::CustomPrompt::default(), &before.older),
+        crate::chat::turn_system_prompt(&crate::chat::CustomPrompt::default(), &after.older)
     );
 }
 

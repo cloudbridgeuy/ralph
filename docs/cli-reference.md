@@ -138,6 +138,7 @@ With `--store DIR` it also checks `DIR/config.toml` on its own, then the merged 
 | `unknown key: chat.wrap_widh` | Key that no setting uses; chat ignores it |
 | `[chat] edit_mode = "nano" is not "emacs" or "vi"; using "emacs"` | Invalid value that chat warns about and replaces with a default |
 | `watch_timeout_secs must be above 0.` | Value chat rejects at startup |
+| `cannot read prompt file <path>: <error>` | A `[chat] prompt_file` or `append_prompt_files` path (after relative paths resolve against the file) that is missing or unreadable; chat skips it with a warning |
 | `note: ...` | Deprecation; does not fail the check |
 | `ok: <path>` | No errors |
 

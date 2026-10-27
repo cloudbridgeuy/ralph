@@ -3,7 +3,7 @@ use crate::chat::memory::Store;
 use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::highlight::ThemeConfig;
-use crate::invoke::build_chat_command;
+use crate::invoke::{build_chat_command, Isolation};
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
@@ -16,7 +16,7 @@ use crate::warn::warning_line;
 use crate::watches::locked;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_reason,
-    turn_prompt, turn_system_prompt, ResetLimits, VIEW_LINES,
+    turn_prompt, turn_system_prompt, CustomPrompt, ResetLimits, VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
@@ -89,6 +89,8 @@ pub(super) struct Turn<'a> {
     pub(super) permission_mode: &'a str,
     pub(super) plugin_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
+    pub(super) custom_prompt: &'a CustomPrompt,
+    pub(super) isolation: &'a Isolation,
     pub(super) theme_config: &'a ThemeConfig,
     pub(super) session: Arc<Mutex<Option<Session>>>,
     pub(super) process_turns: AtomicU64,
@@ -348,7 +350,7 @@ impl Turn<'_> {
         }
         let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
         let first_prompt = turn_prompt(&split.tail, sent);
-        let system = turn_system_prompt(&split.older);
+        let system = turn_system_prompt(self.custom_prompt, &split.older);
         let args = [
             self.mcp_args.to_vec(),
             build_attachments_args(self.store_dir),
@@ -362,6 +364,7 @@ impl Turn<'_> {
                 &args,
                 self.permission_mode,
                 dirs::home_dir().as_deref(),
+                self.isolation,
             ),
             timeout_secs: None,
             theme_config: self.theme_config.clone(),

@@ -2,6 +2,7 @@ use super::empty_submit;
 use super::{ChatSection, EditorSetting, WORKER_QUIET_SECS};
 use ralph_core::chat::{ResetLimits, RESET_TOKENS, RESET_TURNS};
 use ralph_core::chat_status::EmptySubmit;
+use std::path::{Path, PathBuf};
 
 fn positive_setting(value: Option<&toml::Value>, key: &str, default: u64) -> (u64, Option<String>) {
     match value.map(toml::Value::as_integer) {
@@ -16,7 +17,34 @@ fn positive_setting(value: Option<&toml::Value>, key: &str, default: u64) -> (u6
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PromptFiles {
+    pub behaviour: Option<PathBuf>,
+    pub appends: Vec<PathBuf>,
+}
+
+fn expand_home(path: &Path, home: Option<&Path>) -> PathBuf {
+    match (path.strip_prefix("~"), home) {
+        (Ok(rest), Some(home)) => home.join(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 impl ChatSection {
+    pub fn prompt_files(&self, home: Option<&Path>) -> PromptFiles {
+        PromptFiles {
+            behaviour: self
+                .prompt_file
+                .as_deref()
+                .map(|path| expand_home(path, home)),
+            appends: self
+                .append_prompt_files
+                .iter()
+                .map(|path| expand_home(path, home))
+                .collect(),
+        }
+    }
+
     pub fn worker_quiet_setting(&self) -> (u64, Option<String>) {
         positive_setting(
             self.worker_quiet_secs.as_ref(),
@@ -55,5 +83,30 @@ impl ChatSection {
             ),
             None => (None, None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_files_expand_home_and_keep_other_paths() {
+        let chat = ChatSection {
+            prompt_file: Some(PathBuf::from("~/p.md")),
+            append_prompt_files: vec![PathBuf::from("/cfg/a.md"), PathBuf::from("~")],
+            ..ChatSection::default()
+        };
+        assert_eq!(
+            chat.prompt_files(Some(Path::new("/h"))),
+            PromptFiles {
+                behaviour: Some(PathBuf::from("/h/p.md")),
+                appends: vec![PathBuf::from("/cfg/a.md"), PathBuf::from("/h")],
+            }
+        );
+        assert_eq!(
+            chat.prompt_files(None).behaviour,
+            Some(PathBuf::from("~/p.md"))
+        );
     }
 }
