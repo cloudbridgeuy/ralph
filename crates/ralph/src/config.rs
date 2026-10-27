@@ -53,6 +53,22 @@ struct Notice {
     message: String,
 }
 
+fn security_notices(store: &Path) -> Vec<Notice> {
+    let Ok(table) = read_layer(store) else {
+        return Vec::new();
+    };
+    layers::security_keys(&table)
+        .into_iter()
+        .map(|key| Notice {
+            key: format!("security:{key}"),
+            message: format!(
+                "store config {} sets {key}; check it before you trust this store",
+                store.display()
+            ),
+        })
+        .collect()
+}
+
 static STORE_LAYER: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_store_layer(store: &Path) {
@@ -435,6 +451,7 @@ impl AppConfig {
                 }
                 Err(global_error) => (Err(global_error), Vec::new()),
             },
+            (Ok(config), Some(store_path)) => (Ok(config), security_notices(store_path)),
             (result, _) => (result, Vec::new()),
         }
     }

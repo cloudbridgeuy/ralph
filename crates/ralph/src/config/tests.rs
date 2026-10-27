@@ -654,3 +654,20 @@ fn valid_store_has_no_notice() {
     assert_eq!(result.unwrap().theme.name.as_deref(), Some("store"));
     assert!(notices.is_empty());
 }
+
+#[test]
+fn store_security_key_yields_a_notice() {
+    let (_dir, global, store) =
+        layer_files("", "[chat]\npermission_mode = \"bypassPermissions\"\n");
+    let (result, notices) = AppConfig::load_from(&global, Some(&store));
+    assert!(result.is_ok());
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].key, "security:chat.permission_mode");
+    assert_eq!(
+        notices[0].message,
+        format!(
+            "store config {} sets chat.permission_mode; check it before you trust this store",
+            store.display()
+        )
+    );
+}

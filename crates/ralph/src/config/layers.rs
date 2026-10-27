@@ -58,6 +58,27 @@ pub fn anchor_chat_paths(mut table: Table, dir: &Path) -> Table {
     table
 }
 
+const SECURITY_KEYS: [&str; 8] = [
+    "chat.permission_mode",
+    "chat.mcp_servers",
+    "chat.user_settings",
+    "chat.prompt_file",
+    "chat.append_prompt_files",
+    "chat.skills",
+    "codex.permissions",
+    "cursor.permissions",
+];
+
+pub fn security_keys(layer: &Table) -> Vec<&'static str> {
+    SECURITY_KEYS
+        .into_iter()
+        .filter(|key| {
+            let path: Vec<String> = key.split('.').map(str::to_string).collect();
+            defines(layer, &path)
+        })
+        .collect()
+}
+
 fn defines(table: &Table, path: &[String]) -> bool {
     match path {
         [] => false,
@@ -157,6 +178,22 @@ mod tests {
             anchor_chat_paths(table("x = 1\n"), Path::new("/cfg")),
             table("x = 1\n")
         );
+    }
+
+    #[test]
+    fn security_keys_finds_each_listed_key() {
+        for key in SECURITY_KEYS {
+            let (section, leaf) = key.split_once('.').unwrap();
+            let layer = table(&format!("[{section}]\n{leaf} = 1\n"));
+            assert_eq!(security_keys(&layer), [key]);
+        }
+    }
+
+    #[test]
+    fn security_keys_ignores_other_keys_and_empty_tables() {
+        assert!(security_keys(&Table::new()).is_empty());
+        let layer = table("theme = 1\n[chat]\nwrap_width = 1\n[codex]\nmodel = \"x\"\n");
+        assert!(security_keys(&layer).is_empty());
     }
 
     #[test]
