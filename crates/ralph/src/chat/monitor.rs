@@ -1,6 +1,6 @@
 use crate::chat::check::CheckState;
 use crate::chat::keepalive::Stamp;
-use crate::chat::memory::Store;
+use crate::chat::memory::{self, Store};
 use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
 use crate::cursor_owner::{now_secs, write_file};
@@ -256,9 +256,7 @@ impl Monitor {
     }
 
     fn reload_thread(&self) {
-        let usage = self
-            .store
-            .load_usage()
+        let usage = memory::load_usage(&memory::usage_path())
             .ok()
             .map(|text| thread_usage(&text, &self.run));
         let shift = self.measure_shift();

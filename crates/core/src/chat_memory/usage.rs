@@ -1,5 +1,5 @@
 use crate::chat_thread::ResetReason;
-use crate::stream::IterationCosts;
+use crate::stream::{IterationCosts, IterationMetadata};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -56,6 +56,31 @@ pub fn view_stats(lines: &[String]) -> ViewStats {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CostSource {
+    Harness,
+}
+
+const MAIN_HARNESS: &str = "claude";
+
+pub fn carry_metadata(
+    previous: &IterationMetadata,
+    launched: bool,
+    seen: &IterationMetadata,
+) -> IterationMetadata {
+    let base = if launched {
+        IterationMetadata::new()
+    } else {
+        previous.clone()
+    };
+    IterationMetadata {
+        session_id: seen.session_id.clone().or(base.session_id),
+        model: seen.model.clone().or(base.model),
+        tools: Vec::new(),
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct UsageRecord {
     pub at: String,
@@ -77,6 +102,14 @@ pub struct UsageRecord {
     pub reset: Option<ResetReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_source: Option<CostSource>,
     #[serde(flatten)]
     pub view: Option<ViewStats>,
 }
@@ -90,7 +123,12 @@ impl UsageRecord {
     }
 }
 
-pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Option<UsageRecord> {
+pub fn usage_record(
+    kind: CallKind,
+    at: String,
+    costs: &IterationCosts,
+    metadata: &IterationMetadata,
+) -> Option<UsageRecord> {
     let usage = costs.usage.as_ref()?;
     Some(UsageRecord {
         at,
@@ -106,6 +144,10 @@ pub fn usage_record(kind: CallKind, at: String, costs: &IterationCosts) -> Optio
         request_at: None,
         reset: None,
         run: None,
+        harness: Some(MAIN_HARNESS.to_string()),
+        model: metadata.model.clone(),
+        session_id: metadata.session_id.clone(),
+        cost_source: costs.cost_usd.map(|_| CostSource::Harness),
         view: None,
     })
 }
@@ -157,7 +199,13 @@ mod tests {
 
     #[test]
     fn usage_record_maps_all_fields() {
-        let record = usage_record(CallKind::Nap, "t".into(), &costs(Some(7))).unwrap();
+        let record = usage_record(
+            CallKind::Nap,
+            "t".into(),
+            &costs(Some(7)),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
         assert_eq!(
             (
                 record.input_tokens,
@@ -177,7 +225,8 @@ mod tests {
                 trigger: Trigger::User
             },
             "t".into(),
-            &IterationCosts::new()
+            &IterationCosts::new(),
+            &IterationMetadata::new()
         )
         .is_none());
         let record = usage_record(
@@ -186,6 +235,7 @@ mod tests {
             },
             "t".into(),
             &costs(None),
+            &IterationMetadata::new(),
         )
         .unwrap();
         assert_eq!(
@@ -202,9 +252,10 @@ mod tests {
         let kind = CallKind::Nap;
         let mut with = costs(None);
         with.context_tokens = Some(42);
-        let value = line(usage_record(kind, "t".into(), &with).unwrap());
+        let value = line(usage_record(kind, "t".into(), &with, &IterationMetadata::new()).unwrap());
         assert_eq!(value["context_tokens"], 42);
-        let value = line(usage_record(kind, "t".into(), &costs(None)).unwrap());
+        let value =
+            line(usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new()).unwrap());
         assert!(value.get("context_tokens").is_none());
     }
 
@@ -216,6 +267,7 @@ mod tests {
             },
             "t".into(),
             &costs(None),
+            &IterationMetadata::new(),
         )
         .unwrap();
         let line = encode_usage(&record).unwrap();
@@ -230,7 +282,8 @@ mod tests {
         let kind = CallKind::Turn {
             trigger: Trigger::Worker,
         };
-        let record = usage_record(kind, "t".into(), &costs(None)).unwrap();
+        let record =
+            usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new()).unwrap();
         let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert_eq!(
             (&value["kind"], &value["trigger"]),
@@ -240,7 +293,13 @@ mod tests {
 
     #[test]
     fn nap_record_has_no_trigger() {
-        let record = usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap();
+        let record = usage_record(
+            CallKind::Nap,
+            "t".into(),
+            &costs(None),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
         let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert_eq!(value["kind"], "nap");
         assert!(value.get("trigger").is_none());
@@ -254,7 +313,7 @@ mod tests {
         let kind = CallKind::Turn {
             trigger: Trigger::User,
         };
-        let record = usage_record(kind, "t".into(), &costs(None))
+        let record = usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new())
             .unwrap()
             .with_view(stats.clone());
         let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
@@ -262,7 +321,13 @@ mod tests {
         assert_eq!(value["view_lines"], 2);
         assert_eq!(value["view_head_hash"], stats.view_head_hash.as_str());
         assert_eq!(value["view_hash"].as_str().map(str::len), Some(16));
-        let nap = usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap();
+        let nap = usage_record(
+            CallKind::Nap,
+            "t".into(),
+            &costs(None),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
         let value: Value = serde_json::from_str(&encode_usage(&nap).unwrap()).unwrap();
         assert!(value.get("view_bytes").is_none());
     }
@@ -275,9 +340,18 @@ mod tests {
             },
             "t".into(),
             &costs(None),
+            &IterationMetadata::new(),
         )
         .unwrap();
-        let value = line(usage_record(CallKind::Nap, "t".into(), &costs(None)).unwrap());
+        let value = line(
+            usage_record(
+                CallKind::Nap,
+                "t".into(),
+                &costs(None),
+                &IterationMetadata::new(),
+            )
+            .unwrap(),
+        );
         for key in ["process_turn", "request_at", "reset", "run"] {
             assert!(value.get(key).is_none(), "{key}");
         }
@@ -290,6 +364,67 @@ mod tests {
         assert_eq!(value["process_turn"], 3);
         assert_eq!(value["request_at"], "2026-01-02T03:04:05+00:00");
         assert_eq!(value["reset"], "restart");
+    }
+
+    fn seen(model: Option<&str>, session: Option<&str>) -> IterationMetadata {
+        IterationMetadata {
+            model: model.map(String::from),
+            session_id: session.map(String::from),
+            ..IterationMetadata::new()
+        }
+    }
+
+    #[test]
+    fn identity_fields_serialize_only_when_present() {
+        let bare =
+            line(usage_record(CallKind::Nap, "t".into(), &costs(None), &seen(None, None)).unwrap());
+        assert_eq!(bare["harness"], "claude");
+        assert_eq!(bare["cost_source"], "harness");
+        assert!(bare.get("model").is_none() && bare.get("session_id").is_none());
+        let full = line(
+            usage_record(
+                CallKind::Nap,
+                "t".into(),
+                &costs(None),
+                &seen(Some("m"), Some("s")),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            (&full["model"], &full["session_id"]),
+            (&"m".into(), &"s".into())
+        );
+    }
+
+    #[test]
+    fn cost_source_is_absent_without_cost() {
+        let mut no_cost = costs(None);
+        no_cost.cost_usd = None;
+        let value =
+            line(usage_record(CallKind::Nap, "t".into(), &no_cost, &seen(None, None)).unwrap());
+        assert!(value.get("cost_source").is_none());
+        assert!(value["cost_usd"].is_null());
+    }
+
+    #[test]
+    fn carry_metadata_keeps_launch_values_until_relaunch() {
+        let launch = carry_metadata(&IterationMetadata::new(), true, &seen(Some("m"), Some("s")));
+        let later = carry_metadata(&launch, false, &seen(None, None));
+        assert_eq!(
+            (later.model.as_deref(), later.session_id.as_deref()),
+            (Some("m"), Some("s"))
+        );
+        let relaunch = carry_metadata(&later, true, &seen(None, None));
+        assert!(relaunch.is_empty());
+    }
+
+    #[test]
+    fn old_lines_without_identity_fields_still_parse() {
+        let old = r#"{"at":"t","kind":"turn","trigger":"user","input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2,"cost_usd":0.5,"duration_ms":4,"run":"r","process_turn":1}"#;
+        let new = r#"{"at":"t","kind":"turn","trigger":"user","input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2,"cost_usd":0.5,"duration_ms":4,"run":"r","process_turn":2,"harness":"claude","model":"m","session_id":"s","cost_source":"harness"}"#;
+        let text = format!("{old}\n{new}\n");
+        assert_eq!(crate::chat_thread::session_turns(&text, "r").len(), 2);
+        assert!(crate::chat_thread::thread_usage(&text, "r").is_some());
     }
 
     fn line(record: UsageRecord) -> Value {

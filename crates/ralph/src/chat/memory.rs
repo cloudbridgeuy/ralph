@@ -19,7 +19,27 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
+const USAGE_FILE: &str = "usage.jsonl";
 const SUGGESTIONS_FILE: &str = "suggestions.jsonl";
+
+pub fn usage_path() -> PathBuf {
+    crate::paths::config_dir().join(USAGE_FILE)
+}
+
+pub fn load_usage(path: &Path) -> io::Result<String> {
+    let bytes = read_optional(path)?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub fn append_usage(path: &Path, record: &UsageRecord) -> io::Result<()> {
+    let line = encode_usage(record).map_err(io::Error::other)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    check_path(path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    file.write_all(line.as_bytes())
+}
 
 pub struct Store {
     dir: PathBuf,
@@ -149,11 +169,6 @@ impl Store {
         self.with_archive(|archive| search(archive, request))
     }
 
-    pub fn load_usage(&self) -> io::Result<String> {
-        let bytes = read_optional(&self.dir.join("usage.jsonl"))?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
-    }
-
     fn open_lock(&self) -> io::Result<File> {
         fs::create_dir_all(&self.dir)?;
         self.lock_file()
@@ -250,14 +265,6 @@ impl Store {
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
         file.write_all(line.as_bytes())?;
         file.sync_all()
-    }
-
-    pub fn append_usage(&self, record: &UsageRecord) -> io::Result<()> {
-        let line = encode_usage(record).map_err(io::Error::other)?;
-        let path = self.dir.join("usage.jsonl");
-        check_path(&path)?;
-        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-        file.write_all(line.as_bytes())
     }
 
     pub fn append_suggestion(&self, record: &SuggestionRecord) -> io::Result<()> {
