@@ -45,7 +45,9 @@ The two files merge per key: a key in the store file replaces the same key in th
 
 Only the chat commands (`ralph chat` and its helper processes) have a store, so only they read the store file. `ralph ask`, `ralph wire` and every other command read only the global file.
 
-Relative entries in `[chat] skills` resolve from the directory of the file that lists them; `~` and absolute entries stay as written, and `--skill` and `RALPH_CHAT_SKILLS` keep their own rules. `worktree_dir` stays relative to the repo root in both files.
+Relative entries in `[chat] skills`, `prompt_file` and `append_prompt_files` resolve from the directory of the file that lists them; `~` and absolute entries stay as written, and `--skill` and `RALPH_CHAT_SKILLS` keep their own rules. `worktree_dir` stays relative to the repo root in both files.
+
+What a store file can change: it can override any key. Ralph warns once per key when a store file sets one of these security-relevant keys: `chat.permission_mode`, `chat.mcp_servers`, `chat.user_settings`, `chat.prompt_file`, `chat.append_prompt_files`, `chat.skills`, `codex.permissions` and `cursor.permissions`. If the store file fails to parse or validate, ralph warns and names the file, then uses the global file alone. `ralph config show` and `ralph config check` still report that failure as an error.
 
 `ralph config show [--store DIR]` prints the merged config and the source of each value (default, global or store); a value whose environment variable is set is marked. Flags do not apply to it. `ralph config check --store DIR` checks both files and the merged result (see [CLI reference](cli-reference.md#ralph-config)).
 
@@ -230,7 +232,7 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 |-------|------|---------|-------------|
 | `mcp_servers` | list of strings | `["mcptools"]` | Servers from `~/.claude.json` to load in chat turns |
 | `skills` | list of paths | `[]` | Skill directories exposed to chat |
-| `prompt_file` | path | unset | Text file that replaces the behaviour rules of the chat system prompt: the reply format, ask-first, verify, cite-history, development-roles and similar rules. The tool contract (`suggest_reply`, `help`, `config`), the worker, watch and memory rules, and the forget and logging rules stay. Unset uses the built-in text, which is byte-identical to earlier versions |
+| `prompt_file` | path | unset | Text file that replaces the behaviour rules of the chat system prompt: the reply format, ask-first, verify, cite-history, development-roles and similar rules. The tool contract (`suggest_reply`, `help`, `config`), the worker, watch and memory rules, and the forget and logging rules stay. Unset uses the built-in text, which is byte-identical to earlier versions. A file that is empty or only whitespace prints a warning and counts as unset |
 | `append_prompt_files` | list of paths | `[]` | Text files appended, in order, after the system prompt and before the older chat lines |
 | `project_claude_md` | bool | `true` | `false` adds `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` of the directory where chat runs to `claudeMdExcludes`; ancestors are not excluded |
 | `user_settings` | bool | `false` | `true` loads user settings too (`--setting-sources user,project,local`); it does not change `claudeMdExcludes` |
