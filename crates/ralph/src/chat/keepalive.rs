@@ -38,7 +38,7 @@ impl KeepaliveWatch {
         let last_activity = (*locked(&self.last_ping)).max(Some(turn_end));
         let mut slot = locked(&self.session);
         let input = KeepaliveInput {
-            limit_hours: Some(self.limit_hours),
+            limit_hours: self.limit_hours,
             idle_secs: (now - turn_end).num_seconds(),
             since_activity_secs: last_activity.map_or(0, |at| (now - at).num_seconds()),
             session_live: slot.as_mut().is_some_and(Session::is_alive),

@@ -13,12 +13,11 @@ pub fn resolve_keepalive_hours(config: Option<u64>) -> Option<u64> {
 pub enum Keepalive {
     Ping,
     Skip,
-    Stop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeepaliveInput {
-    pub limit_hours: Option<u64>,
+    pub limit_hours: u64,
     pub idle_secs: i64,
     pub since_activity_secs: i64,
     pub session_live: bool,
@@ -26,14 +25,9 @@ pub struct KeepaliveInput {
 }
 
 pub fn keepalive_action(input: &KeepaliveInput) -> Keepalive {
-    let Some(hours) = input.limit_hours else {
-        return Keepalive::Stop;
-    };
     let idle = u64::try_from(input.idle_secs).unwrap_or(0);
     let since_activity = u64::try_from(input.since_activity_secs).unwrap_or(0);
-    if idle >= hours.saturating_mul(3600) {
-        Keepalive::Stop
-    } else if input.turn_running || !input.session_live {
+    if idle >= input.limit_hours.saturating_mul(3600) || input.turn_running || !input.session_live {
         Keepalive::Skip
     } else if since_activity >= KEEPALIVE_PING_SECS {
         Keepalive::Ping
@@ -48,7 +42,7 @@ mod tests {
 
     fn input() -> KeepaliveInput {
         KeepaliveInput {
-            limit_hours: Some(18),
+            limit_hours: 18,
             idle_secs: 3600,
             since_activity_secs: 3600,
             session_live: true,
@@ -61,15 +55,6 @@ mod tests {
         assert_eq!(resolve_keepalive_hours(None), Some(18));
         assert_eq!(resolve_keepalive_hours(Some(0)), None);
         assert_eq!(resolve_keepalive_hours(Some(2)), Some(2));
-    }
-
-    #[test]
-    fn off_stops() {
-        let off = KeepaliveInput {
-            limit_hours: None,
-            ..input()
-        };
-        assert_eq!(keepalive_action(&off), Keepalive::Stop);
     }
 
     #[test]
@@ -94,13 +79,13 @@ mod tests {
     }
 
     #[test]
-    fn stops_at_the_hour_limit_not_before() {
+    fn skips_after_the_hour_limit_not_before() {
         let idle = |secs| KeepaliveInput {
             idle_secs: secs,
             ..input()
         };
         assert_eq!(keepalive_action(&idle(18 * 3600 - 1)), Keepalive::Ping);
-        assert_eq!(keepalive_action(&idle(18 * 3600)), Keepalive::Stop);
+        assert_eq!(keepalive_action(&idle(18 * 3600)), Keepalive::Skip);
     }
 
     #[test]
