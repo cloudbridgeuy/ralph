@@ -512,6 +512,14 @@ pub fn help_text(width: usize) -> String {
 
 const TOOL_WIDTH: usize = 1000;
 
+const IMAGES_HELP: &str = "\
+Images
+![alt](/absolute/path) in a reply draws PNG, JPEG, GIF or WebP inline in Rex, Ghostty and kitty; tmux needs allow-passthrough on.
+Drawing is off with NO_COLOR, in pipes and in unsupported terminals: the raw ![alt](path) text shows.
+A missing file, a file over 10 MiB or one that can't be decoded prints [image: alt (path)].
+Ctrl-V pastes a clipboard image as [Image #N: path].
+";
+
 const CONFIG_DOC: &str = include_str!("../../../docs/configuration.md");
 
 fn topic_name(command: Command) -> &'static str {
@@ -613,11 +621,11 @@ pub fn config_help(
 pub fn help_tool() -> Value {
     json!({
         "name": "help",
-        "description": format!("ralph chat's own /help: its commands, cells, keys and status bar legend. Call it when the user asks how ralph itself works, then answer from its text. Without topic it returns the full help; topic returns one command's section: {}. Topic `config` explains ralph's settings file (path, precedence, sections); `config <section>` returns one section such as `config chat`.", topic_list()),
+        "description": format!("ralph chat's own /help: its commands, cells, keys and status bar legend. Call it when the user asks how ralph itself works, then answer from its text. Without topic it returns the full help; topic returns one command's section: {}. Topic `config` explains ralph's settings file (path, precedence, sections); `config <section>` returns one section such as `config chat`. Topic `images` explains how a reply shows an image.", topic_list()),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "topic": {"type": "string", "description": "A command name such as diff or /diff, `config`, or `config <section>`. Omit it for the full help."}
+                "topic": {"type": "string", "description": "A command name such as diff or /diff, `images`, `config`, or `config <section>`. Omit it for the full help."}
             }
         }
     })
@@ -628,12 +636,15 @@ pub fn help_topic(topic: Option<&str>) -> Result<String, String> {
         return Ok(help_text(TOOL_WIDTH));
     };
     let wanted = topic.strip_prefix('/').unwrap_or(topic);
+    if wanted.eq_ignore_ascii_case("images") {
+        return Ok(IMAGES_HELP.to_string());
+    }
     let command = Command::ALL
         .into_iter()
         .find(|command| topic_name(*command).eq_ignore_ascii_case(wanted))
         .ok_or_else(|| {
             format!(
-                "Unknown help topic '{topic}'. Topics: {}, config, config <section>.",
+                "Unknown help topic '{topic}'. Topics: {}, images, config, config <section>.",
                 topic_list()
             )
         })?;

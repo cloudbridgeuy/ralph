@@ -72,7 +72,7 @@ use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
 use ralph_core::chat::{
     resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
-    resolve_wrap_width, CustomPrompt,
+    resolve_wrap_width, CustomPrompt, ReplyImages,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
@@ -233,6 +233,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let isolation = Isolation::for_chat(&chat_config, &std::env::current_dir()?);
     let live = Arc::new(AtomicBool::new(false));
     let run = run_id(std::process::id(), chrono::Utc::now());
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    let image_settings = crate::render::image::detect(color);
+    let reply_images = if image_settings.is_some() {
+        ReplyImages::Inline
+    } else {
+        ReplyImages::Text
+    };
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -241,6 +248,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin_args: &plugin_args,
         skills: &skills,
         custom_prompt: &custom_prompt,
+        reply_images,
         isolation: &isolation,
         theme_config: &theme_config,
         session: Arc::new(Mutex::new(None)),
@@ -326,14 +334,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
     );
-    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
     let mut editor = build_editor(&store_dir, edit_mode, highlighter)?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
-    crate::render::image::enable_images(crate::render::image::detect(color));
+    crate::render::image::enable_images(image_settings);
     let (configured_editor, config_warning) = chat_config.editor_setting();
     let (editor_cmd, editor_warning) = editor_argv(
         configured_editor,
