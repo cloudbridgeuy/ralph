@@ -35,10 +35,19 @@ Settings are resolved in this order (highest priority first):
 
 1. **CLI flags** (e.g., `--theme "Solarized (dark)"`)
 2. **Environment variables** (e.g., `RALPH_THEME=Solarized (dark)`)
-3. **Config file** (`config.toml` in config directory)
-4. **Default values**
+3. **Store config file** (`<store>/config.toml`, chat commands only)
+4. **Global config file** (`config.toml` in config directory)
+5. **Default values**
 
 This means CLI flags always win, allowing you to override config file settings for specific invocations.
+
+The two files merge per key: a key in the store file replaces the same key in the global file, and every other global key stays. Tables merge recursively. Arrays replace, they never append. Either file may be missing.
+
+Only the chat commands (`ralph chat` and its helper processes) have a store, so only they read the store file. `ralph ask`, `ralph wire` and every other command read only the global file.
+
+Relative entries in `[chat] skills` resolve from the directory of the file that lists them; `~` and absolute entries stay as written, and `--skill` and `RALPH_CHAT_SKILLS` keep their own rules. `worktree_dir` stays relative to the repo root in both files.
+
+`ralph config show [--store DIR]` prints the merged config and the source of each value (default, global or store); a value whose environment variable is set is marked. Flags do not apply to it. `ralph config check --store DIR` checks both files and the merged result (see [CLI reference](cli-reference.md#ralph-config)).
 
 ## Configuration File Format
 

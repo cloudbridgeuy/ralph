@@ -12,16 +12,20 @@ use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::worker::TicketKeys;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use toml::Table;
 
 mod changes;
 mod check;
-pub use check::check;
+pub use check::{check, hard_errors};
 mod chat_settings;
 mod claude;
 mod codex;
+mod command;
 mod cursor;
 mod empty_submit;
+mod layers;
 mod opencode;
 mod permissions;
 #[cfg(test)]
@@ -33,11 +37,43 @@ mod workers;
 pub use changes::ChangesSection;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
+pub use command::{run_check, run_show};
 pub use cursor::CursorSection;
+pub use layers::{leaf_sources, Source};
 pub use opencode::OpencodeSection;
 pub use permissions::configured_permission_mode;
 pub use wire::WireSection;
 pub use workers::{PrProvider, WorkersSection};
+
+static STORE_LAYER: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn set_store_layer(store: &Path) {
+    let _ = STORE_LAYER.set(store.to_path_buf());
+}
+
+fn parse_error(path: &Path, source: toml::de::Error) -> ConfigError {
+    ConfigError::ParseConfig {
+        path: path.display().to_string(),
+        source,
+    }
+}
+
+fn read_layer(path: &Path) -> Result<Table, ConfigError> {
+    if !path.exists() {
+        return Ok(Table::new());
+    }
+    let content = fs::read_to_string(path).map_err(|e| ConfigError::ReadConfig {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+    let table = content
+        .parse::<Table>()
+        .map_err(|source| parse_error(path, source))?;
+    Ok(match path.parent() {
+        Some(dir) => layers::anchor_skills(table, dir),
+        None => table,
+    })
+}
 
 /// Error type for configuration operations.
 #[derive(Debug, thiserror::Error)]
@@ -352,30 +388,35 @@ impl AppConfig {
         Self::default()
     }
 
-    /// Load configuration from the default config file path.
-    ///
-    /// Returns the loaded configuration if the file exists, or
-    /// the default configuration if it doesn't exist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file exists but cannot be read or parsed.
     pub fn load() -> Result<Self, ConfigError> {
-        let path = config_path();
-        Self::load_from(&path)
+        let store_file = STORE_LAYER.get().map(|dir| dir.join("config.toml"));
+        Self::load_layers(&config_path(), store_file.as_deref())
     }
 
-    pub fn load_from(path: &PathBuf) -> Result<Self, ConfigError> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
-        let content = fs::read_to_string(path).map_err(|e| ConfigError::ReadConfig {
-            path: path.display().to_string(),
-            source: e,
-        })?;
-
-        Self::parse(&content, &path.display().to_string())
+    pub fn load_layers(global: &Path, store: Option<&Path>) -> Result<Self, ConfigError> {
+        let layers = [Some(global), store]
+            .into_iter()
+            .flatten()
+            .map(|path| read_layer(path).map(|table| (path, table)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let merged = layers
+            .iter()
+            .cloned()
+            .fold(Table::new(), |merged, (_, layer)| {
+                layers::merge_tables(merged, layer)
+            });
+        merged
+            .try_into::<Self>()
+            .map_err(|source| {
+                let culprit = layers.iter().find_map(|(path, layer)| {
+                    layer.clone().try_into::<Self>().err().map(|e| (*path, e))
+                });
+                match culprit {
+                    Some((path, source)) => parse_error(path, source),
+                    None => parse_error(global, source),
+                }
+            })?
+            .validated()
     }
 
     pub fn parse(content: &str, path: &str) -> Result<Self, ConfigError> {

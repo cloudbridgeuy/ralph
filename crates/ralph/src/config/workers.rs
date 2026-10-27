@@ -145,10 +145,16 @@ mod tests {
             ("[workers]\nview = \"grid\"\n", "view"),
         ] {
             std::fs::write(&path, body).unwrap();
-            let err = AppConfig::load_from(&path).unwrap_err().to_string();
+            let err = AppConfig::load_layers(&path, None).unwrap_err().to_string();
             assert!(err.contains(key), "{err}");
         }
         std::fs::write(&path, "[workers]\ncache_secs = 1\n").unwrap();
-        assert_eq!(AppConfig::load_from(&path).unwrap().workers.cache_secs, 1);
+        assert_eq!(
+            AppConfig::load_layers(&path, None)
+                .unwrap()
+                .workers
+                .cache_secs,
+            1
+        );
     }
 }

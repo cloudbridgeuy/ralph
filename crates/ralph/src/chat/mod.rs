@@ -18,6 +18,7 @@ mod route;
 mod schedule;
 mod schedule_worker;
 mod skills;
+pub(crate) use skills::SKILLS_ENV;
 mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
@@ -94,9 +95,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 const STORE_ENV: &str = "RALPH_CHAT_STORE";
-const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
-const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
-const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
+pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
+pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
+pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
 
 fn resolve_store(
     flag: Option<PathBuf>,
@@ -122,6 +123,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         &std::env::current_dir()?,
         dirs::home_dir().as_deref(),
     )?;
+    crate::config::set_store_layer(&store_dir);
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store = Store::new(store_dir.clone());
     let exe = std::env::current_exe()?;

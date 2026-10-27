@@ -123,10 +123,15 @@ ralph wire sessions [--dir PATH] [--json]
 ## ralph config
 
 ```bash
-ralph config check [--path FILE]
+ralph config check [--path FILE] [--store DIR]
+ralph config show [--store DIR]
 ```
 
 Parses the config file and reports every problem on stderr. Without `--path` it checks the default `config.toml` (honours `RALPH_CONFIG_DIR`); a missing default file prints `no config at <path>; defaults apply` and exits 0. A missing `--path` file is an error.
+
+With `--store DIR` it also checks `DIR/config.toml` on its own, then the merged result of both files for errors only the combination causes. Each line from a file is prefixed with that file's path. A missing store file is fine.
+
+`config show` prints the merged config, one `key = value  [source]` line per value, where source is `default`, `global` or `store`; `env NAME is set` is added when an environment variable for that key is set. Flags do not apply to `config show`.
 
 | Line | Meaning |
 |------|---------|

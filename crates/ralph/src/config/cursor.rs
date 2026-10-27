@@ -36,7 +36,7 @@ mod tests {
         let path = temp_dir.path().join("config.toml");
         for (value, mode) in [("yolo", PermissionMode::Yolo), ("ask", PermissionMode::Ask)] {
             fs::write(&path, format!("[cursor]\npermissions = \"{value}\"\n")).unwrap();
-            let config = AppConfig::load_from(&path).unwrap();
+            let config = AppConfig::load_layers(&path, None).unwrap();
             assert_eq!(config.cursor.permissions_setting(), (mode, None));
         }
         assert_eq!(
@@ -55,7 +55,7 @@ mod tests {
                 format!("[cursor]\npermissions = {value}\n[chat]\nwrap_width = 80\n"),
             )
             .unwrap();
-            let config = AppConfig::load_from(&path).unwrap();
+            let config = AppConfig::load_layers(&path, None).unwrap();
             assert_eq!(config.chat.wrap_width, Some(80));
             let (mode, warning) = config.cursor.permissions_setting();
             assert_eq!(mode, PermissionMode::Ask);

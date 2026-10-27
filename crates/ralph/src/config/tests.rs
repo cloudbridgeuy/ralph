@@ -15,7 +15,7 @@ fn chat_section_defaults() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[chat]\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.mcp_servers, ["mcptools"]);
 }
 
@@ -24,7 +24,7 @@ fn mermaid_section_defaults_and_overrides() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[mermaid]\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.mermaid, MermaidSection::default());
     assert_eq!(config.mermaid.timeout_ms, 500);
     assert_eq!(config.mermaid.max_class_relations, 400);
@@ -33,7 +33,7 @@ fn mermaid_section_defaults_and_overrides() {
         "[mermaid]\ntimeout_ms = 900\nmax_flowchart_edges = 10\n",
     )
     .unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.mermaid.timeout_ms, 900);
     assert_eq!(config.mermaid.max_flowchart_edges, 10);
     assert_eq!(config.mermaid.max_rss_mb, 256);
@@ -74,7 +74,7 @@ fn chat_section_parses_watch_timeout_secs() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[chat]\nwatch_timeout_secs = 120\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.watch_timeout_secs, Some(120));
     assert_eq!(AppConfig::new().chat.watch_timeout_secs, None);
 }
@@ -84,7 +84,7 @@ fn chat_section_parses_wrap_width() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[chat]\nwrap_width = 80\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.wrap_width, Some(80));
     assert_eq!(AppConfig::new().chat.wrap_width, None);
 }
@@ -98,7 +98,7 @@ fn chat_section_parses_editor() {
         "[chat]\neditor = [\"nvim\", \"-c\", \"startinsert\"]\n",
     )
     .unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     let argv = ["nvim", "-c", "startinsert"].map(String::from);
     assert_eq!(config.chat.editor_setting(), (Some(&argv[..]), None));
     assert_eq!(AppConfig::new().chat.editor_setting(), (None, None));
@@ -114,7 +114,7 @@ fn chat_section_wrong_typed_editor_warns_and_keeps_other_keys() {
             format!("[chat]\neditor = {editor}\nwrap_width = 80\n"),
         )
         .unwrap();
-        let config = AppConfig::load_from(&path).unwrap();
+        let config = AppConfig::load_layers(&path, None).unwrap();
         assert_eq!(config.chat.wrap_width, Some(80));
         let (argv, warning) = config.chat.editor_setting();
         assert_eq!(argv, None);
@@ -128,11 +128,11 @@ fn worker_quiet_secs_defaults_and_warns_on_bad_values() {
     let path = temp_dir.path().join("config.toml");
     assert_eq!(AppConfig::new().chat.worker_quiet_setting(), (300, None));
     fs::write(&path, "[chat]\nworker_quiet_secs = 45\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.worker_quiet_setting(), (45, None));
     for value in ["0", "-5", "1.5", "\"x\""] {
         fs::write(&path, format!("[chat]\nworker_quiet_secs = {value}\n")).unwrap();
-        let config = AppConfig::load_from(&path).unwrap();
+        let config = AppConfig::load_layers(&path, None).unwrap();
         let (secs, warning) = config.chat.worker_quiet_setting();
         assert_eq!(secs, 300);
         assert!(warning.is_some_and(|text| text.contains("positive integer")));
@@ -152,12 +152,12 @@ fn chat_section_parses_inbox_alert() {
         "[chat]\ninbox_alert_sound = false\ninbox_alert_notification = true\ninbox_alert_unknown_focus = \"silent\"\n",
     )
     .unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert!(!config.chat.inbox_alert_sound);
     assert!(config.chat.inbox_alert_notification);
     assert_eq!(config.chat.inbox_alert_unknown_focus, UnknownFocus::Silent);
     fs::write(&path, "[chat]\ninbox_alert_unknown_focus = \"loud\"\n").unwrap();
-    assert!(AppConfig::load_from(&path).is_err());
+    assert!(AppConfig::load_layers(&path, None).is_err());
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn chat_section_parses_status_powerline() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[chat]\nstatus_powerline = true\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert!(config.chat.status_powerline);
 }
 
@@ -208,7 +208,7 @@ fn chat_section_parses_worker_base() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[chat]\nworker_base = \"develop\"\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.worker_base.as_deref(), Some("develop"));
     assert_eq!(AppConfig::new().chat.worker_base, None);
 }
@@ -218,7 +218,7 @@ fn chat_section_parses_worktree_dir() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("config.toml");
     fs::write(&path, "[chat]\nworktree_dir = \"../wt\"\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.worktree_dir.as_deref(), Some("../wt"));
     assert_eq!(AppConfig::new().chat.worktree_dir, None);
 }
@@ -228,7 +228,7 @@ fn chat_section_parses_mcp_servers() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[chat]\nmcp_servers = [\"a\", \"b\"]\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.mcp_servers, ["a", "b"]);
 }
 
@@ -237,7 +237,7 @@ fn chat_section_parses_skills() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("config.toml");
     fs::write(&path, "[chat]\nskills = [\"~/a\", \"/b\"]\n").unwrap();
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(
         config.chat.skills,
         [PathBuf::from("~/a"), PathBuf::from("/b")]
@@ -250,7 +250,7 @@ fn test_load_nonexistent_returns_default() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("nonexistent.toml");
 
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert!(config.theme.name.is_none());
     assert!(!config.theme.no_background);
 }
@@ -262,7 +262,7 @@ fn test_load_empty_file() {
 
     fs::write(&path, "").unwrap();
 
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert!(config.theme.name.is_none());
 }
 
@@ -280,7 +280,7 @@ fn test_load_theme_name() {
     )
     .unwrap();
 
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.theme.name, Some("Monokai Extended".to_string()));
     assert!(!config.theme.no_background);
     assert_eq!(config.theme.agent, None);
@@ -336,7 +336,7 @@ fn test_load_theme_file_path() {
     )
     .unwrap();
 
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(
         config.theme.name,
         Some("/path/to/my-theme.tmTheme".to_string())
@@ -357,7 +357,7 @@ fn test_load_no_background() {
     )
     .unwrap();
 
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert!(config.theme.no_background);
 }
 
@@ -376,7 +376,7 @@ fn test_load_full_config() {
     )
     .unwrap();
 
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.theme.name, Some("base16-eighties.dark".to_string()));
     assert!(config.theme.no_background);
 }
@@ -411,7 +411,7 @@ fn test_save_and_load() {
 
     config.save_to(&path).unwrap();
 
-    let loaded = AppConfig::load_from(&path).unwrap();
+    let loaded = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(loaded.theme.name, Some("Monokai Extended".to_string()));
     assert!(loaded.theme.no_background);
 }
@@ -423,7 +423,7 @@ fn test_parse_error() {
 
     fs::write(&path, "invalid toml {{{{").unwrap();
 
-    let result = AppConfig::load_from(&path);
+    let result = AppConfig::load_layers(&path, None);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(matches!(err, ConfigError::ParseConfig { .. }));
@@ -448,7 +448,7 @@ fn test_unknown_fields_ignored() {
     .unwrap();
 
     // Should not error on unknown fields
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.theme.name, Some("Monokai".to_string()));
 }
 
@@ -502,7 +502,7 @@ fn test_load_chat_and_ask_permission_modes_separately() {
     )
     .unwrap();
 
-    let config = AppConfig::load_from(&path).unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
     assert_eq!(config.chat.permission_mode, Some("plan".to_string()));
     assert_eq!(config.ask.permission_mode, Some("acceptEdits".to_string()));
 }
@@ -549,5 +549,66 @@ fn ask_permission_mode_precedence() {
     assert_eq!(
         configured(Some("plan"), None).ask_permission_mode(None, None),
         "bypassPermissions"
+    );
+}
+
+fn write_layer(dir: &TempDir, name: &str, content: &str) -> PathBuf {
+    let path = dir.path().join(name);
+    fs::write(&path, content).unwrap();
+    path
+}
+
+#[test]
+fn store_layer_overrides_per_key_and_keeps_sibling_global_keys() {
+    let dir = TempDir::new().unwrap();
+    let global = write_layer(
+        &dir,
+        "g.toml",
+        "[chat]\nwrap_width = 80\nworker_base = \"dev\"\n",
+    );
+    let store = write_layer(&dir, "s.toml", "[chat]\nwrap_width = 100\n");
+    let config = AppConfig::load_layers(&global, Some(&store)).unwrap();
+    assert_eq!(config.chat.wrap_width, Some(100));
+    assert_eq!(config.chat.worker_base.as_deref(), Some("dev"));
+}
+
+#[test]
+fn missing_layers_are_empty() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("none.toml");
+    let config = AppConfig::load_layers(&missing, Some(&missing)).unwrap();
+    assert_eq!(config.chat.mcp_servers, ["mcptools"]);
+}
+
+#[test]
+fn layer_errors_name_the_offending_file() {
+    let dir = TempDir::new().unwrap();
+    let global = write_layer(&dir, "g.toml", "[chat]\nwrap_width = 80\n");
+    let broken = write_layer(&dir, "s.toml", "[chat\n");
+    let typed = write_layer(&dir, "t.toml", "[chat]\nwrap_width = \"wide\"\n");
+    let syntax = AppConfig::load_layers(&global, Some(&broken)).unwrap_err();
+    assert!(syntax.to_string().contains("s.toml"));
+    let typing = AppConfig::load_layers(&global, Some(&typed)).unwrap_err();
+    assert!(typing.to_string().contains("t.toml"));
+}
+
+#[test]
+fn relative_skills_resolve_per_file_and_store_replaces_global() {
+    let dir = TempDir::new().unwrap();
+    let global = write_layer(&dir, "g.toml", "[chat]\nskills = [\"gs\"]\n");
+    let sub = dir.path().join("store");
+    fs::create_dir(&sub).unwrap();
+    let store = sub.join("config.toml");
+    fs::write(&store, "[chat]\nskills = [\"ss\", \"~/h\"]\n").unwrap();
+    assert_eq!(
+        AppConfig::load_layers(&global, None).unwrap().chat.skills,
+        [dir.path().join("gs")]
+    );
+    assert_eq!(
+        AppConfig::load_layers(&global, Some(&store))
+            .unwrap()
+            .chat
+            .skills,
+        [sub.join("ss"), PathBuf::from("~/h")]
     );
 }

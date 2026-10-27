@@ -9,15 +9,20 @@ pub struct CheckReport {
     pub notes: Vec<String>,
 }
 
-pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
-    let (config, unknown) = AppConfig::parse_reporting_unknown(content, path)?;
+pub fn hard_errors(config: &AppConfig) -> Vec<String> {
     let chat = &config.chat;
-    let hard_errors = resolve_watch_timeout(chat.watch_timeout_secs)
+    resolve_watch_timeout(chat.watch_timeout_secs)
         .err()
         .into_iter()
         .chain(
             resolve_cell_limits(None, None, chat.cell_output_limit, chat.cell_output_bytes).err(),
-        );
+        )
+        .collect()
+}
+
+pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
+    let (config, unknown) = AppConfig::parse_reporting_unknown(content, path)?;
+    let chat = &config.chat;
     let errors = unknown
         .into_iter()
         .map(|key| format!("unknown key: {key}"))
@@ -28,7 +33,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(chat.empty_submit_setting().1)
         .chain(chat.editor_setting().1)
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)
-        .chain(hard_errors)
+        .chain(hard_errors(&config))
         .collect();
     Ok(CheckReport {
         errors,

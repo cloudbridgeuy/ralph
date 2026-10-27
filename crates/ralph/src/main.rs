@@ -94,27 +94,10 @@ fn main() -> ExitCode {
 }
 
 fn execute_config(args: cli::ConfigArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let cli::ConfigCommand::Check { path } = args.command;
-    let explicit = path.is_some();
-    let path = path.unwrap_or_else(config::config_path);
-    let label = path.display().to_string();
-    if !path.exists() && !explicit {
-        println!("no config at {label}; defaults apply");
-        return Ok(());
+    match args.command {
+        cli::ConfigCommand::Check { path, store } => config::run_check(path, store),
+        cli::ConfigCommand::Show { store } => config::run_show(store),
     }
-    let content =
-        std::fs::read_to_string(&path).map_err(|e| format!("cannot read {label}: {e}"))?;
-    let report = config::check(&content, &label)?;
-    report
-        .notes
-        .iter()
-        .for_each(|note| eprintln!("note: {note}"));
-    report.errors.iter().for_each(|error| eprintln!("{error}"));
-    if !report.errors.is_empty() {
-        return Err(format!("{} problem(s) in {label}", report.errors.len()).into());
-    }
-    println!("ok: {label}");
-    Ok(())
 }
 
 /// Execute the themes command.
@@ -245,6 +228,7 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 }
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
+    config::set_store_layer(&args.store);
     let store = chat::memory::Store::new(args.store.clone());
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -276,6 +260,9 @@ fn execute_worker_mcp(args: WorkerMcpArgs) -> Result<(), Box<dyn std::error::Err
 }
 
 fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(store) = &args.store {
+        config::set_store_layer(store);
+    }
     let changes = args
         .store
         .zip(args.id)
@@ -298,6 +285,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 }
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
+    config::set_store_layer(&args.store);
     let store = chat::memory::Store::new(args.store);
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     store.nap(|prompt| {
