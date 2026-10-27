@@ -129,6 +129,10 @@ fn images_paragraph(images: ReplyImages) -> &'static str {
     }
 }
 
+pub fn prompt_text(text: String) -> Option<String> {
+    (!text.trim().is_empty()).then_some(text)
+}
+
 pub fn turn_system_prompt(custom: &CustomPrompt, images: ReplyImages, older: &[String]) -> String {
     let images = images_paragraph(images);
     let behaviour = match &custom.behaviour {
@@ -406,6 +410,13 @@ mod tests {
 
     fn default_prompt() -> String {
         turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &[])
+    }
+
+    #[test]
+    fn prompt_text_rejects_blank_text() {
+        assert_eq!(prompt_text(String::new()), None);
+        assert_eq!(prompt_text("  \n".to_string()), None);
+        assert_eq!(prompt_text("x".to_string()), Some("x".to_string()));
     }
 
     #[test]

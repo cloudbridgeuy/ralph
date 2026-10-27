@@ -71,7 +71,7 @@ use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
 use ralph_core::chat::{
-    resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
+    prompt_text, resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
     resolve_wrap_width, CustomPrompt, ReplyImages,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
@@ -121,9 +121,20 @@ fn read_prompt_file(path: &Path) -> Result<String, String> {
 }
 
 fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
-    let (behaviour, behaviour_warning) = match files.behaviour.as_deref().map(read_prompt_file) {
-        Some(Ok(text)) => (Some(text), None),
-        Some(Err(warning)) => (None, Some(warning)),
+    let (behaviour, behaviour_warning) = match files.behaviour.as_deref() {
+        Some(path) => match read_prompt_file(path) {
+            Ok(text) => match prompt_text(text) {
+                Some(text) => (Some(text), None),
+                None => (
+                    None,
+                    Some(format!(
+                        "Prompt file {} is empty; using the default reply rules",
+                        path.display()
+                    )),
+                ),
+            },
+            Err(warning) => (None, Some(warning)),
+        },
         None => (None, None),
     };
     let (appends, append_warnings): (Vec<_>, Vec<_>) = files
