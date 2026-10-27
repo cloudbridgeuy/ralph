@@ -25,6 +25,7 @@ mod scheduled;
 mod status;
 mod ticket;
 mod tools;
+mod verify;
 mod worktree;
 pub use acp::*;
 pub use codex::*;
@@ -49,6 +50,7 @@ pub use scheduled::*;
 pub use status::*;
 pub use ticket::*;
 pub use tools::*;
+pub use verify::*;
 pub use worktree::*;
 
 pub const SERVER_NAME: &str = "ralph-worker";

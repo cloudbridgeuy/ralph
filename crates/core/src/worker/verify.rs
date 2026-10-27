@@ -1,0 +1,342 @@
+use crate::worker::BlockedContent;
+use serde::{Deserialize, Serialize};
+
+pub const VERIFIED_AGENTS_FILE: &str = "verified-agents.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedAgent {
+    pub agent: String,
+    pub version: String,
+    pub live: bool,
+    pub verified_at: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerifiedAgents {
+    #[serde(default)]
+    pub agents: Vec<VerifiedAgent>,
+}
+
+impl VerifiedAgents {
+    pub fn is_verified(&self, agent: &str, version: &str) -> bool {
+        self.agents
+            .iter()
+            .any(|entry| entry.agent == agent && entry.version == version)
+    }
+
+    pub fn record(mut self, entry: VerifiedAgent) -> Self {
+        let same =
+            |known: &VerifiedAgent| known.agent == entry.agent && known.version == entry.version;
+        match self.agents.iter_mut().find(|known| same(known)) {
+            Some(known) if known.live && !entry.live => {}
+            Some(known) => *known = entry,
+            None => self.agents.push(entry),
+        }
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Pass,
+    Fail,
+    Unknown,
+}
+
+impl Verdict {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pass => "PASS",
+            Self::Fail => "FAIL",
+            Self::Unknown => "UNKNOWN",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckResult {
+    pub name: &'static str,
+    pub verdict: Verdict,
+    pub detail: String,
+    pub blocking: bool,
+}
+
+impl CheckResult {
+    pub fn pass(name: &'static str, detail: impl Into<String>) -> Self {
+        Self::blocking(name, Verdict::Pass, detail)
+    }
+
+    pub fn fail(name: &'static str, detail: impl Into<String>) -> Self {
+        Self::blocking(name, Verdict::Fail, detail)
+    }
+
+    pub fn advisory(name: &'static str, verdict: Verdict, detail: impl Into<String>) -> Self {
+        Self {
+            blocking: false,
+            ..Self::blocking(name, verdict, detail)
+        }
+    }
+
+    fn blocking(name: &'static str, verdict: Verdict, detail: impl Into<String>) -> Self {
+        Self {
+            name,
+            verdict,
+            detail: detail.into(),
+            blocking: true,
+        }
+    }
+}
+
+pub fn spec_passed(results: &[CheckResult]) -> bool {
+    results
+        .iter()
+        .filter(|result| result.blocking)
+        .all(|result| result.verdict == Verdict::Pass)
+}
+
+pub fn render_check(result: &CheckResult) -> String {
+    let advisory = if result.blocking {
+        ""
+    } else {
+        " (does not fail the spec)"
+    };
+    format!(
+        "{:<8}{}{advisory}: {}",
+        result.verdict.label(),
+        result.name,
+        result.detail
+    )
+}
+
+pub fn render_summary(agent: &str, version: &str, live: bool, passed: bool) -> String {
+    let scope = if live {
+        "free and live checks"
+    } else {
+        "free checks only; --live adds prompt, permission and cancel checks"
+    };
+    let outcome = if passed { "PASS" } else { "FAIL" };
+    format!("{outcome}: {agent} {version} ({scope})")
+}
+
+pub fn verified_entry(agent: &str, version: &str, live: bool, today: &str) -> VerifiedAgent {
+    VerifiedAgent {
+        agent: agent.to_string(),
+        version: version.to_string(),
+        live,
+        verified_at: today.to_string(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnSummary {
+    pub stop: Result<String, String>,
+    pub replies: usize,
+    pub permissions: Vec<BlockedContent>,
+    pub cancel_sent: bool,
+}
+
+impl TurnSummary {
+    fn stopped_with(&self, expected: &str) -> Result<(), String> {
+        match &self.stop {
+            Ok(reason) if reason == expected => Ok(()),
+            Ok(reason) => Err(format!("turn ended with `{reason}`, expected `{expected}`")),
+            Err(message) => Err(message.clone()),
+        }
+    }
+}
+
+pub fn prompt_check(turn: &TurnSummary, ended: &str) -> CheckResult {
+    match (turn.stopped_with(ended), turn.replies) {
+        (Err(message), _) => CheckResult::fail("prompt/reply", message),
+        (Ok(()), 0) => CheckResult::fail("prompt/reply", "turn ended without any reply text"),
+        (Ok(()), replies) => CheckResult::pass(
+            "prompt/reply",
+            format!("turn ended with `{ended}` after {replies} reply updates"),
+        ),
+    }
+}
+
+pub fn permission_check(turn: &TurnSummary, ended: &str) -> CheckResult {
+    let allowable = turn.permissions.first().map(|request| {
+        request
+            .options
+            .iter()
+            .any(|option| option.kind == "allow_once")
+    });
+    match (allowable, turn.stopped_with(ended)) {
+        (None, _) => CheckResult::fail("permission", "the agent sent no permission request"),
+        (Some(false), _) => CheckResult::fail("permission", "the request had no allow_once option"),
+        (Some(true), Err(message)) => CheckResult::fail("permission", message),
+        (Some(true), Ok(())) => CheckResult::pass(
+            "permission",
+            format!(
+                "request from `{}` had an allow_once option; allowed; turn ended with `{ended}`",
+                turn.permissions.first().map_or("", |request| &request.tool)
+            ),
+        ),
+    }
+}
+
+pub fn cancel_check(turn: &TurnSummary, cancelled: &str) -> CheckResult {
+    let advisory = |verdict, detail: String| CheckResult::advisory("cancel", verdict, detail);
+    match (&turn.stop, turn.cancel_sent) {
+        (Err(message), _) => advisory(Verdict::Fail, message.clone()),
+        (Ok(_), false) => advisory(
+            Verdict::Unknown,
+            "the turn ended before any output, so no cancel was sent".to_string(),
+        ),
+        (Ok(reason), true) if reason == cancelled => advisory(
+            Verdict::Pass,
+            format!("turn ended with `{cancelled}` after the cancel"),
+        ),
+        (Ok(reason), true) => advisory(
+            Verdict::Unknown,
+            format!("turn ended with `{reason}`; the cancel may have arrived too late"),
+        ),
+    }
+}
+
+pub fn verify_hint(agent: &str) -> String {
+    format!("run `ralph worker verify {agent}` to check this version.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(live: bool, at: &str) -> VerifiedAgent {
+        verified_entry("cursor", "2026.10.22", live, at)
+    }
+
+    #[test]
+    fn a_free_pass_never_downgrades_a_live_record() {
+        let live = VerifiedAgents::default().record(entry(true, "2026-10-01"));
+        assert_eq!(
+            live.clone().record(entry(false, "2026-10-02")).agents,
+            vec![entry(true, "2026-10-01")]
+        );
+        assert_eq!(
+            live.record(entry(true, "2026-10-03")).agents,
+            vec![entry(true, "2026-10-03")]
+        );
+    }
+
+    #[test]
+    fn a_live_pass_upgrades_a_free_record_and_agents_stay_apart() {
+        let file = VerifiedAgents::default()
+            .record(entry(false, "2026-10-01"))
+            .record(entry(true, "2026-10-02"))
+            .record(verified_entry("codex", "2026.10.22", false, "2026-10-02"));
+        assert_eq!(file.agents.len(), 2);
+        assert!(file.is_verified("cursor", "2026.10.22"));
+        assert!(file.is_verified("codex", "2026.10.22"));
+        assert!(!file.is_verified("cursor", "2026.10.23"));
+    }
+
+    #[test]
+    fn the_file_round_trips_and_tolerates_an_empty_object() {
+        let file = VerifiedAgents::default().record(entry(false, "2026-10-01"));
+        let text = serde_json::to_string(&file).unwrap();
+        assert_eq!(serde_json::from_str::<VerifiedAgents>(&text).unwrap(), file);
+        assert_eq!(
+            serde_json::from_str::<VerifiedAgents>("{}").unwrap(),
+            VerifiedAgents::default()
+        );
+    }
+
+    #[test]
+    fn advisory_checks_never_fail_the_spec_but_blocking_ones_do() {
+        let cancel = CheckResult::advisory("cancel", Verdict::Fail, "x");
+        assert!(spec_passed(&[CheckResult::pass("a", "ok"), cancel.clone()]));
+        assert!(!spec_passed(&[CheckResult::fail("a", "no"), cancel]));
+        let unknown = CheckResult {
+            verdict: Verdict::Unknown,
+            ..CheckResult::pass("b", "")
+        };
+        assert!(!spec_passed(&[unknown]));
+    }
+
+    fn turn(stop: Result<&str, &str>, replies: usize, kinds: &[&str]) -> TurnSummary {
+        TurnSummary {
+            stop: stop.map(str::to_string).map_err(str::to_string),
+            replies,
+            permissions: kinds
+                .iter()
+                .map(|kind| BlockedContent {
+                    tool: "edit".into(),
+                    summary: "write".into(),
+                    options: vec![crate::worker::PermissionOption {
+                        option_id: "o".into(),
+                        name: "O".into(),
+                        kind: (*kind).into(),
+                    }],
+                })
+                .collect(),
+            cancel_sent: replies > 0,
+        }
+    }
+
+    #[test]
+    fn live_checks_judge_the_turn_summary() {
+        assert_eq!(
+            prompt_check(&turn(Ok("end_turn"), 2, &[]), "end_turn").verdict,
+            Verdict::Pass
+        );
+        assert_eq!(
+            prompt_check(&turn(Ok("end_turn"), 0, &[]), "end_turn").verdict,
+            Verdict::Fail
+        );
+        assert_eq!(
+            prompt_check(&turn(Ok("cancelled"), 2, &[]), "end_turn").verdict,
+            Verdict::Fail
+        );
+        assert_eq!(
+            permission_check(&turn(Ok("end_turn"), 1, &["allow_once"]), "end_turn").verdict,
+            Verdict::Pass
+        );
+        assert_eq!(
+            permission_check(&turn(Ok("end_turn"), 1, &[]), "end_turn").verdict,
+            Verdict::Fail
+        );
+        assert_eq!(
+            permission_check(&turn(Ok("end_turn"), 1, &["reject_once"]), "end_turn").verdict,
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn cancel_is_advisory_and_unknown_when_it_cannot_be_judged() {
+        let verdict = |turn| cancel_check(&turn, "cancelled");
+        assert_eq!(
+            verdict(turn(Ok("cancelled"), 1, &[])).verdict,
+            Verdict::Pass
+        );
+        assert_eq!(
+            verdict(turn(Ok("end_turn"), 1, &[])).verdict,
+            Verdict::Unknown
+        );
+        assert_eq!(
+            verdict(turn(Ok("end_turn"), 0, &[])).verdict,
+            Verdict::Unknown
+        );
+        let failed = verdict(turn(Err("boom"), 1, &[]));
+        assert_eq!(failed.verdict, Verdict::Fail);
+        assert!(!failed.blocking);
+    }
+
+    #[test]
+    fn check_lines_show_the_verdict_and_the_advisory_note() {
+        assert_eq!(
+            render_check(&CheckResult::pass("version", "2026.10.22")),
+            "PASS    version: 2026.10.22"
+        );
+        assert_eq!(
+            render_check(&CheckResult::advisory(
+                "cancel",
+                Verdict::Unknown,
+                "no turn"
+            )),
+            "UNKNOWN cancel (does not fail the spec): no turn"
+        );
+    }
+}

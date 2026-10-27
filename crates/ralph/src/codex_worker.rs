@@ -8,6 +8,7 @@ use crate::cursor_owner::{
 use crate::permission_queue::PermissionQueue;
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
+use crate::verified_agents;
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
@@ -35,7 +36,7 @@ use std::fs;
 use std::io;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, ExitStatus};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -43,6 +44,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 mod resume;
+mod verify;
+
+pub(crate) use verify::verify;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
@@ -90,6 +94,37 @@ struct Wire {
 
 fn exit_reason(status: ExitStatus) -> String {
     format!("{CODEX_COMMAND} app-server exited ({status})")
+}
+
+fn logged_stdin(stdin: ChildStdin, log: &Arc<CappedLog>) -> Stdin {
+    Arc::new(Mutex::new(Some(LoggedWrite {
+        inner: stdin,
+        log: Arc::clone(log),
+        tag: "in",
+    })))
+}
+
+fn pipe_lines(
+    stdout: ChildStdout,
+    log: &Arc<CappedLog>,
+) -> (mpsc::Receiver<String>, mpsc::Receiver<()>) {
+    let (lines_tx, lines) = mpsc::channel();
+    let (finished_tx, finished) = mpsc::channel();
+    let reader_log = Arc::clone(log);
+    thread::spawn(move || {
+        let reader = BufReader::new(LoggedRead {
+            inner: stdout,
+            log: reader_log,
+            tag: "out",
+        });
+        for line in reader.lines().map_while(Result::ok) {
+            if lines_tx.send(line).is_err() {
+                break;
+            }
+        }
+        finished_tx.send(()).ok();
+    });
+    (lines, finished)
 }
 
 fn report_exit(
@@ -211,7 +246,7 @@ fn handshake(
         .map_err(Stop::message)?;
     let version = decode_version(&init)
         .ok_or("could not read the codex version from its initialize reply")?;
-    if let Some(warning) = check_version(&version)? {
+    if let Some(warning) = check_version(&version, &verified_agents::load())? {
         warn(warning);
     }
     check_login(&wire.call(ACCOUNT_READ, json!({}), deadline)?)?;
@@ -463,27 +498,8 @@ impl CodexWorker {
             .map_err(|e| format!("could not start `{CODEX_COMMAND} app-server`: {e}"))?;
         let log = CappedLog::new(request.inbox.parent(), id);
         drain_stderr(stderr, Arc::clone(&log));
-        let stdin: Stdin = Arc::new(Mutex::new(Some(LoggedWrite {
-            inner: stdin,
-            log: Arc::clone(&log),
-            tag: "in",
-        })));
-        let (lines_tx, lines) = mpsc::channel();
-        let (finished_tx, finished) = mpsc::channel();
-        let reader_log = Arc::clone(&log);
-        thread::spawn(move || {
-            let reader = BufReader::new(LoggedRead {
-                inner: stdout,
-                log: reader_log,
-                tag: "out",
-            });
-            for line in reader.lines().map_while(Result::ok) {
-                if lines_tx.send(line).is_err() {
-                    break;
-                }
-            }
-            finished_tx.send(()).ok();
-        });
+        let stdin = logged_stdin(stdin, &log);
+        let (lines, finished) = pipe_lines(stdout, &log);
         let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
         heartbeat.clear();
         let exited = Arc::new(AtomicBool::new(false));

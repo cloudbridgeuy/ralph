@@ -5,14 +5,15 @@ use crate::cursor_owner::{
     now_secs, sweep_owner, write_file, write_interrupt_result, write_owner_record,
 };
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
+use crate::verified_agents;
 use crate::warn::warn;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
-    CancelNotification, InitializeRequest, LoadSessionRequest, McpServer, NewSessionRequest,
-    PromptRequest, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-    SelectedPermissionOutcome, SessionId, SessionNotification,
+    CancelNotification, InitializeRequest, InitializeResponse, LoadSessionRequest, McpServer,
+    NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
+    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
@@ -46,9 +47,11 @@ use std::time::{Duration, Instant};
 mod model;
 mod permissions;
 mod turns;
+mod verify;
 
 use permissions::Permissions;
 use turns::{run_turns, Turns};
+pub(crate) use verify::verify;
 
 pub(crate) type Events = Arc<Mutex<Vec<WorkerEvent>>>;
 
@@ -337,15 +340,13 @@ impl AcpWorker {
                         agent_client_protocol::on_receive_notification!(),
                     )
                     .connect_with(transport, |connection: ConnectionTo<Agent>| async move {
-                        let init = connection
-                            .send_request(InitializeRequest::new(ProtocolVersion::V1))
-                            .block_task()
-                            .await?;
-                        if let Err(message) = check_protocol(&agent, init.protocol_version.as_u16())
-                        {
-                            ready_tx.send(Err(message)).ok();
-                            return Ok(());
-                        }
+                        let init = match initialize(&connection, &agent).await? {
+                            Ok(init) => init,
+                            Err(message) => {
+                                ready_tx.send(Err(message)).ok();
+                                return Ok(());
+                            }
+                        };
                         let opening = Opening {
                             agent,
                             launch,
@@ -528,14 +529,33 @@ fn exit_reason(status: ExitStatus) -> String {
     format!("{} acp exited ({status})", CURSOR_AGENT.command)
 }
 
-fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
+fn agent_version_output(agent: &AcpAgent) -> Option<String> {
     let output = Command::new(agent.command)
         .arg("--version")
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    version_warning(agent, &String::from_utf8_lossy(&output.stdout))
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
+    version_warning(
+        agent,
+        &agent_version_output(agent)?,
+        &verified_agents::load(),
+    )
+}
+
+async fn initialize(
+    connection: &ConnectionTo<Agent>,
+    agent: &AcpAgent,
+) -> Result<Result<InitializeResponse, String>, agent_client_protocol::Error> {
+    let init = connection
+        .send_request(InitializeRequest::new(ProtocolVersion::V1))
+        .block_task()
+        .await?;
+    Ok(check_protocol(agent, init.protocol_version.as_u16()).map(|()| init))
 }
 
 pub struct CursorHost {
