@@ -1,4 +1,4 @@
-pub const KEEPALIVE_HOURS: u64 = 18;
+pub const KEEPALIVE_HOURS: u64 = 4;
 pub const KEEPALIVE_PING_SECS: u64 = 55 * 60;
 pub const KEEPALIVE_PING_PROMPT: &str = "PING. Reply with only PONG.";
 
@@ -51,8 +51,8 @@ mod tests {
     }
 
     #[test]
-    fn hours_default_to_eighteen_and_zero_turns_it_off() {
-        assert_eq!(resolve_keepalive_hours(None), Some(18));
+    fn hours_default_to_four_and_zero_turns_it_off() {
+        assert_eq!(resolve_keepalive_hours(None), Some(4));
         assert_eq!(resolve_keepalive_hours(Some(0)), None);
         assert_eq!(resolve_keepalive_hours(Some(2)), Some(2));
     }
