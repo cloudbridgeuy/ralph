@@ -76,7 +76,7 @@ pub fn outcome(suggestion: &str, sent: &str) -> Outcome {
     let sent = sent.trim();
     if sent == suggestion {
         Outcome::Accepted
-    } else if sent.len() > suggestion.len() && sent.starts_with(suggestion) {
+    } else if sent.starts_with(suggestion) {
         Outcome::Extended
     } else {
         Outcome::Discarded
