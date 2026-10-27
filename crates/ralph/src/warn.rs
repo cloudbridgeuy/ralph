@@ -1,7 +1,9 @@
 use crate::ansi::{BOLD, RESET, YELLOW};
 use crate::frame::frame;
+use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::io::IsTerminal;
+use std::sync::Mutex;
 
 const SYMBOL: &str = "\u{26a0}";
 const FRAME_WIDTH: usize = 6;
@@ -81,6 +83,22 @@ pub fn warn(message: impl Display) {
     eprint!("{}", warning_line(message));
 }
 
+static SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+fn first_sighting(seen: &mut BTreeSet<String>, key: &str) -> bool {
+    seen.insert(key.to_string())
+}
+
+pub fn warn_once(key: &str, message: impl Display) {
+    let fresh = match SEEN.lock() {
+        Ok(mut seen) => first_sighting(&mut seen, key),
+        Err(_) => true,
+    };
+    if fresh {
+        warn(message);
+    }
+}
+
 pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
     if let Err(e) = result {
         warn(format!("{context}: {e}"));
@@ -133,6 +151,14 @@ mod tests {
                 "\u{2502}   fghij \u{2502}"
             ]
         );
+    }
+
+    #[test]
+    fn first_sighting_is_true_once_per_key() {
+        let mut seen = BTreeSet::new();
+        assert!(first_sighting(&mut seen, "a"));
+        assert!(!first_sighting(&mut seen, "a"));
+        assert!(first_sighting(&mut seen, "b"));
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::invoke::{
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
+use crate::warn::warn_once;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::inbox_alert::UnknownFocus;
 use ralph_core::worker::TicketKeys;
@@ -45,6 +46,12 @@ pub use opencode::OpencodeSection;
 pub use permissions::configured_permission_mode;
 pub use wire::WireSection;
 pub use workers::{PrProvider, WorkersSection};
+
+#[derive(Debug, PartialEq, Eq)]
+struct Notice {
+    key: String,
+    message: String,
+}
 
 static STORE_LAYER: OnceLock<PathBuf> = OnceLock::new();
 
@@ -406,7 +413,30 @@ impl AppConfig {
 
     pub fn load() -> Result<Self, ConfigError> {
         let store_file = STORE_LAYER.get().map(|dir| dir.join("config.toml"));
-        Self::load_layers(&config_path(), store_file.as_deref())
+        let (result, notices) = Self::load_from(&config_path(), store_file.as_deref());
+        for notice in &notices {
+            warn_once(&notice.key, &notice.message);
+        }
+        result
+    }
+
+    fn load_from(global: &Path, store: Option<&Path>) -> (Result<Self, ConfigError>, Vec<Notice>) {
+        match (Self::load_layers(global, store), store) {
+            (Err(store_error), Some(store_path)) => match Self::load_layers(global, None) {
+                Ok(config) => {
+                    let notice = Notice {
+                        key: format!("store-fallback:{}", store_path.display()),
+                        message: format!(
+                            "ignoring store config {}: {store_error}; using the global config only",
+                            store_path.display()
+                        ),
+                    };
+                    (Ok(config), vec![notice])
+                }
+                Err(global_error) => (Err(global_error), Vec::new()),
+            },
+            (result, _) => (result, Vec::new()),
+        }
     }
 
     pub fn load_layers(global: &Path, store: Option<&Path>) -> Result<Self, ConfigError> {

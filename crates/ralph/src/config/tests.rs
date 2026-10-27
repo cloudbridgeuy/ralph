@@ -612,3 +612,45 @@ fn relative_skills_resolve_per_file_and_store_replaces_global() {
         [sub.join("ss"), PathBuf::from("~/h")]
     );
 }
+
+fn layer_files(global: &str, store: &str) -> (TempDir, PathBuf, PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let global_path = dir.path().join("global.toml");
+    let store_path = dir.path().join("store.toml");
+    fs::write(&global_path, global).unwrap();
+    fs::write(&store_path, store).unwrap();
+    (dir, global_path, store_path)
+}
+
+#[test]
+fn broken_store_falls_back_to_global_with_a_notice() {
+    let (_dir, global, store) = layer_files("[theme]\nname = \"global\"\n", "[chat\n");
+    let (result, notices) = AppConfig::load_from(&global, Some(&store));
+    assert_eq!(result.unwrap().theme.name.as_deref(), Some("global"));
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        notices[0].key,
+        format!("store-fallback:{}", store.display())
+    );
+    assert!(notices[0].message.contains(&store.display().to_string()));
+    assert!(notices[0].message.ends_with("using the global config only"));
+}
+
+#[test]
+fn broken_global_still_fails() {
+    let (_dir, global, store) = layer_files("[chat\n", "[theme]\nname = \"store\"\n");
+    let (result, notices) = AppConfig::load_from(&global, Some(&store));
+    assert!(matches!(result, Err(ConfigError::ParseConfig { .. })));
+    assert!(notices.is_empty());
+}
+
+#[test]
+fn valid_store_has_no_notice() {
+    let (_dir, global, store) = layer_files(
+        "[theme]\nname = \"global\"\n",
+        "[theme]\nname = \"store\"\n",
+    );
+    let (result, notices) = AppConfig::load_from(&global, Some(&store));
+    assert_eq!(result.unwrap().theme.name.as_deref(), Some("store"));
+    assert!(notices.is_empty());
+}
