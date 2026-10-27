@@ -38,5 +38,6 @@ mod tests {
         let err = AppConfig::load_layers(&path, None).unwrap_err().to_string();
         assert!(err.contains('m'), "{err}");
         assert!(err.contains("input"), "{err}");
+        assert!(err.contains(&path.display().to_string()), "{err}");
     }
 }

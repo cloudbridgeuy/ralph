@@ -58,6 +58,19 @@ pub fn anchor_chat_paths(mut table: Table, dir: &Path) -> Table {
     table
 }
 
+pub fn culprit_path<'a>(
+    layers: &[(&'a Path, Table)],
+    fallback: &'a Path,
+    fails: impl Fn(&Table) -> bool,
+) -> &'a Path {
+    layers
+        .iter()
+        .rev()
+        .find(|(_, layer)| fails(layer))
+        .or(layers.last())
+        .map_or(fallback, |(path, _)| path)
+}
+
 const SECURITY_KEYS: [&str; 8] = [
     "chat.permission_mode",
     "chat.mcp_servers",
@@ -178,6 +191,27 @@ mod tests {
             anchor_chat_paths(table("x = 1\n"), Path::new("/cfg")),
             table("x = 1\n")
         );
+    }
+
+    #[test]
+    fn culprit_prefers_the_store_and_falls_back_to_the_last_layer() {
+        let layers = [
+            (Path::new("/g"), table("a = 1\n")),
+            (Path::new("/s"), table("a = 2\n")),
+        ];
+        let any = |_: &Table| true;
+        let none = |_: &Table| false;
+        let global_only = |layer: &Table| layer.get("a") == Some(&Value::Integer(1));
+        assert_eq!(culprit_path(&layers, Path::new("/f"), any), Path::new("/s"));
+        assert_eq!(
+            culprit_path(&layers, Path::new("/f"), global_only),
+            Path::new("/g")
+        );
+        assert_eq!(
+            culprit_path(&layers, Path::new("/f"), none),
+            Path::new("/s")
+        );
+        assert_eq!(culprit_path(&[], Path::new("/f"), none), Path::new("/f"));
     }
 
     #[test]

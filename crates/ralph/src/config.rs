@@ -131,11 +131,11 @@ pub enum ConfigError {
     },
 
     /// A `[wire.prices]` value is below zero.
-    #[error("{0}")]
-    InvalidWirePrice(String),
+    #[error("Invalid config at {path}: {message}")]
+    InvalidWirePrice { path: String, message: String },
 
-    #[error("{0}")]
-    InvalidWorkers(String),
+    #[error("Invalid config at {path}: {message}")]
+    InvalidWorkers { path: String, message: String },
 }
 
 /// Application configuration.
@@ -468,27 +468,22 @@ impl AppConfig {
             .fold(Table::new(), |merged, (_, layer)| {
                 layers::merge_tables(merged, layer)
             });
-        merged
-            .try_into::<Self>()
-            .map_err(|source| {
-                let culprit = layers.iter().find_map(|(path, layer)| {
-                    layer.clone().try_into::<Self>().err().map(|e| (*path, e))
-                });
-                match culprit {
-                    Some((path, source)) => parse_error(path, source),
-                    None => parse_error(global, source),
-                }
-            })?
-            .validated()
-    }
-
-    pub fn parse(content: &str, path: &str) -> Result<Self, ConfigError> {
-        toml::from_str::<Self>(content)
-            .map_err(|source| ConfigError::ParseConfig {
-                path: path.to_string(),
-                source,
-            })?
-            .validated()
+        let config = merged.try_into::<Self>().map_err(|source| {
+            let culprit = layers.iter().find_map(|(path, layer)| {
+                layer.clone().try_into::<Self>().err().map(|e| (*path, e))
+            });
+            match culprit {
+                Some((path, source)) => parse_error(path, source),
+                None => parse_error(global, source),
+            }
+        })?;
+        let culprit = layers::culprit_path(&layers, global, |layer| {
+            layer
+                .clone()
+                .try_into::<Self>()
+                .is_ok_and(|alone| alone.check_values("").is_err())
+        });
+        config.validated(&culprit.display().to_string())
     }
 
     pub fn parse_reporting_unknown(
@@ -504,15 +499,26 @@ impl AppConfig {
         let config: Self =
             serde_ignored::deserialize(deserializer, |key| unknown.push(key.to_string()))
                 .map_err(parse_error)?;
-        Ok((config.validated()?, unknown))
+        Ok((config.validated(path)?, unknown))
     }
 
-    fn validated(self) -> Result<Self, ConfigError> {
-        ralph_core::wire::price::validate_price_overrides(&self.wire.prices)
-            .map_err(ConfigError::InvalidWirePrice)?;
+    fn check_values(&self, path: &str) -> Result<(), ConfigError> {
+        ralph_core::wire::price::validate_price_overrides(&self.wire.prices).map_err(
+            |message| ConfigError::InvalidWirePrice {
+                path: path.to_string(),
+                message,
+            },
+        )?;
         self.workers
             .validate()
-            .map_err(ConfigError::InvalidWorkers)?;
+            .map_err(|message| ConfigError::InvalidWorkers {
+                path: path.to_string(),
+                message,
+            })
+    }
+
+    fn validated(self, path: &str) -> Result<Self, ConfigError> {
+        self.check_values(path)?;
         Ok(self)
     }
 

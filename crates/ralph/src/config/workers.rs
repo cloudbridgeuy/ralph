@@ -157,4 +157,32 @@ mod tests {
             1
         );
     }
+
+    #[test]
+    fn invalid_workers_in_the_store_name_the_store_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("global.toml");
+        let store = dir.path().join("store.toml");
+        std::fs::write(&global, "[workers]\ncache_secs = 5\n").unwrap();
+        std::fs::write(&store, "[workers]\ncache_secs = 0\n").unwrap();
+        let err = AppConfig::load_layers(&global, Some(&store))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&store.display().to_string()), "{err}");
+        assert!(err.starts_with("Invalid config at "), "{err}");
+        assert!(err.contains("cache_secs"), "{err}");
+    }
+
+    #[test]
+    fn invalid_workers_in_the_global_name_the_global_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("global.toml");
+        let store = dir.path().join("store.toml");
+        std::fs::write(&global, "[workers]\ncache_secs = 0\n").unwrap();
+        std::fs::write(&store, "[theme]\nname = \"x\"\n").unwrap();
+        let err = AppConfig::load_layers(&global, Some(&store))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(&global.display().to_string()), "{err}");
+    }
 }
