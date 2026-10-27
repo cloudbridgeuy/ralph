@@ -1,4 +1,5 @@
 use crate::transport::stdio::stop_group;
+use crate::warn::warn;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, interrupt_result_text, sweep_decision, HandoffFiles,
     OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
@@ -59,6 +60,13 @@ fn parent_pid(pid: u32) -> Option<u32> {
         .ok()
         .filter(|output| output.status.success())?;
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+pub fn report_start_warning(warning: String, spawn_file: Option<&Path>) {
+    match spawn_file {
+        Some(path) if write_file(path, &warning).is_ok() => {}
+        _ => warn(warning),
+    }
 }
 
 pub fn caller_owns(files: &HandoffFiles) -> bool {

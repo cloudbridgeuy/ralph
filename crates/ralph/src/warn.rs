@@ -1,4 +1,4 @@
-use crate::ansi::{BOLD, RESET, YELLOW};
+use crate::ansi::{BOLD, CLEAR_EOL, CR, RESET, YELLOW};
 use crate::frame::frame;
 use std::collections::BTreeSet;
 use std::fmt::Display;
@@ -72,11 +72,16 @@ pub fn warning_line(message: impl Display) -> String {
     let width = crossterm::terminal::size()
         .map(|(w, _)| usize::from(w))
         .unwrap_or(DEFAULT_TERMINAL_WIDTH);
-    line_of(&format_warning(&message.to_string(), width, color))
+    line_of(&format_warning(&message.to_string(), width, color), color)
 }
 
-fn line_of(text: &str) -> String {
-    format!("{text}\n")
+fn line_of(text: &str, clear: bool) -> String {
+    let prefix = if clear {
+        format!("{CR}{CLEAR_EOL}")
+    } else {
+        String::new()
+    };
+    format!("{prefix}{text}\n")
 }
 
 pub fn warn(message: impl Display) {
@@ -113,7 +118,12 @@ mod tests {
 
     #[test]
     fn line_of_ends_with_one_newline() {
-        assert_eq!(line_of("Warning: x"), "Warning: x\n");
+        assert_eq!(line_of("Warning: x", false), "Warning: x\n");
+    }
+
+    #[test]
+    fn line_of_clears_the_line_first_when_asked() {
+        assert_eq!(line_of("x", true), "\r\x1b[Kx\n");
     }
 
     #[test]

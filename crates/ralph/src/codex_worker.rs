@@ -2,8 +2,8 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::config::{configured_codex, configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
-    claim_owner, now_secs, queued_entries, request_ids, sweep_owner, write_file,
-    write_interrupt_result, write_owner_record,
+    claim_owner, now_secs, queued_entries, report_start_warning, request_ids, sweep_owner,
+    write_file, write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::PermissionQueue;
 use crate::process_tree::{snapshot_tree, sweep_tree};
@@ -236,6 +236,7 @@ fn handshake(
     selection: &Selection,
     open: (&str, Value),
     deadline: Instant,
+    warning_file: Option<&Path>,
 ) -> Result<ThreadInfo, String> {
     let init = wire.call(
         INITIALIZE,
@@ -247,7 +248,7 @@ fn handshake(
     let version = decode_version(&init)
         .ok_or("could not read the codex version from its initialize reply")?;
     if let Some(warning) = check_version(&version, &verified_agents::load())? {
-        warn(warning);
+        report_start_warning(warning, warning_file);
     }
     check_login(&wire.call(ACCOUNT_READ, json!({}), deadline)?)?;
     let listed = list_models(wire, deadline)?;
@@ -459,6 +460,7 @@ pub struct Slot<'a> {
     pub launch: Launch,
     pub markers: WorkerMarkers,
     pub starting: &'a Mutex<HashMap<String, u32>>,
+    pub warning: Option<&'a Path>,
 }
 
 pub struct CodexWorker {
@@ -489,6 +491,7 @@ impl CodexWorker {
             launch,
             markers,
             starting,
+            warning,
         } = slot;
         let mut command = Command::new(CODEX_COMMAND);
         command
@@ -568,7 +571,7 @@ impl CodexWorker {
                 record.permissions.unwrap_or_else(configured_mode),
             ),
         };
-        let thread = handshake(&mut wire, &selection, open, deadline)?;
+        let thread = handshake(&mut wire, &selection, open, deadline, warning)?;
         let pending_record = match &launch {
             Launch::Fresh(template) => Some((
                 session.to_path_buf(),
@@ -933,6 +936,7 @@ impl CodexHost {
         launch: Launch,
     ) -> Result<CodexWorker, String> {
         let files = self.files(id);
+        let warning = matches!(launch, Launch::Fresh(_)).then_some(files.warning.as_path());
         let started = CodexWorker::start(
             request,
             Slot {
@@ -943,6 +947,7 @@ impl CodexHost {
                 launch,
                 markers: WorkerMarkers::new(&self.store_dir, id),
                 starting: &self.starting,
+                warning,
             },
         );
         locked(&self.starting).remove(id);

@@ -51,6 +51,7 @@ pub struct HandoffFiles {
     pub spawn: PathBuf,
     pub close: PathBuf,
     pub error: PathBuf,
+    pub warning: PathBuf,
     pub owner: PathBuf,
     pub answer: PathBuf,
     pub prompt: PathBuf,
@@ -83,10 +84,12 @@ impl HandoffFiles {
     fn in_dirs(store: &Path, id: &str, dirs: [&str; 9]) -> Self {
         let [spawn, close, error, owner, answer, prompt, interrupt, interrupt_result, session] =
             dirs.map(|dir| store.join(dir).join(id));
+        let warning = error.with_file_name(format!("{id}.warning"));
         Self {
             spawn,
             close,
             error,
+            warning,
             owner,
             answer,
             prompt,
@@ -96,11 +99,12 @@ impl HandoffFiles {
         }
     }
 
-    pub fn all(&self) -> [&Path; 8] {
+    pub fn all(&self) -> [&Path; 9] {
         [
             &self.spawn,
             &self.close,
             &self.error,
+            &self.warning,
             &self.owner,
             &self.answer,
             &self.prompt,
@@ -129,6 +133,7 @@ mod tests {
             HandoffFiles::opencode_preflight(Path::new("/s"), "A"),
             PathBuf::from("/s/opencode-preflight/A")
         );
+        assert_eq!(cursor.warning, PathBuf::from("/s/cursor-error/A.warning"));
         assert!(!opencode.all().contains(&opencode.session.as_path()));
     }
 }

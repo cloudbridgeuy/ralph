@@ -2,7 +2,8 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
-    now_secs, sweep_owner, write_file, write_interrupt_result, write_owner_record,
+    now_secs, report_start_warning, sweep_owner, write_file, write_interrupt_result,
+    write_owner_record,
 };
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::verified_agents;
@@ -108,6 +109,7 @@ pub struct Slot<'a> {
     pub results: &'a Path,
     pub markers: WorkerMarkers,
     pub starting: &'a Mutex<HashMap<String, u32>>,
+    pub warning: Option<&'a Path>,
 }
 
 struct Opening {
@@ -207,9 +209,10 @@ impl AcpWorker {
             results,
             markers,
             starting,
+            warning: warning_file,
         } = slot;
         if let Some(warning) = agent_version_warning(&agent) {
-            warn(warning);
+            report_start_warning(warning, warning_file);
         }
         let mut command = Command::new(agent.command);
         command.arg("acp").current_dir(&request.worktree);
@@ -783,6 +786,8 @@ impl CursorHost {
         request: &SpawnRequest,
         launch: Launch,
     ) -> Result<AcpWorker, String> {
+        let files = self.files(id);
+        let warning = matches!(launch, Launch::Fresh { .. }).then_some(files.warning.as_path());
         let started = AcpWorker::start(
             request,
             launch,
@@ -793,6 +798,7 @@ impl CursorHost {
                 results: &self.files(id).interrupt_result,
                 markers: WorkerMarkers::new(&self.store_dir, id),
                 starting: &self.starting,
+                warning,
             },
         );
         self.starting
