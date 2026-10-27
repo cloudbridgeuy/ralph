@@ -116,10 +116,26 @@ pub struct CustomPrompt {
     pub appends: Vec<String>,
 }
 
-pub fn turn_system_prompt(custom: &CustomPrompt, older: &[String]) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyImages {
+    Inline,
+    Text,
+}
+
+fn images_paragraph(images: ReplyImages) -> &'static str {
+    match images {
+        ReplyImages::Inline => "Images: to show an image file, write `![alt](/absolute/path)` in the reply; it draws inline. Never open an image in another app. ralph draws it, or prints `[image: alt (path)]` if the file is missing or can't be read, so don't add caveats about whether it exists or drew.",
+        ReplyImages::Text => "Images: this terminal can't show images. Don't use image markdown or open images in another app; give the path or describe the image instead.",
+    }
+}
+
+pub fn turn_system_prompt(custom: &CustomPrompt, images: ReplyImages, older: &[String]) -> String {
+    let images = images_paragraph(images);
     let behaviour = match &custom.behaviour {
-        Some(text) => format!("{}\n\n{PROMPT_CONTRACT}", text.trim_end()),
-        None => format!("{PROMPT_REPLY_FORMAT} {PROMPT_CONTRACT}\n\n{PROMPT_BEHAVIOUR}"),
+        Some(text) => format!("{}\n\n{PROMPT_CONTRACT}\n\n{images}", text.trim_end()),
+        None => {
+            format!("{PROMPT_REPLY_FORMAT} {PROMPT_CONTRACT}\n\n{images}\n\n{PROMPT_BEHAVIOUR}")
+        }
     };
     let sections = [PROMPT_HEAD, &behaviour, PROMPT_TAIL]
         .into_iter()
@@ -389,7 +405,7 @@ mod tests {
     const DEFAULT_PROMPT_FIXTURE: &str = include_str!("chat_default_prompt.txt");
 
     fn default_prompt() -> String {
-        turn_system_prompt(&CustomPrompt::default(), &[])
+        turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &[])
     }
 
     #[test]
@@ -397,7 +413,7 @@ mod tests {
         assert_eq!(default_prompt(), DEFAULT_PROMPT_FIXTURE);
         let older = vec!["#0 a".to_string(), "#1 b".to_string()];
         assert_eq!(
-            turn_system_prompt(&CustomPrompt::default(), &older),
+            turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &older),
             format!(
                 "{DEFAULT_PROMPT_FIXTURE}\n\nOlder chat, compressed, oldest first:\n#0 a\n#1 b"
             )
@@ -410,7 +426,7 @@ mod tests {
             behaviour: Some("Be terse.\n\n".to_string()),
             appends: Vec::new(),
         };
-        let prompt = turn_system_prompt(&custom, &[]);
+        let prompt = turn_system_prompt(&custom, ReplyImages::Inline, &[]);
         assert!(prompt.starts_with(PROMPT_HEAD));
         assert!(prompt.contains("\n\nBe terse.\n\nWhen the reply will end"));
         assert!(prompt.contains("call `suggest_reply` first"));
@@ -423,13 +439,39 @@ mod tests {
     }
 
     #[test]
+    fn text_images_prompt_drops_image_markdown() {
+        let prompt = turn_system_prompt(&CustomPrompt::default(), ReplyImages::Text, &[]);
+        assert!(prompt.contains(images_paragraph(ReplyImages::Text)));
+        assert!(!prompt.contains("![alt]"));
+    }
+
+    #[test]
+    fn inline_images_prompt_has_the_inline_paragraph() {
+        let prompt = turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &[]);
+        assert!(prompt.contains(images_paragraph(ReplyImages::Inline)));
+        assert!(!prompt.contains("can't show images"));
+    }
+
+    #[test]
+    fn custom_behaviour_keeps_the_images_paragraph_for_both_variants() {
+        let custom = CustomPrompt {
+            behaviour: Some("Be terse.".to_string()),
+            appends: Vec::new(),
+        };
+        for images in [ReplyImages::Inline, ReplyImages::Text] {
+            let prompt = turn_system_prompt(&custom, images, &[]);
+            assert!(prompt.contains(images_paragraph(images)));
+        }
+    }
+
+    #[test]
     fn appends_follow_the_tail_in_order_and_older_lines_come_last() {
         let custom = CustomPrompt {
             behaviour: None,
             appends: vec!["one\n".to_string(), "two".to_string()],
         };
         let older = vec!["#0 a".to_string()];
-        let prompt = turn_system_prompt(&custom, &older);
+        let prompt = turn_system_prompt(&custom, ReplyImages::Inline, &older);
         assert_eq!(
             prompt,
             format!(

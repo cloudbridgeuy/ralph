@@ -358,3 +358,18 @@ fn config_topic_parses_section() {
     assert_eq!(config_topic(Some("diff")), None);
     assert_eq!(config_topic(None), None);
 }
+
+#[test]
+fn help_topic_images_returns_the_images_text() {
+    for topic in ["images", "/Images"] {
+        let text = help_topic(Some(topic)).unwrap();
+        assert!(text.starts_with("Images\n"));
+        assert!(text.contains("[image: alt (path)]"));
+    }
+}
+
+#[test]
+fn unknown_help_topic_lists_images() {
+    let error = help_topic(Some("nope")).unwrap_err();
+    assert!(error.contains(", images, config,"));
+}

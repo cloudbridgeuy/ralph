@@ -16,7 +16,7 @@ use crate::warn::warning_line;
 use crate::watches::locked;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_reason,
-    turn_prompt, turn_system_prompt, CustomPrompt, ResetLimits, VIEW_LINES,
+    turn_prompt, turn_system_prompt, CustomPrompt, ReplyImages, ResetLimits, VIEW_LINES,
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
@@ -90,6 +90,7 @@ pub(super) struct Turn<'a> {
     pub(super) plugin_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
     pub(super) custom_prompt: &'a CustomPrompt,
+    pub(super) reply_images: ReplyImages,
     pub(super) isolation: &'a Isolation,
     pub(super) theme_config: &'a ThemeConfig,
     pub(super) session: Arc<Mutex<Option<Session>>>,
@@ -350,7 +351,7 @@ impl Turn<'_> {
         }
         let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
         let first_prompt = turn_prompt(&split.tail, sent);
-        let system = turn_system_prompt(self.custom_prompt, &split.older);
+        let system = turn_system_prompt(self.custom_prompt, self.reply_images, &split.older);
         let args = [
             self.mcp_args.to_vec(),
             build_attachments_args(self.store_dir),
