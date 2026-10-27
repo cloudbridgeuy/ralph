@@ -81,6 +81,8 @@ Close order (`codex_close_plan`): wind down (mark closing, drain pending permiss
 
 A full pass writes `{agent, version, live, verified_at}` to `verified-agents.json` in the config directory. Both version warnings (`version_warning` for Cursor, `check_version` for Codex) stay silent for the pinned version and for any recorded version, and their text ends with the verify command. A free pass records `live: false`; it never replaces a `live: true` record of the same version. A missing or unreadable file counts as empty.
 
+On a `spawn_worker` start the host writes the warning to `<id>.warning` beside the error file (`HandoffFiles::warning`) and `spawn_headless` appends it to the tool result instead of printing a terminal box; resume starts still print it.
+
 | Check | Cursor | Codex | Mode |
 | --- | --- | --- | --- |
 | version | `agent --version` is readable | `initialize` user agent is readable and not older than 0.162 | free |

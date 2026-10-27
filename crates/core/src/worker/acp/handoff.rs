@@ -20,6 +20,13 @@ pub fn spawn_handoff(ready: bool, error: Option<&str>, elapsed: Duration) -> Han
     }
 }
 
+pub fn with_start_warning(started: String, warning: Option<&str>) -> String {
+    match warning.map(str::trim).filter(|w| !w.is_empty()) {
+        Some(warning) => format!("{started} {warning}"),
+        None => started,
+    }
+}
+
 pub fn close_handoff(owner_exists: bool, elapsed: Duration) -> Handoff {
     if !owner_exists {
         Handoff::Done
@@ -52,6 +59,13 @@ mod tests {
             Handoff::TimedOut
         );
         assert_eq!(spawn_handoff(true, None, HANDOFF_TIMEOUT), Handoff::Done);
+    }
+
+    #[test]
+    fn start_warning_is_appended_only_when_it_has_text() {
+        assert_eq!(with_start_warning("ok.".into(), None), "ok.");
+        assert_eq!(with_start_warning("ok.".into(), Some(" \n")), "ok.");
+        assert_eq!(with_start_warning("ok.".into(), Some("old\n")), "ok. old");
     }
 
     #[test]
