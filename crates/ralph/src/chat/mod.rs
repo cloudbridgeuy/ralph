@@ -279,6 +279,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         run: &run,
         suggestions: suggestions.clone(),
         last_turn_end: Arc::clone(&last_turn_end),
+        identity: Mutex::default(),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),

@@ -37,8 +37,8 @@ pub use tree::{
     ViewSplit,
 };
 pub use usage::{
-    encode_usage, reply_entries, trigger_entries, usage_record, view_stats, CallKind, Trigger,
-    UsageRecord,
+    carry_metadata, encode_usage, reply_entries, trigger_entries, usage_record, view_stats,
+    CallKind, Trigger, UsageRecord,
 };
 
 pub const SUMMARY_BYTES: usize = 512;

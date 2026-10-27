@@ -1,6 +1,6 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
 use crate::chat::keepalive::Stamp;
-use crate::chat::memory::Store;
+use crate::chat::memory::{append_usage, usage_path, Store};
 use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::highlight::ThemeConfig;
@@ -21,11 +21,12 @@ use ralph_core::chat::{
 };
 use ralph_core::chat_input::{turn_end, TurnEnd, TurnSignals};
 use ralph_core::chat_memory::{
-    reply_entries, split_view, trigger_entries, usage_record, view_stats, CallKind, Trigger,
-    ViewSplit,
+    carry_metadata, reply_entries, split_view, trigger_entries, usage_record, view_stats, CallKind,
+    Trigger, ViewSplit,
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::chat_thread::ResetReason;
+use ralph_core::stream::IterationMetadata;
 use std::borrow::Cow;
 use std::io::{self};
 use std::path::Path;
@@ -105,6 +106,7 @@ pub(super) struct Turn<'a> {
     pub(super) run: &'a str,
     pub(super) suggestions: SuggestionSlot,
     pub(super) last_turn_end: Stamp,
+    pub(super) identity: Mutex<IterationMetadata>,
 }
 
 impl Turn<'_> {
@@ -238,10 +240,16 @@ impl Turn<'_> {
                 return Ok(TurnOutcome::Unanswered);
             }
         };
+        let identity = {
+            let mut held = locked(&self.identity);
+            *held = carry_metadata(&held, launch.is_some(), &result.stream_result.metadata);
+            held.clone()
+        };
         if let Some(mut record) = usage_record(
             CallKind::Turn { trigger },
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
+            &identity,
         ) {
             if let Some(spawned) = &launch {
                 record = record.with_view(view_stats(
@@ -257,7 +265,7 @@ impl Turn<'_> {
             record.reset = launch.as_ref().and_then(|spawned| spawned.reset);
             record.run = Some(self.run.to_string());
             self.warn_if_err(
-                self.store.append_usage(&record),
+                append_usage(&usage_path(), &record),
                 "Failed to record chat usage",
             );
         }

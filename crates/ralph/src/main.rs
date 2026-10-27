@@ -325,8 +325,12 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
             ralph_core::chat_memory::CallKind::Nap,
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
+            &result.stream_result.metadata,
         ) {
-            warn_if_err(store.append_usage(&record), "Failed to record chat usage");
+            warn_if_err(
+                chat::memory::append_usage(&chat::memory::usage_path(), &record),
+                "Failed to record chat usage",
+            );
         }
         let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
         ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
