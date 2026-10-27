@@ -1,10 +1,13 @@
-use crate::subprocess::Session;
+use crate::chat::memory::{append_usage, usage_path};
+use crate::subprocess::{Session, StreamingSubprocessResult};
 use crate::watches::locked;
 use chrono::{DateTime, Utc};
 use ralph_core::chat_keepalive::{
     keepalive_action, ping_follow_up, Keepalive, KeepaliveInput, PingFollowUp,
     KEEPALIVE_PING_PROMPT,
 };
+use ralph_core::chat_memory::{usage_record, CallKind};
+use ralph_core::stream::IterationMetadata;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,6 +25,7 @@ pub(super) struct KeepaliveWatch {
     pub(super) last_turn_end: Stamp,
     pub(super) last_ping: Stamp,
     pub(super) last_attempt: Stamp,
+    pub(super) run: String,
 }
 
 impl KeepaliveWatch {
@@ -33,9 +37,13 @@ impl KeepaliveWatch {
     }
 
     fn tick(&self) {
-        let Some(turn_end) = *locked(&self.last_turn_end) else {
-            return;
-        };
+        if let Some(result) = self.ping_once() {
+            self.record(&result);
+        }
+    }
+
+    fn ping_once(&self) -> Option<StreamingSubprocessResult> {
+        let turn_end = (*locked(&self.last_turn_end))?;
         let now = Utc::now();
         let last_activity = (*locked(&self.last_ping)).max(Some(turn_end));
         let mut slot = locked(&self.session);
@@ -48,13 +56,11 @@ impl KeepaliveWatch {
             turn_running: !self.at_prompt.load(Ordering::SeqCst),
         };
         if keepalive_action(&input) != Keepalive::Ping {
-            return;
+            return None;
         }
-        let Some(session) = slot.as_mut() else {
-            return;
-        };
+        let session = slot.as_mut()?;
         let result = session.ping(KEEPALIVE_PING_PROMPT, PING_TIMEOUT);
-        match ping_follow_up(result.ok().map(|r| r.exit_code)) {
+        match ping_follow_up(result.as_ref().ok().map(|r| r.exit_code)) {
             PingFollowUp::Warm => {
                 *locked(&self.last_ping) = Some(Utc::now());
                 *locked(&self.last_attempt) = None;
@@ -65,5 +71,20 @@ impl KeepaliveWatch {
                 self.live.store(false, Ordering::SeqCst);
             }
         }
+        result.ok()
+    }
+
+    fn record(&self, result: &StreamingSubprocessResult) {
+        let Some(mut record) = usage_record(
+            CallKind::Ping,
+            Utc::now().to_rfc3339(),
+            &result.stream_result.costs,
+            &IterationMetadata::new(),
+        ) else {
+            return;
+        };
+        record.request_at = result.request_at.map(|at| at.to_rfc3339());
+        record.run = Some(self.run.clone());
+        let _ = append_usage(&usage_path(), &record);
     }
 }

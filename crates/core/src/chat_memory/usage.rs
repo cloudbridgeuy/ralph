@@ -26,6 +26,7 @@ pub fn reply_entries(reply: &str) -> Vec<(super::Role, String)> {
 pub enum CallKind {
     Turn { trigger: Trigger },
     Nap,
+    Ping,
 }
 
 pub const VIEW_HEAD_BYTES: usize = 1024;
@@ -303,6 +304,26 @@ mod tests {
         let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert_eq!(value["kind"], "nap");
         assert!(value.get("trigger").is_none());
+    }
+
+    #[test]
+    fn ping_record_has_the_ping_kind_run_and_request_time() {
+        let mut record = usage_record(
+            CallKind::Ping,
+            "t".into(),
+            &costs(None),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
+        record.run = Some("r".into());
+        record.request_at = Some("q".into());
+        let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(value["kind"], "ping");
+        assert_eq!(
+            (&value["run"], &value["request_at"]),
+            (&"r".into(), &"q".into())
+        );
+        assert!(value.get("trigger").is_none() && value.get("process_turn").is_none());
     }
 
     #[test]
