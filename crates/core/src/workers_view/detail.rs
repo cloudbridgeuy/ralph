@@ -1,5 +1,8 @@
 use super::remote::{pr_cell, pr_detail, ticket_detail};
-use super::{block, cut, row_lines, title, Remote, WorkerDetail, WorkerRow, REPORT_LIMIT};
+use super::{
+    block, cell_text, cut, lines_text, row_lines, spans_text, title, Remote, WorkerDetail,
+    WorkerRow, REPORT_LIMIT,
+};
 use crate::inbox::age;
 use chrono::{DateTime, Utc};
 use unicode_width::UnicodeWidthStr;
@@ -21,12 +24,12 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
     let mut url_line = None;
     for (name, value) in &mut lines {
         match *name {
-            "ticket" => *value = ticket_detail(detail.ticket.as_ref(), &row.ticket),
+            "ticket" => *value = cell_text(ticket_detail(detail.ticket.as_ref(), &row.ticket)),
             "pr" => {
-                *value = pr_detail(&row.pr);
+                *value = cell_text(pr_detail(&row.pr));
                 if let Remote::Found(pr) = &row.pr {
-                    if !pr.url.is_empty() && 2 + label + 2 + value.width() > width {
-                        *value = pr_cell(&row.pr);
+                    if !pr.url.is_empty() && 2 + label + 2 + spans_text(value).width() > width {
+                        *value = cell_text(pr_cell(&row.pr));
                         url_line = Some(format!("  {}", pr.url));
                     }
                 }
@@ -34,29 +37,32 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
             _ => {}
         }
     }
-    lines.push(("branch", detail.branch.clone()));
+    lines.push(("branch", cell_text(detail.branch.clone())));
     lines.push((
         "worktree",
-        detail.worktree.clone().unwrap_or_else(|| "-".to_string()),
+        cell_text(detail.worktree.clone().unwrap_or_else(|| "-".to_string())),
     ));
-    lines.push(("base", row.base.clone().unwrap_or_else(|| "-".to_string())));
+    lines.push((
+        "base",
+        cell_text(row.base.clone().unwrap_or_else(|| "-".to_string())),
+    ));
     if let Some(session) = &detail.tmux {
-        lines.push(("tmux", session.clone()));
+        lines.push(("tmux", cell_text(session.clone())));
     }
     if !detail.markers.is_empty() {
-        lines.push(("markers", detail.markers.join(", ")));
+        lines.push(("markers", cell_text(detail.markers.join(", "))));
     }
     if let Some(mark) = &detail.heartbeat {
         let at = DateTime::from_timestamp(i64::try_from(mark.at).unwrap_or(i64::MAX), 0)
             .map(|at| at.to_rfc3339())
             .unwrap_or_default();
         let state = if mark.running { "running" } else { "idle" };
-        lines.push(("heartbeat", format!("{state} {}", age(&at, now))));
+        lines.push(("heartbeat", cell_text(format!("{state} {}", age(&at, now)))));
     }
     let mut out = match url_line {
-        None => block(title(row), &lines, width),
+        None => lines_text(&block(title(row), &lines, width)),
         Some(url) => {
-            let shown = block(title(row), &lines, width);
+            let shown = lines_text(&block(title(row), &lines, width));
             let mut rows: Vec<&str> = shown.lines().collect();
             let at = rows
                 .iter()

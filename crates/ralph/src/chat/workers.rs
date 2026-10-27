@@ -1,8 +1,10 @@
+use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::chat::inbox::Display;
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
 use crate::config::{AppConfig, WorkersSection};
+use crate::markdown::{MarkdownTheme, Palette};
 use crate::render::render_markdown;
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
@@ -13,12 +15,14 @@ use ralph_core::worker::{
     worktree_for_branch, ActivityMark, HarnessId, StatusLine, Ticket,
 };
 use ralph_core::workers_view::{
-    count_untracked, detail_view, not_live, parse_head, parse_numstat, workers_view, Diff, Lookup,
-    ReportLine, View, WorkerDetail, WorkerRow,
+    count_untracked, detail_view, lines_text, not_live, parse_head, parse_numstat, workers_view,
+    Diff, Lookup, ReportLine, Span, Tone, View, WorkerDetail, WorkerRow,
 };
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use termimad::crossterm::style::Attribute;
+use termimad::CompoundStyle;
 
 fn git(dir: Option<&Path>, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
@@ -166,6 +170,65 @@ fn facts(monitor: &Monitor) -> Facts {
     }
 }
 
+fn wrapped(open: &str, text: &str) -> String {
+    if open.is_empty() {
+        text.to_string()
+    } else {
+        format!("{open}{text}{RESET}")
+    }
+}
+
+fn paint_span(span: &Span, palette: &Palette) -> String {
+    let open = match span.tone {
+        Tone::Plain => String::new(),
+        Tone::Name => BOLD.to_string(),
+        Tone::Dim => DIM.to_string(),
+        Tone::Done | Tone::Added => fg(palette.done),
+        Tone::Blocked | Tone::Removed => fg(palette.blocked),
+        Tone::Attention | Tone::Behind => fg(palette.waiting),
+        Tone::Active => fg(palette.link),
+        Tone::Sha => fg(palette.inline_code),
+    };
+    wrapped(&open, &span.text)
+}
+
+fn paint_lines(lines: &[Vec<Span>], palette: &Palette, color: bool) -> String {
+    if !color {
+        return lines_text(lines);
+    }
+    lines
+        .iter()
+        .map(|line| {
+            line.iter()
+                .map(|span| paint_span(span, palette))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
+    let mut skin = theme.skin.clone();
+    skin.italic = CompoundStyle::with_attr(Attribute::Dim);
+    skin.inline_code.object_style.background_color = None;
+    MarkdownTheme {
+        skin,
+        palette: theme.palette.clone(),
+    }
+}
+
+fn shown(view: &View, display: &Display) -> String {
+    match view {
+        View::Table(markdown) => {
+            render_markdown(&display.ctx, markdown, &table_theme(display.theme))
+        }
+        View::Text(lines) => format!(
+            "{}\n",
+            paint_lines(lines, &display.theme.palette, display.color)
+        ),
+    }
+}
+
 pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote: &RemoteStatus) {
     let running = running_workers(&monitor.store_dir);
     let facts = facts(monitor);
@@ -179,15 +242,13 @@ pub(super) fn run(monitor: &Monitor, id: Option<&str>, display: &Display, remote
                 row(monitor, worker, &facts, remote, ticket.as_ref()).0
             })
             .collect();
-        match workers_view(&rows, now, width, facts.workers.view) {
-            View::Table(markdown) => {
-                print!(
-                    "{}",
-                    render_markdown(&display.ctx, &markdown, display.theme)
-                )
-            }
-            View::Text(text) => println!("{text}"),
-        }
+        print!(
+            "{}",
+            shown(
+                &workers_view(&rows, now, width, facts.workers.view, display.color),
+                display
+            )
+        );
         return;
     };
     let Some(worker) = running.iter().find(|worker| worker.id == id) else {
@@ -227,7 +288,13 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> View {
-        super::workers_view(rows, now, width, ralph_core::workers_view::Layout::Table)
+        super::workers_view(
+            rows,
+            now,
+            width,
+            ralph_core::workers_view::Layout::Table,
+            false,
+        )
     }
 
     fn now() -> DateTime<Utc> {
@@ -272,7 +339,7 @@ mod tests {
                 markdown,
                 width,
             )),
-            View::Text(text) => text.clone(),
+            View::Text(lines) => lines_text(lines),
         };
         (view, text)
     }
