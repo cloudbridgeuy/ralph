@@ -124,8 +124,8 @@ pub enum ReplyImages {
 
 fn images_paragraph(images: ReplyImages) -> &'static str {
     match images {
-        ReplyImages::Inline => "Images: to show an image file, write `![alt](/absolute/path)` in the reply; it draws inline. Never open an image in another app. ralph draws it, or prints `[image: alt (path)]` if the file is missing or can't be read, so don't add caveats about whether it exists or drew.",
-        ReplyImages::Text => "Images: this terminal can't show images. Don't use image markdown or open images in another app; give the path or describe the image instead.",
+        ReplyImages::Inline => "Images: to show a local image file, write `![alt](/absolute/path)` in the reply; it draws inline. Only local files draw: http(s) and data: URLs stay text. Don't open images in another app unless the user asks. ralph draws it, or prints `[image: alt (path)]` if the file is missing or can't be read, so don't add caveats about whether it exists or drew.",
+        ReplyImages::Text => "Images: images are off in this session. Don't use image markdown, and don't open images in another app unless the user asks; give the path or describe the image instead.",
     }
 }
 
@@ -407,6 +407,7 @@ mod tests {
     }
 
     const DEFAULT_PROMPT_FIXTURE: &str = include_str!("chat_default_prompt.txt");
+    const TEXT_DEFAULT_PROMPT_FIXTURE: &str = include_str!("chat_default_prompt_text.txt");
 
     fn default_prompt() -> String {
         turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &[])
@@ -417,6 +418,14 @@ mod tests {
         assert_eq!(prompt_text(String::new()), None);
         assert_eq!(prompt_text("  \n".to_string()), None);
         assert_eq!(prompt_text("x".to_string()), Some("x".to_string()));
+    }
+
+    #[test]
+    fn default_text_prompt_matches_fixture() {
+        assert_eq!(
+            turn_system_prompt(&CustomPrompt::default(), ReplyImages::Text, &[]),
+            TEXT_DEFAULT_PROMPT_FIXTURE
+        );
     }
 
     #[test]
@@ -460,7 +469,7 @@ mod tests {
     fn inline_images_prompt_has_the_inline_paragraph() {
         let prompt = turn_system_prompt(&CustomPrompt::default(), ReplyImages::Inline, &[]);
         assert!(prompt.contains(images_paragraph(ReplyImages::Inline)));
-        assert!(!prompt.contains("can't show images"));
+        assert!(!prompt.contains("images are off"));
     }
 
     #[test]

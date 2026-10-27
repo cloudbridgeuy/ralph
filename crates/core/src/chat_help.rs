@@ -515,6 +515,7 @@ const TOOL_WIDTH: usize = 1000;
 const IMAGES_HELP: &str = "\
 Images
 ![alt](/absolute/path) in a reply draws PNG, JPEG, GIF or WebP inline in Rex, Ghostty and kitty; tmux needs allow-passthrough on.
+Only local files draw; http(s) and data: URLs stay text.
 Drawing is off with NO_COLOR, in pipes and in unsupported terminals: the raw ![alt](path) text shows.
 A missing file, a file over 10 MiB or one that can't be decoded prints [image: alt (path)].
 Ctrl-V pastes a clipboard image as [Image #N: path].
