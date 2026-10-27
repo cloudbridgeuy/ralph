@@ -347,10 +347,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!("{hint}");
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
+    let idle = Arc::new(AtomicBool::new(false));
     if let Some(limit_hours) = keepalive_hours {
         KeepaliveWatch {
             limit_hours,
-            at_prompt: Arc::clone(&at_prompt),
+            idle: Arc::clone(&idle),
             session: Arc::clone(&turn.session),
             live: Arc::clone(&turn.live),
             last_turn_end,
@@ -438,8 +439,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Some(route) => Some(route),
             None => {
                 at_prompt.store(true, Ordering::SeqCst);
+                idle.store(true, Ordering::SeqCst);
                 let submitted = next_route(&mut editor, &prompt);
                 at_prompt.store(false, Ordering::SeqCst);
+                idle.store(false, Ordering::SeqCst);
                 submitted?.map(|Submitted { line, route }| {
                     if let Some((suggestion, turn_number)) = offered.take() {
                         let record = SuggestionRecord::new(
@@ -514,7 +517,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 (result?, None)
             }
             Route::Hold(filter) => {
-                match hold::run(&filter, &monitor, &prompt.bar) {
+                idle.store(true, Ordering::SeqCst);
+                let held = hold::run(&filter, &monitor, &prompt.bar);
+                idle.store(false, Ordering::SeqCst);
+                match held {
                     Held::Item(position) => {
                         pending = Some(Route::ReadInbox(Selection::At(position)));
                     }

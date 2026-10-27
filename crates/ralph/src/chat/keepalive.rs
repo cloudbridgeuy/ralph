@@ -19,7 +19,7 @@ pub(super) type Stamp = Arc<Mutex<Option<DateTime<Utc>>>>;
 
 pub(super) struct KeepaliveWatch {
     pub(super) limit_hours: u64,
-    pub(super) at_prompt: Arc<AtomicBool>,
+    pub(super) idle: Arc<AtomicBool>,
     pub(super) session: Arc<Mutex<Option<Session>>>,
     pub(super) live: Arc<AtomicBool>,
     pub(super) last_turn_end: Stamp,
@@ -53,7 +53,7 @@ impl KeepaliveWatch {
             since_activity_secs: last_activity.map_or(0, |at| (now - at).num_seconds()),
             since_attempt_secs: (*locked(&self.last_attempt)).map(|at| (now - at).num_seconds()),
             session_live: slot.as_mut().is_some_and(Session::is_alive),
-            turn_running: !self.at_prompt.load(Ordering::SeqCst),
+            turn_running: !self.idle.load(Ordering::SeqCst),
         };
         if keepalive_action(&input) != Keepalive::Ping {
             return None;
