@@ -54,10 +54,11 @@ use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::ChatArgs;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, PromptFiles};
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;
+use crate::invoke::Isolation;
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
 use crate::render::{cap_wrap_width, RenderContext};
@@ -71,7 +72,7 @@ use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
 use ralph_core::chat::{
     resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
-    resolve_wrap_width,
+    resolve_wrap_width, CustomPrompt,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
@@ -112,6 +113,34 @@ fn resolve_store(
             .map(|home| home.join(".ralph").join("chat"))
             .ok_or_else(|| io::Error::other("home directory not found")),
     }
+}
+
+fn read_prompt_file(path: &Path) -> Result<String, String> {
+    std::fs::read_to_string(path)
+        .map_err(|e| format!("Skipping prompt file {}: {e}", path.display()))
+}
+
+fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
+    let (behaviour, behaviour_warning) = match files.behaviour.as_deref().map(read_prompt_file) {
+        Some(Ok(text)) => (Some(text), None),
+        Some(Err(warning)) => (None, Some(warning)),
+        None => (None, None),
+    };
+    let (appends, append_warnings): (Vec<_>, Vec<_>) = files
+        .appends
+        .iter()
+        .map(|path| read_prompt_file(path))
+        .partition(Result::is_ok);
+    (
+        CustomPrompt {
+            behaviour,
+            appends: appends.into_iter().flatten().collect(),
+        },
+        behaviour_warning
+            .into_iter()
+            .chain(append_warnings.into_iter().filter_map(Result::err))
+            .collect(),
+    )
 }
 
 pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -198,6 +227,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 Highlighter::new()
             });
     let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
+    let (custom_prompt, prompt_warnings) =
+        load_custom_prompt(&chat_config.prompt_files(dirs::home_dir().as_deref()));
+    prompt_warnings.into_iter().for_each(warn);
+    let isolation = Isolation::for_chat(&chat_config, &std::env::current_dir()?);
     let live = Arc::new(AtomicBool::new(false));
     let run = run_id(std::process::id(), chrono::Utc::now());
     let turn = Turn {
@@ -207,6 +240,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         permission_mode: &permission_mode,
         plugin_args: &plugin_args,
         skills: &skills,
+        custom_prompt: &custom_prompt,
+        isolation: &isolation,
         theme_config: &theme_config,
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),

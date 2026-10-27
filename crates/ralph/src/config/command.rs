@@ -34,6 +34,26 @@ fn show_row(key: &str, value: &Value, source: Source, env: Option<&str>) -> Stri
     }
 }
 
+fn prompt_file_errors(path: &Path) -> Vec<String> {
+    let Some(config) = read_layer(path)
+        .ok()
+        .and_then(|table| table.try_into::<AppConfig>().ok())
+    else {
+        return Vec::new();
+    };
+    let files = config.chat.prompt_files(dirs::home_dir().as_deref());
+    files
+        .behaviour
+        .iter()
+        .chain(&files.appends)
+        .filter_map(|file| {
+            std::fs::read_to_string(file)
+                .err()
+                .map(|e| format!("cannot read prompt file {}: {e}", file.display()))
+        })
+        .collect()
+}
+
 fn check_file(path: &Path, required: bool, prefixed: bool) -> CommandResult<Vec<String>> {
     let label = path.display().to_string();
     if !path.exists() && !required {
@@ -49,18 +69,16 @@ fn check_file(path: &Path, required: bool, prefixed: bool) -> CommandResult<Vec<
             text.to_string()
         }
     };
+    let errors = [report.errors, prompt_file_errors(path)].concat();
     report
         .notes
         .iter()
         .for_each(|note| eprintln!("note: {}", line(note)));
-    report
-        .errors
-        .iter()
-        .for_each(|error| eprintln!("{}", line(error)));
-    if report.errors.is_empty() {
+    errors.iter().for_each(|error| eprintln!("{}", line(error)));
+    if errors.is_empty() {
         println!("ok: {label}");
     }
-    Ok(report.errors)
+    Ok(errors)
 }
 
 pub fn run_check(path: Option<PathBuf>, store: Option<PathBuf>) -> CommandResult<()> {
@@ -162,5 +180,21 @@ mod tests {
             show_row("chat.wrap_width", &value, Source::Global, Some("X")),
             "chat.wrap_width = 80  [global; env X is set]"
         );
+    }
+
+    #[test]
+    fn prompt_file_errors_name_missing_files_relative_to_the_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("here.md"), "x").unwrap();
+        let config = dir.path().join("config.toml");
+        std::fs::write(
+            &config,
+            "[chat]\nprompt_file = \"here.md\"\nappend_prompt_files = [\"gone.md\"]\n",
+        )
+        .unwrap();
+        let errors = prompt_file_errors(&config);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains(&dir.path().join("gone.md").display().to_string()));
+        assert!(prompt_file_errors(&dir.path().join("none.toml")).is_empty());
     }
 }

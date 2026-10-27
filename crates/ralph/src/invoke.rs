@@ -1,3 +1,4 @@
+use crate::config::ChatSection;
 use crate::highlight::ThemeConfig;
 use crate::spinner::SpinnerSessionInfo;
 use crate::stream_processor::VerboseToolsConfig;
@@ -6,7 +7,7 @@ use crate::subprocess::{
     SubprocessError,
 };
 use ralph_core::sanitize::strip_controls;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
 pub const CHAT_PERMISSION_MODE_ENV: &str = "RALPH_CHAT_PERMISSION_MODE";
@@ -48,23 +49,57 @@ fn quote_prompt(value: &str) -> String {
     shell_quote(&strip_controls(value))
 }
 
-fn isolation_args(home: Option<&Path>, auto_compact_off: bool) -> String {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Isolation {
+    pub user_settings: bool,
+    pub user_claude_md: bool,
+    pub project_excludes: Vec<PathBuf>,
+}
+
+impl Isolation {
+    pub fn for_chat(chat: &ChatSection, cwd: &Path) -> Self {
+        Self {
+            user_settings: chat.user_settings,
+            user_claude_md: chat.user_claude_md,
+            project_excludes: if chat.project_claude_md {
+                Vec::new()
+            } else {
+                vec![
+                    cwd.join("CLAUDE.md"),
+                    cwd.join("CLAUDE.local.md"),
+                    cwd.join(".claude").join("CLAUDE.md"),
+                ]
+            },
+        }
+    }
+}
+
+fn isolation_args(home: Option<&Path>, auto_compact_off: bool, isolation: &Isolation) -> String {
     let mut settings = serde_json::Map::new();
     if auto_compact_off {
         settings.insert("autoCompactEnabled".to_string(), false.into());
     }
-    if let Some(h) = home {
-        settings.insert(
-            "claudeMdExcludes".to_string(),
-            serde_json::json!([h.join(".claude").join("CLAUDE.md").to_string_lossy()]),
-        );
+    let excludes: Vec<String> = home
+        .filter(|_| !isolation.user_claude_md)
+        .map(|h| h.join(".claude").join("CLAUDE.md"))
+        .iter()
+        .chain(&isolation.project_excludes)
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    if !excludes.is_empty() {
+        settings.insert("claudeMdExcludes".to_string(), excludes.into());
     }
     let settings_arg = (!settings.is_empty()).then(|| {
         let json = serde_json::Value::Object(settings).to_string();
         format!(" --settings {}", shell_quote(&json))
     });
+    let sources = if isolation.user_settings {
+        "user,project,local"
+    } else {
+        "project,local"
+    };
     format!(
-        "--setting-sources project,local{}",
+        "--setting-sources {sources}{}",
         settings_arg.unwrap_or_default()
     )
 }
@@ -72,7 +107,7 @@ fn isolation_args(home: Option<&Path>, auto_compact_off: bool) -> String {
 pub fn build_memory_command(prompt: &str, home: Option<&Path>) -> String {
     format!(
         "claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p {}",
-        isolation_args(home, false),
+        isolation_args(home, false, &Isolation::default()),
         quote_prompt(prompt)
     )
 }
@@ -82,6 +117,7 @@ pub fn build_chat_command(
     extra_args: &[String],
     permission_mode: &str,
     home: Option<&Path>,
+    isolation: &Isolation,
 ) -> String {
     let extra = extra_args
         .iter()
@@ -91,7 +127,7 @@ pub fn build_chat_command(
         "{} claude --verbose --permission-mode {} {} --append-system-prompt {}{} --input-format stream-json --output-format stream-json -p",
         CHAT_DISABLE_BACKGROUND_TASKS_ENV,
         permission_mode,
-        isolation_args(home, true),
+        isolation_args(home, true, isolation),
         quote_prompt(system_prompt),
         extra
     )
@@ -149,7 +185,13 @@ mod tests {
     #[test]
     fn chat_command_is_fresh_and_isolated() {
         let mcp = vec!["--strict-mcp-config".to_string()];
-        let cmd = build_chat_command("sys", &mcp, "plan", Some(Path::new("/home/u")));
+        let cmd = build_chat_command(
+            "sys",
+            &mcp,
+            "plan",
+            Some(Path::new("/home/u")),
+            &Isolation::default(),
+        );
         assert!(cmd.starts_with("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude "));
         assert!(cmd.contains("--permission-mode plan "));
         assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
@@ -167,6 +209,7 @@ mod tests {
             &ralph_core::chat::build_agents_args(),
             "auto",
             Some(Path::new("/home/u")),
+            &Isolation::default(),
         );
         assert!(cmd.contains("'--agents'"));
         assert!(cmd.contains("--setting-sources project,local"));
@@ -180,9 +223,72 @@ mod tests {
 
     #[test]
     fn chat_command_strips_a_stored_nul_before_spawn() {
-        let cmd = build_chat_command("sys\0", &[], "auto", None);
+        let cmd = build_chat_command("sys\0", &[], "auto", None, &Isolation::default());
         assert!(std::ffi::CString::new(cmd.clone()).is_ok());
         assert!(cmd.contains("--append-system-prompt 'sys'"));
         assert!(!cmd.contains('\u{0001}'));
+    }
+
+    fn chat_args(chat: ChatSection) -> String {
+        isolation_args(
+            Some(Path::new("/home/u")),
+            true,
+            &Isolation::for_chat(&chat, Path::new("/work")),
+        )
+    }
+
+    #[test]
+    fn default_chat_isolation_is_unchanged() {
+        assert_eq!(
+            chat_args(ChatSection::default()),
+            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]}'"#
+        );
+    }
+
+    #[test]
+    fn user_settings_adds_the_user_source_only() {
+        let args = chat_args(ChatSection {
+            user_settings: true,
+            ..ChatSection::default()
+        });
+        assert!(args.starts_with("--setting-sources user,project,local "));
+        assert!(args.contains(r#""claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]"#));
+    }
+
+    #[test]
+    fn user_claude_md_drops_only_the_home_exclude() {
+        let args = chat_args(ChatSection {
+            user_claude_md: true,
+            ..ChatSection::default()
+        });
+        assert_eq!(
+            args,
+            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false}'"#
+        );
+    }
+
+    #[test]
+    fn project_claude_md_off_excludes_the_cwd_memory_files() {
+        let args = chat_args(ChatSection {
+            project_claude_md: false,
+            ..ChatSection::default()
+        });
+        assert!(args.contains(
+            r#""claudeMdExcludes":["/home/u/.claude/CLAUDE.md","/work/CLAUDE.md","/work/CLAUDE.local.md","/work/.claude/CLAUDE.md"]"#
+        ));
+    }
+
+    #[test]
+    fn all_switches_together() {
+        let args = chat_args(ChatSection {
+            user_settings: true,
+            user_claude_md: true,
+            project_claude_md: false,
+            ..ChatSection::default()
+        });
+        assert_eq!(
+            args,
+            r#"--setting-sources user,project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/work/CLAUDE.md","/work/CLAUDE.local.md","/work/.claude/CLAUDE.md"]}'"#
+        );
     }
 }

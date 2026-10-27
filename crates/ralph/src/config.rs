@@ -35,6 +35,7 @@ mod reset_limits_tests;
 mod wire;
 mod workers;
 pub use changes::ChangesSection;
+pub use chat_settings::PromptFiles;
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
 pub use command::{run_check, run_show};
@@ -70,7 +71,7 @@ fn read_layer(path: &Path) -> Result<Table, ConfigError> {
         .parse::<Table>()
         .map_err(|source| parse_error(path, source))?;
     Ok(match path.parent() {
-        Some(dir) => layers::anchor_skills(table, dir),
+        Some(dir) => layers::anchor_chat_paths(table, dir),
         None => table,
     })
 }
@@ -217,6 +218,16 @@ pub struct ChatSection {
     #[serde(default)]
     pub skills: Vec<PathBuf>,
     #[serde(default)]
+    pub prompt_file: Option<PathBuf>,
+    #[serde(default)]
+    pub append_prompt_files: Vec<PathBuf>,
+    #[serde(default = "default_true")]
+    pub project_claude_md: bool,
+    #[serde(default)]
+    pub user_settings: bool,
+    #[serde(default)]
+    pub user_claude_md: bool,
+    #[serde(default)]
     pub recent_history_tokens: Option<usize>,
     #[serde(default)]
     pub worker_check_secs: Option<u64>,
@@ -278,6 +289,11 @@ impl Default for ChatSection {
         Self {
             mcp_servers: default_mcp_servers(),
             skills: Vec::new(),
+            prompt_file: None,
+            append_prompt_files: Vec::new(),
+            project_claude_md: true,
+            user_settings: false,
+            user_claude_md: false,
             recent_history_tokens: None,
             worker_check_secs: None,
             worker_quiet_secs: None,

@@ -75,7 +75,7 @@ pub fn resolve_recent_history_tokens(flag: Option<usize>, config: Option<usize>)
     flag.or(config).unwrap_or(RECENT_HISTORY_TOKENS)
 }
 
-pub const SYSTEM_PROMPT: &str = "\
+const PROMPT_HEAD: &str = "\
 You are in a long-running chat with one person. The chat so far is compressed, oldest first. The older lines are at the end of this system prompt. The most recent lines start the message you receive, then the new message.
 
 Lines that start with #<id> are summaries of older parts of the chat. The zoom tool opens one into its two halves. The recall tool searches the full chat by regex, newest first. The search tool ranks messages for words, \"quoted phrases\", and identifiers like GUZ-709, and can filter by role and date. The read tool pages through a range of ids in order, as original text or leaf summaries.
@@ -84,32 +84,54 @@ Before you guess or ask the person for a fact, use zoom, recall, and search unti
 
 Messages that start with [worker <id> · <status>] come from agents working for the person, not from the person. Reply to a worker yourself only when the answer is already settled in the chat: a decision the person made, scope they approved, or a step in a plan they agreed. Merges, pushes, PRs, Linear status changes, new scope, and anything public always go to the person: tell them what the worker did or needs, with your recommendation, and wait. List every reply you sent to a worker in your next message to the person. Use spawn_worker and close_worker only to carry out what the person asked in their latest message; set abandon on close_worker only when the person said to drop the work, and force only when the person said to close a worker of another chat.
 
-Messages that start with [worker watch:<name> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report.
+Messages that start with [worker watch:<name> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report.";
 
-Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options. When the reply will end with a Next step the user can say, call `suggest_reply` first, before you write any reply text, with the exact quoted words of that line. Then write the reply once and never mention the suggestion.
+const PROMPT_REPLY_FORMAT: &str = "\
+Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options.";
+
+const PROMPT_CONTRACT: &str = "\
+When the reply will end with a Next step the user can say, call `suggest_reply` first, before you write any reply text, with the exact quoted words of that line. Then write the reply once and never mention the suggestion.
 
 Ralph help: when the person asks how ralph chat itself works (its commands, keys, or status bar), call `help` first and answer from its text, not from the ralph source.
 
-Ralph config: when the person asks about ralph's settings or asks to change how ralph behaves or looks, call `help` with topic `config`, then `config <section>`, before you answer; propose a code change only when no setting covers it. Edit the global config.toml by default; edit the store file `<store>/config.toml` only when the person asks for a store-specific or project-specific setting. Before you edit a config file, copy it to config.toml.bak in the same directory. After editing, run `ralph config check --store <store>`; if it fails, copy config.toml.bak back over the file you edited and report the error.
+Ralph config: when the person asks about ralph's settings or asks to change how ralph behaves or looks, call `help` with topic `config`, then `config <section>`, before you answer; propose a code change only when no setting covers it. Edit the global config.toml by default; edit the store file `<store>/config.toml` only when the person asks for a store-specific or project-specific setting. Before you edit a config file, copy it to config.toml.bak in the same directory. After editing, run `ralph config check --store <store>`; if it fails, copy config.toml.bak back over the file you edited and report the error.";
 
+const PROMPT_BEHAVIOUR: &str = "\
 Ask first: when two readings of a request lead to different work, show a 3-5 line plan and wait for a go.
 
 Verify: never state as fact what you have not checked. A worker or subagent \"done\" is unverified until you check its diff or test output, and the git and Linear state.
 
 Cite history: when you state a fact from older chat, check it with zoom or recall, name its #<id>, and say if it came from a summary.
 
-Development roles: you never do the work yourself; you scope it, decide, and accept results. Read inline only to scope, with at most 3 tool calls per question. Reads across several files, broad searches, and test runs go to the evidence-collector subagent. All code edits go to the implementer subagent. Fixing or finishing work that fell short goes to the reviser subagent. Every dispatch prompt states the goal, the exact question, known facts, the files the worker owns (all other code is read-only), output format and size cap, stop condition and tool budget, \"Report not-found, do not widen scope.\", and \"You are a subagent. Don't run mem.\" After 2 failed repair rounds on one issue, diagnose before you dispatch again; after a 3rd, stop and wait for the person.
+Development roles: you never do the work yourself; you scope it, decide, and accept results. Read inline only to scope, with at most 3 tool calls per question. Reads across several files, broad searches, and test runs go to the evidence-collector subagent. All code edits go to the implementer subagent. Fixing or finishing work that fell short goes to the reviser subagent. Every dispatch prompt states the goal, the exact question, known facts, the files the worker owns (all other code is read-only), output format and size cap, stop condition and tool budget, \"Report not-found, do not widen scope.\", and \"You are a subagent. Don't run mem.\" After 2 failed repair rounds on one issue, diagnose before you dispatch again; after a 3rd, stop and wait for the person.";
 
+const PROMPT_TAIL: &str = "\
 Forget requests: you have no erase tool. Say so plainly; never summarize the item as resolved.
 
 The chat is logged automatically. Never claim to save, store, or remember anything manually.";
 
-pub fn turn_system_prompt(older: &[String]) -> String {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CustomPrompt {
+    pub behaviour: Option<String>,
+    pub appends: Vec<String>,
+}
+
+pub fn turn_system_prompt(custom: &CustomPrompt, older: &[String]) -> String {
+    let behaviour = match &custom.behaviour {
+        Some(text) => format!("{}\n\n{PROMPT_CONTRACT}", text.trim_end()),
+        None => format!("{PROMPT_REPLY_FORMAT} {PROMPT_CONTRACT}\n\n{PROMPT_BEHAVIOUR}"),
+    };
+    let sections = [PROMPT_HEAD, &behaviour, PROMPT_TAIL]
+        .into_iter()
+        .chain(custom.appends.iter().map(|text| text.trim_end()))
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
     if older.is_empty() {
-        return SYSTEM_PROMPT.to_string();
+        return sections;
     }
     format!(
-        "{SYSTEM_PROMPT}\n\nOlder chat, compressed, oldest first:\n{}",
+        "{sections}\n\nOlder chat, compressed, oldest first:\n{}",
         older.join("\n")
     )
 }
@@ -364,17 +386,61 @@ mod tests {
         assert_eq!(resolve_recent_history_tokens(None, Some(0)), 0);
     }
 
+    const DEFAULT_PROMPT_FIXTURE: &str = include_str!("chat_default_prompt.txt");
+
+    fn default_prompt() -> String {
+        turn_system_prompt(&CustomPrompt::default(), &[])
+    }
+
     #[test]
-    fn turn_system_prompt_appends_older_lines() {
-        assert_eq!(turn_system_prompt(&[]), SYSTEM_PROMPT);
+    fn default_prompt_matches_main() {
+        assert_eq!(default_prompt(), DEFAULT_PROMPT_FIXTURE);
         let older = vec!["#0 a".to_string(), "#1 b".to_string()];
-        let prompt = turn_system_prompt(&older);
-        assert!(prompt.starts_with(SYSTEM_PROMPT));
-        assert!(prompt.ends_with("#0 a\n#1 b"));
+        assert_eq!(
+            turn_system_prompt(&CustomPrompt::default(), &older),
+            format!(
+                "{DEFAULT_PROMPT_FIXTURE}\n\nOlder chat, compressed, oldest first:\n#0 a\n#1 b"
+            )
+        );
+    }
+
+    #[test]
+    fn custom_behaviour_replaces_defaults_and_keeps_the_contract() {
+        let custom = CustomPrompt {
+            behaviour: Some("Be terse.\n\n".to_string()),
+            appends: Vec::new(),
+        };
+        let prompt = turn_system_prompt(&custom, &[]);
+        assert!(prompt.starts_with(PROMPT_HEAD));
+        assert!(prompt.contains("\n\nBe terse.\n\nWhen the reply will end"));
+        assert!(prompt.contains("call `suggest_reply` first"));
+        assert!(prompt.contains("call `help` first"));
+        assert!(prompt.contains("Ralph config:"));
+        assert!(prompt.ends_with(PROMPT_TAIL));
+        assert!(!prompt.contains("Reply format:"));
+        assert!(!prompt.contains("Ask first:"));
+        assert!(!prompt.contains("Development roles:"));
+    }
+
+    #[test]
+    fn appends_follow_the_tail_in_order_and_older_lines_come_last() {
+        let custom = CustomPrompt {
+            behaviour: None,
+            appends: vec!["one\n".to_string(), "two".to_string()],
+        };
+        let older = vec!["#0 a".to_string()];
+        let prompt = turn_system_prompt(&custom, &older);
+        assert_eq!(
+            prompt,
+            format!(
+                "{DEFAULT_PROMPT_FIXTURE}\n\none\n\ntwo\n\nOlder chat, compressed, oldest first:\n#0 a"
+            )
+        );
     }
 
     #[test]
     fn system_prompt_states_working_rules() {
+        let prompt = default_prompt();
         for needle in [
             "lead with the answer",
             "one recommended next step",
@@ -397,16 +463,17 @@ mod tests {
             "you have no erase tool",
             "You are a subagent. Don't run mem.",
         ] {
-            assert!(SYSTEM_PROMPT.contains(needle), "{needle}");
+            assert!(prompt.contains(needle), "{needle}");
         }
     }
 
     #[test]
     fn system_prompt_requires_approval_before_watch() {
-        assert!(SYSTEM_PROMPT.contains(
+        let prompt = default_prompt();
+        assert!(prompt.contains(
             "Before calling watch, show the person the exact command and wait for their approval."
         ));
-        assert!(SYSTEM_PROMPT.contains("[worker watch:<name> · watch]"));
+        assert!(prompt.contains("[worker watch:<name> · watch]"));
     }
 
     #[test]
