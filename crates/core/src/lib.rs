@@ -17,6 +17,7 @@ pub mod chat_edit_mode;
 pub mod chat_help;
 pub mod chat_hold;
 pub mod chat_input;
+pub mod chat_keepalive;
 pub mod chat_memory;
 pub mod chat_skills;
 pub mod chat_socket;

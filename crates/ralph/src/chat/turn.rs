@@ -1,4 +1,5 @@
 use crate::backoff::{attempt_from, retry_on_outage, wait_unless, Attempt};
+use crate::chat::keepalive::Stamp;
 use crate::chat::memory::Store;
 use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
@@ -103,6 +104,7 @@ pub(super) struct Turn<'a> {
     pub(super) gate: Arc<OutputGate>,
     pub(super) run: &'a str,
     pub(super) suggestions: SuggestionSlot,
+    pub(super) last_turn_end: Stamp,
 }
 
 impl Turn<'_> {
@@ -153,6 +155,7 @@ impl Turn<'_> {
         message: &str,
     ) -> Result<TurnOutcome, Box<dyn std::error::Error>> {
         let outcome = self.run_turn(trigger, logged, message);
+        *locked(&self.last_turn_end) = Some(chrono::Utc::now());
         self.live
             .store(locked(&self.session).is_some(), Ordering::SeqCst);
         outcome

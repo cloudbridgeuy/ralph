@@ -1,4 +1,4 @@
-use super::spinner::{spawn_piped, Pump, Readers, SpinnerSubprocessConfig, Step};
+use super::spinner::{spawn_piped, Display, Pump, Readers, SpinnerSubprocessConfig, Step};
 use super::types::{
     StreamingSubprocessResult, SubprocessError, EXIT_CODE_INTERRUPTED, EXIT_CODE_KILLED,
 };
@@ -116,18 +116,35 @@ impl Session {
     }
 
     pub fn turn(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
-        let result = self.drive(prompt);
+        let result = self.drive(prompt, Display::Shown, None);
         if matches!(&result, Err(e) if !matches!(e, SubprocessError::Interrupted { .. })) {
             self.alive = false;
         }
         result
     }
 
-    fn drive(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
+    pub fn ping(&mut self, prompt: &str, timeout: Duration) -> Result<(), SubprocessError> {
+        let outcome = match self.drive(prompt, Display::Silent, Some(timeout)) {
+            Ok(result) if result.exit_code == 0 => return Ok(()),
+            Ok(_) => SubprocessError::Stale,
+            Err(e) => e,
+        };
+        self.reap();
+        self.alive = false;
+        Err(outcome)
+    }
+
+    fn drive(
+        &mut self,
+        prompt: &str,
+        display: Display,
+        timeout: Option<Duration>,
+    ) -> Result<StreamingSubprocessResult, SubprocessError> {
         if leftover_is_stale(&self.readers.take_queued()) {
             return Err(SubprocessError::LeftoverResult);
         }
-        let mut pump = Pump::start(&self.config)?;
+        let mut pump = Pump::start(&self.config, display)?;
+        let deadline = timeout.map(|limit| Instant::now() + limit);
         self.send(&user_line(prompt))
             .map_err(|_| SubprocessError::Stale)?;
         let mut interrupt: Option<(Instant, bool)> = None;
@@ -159,6 +176,20 @@ impl Session {
                 self.reap();
                 self.alive = false;
                 break pump.finish(&self.readers, EXIT_CODE_KILLED, false);
+            }
+            if let (Some(limit), Some(at)) = (timeout, deadline) {
+                if Instant::now() >= at {
+                    self.reap();
+                    self.alive = false;
+                    return Err(SubprocessError::Timeout {
+                        timeout_secs: limit.as_secs(),
+                        partial_result: Box::new(pump.finish(
+                            &self.readers,
+                            EXIT_CODE_KILLED,
+                            false,
+                        )),
+                    });
+                }
             }
             match pump.step(&self.readers, pump.gate_paused())? {
                 Step::Pending => {}
