@@ -255,6 +255,8 @@ pub struct ChatSection {
     #[serde(default)]
     pub worker_check_secs: Option<u64>,
     #[serde(default)]
+    pub keepalive_hours: Option<u64>,
+    #[serde(default)]
     pub worker_quiet_secs: Option<toml::Value>,
     #[serde(default)]
     pub reset_turns: Option<toml::Value>,
@@ -319,6 +321,7 @@ impl Default for ChatSection {
             user_claude_md: false,
             recent_history_tokens: None,
             worker_check_secs: None,
+            keepalive_hours: None,
             worker_quiet_secs: None,
             reset_turns: None,
             reset_tokens: None,

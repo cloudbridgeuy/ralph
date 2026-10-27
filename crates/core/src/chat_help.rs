@@ -347,7 +347,7 @@ fn thread_parts() -> Vec<(String, String)> {
         (
             "cache 41m".into(),
             format!(
-                "estimated minutes left of the prompt cache ({} min TTL from the last reply); cold when none",
+                "estimated minutes left of the prompt cache ({} min TTL from the last reply or keepalive ping); cold when none",
                 CACHE_TTL_SECS / 60
             ),
         ),

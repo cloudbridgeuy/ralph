@@ -59,6 +59,7 @@ pub struct ThreadUsage {
 #[derive(Debug, Clone, Copy)]
 pub struct ThreadEnv {
     pub now: DateTime<Utc>,
+    pub last_ping: Option<DateTime<Utc>>,
     pub live: bool,
     pub limits: ResetLimits,
     pub shift: Option<usize>,
@@ -138,10 +139,12 @@ pub fn restart_write(input: u64, write: u64, read: u64) -> bool {
 
 pub fn cache_left_minutes(
     request_at: Option<DateTime<Utc>>,
+    last_ping: Option<DateTime<Utc>>,
     now: DateTime<Utc>,
     live: bool,
 ) -> Option<u64> {
-    let elapsed = (now - request_at.filter(|_| live)?).num_seconds();
+    let touched = request_at.max(last_ping).filter(|_| live)?;
+    let elapsed = (now - touched).num_seconds();
     let left = u64::try_from(CACHE_TTL_SECS - elapsed.max(0)).ok()?;
     (left > 0).then(|| left.div_ceil(60))
 }
@@ -171,8 +174,9 @@ pub fn thread_cell(usage: Option<&ThreadUsage>, env: &ThreadEnv) -> ThreadCell {
         ctx_percent: live
             .and_then(|usage| usage.context_tokens)
             .and_then(|tokens| (tokens * 100).checked_div(env.limits.tokens)),
-        cache_minutes: usage
-            .and_then(|usage| cache_left_minutes(usage.request_at, env.now, env.live)),
+        cache_minutes: usage.and_then(|usage| {
+            cache_left_minutes(usage.request_at, env.last_ping, env.now, env.live)
+        }),
         write_heavy: usage.is_some_and(|usage| usage.write_heavy),
         reset: live.and_then(|usage| usage.reset),
         shift: env.shift,
@@ -266,6 +270,7 @@ mod tests {
     fn env(live: bool, shift: Option<usize>) -> ThreadEnv {
         ThreadEnv {
             now: time(0),
+            last_ping: None,
             live,
             limits: LIMITS,
             shift,
@@ -382,7 +387,7 @@ mod tests {
     #[test]
     fn cache_minutes_follow_the_one_hour_window() {
         let at = Some(time(0));
-        let left = |elapsed: i64| cache_left_minutes(at, time(elapsed), true);
+        let left = |elapsed: i64| cache_left_minutes(at, None, time(elapsed), true);
         assert_eq!(left(0), Some(60));
         assert_eq!(left(1), Some(60));
         assert_eq!(left(60), Some(59));
@@ -394,8 +399,23 @@ mod tests {
 
     #[test]
     fn cache_is_cold_without_a_request_or_a_live_process() {
-        assert_eq!(cache_left_minutes(None, time(1), true), None);
-        assert_eq!(cache_left_minutes(Some(time(0)), time(1), false), None);
+        assert_eq!(cache_left_minutes(None, None, time(1), true), None);
+        assert_eq!(
+            cache_left_minutes(Some(time(0)), None, time(1), false),
+            None
+        );
+    }
+
+    #[test]
+    fn cache_counts_from_the_later_of_the_reply_and_the_ping() {
+        let left = |request: Option<i64>, ping: Option<i64>, live| {
+            cache_left_minutes(request.map(time), ping.map(time), time(3000), live)
+        };
+        assert_eq!(left(Some(0), Some(2400), true), Some(50));
+        assert_eq!(left(Some(2400), Some(0), true), Some(50));
+        assert_eq!(left(None, Some(2400), true), Some(50));
+        assert_eq!(left(None, None, true), None);
+        assert_eq!(left(Some(0), Some(2400), false), None);
     }
 
     #[test]

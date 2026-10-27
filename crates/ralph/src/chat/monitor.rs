@@ -1,4 +1,5 @@
 use crate::chat::check::CheckState;
+use crate::chat::keepalive::Stamp;
 use crate::chat::memory::Store;
 use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
@@ -86,6 +87,7 @@ pub(super) struct Monitor {
     pub(super) warned: Mutex<HashSet<String>>,
     pub(super) alert: AlertConfig,
     pub(super) live: Arc<AtomicBool>,
+    pub(super) last_ping: Stamp,
     pub(super) run: String,
     pub(super) reset_limits: ResetLimits,
     pub(super) thread: Mutex<ThreadMemo>,
@@ -329,6 +331,7 @@ impl Monitor {
                 memo.usage.as_ref(),
                 &ThreadEnv {
                     now: chrono::Utc::now(),
+                    last_ping: *locked(&self.last_ping),
                     live: self.live.load(Ordering::SeqCst),
                     limits: self.reset_limits,
                     shift: memo.shift,

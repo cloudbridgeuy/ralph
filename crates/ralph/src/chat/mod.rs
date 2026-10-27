@@ -8,6 +8,7 @@ mod editor;
 mod hold;
 mod inbox;
 mod index_files;
+mod keepalive;
 mod keys;
 pub(crate) mod mcp;
 pub(crate) mod memory;
@@ -70,6 +71,7 @@ use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
 use crate::workers::{canonical_store, running_workers, Workers};
+use keepalive::{KeepaliveWatch, Stamp};
 use ralph_core::chat::{
     prompt_text, resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
     resolve_wrap_width, CustomPrompt, ReplyImages,
@@ -77,6 +79,7 @@ use ralph_core::chat::{
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
+use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
@@ -183,6 +186,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         chat_config.recent_history_tokens,
     );
     let worker_check_secs = resolve_worker_check_secs(chat_config.worker_check_secs);
+    let keepalive_hours = resolve_keepalive_hours(chat_config.keepalive_hours);
     let (worker_quiet_secs, quiet_warning) = chat_config.worker_quiet_setting();
     let (reset_limits, reset_warnings) = chat_config.reset_limits_setting();
     let watch_timeout = resolve_watch_timeout(chat_config.watch_timeout_secs)?;
@@ -251,6 +255,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         ReplyImages::Text
     };
+    let last_turn_end: Stamp = Arc::default();
+    let last_ping: Stamp = Arc::default();
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
@@ -272,6 +278,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         gate: Arc::new(OutputGate::new()),
         run: &run,
         suggestions: suggestions.clone(),
+        last_turn_end: Arc::clone(&last_turn_end),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -308,6 +315,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             unknown_focus: chat_config.inbox_alert_unknown_focus,
         },
         live,
+        last_ping: Arc::clone(&last_ping),
         run: run.clone(),
         reset_limits,
         thread: Mutex::new(ThreadMemo::default()),
@@ -338,6 +346,17 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         println!("{hint}");
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
+    if let Some(limit_hours) = keepalive_hours {
+        KeepaliveWatch {
+            limit_hours,
+            at_prompt: Arc::clone(&at_prompt),
+            session: Arc::clone(&turn.session),
+            live: Arc::clone(&turn.live),
+            last_turn_end,
+            last_ping,
+        }
+        .spawn();
+    }
     let headless = watch_headless(monitor.store_dir.clone());
     watch_input(
         Arc::clone(&at_prompt),

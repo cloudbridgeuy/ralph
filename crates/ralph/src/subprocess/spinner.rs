@@ -188,7 +188,14 @@ pub(super) enum Step {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Display {
+    Shown,
+    Silent,
+}
+
 pub(super) struct Pump {
+    display: Display,
     processor: StreamProcessor,
     spinner: Spinner,
     spinner_active: bool,
@@ -200,7 +207,10 @@ pub(super) struct Pump {
 }
 
 impl Pump {
-    pub(super) fn start(config: &SpinnerSubprocessConfig) -> Result<Pump, SubprocessError> {
+    pub(super) fn start(
+        config: &SpinnerSubprocessConfig,
+        display: Display,
+    ) -> Result<Pump, SubprocessError> {
         let stdout_is_terminal = std::io::stdout().is_terminal();
         let processor = StreamProcessor::with_verbose_tools(
             config.theme_config.clone(),
@@ -210,11 +220,15 @@ impl Pump {
         )?;
         let mut spinner =
             Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone());
-        spinner.start();
+        let spinner_active = display == Display::Shown;
+        if spinner_active {
+            spinner.start();
+        }
         Ok(Pump {
+            display,
             processor,
             spinner,
-            spinner_active: true,
+            spinner_active,
             last_output_time: Instant::now(),
             pending_tool_count: 0,
             stderr: String::new(),
@@ -256,10 +270,12 @@ impl Pump {
                 if line.contains("\"type\":\"user\"") && line.contains("\"type\":\"tool_result\"") {
                     self.pending_tool_count = self.pending_tool_count.saturating_sub(1);
                 }
-                if let Some(output) = self.processor.process_line(&line) {
-                    self.stop_spinner();
-                    write_to(self.gate.as_deref(), Stream::Stdout, &output);
-                    self.last_output_time = Instant::now();
+                if self.display == Display::Shown {
+                    if let Some(output) = self.processor.process_line(&line) {
+                        self.stop_spinner();
+                        write_to(self.gate.as_deref(), Stream::Stdout, &output);
+                        self.last_output_time = Instant::now();
+                    }
                 }
                 if let Some(is_error) = result_is_error(&line) {
                     return Ok(Step::Result { is_error });
@@ -274,9 +290,15 @@ impl Pump {
                 )))
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                drain_stderr(readers, &mut self.stderr, true, self.gate.as_deref());
+                drain_stderr(
+                    readers,
+                    &mut self.stderr,
+                    self.display == Display::Shown,
+                    self.gate.as_deref(),
+                );
                 let gap_threshold = Duration::from_millis(DEFAULT_GAP_THRESHOLD_MS);
-                if !paused
+                if self.display == Display::Shown
+                    && !paused
                     && !self.spinner_active
                     && self.last_output_time.elapsed() >= gap_threshold
                 {
@@ -301,11 +323,23 @@ impl Pump {
         show_stderr: bool,
     ) -> StreamingSubprocessResult {
         self.stop_spinner();
-        drain_stdout(readers, &mut self.processor, self.gate.as_deref());
-        drain_stderr(readers, &mut self.stderr, show_stderr, self.gate.as_deref());
+        let shown = self.display == Display::Shown;
+        if shown {
+            drain_stdout(readers, &mut self.processor, self.gate.as_deref());
+        } else {
+            readers.take_queued();
+        }
+        drain_stderr(
+            readers,
+            &mut self.stderr,
+            show_stderr && shown,
+            self.gate.as_deref(),
+        );
         let stream_result = self.processor.finish();
         if let Some(ref output) = stream_result.final_output {
-            write_to(self.gate.as_deref(), Stream::Stdout, output);
+            if shown {
+                write_to(self.gate.as_deref(), Stream::Stdout, output);
+            }
         }
         StreamingSubprocessResult {
             exit_code,
@@ -321,7 +355,7 @@ fn run_subprocess_with_spinner(
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     let mut child = spawn_piped(&config.command, Stdio::null())?;
     let mut readers = Readers::start(&mut child)?;
-    let mut pump = Pump::start(config)?;
+    let mut pump = Pump::start(config, Display::Shown)?;
     let start = Instant::now();
 
     loop {
