@@ -15,7 +15,7 @@ pub struct SkillLinks {
     pub dropped: Vec<PathBuf>,
 }
 
-fn expand_home(path: &Path, home: Option<&Path>) -> PathBuf {
+pub fn expand_home(path: &Path, home: Option<&Path>) -> PathBuf {
     match (path.strip_prefix("~"), home) {
         (Ok(rest), Some(home)) => home.join(rest),
         _ => path.to_path_buf(),

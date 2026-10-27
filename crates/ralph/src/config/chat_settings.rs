@@ -1,6 +1,7 @@
 use super::empty_submit;
 use super::{ChatSection, EditorSetting, WORKER_QUIET_SECS};
 use ralph_core::chat::{ResetLimits, RESET_TOKENS, RESET_TURNS};
+use ralph_core::chat_skills::expand_home;
 use ralph_core::chat_status::EmptySubmit;
 use std::path::{Path, PathBuf};
 
@@ -21,13 +22,6 @@ fn positive_setting(value: Option<&toml::Value>, key: &str, default: u64) -> (u6
 pub struct PromptFiles {
     pub behaviour: Option<PathBuf>,
     pub appends: Vec<PathBuf>,
-}
-
-fn expand_home(path: &Path, home: Option<&Path>) -> PathBuf {
-    match (path.strip_prefix("~"), home) {
-        (Ok(rest), Some(home)) => home.join(rest),
-        _ => path.to_path_buf(),
-    }
 }
 
 impl ChatSection {
