@@ -12,14 +12,15 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
     fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, opencode_config,
-    project_slug, resolve_claude_model, resolve_cursor_model, resolve_opencode_model,
-    resolve_ticket, rollback_plan, rollback_report, session_name, spawn_handoff, spawn_record_path,
-    startup_state, with_start_warning, worker_command, worker_mcp_args, worker_mcp_config,
-    worktree_add_args, wt_switch_args, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId,
-    OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket,
-    TicketKeys, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND,
-    CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
-    OPENCODE_CONFIG_FILE, STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    project_slug, resolve_claude_model, resolve_claude_shell, resolve_cursor_model,
+    resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report, session_name,
+    spawn_handoff, spawn_record_path, startup_state, with_start_warning, worker_command,
+    worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeShell,
+    ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback,
+    SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, WorkerMarkers,
+    WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS,
+    FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
+    TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -64,9 +65,21 @@ impl Workers {
                 )))
             }
         }
-        self.preflight(id, harness)?;
-        let session = session_name(&project, id);
         let config = AppConfig::load().map_err(|e| e.to_string());
+        let (shell, shell_warning) = resolve_claude_shell(
+            config
+                .as_ref()
+                .map(|config| config.claude.shell)
+                .map_err(String::as_str),
+        );
+        let shell_warning = shell_warning.filter(|_| harness == HarnessId::Claude);
+        self.preflight(id, harness, shell).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                with_start_warning(e.to_string(), shell_warning.as_deref()),
+            )
+        })?;
+        let session = session_name(&project, id);
         let (worktree, worktree_dir) =
             locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
         exclude(&repo, &exclude_lines(harness, &repo, &worktree_dir.path))?;
@@ -127,7 +140,11 @@ impl Workers {
                 .map(|config| &config.tickets)
                 .unwrap_or(&TicketKeys::default()),
         );
-        let warnings = [worktree_dir.warning.as_deref(), model_warning.as_deref()];
+        let warnings = [
+            worktree_dir.warning.as_deref(),
+            model_warning.as_deref(),
+            shell_warning.as_deref(),
+        ];
         let launch = Launch {
             id,
             task,
@@ -135,6 +152,7 @@ impl Workers {
             model: model.as_deref(),
             worktree: &worktree,
             scheduled,
+            shell,
             site: site.as_ref(),
             session: &session,
             ticket,
@@ -170,16 +188,14 @@ impl Workers {
         })
     }
 
-    fn preflight(&self, id: &str, harness: HarnessId) -> io::Result<()> {
+    fn preflight(&self, id: &str, harness: HarnessId, shell: ClaudeShell) -> io::Result<()> {
         match harness {
             HarnessId::Claude => {
                 require_on_path("tmux")?;
-                require_on_path("zsh")?;
-                // An interactive zsh takes over the terminal's foreground process
-                // group; a new session keeps ralph from being left in the background.
-                let mut check = Command::new("zsh");
+                require_on_path(shell.program())?;
+                let mut check = Command::new(shell.program());
                 check
-                    .args(["-lic", "command -v claude"])
+                    .args([shell.login_flags(), "command -v claude"])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null());
@@ -188,9 +204,10 @@ impl Workers {
                 if found {
                     Ok(())
                 } else {
-                    Err(io::Error::other(
-                        "claude not found on PATH (checked in a zsh login shell)",
-                    ))
+                    Err(io::Error::other(format!(
+                        "claude not found on PATH (checked in a {} login shell)",
+                        shell.program()
+                    )))
                 }
             }
             HarnessId::Opencode => self.preflight_opencode(id),
@@ -206,6 +223,7 @@ impl Workers {
             harness,
             model,
             scheduled,
+            shell,
             worktree,
             site,
             session,
@@ -231,6 +249,7 @@ impl Workers {
                     task,
                     model: *model,
                     scheduled: *scheduled,
+                    shell: *shell,
                 })
             }
             HarnessId::Opencode => {
@@ -453,6 +472,7 @@ struct Launch<'a> {
     harness: HarnessId,
     model: Option<&'a str>,
     scheduled: bool,
+    shell: ClaudeShell,
     worktree: &'a Path,
     site: Option<&'a WorkerSite>,
     session: &'a str,

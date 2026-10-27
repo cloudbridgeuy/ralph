@@ -1,9 +1,12 @@
+use ralph_core::worker::ClaudeShell;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ClaudeSection {
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub shell: ClaudeShell,
 }
 
 #[cfg(test)]

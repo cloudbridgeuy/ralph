@@ -58,6 +58,15 @@ mod tests {
     }
 
     #[test]
+    fn claude_shell_accepts_bash_and_rejects_unknown() {
+        assert!(check("[claude]\nshell = \"fish\"\n", "c").is_err());
+        assert!(check("[claude]\nshell = \"bash\"\n", "c")
+            .unwrap()
+            .errors
+            .is_empty());
+    }
+
+    #[test]
     fn bad_toml_and_invalid_workers_fail() {
         assert!(check("[chat", "c").is_err());
         assert!(check("[workers]\nview = \"grid\"\n", "c").is_err());

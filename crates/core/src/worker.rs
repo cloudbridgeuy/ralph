@@ -332,6 +332,39 @@ pub fn opencode_config(model: &str, exe: &Path, mcp_args: &[String], attachments
     })
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaudeShell {
+    #[default]
+    Zsh,
+    Bash,
+}
+
+impl ClaudeShell {
+    pub fn program(self) -> &'static str {
+        match self {
+            Self::Zsh => "zsh",
+            Self::Bash => "bash",
+        }
+    }
+
+    pub fn login_flags(self) -> &'static str {
+        "-lic"
+    }
+}
+
+pub fn resolve_claude_shell(config: Result<ClaudeShell, &str>) -> (ClaudeShell, Option<String>) {
+    match config {
+        Ok(shell) => (shell, None),
+        Err(error) => (
+            ClaudeShell::default(),
+            Some(format!(
+                "Warning: [claude] shell was skipped because the ralph config did not load ({error}). Used zsh instead."
+            )),
+        ),
+    }
+}
+
 pub struct ClaudeWorkerArgs<'a> {
     pub mcp_config: &'a Path,
     pub settings: &'a Path,
@@ -340,6 +373,7 @@ pub struct ClaudeWorkerArgs<'a> {
     pub task: &'a str,
     pub model: Option<&'a str>,
     pub scheduled: bool,
+    pub shell: ClaudeShell,
 }
 
 pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
@@ -349,8 +383,8 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
         args.permission_mode
     };
     let mut command: Vec<String> = [
-        "zsh",
-        "-lic",
+        args.shell.program(),
+        args.shell.login_flags(),
         r#"exec "$0" "$@""#,
         "claude",
         "--permission-mode",
@@ -633,7 +667,38 @@ mod tests {
             task: "do it",
             model,
             scheduled: false,
+            shell: ClaudeShell::Zsh,
         }
+    }
+
+    #[test]
+    fn claude_shell_resolves_config_or_warns_and_uses_zsh() {
+        assert_eq!(
+            resolve_claude_shell(Ok(ClaudeShell::Bash)),
+            (ClaudeShell::Bash, None)
+        );
+        let (shell, warning) = resolve_claude_shell(Err("bad toml"));
+        assert_eq!(shell, ClaudeShell::Zsh);
+        let warning = warning.unwrap();
+        assert!(warning.contains("bad toml") && warning.contains("zsh"));
+    }
+
+    #[test]
+    fn claude_shell_names_program_and_login_flags() {
+        assert_eq!(ClaudeShell::default(), ClaudeShell::Zsh);
+        assert_eq!(ClaudeShell::Zsh.program(), "zsh");
+        assert_eq!(ClaudeShell::Bash.program(), "bash");
+        assert_eq!(ClaudeShell::Zsh.login_flags(), "-lic");
+        assert_eq!(ClaudeShell::Bash.login_flags(), "-lic");
+    }
+
+    #[test]
+    fn worker_command_runs_claude_through_bash_when_configured() {
+        let args = worker_command(&ClaudeWorkerArgs {
+            shell: ClaudeShell::Bash,
+            ..claude_args(None)
+        });
+        assert_eq!(args[..2], ["bash", "-lic"]);
     }
 
     #[test]
