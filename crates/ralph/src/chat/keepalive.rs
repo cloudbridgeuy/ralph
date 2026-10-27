@@ -1,5 +1,6 @@
 use crate::chat::memory::{append_usage, usage_path};
 use crate::subprocess::{Session, StreamingSubprocessResult};
+use crate::warn::warn_if_err;
 use crate::watches::locked;
 use chrono::{DateTime, Utc};
 use ralph_core::chat_keepalive::{
@@ -25,6 +26,7 @@ pub(super) struct KeepaliveWatch {
     pub(super) last_turn_end: Stamp,
     pub(super) last_ping: Stamp,
     pub(super) last_attempt: Stamp,
+    pub(super) identity: Arc<Mutex<IterationMetadata>>,
     pub(super) run: String,
 }
 
@@ -37,12 +39,10 @@ impl KeepaliveWatch {
     }
 
     fn tick(&self) {
-        if let Some(result) = self.ping_once() {
-            self.record(&result);
-        }
+        self.ping_once();
     }
 
-    fn ping_once(&self) -> Option<StreamingSubprocessResult> {
+    fn ping_once(&self) -> Option<()> {
         let turn_end = (*locked(&self.last_turn_end))?;
         let now = Utc::now();
         let last_activity = (*locked(&self.last_ping)).max(Some(turn_end));
@@ -71,20 +71,25 @@ impl KeepaliveWatch {
                 self.live.store(false, Ordering::SeqCst);
             }
         }
-        result.ok()
+        self.record(&result.ok()?);
+        Some(())
     }
 
     fn record(&self, result: &StreamingSubprocessResult) {
+        let identity = locked(&self.identity).clone();
         let Some(mut record) = usage_record(
             CallKind::Ping,
             Utc::now().to_rfc3339(),
             &result.stream_result.costs,
-            &IterationMetadata::new(),
+            &identity,
         ) else {
             return;
         };
         record.request_at = result.request_at.map(|at| at.to_rfc3339());
         record.run = Some(self.run.clone());
-        let _ = append_usage(&usage_path(), &record);
+        warn_if_err(
+            append_usage(&usage_path(), &record),
+            "Failed to record keepalive ping usage",
+        );
     }
 }

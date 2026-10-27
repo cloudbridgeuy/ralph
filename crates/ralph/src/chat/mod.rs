@@ -279,7 +279,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         run: &run,
         suggestions: suggestions.clone(),
         last_turn_end: Arc::clone(&last_turn_end),
-        identity: Mutex::default(),
+        identity: Arc::default(),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -357,6 +357,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             last_turn_end,
             last_ping,
             last_attempt: Arc::new(Mutex::new(None)),
+            identity: Arc::clone(&turn.identity),
             run: run.clone(),
         }
         .spawn();

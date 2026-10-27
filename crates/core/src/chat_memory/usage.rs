@@ -307,6 +307,34 @@ mod tests {
     }
 
     #[test]
+    fn ping_record_carries_model_session_and_harness() {
+        let value = line(
+            usage_record(
+                CallKind::Ping,
+                "t".into(),
+                &costs(None),
+                &seen(Some("m"), Some("s")),
+            )
+            .unwrap(),
+        );
+        assert_eq!(value["kind"], "ping");
+        assert_eq!(
+            (
+                &value["harness"],
+                &value["model"],
+                &value["session_id"],
+                &value["cost_source"]
+            ),
+            (
+                &"claude".into(),
+                &"m".into(),
+                &"s".into(),
+                &"harness".into()
+            )
+        );
+    }
+
+    #[test]
     fn ping_record_has_the_ping_kind_run_and_request_time() {
         let mut record = usage_record(
             CallKind::Ping,

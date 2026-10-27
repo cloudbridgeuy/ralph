@@ -106,7 +106,7 @@ pub(super) struct Turn<'a> {
     pub(super) run: &'a str,
     pub(super) suggestions: SuggestionSlot,
     pub(super) last_turn_end: Stamp,
-    pub(super) identity: Mutex<IterationMetadata>,
+    pub(super) identity: Arc<Mutex<IterationMetadata>>,
 }
 
 impl Turn<'_> {
@@ -199,7 +199,11 @@ impl Turn<'_> {
         };
         self.print_rule();
         let mut session = self.take_session();
-        if self.cancel.swap(false, Ordering::SeqCst) {
+        let early = turn_end(&TurnSignals {
+            cancelled: self.cancel.swap(false, Ordering::SeqCst),
+            terminated: false,
+        });
+        if early == TurnEnd::Cancelled {
             *locked(&self.session) = session;
             self.warn("Turn cancelled.");
             return Ok(TurnOutcome::Unanswered);
