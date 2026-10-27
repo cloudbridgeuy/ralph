@@ -32,7 +32,7 @@ use std::io::{self};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 use termimad::MadSkin;
 
 pub(super) fn rule(skin: &MadSkin, width: usize) -> String {
@@ -144,6 +144,21 @@ impl Turn<'_> {
         None
     }
 
+    fn take_session(&self) -> Option<Session> {
+        let held = match self.session.try_lock() {
+            Ok(mut slot) => slot.take(),
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().take(),
+            Err(TryLockError::WouldBlock) => {
+                let mut spinner = Spinner::with_session_context(0, chat_session_info());
+                spinner.start_with_context(SpinnerContext::WaitingForResponse);
+                let taken = locked(&self.session).take();
+                spinner.stop();
+                taken
+            }
+        };
+        self.live_or_note(held)
+    }
+
     fn drop_session(&self, reason: ResetReason) {
         if locked(&self.session).take().is_some() {
             self.note_reset(reason);
@@ -182,10 +197,15 @@ impl Turn<'_> {
             Trigger::User => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
-        let mut session = self.live_or_note(locked(&self.session).take());
+        self.print_rule();
+        let mut session = self.take_session();
+        if self.cancel.swap(false, Ordering::SeqCst) {
+            *locked(&self.session) = session;
+            self.warn("Turn cancelled.");
+            return Ok(TurnOutcome::Unanswered);
+        }
         let mut launch: Option<Launch> = None;
         let mut ran_session = false;
-        self.print_rule();
         let result = retry_on_outage(
             "chat turn",
             || {

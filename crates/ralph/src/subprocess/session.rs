@@ -46,6 +46,16 @@ fn group_signal_safe(state: ChildState) -> bool {
     state != ChildState::Reaped
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Interrupts {
+    Honor,
+    Ignore,
+}
+
+fn interrupt_requested(policy: Interrupts, cancelled: bool, sigint: bool) -> bool {
+    policy == Interrupts::Honor && (cancelled || sigint)
+}
+
 pub struct Session {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -116,7 +126,7 @@ impl Session {
     }
 
     pub fn turn(&mut self, prompt: &str) -> Result<StreamingSubprocessResult, SubprocessError> {
-        let result = self.drive(prompt, Display::Shown, None);
+        let result = self.drive(prompt, Display::Shown, None, Interrupts::Honor);
         if matches!(&result, Err(e) if !matches!(e, SubprocessError::Interrupted { .. })) {
             self.alive = false;
         }
@@ -128,7 +138,7 @@ impl Session {
         prompt: &str,
         timeout: Duration,
     ) -> Result<StreamingSubprocessResult, SubprocessError> {
-        self.drive(prompt, Display::Silent, Some(timeout))
+        self.drive(prompt, Display::Silent, Some(timeout), Interrupts::Ignore)
     }
 
     pub fn discard(&mut self) {
@@ -141,6 +151,7 @@ impl Session {
         prompt: &str,
         display: Display,
         timeout: Option<Duration>,
+        interrupts: Interrupts,
     ) -> Result<StreamingSubprocessResult, SubprocessError> {
         if leftover_is_stale(&self.readers.take_queued()) {
             return Err(SubprocessError::LeftoverResult);
@@ -170,7 +181,9 @@ impl Session {
                 .cancel
                 .as_ref()
                 .is_some_and(|flag| flag.load(Ordering::SeqCst));
-            if interrupt.is_none() && (cancelled || signal::is_interrupted()) {
+            if interrupt.is_none()
+                && interrupt_requested(interrupts, cancelled, signal::is_interrupted())
+            {
                 let _ = self.send(&interrupt_line(INTERRUPT_REQUEST_ID));
                 interrupt = Some((Instant::now(), cancelled));
             }
@@ -236,6 +249,18 @@ mod tests {
 
     fn lines(raw: &[&str]) -> Vec<String> {
         raw.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn honored_interrupts_follow_the_cancel_flag_or_sigint() {
+        assert!(interrupt_requested(Interrupts::Honor, true, false));
+        assert!(interrupt_requested(Interrupts::Honor, false, true));
+        assert!(!interrupt_requested(Interrupts::Honor, false, false));
+    }
+
+    #[test]
+    fn ignored_interrupts_never_request() {
+        assert!(!interrupt_requested(Interrupts::Ignore, true, true));
     }
 
     #[test]
