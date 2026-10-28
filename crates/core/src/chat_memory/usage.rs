@@ -138,6 +138,14 @@ impl UsageRecord {
             ..self
         }
     }
+
+    pub fn with_harness_cost(self, cost_usd: Option<f64>) -> UsageRecord {
+        UsageRecord {
+            cost_usd,
+            cost_source: cost_usd.map(|_| CostSource::Harness),
+            ..self
+        }
+    }
 }
 
 pub fn usage_record(

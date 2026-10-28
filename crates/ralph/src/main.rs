@@ -25,6 +25,7 @@ mod invoke;
 mod json_file;
 pub mod markdown;
 mod mermaid_guard;
+mod opencode_usage;
 mod opencode_worker;
 pub mod paths;
 mod permission_queue;
