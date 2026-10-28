@@ -381,6 +381,12 @@ pub struct WorkerStopHookArgs {
     #[arg(long, value_name = "PATH")]
     pub unreported: std::path::PathBuf,
 
+    #[arg(long, value_name = "WORKER", requires = "usage_seen")]
+    pub worker: Option<String>,
+
+    #[arg(long, value_name = "PATH", requires = "worker")]
+    pub usage_seen: Option<std::path::PathBuf>,
+
     #[arg(long, value_name = "DIR", requires_all = ["id", "worktree"])]
     pub store: Option<std::path::PathBuf>,
 

@@ -37,15 +37,22 @@ impl WorkerChanges {
         ))
     }
 
-    pub fn snapshot_turn(&self) -> io::Result<()> {
+    pub fn snapshot_turn(&self) -> io::Result<u64> {
         let turn = next_worker_turn(&self.turns()?);
         self.snapshotter.snapshot(&worker_ref(&self.id, turn))?;
-        self.snapshotter
-            .delete_refs(&worker_refs_to_prune(&self.id, &self.turns()?, KEEP_TURNS))
+        self.snapshotter.delete_refs(&worker_refs_to_prune(
+            &self.id,
+            &self.turns()?,
+            KEEP_TURNS,
+        ))?;
+        Ok(turn)
     }
 
-    pub fn snapshot_turn_or_warn(&self) {
-        warn_if_err(self.snapshot_turn(), "Failed to snapshot the worker turn");
+    pub fn snapshot_turn_or_warn(&self) -> Option<u64> {
+        let turn = self.snapshot_turn();
+        let snapshotted = turn.as_ref().ok().copied();
+        warn_if_err(turn.map(|_| ()), "Failed to snapshot the worker turn");
+        snapshotted
     }
 
     pub fn clear(&self) -> io::Result<()> {

@@ -25,6 +25,7 @@ mod scheduled;
 mod status;
 mod ticket;
 mod tools;
+mod transcript_usage;
 mod verify;
 mod worktree;
 pub use acp::*;
@@ -50,6 +51,7 @@ pub use scheduled::*;
 pub use status::*;
 pub use ticket::*;
 pub use tools::*;
+pub use transcript_usage::*;
 pub use verify::*;
 pub use worktree::*;
 

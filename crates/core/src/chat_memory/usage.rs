@@ -1,5 +1,7 @@
 use crate::chat_thread::ResetReason;
 use crate::stream::{IterationCosts, IterationMetadata};
+use crate::wire::usage::{FIVE_MIN, ONE_HOUR};
+use crate::worker::ModelUsage;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -21,11 +23,17 @@ pub fn reply_entries(reply: &str) -> Vec<(super::Role, String)> {
     vec![(super::Role::Assistant, reply.to_string())]
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum CallKind {
-    Turn { trigger: Trigger },
+    Turn {
+        trigger: Trigger,
+    },
     Nap,
+    Worker {
+        worker_id: String,
+        turn_id: Option<u64>,
+    },
 }
 
 pub const VIEW_HEAD_BYTES: usize = 1024;
@@ -110,6 +118,12 @@ pub struct UsageRecord {
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_source: Option<CostSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_5m: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_write_1h: Option<u64>,
     #[serde(flatten)]
     pub view: Option<ViewStats>,
 }
@@ -148,8 +162,50 @@ pub fn usage_record(
         model: metadata.model.clone(),
         session_id: metadata.session_id.clone(),
         cost_source: costs.cost_usd.map(|_| CostSource::Harness),
+        reasoning_tokens: None,
+        cache_write_5m: None,
+        cache_write_1h: None,
         view: None,
     })
+}
+
+pub fn worker_usage_record(
+    kind: CallKind,
+    at: String,
+    session_id: Option<String>,
+    row: &ModelUsage,
+) -> UsageRecord {
+    let usage = &row.usage;
+    let written = |tier| {
+        usage
+            .cache_writes
+            .iter()
+            .find(|write| write.tier == tier)
+            .map(|write| write.tokens)
+    };
+    UsageRecord {
+        at,
+        kind,
+        input_tokens: usage.input_uncached,
+        cache_creation_input_tokens: usage.cache_writes.iter().map(|write| write.tokens).sum(),
+        cache_read_input_tokens: usage.cache_read,
+        output_tokens: usage.output,
+        cost_usd: None,
+        duration_ms: None,
+        context_tokens: None,
+        process_turn: None,
+        request_at: None,
+        reset: None,
+        run: None,
+        harness: Some(MAIN_HARNESS.to_string()),
+        model: Some(row.model.clone()),
+        session_id,
+        cost_source: None,
+        reasoning_tokens: usage.reasoning,
+        cache_write_5m: written(FIVE_MIN),
+        cache_write_1h: written(ONE_HOUR),
+        view: None,
+    }
 }
 
 pub fn encode_usage(record: &UsageRecord) -> Result<String, String> {
@@ -175,6 +231,56 @@ mod tests {
             context_tokens: None,
             terminal_reason: None,
         }
+    }
+
+    #[test]
+    fn worker_rows_carry_every_collected_field() {
+        use crate::wire::usage::{CacheWrite, Usage};
+        let row = ModelUsage {
+            model: "m".into(),
+            usage: Usage {
+                input_uncached: 1,
+                cache_read: 2,
+                cache_writes: vec![
+                    CacheWrite {
+                        tier: FIVE_MIN,
+                        tokens: 3,
+                    },
+                    CacheWrite {
+                        tier: ONE_HOUR,
+                        tokens: 4,
+                    },
+                ],
+                output: 5,
+                reasoning: Some(6),
+                other: Vec::new(),
+            },
+        };
+        let kind = CallKind::Worker {
+            worker_id: "w1".into(),
+            turn_id: Some(2),
+        };
+        let value: Value = serde_json::from_str(
+            &encode_usage(&worker_usage_record(
+                kind,
+                "t".into(),
+                Some("s".into()),
+                &row,
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(value["kind"], "worker");
+        assert_eq!(value["worker_id"], "w1");
+        assert_eq!(value["turn_id"], 2);
+        assert_eq!(value["cache_creation_input_tokens"], 7);
+        assert_eq!(value["cache_write_5m"], 3);
+        assert_eq!(value["cache_write_1h"], 4);
+        assert_eq!(value["reasoning_tokens"], 6);
+        assert_eq!(value["harness"], "claude");
+        assert_eq!(value["model"], "m");
+        assert_eq!(value["session_id"], "s");
+        assert!(value["cost_usd"].is_null());
     }
 
     #[test]
@@ -252,7 +358,8 @@ mod tests {
         let kind = CallKind::Nap;
         let mut with = costs(None);
         with.context_tokens = Some(42);
-        let value = line(usage_record(kind, "t".into(), &with, &IterationMetadata::new()).unwrap());
+        let value =
+            line(usage_record(kind.clone(), "t".into(), &with, &IterationMetadata::new()).unwrap());
         assert_eq!(value["context_tokens"], 42);
         let value =
             line(usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new()).unwrap());

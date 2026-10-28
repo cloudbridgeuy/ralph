@@ -341,6 +341,16 @@ mod tests {
     }
 
     #[test]
+    fn session_turns_skip_worker_usage_lines() {
+        let worker = format!(
+            r#"{{"at":"{}","kind":"worker","worker_id":"w1","input_tokens":5,"run":"{RUN}"}}"#,
+            time(1).to_rfc3339()
+        );
+        let text = lines(&[worker, turn_line(2, 1, 2.0)]);
+        assert_eq!(session_turns(&text, RUN).len(), 1);
+    }
+
+    #[test]
     fn run_id_joins_the_pid_and_the_start_time() {
         assert_eq!(run_id(42, time(0)), format!("42-{}", time(0).to_rfc3339()));
     }

@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use crate::worker_changes::WorkerChanges;
+use crate::worker_usage::{record_or_warn, UsageTarget};
 
 const DROP_LOG: &str = "inbox-drops.jsonl";
 
@@ -268,10 +269,15 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
+pub struct StopHook<'a> {
+    pub reported: &'a Path,
+    pub unreported: &'a Path,
+    pub changes: Option<&'a WorkerChanges>,
+    pub usage: Option<&'a UsageTarget>,
+}
+
 pub fn run_stop_hook(
-    reported: &Path,
-    unreported: &Path,
-    changes: Option<&WorkerChanges>,
+    hook: &StopHook,
     mut input: impl Read,
     mut output: impl Write,
 ) -> io::Result<()> {
@@ -282,9 +288,15 @@ pub fn run_stop_hook(
         ));
         return Ok(());
     }
-    if let Some(changes) = changes {
-        changes.snapshot_turn_or_warn();
+    let turn_id = hook.changes.and_then(WorkerChanges::snapshot_turn_or_warn);
+    if let Some(usage) = hook.usage {
+        record_or_warn(usage, &payload, turn_id);
     }
+    let StopHook {
+        reported,
+        unreported,
+        ..
+    } = *hook;
     match stop_decision(&payload, reported.exists()) {
         StopDecision::AllowBackground => {}
         StopDecision::GiveUp => {
@@ -312,7 +324,13 @@ mod tests {
     fn stop_hook(reported: &Path, payload: &str) -> String {
         let unreported = reported.with_file_name("unreported");
         let mut out = Vec::new();
-        run_stop_hook(reported, &unreported, None, payload.as_bytes(), &mut out).unwrap();
+        let hook = StopHook {
+            reported,
+            unreported: &unreported,
+            changes: None,
+            usage: None,
+        };
+        run_stop_hook(&hook, payload.as_bytes(), &mut out).unwrap();
         String::from_utf8(out).unwrap()
     }
 

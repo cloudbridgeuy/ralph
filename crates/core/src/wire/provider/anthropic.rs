@@ -59,7 +59,7 @@ fn server_tool_use(raw: &Value) -> Vec<(String, u64)> {
     other
 }
 
-fn map_usage(raw: &Value) -> Usage {
+pub(crate) fn map_usage(raw: &Value) -> Usage {
     Usage {
         input_uncached: count(raw, "input_tokens").unwrap_or(0),
         cache_read: count(raw, "cache_read_input_tokens").unwrap_or(0),

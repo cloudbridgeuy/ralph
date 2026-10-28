@@ -1,0 +1,197 @@
+use super::WORKERS_DIR;
+use crate::wire::provider::anthropic::map_usage;
+use crate::wire::usage::Usage;
+use serde_json::Value;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelUsage {
+    pub model: String,
+    pub usage: Usage,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct TranscriptUsage {
+    pub rows: Vec<ModelUsage>,
+    pub recorded: Vec<String>,
+}
+
+pub fn usage_seen_path(store: &Path, id: &str) -> PathBuf {
+    store.join(WORKERS_DIR).join(format!("{id}.usage-seen"))
+}
+
+pub fn subagents_dir(transcript: &Path) -> PathBuf {
+    transcript.with_extension("").join("subagents")
+}
+
+fn add(total: &mut Usage, part: Usage) {
+    total.input_uncached += part.input_uncached;
+    total.cache_read += part.cache_read;
+    total.output += part.output;
+    total.reasoning = match (total.reasoning, part.reasoning) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+    };
+    for write in part.cache_writes {
+        match total.cache_writes.iter_mut().find(|w| w.tier == write.tier) {
+            Some(existing) => existing.tokens += write.tokens,
+            None => total.cache_writes.push(write),
+        }
+    }
+}
+
+pub fn transcript_usage(lines: &str, seen: &HashSet<String>) -> TranscriptUsage {
+    let mut latest: BTreeMap<String, Value> = BTreeMap::new();
+    for value in lines
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|value| value.get("type").and_then(Value::as_str) == Some("assistant"))
+    {
+        let message = value.get("message");
+        if let Some(id) = message.and_then(|m| m.get("id")).and_then(Value::as_str) {
+            latest.insert(id.to_string(), message.cloned().unwrap_or(Value::Null));
+        }
+    }
+    let mut by_model: BTreeMap<String, Usage> = BTreeMap::new();
+    let mut recorded = Vec::new();
+    for (id, message) in latest {
+        let finished = message
+            .get("stop_reason")
+            .is_some_and(|reason| !reason.is_null());
+        let model = message.get("model").and_then(Value::as_str);
+        let usage = message.get("usage").filter(|usage| usage.is_object());
+        let (true, false, Some(model), Some(usage)) = (finished, seen.contains(&id), model, usage)
+        else {
+            continue;
+        };
+        let part = map_usage(usage);
+        match by_model.get_mut(model) {
+            Some(total) => add(total, part),
+            None => {
+                by_model.insert(model.to_string(), part);
+            }
+        }
+        recorded.push(id);
+    }
+    TranscriptUsage {
+        rows: by_model
+            .into_iter()
+            .map(|(model, usage)| ModelUsage { model, usage })
+            .collect(),
+        recorded,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::usage::{CacheWrite, FIVE_MIN, ONE_HOUR};
+
+    fn line(id: &str, model: &str, stop: Option<&str>, output: u64) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": id,
+                "model": model,
+                "stop_reason": stop,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": output,
+                    "cache_read_input_tokens": 100,
+                    "cache_creation_input_tokens": 7,
+                    "cache_creation": {
+                        "ephemeral_5m_input_tokens": 3,
+                        "ephemeral_1h_input_tokens": 4
+                    },
+                    "output_tokens_details": {"thinking_tokens": 2}
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn none() -> HashSet<String> {
+        HashSet::new()
+    }
+
+    #[test]
+    fn split_message_lines_count_once_from_the_last_line() {
+        let text = [
+            line("m1", "opus", None, 1),
+            line("m1", "opus", Some("end_turn"), 50),
+        ]
+        .join("\n");
+        let found = transcript_usage(&text, &none());
+        assert_eq!(found.recorded, ["m1"]);
+        assert_eq!(found.rows.len(), 1);
+        let usage = &found.rows[0].usage;
+        assert_eq!(usage.output, 50);
+        assert_eq!(usage.input_uncached, 10);
+        assert_eq!(usage.reasoning, Some(2));
+        assert_eq!(
+            usage.cache_writes,
+            [
+                CacheWrite {
+                    tier: FIVE_MIN,
+                    tokens: 3
+                },
+                CacheWrite {
+                    tier: ONE_HOUR,
+                    tokens: 4
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn seen_ids_are_skipped() {
+        let text = [
+            line("m1", "opus", Some("end_turn"), 5),
+            line("m2", "opus", Some("end_turn"), 6),
+        ]
+        .join("\n");
+        let seen = HashSet::from(["m1".to_string()]);
+        let found = transcript_usage(&text, &seen);
+        assert_eq!(found.recorded, ["m2"]);
+        assert_eq!(found.rows[0].usage.output, 6);
+    }
+
+    #[test]
+    fn each_model_gets_its_own_row_with_summed_tokens() {
+        let text = [
+            line("m1", "opus", Some("end_turn"), 5),
+            line("m2", "haiku", Some("end_turn"), 6),
+            line("m3", "opus", Some("tool_use"), 7),
+        ]
+        .join("\n");
+        let found = transcript_usage(&text, &none());
+        let models: Vec<_> = found.rows.iter().map(|row| row.model.as_str()).collect();
+        assert_eq!(models, ["haiku", "opus"]);
+        assert_eq!(found.rows[1].usage.output, 12);
+        assert_eq!(found.rows[1].usage.cache_writes[0].tokens, 6);
+    }
+
+    #[test]
+    fn in_flight_messages_wait_for_a_later_stop() {
+        let found = transcript_usage(&line("m1", "opus", None, 5), &none());
+        assert_eq!(found, TranscriptUsage::default());
+    }
+
+    #[test]
+    fn malformed_and_non_assistant_lines_are_ignored() {
+        let text = format!(
+            "not json\n{{\"type\":\"user\",\"message\":{{\"id\":\"u\"}}}}\n{{\"type\":\"assistant\"}}\n{}",
+            line("m1", "opus", Some("end_turn"), 5)
+        );
+        assert_eq!(transcript_usage(&text, &none()).recorded, ["m1"]);
+    }
+
+    #[test]
+    fn subagents_live_beside_the_transcript_without_its_extension() {
+        assert_eq!(
+            subagents_dir(Path::new("/p/abc.jsonl")),
+            Path::new("/p/abc/subagents")
+        );
+    }
+}
