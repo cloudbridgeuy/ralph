@@ -177,6 +177,12 @@ fn route_input_parses_workers_commands() {
         route(" /workers   GUZ-1 "),
         Route::Workers(Some("GUZ-1".into()))
     );
+    assert_eq!(route("/workers costs"), Route::WorkerCosts);
+    assert_eq!(
+        route("/workers costs x"),
+        Route::Send("/workers costs x".into())
+    );
+    assert!(Route::WorkerCosts.runs_mid_turn());
 }
 
 #[test]
