@@ -112,6 +112,8 @@ pub struct UsageRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -159,6 +161,7 @@ pub fn usage_record(
         request_at: None,
         reset: None,
         run: None,
+        store: None,
         harness: Some(MAIN_HARNESS.to_string()),
         model: metadata.model.clone(),
         session_id: metadata.session_id.clone(),
@@ -198,6 +201,7 @@ pub fn worker_usage_record(
         request_at: None,
         reset: None,
         run: None,
+        store: None,
         harness: Some(MAIN_HARNESS.to_string()),
         model: Some(row.model.clone()),
         session_id,
@@ -383,6 +387,22 @@ mod tests {
         let value: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["kind"], "turn");
         assert_eq!(value["trigger"], "user");
+    }
+
+    #[test]
+    fn encode_usage_includes_store_only_when_set() {
+        let mut record = usage_record(
+            CallKind::Nap,
+            "t".into(),
+            &costs(None),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
+        let bare: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert!(bare.get("store").is_none());
+        record.store = Some("/chat store".into());
+        let set: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(set["store"], "/chat store");
     }
 
     #[test]

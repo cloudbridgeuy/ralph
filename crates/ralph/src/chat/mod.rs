@@ -362,6 +362,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             keeps: Mutex::default(),
             identity: Arc::clone(&turn.identity),
             run: run.clone(),
+            store: store_dir.to_string_lossy().into_owned(),
         }
         .spawn();
     }

@@ -402,6 +402,9 @@ pub struct ChatNapArgs {
     #[arg(long, value_name = "DIR")]
     pub store: std::path::PathBuf,
 
+    #[arg(long, value_name = "ID")]
+    pub run: Option<String>,
+
     #[arg(long, default_value_t = NAP_TIMEOUT_SECS)]
     pub timeout: u64,
 }

@@ -410,6 +410,15 @@ mod tests {
     }
 
     #[test]
+    fn session_rows_parse_lines_that_carry_a_store() {
+        let line = format!(
+            r#"{{"at":"{}","kind":"turn","process_turn":1,"run":"{RUN}","store":"/s"}}"#,
+            time(1).to_rfc3339()
+        );
+        assert_eq!(session_rows(&line, RUN).len(), 1);
+    }
+
+    #[test]
     fn session_rows_exclude_lines_without_a_run() {
         let bare = format!(
             r#"{{"at":"{}","kind":"turn","cost_usd":9.0,"process_turn":1}}"#,

@@ -43,8 +43,8 @@ pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
     !blocks.is_empty()
 }
 
-pub(super) fn spawn_nap(store: &Path) -> io::Result<()> {
-    spawn_detached(Command::new(std::env::current_exe()?).args(build_nap_args(store)))
+pub(super) fn spawn_nap(store: &Path, run: &str) -> io::Result<()> {
+    spawn_detached(Command::new(std::env::current_exe()?).args(build_nap_args(store, run)))
 }
 
 pub(super) fn chat_session_info() -> SpinnerSessionInfo {
@@ -288,6 +288,7 @@ impl Turn<'_> {
             record.request_at = result.request_at.map(|at| at.to_rfc3339());
             record.reset = launch.as_ref().and_then(|spawned| spawned.reset);
             record.run = Some(self.run.to_string());
+            record.store = Some(self.store_dir.to_string_lossy().into_owned());
             self.warn_if_err(
                 append_usage(&usage_path(), &record),
                 "Failed to record chat usage",
@@ -304,7 +305,10 @@ impl Turn<'_> {
                 reply_entries(&reply)
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
-                self.warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
+                self.warn_if_err(
+                    spawn_nap(self.store_dir, self.run),
+                    "Failed to start chat memory nap",
+                );
                 if let Some(reason) = reset_reason(&self.reset_limits, process_turns, costs) {
                     if locked(&self.session).take().is_some() {
                         *locked(&self.reset) = Some(reason);
