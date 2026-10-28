@@ -73,7 +73,9 @@ pub fn fetch_timeout_text() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{worker_command, worktree_add_args, wt_switch_args, ClaudeWorkerArgs};
+    use super::super::{
+        worker_command, worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs,
+    };
     use super::*;
     use std::path::Path;
 
@@ -86,6 +88,7 @@ mod tests {
             task: "do it",
             model: None,
             scheduled: false,
+            shell: ClaudeShell::Zsh,
         }
     }
 
@@ -154,6 +157,7 @@ mod tests {
     fn a_scheduled_worker_command_blocks_push_tools_before_a_flag() {
         let args = worker_command(&ClaudeWorkerArgs {
             scheduled: true,
+            shell: ClaudeShell::Zsh,
             ..claude_args()
         });
         let at = args.iter().position(|a| a == "--disallowedTools").unwrap();
@@ -183,6 +187,7 @@ mod tests {
         };
         let scheduled = ClaudeWorkerArgs {
             scheduled: true,
+            shell: ClaudeShell::Zsh,
             ..chat
         };
         assert_eq!(mode_after_flag(&worker_command(&scheduled)), "auto");
@@ -260,6 +265,7 @@ mod tests {
     fn a_scheduled_worker_command_carries_the_scheduled_prompt() {
         let args = worker_command(&ClaudeWorkerArgs {
             scheduled: true,
+            shell: ClaudeShell::Zsh,
             ..claude_args()
         });
         let at = args

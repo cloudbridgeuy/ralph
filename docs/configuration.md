@@ -296,8 +296,11 @@ Codex setup and limits:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `model` | string | unset (claude's own default) | Model name or alias passed as `--model` to Claude workers that `spawn_worker` starts without a `model` |
+| `shell` | `zsh` or `bash` | `zsh` | Login shell that starts Claude workers (`<shell> -lic`) and the spawn preflight checks `claude` in; other values fail `ralph config check`. A store config can set it per store |
 
-A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses claude's default. A config that fails to load warns and uses claude's default. The key is read at each spawn.
+A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses claude's default. A config that fails to load warns and uses claude's default. The key is read at each spawn. A config that fails to load warns in the spawn result and uses `zsh`. A failed preflight error also carries that warning.
+
+A bash login shell reads `~/.bash_profile` (or `~/.profile`), not `~/.bashrc`. Set the PATH for `claude` there, or make `~/.bash_profile` source `~/.bashrc`.
 
 ### `[opencode]` - opencode Workers
 
