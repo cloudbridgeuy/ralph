@@ -37,10 +37,10 @@ impl CodexUsage {
         };
     }
 
-    pub fn observe(&self, method: &str, params: &Value) {
+    pub fn observe(&self, method: &str, params: &Value, in_turn: bool) {
         if let Some(event) = decode_usage_event(method, params) {
             let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
-            bound.turn.observe(event);
+            bound.turn.observe(event, in_turn);
         }
     }
 
@@ -91,7 +91,7 @@ mod tests {
         let usage = CodexUsage::new("w1", Some(dir.path()));
         usage.bind("th1", Some("gpt".into()));
         let params = serde_json::json!({"turnId": "u", "tokenUsage": {"last": {"inputTokens": 9, "cachedInputTokens": 4, "outputTokens": 2}, "total": {"inputTokens": 9, "cachedInputTokens": 4, "outputTokens": 2}}});
-        usage.observe("thread/tokenUsage/updated", &params);
+        usage.observe("thread/tokenUsage/updated", &params, true);
         let rows = usage.bound.lock().unwrap().turn.take();
         usage.append("th1", &rows, Some(3), &file).unwrap();
         let text = std::fs::read_to_string(&file).unwrap();

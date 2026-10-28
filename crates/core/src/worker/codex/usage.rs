@@ -110,12 +110,16 @@ impl TurnUsage {
         }
     }
 
-    pub fn observe(&mut self, event: UsageEvent) {
+    pub fn observe(&mut self, event: UsageEvent, in_turn: bool) {
         match event {
-            UsageEvent::Rerouted(model) => self.current = Some(model),
+            UsageEvent::Rerouted(model) if in_turn => self.current = Some(model),
+            UsageEvent::Rerouted(_) => {}
             UsageEvent::Call { total, last } => {
                 let tokens = self.seen_total.map_or(last, |seen| total.since(seen));
                 self.seen_total = Some(total);
+                if !in_turn {
+                    return;
+                }
                 let model = self.current.as_deref().unwrap_or(UNKNOWN_MODEL);
                 self.by_model
                     .entry(model.to_string())
@@ -207,10 +211,10 @@ mod tests {
     #[test]
     fn calls_sum_per_model_and_a_reroute_switches_the_model() {
         let mut turn = TurnUsage::new(Some("a".into()));
-        turn.observe(totals((10, 1), (10, 1)));
-        turn.observe(totals((5, 2), (15, 3)));
-        turn.observe(UsageEvent::Rerouted("b".into()));
-        turn.observe(totals((7, 3), (22, 6)));
+        turn.observe(totals((10, 1), (10, 1)), true);
+        turn.observe(totals((5, 2), (15, 3)), true);
+        turn.observe(UsageEvent::Rerouted("b".into()), true);
+        turn.observe(totals((7, 3), (22, 6)), true);
         let rows = turn.take();
         assert_eq!(rows.len(), 2);
         assert_eq!(
@@ -227,20 +231,20 @@ mod tests {
     #[test]
     fn take_empties_the_turn_and_restores_the_starting_model() {
         let mut turn = TurnUsage::new(Some("a".into()));
-        turn.observe(UsageEvent::Rerouted("b".into()));
-        turn.observe(totals((1, 1), (1, 1)));
+        turn.observe(UsageEvent::Rerouted("b".into()), true);
+        turn.observe(totals((1, 1), (1, 1)), true);
         assert_eq!(turn.take().len(), 1);
         assert!(turn.take().is_empty());
-        turn.observe(totals((1, 1), (2, 2)));
+        turn.observe(totals((1, 1), (2, 2)), true);
         assert_eq!(turn.take()[0].model, "a");
     }
 
     #[test]
     fn a_resent_update_counts_once_and_later_calls_count_the_total_delta() {
         let mut turn = TurnUsage::new(Some("a".into()));
-        turn.observe(totals((10, 1), (50, 4)));
-        turn.observe(totals((10, 1), (50, 4)));
-        turn.observe(totals((5, 2), (55, 6)));
+        turn.observe(totals((10, 1), (50, 4)), true);
+        turn.observe(totals((10, 1), (50, 4)), true);
+        turn.observe(totals((5, 2), (55, 6)), true);
         let rows = turn.take();
         assert_eq!(
             (rows[0].usage.input_uncached, rows[0].usage.output),
@@ -251,13 +255,28 @@ mod tests {
     #[test]
     fn a_smaller_total_counts_zero() {
         let mut turn = TurnUsage::new(Some("a".into()));
-        turn.observe(totals((10, 1), (10, 1)));
-        turn.observe(totals((99, 9), (5, 0)));
-        turn.observe(totals((99, 9), (7, 3)));
+        turn.observe(totals((10, 1), (10, 1)), true);
+        turn.observe(totals((99, 9), (5, 0)), true);
+        turn.observe(totals((99, 9), (7, 3)), true);
         let rows = turn.take();
         assert_eq!(
             (rows[0].usage.input_uncached, rows[0].usage.output),
             (12, 4)
+        );
+    }
+
+    #[test]
+    fn usage_between_turns_moves_the_baseline_but_is_not_counted() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.observe(totals((10, 1), (10, 1)), false);
+        turn.observe(UsageEvent::Rerouted("b".into()), false);
+        assert!(turn.take().is_empty());
+        turn.observe(totals((5, 1), (15, 2)), true);
+        let rows = turn.take();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].model.as_str(), rows[0].usage.input_uncached),
+            ("a", 5)
         );
     }
 }

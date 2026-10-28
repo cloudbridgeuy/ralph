@@ -71,6 +71,10 @@ pub fn is_stale(current: Option<&str>, event: Option<&str>) -> bool {
     matches!((current, event), (Some(current), Some(event)) if current != event)
 }
 
+pub fn is_current(current: Option<&str>, event: Option<&str>) -> bool {
+    matches!((current, event), (Some(current), Some(event)) if current == event)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Start(String),
@@ -138,6 +142,10 @@ impl Turns {
 
     pub fn is_stale_request(&self, method: &str, params: &Value) -> bool {
         is_stale(self.turn_id.as_deref(), event_turn_id(method, params))
+    }
+
+    pub fn owns_event(&self, method: &str, params: &Value) -> bool {
+        is_current(self.turn_id.as_deref(), event_turn_id(method, params))
     }
 
     pub fn notification(&mut self, method: &str, params: &Value, closing: bool) -> Vec<Action> {
@@ -517,6 +525,28 @@ mod tests {
         );
         assert!(is_stale(Some("a"), Some("b")));
         assert!(!is_stale(None, Some("b")));
+    }
+
+    #[test]
+    fn only_an_event_of_the_bound_turn_is_current() {
+        assert!(is_current(Some("a"), Some("a")));
+        assert!(!is_current(Some("a"), Some("b")));
+        assert!(!is_current(None, Some("a")));
+        assert!(!is_current(Some("a"), None));
+        assert!(!is_current(None, None));
+    }
+
+    #[test]
+    fn usage_belongs_to_the_bound_turn_only() {
+        let usage = |turn: &str| json!({"threadId": "t", "turnId": turn, "tokenUsage": {}});
+        let mut turns = Turns::default();
+        assert!(!turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u1")));
+        turns.accept("task".into());
+        turns.bind_turn(decode_turn_id(&json!({"turn": {"id": "u1"}})));
+        assert!(turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u1")));
+        assert!(!turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u0")));
+        turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
+        assert!(!turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u1")));
     }
 
     #[test]

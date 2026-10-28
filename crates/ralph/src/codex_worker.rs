@@ -403,9 +403,8 @@ impl Pump {
                     if is_unmapped(&method) && self.unmapped.insert(method.clone()) {
                         self.log.append("unmapped", method.as_bytes());
                     }
-                    if !self.turns.is_stale_request(&method, &params) {
-                        self.usage.observe(&method, &params);
-                    }
+                    let in_turn = self.turns.owns_event(&method, &params);
+                    self.usage.observe(&method, &params, in_turn);
                     let closing = self.closing.load(Ordering::SeqCst);
                     let actions = self.turns.notification(&method, &params, closing);
                     self.settle(actions);
