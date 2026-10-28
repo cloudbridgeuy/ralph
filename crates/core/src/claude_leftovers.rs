@@ -1,3 +1,4 @@
+use crate::chat_skills::expand_home;
 use crate::worker::{CloseState, CloseStep, HarnessId};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -6,6 +7,23 @@ const PROJECTS_KEY: &str = "projects";
 const MAX_DIR_NAME_LEN: usize = 200;
 const TRUST_SWAP_ATTEMPTS: usize = 3;
 const TRUST_LOCK_NAME: &str = "claude-json.lock";
+
+const CLAUDE_JSON_NAME: &str = ".claude.json";
+
+pub fn configured_dir(config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
+    config_dir.map(|dir| expand_home(dir, home))
+}
+
+pub fn claude_dir(config_dir: Option<&Path>, home: &Path) -> PathBuf {
+    configured_dir(config_dir, Some(home)).unwrap_or_else(|| home.join(".claude"))
+}
+
+pub fn claude_json(config_dir: Option<&Path>, home: &Path) -> PathBuf {
+    configured_dir(config_dir, Some(home)).map_or_else(
+        || home.join(CLAUDE_JSON_NAME),
+        |dir| dir.join(CLAUDE_JSON_NAME),
+    )
+}
 
 pub fn cleans_claude_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
     matches!(state.kind, HarnessId::Claude)
@@ -100,6 +118,24 @@ pub fn remove_project_entry(
 mod tests {
     use super::*;
     use crate::worker::Owner;
+
+    #[test]
+    fn unset_config_dir_keeps_the_home_paths() {
+        let home = Path::new("/h");
+        assert_eq!(claude_dir(None, home), Path::new("/h/.claude"));
+        assert_eq!(claude_json(None, home), Path::new("/h/.claude.json"));
+    }
+
+    #[test]
+    fn set_config_dir_holds_both_the_dir_and_the_json() {
+        let home = Path::new("/h");
+        let dir = Some(Path::new("/c/alt"));
+        assert_eq!(claude_dir(dir, home), Path::new("/c/alt"));
+        assert_eq!(claude_json(dir, home), Path::new("/c/alt/.claude.json"));
+        let tilde = Some(Path::new("~/alt"));
+        assert_eq!(claude_dir(tilde, home), Path::new("/h/alt"));
+        assert_eq!(claude_json(tilde, home), Path::new("/h/alt/.claude.json"));
+    }
 
     fn state(kind: HarnessId) -> CloseState {
         CloseState {

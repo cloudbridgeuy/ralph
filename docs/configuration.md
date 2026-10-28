@@ -297,6 +297,9 @@ Codex setup and limits:
 |-------|------|---------|-------------|
 | `model` | string | unset (claude's own default) | Model name or alias passed as `--model` to Claude workers that `spawn_worker` starts without a `model` |
 | `shell` | `zsh` or `bash` | `zsh` | Login shell that starts Claude workers (`<shell> -lic`) and the spawn preflight checks `claude` in; other values fail `ralph config check`. A store config can set it per store |
+| `config_dir` | path | unset (claude uses `~/.claude`) | Folder ralph passes as `CLAUDE_CONFIG_DIR` to every `claude` it starts: chat turns, the memory nap, `ralph ask` and Claude workers. Relative paths are read from the config file's folder; `~` expands to the home directory. A store config can set it per store; `ralph ask` has no `--store`, so only the global key applies to it. `ralph config check` notes a folder that does not exist |
+
+`config_dir` picks which Claude login and subscription ralph's `claude` processes use. It also moves the files ralph touches in that folder: the `CLAUDE.md` chat excludes, the `projects/` transcripts and `.claude.json` trust entry that closing a worker removes, and the `.claude.json` that `[chat] mcp_servers` imports from. ralph never reads `CLAUDE_CONFIG_DIR` from its own environment. Changing the key in the middle of a chat means `--resume` cannot find the old session. Cursor, codex and opencode workers are not affected.
 
 A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses claude's default. A config that fails to load warns and uses claude's default. The key is read at each spawn. A config that fails to load warns in the spawn result and uses `zsh`. A failed preflight error also carries that warning.
 

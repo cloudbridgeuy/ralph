@@ -8,19 +8,20 @@ use crate::cursor_owner::{now_secs, write_file};
 use crate::subprocess::kill_process_group;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
+use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
     fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, opencode_config,
     project_slug, resolve_claude_model, resolve_claude_shell, resolve_cursor_model,
     resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report, session_name,
-    spawn_handoff, spawn_record_path, startup_state, with_start_warning, worker_command,
+    spawn_handoff, spawn_record_path, startup_state, trust_key, with_start_warning, worker_command,
     worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeShell,
     ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback,
     SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, UsageSink,
     WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
     FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
-    STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
+    STORE_OPTION, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -145,6 +146,12 @@ impl Workers {
             model_warning.as_deref(),
             shell_warning.as_deref(),
         ];
+        let config_dir = config.as_ref().ok().and_then(|config| {
+            configured_dir(
+                config.claude.config_dir.as_deref(),
+                dirs::home_dir().as_deref(),
+            )
+        });
         let launch = Launch {
             id,
             task,
@@ -153,6 +160,7 @@ impl Workers {
             worktree: &worktree,
             scheduled,
             shell,
+            config_dir,
             site: site.as_ref(),
             session: &session,
             ticket,
@@ -224,6 +232,7 @@ impl Workers {
             model,
             scheduled,
             shell,
+            config_dir,
             worktree,
             site,
             session,
@@ -250,6 +259,7 @@ impl Workers {
                     model: *model,
                     scheduled: *scheduled,
                     shell: *shell,
+                    config_dir: config_dir.as_deref(),
                 })
             }
             HarnessId::Opencode => {
@@ -482,6 +492,7 @@ struct Launch<'a> {
     model: Option<&'a str>,
     scheduled: bool,
     shell: ClaudeShell,
+    config_dir: Option<PathBuf>,
     worktree: &'a Path,
     site: Option<&'a WorkerSite>,
     session: &'a str,
@@ -564,7 +575,7 @@ fn started_text(id: &str, worktree: &Path, via: &WorktreeVia, warnings: &[Option
 fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
     let target = format!("={session}:");
     let deadline = Instant::now() + STARTUP_TIMEOUT;
-    let mut accepted = false;
+    let mut previous: Option<String> = None;
     let mut state = Startup::Starting;
     while Instant::now() < deadline {
         if !session_exists(session)? {
@@ -573,17 +584,15 @@ fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
             )));
         }
         let pane = run(Command::new("tmux").args(["capture-pane", "-p", "-t", &target]))?;
-        state = startup_state(&String::from_utf8_lossy(&pane.stdout), ready.exists());
-        match state {
-            Startup::Ready => return Ok(true),
-            Startup::TrustPrompt if !accepted => {
-                run(Command::new("tmux")
-                    .args(["send-keys", "-t", &target])
-                    .args(TRUST_KEYS))?;
-                accepted = true;
-            }
-            Startup::TrustPrompt | Startup::Starting => {}
+        let text = String::from_utf8_lossy(&pane.stdout).into_owned();
+        state = startup_state(&text, ready.exists());
+        if state == Startup::Ready {
+            return Ok(true);
         }
+        if let Some(key) = trust_key(&text, previous.as_deref()) {
+            run(Command::new("tmux").args(["send-keys", "-t", &target, key]))?;
+        }
+        previous = Some(text);
         thread::sleep(STARTUP_POLL);
     }
     if state == Startup::TrustPrompt {

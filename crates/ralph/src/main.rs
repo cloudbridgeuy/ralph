@@ -180,19 +180,19 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
     for warning in verbose_tools.warnings() {
         warn(warning);
     }
+    let app_config = config::AppConfig::load().unwrap_or_default();
     Ok(InvocationConfig {
         prompt: resolve_ask_prompt(args.prompt.as_deref())?,
         timeout_secs: args.timeout,
         theme_config,
         verbose_tools,
-        permission_mode: config::AppConfig::load()
-            .unwrap_or_default()
-            .ask_permission_mode(
-                args.permission_mode.as_deref(),
-                std::env::var(invoke::ASK_PERMISSION_MODE_ENV)
-                    .ok()
-                    .as_deref(),
-            ),
+        permission_mode: app_config.ask_permission_mode(
+            args.permission_mode.as_deref(),
+            std::env::var(invoke::ASK_PERMISSION_MODE_ENV)
+                .ok()
+                .as_deref(),
+        ),
+        config_dir: app_config.claude.config_dir,
     })
 }
 
@@ -312,8 +312,16 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
     let store_path = args.store.to_string_lossy().into_owned();
     let store = chat::memory::Store::new(args.store);
     let theme_config = highlight::ThemeConfig::from_config_and_env();
+    let config_dir = config::AppConfig::load()
+        .unwrap_or_default()
+        .claude
+        .config_dir;
     store.nap(|prompt| {
-        let command = invoke::build_memory_command(prompt, dirs::home_dir().as_deref());
+        let command = invoke::build_memory_command(
+            prompt,
+            dirs::home_dir().as_deref(),
+            config_dir.as_deref(),
+        );
         let result = backoff::retry_on_outage(
             "chat memory nap",
             || {

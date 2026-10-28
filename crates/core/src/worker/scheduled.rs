@@ -89,7 +89,51 @@ mod tests {
             model: None,
             scheduled: false,
             shell: ClaudeShell::Zsh,
+            config_dir: None,
         }
+    }
+
+    #[test]
+    fn an_unset_config_dir_keeps_the_worker_argv() {
+        assert_eq!(
+            worker_command(&claude_args()),
+            [
+                "zsh",
+                "-lic",
+                r#"exec "$0" "$@""#,
+                "claude",
+                "--permission-mode",
+                "auto",
+                "--mcp-config",
+                "/s/workers/A.json",
+                "--settings",
+                "/s/workers/A.settings.json",
+                "--add-dir",
+                "/s/attachments",
+                "--append-system-prompt",
+                worker_prompt(false),
+                "do it",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_config_dir_puts_env_before_claude() {
+        let args = worker_command(&ClaudeWorkerArgs {
+            config_dir: Some(Path::new("/c/alt dir")),
+            ..claude_args()
+        });
+        assert_eq!(
+            args[..6],
+            [
+                "zsh",
+                "-lic",
+                r#"exec "$0" "$@""#,
+                "env",
+                "CLAUDE_CONFIG_DIR=/c/alt dir",
+                "claude"
+            ]
+        );
     }
 
     #[test]

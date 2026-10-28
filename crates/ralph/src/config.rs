@@ -19,7 +19,7 @@ use toml::Table;
 
 mod changes;
 mod check;
-pub use check::{check, hard_errors};
+pub use check::{check, hard_errors, missing_config_dir};
 mod chat_settings;
 mod claude;
 mod codex;
@@ -94,7 +94,7 @@ fn read_layer(path: &Path) -> Result<Table, ConfigError> {
         .parse::<Table>()
         .map_err(|source| parse_error(path, source))?;
     Ok(match path.parent() {
-        Some(dir) => layers::anchor_chat_paths(table, dir),
+        Some(dir) => layers::anchor_claude_paths(layers::anchor_chat_paths(table, dir), dir),
         None => table,
     })
 }

@@ -22,6 +22,7 @@ mod permissions;
 mod process_tree;
 mod rollback;
 mod scheduled;
+mod startup;
 mod status;
 mod ticket;
 mod tools;
@@ -48,6 +49,7 @@ pub use permissions::*;
 pub use process_tree::*;
 pub use rollback::*;
 pub use scheduled::*;
+pub use startup::*;
 pub use status::*;
 pub use ticket::*;
 pub use tools::*;
@@ -376,6 +378,7 @@ pub struct ClaudeWorkerArgs<'a> {
     pub model: Option<&'a str>,
     pub scheduled: bool,
     pub shell: ClaudeShell,
+    pub config_dir: Option<&'a Path>,
 }
 
 pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
@@ -388,18 +391,29 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
         args.shell.program(),
         args.shell.login_flags(),
         r#"exec "$0" "$@""#,
-        "claude",
-        "--permission-mode",
-        permission_mode,
-        "--mcp-config",
-        &args.mcp_config.to_string_lossy(),
-        "--settings",
-        &args.settings.to_string_lossy(),
-        "--add-dir",
-        &args.attachments.to_string_lossy(),
     ]
     .map(str::to_string)
     .to_vec();
+    if let Some(dir) = args.config_dir {
+        command.extend([
+            "env".to_string(),
+            format!("CLAUDE_CONFIG_DIR={}", dir.to_string_lossy()),
+        ]);
+    }
+    command.extend(
+        [
+            "claude",
+            "--permission-mode",
+            permission_mode,
+            "--mcp-config",
+            &args.mcp_config.to_string_lossy(),
+            "--settings",
+            &args.settings.to_string_lossy(),
+            "--add-dir",
+            &args.attachments.to_string_lossy(),
+        ]
+        .map(str::to_string),
+    );
     if args.scheduled {
         command.extend(disallowed_tool_args());
     }
@@ -432,27 +446,6 @@ pub fn exclude_lines(harness: HarnessId, repo: &Path, worktree_dir: &Path) -> Ve
         lines.push(format!("/{OPENCODE_CONFIG_FILE}"));
     }
     lines
-}
-
-/// Claude asks before working in a folder it has not seen; "No, exit" is preselected,
-/// so accepting takes Down then Enter.
-pub const TRUST_KEYS: [&str; 2] = ["Down", "Enter"];
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Startup {
-    Starting,
-    TrustPrompt,
-    Ready,
-}
-
-pub fn startup_state(pane: &str, ready: bool) -> Startup {
-    if ready {
-        Startup::Ready
-    } else if pane.contains("Yes, I trust this folder") {
-        Startup::TrustPrompt
-    } else {
-        Startup::Starting
-    }
 }
 
 pub fn inbox_file_name(report: &Report, seq: u64) -> String {
@@ -670,6 +663,7 @@ mod tests {
             model,
             scheduled: false,
             shell: ClaudeShell::Zsh,
+            config_dir: None,
         }
     }
 
@@ -895,22 +889,6 @@ mod tests {
         assert_eq!(
             WorktreeVia::Existing.note(),
             "Reused its existing worktree."
-        );
-    }
-
-    #[test]
-    fn startup_state_waits_for_the_ready_signal_and_spots_the_trust_prompt() {
-        let trust = " Accessing workspace:\n ❯ No, exit\n   Yes, I trust this folder\n";
-        assert_eq!(startup_state("", false), Startup::Starting);
-        assert_eq!(startup_state(trust, false), Startup::TrustPrompt);
-        assert_eq!(startup_state(trust, true), Startup::Ready);
-        assert_eq!(
-            startup_state(" ▐▛███▛█   Claude Code v2.1.295\n", false),
-            Startup::Starting
-        );
-        assert_eq!(
-            startup_state("  ctrl+p commands\n", false),
-            Startup::Starting
         );
     }
 
