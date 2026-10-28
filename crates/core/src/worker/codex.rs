@@ -5,6 +5,7 @@ mod protocol;
 mod resume;
 mod rpc;
 mod turns;
+mod usage;
 
 pub use approvals::*;
 pub use close::*;
@@ -13,6 +14,7 @@ pub use protocol::*;
 pub use resume::*;
 pub use rpc::*;
 pub use turns::*;
+pub use usage::*;
 
 pub const CODEX_COMMAND: &str = "codex";
 pub const CODEX_SPAWN_DIR: &str = "codex-spawn";

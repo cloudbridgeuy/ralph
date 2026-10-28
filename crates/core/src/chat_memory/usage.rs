@@ -177,6 +177,7 @@ pub fn worker_usage_record(
     kind: CallKind,
     at: String,
     session_id: Option<String>,
+    harness: &str,
     row: &ModelUsage,
 ) -> UsageRecord {
     let usage = &row.usage;
@@ -202,7 +203,7 @@ pub fn worker_usage_record(
         reset: None,
         run: None,
         store: None,
-        harness: Some(MAIN_HARNESS.to_string()),
+        harness: Some(harness.to_string()),
         model: Some(row.model.clone()),
         session_id,
         cost_source: None,
@@ -270,6 +271,7 @@ mod tests {
                 kind,
                 "t".into(),
                 Some("s".into()),
+                "claude",
                 &row,
             ))
             .unwrap(),
