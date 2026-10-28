@@ -91,6 +91,7 @@ pub struct Turns {
     queue: PromptQueue,
     running: Option<String>,
     turn_id: Option<String>,
+    previous_turn: Option<String>,
     interrupts: Vec<String>,
     interrupt_sent: bool,
     close_requested: bool,
@@ -145,7 +146,12 @@ impl Turns {
     }
 
     pub fn owns_event(&self, method: &str, params: &Value) -> bool {
-        is_current(self.turn_id.as_deref(), event_turn_id(method, params))
+        let event = event_turn_id(method, params);
+        let current = self.turn_id.as_deref();
+        if method == MODEL_REROUTED {
+            return current.is_some() && (event.is_none() || is_current(current, event));
+        }
+        is_current(current, event) || is_current(self.previous_turn.as_deref(), event)
     }
 
     pub fn notification(&mut self, method: &str, params: &Value, closing: bool) -> Vec<Action> {
@@ -190,7 +196,7 @@ impl Turns {
         };
         self.reported = false;
         self.running = Some(text.clone());
-        self.turn_id = None;
+        self.previous_turn = self.turn_id.take();
         self.interrupt_sent = false;
         vec![Action::Emit(WorkerEvent::TurnStarted), Action::Start(text)]
     }
@@ -246,7 +252,7 @@ impl Turns {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::decode_turn_id;
+    use crate::worker::{decode_turn_id, decode_usage_event, TurnUsage};
     use serde_json::json;
 
     fn item(server: &str, tool: &str, status: &str) -> Value {
@@ -536,17 +542,81 @@ mod tests {
         assert!(!is_current(None, None));
     }
 
+    fn bind(turns: &mut Turns, turn: &str) {
+        turns.bind_turn(decode_turn_id(&json!({"turn": {"id": turn}})));
+    }
+
+    fn usage(turn: &str, input: u64) -> Value {
+        let tokens = json!({"inputTokens": input, "outputTokens": 0});
+        json!({"threadId": "t", "turnId": turn, "tokenUsage": {"last": tokens, "total": tokens}})
+    }
+
+    fn owns(turns: &Turns, turn: &str) -> bool {
+        turns.owns_event(TOKEN_USAGE_UPDATED, &usage(turn, 0))
+    }
+
     #[test]
-    fn usage_belongs_to_the_bound_turn_only() {
-        let usage = |turn: &str| json!({"threadId": "t", "turnId": turn, "tokenUsage": {}});
+    fn a_reported_turn_keeps_its_late_usage_after_the_next_turn_starts() {
         let mut turns = Turns::default();
-        assert!(!turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u1")));
+        assert!(!owns(&turns, "u"));
         turns.accept("task".into());
-        turns.bind_turn(decode_turn_id(&json!({"turn": {"id": "u1"}})));
-        assert!(turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u1")));
-        assert!(!turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u0")));
-        turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
-        assert!(!turns.owns_event(TOKEN_USAGE_UPDATED, &usage("u1")));
+        bind(&mut turns, "u");
+        assert!(owns(&turns, "u"));
+        assert!(!owns(&turns, "u0"));
+        turns.notification(
+            ITEM_COMPLETED,
+            &item("ralph-worker", "report", "completed"),
+            false,
+        );
+        let ended = turns.notification(TURN_COMPLETED, &completed("u", "completed"), false);
+        assert!(starts(&ended).is_empty());
+        assert!(owns(&turns, "u"));
+        turns.accept("next".into());
+        assert!(owns(&turns, "u"));
+        bind(&mut turns, "v");
+        assert!(owns(&turns, "v"));
+        assert!(owns(&turns, "u"));
+        assert!(!owns(&turns, "u0"));
+    }
+
+    #[test]
+    fn late_usage_of_a_turn_that_ends_into_the_reminder_is_counted_once() {
+        let mut turns = Turns::default();
+        let mut tally = TurnUsage::new(Some("a".into()));
+        let mut observe = |turns: &Turns, turn: &str, total: u64| {
+            let params = usage(turn, total);
+            let event = decode_usage_event(TOKEN_USAGE_UPDATED, &params).unwrap();
+            tally.observe(event, turns.owns_event(TOKEN_USAGE_UPDATED, &params));
+            tally.take()
+        };
+        turns.accept("task".into());
+        bind(&mut turns, "u");
+        assert_eq!(observe(&turns, "u", 10)[0].usage.input_uncached, 10);
+        let ended = turns.notification(TURN_COMPLETED, &completed("u", "completed"), false);
+        assert_eq!(starts(&ended), [REPORT_REMINDER]);
+        assert_eq!(observe(&turns, "u", 15)[0].usage.input_uncached, 5);
+        bind(&mut turns, "v");
+        assert_eq!(observe(&turns, "u", 22)[0].usage.input_uncached, 7);
+        assert_eq!(observe(&turns, "v", 30)[0].usage.input_uncached, 8);
+        assert!(observe(&turns, "u0", 40).is_empty());
+    }
+
+    #[test]
+    fn a_reroute_belongs_to_the_bound_turn_even_without_a_turn_id() {
+        let reroute = |turn: Option<&str>| match turn {
+            Some(turn) => json!({"threadId": "t", "turnId": turn, "toModel": "b"}),
+            None => json!({"threadId": "t", "toModel": "b"}),
+        };
+        let mut turns = Turns::default();
+        assert!(!turns.owns_event(MODEL_REROUTED, &reroute(None)));
+        turns.accept("task".into());
+        bind(&mut turns, "u");
+        assert!(turns.owns_event(MODEL_REROUTED, &reroute(None)));
+        assert!(turns.owns_event(MODEL_REROUTED, &reroute(Some("u"))));
+        turns.notification(TURN_COMPLETED, &completed("u", "completed"), false);
+        bind(&mut turns, "v");
+        assert!(!turns.owns_event(MODEL_REROUTED, &reroute(Some("u"))));
+        assert!(turns.owns_event(MODEL_REROUTED, &reroute(Some("v"))));
     }
 
     #[test]

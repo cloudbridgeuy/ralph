@@ -44,6 +44,11 @@ impl CodexUsage {
         }
     }
 
+    pub fn start_turn(&self) {
+        let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);
+        bound.turn.start_turn();
+    }
+
     pub fn flush(&self, turn_id: Option<u64>) {
         let (thread, rows) = {
             let mut bound = self.bound.lock().unwrap_or_else(PoisonError::into_inner);

@@ -129,6 +129,10 @@ impl TurnUsage {
         }
     }
 
+    pub fn start_turn(&mut self) {
+        self.current = self.base.clone();
+    }
+
     pub fn take(&mut self) -> Vec<ModelUsage> {
         self.current = self.base.clone();
         std::mem::take(&mut self.by_model)
@@ -290,5 +294,14 @@ mod tests {
         assert_eq!(turn.take().len(), 1);
         turn.observe(totals((4, 1), (4, 1)), true);
         assert!(turn.take().is_empty());
+    }
+
+    #[test]
+    fn a_new_turn_starts_on_the_base_model() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.observe(UsageEvent::Rerouted("b".into()), true);
+        turn.start_turn();
+        turn.observe(totals((1, 1), (1, 1)), true);
+        assert_eq!(turn.take()[0].model, "a");
     }
 }

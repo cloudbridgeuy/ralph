@@ -313,6 +313,7 @@ impl Pump {
                     match &event {
                         WorkerEvent::TurnStarted => {
                             self.snapshot_turn = None;
+                            self.usage.start_turn();
                             self.wire.heartbeat.set_running(true);
                         }
                         WorkerEvent::TurnEnded(end) => {
