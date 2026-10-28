@@ -1,4 +1,7 @@
-use super::{config_path, hard_errors, leaf_sources, read_layer, AppConfig, ConfigError, Source};
+use super::{
+    config_path, hard_errors, leaf_sources, missing_config_dir, read_layer, AppConfig, ConfigError,
+    Source,
+};
 use crate::chat::{CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, SKILLS_ENV, WRAP_WIDTH_ENV};
 use crate::highlight::{RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV};
 use crate::invoke::{ASK_PERMISSION_MODE_ENV, CHAT_PERMISSION_MODE_ENV};
@@ -34,11 +37,14 @@ fn show_row(key: &str, value: &Value, source: Source, env: Option<&str>) -> Stri
     }
 }
 
-fn prompt_file_errors(path: &Path) -> Vec<String> {
-    let Some(config) = read_layer(path)
+fn layer_config(path: &Path) -> Option<AppConfig> {
+    read_layer(path)
         .ok()
         .and_then(|table| table.try_into::<AppConfig>().ok())
-    else {
+}
+
+fn prompt_file_errors(path: &Path) -> Vec<String> {
+    let Some(config) = layer_config(path) else {
         return Vec::new();
     };
     let files = config.chat.prompt_files(dirs::home_dir().as_deref());
@@ -70,9 +76,12 @@ fn check_file(path: &Path, required: bool, prefixed: bool) -> CommandResult<Vec<
         }
     };
     let errors = [report.errors, prompt_file_errors(path)].concat();
+    let config_dir_note = layer_config(path)
+        .and_then(|config| missing_config_dir(&config, dirs::home_dir().as_deref(), Path::exists));
     report
         .notes
         .iter()
+        .chain(&config_dir_note)
         .for_each(|note| eprintln!("note: {}", line(note)));
     errors.iter().for_each(|error| eprintln!("{}", line(error)));
     if errors.is_empty() {

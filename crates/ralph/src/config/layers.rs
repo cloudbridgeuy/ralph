@@ -58,6 +58,17 @@ pub fn anchor_chat_paths(mut table: Table, dir: &Path) -> Table {
     table
 }
 
+pub fn anchor_claude_paths(mut table: Table, dir: &Path) -> Table {
+    if let Some(Value::String(text)) = table
+        .get_mut("claude")
+        .and_then(Value::as_table_mut)
+        .and_then(|claude| claude.get_mut("config_dir"))
+    {
+        *text = anchored(text, dir);
+    }
+    table
+}
+
 pub fn culprit_path<'a, E: PartialEq>(
     layers: &[(&'a Path, Table)],
     fallback: &'a Path,
@@ -175,6 +186,19 @@ mod tests {
             table(
                 "[chat]\nskills = [\"/cfg/rel/x\", \"~/y\", \"/abs/z\"]\nworktree_dir = \"wt\"\n"
             )
+        );
+    }
+
+    #[test]
+    fn relative_claude_config_dir_anchors_to_the_file_directory() {
+        let anchor = |text| anchor_claude_paths(table(text), Path::new("/cfg"));
+        assert_eq!(
+            anchor("[claude]\nconfig_dir = \"alt\"\n"),
+            table("[claude]\nconfig_dir = \"/cfg/alt\"\n")
+        );
+        assert_eq!(
+            anchor("[claude]\nconfig_dir = \"~/alt\"\n"),
+            table("[claude]\nconfig_dir = \"~/alt\"\n")
         );
     }
 

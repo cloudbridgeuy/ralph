@@ -1,8 +1,9 @@
 use crate::chat::memory::Store;
 use crate::warn::warn;
-use ralph_core::chat::{build_mcp_args, mcp_config, select_servers};
+use ralph_core::chat::{build_mcp_args, mcp_config, ImportedServers};
 use ralph_core::chat_skills::{plan_links, plugin_manifest, ChatSkill};
 use ralph_core::chat_socket::mcp_config_path;
+use ralph_core::claude_leftovers::claude_json;
 use std::io::{self};
 use std::path::{Path, PathBuf};
 
@@ -13,10 +14,8 @@ pub(super) fn write_mcp_config(
     store_dir: &Path,
     socket: &Path,
     exe: &Path,
-    server_names: &[String],
+    imported: &ImportedServers,
 ) -> io::Result<Vec<String>> {
-    let claude_config = read_claude_config();
-    let imported = select_servers(&claude_config, server_names);
     for name in &imported.missing {
         warn(format!(
             "chat: MCP server \"{name}\" not found in ~/.claude.json; continuing without it"
@@ -100,8 +99,8 @@ pub(super) fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<temp
     Ok(Some(plugin))
 }
 
-pub(super) fn read_claude_config() -> serde_json::Value {
-    let Some(path) = dirs::home_dir().map(|home| home.join(".claude.json")) else {
+pub(super) fn read_claude_config(config_dir: Option<&Path>) -> serde_json::Value {
+    let Some(path) = dirs::home_dir().map(|home| claude_json(config_dir, &home)) else {
         return serde_json::json!({});
     };
     match std::fs::read(&path) {

@@ -296,7 +296,15 @@ impl Workers {
             dirs::home_dir()
                 .map(|home| {
                     let lock = trust_lock_path(dirs::data_dir().as_deref());
-                    cleanup_worktree_leftovers(&home, lock.as_deref(), &worktree)
+                    cleanup_worktree_leftovers(
+                        config
+                            .as_ref()
+                            .ok()
+                            .and_then(|config| config.claude.config_dir.as_deref()),
+                        &home,
+                        lock.as_deref(),
+                        &worktree,
+                    )
                 })
                 .unwrap_or_default()
         } else if cleans_cursor_leftovers(&state, &steps) {

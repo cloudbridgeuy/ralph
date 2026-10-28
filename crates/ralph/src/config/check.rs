@@ -2,6 +2,8 @@ use super::{AppConfig, ConfigError};
 use ralph_core::chat::resolve_watch_timeout;
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
+use ralph_core::claude_leftovers::configured_dir;
+use std::path::Path;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct CheckReport {
@@ -18,6 +20,15 @@ pub fn hard_errors(config: &AppConfig) -> Vec<String> {
             resolve_cell_limits(None, None, chat.cell_output_limit, chat.cell_output_bytes).err(),
         )
         .collect()
+}
+
+pub fn missing_config_dir(
+    config: &AppConfig,
+    home: Option<&Path>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<String> {
+    let dir = configured_dir(config.claude.config_dir.as_deref(), home)?;
+    (!exists(&dir)).then(|| format!("[claude] config_dir {} does not exist", dir.display()))
 }
 
 pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
@@ -64,6 +75,23 @@ mod tests {
             .unwrap()
             .errors
             .is_empty());
+    }
+
+    #[test]
+    fn missing_config_dir_is_reported_after_home_expansion() {
+        let config = AppConfig::parse_reporting_unknown("[claude]\nconfig_dir = \"~/alt\"\n", "c")
+            .unwrap()
+            .0;
+        let home = Some(Path::new("/h"));
+        assert_eq!(
+            missing_config_dir(&config, home, |_| false),
+            Some("[claude] config_dir /h/alt does not exist".to_string())
+        );
+        assert_eq!(
+            missing_config_dir(&config, home, |dir| dir == Path::new("/h/alt")),
+            None
+        );
+        assert_eq!(missing_config_dir(&AppConfig::new(), home, |_| false), None);
     }
 
     #[test]

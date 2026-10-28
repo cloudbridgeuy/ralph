@@ -6,6 +6,7 @@ use crate::subprocess::{
     invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig, StreamingSubprocessResult,
     SubprocessError,
 };
+use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
 use std::path::{Path, PathBuf};
 
@@ -34,6 +35,7 @@ pub struct InvocationConfig {
     pub theme_config: ThemeConfig,
     pub verbose_tools: VerboseToolsConfig,
     pub permission_mode: String,
+    pub config_dir: Option<PathBuf>,
 }
 
 /// Shell-quote a string for embedding in a single-quoted argument.
@@ -54,10 +56,11 @@ pub struct Isolation {
     pub user_settings: bool,
     pub user_claude_md: bool,
     pub project_excludes: Vec<PathBuf>,
+    pub config_dir: Option<PathBuf>,
 }
 
 impl Isolation {
-    pub fn for_chat(chat: &ChatSection, cwd: &Path) -> Self {
+    pub fn for_chat(chat: &ChatSection, cwd: &Path, config_dir: Option<&Path>) -> Self {
         Self {
             user_settings: chat.user_settings,
             user_claude_md: chat.user_claude_md,
@@ -70,6 +73,7 @@ impl Isolation {
                     cwd.join(".claude").join("CLAUDE.md"),
                 ]
             },
+            config_dir: config_dir.map(Path::to_path_buf),
         }
     }
 }
@@ -81,7 +85,7 @@ fn isolation_args(home: Option<&Path>, auto_compact_off: bool, isolation: &Isola
     }
     let excludes: Vec<String> = home
         .filter(|_| !isolation.user_claude_md)
-        .map(|h| h.join(".claude").join("CLAUDE.md"))
+        .map(|h| claude_dir(isolation.config_dir.as_deref(), h).join("CLAUDE.md"))
         .iter()
         .chain(&isolation.project_excludes)
         .map(|path| path.to_string_lossy().into_owned())
@@ -104,10 +108,25 @@ fn isolation_args(home: Option<&Path>, auto_compact_off: bool, isolation: &Isola
     )
 }
 
-pub fn build_memory_command(prompt: &str, home: Option<&Path>) -> String {
+fn config_dir_env(config_dir: Option<&Path>, home: Option<&Path>) -> String {
+    configured_dir(config_dir, home)
+        .map(|dir| format!("CLAUDE_CONFIG_DIR={} ", shell_quote(&dir.to_string_lossy())))
+        .unwrap_or_default()
+}
+
+pub fn build_memory_command(
+    prompt: &str,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+) -> String {
+    let isolation = Isolation {
+        config_dir: config_dir.map(Path::to_path_buf),
+        ..Isolation::default()
+    };
     format!(
-        "claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p {}",
-        isolation_args(home, false, &Isolation::default()),
+        "{}claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p {}",
+        config_dir_env(config_dir, home),
+        isolation_args(home, false, &isolation),
         quote_prompt(prompt)
     )
 }
@@ -124,8 +143,9 @@ pub fn build_chat_command(
         .map(|arg| format!(" {}", shell_quote(arg)))
         .collect::<String>();
     format!(
-        "{} claude --verbose --permission-mode {} {} --append-system-prompt {}{} --input-format stream-json --output-format stream-json -p",
+        "{} {}claude --verbose --permission-mode {} {} --append-system-prompt {}{} --input-format stream-json --output-format stream-json -p",
         CHAT_DISABLE_BACKGROUND_TASKS_ENV,
+        config_dir_env(isolation.config_dir.as_deref(), home),
         permission_mode,
         isolation_args(home, true, isolation),
         quote_prompt(system_prompt),
@@ -133,9 +153,15 @@ pub fn build_chat_command(
     )
 }
 
-pub fn build_command(prompt: &str, permission_mode: &str) -> String {
+pub fn build_command(
+    prompt: &str,
+    permission_mode: &str,
+    config_dir: Option<&Path>,
+    home: Option<&Path>,
+) -> String {
     format!(
-        "claude --verbose --permission-mode {} --output-format stream-json -p {}",
+        "{}claude --verbose --permission-mode {} --output-format stream-json -p {}",
+        config_dir_env(config_dir, home),
         permission_mode,
         quote_prompt(prompt)
     )
@@ -143,7 +169,12 @@ pub fn build_command(prompt: &str, permission_mode: &str) -> String {
 
 pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, SubprocessError> {
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
-        command: build_command(&config.prompt, &config.permission_mode),
+        command: build_command(
+            &config.prompt,
+            &config.permission_mode,
+            config.config_dir.as_deref(),
+            dirs::home_dir().as_deref(),
+        ),
         timeout_secs: Some(config.timeout_secs),
         theme_config: config.theme_config,
         session_elapsed_ms: 0,
@@ -160,7 +191,7 @@ mod tests {
 
     #[test]
     fn build_command_is_plain_ask() {
-        let cmd = build_command("hello", "bypassPermissions");
+        let cmd = build_command("hello", "bypassPermissions", None, None);
         assert!(cmd.contains("--permission-mode bypassPermissions"));
         assert!(cmd.contains("-p 'hello'"));
         assert!(!cmd.contains("--agent"));
@@ -170,7 +201,7 @@ mod tests {
 
     #[test]
     fn memory_curator_is_haiku_and_isolated_without_tools() {
-        let cmd = build_memory_command("merge it's notes", Some(Path::new("/home/u")));
+        let cmd = build_memory_command("merge it's notes", Some(Path::new("/home/u")), None);
         assert!(cmd.contains("--model haiku"));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains("claudeMdExcludes"));
@@ -217,7 +248,7 @@ mod tests {
 
     #[test]
     fn build_command_escapes_single_quotes() {
-        let cmd = build_command("it's a test", "default");
+        let cmd = build_command("it's a test", "default", None, None);
         assert!(cmd.contains("'\"'\"'"));
     }
 
@@ -229,11 +260,45 @@ mod tests {
         assert!(!cmd.contains('\u{0001}'));
     }
 
+    #[test]
+    fn unset_config_dir_leaves_every_command_as_before() {
+        assert_eq!(
+            build_command("hi", "auto", None, Some(Path::new("/home/u"))),
+            "claude --verbose --permission-mode auto --output-format stream-json -p 'hi'"
+        );
+        assert_eq!(
+            build_memory_command("hi", Some(Path::new("/home/u")), None),
+            r#"claude --verbose --model haiku --setting-sources project,local --settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]}' --tools '' --mcp-config '{"mcpServers":{}}' --strict-mcp-config --output-format stream-json -p 'hi'"#
+        );
+        assert_eq!(
+            build_chat_command("sys", &[], "auto", None, &Isolation::default()),
+            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings '{\"autoCompactEnabled\":false}' --append-system-prompt 'sys' --input-format stream-json --output-format stream-json -p"
+        );
+    }
+
+    #[test]
+    fn config_dir_prefixes_every_command_and_moves_the_exclude() {
+        let home = Some(Path::new("/home/u"));
+        let dir = Some(Path::new("~/alt dir"));
+        let ask = build_command("hi", "auto", dir, home);
+        assert!(ask.starts_with("CLAUDE_CONFIG_DIR='/home/u/alt dir' claude --verbose "));
+        let memory = build_memory_command("hi", home, dir);
+        assert!(memory.starts_with("CLAUDE_CONFIG_DIR='/home/u/alt dir' claude "));
+        assert!(memory.contains(r#"["/home/u/alt dir/CLAUDE.md"]"#));
+        let isolation = Isolation::for_chat(&ChatSection::default(), Path::new("/work"), dir);
+        let chat = build_chat_command("sys", &[], "auto", home, &isolation);
+        assert!(chat.starts_with(
+            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 CLAUDE_CONFIG_DIR='/home/u/alt dir' claude "
+        ));
+        assert!(chat.contains(r#""claudeMdExcludes":["/home/u/alt dir/CLAUDE.md"]"#));
+        assert!(!chat.contains("/.claude/CLAUDE.md"));
+    }
+
     fn chat_args(chat: ChatSection) -> String {
         isolation_args(
             Some(Path::new("/home/u")),
             true,
-            &Isolation::for_chat(&chat, Path::new("/work")),
+            &Isolation::for_chat(&chat, Path::new("/work"), None),
         )
     }
 

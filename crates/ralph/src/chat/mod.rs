@@ -46,7 +46,8 @@ use crate::chat::queue::{
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::skills::{
-    env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
+    env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
+    write_skill_plugin,
 };
 use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
@@ -74,7 +75,7 @@ use crate::workers::{canonical_store, running_workers, Workers};
 use keepalive::{KeepaliveWatch, Stamp};
 use ralph_core::chat::{
     prompt_text, resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
-    resolve_wrap_width, CustomPrompt, ReplyImages,
+    resolve_wrap_width, select_servers, CustomPrompt, ReplyImages,
 };
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
@@ -208,13 +209,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let shown = SuggestionSlot::default();
     let socket_files = chat_socket.files().clone();
     let _socket_guard = SocketGuard(socket_files.clone());
-    let mcp_args = write_mcp_config(
-        &store,
-        &store_dir,
-        chat_socket.path(),
-        &exe,
+    let imported = select_servers(
+        &read_claude_config(config.claude.config_dir.as_deref()),
         &chat_config.mcp_servers,
-    )?;
+    );
+    let mcp_args = write_mcp_config(&store, &store_dir, chat_socket.path(), &exe, &imported)?;
     let skills = link_skills(usable_skills(resolve_skills(
         &SkillSources {
             cli: &args.skills,
@@ -245,7 +244,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let (custom_prompt, prompt_warnings) =
         load_custom_prompt(&chat_config.prompt_files(dirs::home_dir().as_deref()));
     prompt_warnings.into_iter().for_each(warn);
-    let isolation = Isolation::for_chat(&chat_config, &std::env::current_dir()?);
+    let isolation = Isolation::for_chat(
+        &chat_config,
+        &std::env::current_dir()?,
+        config.claude.config_dir.as_deref(),
+    );
     let live = Arc::new(AtomicBool::new(false));
     let run = run_id(std::process::id(), chrono::Utc::now());
     let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
