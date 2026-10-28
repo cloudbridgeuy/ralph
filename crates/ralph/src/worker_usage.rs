@@ -1,4 +1,4 @@
-use crate::chat::memory::{append_usage, usage_path};
+use crate::chat::memory::append_usage;
 use crate::warn::warn_if_err;
 use ralph_core::chat_memory::{worker_usage_record, CallKind};
 use ralph_core::worker::{parse_stop_session, subagents_dir, transcript_usage};
@@ -11,6 +11,7 @@ pub struct UsageTarget {
     pub worker: String,
     pub seen: PathBuf,
     pub store: Option<PathBuf>,
+    pub usage: PathBuf,
 }
 
 fn read_or_empty(path: &Path) -> io::Result<String> {
@@ -86,7 +87,7 @@ fn record(
 
 pub fn record_or_warn(target: &UsageTarget, payload: &str, turn_id: Option<u64>) {
     warn_if_err(
-        record(target, payload, turn_id, &usage_path()),
+        record(target, payload, turn_id, &target.usage),
         "Failed to record worker usage",
     );
 }
@@ -122,8 +123,9 @@ mod tests {
             worker: "w1".into(),
             seen: dir.path().join("workers").join("w1.usage-seen"),
             store: Some(dir.path().to_path_buf()),
+            usage: dir.path().join("usage.jsonl"),
         };
-        let usage_file = dir.path().join("usage.jsonl");
+        let usage_file = target.usage.clone();
         let payload = format!(
             r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
             transcript.display()

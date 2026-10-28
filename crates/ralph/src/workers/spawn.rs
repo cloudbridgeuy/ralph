@@ -3,6 +3,7 @@ use super::{
     Workers,
 };
 use crate::chat::cell::detach_from_terminal;
+use crate::chat::memory::usage_path;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::subprocess::kill_process_group;
@@ -463,6 +464,7 @@ impl Workers {
                 &UsageSink {
                     store: &self.store_dir,
                     worker: id,
+                    usage: &usage_path(),
                 },
             )
             .to_string(),

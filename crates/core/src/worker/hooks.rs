@@ -23,6 +23,8 @@ fn stop_hook_command(
         shell_quote(&markers.unreported.to_string_lossy()),
         "--worker".to_string(),
         shell_quote(usage.worker),
+        "--usage".to_string(),
+        shell_quote(&usage.usage.to_string_lossy()),
         "--usage-seen".to_string(),
         shell_quote(&usage_seen_path(usage.store, usage.worker).to_string_lossy()),
     ];
@@ -38,6 +40,7 @@ fn stop_hook_command(
 pub struct UsageSink<'a> {
     pub store: &'a Path,
     pub worker: &'a str,
+    pub usage: &'a Path,
 }
 
 fn touch_command(path: &Path) -> String {
@@ -164,6 +167,7 @@ mod tests {
         UsageSink {
             store: Path::new("/s"),
             worker: "A",
+            usage: Path::new("/u/usage.jsonl"),
         }
     }
 
@@ -195,7 +199,7 @@ mod tests {
             claude_worker_settings(Path::new("/bin/ral'ph"), &markers, Some(&site()), &sink());
         assert_eq!(
             hook_command(&settings, "Stop"),
-            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A' --unreported '/s/it'\''s/unreported/A' --worker 'A' --usage-seen '/s/workers/A.usage-seen' '--store' '/s' '--id' 'A' '--worktree' '/w'"
+            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A' --unreported '/s/it'\''s/unreported/A' --worker 'A' --usage '/u/usage.jsonl' --usage-seen '/s/workers/A.usage-seen' '--store' '/s' '--id' 'A' '--worktree' '/w'"
         );
     }
 
@@ -204,7 +208,7 @@ mod tests {
         let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), None, &sink());
         assert_eq!(
             hook_command(&settings, "Stop"),
-            "'/bin/ralph' worker-stop-hook --reported '/s/reported/A' --unreported '/s/unreported/A' --worker 'A' --usage-seen '/s/workers/A.usage-seen'"
+            "'/bin/ralph' worker-stop-hook --reported '/s/reported/A' --unreported '/s/unreported/A' --worker 'A' --usage '/u/usage.jsonl' --usage-seen '/s/workers/A.usage-seen'"
         );
     }
 
