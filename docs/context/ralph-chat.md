@@ -535,6 +535,10 @@ Every completed Claude call (each turn, including failed exits but not interrupt
 jq -s '[.[] | select((.kind == "turn" and .process_turn != null) or .kind == "ping")] | group_by(.run) | map(reduce .[] as $t ([]; if $t.process_turn == 1 or length == 0 then . + [$t.cost_usd // 0] else .[-1] = ($t.cost_usd // .[-1]) end) | add) | add' <config dir>/usage.jsonl
 ```
 
+### Claude worker usage
+
+A claude worker's Stop hook (`ralph worker-stop-hook`, given `--worker` and `--usage-seen`) also appends rows to the same `usage.jsonl`, so the tokens outlive `close_worker`. It reads `session_id` and `transcript_path` from the hook input, then the main transcript and `<transcript without .jsonl>/subagents/agent-*.jsonl`. The pure `ralph_core::worker::transcript_usage` keeps the last line of each `message.id` (earlier lines carry partial output counts), skips messages with a null `stop_reason` (a later Stop picks them up) and ids already listed in `<store>/workers/<id>.usage-seen`, and sums the rest per model with the wire Anthropic mapping (`map_usage`). Each model becomes one line with `kind` `worker`, `worker_id`, `turn_id` (the worker snapshot turn of that Stop; absent without snapshots), `harness` `claude`, `model`, `session_id`, the four token counts, `reasoning_tokens` (thinking tokens, raw), `cache_write_5m` and `cache_write_1h`; `cost_usd` and `duration_ms` are null. Worker lines carry no `run`, so `session_turns` and the status bar skip them. A failure only warns and never changes the Stop decision. `close_worker` removes the `.usage-seen` file. Limit: a turn cut off by `close_worker` before its Stop is not recorded.
+
 ## Out of scope (v1)
 
 - Mid-turn message injection.

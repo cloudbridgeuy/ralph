@@ -1,4 +1,6 @@
-use super::{branch_name, marker_paths, spawn_record_path, status_path, HarnessId};
+use super::{
+    branch_name, marker_paths, spawn_record_path, status_path, usage_seen_path, HarnessId,
+};
 use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
@@ -163,6 +165,7 @@ pub enum CloseStep {
 pub fn close_clear_paths(store: &Path, id: &str) -> Vec<PathBuf> {
     let mut paths = marker_paths(store, id).to_vec();
     paths.push(status_path(store, id));
+    paths.push(usage_seen_path(store, id));
     paths.push(spawn_record_path(store, id));
     paths
 }
@@ -439,11 +442,12 @@ mod tests {
     #[test]
     fn close_clears_every_marker_the_status_file_and_the_spawn_record() {
         let paths = close_clear_paths(Path::new("/s"), "A");
-        assert_eq!(paths.len(), marker_paths(Path::new("/s"), "A").len() + 2);
+        assert_eq!(paths.len(), marker_paths(Path::new("/s"), "A").len() + 3);
         assert!(marker_paths(Path::new("/s"), "A")
             .iter()
             .all(|marker| paths.contains(marker)));
         assert!(paths.contains(&PathBuf::from("/s/status/A")));
+        assert!(paths.contains(&PathBuf::from("/s/workers/A.usage-seen")));
         assert_eq!(paths.last(), Some(&PathBuf::from("/s/spawn/A")));
     }
 

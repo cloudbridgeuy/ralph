@@ -38,7 +38,7 @@ pub use tree::{
 };
 pub use usage::{
     carry_metadata, encode_usage, reply_entries, trigger_entries, usage_record, view_stats,
-    CallKind, Trigger, UsageRecord,
+    worker_usage_record, CallKind, Trigger, UsageRecord,
 };
 
 pub const SUMMARY_BYTES: usize = 512;

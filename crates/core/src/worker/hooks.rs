@@ -1,4 +1,4 @@
-use super::{WorkerMarkers, REPORT_REMINDER};
+use super::{usage_seen_path, WorkerMarkers, REPORT_REMINDER};
 use crate::snapshot::WorkerSite;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -8,7 +8,12 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
-fn stop_hook_command(exe: &Path, markers: &WorkerMarkers, site: Option<&WorkerSite>) -> String {
+fn stop_hook_command(
+    exe: &Path,
+    markers: &WorkerMarkers,
+    site: Option<&WorkerSite>,
+    usage: &UsageSink,
+) -> String {
     let mut words = vec![
         shell_quote(&exe.to_string_lossy()),
         "worker-stop-hook".to_string(),
@@ -16,6 +21,10 @@ fn stop_hook_command(exe: &Path, markers: &WorkerMarkers, site: Option<&WorkerSi
         shell_quote(&markers.reported.to_string_lossy()),
         "--unreported".to_string(),
         shell_quote(&markers.unreported.to_string_lossy()),
+        "--worker".to_string(),
+        shell_quote(usage.worker),
+        "--usage-seen".to_string(),
+        shell_quote(&usage_seen_path(usage.store, usage.worker).to_string_lossy()),
     ];
     words.extend(
         site.into_iter()
@@ -23,6 +32,12 @@ fn stop_hook_command(exe: &Path, markers: &WorkerMarkers, site: Option<&WorkerSi
             .map(|arg| shell_quote(&arg)),
     );
     words.join(" ")
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct UsageSink<'a> {
+    pub store: &'a Path,
+    pub worker: &'a str,
 }
 
 fn touch_command(path: &Path) -> String {
@@ -37,6 +52,7 @@ pub fn claude_worker_settings(
     exe: &Path,
     markers: &WorkerMarkers,
     site: Option<&WorkerSite>,
+    usage: &UsageSink,
 ) -> Value {
     let quote = |path: &Path| shell_quote(&path.to_string_lossy());
     let clear_blocked = format!("rm -f {}", quote(&markers.blocked));
@@ -58,7 +74,7 @@ pub fn claude_worker_settings(
             }],
             "Stop": [{
                 "hooks": [
-                    command_hook(stop_hook_command(exe, markers, site)),
+                    command_hook(stop_hook_command(exe, markers, site, usage)),
                     command_hook(clear_blocked)
                 ]
             }],
@@ -83,6 +99,16 @@ pub fn claude_worker_settings(
 struct StopPayload {
     stop_hook_active: Option<bool>,
     background_tasks: Option<Vec<Value>>,
+}
+
+#[derive(Deserialize)]
+pub struct StopSession {
+    pub session_id: String,
+    pub transcript_path: std::path::PathBuf,
+}
+
+pub fn parse_stop_session(payload: &str) -> Result<StopSession, String> {
+    serde_json::from_str(payload).map_err(|e| format!("Stop hook input has no transcript: {e}"))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +160,13 @@ mod tests {
         WorkerMarkers::new(Path::new("/s"), "A")
     }
 
+    fn sink() -> UsageSink<'static> {
+        UsageSink {
+            store: Path::new("/s"),
+            worker: "A",
+        }
+    }
+
     fn site() -> WorkerSite {
         WorkerSite {
             store: "/s".into(),
@@ -145,7 +178,8 @@ mod tests {
     #[test]
     fn claude_worker_settings_touch_the_ready_file_on_startup_only() {
         let markers = WorkerMarkers::new(Path::new("/s/it's"), "A");
-        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers, Some(&site()));
+        let settings =
+            claude_worker_settings(Path::new("/bin/ralph"), &markers, Some(&site()), &sink());
         let start = &settings["hooks"]["SessionStart"][0];
         assert_eq!(start["matcher"], "startup");
         assert_eq!(
@@ -157,25 +191,27 @@ mod tests {
     #[test]
     fn claude_stop_hook_runs_ralph_with_the_marker() {
         let markers = WorkerMarkers::new(Path::new("/s/it's"), "A");
-        let settings = claude_worker_settings(Path::new("/bin/ral'ph"), &markers, Some(&site()));
+        let settings =
+            claude_worker_settings(Path::new("/bin/ral'ph"), &markers, Some(&site()), &sink());
         assert_eq!(
             hook_command(&settings, "Stop"),
-            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A' --unreported '/s/it'\''s/unreported/A' '--store' '/s' '--id' 'A' '--worktree' '/w'"
+            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A' --unreported '/s/it'\''s/unreported/A' --worker 'A' --usage-seen '/s/workers/A.usage-seen' '--store' '/s' '--id' 'A' '--worktree' '/w'"
         );
     }
 
     #[test]
     fn claude_stop_hook_omits_the_site_arguments_without_a_site() {
-        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), None);
+        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), None, &sink());
         assert_eq!(
             hook_command(&settings, "Stop"),
-            "'/bin/ralph' worker-stop-hook --reported '/s/reported/A' --unreported '/s/unreported/A'"
+            "'/bin/ralph' worker-stop-hook --reported '/s/reported/A' --unreported '/s/unreported/A' --worker 'A' --usage-seen '/s/workers/A.usage-seen'"
         );
     }
 
     #[test]
     fn claude_permission_hook_only_touches_the_blocked_marker() {
-        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()));
+        let settings =
+            claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()), &sink());
         assert_eq!(
             hook_command(&settings, "PermissionRequest"),
             "touch '/s/blocked/A'"
@@ -184,7 +220,8 @@ mod tests {
 
     #[test]
     fn claude_idle_notification_clears_blocked_and_touches_waiting_only_while_unreported() {
-        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()));
+        let settings =
+            claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()), &sink());
         assert_eq!(
             settings["hooks"]["Notification"][0]["matcher"],
             "idle_prompt"
@@ -197,7 +234,8 @@ mod tests {
 
     #[test]
     fn claude_stop_clears_the_blocked_marker_after_the_stop_hook() {
-        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()));
+        let settings =
+            claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()), &sink());
         assert_eq!(
             settings["hooks"]["Stop"][0]["hooks"][1]["command"],
             "rm -f '/s/blocked/A'"
@@ -206,7 +244,8 @@ mod tests {
 
     #[test]
     fn claude_activity_hooks_clear_blocked_and_waiting_for_every_event() {
-        let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()));
+        let settings =
+            claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()), &sink());
         for event in ["UserPromptSubmit", "PostToolUse"] {
             assert!(
                 settings["hooks"][event][0].get("matcher").is_none(),
@@ -270,6 +309,16 @@ mod tests {
             StopDecision::FailOpen(_)
         ));
         assert_eq!(stop_decision("{}", true), StopDecision::ConsumeMarker);
+    }
+
+    #[test]
+    fn stop_session_reads_the_session_and_transcript() {
+        let session =
+            parse_stop_session(r#"{"session_id":"s1","transcript_path":"/t/s1.jsonl","x":1}"#)
+                .unwrap();
+        assert_eq!(session.session_id, "s1");
+        assert_eq!(session.transcript_path, Path::new("/t/s1.jsonl"));
+        assert!(parse_stop_session("{}").is_err());
     }
 
     #[test]

@@ -374,6 +374,16 @@ mod tests {
     }
 
     #[test]
+    fn session_turns_skip_worker_usage_lines() {
+        let worker = format!(
+            r#"{{"at":"{}","kind":"worker","worker_id":"w1","input_tokens":5,"run":"{RUN}"}}"#,
+            time(1).to_rfc3339()
+        );
+        let text = lines(&[worker, turn_line(2, 1, 2.0)]);
+        assert_eq!(session_turns(&text, RUN).len(), 1);
+    }
+
+    #[test]
     fn run_id_joins_the_pid_and_the_start_time() {
         assert_eq!(run_id(42, time(0)), format!("42-{}", time(0).to_rfc3339()));
     }
@@ -480,6 +490,25 @@ mod tests {
         let text = lines(&[turn_line(1, 1, 1.0), ping_line(2, 1.2)]);
         assert_eq!(session_turns(&text, RUN).len(), 1);
         assert_eq!(session_rows(&text, RUN).len(), 2);
+    }
+
+    #[test]
+    fn worker_rows_are_left_out_of_turns_rows_and_cost() {
+        let worker = format!(
+            r#"{{"at":"{}","kind":"worker","worker_id":"w","cost_usd":9.0,"run":"{RUN}"}}"#,
+            time(2).to_rfc3339()
+        );
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            worker,
+            ping_line(3, 1.2),
+            turn_line(4, 2, 1.5),
+        ]);
+        assert_eq!(session_turns(&text, RUN).len(), 2);
+        let rows = session_rows(&text, RUN);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(session_cost(&rows).unwrap().total, 1.5);
+        assert_eq!(thread_usage(&text, RUN).unwrap().cost.unwrap().total, 1.5);
     }
 
     #[test]

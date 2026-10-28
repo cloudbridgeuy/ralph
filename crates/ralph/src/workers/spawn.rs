@@ -17,10 +17,10 @@ use ralph_core::worker::{
     spawn_handoff, spawn_record_path, startup_state, with_start_warning, worker_command,
     worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeShell,
     ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback,
-    SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, WorkerMarkers,
-    WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS,
-    FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
-    TRUST_KEYS, WORKERS_DIR,
+    SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, UsageSink,
+    WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
+    FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
+    STORE_OPTION, TRUST_KEYS, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -446,7 +446,16 @@ impl Workers {
         let path = dir.join(format!("{id}.settings.json"));
         fs::write(
             &path,
-            claude_worker_settings(&self.exe, markers, site).to_string(),
+            claude_worker_settings(
+                &self.exe,
+                markers,
+                site,
+                &UsageSink {
+                    store: &self.store_dir,
+                    worker: id,
+                },
+            )
+            .to_string(),
         )?;
         Ok(path)
     }

@@ -49,6 +49,7 @@ mod watches;
 mod wire;
 mod worker_changes;
 mod worker_mcp;
+mod worker_usage;
 mod worker_verify;
 mod workers;
 
@@ -273,6 +274,10 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
     if let Some(store) = &args.store {
         config::set_store_layer(store);
     }
+    let usage = args
+        .worker
+        .zip(args.usage_seen)
+        .map(|(worker, seen)| worker_usage::UsageTarget { worker, seen });
     let changes = args
         .store
         .zip(args.id)
@@ -285,9 +290,12 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
         .as_ref()
         .and_then(worker_changes::WorkerChanges::open);
     worker_mcp::run_stop_hook(
-        &args.reported,
-        &args.unreported,
-        changes.as_ref(),
+        &worker_mcp::StopHook {
+            reported: &args.reported,
+            unreported: &args.unreported,
+            changes: changes.as_ref(),
+            usage: usage.as_ref(),
+        },
         std::io::stdin().lock(),
         std::io::stdout().lock(),
     )?;
