@@ -21,7 +21,7 @@ use ralph_core::chat_memory::entries_to_shift;
 use ralph_core::chat_status::{
     latest_states, schedule_states, watch_states, worker_states, RunningWorker, Status,
 };
-use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage};
+use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage, UsageTail};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::schedule_worker::new_scheduled_reports;
@@ -93,6 +93,7 @@ pub(super) struct Monitor {
     pub(super) run: String,
     pub(super) reset_limits: ResetLimits,
     pub(super) thread: Mutex<ThreadMemo>,
+    pub(super) usage_tail: Mutex<UsageTail>,
 }
 
 impl Monitor {
@@ -257,10 +258,15 @@ impl Monitor {
         Some(entries_to_shift(&entries, self.recent_history_tokens))
     }
 
+    fn read_usage_rows(&self) -> Option<Option<ThreadUsage>> {
+        let mut tail = locked(&self.usage_tail);
+        let read = memory::read_usage_since(&memory::usage_path(), tail.clone(), &self.run);
+        *tail = read.ok()?;
+        Some(thread_usage(&tail.rows))
+    }
+
     fn reload_thread(&self) {
-        let usage = memory::load_usage(&memory::usage_path())
-            .ok()
-            .map(|text| thread_usage(&text, &self.run));
+        let usage = self.read_usage_rows();
         let shift = self.measure_shift();
         let mut memo = locked(&self.thread);
         if let Some(usage) = usage {

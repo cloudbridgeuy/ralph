@@ -84,7 +84,7 @@ use ralph_core::chat_memory::Trigger;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{prefill, Prefill, SuggestionRecord};
-use ralph_core::chat_thread::run_id;
+use ralph_core::chat_thread::{run_id, UsageTail};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::schedule_request::SCHEDULE_DIR;
@@ -288,6 +288,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     let inbox = Arc::new(Inbox::new(store_dir.join(INBOX_DIR)));
     let known = inbox.peek().unwrap_or_default();
+    let usage_stamp = memory::usage_stamp(&memory::usage_path()).unwrap_or_default();
     let monitor = Arc::new(Monitor {
         watches: Watches::new(Arc::clone(&inbox), &store_dir, watch_timeout),
         schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
@@ -320,6 +321,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         run: run.clone(),
         reset_limits,
         thread: Mutex::new(ThreadMemo::default()),
+        usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
     });
     chat_socket.serve(
         Store::new(store_dir.clone()),
