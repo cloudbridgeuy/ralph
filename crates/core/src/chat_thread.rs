@@ -87,17 +87,28 @@ pub fn run_id(pid: u32, started: DateTime<Utc>) -> String {
     format!("{pid}-{}", started.to_rfc3339())
 }
 
-pub fn session_turns(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
+fn run_rows<'a>(
+    usage_jsonl: &'a str,
+    run: &'a str,
+    kinds: &'a [&'a str],
+) -> impl Iterator<Item = UsageLine> + 'a {
     usage_jsonl
         .lines()
         .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
-        .filter(|usage| usage.kind == "turn")
-        .filter(|usage| usage.run.as_deref() == Some(run))
-        .collect()
+        .filter(move |usage| kinds.contains(&usage.kind.as_str()))
+        .filter(move |usage| usage.run.as_deref() == Some(run))
 }
 
-fn processes(turns: &[UsageLine]) -> Vec<&[UsageLine]> {
-    let starts: Vec<usize> = turns
+pub fn session_turns(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
+    run_rows(usage_jsonl, run, &["turn"]).collect()
+}
+
+pub fn session_rows(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
+    run_rows(usage_jsonl, run, &["turn", "ping"]).collect()
+}
+
+fn processes(rows: &[UsageLine]) -> Vec<&[UsageLine]> {
+    let starts: Vec<usize> = rows
         .iter()
         .enumerate()
         .filter(|(at, turn)| *at == 0 || turn.process_turn == Some(1))
@@ -106,29 +117,37 @@ fn processes(turns: &[UsageLine]) -> Vec<&[UsageLine]> {
     starts
         .iter()
         .enumerate()
-        .map(|(n, start)| &turns[*start..starts.get(n + 1).copied().unwrap_or(turns.len())])
+        .map(|(n, start)| &rows[*start..starts.get(n + 1).copied().unwrap_or(rows.len())])
         .collect()
 }
 
-fn last_delta(turns: &[UsageLine]) -> Option<f64> {
-    let (last, before) = turns.split_last()?;
-    let own = last.cost_usd?;
-    let base = if last.process_turn == Some(1) {
+fn last_delta(rows: &[UsageLine]) -> Option<f64> {
+    let at = rows.iter().rposition(|row| row.kind == "turn")?;
+    let own = rows[at].cost_usd?;
+    let base = if rows[at].process_turn == Some(1) {
         0.0
     } else {
-        before.last()?.cost_usd?
+        rows[..at]
+            .iter()
+            .rev()
+            .scan(false, |done, row| {
+                let previous = (!*done).then_some(row);
+                *done = row.process_turn == Some(1);
+                previous
+            })
+            .find_map(|row| row.cost_usd)?
     };
     Some(own - base).filter(|delta| *delta >= 0.0)
 }
 
-pub fn session_cost(turns: &[UsageLine]) -> Option<SessionCost> {
-    let totals: Vec<f64> = processes(turns)
+pub fn session_cost(rows: &[UsageLine]) -> Option<SessionCost> {
+    let totals: Vec<f64> = processes(rows)
         .iter()
         .filter_map(|process| process.iter().rev().find_map(|turn| turn.cost_usd))
         .collect();
     (!totals.is_empty()).then(|| SessionCost {
         total: totals.iter().sum(),
-        delta: last_delta(turns),
+        delta: last_delta(rows),
     })
 }
 
@@ -150,8 +169,8 @@ pub fn cache_left_minutes(
 }
 
 pub fn thread_usage(usage_jsonl: &str, run: &str) -> Option<ThreadUsage> {
-    let turns = session_turns(usage_jsonl, run);
-    let last = turns.last()?;
+    let rows = session_rows(usage_jsonl, run);
+    let last = rows.iter().rfind(|row| row.kind == "turn")?;
     Some(ThreadUsage {
         process_turn: last.process_turn.unwrap_or(0),
         context_tokens: last.context_tokens,
@@ -162,7 +181,7 @@ pub fn thread_usage(usage_jsonl: &str, run: &str) -> Option<ThreadUsage> {
         ),
         request_at: last.request_at.as_deref().and_then(parse_time),
         reset: last.reset,
-        cost: session_cost(&turns),
+        cost: session_cost(&rows),
     })
 }
 
@@ -250,6 +269,20 @@ mod tests {
 
     fn turn_line(secs: i64, process_turn: u64, cost: f64) -> String {
         run_line(RUN, secs, process_turn, cost)
+    }
+
+    fn ping_line(secs: i64, cost: f64) -> String {
+        format!(
+            r#"{{"at":"{}","kind":"ping","cost_usd":{cost},"run":"{RUN}"}}"#,
+            time(secs).to_rfc3339()
+        )
+    }
+
+    fn ping_line_without_cost(secs: i64) -> String {
+        format!(
+            r#"{{"at":"{}","kind":"ping","run":"{RUN}"}}"#,
+            time(secs).to_rfc3339()
+        )
     }
 
     fn lines(rows: &[String]) -> String {
@@ -395,6 +428,102 @@ mod tests {
     }
 
     #[test]
+    fn pings_join_their_process_and_the_last_total_wins() {
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            ping_line(2, 1.2),
+            turn_line(3, 2, 2.0),
+            turn_line(4, 1, 0.5),
+        ]);
+        let rows = session_rows(&text, RUN);
+        assert_eq!(rows.len(), 4);
+        assert_eq!(session_cost(&rows).unwrap().total, 2.5);
+    }
+
+    #[test]
+    fn a_process_ending_on_a_ping_totals_the_ping_cost() {
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            turn_line(2, 2, 2.0),
+            ping_line(3, 2.4),
+        ]);
+        assert_eq!(session_cost(&session_rows(&text, RUN)).unwrap().total, 2.4);
+    }
+
+    #[test]
+    fn the_delta_of_a_turn_after_a_ping_excludes_the_ping() {
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            ping_line(2, 1.2),
+            turn_line(3, 2, 1.5),
+        ]);
+        let cost = session_cost(&session_rows(&text, RUN)).unwrap();
+        assert_eq!(cost.total, 1.5);
+        assert!((cost.delta.unwrap() - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_delta_skips_a_ping_without_cost_back_to_the_turn_before() {
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            ping_line_without_cost(2),
+            turn_line(3, 2, 1.5),
+        ]);
+        let cost = session_cost(&session_rows(&text, RUN)).unwrap();
+        assert_eq!(cost.delta, Some(0.5));
+    }
+
+    #[test]
+    fn the_delta_stays_on_the_last_turn_when_a_ping_follows() {
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            turn_line(2, 2, 1.5),
+            ping_line(3, 1.7),
+        ]);
+        let cost = session_cost(&session_rows(&text, RUN)).unwrap();
+        assert_eq!(cost.total, 1.7);
+        assert_eq!(cost.delta, Some(0.5));
+    }
+
+    #[test]
+    fn session_turns_leave_out_pings() {
+        let text = lines(&[turn_line(1, 1, 1.0), ping_line(2, 1.2)]);
+        assert_eq!(session_turns(&text, RUN).len(), 1);
+        assert_eq!(session_rows(&text, RUN).len(), 2);
+    }
+
+    #[test]
+    fn worker_rows_are_left_out_of_turns_rows_and_cost() {
+        let worker = format!(
+            r#"{{"at":"{}","kind":"worker","worker_id":"w","cost_usd":9.0,"run":"{RUN}"}}"#,
+            time(2).to_rfc3339()
+        );
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            worker,
+            ping_line(3, 1.2),
+            turn_line(4, 2, 1.5),
+        ]);
+        assert_eq!(session_turns(&text, RUN).len(), 2);
+        let rows = session_rows(&text, RUN);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(session_cost(&rows).unwrap().total, 1.5);
+        assert_eq!(thread_usage(&text, RUN).unwrap().cost.unwrap().total, 1.5);
+    }
+
+    #[test]
+    fn thread_usage_reads_the_last_turn_not_the_last_ping() {
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            turn_line(2, 2, 1.5),
+            ping_line(3, 1.7),
+        ]);
+        let usage = thread_usage(&text, RUN).unwrap();
+        assert_eq!(usage.process_turn, 2);
+        assert_eq!(usage.cost.unwrap().total, 1.7);
+    }
+
+    #[test]
     fn cache_minutes_follow_the_one_hour_window() {
         let at = Some(time(0));
         let left = |elapsed: i64| cache_left_minutes(at, None, time(elapsed), true);
@@ -412,6 +541,10 @@ mod tests {
         assert_eq!(cache_left_minutes(None, None, time(1), true), None);
         assert_eq!(
             cache_left_minutes(Some(time(0)), None, time(1), false),
+            None
+        );
+        assert_eq!(
+            cache_left_minutes(None, Some(time(0)), time(3600), true),
             None
         );
     }

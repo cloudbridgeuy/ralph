@@ -34,6 +34,7 @@ pub enum CallKind {
         worker_id: String,
         turn_id: Option<u64>,
     },
+    Ping,
 }
 
 pub const VIEW_HEAD_BYTES: usize = 1024;
@@ -410,6 +411,54 @@ mod tests {
         let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert_eq!(value["kind"], "nap");
         assert!(value.get("trigger").is_none());
+    }
+
+    #[test]
+    fn ping_record_carries_model_session_and_harness() {
+        let value = line(
+            usage_record(
+                CallKind::Ping,
+                "t".into(),
+                &costs(None),
+                &seen(Some("m"), Some("s")),
+            )
+            .unwrap(),
+        );
+        assert_eq!(value["kind"], "ping");
+        assert_eq!(
+            (
+                &value["harness"],
+                &value["model"],
+                &value["session_id"],
+                &value["cost_source"]
+            ),
+            (
+                &"claude".into(),
+                &"m".into(),
+                &"s".into(),
+                &"harness".into()
+            )
+        );
+    }
+
+    #[test]
+    fn ping_record_has_the_ping_kind_run_and_request_time() {
+        let mut record = usage_record(
+            CallKind::Ping,
+            "t".into(),
+            &costs(None),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
+        record.run = Some("r".into());
+        record.request_at = Some("q".into());
+        let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(value["kind"], "ping");
+        assert_eq!(
+            (&value["run"], &value["request_at"]),
+            (&"r".into(), &"q".into())
+        );
+        assert!(value.get("trigger").is_none() && value.get("process_turn").is_none());
     }
 
     #[test]
