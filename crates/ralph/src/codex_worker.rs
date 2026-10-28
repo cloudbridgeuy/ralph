@@ -1,5 +1,6 @@
-use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
+use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
+use crate::codex_usage::CodexUsage;
 use crate::config::{configured_codex, configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
     claim_owner, now_secs, queued_entries, report_start_warning, request_ids, sweep_owner,
@@ -34,18 +35,20 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus};
+use std::process::{Child, ChildStdin, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod pipes;
 mod resume;
 mod verify;
 
+use pipes::{logged_stdin, pipe_lines};
 pub(crate) use verify::verify;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -94,37 +97,6 @@ struct Wire {
 
 fn exit_reason(status: ExitStatus) -> String {
     format!("{CODEX_COMMAND} app-server exited ({status})")
-}
-
-fn logged_stdin(stdin: ChildStdin, log: &Arc<CappedLog>) -> Stdin {
-    Arc::new(Mutex::new(Some(LoggedWrite {
-        inner: stdin,
-        log: Arc::clone(log),
-        tag: "in",
-    })))
-}
-
-fn pipe_lines(
-    stdout: ChildStdout,
-    log: &Arc<CappedLog>,
-) -> (mpsc::Receiver<String>, mpsc::Receiver<()>) {
-    let (lines_tx, lines) = mpsc::channel();
-    let (finished_tx, finished) = mpsc::channel();
-    let reader_log = Arc::clone(log);
-    thread::spawn(move || {
-        let reader = BufReader::new(LoggedRead {
-            inner: stdout,
-            log: reader_log,
-            tag: "out",
-        });
-        for line in reader.lines().map_while(Result::ok) {
-            if lines_tx.send(line).is_err() {
-                break;
-            }
-        }
-        finished_tx.send(()).ok();
-    });
-    (lines, finished)
 }
 
 fn report_exit(
@@ -293,6 +265,8 @@ struct Pump {
     wound_down: bool,
     log: Arc<CappedLog>,
     unmapped: HashSet<String>,
+    usage: Arc<CodexUsage>,
+    snapshot_turn: Option<u64>,
 }
 
 impl Pump {
@@ -337,9 +311,13 @@ impl Pump {
                 }
                 Action::Emit(event) => {
                     match &event {
-                        WorkerEvent::TurnStarted => self.wire.heartbeat.set_running(true),
+                        WorkerEvent::TurnStarted => {
+                            self.snapshot_turn = None;
+                            self.wire.heartbeat.set_running(true);
+                        }
                         WorkerEvent::TurnEnded(end) => {
                             self.wire.heartbeat.set_running(false);
+                            self.usage.flush(self.snapshot_turn.take());
                             if session_saved(turn_stop(end), true) {
                                 self.save_record();
                             }
@@ -354,7 +332,7 @@ impl Pump {
                 }
                 Action::Snapshot => {
                     if let Some(changes) = &self.changes {
-                        changes.snapshot_turn_or_warn();
+                        self.snapshot_turn = changes.snapshot_turn_or_warn();
                     }
                 }
                 Action::PostFailure(problem) => {
@@ -425,6 +403,9 @@ impl Pump {
                     if is_unmapped(&method) && self.unmapped.insert(method.clone()) {
                         self.log.append("unmapped", method.as_bytes());
                     }
+                    if !self.turns.is_stale_request(&method, &params) {
+                        self.usage.observe(&method, &params);
+                    }
                     let closing = self.closing.load(Ordering::SeqCst);
                     let actions = self.turns.notification(&method, &params, closing);
                     self.settle(actions);
@@ -479,6 +460,7 @@ pub struct CodexWorker {
     replies: mpsc::Sender<Inbound>,
     permissions: Arc<Permissions>,
     log: Arc<CappedLog>,
+    usage: Arc<CodexUsage>,
 }
 
 impl CodexWorker {
@@ -530,6 +512,7 @@ impl CodexWorker {
             replies,
             permissions: Arc::clone(&permissions),
             log,
+            usage: Arc::new(CodexUsage::new(id, request.inbox.parent())),
         };
         write_owner_record(owner, worker.child.id(), "codex")?;
         locked(starting).insert(id.to_string(), worker.child.id());
@@ -572,6 +555,9 @@ impl CodexWorker {
             ),
         };
         let thread = handshake(&mut wire, &selection, open, deadline, warning)?;
+        worker
+            .usage
+            .bind(&thread.id, thread.model.clone().or(selection.model.clone()));
         let pending_record = match &launch {
             Launch::Fresh(template) => Some((
                 session.to_path_buf(),
@@ -621,6 +607,8 @@ impl CodexWorker {
             wound_down: false,
             log: Arc::clone(&worker.log),
             unmapped: HashSet::new(),
+            usage: Arc::clone(&worker.usage),
+            snapshot_turn: None,
         };
         if matches!(launch, Launch::Fresh(_)) {
             let first = pump.turns.accept(task_prompt(&request.task));
@@ -640,6 +628,7 @@ impl CodexWorker {
             return;
         }
         if let Ok(Some(status)) = self.child.try_wait() {
+            self.usage.flush(None);
             report_exit(
                 &self.heartbeat,
                 &self.events,
@@ -710,6 +699,7 @@ impl CodexWorker {
                 }
             }
         }
+        self.usage.flush(None);
     }
 }
 

@@ -64,7 +64,7 @@ fn record(
             turn_id,
         };
         let session_id = Some(session.session_id.clone());
-        let mut usage = worker_usage_record(kind, at.clone(), session_id, row);
+        let mut usage = worker_usage_record(kind, at.clone(), session_id, "claude", row);
         usage.store = target
             .store
             .as_ref()

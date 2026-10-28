@@ -1,4 +1,4 @@
-use super::{MCP_STARTUP_STATUS, SERVER_REQUEST_RESOLVED};
+use super::{MCP_STARTUP_STATUS, MODEL_REROUTED, SERVER_REQUEST_RESOLVED, TOKEN_USAGE_UPDATED};
 use crate::worker::acp::REPORT_TOOL;
 use crate::worker::{
     cancels_turn, stop_problem, turn_outcome, turn_stop, HarnessId, Inbound, PromptQueue, TurnEnd,
@@ -55,6 +55,8 @@ pub fn is_unmapped(method: &str) -> bool {
             | ITEM_COMPLETED
             | MCP_STARTUP_STATUS
             | SERVER_REQUEST_RESOLVED
+            | TOKEN_USAGE_UPDATED
+            | MODEL_REROUTED
     )
 }
 
@@ -490,6 +492,8 @@ mod tests {
             ITEM_COMPLETED,
             MCP_STARTUP_STATUS,
             SERVER_REQUEST_RESOLVED,
+            TOKEN_USAGE_UPDATED,
+            MODEL_REROUTED,
         ] {
             assert!(!is_unmapped(method));
         }
