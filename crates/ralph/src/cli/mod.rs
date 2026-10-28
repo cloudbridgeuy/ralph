@@ -387,6 +387,14 @@ pub struct WorkerStopHookArgs {
     #[arg(long, value_name = "PATH", requires = "worker")]
     pub usage_seen: Option<std::path::PathBuf>,
 
+    #[arg(
+        long,
+        value_name = "PATH",
+        requires = "usage_seen",
+        help = "Chat usage.jsonl the hook appends worker rows to"
+    )]
+    pub usage: Option<std::path::PathBuf>,
+
     #[arg(long, value_name = "DIR", requires_all = ["id", "worktree"])]
     pub store: Option<std::path::PathBuf>,
 

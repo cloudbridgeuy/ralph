@@ -1,4 +1,4 @@
-use crate::chat::memory::{append_usage, usage_path};
+use crate::chat::memory::append_usage;
 use crate::warn::warn_if_err;
 use ralph_core::chat_memory::{worker_usage_record, CallKind};
 use ralph_core::worker::{parse_stop_session, subagents_dir, transcript_usage};
@@ -11,6 +11,7 @@ pub struct UsageTarget {
     pub worker: String,
     pub seen: PathBuf,
     pub store: Option<PathBuf>,
+    pub usage: PathBuf,
 }
 
 fn read_or_empty(path: &Path) -> io::Result<String> {
@@ -42,12 +43,7 @@ fn subagent_lines(dir: &Path) -> io::Result<String> {
     Ok(text)
 }
 
-fn record(
-    target: &UsageTarget,
-    payload: &str,
-    turn_id: Option<u64>,
-    usage_file: &Path,
-) -> io::Result<()> {
+fn record(target: &UsageTarget, payload: &str, turn_id: Option<u64>) -> io::Result<()> {
     let session = parse_stop_session(payload).map_err(io::Error::other)?;
     let mut lines = read_or_empty(&session.transcript_path)?;
     lines.push('\n');
@@ -69,7 +65,7 @@ fn record(
             .store
             .as_ref()
             .map(|store| store.to_string_lossy().into_owned());
-        append_usage(usage_file, &usage)?;
+        append_usage(&target.usage, &usage)?;
     }
     if found.recorded.is_empty() {
         return Ok(());
@@ -86,7 +82,7 @@ fn record(
 
 pub fn record_or_warn(target: &UsageTarget, payload: &str, turn_id: Option<u64>) {
     warn_if_err(
-        record(target, payload, turn_id, &usage_path()),
+        record(target, payload, turn_id),
         "Failed to record worker usage",
     );
 }
@@ -122,15 +118,15 @@ mod tests {
             worker: "w1".into(),
             seen: dir.path().join("workers").join("w1.usage-seen"),
             store: Some(dir.path().to_path_buf()),
+            usage: dir.path().join("usage.jsonl"),
         };
-        let usage_file = dir.path().join("usage.jsonl");
         let payload = format!(
             r#"{{"session_id":"s1","transcript_path":"{}"}}"#,
             transcript.display()
         );
-        record(&target, &payload, Some(3), &usage_file).unwrap();
-        record(&target, &payload, Some(4), &usage_file).unwrap();
-        let written = fs::read_to_string(&usage_file).unwrap();
+        record(&target, &payload, Some(3)).unwrap();
+        record(&target, &payload, Some(4)).unwrap();
+        let written = fs::read_to_string(&target.usage).unwrap();
         assert_eq!(written.lines().count(), 2);
         assert!(written.contains(r#""kind":"worker""#));
         assert!(written.contains(r#""turn_id":3"#));

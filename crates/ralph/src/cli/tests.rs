@@ -121,3 +121,36 @@ fn test_cli_wire_defaults_and_flags() {
     assert_eq!(wire.upstream.as_deref(), Some("http://u"));
     assert!(wire.responses);
 }
+
+fn stop_hook_args(extra: &[&str]) -> Result<WorkerStopHookArgs, clap::Error> {
+    let base = [
+        "ralph",
+        "worker-stop-hook",
+        "--reported",
+        "R",
+        "--unreported",
+        "U",
+    ];
+    let cli = Cli::try_parse_from(base.iter().chain(extra))?;
+    match cli.command {
+        Some(Commands::WorkerStopHook(args)) => Ok(args),
+        other => panic!("expected worker-stop-hook, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_cli_stop_hook_usage_requires_usage_seen() {
+    assert!(stop_hook_args(&["--usage", "/u"]).is_err());
+}
+
+#[test]
+fn test_cli_stop_hook_usage_seen_does_not_require_usage() {
+    let args = stop_hook_args(&["--worker", "X", "--usage-seen", "P"]).unwrap();
+    assert_eq!(args.usage, None);
+}
+
+#[test]
+fn test_cli_stop_hook_takes_usage_with_usage_seen() {
+    let args = stop_hook_args(&["--worker", "X", "--usage-seen", "P", "--usage", "/u"]).unwrap();
+    assert_eq!(args.usage, Some(std::path::PathBuf::from("/u")));
+}

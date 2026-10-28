@@ -276,6 +276,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
         config::set_store_layer(store);
     }
     let store = args.store.clone();
+    let usage_file = args.usage;
     let usage = args
         .worker
         .zip(args.usage_seen)
@@ -283,6 +284,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
             worker,
             seen,
             store,
+            usage: usage_file.unwrap_or_else(chat::memory::usage_path),
         });
     let changes = args
         .store

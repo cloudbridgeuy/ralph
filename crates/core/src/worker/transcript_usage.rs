@@ -25,6 +25,17 @@ pub fn subagents_dir(transcript: &Path) -> PathBuf {
     transcript.with_extension("").join("subagents")
 }
 
+const SYNTHETIC_MODEL: &str = "<synthetic>";
+
+fn is_empty(usage: &Usage) -> bool {
+    usage.input_uncached == 0
+        && usage.cache_read == 0
+        && usage.output == 0
+        && usage.reasoning.unwrap_or(0) == 0
+        && usage.cache_writes.iter().all(|write| write.tokens == 0)
+        && usage.other.iter().all(|(_, tokens)| *tokens == 0)
+}
+
 fn add(total: &mut Usage, part: Usage) {
     total.input_uncached += part.input_uncached;
     total.cache_read += part.cache_read;
@@ -66,13 +77,16 @@ pub fn transcript_usage(lines: &str, seen: &HashSet<String>) -> TranscriptUsage 
             continue;
         };
         let part = map_usage(usage);
+        recorded.push(id);
+        if model == SYNTHETIC_MODEL || is_empty(&part) {
+            continue;
+        }
         match by_model.get_mut(model) {
             Some(total) => add(total, part),
             None => {
                 by_model.insert(model.to_string(), part);
             }
         }
-        recorded.push(id);
     }
     TranscriptUsage {
         rows: by_model
@@ -113,6 +127,76 @@ mod tests {
 
     fn none() -> HashSet<String> {
         HashSet::new()
+    }
+
+    fn zero_line(id: &str, model: &str) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": id,
+                "model": model,
+                "stop_reason": "stop_sequence",
+                "usage": {"input_tokens": 0, "output_tokens": 0}
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn usage_is_empty_only_when_every_count_is_zero() {
+        let zero = Usage {
+            input_uncached: 0,
+            cache_read: 0,
+            cache_writes: vec![CacheWrite {
+                tier: FIVE_MIN,
+                tokens: 0,
+            }],
+            output: 0,
+            reasoning: Some(0),
+            other: vec![("x".to_string(), 0)],
+        };
+        assert!(is_empty(&zero));
+        let mut cases = vec![zero.clone(); 6];
+        cases[0].input_uncached = 1;
+        cases[1].cache_read = 1;
+        cases[2].output = 1;
+        cases[3].reasoning = Some(1);
+        cases[4].cache_writes[0].tokens = 1;
+        cases[5].other[0].1 = 1;
+        assert!(cases.iter().all(|usage| !is_empty(usage)));
+    }
+
+    #[test]
+    fn synthetic_messages_give_no_row() {
+        let found = transcript_usage(&zero_line("m1", "<synthetic>"), &none());
+        assert!(found.rows.is_empty());
+        assert_eq!(found.recorded, ["m1"]);
+    }
+
+    #[test]
+    fn synthetic_messages_with_tokens_give_no_row() {
+        let found = transcript_usage(&line("m1", "<synthetic>", Some("end_turn"), 5), &none());
+        assert!(found.rows.is_empty());
+        assert_eq!(found.recorded, ["m1"]);
+    }
+
+    #[test]
+    fn all_zero_usage_gives_no_row() {
+        let found = transcript_usage(&zero_line("m1", "opus"), &none());
+        assert!(found.rows.is_empty());
+        assert_eq!(found.recorded, ["m1"]);
+    }
+
+    #[test]
+    fn zero_messages_do_not_hide_real_ones() {
+        let text = [
+            zero_line("m1", "opus"),
+            line("m2", "opus", Some("end_turn"), 5),
+        ]
+        .join("\n");
+        let found = transcript_usage(&text, &none());
+        assert_eq!(found.recorded, ["m1", "m2"]);
+        assert_eq!(found.rows[0].usage.output, 5);
     }
 
     #[test]
