@@ -1,7 +1,10 @@
+use crate::cursor_leftovers::cursor_slug;
 use crate::worker::BlockedContent;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 pub const VERIFIED_AGENTS_FILE: &str = "verified-agents.json";
+pub const CURSOR_HOOKS_FILE: &str = ".cursor/hooks.json";
 pub const CURSOR_VERIFY_HOOKS: &str = r#"{"version":1,"hooks":{"beforeShellExecution":[{"command":"echo '{\"permission\":\"ask\"}'"}]}}"#;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,7 +160,38 @@ pub fn prompt_check(turn: &TurnSummary, ended: &str) -> CheckResult {
     }
 }
 
-pub fn permission_check(turn: &TurnSummary, ended: &str, setup: &str) -> CheckResult {
+pub fn cursor_verify_project(home: &Path, workspace: &Path) -> PathBuf {
+    home.join(".cursor/projects")
+        .join(cursor_slug(&workspace.to_string_lossy()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionSetup {
+    pub label: String,
+    pub no_request: String,
+}
+
+impl PermissionSetup {
+    pub fn cursor(hooks: &Path) -> Self {
+        Self {
+            label: format!("{} asks before every shell command", hooks.display()),
+            no_request: format!(
+                "Cursor sent no permission request although {} asks before every shell command; Cursor may have changed its project slug or how it loads hooks",
+                hooks.display()
+            ),
+        }
+    }
+
+    pub fn codex() -> Self {
+        let label = "a read-only thread with approvalPolicy on-request";
+        Self {
+            label: label.to_string(),
+            no_request: format!("codex sent no approval request although it runs {label}"),
+        }
+    }
+}
+
+pub fn permission_check(turn: &TurnSummary, ended: &str, setup: &PermissionSetup) -> CheckResult {
     let allowable = turn.permissions.first().map(|request| {
         request
             .options
@@ -165,7 +199,7 @@ pub fn permission_check(turn: &TurnSummary, ended: &str, setup: &str) -> CheckRe
             .any(|option| option.kind == "allow_once")
     });
     let mut result = match (allowable, turn.stopped_with(ended)) {
-        (None, _) => CheckResult::fail("permission", "the agent sent no permission request"),
+        (None, _) => CheckResult::fail("permission", setup.no_request.clone()),
         (Some(false), _) => CheckResult::fail("permission", "the request had no allow_once option"),
         (Some(true), Err(message)) => CheckResult::fail("permission", message),
         (Some(true), Ok(())) => CheckResult::pass(
@@ -176,7 +210,7 @@ pub fn permission_check(turn: &TurnSummary, ended: &str, setup: &str) -> CheckRe
             ),
         ),
     };
-    result.detail = format!("{} (setup: {setup})", result.detail);
+    result.detail = format!("{} (setup: {})", result.detail, setup.label);
     result
 }
 
@@ -293,22 +327,54 @@ mod tests {
             prompt_check(&turn(Ok("cancelled"), 2, &[]), "end_turn").verdict,
             Verdict::Fail
         );
-        let permission = |kinds| permission_check(&turn(Ok("end_turn"), 1, kinds), "end_turn", "s");
+        let setup = PermissionSetup {
+            label: "a hook".into(),
+            no_request: "no request".into(),
+        };
+        let permission =
+            |kinds| permission_check(&turn(Ok("end_turn"), 1, kinds), "end_turn", &setup);
         assert_eq!(permission(&["allow_once"]).verdict, Verdict::Pass);
-        assert_eq!(permission(&[]).verdict, Verdict::Fail);
         assert_eq!(permission(&["reject_once"]).verdict, Verdict::Fail);
+        let missing = permission(&[]);
+        assert_eq!(missing.verdict, Verdict::Fail);
+        assert_eq!(missing.detail, "no request (setup: a hook)");
+        assert!(permission(&["allow_once"])
+            .detail
+            .ends_with(" (setup: a hook)"));
     }
 
     #[test]
-    fn the_permission_check_names_its_setup_whatever_the_verdict() {
-        for kinds in [&["allow_once"][..], &[]] {
-            let result = permission_check(&turn(Ok("end_turn"), 1, kinds), "end_turn", "a hook");
-            assert!(
-                result.detail.ends_with(" (setup: a hook)"),
-                "{}",
-                result.detail
-            );
-        }
+    fn the_cursor_hook_lives_in_the_project_folder_cursor_acp_reads() {
+        let project = |cwd: &str| cursor_verify_project(Path::new("/h"), Path::new(cwd));
+        assert_eq!(
+            project("/tmp/acp-spike/ws"),
+            Path::new("/h/.cursor/projects/tmp-acp-spike-ws")
+        );
+        assert_eq!(
+            project("/private/tmp/smoke-568c/repo/.worktrees/smk2"),
+            Path::new("/h/.cursor/projects/private-tmp-smoke-568c-repo-worktrees-smk2")
+        );
+        assert_eq!(
+            project("/private/tmp/ralph-smoke-626/repo/.worktrees/echo-sleep"),
+            Path::new("/h/.cursor/projects/private-tmp-ralph-smoke-626-repo-worktrees-echo-sleep")
+        );
+        assert_eq!(
+            project("/var/folders/g9/x/T/.tmpiqjUi0"),
+            Path::new("/h/.cursor/projects/var-folders-g9-x-T-tmpiqjUi0")
+        );
+    }
+
+    #[test]
+    fn the_cursor_setup_names_the_hook_file_and_the_likely_cause() {
+        let setup = PermissionSetup::cursor(Path::new("/p/.cursor/hooks.json"));
+        assert_eq!(
+            setup.label,
+            "/p/.cursor/hooks.json asks before every shell command"
+        );
+        assert!(setup.no_request.contains("/p/.cursor/hooks.json"));
+        assert!(setup
+            .no_request
+            .contains("project slug or how it loads hooks"));
     }
 
     #[test]
