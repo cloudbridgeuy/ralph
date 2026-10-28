@@ -3,8 +3,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-const SOCKET_BASE_MAX: usize = 84;
-const SOCKET_PATH_MAX: usize = 92;
+const SOCKET_BASE_MAX: usize = 83;
+const SOCKET_PATH_MAX: usize = 91;
 const SOCKET_HASH_CHARS: usize = 7;
 
 #[derive(Deserialize)]
@@ -48,13 +48,16 @@ fn socket_dir(base: &str, slug: &str) -> Option<String> {
     ))
 }
 
-pub fn project_dirs(projects_base: &Path, real_worktree: &str) -> Vec<PathBuf> {
-    let slug = cursor_slug(real_worktree);
-    let mut dirs = vec![projects_base.join(&slug)];
-    let socket = projects_base
+pub fn socket_project_dir(projects_base: &Path, real_worktree: &str) -> Option<PathBuf> {
+    projects_base
         .to_str()
-        .and_then(|base| socket_dir(base, &slug))
-        .map(PathBuf::from);
+        .and_then(|base| socket_dir(base, &cursor_slug(real_worktree)))
+        .map(PathBuf::from)
+}
+
+pub fn project_dirs(projects_base: &Path, real_worktree: &str) -> Vec<PathBuf> {
+    let mut dirs = vec![projects_base.join(cursor_slug(real_worktree))];
+    let socket = socket_project_dir(projects_base, real_worktree);
     if let Some(socket) = socket.filter(|socket| !dirs.contains(socket)) {
         dirs.push(socket);
     }
@@ -157,15 +160,19 @@ mod tests {
         let cases = [
             (
                 "/Users/guzmanmonne/Projects/Rust/ralph/.worktrees/cursor-smoke",
-                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees--11db232",
+                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees-11db232",
             ),
             (
                 "/Users/guzmanmonne/Projects/Rust/ralph/.worktrees/cursor-smoke2",
-                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees--994d430",
+                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees-994d430",
             ),
             (
                 "/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpHVgYgu",
-                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0-f404dd6",
+                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-f404dd6",
+            ),
+            (
+                "/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2",
+                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-bc092f5",
             ),
         ];
         for (real, socket) in cases {

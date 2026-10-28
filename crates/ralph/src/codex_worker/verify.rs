@@ -2,8 +2,8 @@ use super::*;
 use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
     cancel_check, permission_check, prompt_check, thread_archive_params,
-    verify_thread_start_params, TurnSummary, VerifiedAgents, PROBED_VERSION, THREAD_ARCHIVE,
-    TURN_COMPLETED,
+    verify_thread_start_params, PermissionSetup, TurnSummary, VerifiedAgents, PROBED_VERSION,
+    THREAD_ARCHIVE, TURN_COMPLETED,
 };
 
 const FREE_DEADLINE: Duration = Duration::from_secs(90);
@@ -111,6 +111,7 @@ fn live_checks(wire: &mut Wire, thread: &str, checks: &Checks, deadline: Instant
     checks.add(permission_check(
         &run_turn(wire, &run(Plan::Allow, PERMISSION_PROMPT)),
         ENDED,
+        &PermissionSetup::codex(),
     ));
     checks.add(cancel_check(
         &run_turn(wire, &run(Plan::Cancel, CANCEL_PROMPT)),

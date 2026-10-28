@@ -1,8 +1,9 @@
 use super::*;
 use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
-    cancel_check, parse_agent_version, permission_check, prompt_check, BlockedContent, CheckResult,
-    TurnSummary, ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE,
+    cancel_check, cursor_verify_leftover, cursor_verify_project, parse_agent_version,
+    permission_check, prompt_check, BlockedContent, CheckResult, PermissionSetup, TurnSummary,
+    ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
 };
 use std::sync::atomic::AtomicUsize;
 
@@ -10,8 +11,7 @@ const FREE_DEADLINE: Duration = Duration::from_secs(90);
 const LIVE_DEADLINE: Duration = Duration::from_secs(420);
 const KILL_GRACE: Duration = Duration::from_millis(200);
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
-const PERMISSION_PROMPT: &str =
-    "Create a file named verify.txt in the current directory containing the word ok.";
+const PERMISSION_PROMPT: &str = "Run the shell command `date +%Y` and reply with its output.";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
 const ENDED: &str = "end_turn";
 const CANCELLED: &str = "cancelled";
@@ -167,7 +167,7 @@ async fn reload_session(
 async fn run_checks(
     connection: ConnectionTo<Agent>,
     dir: PathBuf,
-    live: bool,
+    live: Option<PermissionSetup>,
     checks: Checks,
     probe: Probe,
 ) -> Result<(), agent_client_protocol::Error> {
@@ -180,7 +180,7 @@ async fn run_checks(
         check_load_capability(&init),
         Clone::clone,
     );
-    if live {
+    if let Some(setup) = live {
         let mut session = Session {
             connection: &connection,
             id,
@@ -195,6 +195,7 @@ async fn run_checks(
         checks.add(permission_check(
             &session.turn(PERMISSION_PROMPT, Plan::Allow).await,
             ENDED,
+            &setup,
         ));
         checks.add(cancel_check(
             &session.turn(CANCEL_PROMPT, Plan::Cancel).await,
@@ -232,6 +233,58 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
         }),
         |version| format!("{version} (tested {})", agent.tested_version),
     )?;
+    let Some(home) = dirs::home_dir() else {
+        checks.add(CheckResult::fail(
+            "hooks",
+            "could not find the home directory",
+        ));
+        return version;
+    };
+    let project = cursor_verify_project(&home, dir);
+    if project.exists() {
+        checks.add(CheckResult::fail(
+            "hooks",
+            format!(
+                "{} already exists; verify writes its hook only into a Cursor project folder it creates",
+                project.display()
+            ),
+        ));
+        return version;
+    }
+    let leftover = fs::canonicalize(dir)
+        .ok()
+        .and_then(|real| cursor_verify_leftover(&home, &real, &project))
+        .filter(|leftover| !leftover.exists());
+    let hooks = project.join(CURSOR_HOOKS_FILE);
+    let written = hooks
+        .parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| fs::write(&hooks, CURSOR_VERIFY_HOOKS))
+        .map_err(|error| format!("could not write {}: {error}", hooks.display()));
+    if step(checks, "hooks", written, |()| {
+        format!("wrote {}", hooks.display())
+    })
+    .is_some()
+    {
+        exercise(live.then(|| PermissionSetup::cursor(&hooks)), dir, checks);
+    }
+    let removed = fs::remove_dir_all(&project)
+        .map_err(|error| format!("could not remove {}: {error}", project.display()));
+    step(checks, "hooks cleanup", removed, |()| {
+        format!("removed {}", project.display())
+    });
+    if let Some(leftover) = leftover.filter(|leftover| leftover.exists()) {
+        let removed = fs::remove_dir_all(&leftover)
+            .map_err(|error| format!("could not remove {}: {error}", leftover.display()));
+        step(checks, "cursor cleanup", removed, |()| {
+            format!("removed {}", leftover.display())
+        });
+    }
+    version
+}
+
+fn exercise(live: Option<PermissionSetup>, dir: &Path, checks: &Checks) {
+    let agent = CURSOR_AGENT;
     let mut command = Command::new(agent.command);
     command.arg("acp").current_dir(dir);
     let spawned = spawn_piped(command)
@@ -239,10 +292,14 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     let Some((mut child, stdin, stdout, stderr)) = step(checks, "spawn", spawned, |_| {
         format!("`{} acp` started", agent.command)
     }) else {
-        return version;
+        return;
     };
     drain_stderr(stderr, CappedLog::new(None, "verify"));
-    let deadline = if live { LIVE_DEADLINE } else { FREE_DEADLINE };
+    let deadline = if live.is_some() {
+        LIVE_DEADLINE
+    } else {
+        FREE_DEADLINE
+    };
     let done = watchdog(child.id(), deadline);
     let (update_tx, updates) = queue::unbounded();
     let probe = Probe {
@@ -299,5 +356,4 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
             format!("{} agent connection failed: {error}", agent.name),
         ));
     }
-    version
 }
