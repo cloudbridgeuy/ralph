@@ -1,4 +1,7 @@
 use crate::chat_thread::{session_cost, UsageLine};
+use crate::wire::price::{prompt_tokens, resolve_price, usd, PriceTable};
+use crate::wire::usage::{CacheTier, CacheWrite, Usage, FIVE_MIN, ONE_HOUR};
+use crate::wire::view::Pricing;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const NO_USAGE: &str = "No usage recorded.";
@@ -132,10 +135,50 @@ struct CostRow {
     usd: Usd,
 }
 
-fn summed(lines: &[UsageLine]) -> Usd {
+fn wire_usage(line: &UsageLine) -> Usage {
+    let tiered = line
+        .cache_write_5m
+        .unwrap_or(0)
+        .saturating_add(line.cache_write_1h.unwrap_or(0));
+    let writes = [
+        (FIVE_MIN, line.cache_write_5m.unwrap_or(0)),
+        (ONE_HOUR, line.cache_write_1h.unwrap_or(0)),
+        (
+            CacheTier::Unspecified,
+            line.cache_creation_input_tokens.saturating_sub(tiered),
+        ),
+    ];
+    Usage {
+        input_uncached: line.input_tokens,
+        cache_read: line.cache_read_input_tokens,
+        cache_writes: writes
+            .into_iter()
+            .filter(|(_, tokens)| *tokens > 0)
+            .map(|(tier, tokens)| CacheWrite { tier, tokens })
+            .collect(),
+        output: line.output_tokens,
+        reasoning: line.reasoning_tokens,
+        other: vec![],
+    }
+}
+
+fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Option<f64> {
+    let model = line.model.as_deref()?;
+    let usage = wire_usage(line);
+    let price = resolve_price(
+        table,
+        pricing.overrides,
+        &pricing.provider.rates(model),
+        model,
+        prompt_tokens(&usage),
+    )?;
+    usd(&usage, &price)
+}
+
+fn summed(lines: &[UsageLine], priced: &dyn Fn(&UsageLine) -> Option<f64>) -> Usd {
     lines
         .iter()
-        .map(|line| Usd::of(line.cost_usd))
+        .map(|line| Usd::of(line.cost_usd.or_else(|| priced(line))))
         .fold(Usd::default(), Usd::plus)
 }
 
@@ -161,11 +204,16 @@ fn worker_runs(lines: &[UsageLine]) -> usize {
         .len()
 }
 
-fn cost_row(source: &Source, model: String, lines: &[UsageLine]) -> CostRow {
+fn cost_row(
+    source: &Source,
+    model: String,
+    lines: &[UsageLine],
+    priced: &dyn Fn(&UsageLine) -> Option<f64>,
+) -> CostRow {
     let (runs, usd) = match source {
         Source::Main => main_runs(lines),
-        Source::Nap => (lines.len(), summed(lines)),
-        Source::Worker(_) => (worker_runs(lines), summed(lines)),
+        Source::Nap => (lines.len(), summed(lines, priced)),
+        Source::Worker(_) => (worker_runs(lines), summed(lines, priced)),
     };
     CostRow {
         harness: source.label().to_string(),
@@ -179,7 +227,9 @@ fn cost_row(source: &Source, model: String, lines: &[UsageLine]) -> CostRow {
     }
 }
 
-fn cost_rows(usage_jsonl: &str) -> Vec<CostRow> {
+fn cost_rows(usage_jsonl: &str, pricing: &Pricing) -> Vec<CostRow> {
+    let table = pricing.provider.prices();
+    let priced = |line: &UsageLine| computed_usd(line, pricing, &table);
     let mut groups: BTreeMap<(Source, String), Vec<UsageLine>> = BTreeMap::new();
     for line in usage_jsonl
         .lines()
@@ -192,7 +242,7 @@ fn cost_rows(usage_jsonl: &str) -> Vec<CostRow> {
     }
     groups
         .into_iter()
-        .map(|((source, model), lines)| cost_row(&source, model, &lines))
+        .map(|((source, model), lines)| cost_row(&source, model, &lines, &priced))
         .collect()
 }
 
@@ -242,8 +292,8 @@ fn cells(row: &CostRow) -> [String; 11] {
     ]
 }
 
-pub fn costs_view(usage_jsonl: &str) -> String {
-    let mut rows = cost_rows(usage_jsonl);
+pub fn costs_view(usage_jsonl: &str, pricing: &Pricing) -> String {
+    let mut rows = cost_rows(usage_jsonl, pricing);
     if rows.is_empty() {
         return NO_USAGE.to_string();
     }

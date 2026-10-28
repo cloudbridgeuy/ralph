@@ -424,6 +424,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         schedule: &monitor.schedule,
         display: &display,
         changes: &config.changes,
+        prices: &config.wire.prices,
         store: &store_dir,
         monitor: &monitor,
         remote: &remote,
