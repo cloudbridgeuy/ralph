@@ -10,6 +10,9 @@ use crate::render::render_markdown;
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
 use ralph_core::chat_status::RunningWorker;
+use ralph_core::wire::price::PriceOverride;
+use ralph_core::wire::provider::{provider, ProviderId};
+use ralph_core::wire::view::Pricing;
 use ralph_core::worker::{
     activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, decode_statuses,
     gone_path, sent_path, spawn_record_path, status_path, unreported_path, waiting_path,
@@ -20,7 +23,7 @@ use ralph_core::workers_view::{
     count_untracked, detail_view, lines_text, not_live, parse_head, parse_numstat, workers_view,
     Diff, Lookup, ReportLine, Span, Tone, View, WorkerDetail, WorkerRow,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use termimad::crossterm::style::Attribute;
@@ -231,13 +234,18 @@ fn shown(view: &View, display: &Display) -> String {
     }
 }
 
-pub(super) fn costs(display: &Display) {
+pub(super) fn costs(display: &Display, prices: &BTreeMap<String, PriceOverride>) {
+    let provider = provider(ProviderId::Anthropic);
+    let pricing = Pricing {
+        provider: provider.as_ref(),
+        overrides: prices,
+    };
     match load_usage(&usage_path()) {
         Ok(usage) => print!(
             "{}",
             render_markdown(
                 &display.ctx,
-                &costs_view(&usage),
+                &costs_view(&usage, &pricing),
                 &table_theme(display.theme)
             )
         ),

@@ -1,5 +1,23 @@
 use super::*;
+use crate::wire::price::PriceOverride;
+use crate::wire::provider::{provider, ProviderId};
 use serde_json::{json, Value};
+
+fn with_pricing<T>(overrides: &BTreeMap<String, PriceOverride>, f: impl Fn(&Pricing) -> T) -> T {
+    let provider = provider(ProviderId::Anthropic);
+    f(&Pricing {
+        provider: provider.as_ref(),
+        overrides,
+    })
+}
+
+fn rows_of(usage: &str) -> Vec<CostRow> {
+    with_pricing(&BTreeMap::new(), |pricing| cost_rows(usage, pricing))
+}
+
+fn view_of(usage: &str) -> String {
+    with_pricing(&BTreeMap::new(), |pricing| costs_view(usage, pricing))
+}
 
 fn jsonl(rows: &[Value]) -> String {
     rows.iter().map(|row| format!("{row}\n")).collect()
@@ -49,7 +67,7 @@ fn groups_by_harness_and_model_with_main_and_nap_first() {
         turn("r1", 1, 0.5),
         worker("GUZ-2", "s2", "claude-sonnet-5-5"),
     ]);
-    let keys: Vec<(String, String)> = cost_rows(&usage)
+    let keys: Vec<(String, String)> = rows_of(&usage)
         .into_iter()
         .map(|row| (row.harness, row.model))
         .collect();
@@ -68,14 +86,14 @@ fn groups_by_harness_and_model_with_main_and_nap_first() {
 fn main_rows_split_by_model() {
     let mut opus = turn("r1", 1, 0.5);
     opus["model"] = json!("claude-opus-5-5");
-    let rows = cost_rows(&jsonl(&[opus, turn("r2", 1, 0.25)]));
+    let rows = rows_of(&jsonl(&[opus, turn("r2", 1, 0.25)]));
     assert!(close(find(&rows, "main", "claude-opus-5-5").usd, 0.5));
     assert!(close(find(&rows, "main", "unknown").usd, 0.25));
 }
 
 #[test]
 fn main_cost_takes_the_last_running_total_per_run() {
-    let rows = cost_rows(&jsonl(&[
+    let rows = rows_of(&jsonl(&[
         turn("r1", 1, 0.1),
         turn("r1", 2, 0.3),
         turn("r2", 1, 0.2),
@@ -88,7 +106,7 @@ fn main_cost_takes_the_last_running_total_per_run() {
 
 #[test]
 fn main_cost_sums_every_process_of_a_run() {
-    let rows = cost_rows(&jsonl(&[
+    let rows = rows_of(&jsonl(&[
         turn("r1", 1, 0.1),
         turn("r1", 2, 0.3),
         turn("r1", 1, 0.05),
@@ -105,7 +123,7 @@ fn pings_count_toward_the_main_cost() {
         "kind": "ping", "run": "r1", "cost_usd": 0.4, "input_tokens": 0,
         "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 9,
     });
-    let rows = cost_rows(&jsonl(&[turn("r1", 1, 0.3), ping]));
+    let rows = rows_of(&jsonl(&[turn("r1", 1, 0.3), ping]));
     let main = find(&rows, "main", "unknown");
     assert!(close(main.usd, 0.4));
     assert_eq!(main.tokens.cache_read, 1009);
@@ -113,7 +131,7 @@ fn pings_count_toward_the_main_cost() {
 
 #[test]
 fn a_reused_worker_id_counts_each_session() {
-    let rows = cost_rows(&jsonl(&[
+    let rows = rows_of(&jsonl(&[
         worker("GUZ-1", "s1", "claude-opus-5-5"),
         worker("GUZ-1", "s1", "claude-opus-5-5"),
         worker("GUZ-1", "s2", "claude-opus-5-5"),
@@ -126,14 +144,48 @@ fn a_reused_worker_id_counts_each_session() {
 }
 
 #[test]
-fn unpriced_worker_rows_show_no_price() {
-    let rows = cost_rows(&jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]));
+fn worker_rows_are_priced_from_tokens() {
+    let rows = rows_of(&jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]));
+    assert!(close(
+        find(&rows, "claude", "claude-opus-5-5").usd,
+        0.000572
+    ));
+}
+
+#[test]
+fn unknown_model_shows_no_price() {
+    let rows = rows_of(&jsonl(&[worker("GUZ-1", "s1", "gpt-9")]));
+    assert_eq!(find(&rows, "claude", "gpt-9").usd.text(), "n/a");
+}
+
+#[test]
+fn a_cache_write_tier_gap_shows_no_price() {
+    let mut gap = worker("GUZ-1", "s1", "claude-opus-5-5");
+    gap["cache_creation_input_tokens"] = json!(60);
+    let rows = rows_of(&jsonl(&[gap]));
     assert_eq!(find(&rows, "claude", "claude-opus-5-5").usd.text(), "n/a");
 }
 
 #[test]
+fn an_override_wins_over_the_table() {
+    let overrides = BTreeMap::from([(
+        "claude-opus-5-5".to_string(),
+        PriceOverride {
+            input: 1000.0,
+            cache_read: Some(0.0),
+            cache_write_5m: Some(0.0),
+            cache_write_1h: Some(0.0),
+            output: Some(0.0),
+        },
+    )]);
+    let usage = jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]);
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    assert!(close(find(&rows, "claude", "claude-opus-5-5").usd, 0.003));
+}
+
+#[test]
 fn nap_runs_count_rows_and_sum_cost() {
-    let rows = cost_rows(&jsonl(&[
+    let rows = rows_of(&jsonl(&[
         nap("claude-haiku-5-5", 0.01),
         nap("claude-haiku-5-5", 0.02),
     ]));
@@ -145,16 +197,15 @@ fn nap_runs_count_rows_and_sum_cost() {
 #[test]
 fn skips_unknown_kinds_and_bad_lines() {
     let usage = format!("not json\n{}\n", json!({"kind": "other"}));
-    assert_eq!(costs_view(&usage), NO_USAGE);
-    assert_eq!(costs_view(""), NO_USAGE);
+    assert_eq!(view_of(&usage), NO_USAGE);
+    assert_eq!(view_of(""), NO_USAGE);
 }
 
 #[test]
-fn table_marks_a_partly_unknown_total() {
-    let view = costs_view(&jsonl(&[
-        turn("r1", 1, 1.5),
-        worker("GUZ-1", "s1", "claude-opus-5-5"),
-    ]));
+fn table_totals_main_and_computed_worker_cost() {
+    let mut heavy = worker("GUZ-1", "s1", "claude-opus-5-5");
+    heavy["output_tokens"] = json!(30_000);
+    let view = view_of(&jsonl(&[turn("r1", 1, 1.5), heavy]));
     let lines: Vec<&str> = view.lines().collect();
     assert_eq!(lines.len(), 5);
     assert!(lines[0].starts_with("| HARNESS | MODEL | RUNS |"));
@@ -164,11 +215,11 @@ fn table_marks_a_partly_unknown_total() {
     );
     assert_eq!(
         lines[3],
-        "| claude | claude-opus-5-5 | 1 | 3 | 7 | 400 | 50 | 20 | 30 | – | n/a |"
+        "| claude | claude-opus-5-5 | 1 | 3 | 30.0k | 400 | 50 | 20 | 30 | – | 0.60 |"
     );
     assert_eq!(
         lines[4],
-        "| total |  |  | 13 | 12 | 1.4k | 150 | 20 | 30 | – | 1.50+ |"
+        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20 | 30 | – | 2.10 |"
     );
 }
 
