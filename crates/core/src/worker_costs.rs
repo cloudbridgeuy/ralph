@@ -1,8 +1,10 @@
 use crate::chat_thread::{session_cost, UsageLine};
 use crate::wire::price::{prompt_tokens, resolve_price, usd, PriceTable};
-use crate::wire::usage::{CacheTier, CacheWrite, Usage, FIVE_MIN, ONE_HOUR};
+use crate::wire::usage::{CacheWrite, Usage, FIVE_MIN, ONE_HOUR};
 use crate::wire::view::Pricing;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod openai_price;
 
 pub const NO_USAGE: &str = "No usage recorded.";
 const UNKNOWN: &str = "unknown";
@@ -135,18 +137,18 @@ struct CostRow {
     usd: Usd,
 }
 
-fn wire_usage(line: &UsageLine) -> Usage {
-    let tiered = line
-        .cache_write_5m
-        .unwrap_or(0)
-        .saturating_add(line.cache_write_1h.unwrap_or(0));
+fn untiered_writes(line: &UsageLine) -> u64 {
+    line.cache_creation_input_tokens.saturating_sub(
+        line.cache_write_5m
+            .unwrap_or(0)
+            .saturating_add(line.cache_write_1h.unwrap_or(0)),
+    )
+}
+
+fn tiered_usage(line: &UsageLine) -> Usage {
     let writes = [
         (FIVE_MIN, line.cache_write_5m.unwrap_or(0)),
         (ONE_HOUR, line.cache_write_1h.unwrap_or(0)),
-        (
-            CacheTier::Unspecified,
-            line.cache_creation_input_tokens.saturating_sub(tiered),
-        ),
     ];
     Usage {
         input_uncached: line.input_tokens,
@@ -162,23 +164,32 @@ fn wire_usage(line: &UsageLine) -> Usage {
     }
 }
 
-fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Option<f64> {
-    let model = line.model.as_deref()?;
-    let usage = wire_usage(line);
-    let price = resolve_price(
-        table,
-        pricing.overrides,
-        &pricing.provider.rates(model),
-        model,
-        prompt_tokens(&usage),
-    )?;
-    usd(&usage, &price)
+fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd {
+    let untiered = untiered_writes(line);
+    let known = line.model.as_deref().and_then(|model| {
+        let usage = tiered_usage(line);
+        let price = resolve_price(
+            table,
+            pricing.overrides,
+            &pricing.provider.rates(model),
+            model,
+            prompt_tokens(&usage).saturating_add(untiered),
+        )?;
+        usd(&usage, &price)
+    });
+    Usd {
+        known,
+        missing: known.is_none() || untiered > 0,
+    }
 }
 
-fn summed(lines: &[UsageLine], priced: &dyn Fn(&UsageLine) -> Option<f64>) -> Usd {
+fn summed(lines: &[UsageLine], priced: &dyn Fn(&UsageLine) -> Usd) -> Usd {
     lines
         .iter()
-        .map(|line| Usd::of(line.cost_usd.or_else(|| priced(line))))
+        .map(|line| {
+            line.cost_usd
+                .map_or_else(|| priced(line), |cost| Usd::of(Some(cost)))
+        })
         .fold(Usd::default(), Usd::plus)
 }
 
@@ -208,7 +219,7 @@ fn cost_row(
     source: &Source,
     model: String,
     lines: &[UsageLine],
-    priced: &dyn Fn(&UsageLine) -> Option<f64>,
+    priced: &dyn Fn(&UsageLine) -> Usd,
 ) -> CostRow {
     let (runs, usd) = match source {
         Source::Main => main_runs(lines),
@@ -228,7 +239,8 @@ fn cost_row(
 }
 
 fn cost_rows(usage_jsonl: &str, pricing: &Pricing) -> Vec<CostRow> {
-    let table = pricing.provider.prices();
+    let mut table = pricing.provider.prices();
+    table.entries.extend(openai_price::entries());
     let priced = |line: &UsageLine| computed_usd(line, pricing, &table);
     let mut groups: BTreeMap<(Source, String), Vec<UsageLine>> = BTreeMap::new();
     for line in usage_jsonl
