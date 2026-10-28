@@ -133,6 +133,7 @@ impl TurnUsage {
         self.current = self.base.clone();
         std::mem::take(&mut self.by_model)
             .into_iter()
+            .filter(|(_, tokens)| *tokens != CallTokens::default())
             .map(|(model, tokens)| ModelUsage {
                 model,
                 usage: tokens.usage(),
@@ -278,5 +279,16 @@ mod tests {
             (rows[0].model.as_str(), rows[0].usage.input_uncached),
             ("a", 5)
         );
+    }
+
+    #[test]
+    fn a_turn_with_only_zero_usage_gives_no_row() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.observe(totals((0, 0), (0, 0)), true);
+        assert!(turn.take().is_empty());
+        turn.observe(totals((4, 1), (4, 1)), true);
+        assert_eq!(turn.take().len(), 1);
+        turn.observe(totals((4, 1), (4, 1)), true);
+        assert!(turn.take().is_empty());
     }
 }
