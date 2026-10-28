@@ -1,9 +1,9 @@
 use super::*;
 use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
-    cancel_check, cursor_verify_project, parse_agent_version, permission_check, prompt_check,
-    BlockedContent, CheckResult, PermissionSetup, TurnSummary, ACP_PROTOCOL_VERSION,
-    AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
+    cancel_check, cursor_verify_leftover, cursor_verify_project, parse_agent_version,
+    permission_check, prompt_check, BlockedContent, CheckResult, PermissionSetup, TurnSummary,
+    ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
 };
 use std::sync::atomic::AtomicUsize;
 
@@ -251,6 +251,10 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
         ));
         return version;
     }
+    let leftover = fs::canonicalize(dir)
+        .ok()
+        .and_then(|real| cursor_verify_leftover(&home, &real, &project))
+        .filter(|leftover| !leftover.exists());
     let hooks = project.join(CURSOR_HOOKS_FILE);
     let written = hooks
         .parent()
@@ -269,6 +273,13 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     step(checks, "hooks cleanup", removed, |()| {
         format!("removed {}", project.display())
     });
+    if let Some(leftover) = leftover.filter(|leftover| leftover.exists()) {
+        let removed = fs::remove_dir_all(&leftover)
+            .map_err(|error| format!("could not remove {}: {error}", leftover.display()));
+        step(checks, "cursor cleanup", removed, |()| {
+            format!("removed {}", leftover.display())
+        });
+    }
     version
 }
 

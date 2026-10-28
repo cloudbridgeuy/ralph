@@ -1,4 +1,4 @@
-use crate::cursor_leftovers::cursor_slug;
+use crate::cursor_leftovers::{cursor_slug, socket_project_dir};
 use crate::worker::BlockedContent;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -163,6 +163,12 @@ pub fn prompt_check(turn: &TurnSummary, ended: &str) -> CheckResult {
 pub fn cursor_verify_project(home: &Path, workspace: &Path) -> PathBuf {
     home.join(".cursor/projects")
         .join(cursor_slug(&workspace.to_string_lossy()))
+}
+
+pub fn cursor_verify_leftover(home: &Path, real: &Path, project: &Path) -> Option<PathBuf> {
+    real.to_str()
+        .and_then(|real| socket_project_dir(&home.join(".cursor/projects"), real))
+        .filter(|leftover| leftover != project)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,6 +367,24 @@ mod tests {
         assert_eq!(
             project("/var/folders/g9/x/T/.tmpiqjUi0"),
             Path::new("/h/.cursor/projects/var-folders-g9-x-T-tmpiqjUi0")
+        );
+    }
+
+    #[test]
+    fn cursor_verify_removes_the_hashed_folder_cursor_makes_for_the_real_path() {
+        let home = Path::new("/Users/guzmanmonne");
+        let dir = Path::new("/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2");
+        let real = Path::new("/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2");
+        assert_eq!(
+            cursor_verify_leftover(home, real, &cursor_verify_project(home, dir)),
+            Some(PathBuf::from(
+                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0-bc092f5"
+            ))
+        );
+        let short = Path::new("/tmp/x");
+        assert_eq!(
+            cursor_verify_leftover(home, short, &cursor_verify_project(home, short)),
+            None
         );
     }
 

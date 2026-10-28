@@ -48,13 +48,16 @@ fn socket_dir(base: &str, slug: &str) -> Option<String> {
     ))
 }
 
-pub fn project_dirs(projects_base: &Path, real_worktree: &str) -> Vec<PathBuf> {
-    let slug = cursor_slug(real_worktree);
-    let mut dirs = vec![projects_base.join(&slug)];
-    let socket = projects_base
+pub fn socket_project_dir(projects_base: &Path, real_worktree: &str) -> Option<PathBuf> {
+    projects_base
         .to_str()
-        .and_then(|base| socket_dir(base, &slug))
-        .map(PathBuf::from);
+        .and_then(|base| socket_dir(base, &cursor_slug(real_worktree)))
+        .map(PathBuf::from)
+}
+
+pub fn project_dirs(projects_base: &Path, real_worktree: &str) -> Vec<PathBuf> {
+    let mut dirs = vec![projects_base.join(cursor_slug(real_worktree))];
+    let socket = socket_project_dir(projects_base, real_worktree);
     if let Some(socket) = socket.filter(|socket| !dirs.contains(socket)) {
         dirs.push(socket);
     }
@@ -166,6 +169,10 @@ mod tests {
             (
                 "/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpHVgYgu",
                 "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0-f404dd6",
+            ),
+            (
+                "/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2",
+                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0-bc092f5",
             ),
         ];
         for (real, socket) in cases {
