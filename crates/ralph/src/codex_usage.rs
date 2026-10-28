@@ -90,7 +90,7 @@ mod tests {
         let file = dir.path().join("usage.jsonl");
         let usage = CodexUsage::new("w1", Some(dir.path()));
         usage.bind("th1", Some("gpt".into()));
-        let params = serde_json::json!({"turnId": "u", "tokenUsage": {"last": {"inputTokens": 9, "cachedInputTokens": 4, "outputTokens": 2}}});
+        let params = serde_json::json!({"turnId": "u", "tokenUsage": {"last": {"inputTokens": 9, "cachedInputTokens": 4, "outputTokens": 2}, "total": {"inputTokens": 9, "cachedInputTokens": 4, "outputTokens": 2}}});
         usage.observe("thread/tokenUsage/updated", &params);
         let rows = usage.bound.lock().unwrap().turn.take();
         usage.append("th1", &rows, Some(3), &file).unwrap();

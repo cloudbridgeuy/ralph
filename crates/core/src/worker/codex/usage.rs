@@ -25,6 +25,16 @@ impl CallTokens {
         self.reasoning += other.reasoning;
     }
 
+    fn since(self, earlier: Self) -> Self {
+        Self {
+            input_uncached: self.input_uncached.saturating_sub(earlier.input_uncached),
+            cache_read: self.cache_read.saturating_sub(earlier.cache_read),
+            cache_write: self.cache_write.saturating_sub(earlier.cache_write),
+            output: self.output.saturating_sub(earlier.output),
+            reasoning: self.reasoning.saturating_sub(earlier.reasoning),
+        }
+    }
+
     fn usage(self) -> Usage {
         Usage {
             input_uncached: self.input_uncached,
@@ -47,7 +57,7 @@ impl CallTokens {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UsageEvent {
-    Call(CallTokens),
+    Call { total: CallTokens, last: CallTokens },
     Rerouted(String),
 }
 
@@ -68,9 +78,13 @@ fn decode_call(last: &Value) -> CallTokens {
 
 pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
     match method {
-        TOKEN_USAGE_UPDATED => params["tokenUsage"]["last"]
-            .is_object()
-            .then(|| UsageEvent::Call(decode_call(&params["tokenUsage"]["last"]))),
+        TOKEN_USAGE_UPDATED => {
+            let usage = &params["tokenUsage"];
+            (usage["total"].is_object() && usage["last"].is_object()).then(|| UsageEvent::Call {
+                total: decode_call(&usage["total"]),
+                last: decode_call(&usage["last"]),
+            })
+        }
         MODEL_REROUTED => params["toModel"]
             .as_str()
             .map(|model| UsageEvent::Rerouted(model.to_string())),
@@ -82,6 +96,7 @@ pub fn decode_usage_event(method: &str, params: &Value) -> Option<UsageEvent> {
 pub struct TurnUsage {
     base: Option<String>,
     current: Option<String>,
+    seen_total: Option<CallTokens>,
     by_model: BTreeMap<String, CallTokens>,
 }
 
@@ -90,6 +105,7 @@ impl TurnUsage {
         Self {
             base: model.clone(),
             current: model,
+            seen_total: None,
             by_model: BTreeMap::new(),
         }
     }
@@ -97,7 +113,9 @@ impl TurnUsage {
     pub fn observe(&mut self, event: UsageEvent) {
         match event {
             UsageEvent::Rerouted(model) => self.current = Some(model),
-            UsageEvent::Call(tokens) => {
+            UsageEvent::Call { total, last } => {
+                let tokens = self.seen_total.map_or(last, |seen| total.since(seen));
+                self.seen_total = Some(total);
                 let model = self.current.as_deref().unwrap_or(UNKNOWN_MODEL);
                 self.by_model
                     .entry(model.to_string())
@@ -124,14 +142,23 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn updated(last: Value) -> Value {
-        json!({"threadId": "t", "turnId": "u", "tokenUsage": {"last": last, "total": {}}})
+    fn updated(last: Value, total: Value) -> Value {
+        json!({"threadId": "t", "turnId": "u", "tokenUsage": {"last": last, "total": total}})
+    }
+
+    fn breakdown(input: u64, output: u64) -> Value {
+        json!({"inputTokens": input, "outputTokens": output})
     }
 
     fn call(input: u64, cached: u64, output: u64) -> UsageEvent {
+        let last = json!({"inputTokens": input, "cachedInputTokens": cached, "outputTokens": output, "reasoningOutputTokens": 1});
+        decode_usage_event(TOKEN_USAGE_UPDATED, &updated(last, json!({}))).unwrap()
+    }
+
+    fn totals(last: (u64, u64), total: (u64, u64)) -> UsageEvent {
         decode_usage_event(
             TOKEN_USAGE_UPDATED,
-            &updated(json!({"inputTokens": input, "cachedInputTokens": cached, "outputTokens": output, "reasoningOutputTokens": 1})),
+            &updated(breakdown(last.0, last.1), breakdown(total.0, total.1)),
         )
         .unwrap()
     }
@@ -140,8 +167,10 @@ mod tests {
     fn the_last_breakdown_maps_input_minus_cached() {
         let params = updated(
             json!({"inputTokens": 100, "cachedInputTokens": 30, "cacheWriteInputTokens": 5, "outputTokens": 7, "reasoningOutputTokens": 2, "totalTokens": 107}),
+            json!({}),
         );
-        let Some(UsageEvent::Call(tokens)) = decode_usage_event(TOKEN_USAGE_UPDATED, &params)
+        let Some(UsageEvent::Call { last: tokens, .. }) =
+            decode_usage_event(TOKEN_USAGE_UPDATED, &params)
         else {
             panic!("not a call");
         };
@@ -155,7 +184,7 @@ mod tests {
 
     #[test]
     fn cached_above_input_gives_zero_input_and_a_missing_cache_write_gives_none() {
-        let UsageEvent::Call(tokens) = call(10, 40, 3) else {
+        let UsageEvent::Call { last: tokens, .. } = call(10, 40, 3) else {
             panic!("not a call");
         };
         let usage = tokens.usage();
@@ -167,6 +196,8 @@ mod tests {
     fn other_methods_and_missing_breakdowns_are_not_usage() {
         assert_eq!(decode_usage_event("turn/started", &json!({})), None);
         assert_eq!(decode_usage_event(TOKEN_USAGE_UPDATED, &json!({})), None);
+        let no_total = json!({"tokenUsage": {"last": breakdown(1, 1)}});
+        assert_eq!(decode_usage_event(TOKEN_USAGE_UPDATED, &no_total), None);
         assert_eq!(
             decode_usage_event(MODEL_REROUTED, &json!({"toModel": "b"})),
             Some(UsageEvent::Rerouted("b".into()))
@@ -176,20 +207,17 @@ mod tests {
     #[test]
     fn calls_sum_per_model_and_a_reroute_switches_the_model() {
         let mut turn = TurnUsage::new(Some("a".into()));
-        turn.observe(call(10, 0, 1));
-        turn.observe(call(5, 0, 2));
+        turn.observe(totals((10, 1), (10, 1)));
+        turn.observe(totals((5, 2), (15, 3)));
         turn.observe(UsageEvent::Rerouted("b".into()));
-        turn.observe(call(7, 0, 3));
+        turn.observe(totals((7, 3), (22, 6)));
         let rows = turn.take();
         assert_eq!(rows.len(), 2);
         assert_eq!(
             (rows[0].model.as_str(), rows[0].usage.input_uncached),
             ("a", 15)
         );
-        assert_eq!(
-            (rows[0].usage.output, rows[0].usage.reasoning),
-            (3, Some(2))
-        );
+        assert_eq!(rows[0].usage.output, 3);
         assert_eq!(
             (rows[1].model.as_str(), rows[1].usage.input_uncached),
             ("b", 7)
@@ -200,10 +228,36 @@ mod tests {
     fn take_empties_the_turn_and_restores_the_starting_model() {
         let mut turn = TurnUsage::new(Some("a".into()));
         turn.observe(UsageEvent::Rerouted("b".into()));
-        turn.observe(call(1, 0, 1));
+        turn.observe(totals((1, 1), (1, 1)));
         assert_eq!(turn.take().len(), 1);
         assert!(turn.take().is_empty());
-        turn.observe(call(1, 0, 1));
+        turn.observe(totals((1, 1), (2, 2)));
         assert_eq!(turn.take()[0].model, "a");
+    }
+
+    #[test]
+    fn a_resent_update_counts_once_and_later_calls_count_the_total_delta() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.observe(totals((10, 1), (50, 4)));
+        turn.observe(totals((10, 1), (50, 4)));
+        turn.observe(totals((5, 2), (55, 6)));
+        let rows = turn.take();
+        assert_eq!(
+            (rows[0].usage.input_uncached, rows[0].usage.output),
+            (15, 3)
+        );
+    }
+
+    #[test]
+    fn a_smaller_total_counts_zero() {
+        let mut turn = TurnUsage::new(Some("a".into()));
+        turn.observe(totals((10, 1), (10, 1)));
+        turn.observe(totals((99, 9), (5, 0)));
+        turn.observe(totals((99, 9), (7, 3)));
+        let rows = turn.take();
+        assert_eq!(
+            (rows[0].usage.input_uncached, rows[0].usage.output),
+            (12, 4)
+        );
     }
 }
