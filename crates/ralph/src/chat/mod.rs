@@ -357,6 +357,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             last_turn_end,
             last_ping,
             last_attempt: Arc::new(Mutex::new(None)),
+            keeps: Mutex::default(),
             identity: Arc::clone(&turn.identity),
             run: run.clone(),
         }

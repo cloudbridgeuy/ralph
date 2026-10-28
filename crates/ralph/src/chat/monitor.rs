@@ -1,5 +1,5 @@
 use crate::chat::check::CheckState;
-use crate::chat::keepalive::Stamp;
+use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
 use crate::chat::memory::{self, Store};
 use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
@@ -16,6 +16,7 @@ use crate::workers::headless::{ExitCleanup, HeadlessShutdown};
 use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::ResetLimits;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
+use ralph_core::chat_keepalive::lock_wait_continues;
 use ralph_core::chat_memory::entries_to_shift;
 use ralph_core::chat_status::{
     latest_states, schedule_states, watch_states, worker_states, RunningWorker, Status,
@@ -37,10 +38,11 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, TryLockError};
+use std::time::{Duration, Instant};
 
 pub(super) const POLL: Duration = Duration::from_millis(500);
+const LOCK_POLL: Duration = Duration::from_millis(100);
 const MEMORY_EVERY_POLLS: u64 = 10;
 const INPUT_LOST_EXIT: i32 = 129;
 
@@ -411,6 +413,28 @@ pub(super) fn stdin_hung_up() -> bool {
     unsafe { libc::poll(&mut stdin, 1, 0) > 0 && stdin.revents & libc::POLLHUP != 0 }
 }
 
+fn drop_session(session: &Mutex<Option<Session>>) {
+    let started = Instant::now();
+    loop {
+        match session.try_lock() {
+            Ok(mut live) => {
+                live.take();
+                return;
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                poisoned.into_inner().take();
+                return;
+            }
+            Err(TryLockError::WouldBlock) => {
+                if !lock_wait_continues(started.elapsed(), PING_TIMEOUT) {
+                    return;
+                }
+                std::thread::sleep(LOCK_POLL);
+            }
+        }
+    }
+}
+
 pub(super) fn watch_input(
     at_prompt: Arc<AtomicBool>,
     session: Arc<Mutex<Option<Session>>>,
@@ -426,11 +450,7 @@ pub(super) fn watch_input(
             stdin_hung_up: stdin_hung_up(),
             at_prompt: at_prompt.load(Ordering::SeqCst),
         }) {
-            // No turn runs at the prompt, so the lock is free; `exit` skips
-            // destructors, so close the claude process group here.
-            if let Ok(mut live) = session.try_lock() {
-                live.take();
-            }
+            drop_session(&session);
             if let Some(dir) = &plugin_dir {
                 std::fs::remove_dir_all(dir).ok();
             }

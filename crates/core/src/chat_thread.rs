@@ -127,7 +127,15 @@ fn last_delta(rows: &[UsageLine]) -> Option<f64> {
     let base = if rows[at].process_turn == Some(1) {
         0.0
     } else {
-        rows.get(at.checked_sub(1)?)?.cost_usd?
+        rows[..at]
+            .iter()
+            .rev()
+            .scan(false, |done, row| {
+                let previous = (!*done).then_some(row);
+                *done = row.process_turn == Some(1);
+                previous
+            })
+            .find_map(|row| row.cost_usd)?
     };
     Some(own - base).filter(|delta| *delta >= 0.0)
 }
@@ -266,6 +274,13 @@ mod tests {
     fn ping_line(secs: i64, cost: f64) -> String {
         format!(
             r#"{{"at":"{}","kind":"ping","cost_usd":{cost},"run":"{RUN}"}}"#,
+            time(secs).to_rfc3339()
+        )
+    }
+
+    fn ping_line_without_cost(secs: i64) -> String {
+        format!(
+            r#"{{"at":"{}","kind":"ping","run":"{RUN}"}}"#,
             time(secs).to_rfc3339()
         )
     }
@@ -435,6 +450,17 @@ mod tests {
         let cost = session_cost(&session_rows(&text, RUN)).unwrap();
         assert_eq!(cost.total, 1.5);
         assert!((cost.delta.unwrap() - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_delta_skips_a_ping_without_cost_back_to_the_turn_before() {
+        let text = lines(&[
+            turn_line(1, 1, 1.0),
+            ping_line_without_cost(2),
+            turn_line(3, 2, 1.5),
+        ]);
+        let cost = session_cost(&session_rows(&text, RUN)).unwrap();
+        assert_eq!(cost.delta, Some(0.5));
     }
 
     #[test]
