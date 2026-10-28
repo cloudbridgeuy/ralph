@@ -43,8 +43,8 @@ pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
     !blocks.is_empty()
 }
 
-pub(super) fn spawn_nap(store: &Path) -> io::Result<()> {
-    spawn_detached(Command::new(std::env::current_exe()?).args(build_nap_args(store)))
+pub(super) fn spawn_nap(store: &Path, run: &str) -> io::Result<()> {
+    spawn_detached(Command::new(std::env::current_exe()?).args(build_nap_args(store, run)))
 }
 
 pub(super) fn chat_session_info() -> SpinnerSessionInfo {
@@ -245,6 +245,11 @@ impl Turn<'_> {
         if !keeps_session(&end) {
             self.drop_session(ResetReason::Restart);
         }
+        let identity = {
+            let mut held = locked(&self.identity);
+            *held = carry_metadata(&held, launch.is_some(), &turn_metadata(&result));
+            held.clone()
+        };
         match end {
             TurnEnd::Exit => return Ok(TurnOutcome::Exit),
             TurnEnd::Cancelled => {
@@ -263,11 +268,6 @@ impl Turn<'_> {
                 self.warn(format!("chat turn failed: {e}"));
                 return Ok(TurnOutcome::Unanswered);
             }
-        };
-        let identity = {
-            let mut held = locked(&self.identity);
-            *held = carry_metadata(&held, launch.is_some(), &result.stream_result.metadata);
-            held.clone()
         };
         if let Some(mut record) = usage_record(
             CallKind::Turn { trigger },
@@ -288,6 +288,7 @@ impl Turn<'_> {
             record.request_at = result.request_at.map(|at| at.to_rfc3339());
             record.reset = launch.as_ref().and_then(|spawned| spawned.reset);
             record.run = Some(self.run.to_string());
+            record.store = Some(self.store_dir.to_string_lossy().into_owned());
             self.warn_if_err(
                 append_usage(&usage_path(), &record),
                 "Failed to record chat usage",
@@ -304,7 +305,10 @@ impl Turn<'_> {
                 reply_entries(&reply)
                     .iter()
                     .try_for_each(|(role, text)| self.store.append(*role, text))?;
-                self.warn_if_err(spawn_nap(self.store_dir), "Failed to start chat memory nap");
+                self.warn_if_err(
+                    spawn_nap(self.store_dir, self.run),
+                    "Failed to start chat memory nap",
+                );
                 if let Some(reason) = reset_reason(&self.reset_limits, process_turns, costs) {
                     if locked(&self.session).take().is_some() {
                         *locked(&self.reset) = Some(reason);
@@ -437,6 +441,17 @@ fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
         )
 }
 
+fn turn_metadata(result: &Result<StreamingSubprocessResult, SubprocessError>) -> IterationMetadata {
+    match result {
+        Ok(done) => done.stream_result.metadata.clone(),
+        Err(
+            SubprocessError::Timeout { partial_result, .. }
+            | SubprocessError::Interrupted { partial_result },
+        ) => partial_result.stream_result.metadata.clone(),
+        Err(_) => IterationMetadata::new(),
+    }
+}
+
 fn next_process_turns(ran: bool, launched: bool, current: u64) -> u64 {
     match (ran, launched) {
         (false, _) => current,
@@ -452,6 +467,92 @@ fn keeps_session(end: &TurnEnd) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stream_processor::StreamProcessorResult;
+
+    fn finished(session_id: Option<&str>, model: Option<&str>) -> StreamingSubprocessResult {
+        StreamingSubprocessResult {
+            exit_code: 0,
+            stderr: String::new(),
+            stream_result: StreamProcessorResult {
+                metadata: IterationMetadata {
+                    session_id: session_id.map(str::to_string),
+                    model: model.map(str::to_string),
+                    tools: Vec::new(),
+                },
+                ..Default::default()
+            },
+            request_at: None,
+        }
+    }
+
+    fn previous() -> IterationMetadata {
+        IterationMetadata {
+            session_id: Some("old".to_string()),
+            model: Some("old-model".to_string()),
+            tools: Vec::new(),
+        }
+    }
+
+    fn timeout(partial: StreamingSubprocessResult) -> SubprocessError {
+        SubprocessError::Timeout {
+            timeout_secs: 1,
+            partial_result: Box::new(partial),
+        }
+    }
+
+    #[test]
+    fn turn_metadata_reads_a_finished_turn() {
+        let result = Ok(finished(Some("s1"), Some("m1")));
+        let meta = turn_metadata(&result);
+        assert_eq!(meta.session_id.as_deref(), Some("s1"));
+        assert_eq!(meta.model.as_deref(), Some("m1"));
+    }
+
+    #[test]
+    fn turn_metadata_reads_a_timeout_partial() {
+        let result = Err(timeout(finished(Some("s2"), None)));
+        let meta = turn_metadata(&result);
+        assert_eq!(meta.session_id.as_deref(), Some("s2"));
+        assert_eq!(meta.model, None);
+    }
+
+    #[test]
+    fn turn_metadata_reads_an_interrupted_partial() {
+        let result = Err(SubprocessError::Interrupted {
+            partial_result: Box::new(finished(Some("s3"), None)),
+        });
+        assert_eq!(turn_metadata(&result).session_id.as_deref(), Some("s3"));
+    }
+
+    #[test]
+    fn turn_metadata_is_empty_for_stale() {
+        let result = Err(SubprocessError::Stale);
+        assert_eq!(turn_metadata(&result), IterationMetadata::new());
+    }
+
+    #[test]
+    fn launched_stale_turn_clears_previous_identity() {
+        let result = Err(SubprocessError::Stale);
+        let carried = carry_metadata(&previous(), true, &turn_metadata(&result));
+        assert_eq!(carried.session_id, None);
+        assert_eq!(carried.model, None);
+    }
+
+    #[test]
+    fn reused_failed_turn_keeps_previous_identity() {
+        let result = Err(SubprocessError::Stale);
+        let carried = carry_metadata(&previous(), false, &turn_metadata(&result));
+        assert_eq!(carried.session_id.as_deref(), Some("old"));
+        assert_eq!(carried.model.as_deref(), Some("old-model"));
+    }
+
+    #[test]
+    fn launched_timeout_takes_partial_session_id() {
+        let result = Err(timeout(finished(Some("new"), None)));
+        let carried = carry_metadata(&previous(), true, &turn_metadata(&result));
+        assert_eq!(carried.session_id.as_deref(), Some("new"));
+        assert_eq!(carried.model, None);
+    }
 
     #[test]
     fn process_turns_stay_when_no_session_ran() {

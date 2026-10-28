@@ -274,10 +274,15 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
     if let Some(store) = &args.store {
         config::set_store_layer(store);
     }
+    let store = args.store.clone();
     let usage = args
         .worker
         .zip(args.usage_seen)
-        .map(|(worker, seen)| worker_usage::UsageTarget { worker, seen });
+        .map(|(worker, seen)| worker_usage::UsageTarget {
+            worker,
+            seen,
+            store,
+        });
     let changes = args
         .store
         .zip(args.id)
@@ -304,6 +309,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
     config::set_store_layer(&args.store);
+    let store_path = args.store.to_string_lossy().into_owned();
     let store = chat::memory::Store::new(args.store);
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     store.nap(|prompt| {
@@ -329,12 +335,14 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
             |delay| backoff::wait_unless(signal::is_terminated, delay),
         )
         .map_err(|e| e.to_string())?;
-        if let Some(record) = ralph_core::chat_memory::usage_record(
+        if let Some(mut record) = ralph_core::chat_memory::usage_record(
             ralph_core::chat_memory::CallKind::Nap,
             chrono::Utc::now().to_rfc3339(),
             &result.stream_result.costs,
             &result.stream_result.metadata,
         ) {
+            record.run = args.run.clone();
+            record.store = Some(store_path.clone());
             warn_if_err(
                 chat::memory::append_usage(&chat::memory::usage_path(), &record),
                 "Failed to record chat usage",

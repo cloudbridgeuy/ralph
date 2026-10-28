@@ -21,6 +21,19 @@ fn test_cli_version_flags_render_the_current_version() {
 }
 
 #[test]
+fn test_cli_chat_nap_takes_store_and_run() {
+    let Some(Commands::ChatNap(nap)) =
+        Cli::try_parse_from(["ralph", "chat-nap", "--store", "X", "--run", "R"])
+            .unwrap()
+            .command
+    else {
+        panic!("expected chat-nap");
+    };
+    assert_eq!(nap.store, std::path::PathBuf::from("X"));
+    assert_eq!(nap.run.as_deref(), Some("R"));
+}
+
+#[test]
 fn test_cli_chat_takes_recent_history_tokens() {
     let Some(Commands::Chat(chat)) =
         Cli::try_parse_from(["ralph", "chat", "--recent-history-tokens", "0"])

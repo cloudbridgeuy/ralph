@@ -9,6 +9,7 @@ use ralph_core::chat_memory::{
     SearchRequest, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::chat_suggestion::SuggestionRecord;
+use ralph_core::chat_thread::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -24,6 +25,42 @@ const SUGGESTIONS_FILE: &str = "suggestions.jsonl";
 
 pub fn usage_path() -> PathBuf {
     crate::paths::config_dir().join(USAGE_FILE)
+}
+
+fn open_stamped(path: &Path) -> io::Result<Option<(File, FileStamp)>> {
+    check_path(path)?;
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let metadata = file.metadata()?;
+    #[cfg(unix)]
+    let id = Some((metadata.dev(), metadata.ino()));
+    #[cfg(not(unix))]
+    let id = None;
+    let stamp = FileStamp {
+        id,
+        len: metadata.len(),
+    };
+    Ok(Some((file, stamp)))
+}
+
+pub fn usage_stamp(path: &Path) -> io::Result<FileStamp> {
+    Ok(open_stamped(path)?.map_or_else(FileStamp::default, |(_, stamp)| stamp))
+}
+
+pub fn read_usage_since(path: &Path, tail: UsageTail, run: &str) -> io::Result<UsageTail> {
+    let Some((mut file, stamp)) = open_stamped(path)? else {
+        let stamp = FileStamp::default();
+        let read = tail_read(&tail, &stamp);
+        return Ok(absorb_usage(tail, &stamp, read, &[], run));
+    };
+    let read = tail_read(&tail, &stamp);
+    file.seek(SeekFrom::Start(read.from))?;
+    let mut chunk = Vec::new();
+    file.read_to_end(&mut chunk)?;
+    Ok(absorb_usage(tail, &stamp, read, &chunk, run))
 }
 
 pub fn load_usage(path: &Path) -> io::Result<String> {

@@ -24,7 +24,7 @@ impl ResetReason {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct UsageLine {
     pub kind: String,
@@ -95,24 +95,73 @@ pub fn run_id(pid: u32, started: DateTime<Utc>) -> String {
     format!("{pid}-{}", started.to_rfc3339())
 }
 
-fn run_rows<'a>(
-    usage_jsonl: &'a str,
-    run: &'a str,
-    kinds: &'a [&'a str],
-) -> impl Iterator<Item = UsageLine> + 'a {
+pub fn session_rows(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
     usage_jsonl
         .lines()
         .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
-        .filter(move |usage| kinds.contains(&usage.kind.as_str()))
-        .filter(move |usage| usage.run.as_deref() == Some(run))
+        .filter(|usage| matches!(usage.kind.as_str(), "turn" | "ping"))
+        .filter(|usage| usage.run.as_deref() == Some(run))
+        .collect()
 }
 
-pub fn session_turns(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
-    run_rows(usage_jsonl, run, &["turn"]).collect()
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FileStamp {
+    pub id: Option<(u64, u64)>,
+    pub len: u64,
 }
 
-pub fn session_rows(usage_jsonl: &str, run: &str) -> Vec<UsageLine> {
-    run_rows(usage_jsonl, run, &["turn", "ping"]).collect()
+#[derive(Debug, Clone, PartialEq)]
+pub struct UsageTail {
+    pub file: Option<(u64, u64)>,
+    pub offset: u64,
+    pub rows: Vec<UsageLine>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TailRead {
+    pub from: u64,
+    pub reset: bool,
+}
+
+impl UsageTail {
+    pub fn starting_at(stamp: &FileStamp) -> Self {
+        Self {
+            file: stamp.id,
+            offset: stamp.len,
+            rows: Vec::new(),
+        }
+    }
+}
+
+pub fn tail_read(tail: &UsageTail, stamp: &FileStamp) -> TailRead {
+    let reset = tail.file != stamp.id || stamp.len < tail.offset;
+    TailRead {
+        from: if reset { 0 } else { tail.offset },
+        reset,
+    }
+}
+
+pub fn absorb_usage(
+    tail: UsageTail,
+    stamp: &FileStamp,
+    read: TailRead,
+    chunk: &[u8],
+    run: &str,
+) -> UsageTail {
+    let consumed = chunk
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |at| at + 1);
+    let mut rows = if read.reset { Vec::new() } else { tail.rows };
+    rows.extend(session_rows(
+        &String::from_utf8_lossy(&chunk[..consumed]),
+        run,
+    ));
+    UsageTail {
+        file: stamp.id,
+        offset: read.from + consumed as u64,
+        rows,
+    }
 }
 
 fn processes(rows: &[UsageLine]) -> Vec<&[UsageLine]> {
@@ -176,8 +225,7 @@ pub fn cache_left_minutes(
     (left > 0).then(|| left.div_ceil(60))
 }
 
-pub fn thread_usage(usage_jsonl: &str, run: &str) -> Option<ThreadUsage> {
-    let rows = session_rows(usage_jsonl, run);
+pub fn thread_usage(rows: &[UsageLine]) -> Option<ThreadUsage> {
     let last = rows.iter().rfind(|row| row.kind == "turn")?;
     Some(ThreadUsage {
         process_turn: last.process_turn.unwrap_or(0),
@@ -189,7 +237,7 @@ pub fn thread_usage(usage_jsonl: &str, run: &str) -> Option<ThreadUsage> {
         ),
         request_at: last.request_at.as_deref().and_then(parse_time),
         reset: last.reset,
-        cost: session_cost(&rows),
+        cost: session_cost(rows),
     })
 }
 
@@ -294,7 +342,7 @@ mod tests {
     }
 
     fn lines(rows: &[String]) -> String {
-        rows.join("\n")
+        rows.iter().map(|row| format!("{row}\n")).collect()
     }
 
     fn usage(request_at: Option<DateTime<Utc>>) -> ThreadUsage {
@@ -339,7 +387,7 @@ mod tests {
             turn_line(3, 1, 0.5),
             turn_line(4, 2, 1.25),
         ]);
-        let cost = session_cost(&session_turns(&text, RUN)).unwrap();
+        let cost = session_cost(&session_rows(&text, RUN)).unwrap();
         assert_eq!(cost.total, 4.25);
         assert_eq!(cost.delta, Some(0.75));
     }
@@ -351,44 +399,53 @@ mod tests {
             turn_line(2, 2, 3.0),
             turn_line(3, 3, 6.0),
         ]);
-        assert_eq!(session_cost(&session_turns(&text, RUN)).unwrap().total, 6.0);
+        assert_eq!(session_cost(&session_rows(&text, RUN)).unwrap().total, 6.0);
     }
 
     #[test]
-    fn session_turns_keep_only_the_own_run_when_two_runs_interleave() {
+    fn session_rows_keep_only_the_own_run_when_two_runs_interleave() {
         let text = lines(&[
             run_line("other", 1, 1, 9.0),
             turn_line(2, 1, 2.0),
             run_line("other", 3, 2, 11.0),
             turn_line(4, 2, 3.0),
         ]);
-        let turns = session_turns(&text, RUN);
+        let turns = session_rows(&text, RUN);
         assert_eq!(turns.len(), 2);
         assert_eq!(session_cost(&turns).unwrap().total, 3.0);
-        assert_eq!(session_turns(&text, "other").len(), 2);
-        assert_eq!(session_turns(&text, "missing").len(), 0);
+        assert_eq!(session_rows(&text, "other").len(), 2);
+        assert_eq!(session_rows(&text, "missing").len(), 0);
     }
 
     #[test]
-    fn session_turns_exclude_lines_without_a_run() {
+    fn session_rows_parse_lines_that_carry_a_store() {
+        let line = format!(
+            r#"{{"at":"{}","kind":"turn","process_turn":1,"run":"{RUN}","store":"/s"}}"#,
+            time(1).to_rfc3339()
+        );
+        assert_eq!(session_rows(&line, RUN).len(), 1);
+    }
+
+    #[test]
+    fn session_rows_exclude_lines_without_a_run() {
         let bare = format!(
             r#"{{"at":"{}","kind":"turn","cost_usd":9.0,"process_turn":1}}"#,
             time(1).to_rfc3339()
         );
         let text = lines(&[bare, turn_line(2, 1, 2.0)]);
-        let turns = session_turns(&text, RUN);
+        let turns = session_rows(&text, RUN);
         assert_eq!(turns.len(), 1);
         assert_eq!(session_cost(&turns).unwrap().total, 2.0);
     }
 
     #[test]
-    fn session_turns_skip_worker_usage_lines() {
+    fn session_rows_skip_worker_usage_lines() {
         let worker = format!(
             r#"{{"at":"{}","kind":"worker","worker_id":"w1","input_tokens":5,"run":"{RUN}"}}"#,
             time(1).to_rfc3339()
         );
         let text = lines(&[worker, turn_line(2, 1, 2.0)]);
-        assert_eq!(session_turns(&text, RUN).len(), 1);
+        assert_eq!(session_rows(&text, RUN).len(), 1);
     }
 
     #[test]
@@ -403,7 +460,7 @@ mod tests {
             time(2).to_rfc3339()
         );
         let text = lines(&[turn_line(1, 1, 2.0), nap, "not json".to_string()]);
-        let turns = session_turns(&text, RUN);
+        let turns = session_rows(&text, RUN);
         assert_eq!(session_cost(&turns).unwrap().total, 2.0);
     }
 
@@ -413,7 +470,7 @@ mod tests {
             r#"{{"at":"{}","kind":"turn","process_turn":1,"run":"7-run"}}"#,
             time(1).to_rfc3339()
         );
-        assert_eq!(session_cost(&session_turns(&bare, RUN)), None);
+        assert_eq!(session_cost(&session_rows(&bare, RUN)), None);
         assert_eq!(session_cost(&[]), None);
     }
 
@@ -424,14 +481,14 @@ mod tests {
             turn_line(2, 2, 3.0),
             turn_line(3, 1, 0.4),
         ]);
-        let cost = session_cost(&session_turns(&text, RUN)).unwrap();
+        let cost = session_cost(&session_rows(&text, RUN)).unwrap();
         assert_eq!(cost.delta, Some(0.4));
     }
 
     #[test]
     fn delta_is_absent_when_the_cost_goes_down() {
         let text = lines(&[turn_line(1, 1, 2.0), turn_line(2, 2, 1.0)]);
-        let cost = session_cost(&session_turns(&text, RUN)).unwrap();
+        let cost = session_cost(&session_rows(&text, RUN)).unwrap();
         assert_eq!(cost.delta, None);
     }
 
@@ -494,13 +551,6 @@ mod tests {
     }
 
     #[test]
-    fn session_turns_leave_out_pings() {
-        let text = lines(&[turn_line(1, 1, 1.0), ping_line(2, 1.2)]);
-        assert_eq!(session_turns(&text, RUN).len(), 1);
-        assert_eq!(session_rows(&text, RUN).len(), 2);
-    }
-
-    #[test]
     fn worker_rows_are_left_out_of_turns_rows_and_cost() {
         let worker = format!(
             r#"{{"at":"{}","kind":"worker","worker_id":"w","cost_usd":9.0,"run":"{RUN}"}}"#,
@@ -512,11 +562,17 @@ mod tests {
             ping_line(3, 1.2),
             turn_line(4, 2, 1.5),
         ]);
-        assert_eq!(session_turns(&text, RUN).len(), 2);
         let rows = session_rows(&text, RUN);
         assert_eq!(rows.len(), 3);
         assert_eq!(session_cost(&rows).unwrap().total, 1.5);
-        assert_eq!(thread_usage(&text, RUN).unwrap().cost.unwrap().total, 1.5);
+        assert_eq!(
+            thread_usage(&session_rows(&text, RUN))
+                .unwrap()
+                .cost
+                .unwrap()
+                .total,
+            1.5
+        );
     }
 
     #[test]
@@ -526,9 +582,167 @@ mod tests {
             turn_line(2, 2, 1.5),
             ping_line(3, 1.7),
         ]);
-        let usage = thread_usage(&text, RUN).unwrap();
+        let usage = thread_usage(&session_rows(&text, RUN)).unwrap();
         assert_eq!(usage.process_turn, 2);
         assert_eq!(usage.cost.unwrap().total, 1.7);
+    }
+
+    const FILE: Option<(u64, u64)> = Some((1, 10));
+
+    fn stamp(file: Option<(u64, u64)>, text: &str) -> FileStamp {
+        FileStamp {
+            id: file,
+            len: text.len() as u64,
+        }
+    }
+
+    fn read_all(tail: UsageTail, file: Option<(u64, u64)>, text: &str) -> UsageTail {
+        let stamp = stamp(file, text);
+        let read = tail_read(&tail, &stamp);
+        let chunk = &text.as_bytes()[read.from as usize..];
+        absorb_usage(tail, &stamp, read, chunk, RUN)
+    }
+
+    fn costs(tail: &UsageTail) -> Vec<Option<f64>> {
+        tail.rows.iter().map(|row| row.cost_usd).collect()
+    }
+
+    #[test]
+    fn two_absorbs_equal_one_full_parse() {
+        let first = lines(&[turn_line(1, 1, 1.0), run_line("other", 2, 1, 9.0)]);
+        let all = format!(
+            "{first}{}",
+            lines(&[ping_line(3, 1.2), turn_line(4, 2, 2.0)])
+        );
+        let tail = read_all(
+            UsageTail::starting_at(&FileStamp { id: FILE, len: 0 }),
+            FILE,
+            &first,
+        );
+        let tail = read_all(tail, FILE, &all);
+        let full = read_all(
+            UsageTail::starting_at(&FileStamp { id: FILE, len: 0 }),
+            FILE,
+            &all,
+        );
+        assert_eq!(tail, full);
+        assert_eq!(tail.offset, all.len() as u64);
+        assert_eq!(costs(&tail), vec![Some(1.0), Some(1.2), Some(2.0)]);
+    }
+
+    #[test]
+    fn a_torn_last_line_waits_for_the_next_read() {
+        let whole = lines(&[turn_line(1, 1, 1.0), turn_line(2, 2, 2.0)]);
+        let cut = whole.len() - 10;
+        let start = UsageTail::starting_at(&FileStamp { id: FILE, len: 0 });
+        let tail = read_all(start, FILE, &whole[..cut]);
+        assert_eq!(costs(&tail), vec![Some(1.0)]);
+        assert_eq!(tail.offset, whole.find('\n').unwrap() as u64 + 1);
+        let tail = read_all(tail, FILE, &whole);
+        assert_eq!(costs(&tail), vec![Some(1.0), Some(2.0)]);
+        assert_eq!(tail.offset, whole.len() as u64);
+    }
+
+    #[test]
+    fn a_shorter_file_resets_and_rereads() {
+        let long = lines(&[turn_line(1, 1, 1.0), turn_line(2, 2, 2.0)]);
+        let short = lines(&[turn_line(3, 1, 5.0)]);
+        let start = UsageTail::starting_at(&FileStamp { id: FILE, len: 0 });
+        let tail = read_all(start, FILE, &long);
+        assert!(tail_read(&tail, &stamp(FILE, &short)).reset);
+        let tail = read_all(tail, FILE, &short);
+        assert_eq!(costs(&tail), vec![Some(5.0)]);
+    }
+
+    #[test]
+    fn a_new_inode_resets_and_rereads() {
+        let old = lines(&[turn_line(1, 1, 1.0)]);
+        let new = lines(&[turn_line(2, 1, 4.0), turn_line(3, 2, 6.0)]);
+        let start = UsageTail::starting_at(&FileStamp { id: FILE, len: 0 });
+        let tail = read_all(start, FILE, &old);
+        let other = Some((1, 11));
+        assert_eq!(
+            tail_read(&tail, &stamp(other, &new)),
+            TailRead {
+                from: 0,
+                reset: true
+            }
+        );
+        let tail = read_all(tail, other, &new);
+        assert_eq!(costs(&tail), vec![Some(4.0), Some(6.0)]);
+        assert_eq!(tail.file, other);
+    }
+
+    #[test]
+    fn an_unchanged_file_reads_on_from_the_offset() {
+        let text = lines(&[turn_line(1, 1, 1.0)]);
+        let tail = read_all(
+            UsageTail::starting_at(&FileStamp { id: FILE, len: 0 }),
+            FILE,
+            &text,
+        );
+        assert_eq!(
+            tail_read(&tail, &stamp(FILE, &text)),
+            TailRead {
+                from: text.len() as u64,
+                reset: false
+            }
+        );
+    }
+
+    #[test]
+    fn interleaved_runs_keep_only_the_own_rows_across_absorbs() {
+        let first = lines(&[run_line("other", 1, 1, 9.0), turn_line(2, 1, 2.0)]);
+        let all = format!(
+            "{first}{}",
+            lines(&[run_line("other", 3, 2, 11.0), turn_line(4, 2, 3.0)])
+        );
+        let tail = read_all(
+            UsageTail::starting_at(&FileStamp { id: FILE, len: 0 }),
+            FILE,
+            &first,
+        );
+        let tail = read_all(tail, FILE, &all);
+        assert_eq!(costs(&tail), vec![Some(2.0), Some(3.0)]);
+    }
+
+    #[test]
+    fn a_ping_after_a_turn_counts_in_the_session_cost() {
+        let first = lines(&[turn_line(1, 1, 1.0)]);
+        let all = format!("{first}{}", lines(&[ping_line(2, 1.2)]));
+        let tail = read_all(
+            UsageTail::starting_at(&FileStamp { id: FILE, len: 0 }),
+            FILE,
+            &first,
+        );
+        let tail = read_all(tail, FILE, &all);
+        let usage = thread_usage(&tail.rows).unwrap();
+        assert_eq!(usage.cost.unwrap().total, 1.2);
+    }
+
+    #[test]
+    fn a_start_offset_inside_a_line_skips_the_fragment() {
+        let text = lines(&[turn_line(1, 1, 1.0), turn_line(2, 2, 2.0)]);
+        let mid = FileStamp { id: FILE, len: 20 };
+        let tail = read_all(UsageTail::starting_at(&mid), FILE, &text);
+        assert_eq!(costs(&tail), vec![Some(2.0)]);
+        assert_eq!(tail.offset, text.len() as u64);
+    }
+
+    #[test]
+    fn starting_at_a_stamp_begins_at_its_end_with_no_rows() {
+        let tail = UsageTail::starting_at(&FileStamp { id: FILE, len: 7 });
+        assert_eq!((tail.file, tail.offset, tail.rows.len()), (FILE, 7, 0));
+    }
+
+    #[test]
+    fn a_chunk_without_a_newline_consumes_nothing() {
+        let stamp = FileStamp { id: FILE, len: 5 };
+        let tail = UsageTail::starting_at(&FileStamp { id: FILE, len: 0 });
+        let read = tail_read(&tail, &stamp);
+        let tail = absorb_usage(tail, &stamp, read, b"{\"kind", RUN);
+        assert_eq!(tail.offset, 0);
+        assert!(tail.rows.is_empty());
     }
 
     #[test]
@@ -598,15 +812,15 @@ mod tests {
             time(4).to_rfc3339()
         );
         let text = lines(&[turn_line(1, 4, 1.0), last]);
-        let data = thread_usage(&text, RUN).unwrap();
+        let data = thread_usage(&session_rows(&text, RUN)).unwrap();
         assert_eq!(data.process_turn, 1);
         assert_eq!(data.context_tokens, Some(1000));
         assert!(data.write_heavy);
         assert_eq!(data.request_at, Some(time(4)));
         assert_eq!(data.reset, Some(ResetReason::Turns));
         assert_eq!(data.cost.unwrap().total, 3.0);
-        assert_eq!(thread_usage(&text, "other"), None);
-        assert_eq!(thread_usage("", RUN), None);
+        assert_eq!(thread_usage(&session_rows(&text, "other")), None);
+        assert_eq!(thread_usage(&[]), None);
     }
 
     #[test]

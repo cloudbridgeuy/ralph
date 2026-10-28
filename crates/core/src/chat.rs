@@ -215,11 +215,13 @@ fn allowed_tools(config: &Value) -> String {
         .join(",")
 }
 
-pub fn build_nap_args(store: &Path) -> Vec<OsString> {
+pub fn build_nap_args(store: &Path, run: &str) -> Vec<OsString> {
     vec![
         "chat-nap".into(),
         "--store".into(),
         store.as_os_str().to_owned(),
+        "--run".into(),
+        run.into(),
     ]
 }
 
@@ -649,10 +651,10 @@ mod tests {
     }
 
     #[test]
-    fn build_nap_args_passes_the_store() {
+    fn build_nap_args_passes_the_store_and_run() {
         assert_eq!(
-            build_nap_args(Path::new("/chat store")),
-            ["chat-nap", "--store", "/chat store"].map(OsString::from)
+            build_nap_args(Path::new("/chat store"), "42-t"),
+            ["chat-nap", "--store", "/chat store", "--run", "42-t"].map(OsString::from)
         );
     }
 

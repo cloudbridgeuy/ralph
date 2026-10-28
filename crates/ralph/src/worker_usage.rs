@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct UsageTarget {
     pub worker: String,
     pub seen: PathBuf,
+    pub store: Option<PathBuf>,
 }
 
 fn read_or_empty(path: &Path) -> io::Result<String> {
@@ -63,10 +64,12 @@ fn record(
             turn_id,
         };
         let session_id = Some(session.session_id.clone());
-        append_usage(
-            usage_file,
-            &worker_usage_record(kind, at.clone(), session_id, row),
-        )?;
+        let mut usage = worker_usage_record(kind, at.clone(), session_id, row);
+        usage.store = target
+            .store
+            .as_ref()
+            .map(|store| store.to_string_lossy().into_owned());
+        append_usage(usage_file, &usage)?;
     }
     if found.recorded.is_empty() {
         return Ok(());
@@ -118,6 +121,7 @@ mod tests {
         let target = UsageTarget {
             worker: "w1".into(),
             seen: dir.path().join("workers").join("w1.usage-seen"),
+            store: Some(dir.path().to_path_buf()),
         };
         let usage_file = dir.path().join("usage.jsonl");
         let payload = format!(
@@ -130,6 +134,7 @@ mod tests {
         assert_eq!(written.lines().count(), 2);
         assert!(written.contains(r#""kind":"worker""#));
         assert!(written.contains(r#""turn_id":3"#));
+        assert!(written.contains(&format!(r#""store":{:?}"#, dir.path().to_string_lossy())));
         assert_eq!(
             fs::read_to_string(&target.seen).unwrap(),
             "m1

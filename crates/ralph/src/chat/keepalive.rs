@@ -35,6 +35,7 @@ pub(super) struct KeepaliveWatch {
     pub(super) keeps: Mutex<Keeps>,
     pub(super) identity: Arc<Mutex<IterationMetadata>>,
     pub(super) run: String,
+    pub(super) store: String,
 }
 
 impl KeepaliveWatch {
@@ -107,6 +108,7 @@ impl KeepaliveWatch {
         };
         record.request_at = result.request_at.map(|at| at.to_rfc3339());
         record.run = Some(self.run.clone());
+        record.store = Some(self.store.clone());
         warn_if_err(
             append_usage(&usage_path(), &record),
             "Failed to record keepalive ping usage",
