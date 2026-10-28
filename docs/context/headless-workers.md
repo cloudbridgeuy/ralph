@@ -172,7 +172,7 @@ The 300 s default of `worker_quiet_secs` was not measured for Codex.
 
 NOT-TESTED, because the case did not arise and was not forced: file-change approval, permissions grant, elicitation, the idle `-32600` interrupt path, an unknown interrupt outcome (missing reply), and resume with missing history.
 
-At probe time ralph did not map 15 notification methods, for example `item/agentMessage/delta`, `thread/tokenUsage/updated` and `account/rateLimits/updated`. Since GUZ-1033 `thread/tokenUsage/updated` and `model/rerouted` are mapped: they feed the worker usage rows (see ralph-chat.md). Every other unmapped method is logged once per worker with tag `unmapped`.
+At probe time ralph did not map 15 notification methods, for example `item/agentMessage/delta`, `thread/tokenUsage/updated` and `account/rateLimits/updated`. Since GUZ-1033 `thread/tokenUsage/updated` and `model/rerouted` are mapped: they feed the worker usage rows (see ralph-chat.md). codex sends `thread/tokenUsage/updated` again with an unchanged `last` on rate-limit updates and on resume, so ralph counts `total` deltas, and only for the bound turn. Every other unmapped method is logged once per worker with tag `unmapped`.
 
 Regression, one spawn, report and close each, all PASS: Cursor (`agent` 2026.10.14), opencode v2.1.4 and Claude 2.1.309. The first opencode id failed with `LocationNotFoundError` for a directory of an older probe (inferred: id collision with a stale opencode session); a new id worked.
 
