@@ -125,6 +125,10 @@ impl Command {
                     "/workers <id>",
                     "one worker in detail with its status and last 5 reports",
                 ),
+                (
+                    "/workers costs",
+                    "all-time token totals by harness and model from the global usage record, closed workers included; main is the chat thread with its keepalive pings, nap the memory summaries; RUNS counts chat processes, naps or worker sessions; USD is n/a where no price is recorded and the total ends in + when part is unknown; no turn",
+                ),
             ],
             Command::Hold => &[
                 (

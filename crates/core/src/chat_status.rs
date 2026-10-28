@@ -88,6 +88,7 @@ pub enum Route {
     Schedule(ScheduleCommand),
     Diff(DiffArgs),
     Workers(Option<String>),
+    WorkerCosts,
     Hold(HoldFilter),
     Help,
     Ignore,
@@ -97,6 +98,7 @@ impl Route {
     pub fn runs_mid_turn(&self) -> bool {
         match self {
             Route::Workers(_)
+            | Route::WorkerCosts
             | Route::PeekInbox(_)
             | Route::ListInbox
             | Route::Help
@@ -154,10 +156,13 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
     }
 }
 
+const WORKER_COSTS: &str = "costs";
+
 fn workers_route(args: &str, line: &str) -> Route {
     let mut tokens = args.split_whitespace();
     match (tokens.next(), tokens.next()) {
         (None, _) => Route::Workers(None),
+        (Some(WORKER_COSTS), None) => Route::WorkerCosts,
         (Some(id), None) => Route::Workers(Some(scheduled_worker_id(id))),
         _ => Route::Send(line.to_string()),
     }

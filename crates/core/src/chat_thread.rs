@@ -34,10 +34,18 @@ pub struct UsageLine {
     pub input_tokens: u64,
     pub cache_creation_input_tokens: u64,
     pub cache_read_input_tokens: u64,
+    pub output_tokens: u64,
     pub process_turn: Option<u64>,
     pub request_at: Option<String>,
     pub reset: Option<ResetReason>,
     pub run: Option<String>,
+    pub worker_id: Option<String>,
+    pub session_id: Option<String>,
+    pub harness: Option<String>,
+    pub model: Option<String>,
+    pub reasoning_tokens: Option<u64>,
+    pub cache_write_5m: Option<u64>,
+    pub cache_write_1h: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

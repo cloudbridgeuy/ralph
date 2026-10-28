@@ -1,5 +1,6 @@
 use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::chat::inbox::Display;
+use crate::chat::memory::{load_usage, usage_path};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
@@ -14,6 +15,7 @@ use ralph_core::worker::{
     gone_path, sent_path, spawn_record_path, status_path, unreported_path, waiting_path,
     worktree_for_branch, ActivityMark, HarnessId, StatusLine, Ticket,
 };
+use ralph_core::worker_costs::costs_view;
 use ralph_core::workers_view::{
     count_untracked, detail_view, lines_text, not_live, parse_head, parse_numstat, workers_view,
     Diff, Lookup, ReportLine, Span, Tone, View, WorkerDetail, WorkerRow,
@@ -226,6 +228,20 @@ fn shown(view: &View, display: &Display) -> String {
             "{}\n",
             paint_lines(lines, &display.theme.palette, display.color)
         ),
+    }
+}
+
+pub(super) fn costs(display: &Display) {
+    match load_usage(&usage_path()) {
+        Ok(usage) => print!(
+            "{}",
+            render_markdown(
+                &display.ctx,
+                &costs_view(&usage),
+                &table_theme(display.theme)
+            )
+        ),
+        Err(error) => println!("Could not read the usage record: {error}"),
     }
 }
 

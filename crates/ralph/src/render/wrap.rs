@@ -24,22 +24,40 @@ fn capped_width(terminal: usize, cap: Option<usize>) -> usize {
     cap.map_or(terminal, |cap| cap.min(terminal))
 }
 
+enum Piece<'s> {
+    Text(FmtComposite<'s>),
+    Table(Vec<FmtLine<'s>>),
+}
+
+fn pieces(lines: Vec<FmtLine<'_>>) -> Vec<Piece<'_>> {
+    let mut pieces = Vec::new();
+    for line in lines {
+        match line {
+            FmtLine::Normal(composite) => pieces.push(Piece::Text(composite)),
+            other => match pieces.last_mut() {
+                Some(Piece::Table(run)) => run.push(other),
+                _ => pieces.push(Piece::Table(vec![other])),
+            },
+        }
+    }
+    pieces
+}
+
 pub fn render_prose(skin: &MadSkin, src: &str, width: usize) -> String {
-    let mut fitted_tables = skin
-        .text(src, Some(width))
-        .lines
+    let mut fitted_tables = pieces(skin.text(src, Some(width)).lines)
         .into_iter()
-        .filter(|line| !matches!(line, FmtLine::Normal(_)));
-    let lines = skin
-        .text(src, None)
-        .lines
+        .filter_map(|piece| match piece {
+            Piece::Table(run) => Some(run),
+            Piece::Text(_) => None,
+        });
+    let lines = pieces(skin.text(src, None).lines)
         .into_iter()
-        .flat_map(|line| match line {
-            FmtLine::Normal(composite) => wrap_composite(composite, width, skin)
+        .flat_map(|piece| match piece {
+            Piece::Text(composite) => wrap_composite(composite, width, skin)
                 .into_iter()
                 .map(FmtLine::Normal)
                 .collect(),
-            other => vec![fitted_tables.next().unwrap_or(other)],
+            Piece::Table(run) => fitted_tables.next().unwrap_or(run),
         })
         .collect();
     FmtText {
@@ -292,6 +310,15 @@ mod tests {
             "{rendered}"
         );
         assert!(rendered.contains('│'));
+    }
+
+    #[test]
+    fn prose_keeps_every_row_when_fitting_wraps_cells() {
+        let skin = markdown_skin(&Palette::default());
+        let src = "|a|b|\n|-|-|\n|one two three four|five six seven eight|\n|last|row|\n";
+        let rendered = strip_ansi(&render_prose(&skin, src, 24));
+        assert!(rendered.contains("last"), "{rendered}");
+        assert!(rendered.contains("eight"), "{rendered}");
     }
 
     #[test]

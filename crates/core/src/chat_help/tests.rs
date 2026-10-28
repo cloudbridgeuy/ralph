@@ -280,6 +280,13 @@ fn help_topic_points_to_matching_config_section() {
 }
 
 #[test]
+fn workers_help_lists_costs() {
+    assert!(help_topic(Some("workers"))
+        .unwrap()
+        .contains("/workers costs"));
+}
+
+#[test]
 fn unknown_help_topic_lists_every_command() {
     let error = help_topic(Some("nope")).unwrap_err();
     assert!(error.starts_with("Unknown help topic 'nope'."));

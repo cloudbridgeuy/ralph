@@ -1,0 +1,181 @@
+use super::*;
+use serde_json::{json, Value};
+
+fn jsonl(rows: &[Value]) -> String {
+    rows.iter().map(|row| format!("{row}\n")).collect()
+}
+
+fn turn(run: &str, process_turn: u64, cost: f64) -> Value {
+    json!({
+        "kind": "turn", "trigger": "user", "run": run, "process_turn": process_turn,
+        "cost_usd": cost, "input_tokens": 10, "output_tokens": 5,
+        "cache_creation_input_tokens": 100, "cache_read_input_tokens": 1000,
+    })
+}
+
+fn worker(id: &str, session: &str, model: &str) -> Value {
+    json!({
+        "kind": "worker", "worker_id": id, "turn_id": 1, "harness": "claude",
+        "model": model, "session_id": session, "cost_usd": null,
+        "input_tokens": 3, "output_tokens": 7, "cache_creation_input_tokens": 50,
+        "cache_read_input_tokens": 400, "cache_write_5m": 20, "cache_write_1h": 30,
+    })
+}
+
+fn nap(model: &str, cost: f64) -> Value {
+    json!({
+        "kind": "nap", "harness": "claude", "model": model, "cost_usd": cost,
+        "input_tokens": 1, "output_tokens": 2,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+    })
+}
+
+fn find<'a>(rows: &'a [CostRow], harness: &str, model: &str) -> &'a CostRow {
+    rows.iter()
+        .find(|row| row.harness == harness && row.model == model)
+        .unwrap()
+}
+
+fn close(usd: Usd, expected: f64) -> bool {
+    usd.known
+        .is_some_and(|known| (known - expected).abs() < 1e-9)
+}
+
+#[test]
+fn groups_by_harness_and_model_with_main_and_nap_first() {
+    let usage = jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        nap("claude-haiku-5-5", 0.01),
+        turn("r1", 1, 0.5),
+        worker("GUZ-2", "s2", "claude-sonnet-5-5"),
+    ]);
+    let keys: Vec<(String, String)> = cost_rows(&usage)
+        .into_iter()
+        .map(|row| (row.harness, row.model))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            ("main".into(), "unknown".into()),
+            ("nap".into(), "claude-haiku-5-5".into()),
+            ("claude".into(), "claude-opus-5-5".into()),
+            ("claude".into(), "claude-sonnet-5-5".into()),
+        ]
+    );
+}
+
+#[test]
+fn main_rows_split_by_model() {
+    let mut opus = turn("r1", 1, 0.5);
+    opus["model"] = json!("claude-opus-5-5");
+    let rows = cost_rows(&jsonl(&[opus, turn("r2", 1, 0.25)]));
+    assert!(close(find(&rows, "main", "claude-opus-5-5").usd, 0.5));
+    assert!(close(find(&rows, "main", "unknown").usd, 0.25));
+}
+
+#[test]
+fn main_cost_takes_the_last_running_total_per_run() {
+    let rows = cost_rows(&jsonl(&[
+        turn("r1", 1, 0.1),
+        turn("r1", 2, 0.3),
+        turn("r2", 1, 0.2),
+    ]));
+    let main = find(&rows, "main", "unknown");
+    assert_eq!(main.runs, Some(2));
+    assert!(close(main.usd, 0.5));
+    assert!(!main.usd.missing);
+}
+
+#[test]
+fn main_cost_sums_every_process_of_a_run() {
+    let rows = cost_rows(&jsonl(&[
+        turn("r1", 1, 0.1),
+        turn("r1", 2, 0.3),
+        turn("r1", 1, 0.05),
+        turn("r1", 2, 0.15),
+    ]));
+    let main = find(&rows, "main", "unknown");
+    assert_eq!(main.runs, Some(1));
+    assert!(close(main.usd, 0.45));
+}
+
+#[test]
+fn pings_count_toward_the_main_cost() {
+    let ping = json!({
+        "kind": "ping", "run": "r1", "cost_usd": 0.4, "input_tokens": 0,
+        "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 9,
+    });
+    let rows = cost_rows(&jsonl(&[turn("r1", 1, 0.3), ping]));
+    let main = find(&rows, "main", "unknown");
+    assert!(close(main.usd, 0.4));
+    assert_eq!(main.tokens.cache_read, 1009);
+}
+
+#[test]
+fn a_reused_worker_id_counts_each_session() {
+    let rows = cost_rows(&jsonl(&[
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+        worker("GUZ-1", "s2", "claude-opus-5-5"),
+    ]));
+    let claude = find(&rows, "claude", "claude-opus-5-5");
+    assert_eq!(claude.runs, Some(2));
+    assert_eq!(claude.tokens.write_5m, Some(60));
+    assert_eq!(claude.tokens.write_1h, Some(90));
+    assert_eq!(claude.tokens.output, 21);
+}
+
+#[test]
+fn unpriced_worker_rows_show_no_price() {
+    let rows = cost_rows(&jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]));
+    assert_eq!(find(&rows, "claude", "claude-opus-5-5").usd.text(), "n/a");
+}
+
+#[test]
+fn nap_runs_count_rows_and_sum_cost() {
+    let rows = cost_rows(&jsonl(&[
+        nap("claude-haiku-5-5", 0.01),
+        nap("claude-haiku-5-5", 0.02),
+    ]));
+    let nap = find(&rows, "nap", "claude-haiku-5-5");
+    assert_eq!(nap.runs, Some(2));
+    assert_eq!(nap.usd.text(), "0.03");
+}
+
+#[test]
+fn skips_unknown_kinds_and_bad_lines() {
+    let usage = format!("not json\n{}\n", json!({"kind": "other"}));
+    assert_eq!(costs_view(&usage), NO_USAGE);
+    assert_eq!(costs_view(""), NO_USAGE);
+}
+
+#[test]
+fn table_marks_a_partly_unknown_total() {
+    let view = costs_view(&jsonl(&[
+        turn("r1", 1, 1.5),
+        worker("GUZ-1", "s1", "claude-opus-5-5"),
+    ]));
+    let lines: Vec<&str> = view.lines().collect();
+    assert_eq!(lines.len(), 5);
+    assert!(lines[0].starts_with("| HARNESS | MODEL | RUNS |"));
+    assert_eq!(
+        lines[2],
+        "| main | unknown | 1 | 10 | 5 | 1.0k | 100 | – | – | – | 1.50 |"
+    );
+    assert_eq!(
+        lines[3],
+        "| claude | claude-opus-5-5 | 1 | 3 | 7 | 400 | 50 | 20 | 30 | – | n/a |"
+    );
+    assert_eq!(
+        lines[4],
+        "| total |  |  | 13 | 12 | 1.4k | 150 | 20 | 30 | – | 1.50+ |"
+    );
+}
+
+#[test]
+fn counts_scale_to_one_decimal() {
+    assert_eq!(count(999), "999");
+    assert_eq!(count(1_250), "1.2k");
+    assert_eq!(count(3_100_000), "3.1M");
+    assert_eq!(count(2_000_000_000), "2.0B");
+}
