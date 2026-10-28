@@ -3,8 +3,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-const SOCKET_BASE_MAX: usize = 84;
-const SOCKET_PATH_MAX: usize = 92;
+const SOCKET_BASE_MAX: usize = 83;
+const SOCKET_PATH_MAX: usize = 91;
 const SOCKET_HASH_CHARS: usize = 7;
 
 #[derive(Deserialize)]
@@ -160,19 +160,19 @@ mod tests {
         let cases = [
             (
                 "/Users/guzmanmonne/Projects/Rust/ralph/.worktrees/cursor-smoke",
-                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees--11db232",
+                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees-11db232",
             ),
             (
                 "/Users/guzmanmonne/Projects/Rust/ralph/.worktrees/cursor-smoke2",
-                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees--994d430",
+                "/Users/guzmanmonne/.cursor/projects/Users-guzmanmonne-Projects-Rust-ralph-worktrees-994d430",
             ),
             (
                 "/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpHVgYgu",
-                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0-f404dd6",
+                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-f404dd6",
             ),
             (
                 "/private/var/folders/g9/4b8tv1yj0tnfsp21spqtx5zr0000gp/T/.tmpX4HBM2",
-                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0-bc092f5",
+                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-bc092f5",
             ),
         ];
         for (real, socket) in cases {

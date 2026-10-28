@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(
             cursor_verify_leftover(home, real, &cursor_verify_project(home, dir)),
             Some(PathBuf::from(
-                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr0-bc092f5"
+                "/Users/guzmanmonne/.cursor/projects/private-var-folders-g9-4b8tv1yj0tnfsp21spqtx5zr-bc092f5"
             ))
         );
         let short = Path::new("/tmp/x");
