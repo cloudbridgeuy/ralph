@@ -1,4 +1,4 @@
-use super::{post_prompt, OpencodeHost, Session, Target};
+use super::{post_prompt, record_usage, OpencodeHost, Session, Target};
 use crate::acp_worker::Events;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::warn::warn;
@@ -6,8 +6,8 @@ use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     create_session_body, interrupt_result_text, opencode_session_id, request_stale, task_prompt,
-    HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord, OpencodeSpawn, TurnState,
-    WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR,
+    HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord, OpencodeSpawn, OpencodeTurnUsage,
+    TurnState, WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR,
     OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
 };
 use std::fs;
@@ -155,6 +155,7 @@ impl OpencodeHost {
                 heartbeat,
                 state: HeadlessState::default(),
                 events: Events::default(),
+                usage: OpencodeTurnUsage::new(&request.model),
             },
         );
         if let Err(message) = post_prompt(&api, &session_id, &text) {
@@ -287,7 +288,10 @@ impl OpencodeHost {
             .send(WorkerCommand::Close)
             .inspect(|()| {
                 self.apply_events(id, &session_id);
-                self.sessions().remove(&session_id);
+                let removed = self.sessions().remove(&session_id);
+                if let Some(mut session) = removed {
+                    record_usage(&session_id, &session.target, None, &session.usage.take());
+                }
             })
     }
 

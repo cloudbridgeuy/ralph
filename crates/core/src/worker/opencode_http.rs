@@ -5,10 +5,12 @@ use serde_json::{json, Value};
 mod handoff;
 mod server;
 mod turns;
+mod usage;
 
 pub use handoff::*;
 pub use server::*;
 pub use turns::*;
+pub use usage::*;
 
 const FALLBACK_FAILURE: &str = "opencode turn failed";
 

@@ -1,6 +1,7 @@
 use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, process_start, write_file};
+use crate::opencode_usage::{record_opencode_usage, OpencodeTurn};
 use crate::process_tree::process_table;
 use crate::transport::http::HttpSse;
 use crate::transport::stdio::stop_child;
@@ -11,14 +12,15 @@ use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::Scope;
 use ralph_core::worker::{
-    advance, descendants, hex_encode, opencode_failure_report, opencode_serve_command,
-    opencode_server_log, opencode_server_record_path, opencode_session_path, parse_event,
-    reconcile, reconnect_delay, reduce, running_sessions, server_record_fate, server_record_pid,
-    server_record_usable, session_activity, session_missing, session_update, spawn_failure,
-    stale_server_group, start_failure, turn_result, ApiData, Effect, HandoffFiles, HeadlessState,
-    HeadlessWorker, OpencodeRecord, PermissionAsked, RecordFate, ServerEvent, ServerRecord,
-    ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState,
-    WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
+    advance, decode_opencode_usage, descendants, hex_encode, opencode_failure_report,
+    opencode_serve_command, opencode_server_log, opencode_server_record_path,
+    opencode_session_path, parse_event, reconcile, reconnect_delay, reduce, running_sessions,
+    server_record_fate, server_record_pid, server_record_usable, session_activity, session_missing,
+    session_update, spawn_failure, stale_server_group, start_failure, turn_result, ApiData, Effect,
+    HandoffFiles, HeadlessState, HeadlessWorker, OpencodeModelUsage, OpencodeRecord,
+    OpencodeTurnUsage, PermissionAsked, RecordFate, ServerEvent, ServerRecord, ServerRecordFacts,
+    SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerCommand,
+    WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
     OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
 };
 use serde_json::json;
@@ -300,6 +302,22 @@ struct Session {
     heartbeat: Arc<Heartbeat>,
     state: HeadlessState,
     events: Events,
+    usage: OpencodeTurnUsage,
+}
+
+fn record_usage(
+    session_id: &str,
+    target: &Target,
+    turn_id: Option<u64>,
+    rows: &[OpencodeModelUsage],
+) {
+    let turn = OpencodeTurn {
+        worker: &target.worker,
+        session_id,
+        store: target.inbox.parent(),
+        turn_id,
+    };
+    record_opencode_usage(&turn, rows);
 }
 
 enum Feed {
@@ -351,6 +369,7 @@ fn load_sessions(store: &Path, snapshots: bool) -> HashMap<String, Session> {
                 id: id.clone(),
                 worktree: record.cwd,
             });
+            let usage = OpencodeTurnUsage::new(&record.model);
             let session = Session {
                 target: Target {
                     markers,
@@ -363,6 +382,7 @@ fn load_sessions(store: &Path, snapshots: bool) -> HashMap<String, Session> {
                 heartbeat,
                 state: HeadlessState::default(),
                 events: Events::default(),
+                usage,
             };
             Some((record.session_id, session))
         })
@@ -465,7 +485,7 @@ impl OpencodeHost {
     }
 
     fn lose_sessions(&self) {
-        let lost: Vec<(String, Target, Vec<Effect>)> = self
+        let lost: Vec<(String, Target, Vec<Effect>, Vec<OpencodeModelUsage>)> = self
             .sessions()
             .iter_mut()
             .map(|(id, session)| {
@@ -473,15 +493,18 @@ impl OpencodeHost {
                     id.clone(),
                     session.target.clone(),
                     session.turn.server_lost(),
+                    session.usage.take(),
                 )
             })
             .collect();
-        for (id, target, effects) in lost {
-            self.run(&id, &target, effects);
+        for (id, target, effects, rows) in lost {
+            let turn_id = self.run(&id, &target, effects);
+            record_usage(&id, &target, turn_id, &rows);
         }
     }
 
     fn apply(&self, session_id: &str, update: SessionUpdate) {
+        let ended = matches!(update, SessionUpdate::TurnEnded(_));
         let planned = {
             let mut sessions = self.sessions();
             sessions.get_mut(session_id).map(|session| {
@@ -489,14 +512,18 @@ impl OpencodeHost {
                     reported: session.target.markers.reported.exists(),
                     closing: self.closed(),
                 };
-                (
-                    session.target.clone(),
-                    advance(&mut session.turn, update, facts),
-                )
+                let effects = advance(&mut session.turn, update, facts);
+                let rows = if ended {
+                    session.usage.take()
+                } else {
+                    Vec::new()
+                };
+                (session.target.clone(), effects, rows)
             })
         };
-        if let Some((target, effects)) = planned {
-            self.run(session_id, &target, effects);
+        if let Some((target, effects, rows)) = planned {
+            let turn_id = self.run(session_id, &target, effects);
+            record_usage(session_id, &target, turn_id, &rows);
         }
     }
 
@@ -528,8 +555,9 @@ impl OpencodeHost {
         events
     }
 
-    fn run(&self, session_id: &str, target: &Target, effects: Vec<Effect>) {
+    fn run(&self, session_id: &str, target: &Target, effects: Vec<Effect>) -> Option<u64> {
         let markers = &target.markers;
+        let mut turn_id = None;
         let worker = self.worker(&target.worker, session_id);
         for effect in effects {
             match effect {
@@ -549,13 +577,16 @@ impl OpencodeHost {
                 Effect::Problem(problem) => post_problem(target, &problem),
                 Effect::Send(text) => self.send(session_id, target, &text),
                 Effect::Snapshot => {
-                    if let Some(changes) = target.site.as_ref().and_then(WorkerChanges::open) {
-                        changes.snapshot_turn_or_warn();
-                    }
+                    turn_id = target
+                        .site
+                        .as_ref()
+                        .and_then(WorkerChanges::open)
+                        .and_then(|changes| changes.snapshot_turn_or_warn());
                 }
             }
         }
         self.apply_events(&target.worker, session_id);
+        turn_id
     }
 
     fn send(&self, session_id: &str, target: &Target, text: &str) {
@@ -574,6 +605,11 @@ impl OpencodeHost {
         let Some(session_id) = event.session_id() else {
             return;
         };
+        if let Some(spend) = decode_opencode_usage(event) {
+            if let Some(session) = self.sessions().get_mut(session_id) {
+                session.usage.observe(spend);
+            }
+        }
         let update = session_update(event);
         let heartbeat = self
             .sessions()
