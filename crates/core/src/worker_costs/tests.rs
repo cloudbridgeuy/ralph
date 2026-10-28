@@ -159,11 +159,13 @@ fn unknown_model_shows_no_price() {
 }
 
 #[test]
-fn a_cache_write_tier_gap_shows_no_price() {
+fn a_cache_write_tier_gap_prices_the_rest() {
     let mut gap = worker("GUZ-1", "s1", "claude-opus-5-5");
     gap["cache_creation_input_tokens"] = json!(60);
     let rows = rows_of(&jsonl(&[gap]));
-    assert_eq!(find(&rows, "claude", "claude-opus-5-5").usd.text(), "n/a");
+    let usd = find(&rows, "claude", "claude-opus-5-5").usd;
+    assert!(close(usd, 0.000572));
+    assert!(usd.missing);
 }
 
 #[test]
@@ -181,6 +183,52 @@ fn an_override_wins_over_the_table() {
     let usage = jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]);
     let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
     assert!(close(find(&rows, "claude", "claude-opus-5-5").usd, 0.003));
+}
+
+fn codex(model: &str) -> Value {
+    json!({
+        "kind": "worker", "worker_id": "GUZ-2", "turn_id": 1, "harness": "codex",
+        "model": model, "session_id": "th1", "cost_usd": null,
+        "input_tokens": 1_000_000, "output_tokens": 500_000, "reasoning_tokens": 400_000,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 2_000_000,
+    })
+}
+
+#[test]
+fn codex_rows_price_cached_input_and_skip_reasoning() {
+    let rows = rows_of(&jsonl(&[codex("gpt-6.1-sol")]));
+    assert!(close(find(&rows, "codex", "gpt-6.1-sol").usd, 7.2));
+}
+
+#[test]
+fn codex_luna_rows_use_the_luna_price() {
+    let rows = rows_of(&jsonl(&[codex("gpt-6-luna")]));
+    assert!(close(find(&rows, "codex", "gpt-6-luna").usd, 0.37));
+}
+
+#[test]
+fn codex_cache_write_without_a_tier_prices_the_rest() {
+    let mut row = codex("gpt-6.1-sol");
+    row["cache_creation_input_tokens"] = json!(10);
+    let rows = rows_of(&jsonl(&[row, codex("gpt-6.1-sol")]));
+    assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "14.40+");
+}
+
+#[test]
+fn an_override_wins_over_the_openai_table() {
+    let overrides = BTreeMap::from([(
+        "gpt-6.1-sol".to_string(),
+        PriceOverride {
+            input: 1.0,
+            cache_read: Some(0.0),
+            cache_write_5m: None,
+            cache_write_1h: None,
+            output: Some(0.0),
+        },
+    )]);
+    let usage = jsonl(&[codex("gpt-6.1-sol")]);
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    assert!(close(find(&rows, "codex", "gpt-6.1-sol").usd, 1.0));
 }
 
 #[test]
