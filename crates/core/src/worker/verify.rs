@@ -2,6 +2,7 @@ use crate::worker::BlockedContent;
 use serde::{Deserialize, Serialize};
 
 pub const VERIFIED_AGENTS_FILE: &str = "verified-agents.json";
+pub const CURSOR_VERIFY_HOOKS: &str = r#"{"version":1,"hooks":{"beforeShellExecution":[{"command":"echo '{\"permission\":\"ask\"}'"}]}}"#;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifiedAgent {
@@ -156,14 +157,14 @@ pub fn prompt_check(turn: &TurnSummary, ended: &str) -> CheckResult {
     }
 }
 
-pub fn permission_check(turn: &TurnSummary, ended: &str) -> CheckResult {
+pub fn permission_check(turn: &TurnSummary, ended: &str, setup: &str) -> CheckResult {
     let allowable = turn.permissions.first().map(|request| {
         request
             .options
             .iter()
             .any(|option| option.kind == "allow_once")
     });
-    match (allowable, turn.stopped_with(ended)) {
+    let mut result = match (allowable, turn.stopped_with(ended)) {
         (None, _) => CheckResult::fail("permission", "the agent sent no permission request"),
         (Some(false), _) => CheckResult::fail("permission", "the request had no allow_once option"),
         (Some(true), Err(message)) => CheckResult::fail("permission", message),
@@ -174,7 +175,9 @@ pub fn permission_check(turn: &TurnSummary, ended: &str) -> CheckResult {
                 turn.permissions.first().map_or("", |request| &request.tool)
             ),
         ),
-    }
+    };
+    result.detail = format!("{} (setup: {setup})", result.detail);
+    result
 }
 
 pub fn cancel_check(turn: &TurnSummary, cancelled: &str) -> CheckResult {
@@ -290,17 +293,31 @@ mod tests {
             prompt_check(&turn(Ok("cancelled"), 2, &[]), "end_turn").verdict,
             Verdict::Fail
         );
+        let permission = |kinds| permission_check(&turn(Ok("end_turn"), 1, kinds), "end_turn", "s");
+        assert_eq!(permission(&["allow_once"]).verdict, Verdict::Pass);
+        assert_eq!(permission(&[]).verdict, Verdict::Fail);
+        assert_eq!(permission(&["reject_once"]).verdict, Verdict::Fail);
+    }
+
+    #[test]
+    fn the_permission_check_names_its_setup_whatever_the_verdict() {
+        for kinds in [&["allow_once"][..], &[]] {
+            let result = permission_check(&turn(Ok("end_turn"), 1, kinds), "end_turn", "a hook");
+            assert!(
+                result.detail.ends_with(" (setup: a hook)"),
+                "{}",
+                result.detail
+            );
+        }
+    }
+
+    #[test]
+    fn the_cursor_verify_hook_asks_before_every_shell_command() {
+        let hooks: serde_json::Value = serde_json::from_str(CURSOR_VERIFY_HOOKS).unwrap();
+        assert_eq!(hooks["version"], 1);
         assert_eq!(
-            permission_check(&turn(Ok("end_turn"), 1, &["allow_once"]), "end_turn").verdict,
-            Verdict::Pass
-        );
-        assert_eq!(
-            permission_check(&turn(Ok("end_turn"), 1, &[]), "end_turn").verdict,
-            Verdict::Fail
-        );
-        assert_eq!(
-            permission_check(&turn(Ok("end_turn"), 1, &["reject_once"]), "end_turn").verdict,
-            Verdict::Fail
+            hooks["hooks"]["beforeShellExecution"][0]["command"],
+            r#"echo '{"permission":"ask"}'"#
         );
     }
 

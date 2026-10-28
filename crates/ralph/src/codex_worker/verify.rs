@@ -13,6 +13,7 @@ const REPLY_PROMPT: &str = "Reply with the single word: ok";
 const PERMISSION_PROMPT: &str =
     "Create a file named verify.txt in the current directory containing the word ok.";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
+const PERMISSION_SETUP: &str = "a read-only thread with approvalPolicy on-request";
 const ENDED: &str = "completed";
 const INTERRUPTED: &str = "interrupted";
 
@@ -111,6 +112,7 @@ fn live_checks(wire: &mut Wire, thread: &str, checks: &Checks, deadline: Instant
     checks.add(permission_check(
         &run_turn(wire, &run(Plan::Allow, PERMISSION_PROMPT)),
         ENDED,
+        PERMISSION_SETUP,
     ));
     checks.add(cancel_check(
         &run_turn(wire, &run(Plan::Cancel, CANCEL_PROMPT)),

@@ -2,7 +2,7 @@ use super::*;
 use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
     cancel_check, parse_agent_version, permission_check, prompt_check, BlockedContent, CheckResult,
-    TurnSummary, ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE,
+    TurnSummary, ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_VERIFY_HOOKS,
 };
 use std::sync::atomic::AtomicUsize;
 
@@ -10,8 +10,9 @@ const FREE_DEADLINE: Duration = Duration::from_secs(90);
 const LIVE_DEADLINE: Duration = Duration::from_secs(420);
 const KILL_GRACE: Duration = Duration::from_millis(200);
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
-const PERMISSION_PROMPT: &str =
-    "Create a file named verify.txt in the current directory containing the word ok.";
+const PERMISSION_PROMPT: &str = "Run the shell command `echo ok` and reply with its output.";
+const PERMISSION_SETUP: &str =
+    "the temporary directory's .cursor/hooks.json asks before every shell command";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
 const ENDED: &str = "end_turn";
 const CANCELLED: &str = "cancelled";
@@ -195,6 +196,7 @@ async fn run_checks(
         checks.add(permission_check(
             &session.turn(PERMISSION_PROMPT, Plan::Allow).await,
             ENDED,
+            PERMISSION_SETUP,
         ));
         checks.add(cancel_check(
             &session.turn(CANCEL_PROMPT, Plan::Cancel).await,
@@ -232,6 +234,13 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
         }),
         |version| format!("{version} (tested {})", agent.tested_version),
     )?;
+    let hooks = dir.join(".cursor");
+    let written = fs::create_dir_all(&hooks)
+        .and_then(|()| fs::write(hooks.join("hooks.json"), CURSOR_VERIFY_HOOKS))
+        .map_err(|error| format!("could not write {}: {error}", hooks.display()));
+    step(checks, "hooks", written, |()| {
+        "wrote .cursor/hooks.json in the temporary directory".to_string()
+    })?;
     let mut command = Command::new(agent.command);
     command.arg("acp").current_dir(dir);
     let spawned = spawn_piped(command)
