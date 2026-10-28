@@ -6,6 +6,7 @@ use crate::chat::cell::detach_from_terminal;
 use crate::chat::memory::usage_path;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
+use crate::paths::absolute_from;
 use crate::subprocess::kill_process_group;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
@@ -454,6 +455,7 @@ impl Workers {
     ) -> io::Result<PathBuf> {
         let dir = self.store_dir.join(WORKERS_DIR);
         fs::create_dir_all(&dir)?;
+        let usage = absolute_from(&usage_path(), &std::env::current_dir()?);
         let path = dir.join(format!("{id}.settings.json"));
         fs::write(
             &path,
@@ -464,7 +466,7 @@ impl Workers {
                 &UsageSink {
                     store: &self.store_dir,
                     worker: id,
-                    usage: &usage_path(),
+                    usage: &usage,
                 },
             )
             .to_string(),
