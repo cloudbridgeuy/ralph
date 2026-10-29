@@ -67,10 +67,13 @@ fn count(breakdown: &Value, key: &str) -> u64 {
 
 fn decode_call(last: &Value) -> CallTokens {
     let cached = count(last, "cachedInputTokens");
+    let written = count(last, "cacheWriteInputTokens");
     CallTokens {
-        input_uncached: count(last, "inputTokens").saturating_sub(cached),
+        input_uncached: count(last, "inputTokens")
+            .saturating_sub(cached)
+            .saturating_sub(written),
         cache_read: cached,
-        cache_write: count(last, "cacheWriteInputTokens"),
+        cache_write: written,
         output: count(last, "outputTokens"),
         reasoning: count(last, "reasoningOutputTokens"),
     }
@@ -173,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn the_last_breakdown_maps_input_minus_cached() {
+    fn the_last_breakdown_maps_input_minus_cached_and_written() {
         let params = updated(
             json!({"inputTokens": 100, "cachedInputTokens": 30, "cacheWriteInputTokens": 5, "outputTokens": 7, "reasoningOutputTokens": 2, "totalTokens": 107}),
             json!({}),
@@ -184,11 +187,28 @@ mod tests {
             panic!("not a call");
         };
         let usage = tokens.usage();
-        assert_eq!(usage.input_uncached, 70);
+        assert_eq!(usage.input_uncached, 65);
         assert_eq!(usage.cache_read, 30);
         assert_eq!(usage.cache_writes[0].tokens, 5);
         assert_eq!(usage.output, 7);
         assert_eq!(usage.reasoning, Some(2));
+    }
+
+    #[test]
+    fn cache_writes_inside_input_are_not_counted_as_input() {
+        let params = updated(
+            json!({"inputTokens": 100, "cachedInputTokens": 40, "cacheWriteInputTokens": 60}),
+            json!({}),
+        );
+        let Some(UsageEvent::Call { last: tokens, .. }) =
+            decode_usage_event(TOKEN_USAGE_UPDATED, &params)
+        else {
+            panic!("not a call");
+        };
+        let usage = tokens.usage();
+        assert_eq!(usage.input_uncached, 0);
+        assert_eq!(usage.cache_read, 40);
+        assert_eq!(usage.cache_writes[0].tokens, 60);
     }
 
     #[test]
