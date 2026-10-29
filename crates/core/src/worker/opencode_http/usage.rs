@@ -122,7 +122,7 @@ impl OpencodeTurnUsage {
     pub fn take(&mut self) -> Vec<OpencodeModelUsage> {
         std::mem::take(&mut self.by_model)
             .into_iter()
-            .filter(|(_, spend)| spend.tokens != StepTokens::default())
+            .filter(|(_, spend)| spend.tokens != StepTokens::default() || spend.cost > 0.0)
             .map(|(model, spend)| OpencodeModelUsage {
                 row: ModelUsage {
                     model,
@@ -158,6 +158,8 @@ mod tests {
 
     const STARTED: &str = r#"data: {"id":"evt_1","type":"session.step.started","data":{"sessionID":"ses_a","assistantMessageID":"msg_1","model":{"id":"gpt-6.1-sol","providerID":"openai","variant":"default"}}}"#;
 
+    const STARTED_NO_PROVIDER: &str = r#"data: {"id":"evt_1","type":"session.step.started","data":{"sessionID":"ses_a","model":{"id":"gpt-6.1-sol"}}}"#;
+
     const ENDED: &str = r#"data: {"id":"evt_2","type":"session.step.ended","data":{"sessionID":"ses_a","assistantMessageID":"msg_1","finish":"tool-calls","cost":0,"tokens":{"input":204,"output":23,"reasoning":40,"cache":{"read":12928,"write":0}}}}"#;
 
     const FAILED_WITH_TOKENS: &str = r#"data: {"id":"evt_3","type":"session.step.failed","data":{"sessionID":"ses_a","assistantMessageID":"msg_2","error":{"type":"aborted","message":"Step interrupted"},"cost":0.25,"tokens":{"input":10,"output":1,"reasoning":0,"cache":{"read":0,"write":7}}}}"#;
@@ -192,18 +194,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_prefixes_the_step_model_with_its_provider() {
-        assert_eq!(
-            decode(STARTED),
-            Some(OpencodeUsageEvent::Model("openai/gpt-6.1-sol".into()))
-        );
-    }
-
-    #[test]
     fn decode_keeps_the_bare_id_without_a_provider() {
-        let line = r#"data: {"id":"evt_1","type":"session.step.started","data":{"sessionID":"ses_a","model":{"id":"gpt-6.1-sol"}}}"#;
         assert_eq!(
-            decode(line),
+            decode(STARTED_NO_PROVIDER),
             Some(OpencodeUsageEvent::Model("gpt-6.1-sol".into()))
         );
     }
@@ -250,6 +243,21 @@ mod tests {
         let zero = r#"data: {"id":"evt_9","type":"session.step.ended","data":{"sessionID":"ses_a","assistantMessageID":"msg_9","finish":"stop","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}"#;
         let mut turn = observed(&[STARTED, zero]);
         assert!(turn.take().is_empty());
+    }
+
+    #[test]
+    fn take_keeps_a_zero_token_spend_with_cost() {
+        let priced = r#"data: {"id":"evt_9","type":"session.step.ended","data":{"sessionID":"ses_a","assistantMessageID":"msg_9","finish":"stop","cost":0.25,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}"#;
+        let rows = observed(&[STARTED, priced]).take();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].cost_usd, Some(0.25));
+    }
+
+    #[test]
+    fn a_step_without_a_provider_keeps_the_bare_model_in_the_row() {
+        let rows = observed(&[STARTED_NO_PROVIDER, ENDED]).take();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].row.model, "gpt-6.1-sol");
     }
 
     #[test]
