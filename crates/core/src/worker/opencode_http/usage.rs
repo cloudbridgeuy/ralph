@@ -62,9 +62,15 @@ pub enum OpencodeUsageEvent {
 
 pub fn decode_opencode_usage(event: &ServerEvent) -> Option<OpencodeUsageEvent> {
     match event.kind.as_str() {
-        STEP_STARTED => event.data["model"]["id"]
-            .as_str()
-            .map(|id| OpencodeUsageEvent::Model(id.to_string())),
+        STEP_STARTED => {
+            let model = &event.data["model"];
+            let id = model["id"].as_str()?;
+            let name = match model["providerID"].as_str() {
+                Some(provider) => format!("{provider}/{id}"),
+                None => id.to_string(),
+            };
+            Some(OpencodeUsageEvent::Model(name))
+        }
         STEP_ENDED | STEP_FAILED => {
             let tokens = serde_json::from_value(event.data.get("tokens")?.clone()).ok()?;
             Some(OpencodeUsageEvent::Step {
@@ -96,9 +102,8 @@ pub struct OpencodeTurnUsage {
 
 impl OpencodeTurnUsage {
     pub fn new(configured: &str) -> Self {
-        let bare = configured.split_once('/').map_or(configured, |(_, id)| id);
         Self {
-            model: bare.to_string(),
+            model: configured.to_string(),
             by_model: BTreeMap::new(),
         }
     }
@@ -175,7 +180,7 @@ mod tests {
     fn decode_reads_the_step_model_and_tokens() {
         assert_eq!(
             decode(STARTED),
-            Some(OpencodeUsageEvent::Model("gpt-6.1-sol".into()))
+            Some(OpencodeUsageEvent::Model("openai/gpt-6.1-sol".into()))
         );
         let Some(OpencodeUsageEvent::Step { tokens, cost }) = decode(ENDED) else {
             panic!("not a step");
@@ -184,6 +189,23 @@ mod tests {
         assert_eq!(tokens.reasoning, 40);
         assert_eq!(tokens.cache.read, 12928);
         assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn decode_prefixes_the_step_model_with_its_provider() {
+        assert_eq!(
+            decode(STARTED),
+            Some(OpencodeUsageEvent::Model("openai/gpt-6.1-sol".into()))
+        );
+    }
+
+    #[test]
+    fn decode_keeps_the_bare_id_without_a_provider() {
+        let line = r#"data: {"id":"evt_1","type":"session.step.started","data":{"sessionID":"ses_a","model":{"id":"gpt-6.1-sol"}}}"#;
+        assert_eq!(
+            decode(line),
+            Some(OpencodeUsageEvent::Model("gpt-6.1-sol".into()))
+        );
     }
 
     #[test]
@@ -211,16 +233,16 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].row.model, "gpt-6-luna");
         assert_eq!(rows[0].row.usage.input_uncached, 10);
-        assert_eq!(rows[1].row.model, "gpt-6.1-sol");
+        assert_eq!(rows[1].row.model, "openai/gpt-6.1-sol");
         assert_eq!(rows[1].row.usage.input_uncached, 408);
         assert_eq!(rows[1].row.usage.cache_read, 25856);
         assert!(turn.take().is_empty());
     }
 
     #[test]
-    fn steps_before_a_start_use_the_bare_configured_model() {
+    fn steps_before_a_start_use_the_configured_model() {
         let rows = observed(&[ENDED]).take();
-        assert_eq!(rows[0].row.model, "gpt-6.1-sol");
+        assert_eq!(rows[0].row.model, "openai/gpt-6.1-sol");
     }
 
     #[test]
@@ -258,7 +280,7 @@ mod tests {
         assert_eq!(value["worker_id"], "w1");
         assert_eq!(value["turn_id"], 2);
         assert_eq!(value["harness"], "opencode");
-        assert_eq!(value["model"], "gpt-6.1-sol");
+        assert_eq!(value["model"], "openai/gpt-6.1-sol");
         assert_eq!(value["session_id"], "ses_a");
         assert_eq!(value["input_tokens"], 214);
         assert_eq!(value["cache_read_input_tokens"], 12928);

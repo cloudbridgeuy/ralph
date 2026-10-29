@@ -58,7 +58,7 @@ mod tests {
         assert_eq!(text.lines().count(), 1);
         let row: Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(row["harness"], "opencode");
-        assert_eq!(row["model"], "gpt-6.1-sol");
+        assert_eq!(row["model"], "openai/gpt-6.1-sol");
         assert_eq!(row["output_tokens"], 3);
         assert_eq!(row["turn_id"], 3);
         assert_eq!(row["store"], dir.path().to_string_lossy().as_ref());

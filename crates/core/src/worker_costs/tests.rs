@@ -159,6 +159,19 @@ fn unknown_model_shows_no_price() {
 }
 
 #[test]
+fn a_provider_prefixed_opencode_row_with_no_cost_shows_no_price() {
+    let mut line = worker("GUZ-1", "s1", "github-copilot/gpt-6.1-sol");
+    line["harness"] = json!("opencode");
+    let rows = rows_of(&jsonl(&[line]));
+    assert_eq!(
+        find(&rows, "opencode", "github-copilot/gpt-6.1-sol")
+            .usd
+            .text(),
+        "n/a"
+    );
+}
+
+#[test]
 fn a_cache_write_tier_gap_prices_the_rest() {
     let mut gap = worker("GUZ-1", "s1", "claude-opus-5-5");
     gap["cache_creation_input_tokens"] = json!(60);
