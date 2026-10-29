@@ -1,15 +1,13 @@
 use crate::chat::changes::run_changes;
 use crate::chat::memory::Store;
 use crate::chat::socket::forward;
-use crate::chat::workers::tool_report;
-use crate::workers::{canonical_store, running_workers};
 use ralph_core::chat_help::config_help;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome, Tool};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::mcp::tool_result;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub fn run_stdio_server(
     store: &Store,
@@ -45,15 +43,6 @@ pub fn run_stdio_server(
                     Err(message) => tool_result(id, &message, true),
                 }
             }
-            Outcome::Workers { id } => tool_result(
-                id,
-                &tool_report(
-                    store,
-                    &running_workers(&worker_store_dir(store)),
-                    chrono::Utc::now(),
-                ),
-                false,
-            ),
             Outcome::ConfigHelp { id, section } => finish_call(
                 id,
                 config_help(
@@ -75,10 +64,6 @@ pub fn run_stdio_server(
     Ok(())
 }
 
-fn worker_store_dir(store: &Store) -> PathBuf {
-    canonical_store(store.dir().to_path_buf())
-}
-
 fn memory_call(store: &Store, tool: &Tool) -> io::Result<Result<String, String>> {
     match tool {
         Tool::Zoom(node) => store.zoom(*node),
@@ -91,21 +76,6 @@ fn memory_call(store: &Store, tool: &Tool) -> io::Result<Result<String, String>>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::worker::same_store;
-
-    #[test]
-    fn workers_tool_uses_the_canonical_store_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        let real = tmp.path().join("real");
-        let link = tmp.path().join("link");
-        std::fs::create_dir(&real).unwrap();
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-        let store = Store::new(link);
-        assert!(same_store(
-            &canonical_store(real).to_string_lossy(),
-            &worker_store_dir(&store).to_string_lossy()
-        ));
-    }
 
     fn run(store: &Store, socket: &Path, input: &str) -> Vec<Value> {
         let mut out = Vec::new();

@@ -30,6 +30,8 @@ use std::thread;
 use std::time::Duration;
 
 const SUGGEST_REPLY: &str = "suggest_reply";
+type Roster = Box<dyn Fn() -> String + Send + Sync>;
+const WORKERS: &str = "workers";
 const REQUEST_LIMIT_BYTES: u64 = 1 << 20;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
@@ -128,8 +130,14 @@ impl ChatSocket {
         &self.files
     }
 
-    pub(crate) fn serve(self, store: Store, workers: Workers, suggestions: SuggestionSlot) {
-        let shared = Arc::new((store, workers, suggestions));
+    pub(crate) fn serve(
+        self,
+        store: Store,
+        workers: Workers,
+        suggestions: SuggestionSlot,
+        roster: impl Fn() -> String + Send + Sync + 'static,
+    ) {
+        let shared = Arc::new((store, workers, suggestions, Box::new(roster) as Roster));
         thread::spawn(move || {
             for connection in self.listener.incoming() {
                 match connection {
@@ -192,13 +200,17 @@ fn decide_fate(files: &SocketFiles, pid: u32, decide: fn(SocketFacts) -> SocketF
 
 fn handle_connection(
     stream: &UnixStream,
-    shared: &(Store, Workers, SuggestionSlot),
+    shared: &(Store, Workers, SuggestionSlot, Roster),
 ) -> io::Result<()> {
-    let (store, workers, suggestions) = shared;
+    let (store, workers, suggestions, roster) = shared;
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut line = String::new();
     BufReader::new(stream.take(REQUEST_LIMIT_BYTES)).read_line(&mut line)?;
     let response = match decode_line::<SocketRequest>(&line) {
+        Ok(request) if request.tool == WORKERS => SocketResponse {
+            text: roster(),
+            is_error: false,
+        },
         Ok(request) => respond(store, workers, suggestions, &request),
         Err(text) => SocketResponse {
             text,
@@ -564,6 +576,7 @@ mod tests {
             Store::new(dir.path().to_path_buf()),
             workers(),
             SuggestionSlot::default(),
+            String::new,
         );
         let response = forward(&path, &request("watch", watch_args())).unwrap();
         assert!(!response.is_error);

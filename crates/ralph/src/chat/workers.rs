@@ -9,7 +9,7 @@ use crate::markdown::{MarkdownTheme, Palette};
 use crate::render::render_markdown;
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
-use ralph_core::chat_status::{worker_states, RunningWorker};
+use ralph_core::chat_status::{RunningWorker, WorkerState};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::view::Pricing;
@@ -24,7 +24,7 @@ use ralph_core::workers_view::{
     workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
     WorkerRow,
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use termimad::crossterm::style::Attribute;
@@ -161,17 +161,10 @@ fn row(
     )
 }
 
-fn id_set(running: &[RunningWorker], exists: impl Fn(&str) -> bool) -> HashSet<String> {
-    running
-        .iter()
-        .filter(|worker| exists(&worker.id))
-        .map(|worker| worker.id.clone())
-        .collect()
-}
-
 pub(super) fn tool_report(
     store: &Store,
     running: &[RunningWorker],
+    states: &[WorkerState],
     now: chrono::DateTime<chrono::Utc>,
 ) -> String {
     let dir = store.dir();
@@ -179,24 +172,18 @@ pub(super) fn tool_report(
         .load_quiet()
         .ok()
         .map(|(entries, _, _)| group_reports(&entries, &[]));
-    let seen: HashMap<String, String> = reports
-        .iter()
-        .flatten()
-        .filter_map(|(id, list)| Some((id.clone(), list.first()?.status.clone())))
-        .collect();
-    let sent = id_set(running, |id| sent_path(dir, id).exists());
-    let blocked = id_set(running, |id| blocked_path(dir, id).exists());
-    let states = worker_states(running, &seen, &sent, None, &blocked);
     let rows: Vec<WorkerRow> = running
         .iter()
-        .zip(states)
-        .map(|(worker, state)| {
+        .map(|worker| {
             let state = if gone_path(dir, &worker.id).exists() {
-                "gone".to_string()
+                Some("gone".to_string())
             } else {
-                state.state
+                states
+                    .iter()
+                    .find(|state| state.id == worker.id)
+                    .map(|state| state.state.clone())
             };
-            cheap_row(dir, worker, Some(state), report_of(&reports, &worker.id))
+            cheap_row(dir, worker, state, report_of(&reports, &worker.id))
         })
         .collect();
     workers_text(&rows, now)
@@ -554,7 +541,7 @@ mod tests {
     fn the_tool_lists_only_the_given_workers_with_state_and_report() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
-        assert_eq!(tool_report(&store, &[], now()), "no workers");
+        assert_eq!(tool_report(&store, &[], &[], now()), "no workers");
         let log = "{\"role\":\"worker\",\"at\":\"2026-01-01T00:48:00Z\",\"text\":\"[worker A · done]\\nshipped\"}\n";
         std::fs::write(dir.path().join("log.jsonl"), log).unwrap();
         let gone = gone_path(dir.path(), "B");
@@ -564,9 +551,26 @@ mod tests {
             RunningWorker::headless("A", HarnessId::Cursor),
             RunningWorker::headless("B", HarnessId::Codex),
         ];
+        let states = [WorkerState {
+            id: "A".into(),
+            state: "done".into(),
+        }];
         assert_eq!(
-            tool_report(&store, &running, now()),
+            tool_report(&store, &running, &states, now()),
             "A cursor done done 12m worker/A\nB codex gone - - worker/B"
         );
+    }
+
+    #[test]
+    fn the_tool_shows_the_monitor_state_when_the_report_is_unread() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let running = [RunningWorker::headless("A", HarnessId::Claude)];
+        let states = [WorkerState {
+            id: "A".into(),
+            state: "done".into(),
+        }];
+        let text = tool_report(&store, &running, &states, now());
+        assert_eq!(text, "A claude done - - worker/A");
     }
 }

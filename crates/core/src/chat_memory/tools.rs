@@ -38,9 +38,6 @@ pub enum Outcome {
         id: Value,
         section: Option<String>,
     },
-    Workers {
-        id: Value,
-    },
 }
 
 pub fn tool_definitions() -> Value {
@@ -143,7 +140,6 @@ pub fn handle_request(request: &Value) -> Outcome {
                 None => Outcome::Respond(finish_call(id, help_topic(topic))),
             }
         }
-        Dispatch::Call { id, name, .. } if name == "workers" => Outcome::Workers { id },
         Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {
             Ok(request) => Outcome::Changes { id, request },
             Err(message) => Outcome::Respond(tool_result(id, &message, true)),
@@ -200,7 +196,6 @@ mod tests {
             Outcome::Silent
             | Outcome::Socket { .. }
             | Outcome::Changes { .. }
-            | Outcome::Workers { .. }
             | Outcome::ConfigHelp { .. } => {
                 panic!("not a memory call")
             }
@@ -239,10 +234,14 @@ mod tests {
     }
 
     #[test]
-    fn workers_takes_no_arguments_and_routes_to_the_shell() {
+    fn workers_takes_no_arguments_and_routes_to_the_socket() {
         assert_eq!(
             call("workers", json!({})),
-            Outcome::Workers { id: json!(7) }
+            Outcome::Socket {
+                id: json!(7),
+                name: "workers".into(),
+                args: json!({})
+            }
         );
     }
 

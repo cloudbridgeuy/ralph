@@ -54,6 +54,7 @@ use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
+use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::ChatArgs;
 use crate::config::{AppConfig, PromptFiles};
@@ -329,6 +330,18 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         thread: Mutex::new(ThreadMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
     });
+    let roster = {
+        let monitor = Arc::clone(&monitor);
+        let store = Store::new(store_dir.clone());
+        move || {
+            tool_report(
+                &store,
+                &running_workers(&monitor.store_dir),
+                &monitor.status().workers,
+                chrono::Utc::now(),
+            )
+        }
+    };
     chat_socket.serve(
         Store::new(store_dir.clone()),
         Workers::new(
@@ -338,6 +351,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.worktree_dir.clone(),
         ),
         suggestions.clone(),
+        roster,
     );
     let _close = monitor.watches.close_guard();
     monitor.watches.restore();

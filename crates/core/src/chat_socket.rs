@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const SOCKET_TOOLS: [&str; 6] = [
+const SOCKET_TOOLS: [&str; 7] = [
+    "workers",
     "spawn_worker",
     "reply",
     "close_worker",
@@ -146,6 +147,7 @@ mod tests {
     #[test]
     fn socket_tools_route_to_the_socket_and_memory_tools_do_not() {
         for name in [
+            "workers",
             "spawn_worker",
             "reply",
             "close_worker",
