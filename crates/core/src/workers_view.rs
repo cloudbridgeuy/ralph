@@ -29,6 +29,12 @@ const COLUMNS: usize = 9;
 const HEADERS: [&str; COLUMNS] = [
     "ID", "HARNESS", "STATE", "REPORT", "HEAD", "+/-", "BEHIND", "TICKET", "PR",
 ];
+pub const TONE_DONE: char = '\u{206A}';
+pub const TONE_BLOCKED: char = '\u{206B}';
+pub const TONE_WAITING: char = '\u{206C}';
+pub const TONE_ACTIVE: char = '\u{206D}';
+pub const TONE_END: char = '\u{206E}';
+const TONE_MARKERS: [char; 5] = [TONE_DONE, TONE_BLOCKED, TONE_WAITING, TONE_ACTIVE, TONE_END];
 const SUBJECT_SEPARATOR: &str = "¦";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -445,7 +451,10 @@ fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [Ve
     .map(|cell| {
         cell.into_iter()
             .map(|span| Span {
-                text: span.text.replace('|', SUBJECT_SEPARATOR),
+                text: span
+                    .text
+                    .replace('|', SUBJECT_SEPARATOR)
+                    .replace(TONE_MARKERS, ""),
                 ..span
             })
             .collect()
@@ -466,8 +475,16 @@ fn table_width(cells: &[[Vec<Span>; COLUMNS]]) -> usize {
     columns + HEADERS.len() + 1
 }
 
+fn toned(start: char, text: &str) -> String {
+    format!("{start}{text}{TONE_END}")
+}
+
 fn marked(span: &Span) -> String {
     match span.tone {
+        Tone::Done | Tone::Added => toned(TONE_DONE, &span.text),
+        Tone::Blocked | Tone::Removed => toned(TONE_BLOCKED, &span.text),
+        Tone::Attention | Tone::Behind => toned(TONE_WAITING, &span.text),
+        Tone::Active => toned(TONE_ACTIVE, &span.text),
         Tone::Name => format!("**{}**", span.text),
         Tone::Sha => format!("`{}`", span.text),
         Tone::Dim => format!("*{}*", span.text),
