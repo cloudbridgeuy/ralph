@@ -219,13 +219,23 @@ fn middle_lines(entries: &[Entry], tree: &Tree, from: usize, to: usize) -> Vec<S
                 lo,
                 hi: lo + TAIL_STEP,
             })
-            .flat_map(|node| match node_line(entries, tree, node) {
-                Some(line) => vec![Shown::Line(line)],
-                None => (node.lo..node.hi)
-                    .map(|i| shown_node(entries, tree, Node::leaf(i)))
-                    .collect(),
-            }),
+            .flat_map(|node| block_lines(entries, tree, node)),
     )
+}
+
+fn block_lines(entries: &[Entry], tree: &Tree, node: Node) -> Vec<Shown> {
+    if node.size() == 1 {
+        return vec![shown_node(entries, tree, node)];
+    }
+    match node_line(entries, tree, node) {
+        Some(line) => vec![Shown::Line(line)],
+        None => {
+            let (left, right) = node.halves();
+            let mut shown = block_lines(entries, tree, left);
+            shown.extend(block_lines(entries, tree, right));
+            shown
+        }
+    }
 }
 
 pub fn stable_cut(start: usize, step: usize) -> usize {

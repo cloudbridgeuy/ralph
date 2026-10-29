@@ -518,6 +518,46 @@ fn middle_only_grows_inside_one_frozen_step() {
 }
 
 #[test]
+fn corrupt_entry_in_middle_block_splits_to_the_damaged_leaf() {
+    let (mut entries, _) = long_list();
+    let len = (300..=700)
+        .find(|&len| tail_cut_at(&entries[..len]) > frozen_at(&entries[..len]))
+        .unwrap();
+    let frozen = frozen_at(&entries[..len]);
+    let damaged = frozen + 5;
+    entries[damaged] = Entry::corrupt();
+    let tree = summarized(&entries);
+    let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+    let block = Node {
+        lo: frozen,
+        hi: frozen + TAIL_STEP,
+    };
+    let mut expected = Vec::new();
+    let mut node = block;
+    while node.size() > 1 {
+        let (left, right) = node.halves();
+        let (sibling, inner) = if (left.lo..left.hi).contains(&damaged) {
+            (right, left)
+        } else {
+            (left, right)
+        };
+        expected.push((sibling.lo, node_line(&entries, &tree, sibling).unwrap()));
+        node = inner;
+    }
+    expected.sort_by_key(|(lo, _)| *lo);
+    let mut lines: Vec<String> = expected.into_iter().map(|(_, line)| line).collect();
+    lines.insert(
+        lines
+            .iter()
+            .take_while(|l| line_node(l).lo < damaged)
+            .count(),
+        merge_notices([Shown::Unreadable(damaged)]).remove(0),
+    );
+    assert_eq!(lines.len(), 6);
+    assert_eq!(split.middle[..6], lines[..]);
+}
+
+#[test]
 fn middle_falls_back_to_leaf_lines_without_a_block_summary() {
     let (entries, mut tree) = long_list();
     let len = (300..=700)
