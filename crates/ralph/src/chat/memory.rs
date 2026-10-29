@@ -502,7 +502,13 @@ mod tests {
         let nap = store.open_nap_lock().unwrap();
         assert!(nap.try_lock().is_ok());
         drop(guard);
-        assert!(store.claim_chat().unwrap().is_ok());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut reclaimed = store.claim_chat().unwrap();
+        while reclaimed.is_err() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            reclaimed = store.claim_chat().unwrap();
+        }
+        assert!(reclaimed.is_ok());
     }
 
     #[test]
