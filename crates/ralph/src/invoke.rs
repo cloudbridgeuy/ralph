@@ -93,19 +93,15 @@ fn isolation_args(home: Option<&Path>, auto_compact_off: bool, isolation: &Isola
     if !excludes.is_empty() {
         settings.insert("claudeMdExcludes".to_string(), excludes.into());
     }
-    let settings_arg = (!settings.is_empty()).then(|| {
-        let json = serde_json::Value::Object(settings).to_string();
-        format!(" --settings {}", shell_quote(&json))
-    });
+    settings.insert("totalTokensReminder".to_string(), "off".into());
+    let json = serde_json::Value::Object(settings).to_string();
+    let settings_arg = format!(" --settings {}", shell_quote(&json));
     let sources = if isolation.user_settings {
         "user,project,local"
     } else {
         "project,local"
     };
-    format!(
-        "--setting-sources {sources}{}",
-        settings_arg.unwrap_or_default()
-    )
+    format!("--setting-sources {sources}{settings_arg}")
 }
 
 fn config_dir_env(config_dir: Option<&Path>, home: Option<&Path>) -> String {
@@ -247,6 +243,15 @@ mod tests {
     }
 
     #[test]
+    fn chat_and_nap_turn_off_the_total_tokens_reminder() {
+        let chat = build_chat_command("sys", &[], "auto", None, &Isolation::default());
+        let nap = build_memory_command("hi", None, None);
+        for cmd in [chat, nap] {
+            assert!(cmd.contains(r#""totalTokensReminder":"off""#), "{cmd}");
+        }
+    }
+
+    #[test]
     fn build_command_escapes_single_quotes() {
         let cmd = build_command("it's a test", "default", None, None);
         assert!(cmd.contains("'\"'\"'"));
@@ -268,11 +273,11 @@ mod tests {
         );
         assert_eq!(
             build_memory_command("hi", Some(Path::new("/home/u")), None),
-            r#"claude --verbose --model haiku --setting-sources project,local --settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]}' --tools '' --mcp-config '{"mcpServers":{}}' --strict-mcp-config --output-format stream-json -p 'hi'"#
+            r#"claude --verbose --model haiku --setting-sources project,local --settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}' --tools '' --mcp-config '{"mcpServers":{}}' --strict-mcp-config --output-format stream-json -p 'hi'"#
         );
         assert_eq!(
             build_chat_command("sys", &[], "auto", None, &Isolation::default()),
-            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings '{\"autoCompactEnabled\":false}' --append-system-prompt 'sys' --input-format stream-json --output-format stream-json -p"
+            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings '{\"autoCompactEnabled\":false,\"totalTokensReminder\":\"off\"}' --append-system-prompt 'sys' --input-format stream-json --output-format stream-json -p"
         );
     }
 
@@ -306,7 +311,7 @@ mod tests {
     fn default_chat_isolation_is_unchanged() {
         assert_eq!(
             chat_args(ChatSection::default()),
-            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"]}'"#
+            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}'"#
         );
     }
 
@@ -328,7 +333,7 @@ mod tests {
         });
         assert_eq!(
             args,
-            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false}'"#
+            r#"--setting-sources project,local --settings '{"autoCompactEnabled":false,"totalTokensReminder":"off"}'"#
         );
     }
 
@@ -353,7 +358,7 @@ mod tests {
         });
         assert_eq!(
             args,
-            r#"--setting-sources user,project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/work/CLAUDE.md","/work/CLAUDE.local.md","/work/.claude/CLAUDE.md"]}'"#
+            r#"--setting-sources user,project,local --settings '{"autoCompactEnabled":false,"claudeMdExcludes":["/work/CLAUDE.md","/work/CLAUDE.local.md","/work/.claude/CLAUDE.md"],"totalTokensReminder":"off"}'"#
         );
     }
 }
