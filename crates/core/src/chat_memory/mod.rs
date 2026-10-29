@@ -1,4 +1,5 @@
 mod archive;
+mod claim;
 #[cfg(test)]
 mod corrupt_tests;
 mod index;
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub use archive::{refresh, write_plan, Archive, ByteSource, IndexWrite};
+pub use claim::{holder_pid, store_in_use_message};
 pub use index::{
     index_temp_prefix, is_index_temp, Index, LogIndex, NodeSlot, Slot, TreeIndex, INDEX_TEMP_RAND,
     INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,

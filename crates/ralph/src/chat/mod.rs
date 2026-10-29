@@ -81,7 +81,7 @@ use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
-use ralph_core::chat_memory::Trigger;
+use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{prefill, Prefill, SuggestionRecord};
@@ -170,6 +170,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     crate::config::set_store_layer(&store_dir);
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store = Store::new(store_dir.clone());
+    let _chat = store
+        .claim_chat()?
+        .map_err(|holder| store_in_use_message(&canonical_store(store_dir.clone()), holder))?;
     let exe = std::env::current_exe()?;
     let config = AppConfig::load().unwrap_or_else(|e| {
         warn(format!("Failed to load config: {e}"));

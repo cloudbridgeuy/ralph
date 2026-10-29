@@ -4,9 +4,9 @@ use crate::chat::index_files::{
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
-    log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall, retry_prompt, search,
-    Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, RangeRequest, Role,
-    SearchRequest, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    holder_pid, log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall,
+    retry_prompt, search, Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot,
+    RangeRequest, Role, SearchRequest, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::chat_suggestion::SuggestionRecord;
 use ralph_core::chat_thread::{absorb_usage, tail_read, FileStamp, UsageTail};
@@ -219,6 +219,31 @@ impl Store {
             .truncate(false)
             .write(true)
             .open(path)
+    }
+
+    pub fn claim_chat(&self) -> io::Result<Result<File, Option<u32>>> {
+        fs::create_dir_all(&self.dir)?;
+        let path = self.dir.join("CHAT");
+        check_path(&path)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        match file.try_lock() {
+            Ok(()) => {
+                file.set_len(0)?;
+                write!(file, "{}", std::process::id())?;
+                Ok(Ok(file))
+            }
+            Err(TryLockError::WouldBlock) => {
+                let mut contents = String::new();
+                file.read_to_string(&mut contents)?;
+                Ok(Err(holder_pid(&contents)))
+            }
+            Err(TryLockError::Error(e)) => Err(e),
+        }
     }
 
     fn lock(&self) -> io::Result<File> {
@@ -458,6 +483,27 @@ mod tests {
         parse_search_args, split_view, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE,
         TREE_INDEX_FILE,
     };
+
+    #[test]
+    fn second_chat_claim_is_refused_until_the_first_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let guard = store.claim_chat().unwrap().unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("CHAT")).unwrap(),
+            std::process::id().to_string()
+        );
+        assert_eq!(
+            store.claim_chat().unwrap().unwrap_err(),
+            Some(std::process::id())
+        );
+        let lock = store.open_lock().unwrap();
+        assert!(lock.try_lock().is_ok());
+        let nap = store.open_nap_lock().unwrap();
+        assert!(nap.try_lock().is_ok());
+        drop(guard);
+        assert!(store.claim_chat().unwrap().is_ok());
+    }
 
     #[test]
     fn missing_files_load_empty() {
