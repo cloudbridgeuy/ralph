@@ -520,29 +520,43 @@ mod tests {
         assert_eq!(spawn_ticket(dir.path(), "GUZ-1"), None);
     }
 
-    fn shown_table(rows: &[WorkerRow], color: bool) -> String {
-        let highlighter = crate::highlight::Highlighter::new();
-        let mut ctx = crate::render::RenderContext::new(&highlighter, color);
-        ctx.width = 200;
-        let theme = MarkdownTheme::default();
-        let display = Display {
-            ctx,
-            theme: &theme,
-            color,
-        };
-        let view = super::workers_view(
+    fn table_markdown(rows: &[WorkerRow], color: bool) -> View {
+        super::workers_view(
             rows,
             now(),
             200,
             ralph_core::workers_view::Layout::Table,
             color,
-        );
-        shown(&view, &display)
+        )
+    }
+
+    fn shown_plain(rows: &[WorkerRow]) -> String {
+        let highlighter = crate::highlight::Highlighter::new();
+        let mut ctx = crate::render::RenderContext::new(&highlighter, false);
+        ctx.width = 200;
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx,
+            theme: &theme,
+            color: false,
+        };
+        shown(&table_markdown(rows, false), &display)
+    }
+
+    fn painted_table(rows: &[WorkerRow]) -> String {
+        let theme = MarkdownTheme::default();
+        let skin = table_theme(&theme).skin;
+        match table_markdown(rows, true) {
+            View::Table(markdown) => {
+                paint_tones(&render_prose(&skin, &markdown, 200), &theme.palette)
+            }
+            other => panic!("not a table: {other:?}"),
+        }
     }
 
     #[test]
     fn colour_off_table_output_is_unchanged() {
-        let out = shown_table(&[row("GUZ-1", "fix: x")], false);
+        let out = shown_plain(&[row("GUZ-1", "fix: x")]);
         assert_eq!(out, concat!(
                 "| ID | HARNESS | STATE | REPORT | HEAD | +/- | BEHIND | TICKET | PR |\n",
                 "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
@@ -553,7 +567,7 @@ mod tests {
     #[test]
     fn colour_on_tables_paint_diff_and_behind_cells() {
         let palette = MarkdownTheme::default().palette;
-        let out = shown_table(&[row("GUZ-1", "fix: x")], true);
+        let out = painted_table(&[row("GUZ-1", "fix: x")]);
         assert!(
             out.contains(&format!("{}+120", fg(palette.done))),
             "{out:?}"
@@ -574,7 +588,7 @@ mod tests {
             row("GUZ-844", "fix(chat): exact /help and stricter tests"),
             row("GUZ-2", "feat: short"),
         ];
-        let out = shown_table(&rows, true);
+        let out = painted_table(&rows);
         let done = fg(MarkdownTheme::default().palette.done);
         assert!(out.contains(&format!("{done}+120")), "{out:?}");
         assert!(!out.chars().any(|ch| TONE_MARKERS.contains(&ch)), "{out:?}");
