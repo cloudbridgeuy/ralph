@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod openai_price;
 
+use openai_price::THIRTY_MIN;
+
 pub const NO_USAGE: &str = "No usage recorded.";
 const UNKNOWN: &str = "unknown";
 const MISSING: &str = "–";
@@ -166,8 +168,8 @@ fn tiered_usage(line: &UsageLine) -> Usage {
 
 fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd {
     let untiered = untiered_writes(line);
-    let known = line.model.as_deref().and_then(|model| {
-        let usage = tiered_usage(line);
+    let priced = line.model.as_deref().and_then(|model| {
+        let mut usage = tiered_usage(line);
         let price = resolve_price(
             table,
             pricing.overrides,
@@ -175,11 +177,21 @@ fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd 
             model,
             prompt_tokens(&usage).saturating_add(untiered),
         )?;
-        usd(&usage, &price)
+        let at_30m = price
+            .cache_writes
+            .iter()
+            .any(|write| write.tier == THIRTY_MIN);
+        if at_30m && untiered > 0 {
+            usage.cache_writes.push(CacheWrite {
+                tier: THIRTY_MIN,
+                tokens: untiered,
+            });
+        }
+        usd(&usage, &price).map(|usd| (usd, at_30m))
     });
     Usd {
-        known,
-        missing: known.is_none() || untiered > 0,
+        known: priced.map(|(usd, _)| usd),
+        missing: priced.is_none_or(|(_, at_30m)| untiered > 0 && !at_30m),
     }
 }
 

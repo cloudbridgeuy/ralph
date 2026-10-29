@@ -207,11 +207,32 @@ fn codex_luna_rows_use_the_luna_price() {
 }
 
 #[test]
-fn codex_cache_write_without_a_tier_prices_the_rest() {
+fn codex_cache_writes_without_a_tier_price_at_the_30m_rate() {
+    let mut row = codex("gpt-6.1-sol");
+    row["cache_creation_input_tokens"] = json!(1_000_000);
+    let rows = rows_of(&jsonl(&[row, codex("gpt-6.1-sol")]));
+    let usd = find(&rows, "codex", "gpt-6.1-sol").usd;
+    assert!(close(usd, 16.9));
+    assert_eq!(usd.text(), "16.90");
+}
+
+#[test]
+fn a_gpt_override_without_a_30m_price_keeps_the_plus() {
+    let overrides = BTreeMap::from([(
+        "gpt-6.1-sol".to_string(),
+        PriceOverride {
+            input: 1.0,
+            cache_read: Some(0.0),
+            cache_write_5m: None,
+            cache_write_1h: None,
+            output: Some(0.0),
+        },
+    )]);
     let mut row = codex("gpt-6.1-sol");
     row["cache_creation_input_tokens"] = json!(10);
-    let rows = rows_of(&jsonl(&[row, codex("gpt-6.1-sol")]));
-    assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "14.40+");
+    let usage = jsonl(&[row]);
+    let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
+    assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "1.00+");
 }
 
 #[test]
