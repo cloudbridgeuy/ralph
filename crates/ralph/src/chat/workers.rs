@@ -6,7 +6,7 @@ use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
 use crate::config::{AppConfig, WorkersSection};
 use crate::markdown::{MarkdownTheme, Palette};
-use crate::render::render_markdown;
+use crate::render::{render_markdown, COLOR_OFF};
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
 use ralph_core::chat_status::RunningWorker;
@@ -223,8 +223,6 @@ fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
     }
 }
 
-const COLOR_OFF: &str = "\x1b[39m";
-
 fn paint_tones(rendered: &str, palette: &Palette) -> String {
     let mut out = String::with_capacity(rendered.len());
     let mut open = false;
@@ -343,7 +341,7 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
-    use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote};
+    use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote, TONE_MARKERS};
     use unicode_width::UnicodeWidthStr;
 
     fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> View {
@@ -579,10 +577,8 @@ mod tests {
         let out = shown_table(&rows, true);
         let done = fg(MarkdownTheme::default().palette.done);
         assert!(out.contains(&format!("{done}+120")), "{out:?}");
-        let plain: String = strip_ansi(&out)
-            .chars()
-            .filter(|ch| !('\u{206A}'..='\u{206E}').contains(ch))
-            .collect();
+        assert!(!out.chars().any(|ch| TONE_MARKERS.contains(&ch)), "{out:?}");
+        let plain = strip_ansi(&out);
         let widths: Vec<usize> = plain.lines().map(|line| line.width()).collect();
         assert!(widths.len() > 3, "{plain}");
         assert!(
@@ -623,5 +619,22 @@ mod tests {
     fn paint_tones_leaves_text_without_markers_alone() {
         let palette = MarkdownTheme::default().palette;
         assert_eq!(paint_tones("a\n\x1b[1mb", &palette), "a\n\x1b[1mb");
+    }
+
+    #[test]
+    fn paint_tones_turns_a_stray_end_into_a_colour_reset() {
+        let palette = MarkdownTheme::default().palette;
+        let text = format!("a{TONE_END}b");
+        assert_eq!(paint_tones(&text, &palette), format!("a{COLOR_OFF}b"));
+    }
+
+    #[test]
+    fn paint_tones_lets_a_second_start_replace_the_first() {
+        let palette = MarkdownTheme::default().palette;
+        let text = format!("{TONE_DONE}{TONE_BLOCKED}x{TONE_END}");
+        assert_eq!(
+            paint_tones(&text, &palette),
+            format!("{}{}x{COLOR_OFF}", fg(palette.done), fg(palette.blocked))
+        );
     }
 }

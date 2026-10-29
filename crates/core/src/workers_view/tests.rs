@@ -583,9 +583,7 @@ fn tone_markers_in_a_subject_are_stripped_from_the_table() {
 fn unstyled_tables_have_no_tone_markers() {
     let markdown = table_of(workers_view(&[row("GUZ-1")], now(), 200));
     assert!(
-        !markdown
-            .chars()
-            .any(|ch| ('\u{206A}'..='\u{206E}').contains(&ch)),
+        !markdown.chars().any(|ch| TONE_MARKERS.contains(&ch)),
         "{markdown}"
     );
 }

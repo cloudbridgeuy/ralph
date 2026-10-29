@@ -34,7 +34,7 @@ pub const TONE_BLOCKED: char = '\u{206B}';
 pub const TONE_WAITING: char = '\u{206C}';
 pub const TONE_ACTIVE: char = '\u{206D}';
 pub const TONE_END: char = '\u{206E}';
-const TONE_MARKERS: [char; 5] = [TONE_DONE, TONE_BLOCKED, TONE_WAITING, TONE_ACTIVE, TONE_END];
+pub const TONE_MARKERS: [char; 5] = [TONE_DONE, TONE_BLOCKED, TONE_WAITING, TONE_ACTIVE, TONE_END];
 const SUBJECT_SEPARATOR: &str = "¦";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
