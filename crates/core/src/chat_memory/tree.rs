@@ -1,7 +1,7 @@
 use super::nap::fallback_summary;
 use super::notice::{merge_notices, Shown};
 use super::{Entry, Node, Tree, SUMMARY_BYTES, UNAVAILABLE_MARK};
-use crate::chat::OLDER_VIEW_STEP;
+use crate::chat::{OLDER_VIEW_STEP, TAIL_STEP};
 
 fn cover_at(t: usize, alpha: f64) -> Vec<(usize, usize)> {
     let root = t.next_power_of_two();
@@ -191,6 +191,7 @@ fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ViewSplit {
     pub older: Vec<String>,
+    pub middle: Vec<String>,
     pub tail: Vec<String>,
 }
 
@@ -200,11 +201,38 @@ pub fn split_view(
     budget: usize,
     recent_tokens: usize,
 ) -> ViewSplit {
-    let cut = stable_cut(verbatim_start(entries, 0, recent_tokens), OLDER_VIEW_STEP);
+    let start = verbatim_start(entries, 0, recent_tokens);
+    let frozen = stable_cut(start, OLDER_VIEW_STEP);
+    let cut = stable_cut(start, TAIL_STEP);
     ViewSplit {
-        older: view(&entries[..cut], tree, budget),
+        older: view(&entries[..frozen], tree, budget),
+        middle: middle_lines(entries, tree, frozen, cut),
         tail: tail_lines(entries, tree, cut, recent_tokens),
     }
+}
+
+fn aligned_blocks(from: usize, to: usize) -> Vec<Node> {
+    let mut blocks = Vec::new();
+    let mut lo = from;
+    while lo < to {
+        let fits = 1 << (to - lo).ilog2();
+        let aligned = 1_usize.checked_shl(lo.trailing_zeros()).unwrap_or(fits);
+        let hi = lo + fits.min(aligned);
+        blocks.push(Node { lo, hi });
+        lo = hi;
+    }
+    blocks
+}
+
+fn middle_lines(entries: &[Entry], tree: &Tree, from: usize, to: usize) -> Vec<String> {
+    merge_notices(aligned_blocks(from, to).into_iter().flat_map(|node| {
+        match node_line(entries, tree, node) {
+            Some(line) => vec![Shown::Line(line)],
+            None => (node.lo..node.hi)
+                .map(|i| shown_node(entries, tree, Node::leaf(i)))
+                .collect(),
+        }
+    }))
 }
 
 pub fn stable_cut(start: usize, step: usize) -> usize {

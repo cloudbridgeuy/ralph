@@ -279,6 +279,7 @@ impl Turn<'_> {
                 record = record.with_view(view_stats(
                     &[
                         spawned.split.older.as_slice(),
+                        spawned.split.middle.as_slice(),
                         spawned.split.tail.as_slice(),
                     ]
                     .concat(),
@@ -389,7 +390,10 @@ impl Turn<'_> {
             entries.truncate(len);
         }
         let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
-        let first_prompt = turn_prompt(&split.tail, sent);
+        let first_prompt = turn_prompt(
+            &[split.middle.as_slice(), split.tail.as_slice()].concat(),
+            sent,
+        );
         let system = turn_system_prompt(self.custom_prompt, self.reply_images, &split.older);
         let args = [
             self.mcp_args.to_vec(),

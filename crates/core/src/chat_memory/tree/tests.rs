@@ -251,11 +251,11 @@ fn verbatim_start_takes_a_contiguous_newest_suffix() {
 fn entries_to_shift_counts_to_the_next_stable_cut() {
     let entries = texted(40, |_| "abc".into());
     let shift = |budget| entries_to_shift(&entries, budget);
-    assert_eq!(shift(100), 32);
-    assert_eq!(shift(9), 1);
-    assert_eq!(shift(8), 32);
-    assert_eq!(shift(7), 31);
-    assert_eq!(entries_to_shift(&[], 100), 32);
+    assert_eq!(shift(100), 256);
+    assert_eq!(shift(9), 225);
+    assert_eq!(shift(8), 224);
+    assert_eq!(shift(7), 223);
+    assert_eq!(entries_to_shift(&[], 100), 256);
 }
 
 #[test]
@@ -385,12 +385,124 @@ fn split_view_covers_every_entry_once() {
     let entries: Vec<Entry> = (0..300).map(|i| entry(i, 5)).collect();
     let tree = summarized(&entries);
     for recent in [0, 30, 300, 100_000] {
-        let cut = stable_cut(verbatim_start(&entries, 0, recent), OLDER_VIEW_STEP);
+        let start = verbatim_start(&entries, 0, recent);
+        let frozen = stable_cut(start, OLDER_VIEW_STEP);
+        let cut = stable_cut(start, TAIL_STEP);
         let split = split_view(&entries, &tree, 200, recent);
-        assert_eq!(split.older, view(&entries[..cut], &tree, 200), "r={recent}");
+        assert_eq!(
+            split.older,
+            view(&entries[..frozen], &tree, 200),
+            "r={recent}"
+        );
         assert_eq!(split.tail.len(), 300 - cut, "r={recent}");
         assert!(split.older.len() <= 200, "r={recent}");
     }
+}
+
+fn line_ids(line: &str) -> (usize, usize) {
+    let id = line
+        .strip_prefix('#')
+        .and_then(|rest| rest.split(' ').next())
+        .unwrap();
+    match id.split_once('-') {
+        Some((lo, last)) => (lo.parse().unwrap(), last.parse().unwrap()),
+        None => (id.parse().unwrap(), id.parse().unwrap()),
+    }
+}
+
+fn long_list() -> (Vec<Entry>, Tree) {
+    let entries: Vec<Entry> = (0..700).map(|i| entry(i, 5)).collect();
+    let tree = summarized(&entries);
+    (entries, tree)
+}
+
+const LONG_RECENT: usize = 100;
+
+fn frozen_at(entries: &[Entry]) -> usize {
+    stable_cut(verbatim_start(entries, 0, LONG_RECENT), OLDER_VIEW_STEP)
+}
+
+fn tail_cut_at(entries: &[Entry]) -> usize {
+    stable_cut(verbatim_start(entries, 0, LONG_RECENT), TAIL_STEP)
+}
+
+#[test]
+fn turn_system_prompt_is_identical_for_every_length_inside_one_frozen_step() {
+    let (entries, tree) = long_list();
+    let prompt = |older: &[String]| {
+        crate::chat::turn_system_prompt(
+            &crate::chat::CustomPrompt::default(),
+            crate::chat::ReplyImages::Inline,
+            older,
+        )
+    };
+    let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    for len in 300..=700 {
+        groups
+            .entry(frozen_at(&entries[..len]))
+            .or_default()
+            .push(len);
+    }
+    let spans_tail_cuts = groups.values().any(|lens| {
+        lens.iter()
+            .map(|&len| tail_cut_at(&entries[..len]))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            > 1
+    });
+    assert!(spans_tail_cuts);
+    for (frozen, lens) in groups {
+        let first = split_view(&entries[..lens[0]], &tree, 200, LONG_RECENT);
+        assert!(!first.older.is_empty(), "frozen={frozen}");
+        for len in lens {
+            let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+            assert_eq!(split.older, first.older, "len={len}");
+            assert_eq!(prompt(&split.older), prompt(&first.older), "len={len}");
+        }
+    }
+}
+
+#[test]
+fn middle_and_tail_cover_from_the_frozen_cut_once() {
+    let (entries, tree) = long_list();
+    for len in 300..=700 {
+        let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+        let mut next = frozen_at(&entries[..len]);
+        for line in split.middle.iter().chain(&split.tail) {
+            let (lo, last) = line_ids(line);
+            assert_eq!(lo, next, "len={len} line={line}");
+            next = last + 1;
+        }
+        assert_eq!(next, len, "len={len}");
+    }
+}
+
+#[test]
+fn middle_has_at_most_three_block_lines() {
+    let (entries, tree) = long_list();
+    let mut seen_three = false;
+    for len in 300..=700 {
+        let middle = split_view(&entries[..len], &tree, 200, LONG_RECENT).middle;
+        assert!(middle.len() <= 3, "len={len} {middle:?}");
+        seen_three |= middle.len() == 3;
+    }
+    assert!(seen_three);
+}
+
+#[test]
+fn middle_falls_back_to_leaf_lines_without_a_block_summary() {
+    let (entries, mut tree) = long_list();
+    let len = (300..=700)
+        .find(|&len| tail_cut_at(&entries[..len]) > frozen_at(&entries[..len]))
+        .unwrap();
+    let frozen = frozen_at(&entries[..len]);
+    let cut = tail_cut_at(&entries[..len]);
+    tree.retain(|node, _| node.size() == 1 || node.hi <= frozen || node.lo >= cut);
+    let split = split_view(&entries[..len], &tree, 200, LONG_RECENT);
+    let leaves: Vec<String> = (frozen..cut)
+        .map(|i| leaf_line(i, &entries[i], &tree).unwrap())
+        .collect();
+    assert_eq!(split.middle, leaves);
 }
 
 #[test]
@@ -446,11 +558,11 @@ fn split_view_tail_keeps_newest_verbatim_and_bounds_settled_lines() {
     let (_, entries, tree) = stable_lists();
     let recent = 100;
     let start = verbatim_start(&entries, 0, recent);
-    let cut = stable_cut(start, OLDER_VIEW_STEP);
+    let cut = stable_cut(start, TAIL_STEP);
     let split = split_view(&entries, &tree, 200, recent);
     let settled = start - cut;
     assert_eq!(split.tail.len(), entries.len() - cut);
-    assert!(settled < OLDER_VIEW_STEP);
+    assert!(settled < TAIL_STEP);
     assert!(settled > 0);
     for (offset, line) in split.tail.iter().enumerate() {
         let i = cut + offset;
@@ -475,9 +587,10 @@ fn split_view_tail_respects_token_budget() {
     let verbatim = verbatim_start(&entries, 0, 100);
     let used: usize = (50 - verbatim) * estimate_tokens(&entries[0].text);
     assert!(verbatim < 50 && used <= 100);
-    let cut = stable_cut(verbatim, OLDER_VIEW_STEP);
+    let cut = stable_cut(verbatim, TAIL_STEP);
     assert_eq!(split.tail.len(), 50 - cut);
-    assert_eq!(split.older.len(), cut);
+    assert!(split.older.is_empty());
+    assert_eq!(split.middle.len(), cut);
 }
 
 #[test]
