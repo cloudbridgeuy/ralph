@@ -9,7 +9,8 @@ use std::time::Duration;
 
 pub const VIEW_LINES: usize = 200;
 pub const RECENT_HISTORY_TOKENS: usize = 8192;
-pub const OLDER_VIEW_STEP: usize = 32;
+pub const OLDER_VIEW_STEP: usize = 256;
+pub const TAIL_STEP: usize = 32;
 pub const WORKER_CHECK_SECS: u64 = 60;
 pub const WORKER_QUIET_SECS: u64 = 300;
 pub const WATCH_TIMEOUT_SECS: u64 = 3600;
