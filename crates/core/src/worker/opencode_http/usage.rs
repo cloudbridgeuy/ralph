@@ -117,6 +117,7 @@ impl OpencodeTurnUsage {
     pub fn take(&mut self) -> Vec<OpencodeModelUsage> {
         std::mem::take(&mut self.by_model)
             .into_iter()
+            .filter(|(_, spend)| spend.tokens != StepTokens::default())
             .map(|(model, spend)| OpencodeModelUsage {
                 row: ModelUsage {
                     model,
@@ -220,6 +221,13 @@ mod tests {
     fn steps_before_a_start_use_the_bare_configured_model() {
         let rows = observed(&[ENDED]).take();
         assert_eq!(rows[0].row.model, "gpt-6.1-sol");
+    }
+
+    #[test]
+    fn take_skips_all_zero_spends() {
+        let zero = r#"data: {"id":"evt_9","type":"session.step.ended","data":{"sessionID":"ses_a","assistantMessageID":"msg_9","finish":"stop","cost":0,"tokens":{"input":0,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}}"#;
+        let mut turn = observed(&[STARTED, zero]);
+        assert!(turn.take().is_empty());
     }
 
     #[test]
