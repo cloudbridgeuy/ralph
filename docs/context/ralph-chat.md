@@ -247,6 +247,8 @@ The spawn runs only after reedline `read_line` has turned raw mode off, so a ful
 
 BEHIND counts against the local remote-tracking ref `origin/<base>` (base = `[chat] worker_base`, else `origin/HEAD`, else `main`), so it is stale until a fetch; no network is used, and a missing ref shows `?`. +/- uses the merge-base with `<base>`. In the table a `-` cell is wrapped in a code span (backslash escapes are not honored) so termimad does not draw a list bullet. A missing value shows `-`, a failed lookup `?`, a lookup not done yet `…`.
 
+With color on, table cells are colored from the `[theme]` palette: STATE (`done` green, `blocked` red, `question` and `permission` yellow, `running` and `busy` link color), `+N` green, `-N` red and BEHIND above 0 yellow. The core view marks these cells with the zero-width characters U+206A to U+206E (`TONE_*` in `workers_view.rs`, stripped from cell text), and `chat/workers.rs` turns them into colors after the table renders. With color off the table has no markers.
+
 With no live worker it prints `No live workers.`. By default, the list is a markdown table through the chat renderer when it fits the prompt width (columns plus `cols + 1` border cells, as termimad draws them without padding); the HEAD subject is cut with `…` down to 20 characters first. Else each worker is a block, every line cut to the width. Set `[workers] view = "list"` to always use these blocks; `view = "table"` keeps the default table with a block fallback and does not change `/workers <id>`:
 
 ```
