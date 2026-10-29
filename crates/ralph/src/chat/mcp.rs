@@ -1,6 +1,8 @@
 use crate::chat::changes::run_changes;
 use crate::chat::memory::Store;
 use crate::chat::socket::forward;
+use crate::chat::workers::tool_report;
+use crate::workers::running_workers;
 use ralph_core::chat_help::config_help;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome, Tool};
 use ralph_core::chat_socket::SocketRequest;
@@ -43,6 +45,11 @@ pub fn run_stdio_server(
                     Err(message) => tool_result(id, &message, true),
                 }
             }
+            Outcome::Workers { id } => tool_result(
+                id,
+                &tool_report(store, &running_workers(store.dir()), chrono::Utc::now()),
+                false,
+            ),
             Outcome::ConfigHelp { id, section } => finish_call(
                 id,
                 config_help(

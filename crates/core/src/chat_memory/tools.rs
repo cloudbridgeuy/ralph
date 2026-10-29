@@ -38,6 +38,9 @@ pub enum Outcome {
         id: Value,
         section: Option<String>,
     },
+    Workers {
+        id: Value,
+    },
 }
 
 pub fn tool_definitions() -> Value {
@@ -104,7 +107,12 @@ fn memory_tool_definitions() -> Value {
                 "required": ["query"]
             }
         },
-        changes_tool_definition()
+        changes_tool_definition(),
+        {
+            "name": "workers",
+            "description": "List this chat's live workers, one line each: `<id> <harness> <state> <last report kind> <report age> <branch>`. State is running, busy, idle, permission, a worker's last report, or gone. Read-only; takes no arguments. Use it for worker status; never inspect system processes.",
+            "inputSchema": {"type": "object", "properties": {}}
+        }
     ])
 }
 
@@ -135,6 +143,7 @@ pub fn handle_request(request: &Value) -> Outcome {
                 None => Outcome::Respond(finish_call(id, help_topic(topic))),
             }
         }
+        Dispatch::Call { id, name, .. } if name == "workers" => Outcome::Workers { id },
         Dispatch::Call { id, name, args } if name == "changes" => match parse_changes_args(&args) {
             Ok(request) => Outcome::Changes { id, request },
             Err(message) => Outcome::Respond(tool_result(id, &message, true)),
@@ -191,6 +200,7 @@ mod tests {
             Outcome::Silent
             | Outcome::Socket { .. }
             | Outcome::Changes { .. }
+            | Outcome::Workers { .. }
             | Outcome::ConfigHelp { .. } => {
                 panic!("not a memory call")
             }
@@ -216,6 +226,7 @@ mod tests {
                 "read",
                 "search",
                 "changes",
+                "workers",
                 "spawn_worker",
                 "reply",
                 "close_worker",
@@ -224,6 +235,14 @@ mod tests {
                 "suggest_reply",
                 "help"
             ]
+        );
+    }
+
+    #[test]
+    fn workers_takes_no_arguments_and_routes_to_the_shell() {
+        assert_eq!(
+            call("workers", json!({})),
+            Outcome::Workers { id: json!(7) }
         );
     }
 

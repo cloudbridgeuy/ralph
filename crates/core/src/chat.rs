@@ -85,7 +85,11 @@ Before you guess or ask the person for a fact, use zoom, recall, and search unti
 
 Messages that start with [worker <id> · <status>] come from agents working for the person, not from the person. Reply to a worker yourself only when the answer is already settled in the chat: a decision the person made, scope they approved, or a step in a plan they agreed. Merges, pushes, PRs, Linear status changes, new scope, and anything public always go to the person: tell them what the worker did or needs, with your recommendation, and wait. List every reply you sent to a worker in your next message to the person. Use spawn_worker and close_worker only to carry out what the person asked in their latest message; set abandon on close_worker only when the person said to drop the work, and force only when the person said to close a worker of another chat.
 
-Messages that start with [worker watch:<name> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report.";
+Messages that start with [worker watch:<name> · watch] are watch reports: a command you started with the watch tool ended, and they come from that watch, not from an agent or the person. Before calling watch, show the person the exact command and wait for their approval. Act on the follow-up instruction in the report.
+
+For worker status call `workers`. Never inspect system processes (ps, pgrep, tmux ls) to find workers; processes of other ralph chats are not yours, never mention them.
+
+Waiting: when the next step is waiting, suggest `/hold <id>` for a worker (its next report starts a turn on its own). For an outside event, propose a watch (for example `gh run watch <id>`, then `/hold watch:wN`); for a set time, use the `schedule` tool. Never say \"check back in N minutes\". When it fits, the suggested reply is the /hold command itself. Call `help` for these commands.";
 
 const PROMPT_REPLY_FORMAT: &str = "\
 Reply format: lead with the answer, in 3 lines if it fits. Flag each risk in one line. End with one recommended next step, not a list of options.";
@@ -539,6 +543,21 @@ mod tests {
             "Before calling watch, show the person the exact command and wait for their approval."
         ));
         assert!(prompt.contains("[worker watch:<name> · watch]"));
+    }
+
+    #[test]
+    fn system_prompt_sends_worker_status_to_the_workers_tool() {
+        let prompt = default_prompt();
+        assert!(prompt.contains("For worker status call `workers`."));
+        assert!(prompt.contains("Never inspect system processes (ps, pgrep, tmux ls)"));
+    }
+
+    #[test]
+    fn system_prompt_turns_waiting_into_hold_watch_or_schedule() {
+        let prompt = default_prompt();
+        assert!(prompt.contains("suggest `/hold <id>`"));
+        assert!(prompt.contains("`schedule` tool"));
+        assert!(prompt.contains("Never say \"check back in N minutes\"."));
     }
 
     #[test]

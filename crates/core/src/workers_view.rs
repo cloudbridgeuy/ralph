@@ -3,7 +3,7 @@
 
 use crate::chat_memory::{Entry, Role};
 use crate::inbox::age;
-use crate::worker::{ActivityMark, Report, StatusLine, Ticket};
+use crate::worker::{branch_name, ActivityMark, Report, StatusLine, Ticket};
 use crate::worker_check::{is_report_status, message_header};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -563,6 +563,29 @@ fn title(row: &WorkerRow) -> Vec<Span> {
         plain(" · "),
         state,
     ]
+}
+
+pub fn workers_text(rows: &[WorkerRow], now: DateTime<Utc>) -> String {
+    if rows.is_empty() {
+        return "no workers".to_string();
+    }
+    rows.iter()
+        .map(|row| {
+            let (kind, since) = match &row.report {
+                Lookup::Found(report) => (report.status.clone(), age(&report.at, now)),
+                Lookup::Missing => ("-".to_string(), "-".to_string()),
+                Lookup::Failed => ("?".to_string(), "?".to_string()),
+            };
+            format!(
+                "{} {} {} {kind} {since} {}",
+                row.id,
+                row.harness,
+                row.state.as_deref().unwrap_or("-"),
+                branch_name(&row.id)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn workers_view(

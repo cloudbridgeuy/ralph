@@ -123,7 +123,7 @@ impl Command {
                 ),
                 (
                     "/workers <id>",
-                    "one worker in detail with its status and last 5 reports",
+                    "one worker in detail with its status and last 5 reports; the model lists its own chat's workers with the `workers` tool, one line each, instead of inspecting processes",
                 ),
                 (
                     "/workers costs",
@@ -133,7 +133,7 @@ impl Command {
             Command::Hold => &[
                 (
                     "/hold [<worker-id> | watch:<name> | schedule:<id>]",
-                    "wait with no prompt; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Ctrl-Q or Ctrl-D leaves",
+                    "wait with no prompt; the model suggests it when the next step is waiting; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
         }

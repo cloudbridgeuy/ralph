@@ -508,3 +508,26 @@ fn cut_spans_keep_the_cut_text_of_the_plain_line() {
         );
     }
 }
+
+#[test]
+fn workers_text_is_one_plain_line_per_worker() {
+    let mut gone = row("GUZ-2");
+    gone.state = Some("gone".into());
+    gone.report = Lookup::Missing;
+    let mut unknown = row("GUZ-3");
+    unknown.harness = "codex".into();
+    unknown.state = None;
+    unknown.report = Lookup::Failed;
+    let rows = [row("GUZ-1"), gone, unknown];
+    assert_eq!(
+        workers_text(&rows, now()),
+        "GUZ-1 claude busy done 12m worker/GUZ-1\n\
+         GUZ-2 claude gone - - worker/GUZ-2\n\
+         GUZ-3 codex - ? ? worker/GUZ-3"
+    );
+}
+
+#[test]
+fn workers_text_without_workers_says_so() {
+    assert_eq!(workers_text(&[], now()), "no workers");
+}

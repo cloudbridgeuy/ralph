@@ -1,6 +1,6 @@
 use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::chat::inbox::Display;
-use crate::chat::memory::{load_usage, usage_path};
+use crate::chat::memory::{load_usage, usage_path, Store};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
@@ -9,7 +9,7 @@ use crate::markdown::{MarkdownTheme, Palette};
 use crate::render::render_markdown;
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
-use ralph_core::chat_status::RunningWorker;
+use ralph_core::chat_status::{worker_states, RunningWorker};
 use ralph_core::wire::price::PriceOverride;
 use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::view::Pricing;
@@ -20,10 +20,11 @@ use ralph_core::worker::{
 };
 use ralph_core::worker_costs::costs_view;
 use ralph_core::workers_view::{
-    count_untracked, detail_view, lines_text, not_live, parse_head, parse_numstat, workers_view,
-    Diff, Lookup, ReportLine, Span, Tone, View, WorkerDetail, WorkerRow,
+    count_untracked, detail_view, group_reports, lines_text, not_live, parse_head, parse_numstat,
+    workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
+    WorkerRow,
 };
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use termimad::crossterm::style::Attribute;
@@ -74,6 +75,37 @@ fn spawn_ticket(store: &Path, id: &str) -> Option<Ticket> {
     decode_spawn_record(&std::fs::read_to_string(spawn_record_path(store, id)).ok()?)?.ticket()
 }
 
+fn report_of(reports: &Option<HashMap<String, Vec<ReportLine>>>, id: &str) -> Lookup<ReportLine> {
+    match reports {
+        None => Lookup::Failed,
+        Some(reports) => reports
+            .get(id)
+            .and_then(|list| list.first().cloned())
+            .map_or(Lookup::Missing, Lookup::Found),
+    }
+}
+
+fn cheap_row(
+    store: &Path,
+    worker: &RunningWorker,
+    state: Option<String>,
+    report: Lookup<ReportLine>,
+) -> WorkerRow {
+    WorkerRow {
+        id: worker.id.clone(),
+        harness: worker.kind.as_str().to_string(),
+        state,
+        report,
+        status: status_line(store, &worker.id),
+        head: Lookup::Missing,
+        diff: Lookup::Missing,
+        behind: Lookup::Missing,
+        base: None,
+        ticket: None,
+        pr: Remote::None,
+    }
+}
+
 fn row(
     monitor: &Monitor,
     worker: &RunningWorker,
@@ -87,13 +119,7 @@ fn row(
         .into_iter()
         .find(|state| state.id == worker.id)
         .map(|state| state.state);
-    let report = match &facts.reports {
-        None => Lookup::Failed,
-        Some(reports) => reports
-            .get(&worker.id)
-            .and_then(|list| list.first().cloned())
-            .map_or(Lookup::Missing, Lookup::Found),
-    };
+    let report = report_of(&facts.reports, &worker.id);
     let tree = facts
         .porcelain
         .as_deref()
@@ -123,20 +149,57 @@ fn row(
     let cells = remote.cells(&facts.workers, &worker.id, ticket);
     (
         WorkerRow {
-            id: worker.id.clone(),
-            harness: worker.kind.as_str().to_string(),
-            state,
-            report,
-            status: status_line(&monitor.store_dir, &worker.id),
             head,
             diff,
             behind,
             base,
             ticket: cells.ticket,
             pr: cells.pr,
+            ..cheap_row(&monitor.store_dir, worker, state, report)
         },
         worktree,
     )
+}
+
+fn id_set(running: &[RunningWorker], exists: impl Fn(&str) -> bool) -> HashSet<String> {
+    running
+        .iter()
+        .filter(|worker| exists(&worker.id))
+        .map(|worker| worker.id.clone())
+        .collect()
+}
+
+pub(super) fn tool_report(
+    store: &Store,
+    running: &[RunningWorker],
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let dir = store.dir();
+    let reports = store
+        .load_quiet()
+        .ok()
+        .map(|(entries, _, _)| group_reports(&entries, &[]));
+    let seen: HashMap<String, String> = reports
+        .iter()
+        .flatten()
+        .filter_map(|(id, list)| Some((id.clone(), list.first()?.status.clone())))
+        .collect();
+    let sent = id_set(running, |id| sent_path(dir, id).exists());
+    let blocked = id_set(running, |id| blocked_path(dir, id).exists());
+    let states = worker_states(running, &seen, &sent, None, &blocked);
+    let rows: Vec<WorkerRow> = running
+        .iter()
+        .zip(states)
+        .map(|(worker, state)| {
+            let state = if gone_path(dir, &worker.id).exists() {
+                "gone".to_string()
+            } else {
+                state.state
+            };
+            cheap_row(dir, worker, Some(state), report_of(&reports, &worker.id))
+        })
+        .collect();
+    workers_text(&rows, now)
 }
 
 fn markers(store: &Path, id: &str) -> Vec<&'static str> {
@@ -160,7 +223,7 @@ fn heartbeat(store: &Path, id: &str) -> Option<ActivityMark> {
 fn facts(monitor: &Monitor) -> Facts {
     let reports = monitor.store.load().ok().and_then(|(entries, _)| {
         let unread = monitor.inbox.peek().ok()?;
-        Some(ralph_core::workers_view::group_reports(&entries, &unread))
+        Some(group_reports(&entries, &unread))
     });
     let config = AppConfig::load().map_err(|e| e.to_string());
     Facts {
@@ -485,5 +548,25 @@ mod tests {
         );
         std::fs::write(&path, "garbage").unwrap();
         assert_eq!(spawn_ticket(dir.path(), "GUZ-1"), None);
+    }
+
+    #[test]
+    fn the_tool_lists_only_the_given_workers_with_state_and_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        assert_eq!(tool_report(&store, &[], now()), "no workers");
+        let log = "{\"role\":\"worker\",\"at\":\"2026-01-01T00:48:00Z\",\"text\":\"[worker A · done]\\nshipped\"}\n";
+        std::fs::write(dir.path().join("log.jsonl"), log).unwrap();
+        let gone = gone_path(dir.path(), "B");
+        std::fs::create_dir_all(gone.parent().unwrap()).unwrap();
+        std::fs::write(gone, "").unwrap();
+        let running = [
+            RunningWorker::headless("A", HarnessId::Cursor),
+            RunningWorker::headless("B", HarnessId::Codex),
+        ];
+        assert_eq!(
+            tool_report(&store, &running, now()),
+            "A cursor done done 12m worker/A\nB codex gone - - worker/B"
+        );
     }
 }
