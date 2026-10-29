@@ -211,28 +211,21 @@ pub fn split_view(
     }
 }
 
-fn aligned_blocks(from: usize, to: usize) -> Vec<Node> {
-    let mut blocks = Vec::new();
-    let mut lo = from;
-    while lo < to {
-        let fits = 1 << (to - lo).ilog2();
-        let aligned = 1_usize.checked_shl(lo.trailing_zeros()).unwrap_or(fits);
-        let hi = lo + fits.min(aligned);
-        blocks.push(Node { lo, hi });
-        lo = hi;
-    }
-    blocks
-}
-
 fn middle_lines(entries: &[Entry], tree: &Tree, from: usize, to: usize) -> Vec<String> {
-    merge_notices(aligned_blocks(from, to).into_iter().flat_map(|node| {
-        match node_line(entries, tree, node) {
-            Some(line) => vec![Shown::Line(line)],
-            None => (node.lo..node.hi)
-                .map(|i| shown_node(entries, tree, Node::leaf(i)))
-                .collect(),
-        }
-    }))
+    merge_notices(
+        (from..to)
+            .step_by(TAIL_STEP)
+            .map(|lo| Node {
+                lo,
+                hi: lo + TAIL_STEP,
+            })
+            .flat_map(|node| match node_line(entries, tree, node) {
+                Some(line) => vec![Shown::Line(line)],
+                None => (node.lo..node.hi)
+                    .map(|i| shown_node(entries, tree, Node::leaf(i)))
+                    .collect(),
+            }),
+    )
 }
 
 pub fn stable_cut(start: usize, step: usize) -> usize {

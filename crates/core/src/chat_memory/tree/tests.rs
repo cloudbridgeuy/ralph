@@ -478,15 +478,43 @@ fn middle_and_tail_cover_from_the_frozen_cut_once() {
 }
 
 #[test]
-fn middle_has_at_most_three_block_lines() {
+fn middle_has_one_line_per_32_block() {
     let (entries, tree) = long_list();
-    let mut seen_three = false;
+    let mut seen_seven = false;
     for len in 300..=700 {
         let middle = split_view(&entries[..len], &tree, 200, LONG_RECENT).middle;
-        assert!(middle.len() <= 3, "len={len} {middle:?}");
-        seen_three |= middle.len() == 3;
+        assert!(middle.len() <= 7, "len={len} {middle:?}");
+        seen_seven |= middle.len() == 7;
+        for line in &middle {
+            let node = line_node(line);
+            assert_eq!(node.size(), TAIL_STEP, "len={len} line={line}");
+            assert_eq!(node.lo % TAIL_STEP, 0, "len={len} line={line}");
+        }
     }
-    assert!(seen_three);
+    assert!(seen_seven);
+}
+
+#[test]
+fn middle_only_grows_inside_one_frozen_step() {
+    let (entries, tree) = long_list();
+    let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    for len in 300..=700 {
+        groups
+            .entry(frozen_at(&entries[..len]))
+            .or_default()
+            .push(len);
+    }
+    for lens in groups.values() {
+        for pair in lens.windows(2) {
+            let earlier = split_view(&entries[..pair[0]], &tree, 200, LONG_RECENT).middle;
+            let later = split_view(&entries[..pair[1]], &tree, 200, LONG_RECENT).middle;
+            assert!(
+                later.starts_with(&earlier),
+                "len={} {earlier:?} {later:?}",
+                pair[1]
+            );
+        }
+    }
 }
 
 #[test]
