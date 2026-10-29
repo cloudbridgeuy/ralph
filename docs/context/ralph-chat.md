@@ -54,7 +54,7 @@ ralph                      # same as ralph chat with defaults
 
 ## Single instance
 
-`chat::run` calls `Store::claim_chat` right after `Store::new`: an exclusive `try_lock` on `<store>/CHAT`, held for the life of the chat, with the pid written inside. A second chat on the same store exits with `ralph chat: store <path> is in use by pid <N>; use --store <DIR> or RALPH_CHAT_STORE for a second chat` (the pid part is left out when the file is unreadable). The pure `holder_pid` and `store_in_use_message` live in `chat_memory/claim.rs`. The OS releases the lock when the process dies, so a crash leaves no stale claim. flock is per inode, so `/tmp` and `/private/tmp` give the same lock. `CHAT` is a separate file from `LOCK` and `NAP`, so `chat-nap`, `chat-mcp`, worker writes and chats on other `--store` dirs are not blocked. Parallel chats need separate stores (GUZ-436).
+`chat::run` calls `Store::claim_chat` right after `Store::new`: an exclusive `try_lock` on `<store>/CHAT`, held for the life of the chat, with the pid written inside. A second chat on the same store exits with `store <path> is in use by pid <N>; use --store <DIR> or RALPH_CHAT_STORE for a second chat` (the pid part is left out when the file is unreadable). The pure `holder_pid` and `store_in_use_message` live in `chat_memory/claim.rs`. The OS releases the lock when the process dies, so a crash leaves no stale claim. flock is per inode, so `/tmp` and `/private/tmp` give the same lock. `CHAT` is a separate file from `LOCK` and `NAP`, so `chat-nap`, `chat-mcp`, worker writes and chats on other `--store` dirs are not blocked. Parallel chats need separate stores (GUZ-436).
 
 ## Turn loop
 
