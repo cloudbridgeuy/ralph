@@ -40,6 +40,19 @@ impl VerifiedAgents {
     }
 }
 
+pub fn merge_verified(
+    existing: Option<&str>,
+    entry: VerifiedAgent,
+) -> Result<VerifiedAgents, String> {
+    let known = match existing {
+        Some(text) => serde_json::from_str::<VerifiedAgents>(text).map_err(|error| {
+            format!("refusing to overwrite {VERIFIED_AGENTS_FILE}: it does not parse ({error}); fix or remove it")
+        })?,
+        None => VerifiedAgents::default(),
+    };
+    Ok(known.record(entry))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Pass,
@@ -286,6 +299,23 @@ mod tests {
             serde_json::from_str::<VerifiedAgents>("{}").unwrap(),
             VerifiedAgents::default()
         );
+    }
+
+    #[test]
+    fn saving_refuses_a_record_file_it_cannot_parse() {
+        let error = merge_verified(Some("{not json"), entry(false, "2026-10-01")).unwrap_err();
+        assert!(error.starts_with("refusing to overwrite verified-agents.json"));
+        assert!(merge_verified(Some(r#"{"agents":7}"#), entry(false, "2026-10-01")).is_err());
+    }
+
+    #[test]
+    fn saving_starts_or_extends_the_record_file() {
+        let first = merge_verified(None, entry(false, "2026-10-01")).unwrap();
+        assert_eq!(first.agents, vec![entry(false, "2026-10-01")]);
+        let text = serde_json::to_string(&first).unwrap();
+        let codex = verified_entry("codex", "0.164.0", true, "2026-10-02");
+        let second = merge_verified(Some(&text), codex.clone()).unwrap();
+        assert_eq!(second.agents, vec![entry(false, "2026-10-01"), codex]);
     }
 
     #[test]
