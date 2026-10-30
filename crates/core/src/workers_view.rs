@@ -359,6 +359,10 @@ fn status_cell(status: &StatusLine, now: DateTime<Utc>, text_limit: usize) -> Ve
     ]
 }
 
+fn untoned(text: &str) -> String {
+    text.replace(TONE_MARKERS, "")
+}
+
 fn is_newer(status_at: &str, report_at: &str) -> bool {
     match (
         DateTime::parse_from_rfc3339(status_at),
@@ -451,10 +455,7 @@ fn table_cells(row: &WorkerRow, now: DateTime<Utc>, subject_limit: usize) -> [Ve
     .map(|cell| {
         cell.into_iter()
             .map(|span| Span {
-                text: span
-                    .text
-                    .replace('|', SUBJECT_SEPARATOR)
-                    .replace(TONE_MARKERS, ""),
+                text: untoned(&span.text.replace('|', SUBJECT_SEPARATOR)),
                 ..span
             })
             .collect()
@@ -588,7 +589,10 @@ pub fn workers_text(rows: &[WorkerRow], now: DateTime<Utc>) -> String {
     }
     rows.iter()
         .map(|row| {
-            let report = spans_text(&activity_cell(row, now, 80)).replace(['\r', '\n'], " ");
+            let report = untoned(&spans_text(&activity_cell(row, now, usize::MAX)))
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             format!(
                 "{} {} {} {} {report}",
                 row.id,

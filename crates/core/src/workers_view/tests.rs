@@ -552,7 +552,47 @@ fn workers_text_keeps_a_multiline_status_on_one_line() {
     let text = workers_text(&[busy], now());
     assert_eq!(text.lines().count(), 1);
     assert!(!text.contains('\r'));
-    assert_eq!(text, "B claude busy worker/B first  second third · 5m ago");
+    assert_eq!(text, "B claude busy worker/B first second third · 5m ago");
+}
+
+#[test]
+fn workers_text_collapses_whitespace_and_drops_tone_markers() {
+    let mut busy = row("B");
+    busy.status = Some(StatusLine {
+        at: "2026-01-01T00:55:00Z".into(),
+        text: format!("a{TONE_DONE}  b\t\tc{TONE_END}"),
+    });
+    assert_eq!(
+        workers_text(&[busy], now()),
+        "B claude busy worker/B a b c · 5m ago"
+    );
+}
+
+#[test]
+fn workers_text_shows_a_long_status_whole() {
+    let long = "word ".repeat(30).trim_end().to_string();
+    let mut busy = row("B");
+    busy.status = Some(StatusLine {
+        at: "2026-01-01T00:55:00Z".into(),
+        text: long.clone(),
+    });
+    assert_eq!(
+        workers_text(&[busy], now()),
+        format!("B claude busy worker/B {long} · 5m ago")
+    );
+}
+
+#[test]
+fn workers_text_shows_the_report_when_the_status_is_older() {
+    let mut busy = row("B");
+    busy.status = Some(StatusLine {
+        at: "2026-01-01T00:40:00Z".into(),
+        text: "Old note.".into(),
+    });
+    assert_eq!(
+        workers_text(&[busy], now()),
+        "B claude busy worker/B done 12m ago"
+    );
 }
 
 #[test]
