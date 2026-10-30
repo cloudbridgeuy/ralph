@@ -33,13 +33,11 @@ impl Permissions {
     pub(super) fn new(
         markers: &WorkerMarkers,
         mode: PermissionMode,
-        worker_id: String,
-        inbox: Inbox,
-        events: Events,
+        queue: PermissionQueue<Reply>,
     ) -> Arc<Self> {
         Arc::new(Self {
             mode,
-            queue: PermissionQueue::new(worker_id, inbox, events),
+            queue,
             heartbeat: Heartbeat::new(markers.activity.clone(), markers.gone.clone()),
         })
     }

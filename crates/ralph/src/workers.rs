@@ -16,8 +16,8 @@ use ralph_core::worker::{
     parse_interrupt_result, project_slug, prompt_entry_name, ready_path, resolve_worktree_dir,
     sent_path, session_name, session_owner, session_survived_kill, tagged_sessions,
     worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff, HandoffFiles, HarnessId,
-    Owner, PermissionAnswer, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
-    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
+    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -25,10 +25,11 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Output, Stdio};
 use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod guard;
 pub(crate) mod headless;
+mod reply;
 mod spawn;
 pub(crate) use spawn::SpawnArgs;
 
@@ -38,6 +39,7 @@ pub struct Workers {
     exe: PathBuf,
     permission_mode: String,
     worktree_dir: Option<String>,
+    handoff_timeout: Duration,
 }
 
 impl Workers {
@@ -52,6 +54,7 @@ impl Workers {
             exe,
             permission_mode,
             worktree_dir,
+            handoff_timeout: HANDOFF_TIMEOUT,
         }
     }
 
@@ -192,14 +195,7 @@ impl Workers {
     }
 
     fn queue_entry(&self, dir: &Path, text: &str) -> io::Result<String> {
-        let entry = prompt_entry_name(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |elapsed| {
-                    u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
-                }),
-            process::id(),
-        );
+        let entry = prompt_entry_name(now_nanos(), process::id());
         let pending = dir.join(format!(".{entry}"));
         write_file(&pending, text)?;
         fs::rename(&pending, dir.join(&entry))?;
@@ -425,43 +421,6 @@ impl Workers {
         self.headless_files(id).is_some() && blocked_path(&self.store_dir, id).exists()
     }
 
-    fn answer_permission(&self, id: &str, request_id: &str, text: &str) -> io::Result<String> {
-        let HandoffFiles { answer, error, .. } = self.headless_files(id).ok_or_else(|| {
-            io::Error::other(format!(
-                "worker {id} is not a running Cursor, Codex or opencode worker"
-            ))
-        })?;
-        let body = serde_json::to_string(&PermissionAnswer {
-            request_id: request_id.to_string(),
-            option_id: text.to_string(),
-        })?;
-        clear_marker(&error)?;
-        let staging = self.store_dir.join(format!(".answer-{id}"));
-        write_file(&staging, &body)?;
-        fs::create_dir_all(answer.parent().unwrap_or(&self.store_dir))?;
-        fs::rename(&staging, &answer)?;
-        let started = Instant::now();
-        loop {
-            match close_handoff(answer.exists(), started.elapsed()) {
-                Handoff::Done => break,
-                Handoff::TimedOut => {
-                    clear_marker(&answer)?;
-                    return Err(io::Error::other(
-                        "ralph chat did not pick up the permission answer in time",
-                    ));
-                }
-                Handoff::Pending | Handoff::Failed(_) => thread::sleep(HANDOFF_POLL),
-            }
-        }
-        match fs::read_to_string(&error) {
-            Ok(message) => {
-                clear_marker(&error)?;
-                Err(io::Error::other(message))
-            }
-            Err(_) => Ok(format!("Answered the permission request of worker {id}.")),
-        }
-    }
-
     fn terminate_opencode(&self, id: &str) -> io::Result<()> {
         let files = HandoffFiles::opencode(&self.store_dir, id);
         clear_marker(&files.error)?;
@@ -575,6 +534,14 @@ fn repo_root() -> io::Result<PathBuf> {
     Ok(PathBuf::from(stdout_line(run(
         Command::new("git").args(["rev-parse", "--show-toplevel"])
     )?)))
+}
+
+fn now_nanos() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        })
 }
 
 fn clear_marker(marker: &Path) -> io::Result<()> {
@@ -767,7 +734,7 @@ mod tests {
         assert_eq!(canonical_store(link), canonical_store(real));
     }
 
-    fn workers_in(dir: &Path) -> Workers {
+    pub(super) fn workers_in(dir: &Path) -> Workers {
         Workers::new(dir.to_path_buf(), "/bin/ralph".into(), "auto".into(), None)
     }
 
@@ -808,40 +775,6 @@ mod tests {
         let running = running_workers(dir.path());
         let worker = running.iter().find(|worker| worker.id == "A").unwrap();
         assert!(worker.kind == HarnessId::Opencode && worker.session.is_empty());
-    }
-
-    #[test]
-    fn a_permission_answer_carries_its_request_id_to_the_host() {
-        let dir = tempfile::tempdir().unwrap();
-        let workers = workers_in(dir.path());
-        let files = HandoffFiles::opencode(dir.path(), "A");
-        write_file(&files.owner, "").unwrap();
-        write_file(&blocked_path(dir.path(), "A"), "").unwrap();
-        let (answer, error) = (files.answer.clone(), files.error.clone());
-        let host = thread::spawn(move || {
-            let mut seen = Vec::new();
-            while seen.len() < 2 {
-                if let Ok(text) = fs::read_to_string(&answer) {
-                    let decoded = PermissionAnswer::decode(&text).unwrap();
-                    if decoded.request_id.is_empty() {
-                        write_file(&error, "pass request. pending: per_1").unwrap();
-                    }
-                    seen.push(decoded);
-                    fs::remove_file(&answer).unwrap();
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            seen
-        });
-        let unnamed = workers.reply("A", "once", false, None).unwrap_err();
-        assert_eq!(unnamed.to_string(), "pass request. pending: per_1");
-        assert_eq!(
-            workers.reply("A", "once", false, Some("per_1")).unwrap(),
-            "Answered the permission request of worker A."
-        );
-        let seen = host.join().unwrap();
-        assert_eq!(seen[1].request_id, "per_1");
-        assert_eq!(seen[1].option_id, "once");
     }
 
     #[test]

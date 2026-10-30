@@ -2,8 +2,8 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
-    now_secs, report_start_warning, sweep_owner, write_file, write_interrupt_result,
-    write_owner_record,
+    now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_file_atomic,
+    write_interrupt_result, write_owner_record,
 };
 use crate::subprocess::{exited_unreaped, signal_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
@@ -53,6 +53,7 @@ mod permissions;
 mod turns;
 mod verify;
 
+use crate::permission_queue::{host_process_token, PermissionQueue};
 use permissions::Permissions;
 use turns::{run_turns, Turns};
 pub(crate) use verify::verify;
@@ -81,7 +82,7 @@ pub(crate) fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
             fs::remove_file(path(*marker)).ok();
         }
         HeadlessEffect::Publish(content) => {
-            write_file(&markers.blocked, &content.render()).ok();
+            write_file_atomic(&markers.blocked, &content.render()).ok();
         }
         HeadlessEffect::ReplyText(_) => {}
     }
@@ -227,9 +228,12 @@ impl AcpWorker {
         let permissions = Permissions::new(
             &markers,
             cursor_permissions(),
-            id.to_string(),
-            Inbox::new(request.inbox.clone()),
-            Arc::clone(&events),
+            PermissionQueue::new(
+                host_process_token(),
+                id.to_string(),
+                Inbox::new(request.inbox.clone()),
+                Arc::clone(&events),
+            ),
         );
         let (prompts, prompt_rx) = queue::unbounded();
         let (finished_tx, finished_rx) = mpsc::channel();
@@ -715,20 +719,14 @@ impl CursorHost {
     }
 
     fn answer(&self, id: &str) {
-        let files = self.files(id);
-        let Ok(text) = fs::read_to_string(&files.answer) else {
-            return;
-        };
-        let result = PermissionAnswer::decode(&text).and_then(|answer| {
-            self.workers()
-                .get_mut(id)
-                .ok_or_else(|| format!("worker has no running {} agent", CURSOR_AGENT.name))
-                .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
+        take_answer(&self.files(id), |text| {
+            PermissionAnswer::decode(text).and_then(|answer| {
+                self.workers()
+                    .get_mut(id)
+                    .ok_or_else(|| format!("worker has no running {} agent", CURSOR_AGENT.name))
+                    .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
+            })
         });
-        if let Err(message) = result {
-            write_file(&files.error, &message).ok();
-        }
-        fs::remove_file(&files.answer).ok();
     }
 
     fn prompt(

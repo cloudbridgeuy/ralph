@@ -1,6 +1,6 @@
 use super::{post_prompt, record_usage, OpencodeHost, Session, Target};
 use crate::acp_worker::Events;
-use crate::cursor_owner::{now_secs, write_file};
+use crate::cursor_owner::{now_secs, take_answer, write_file};
 use crate::warn::warn;
 use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
@@ -229,14 +229,7 @@ impl OpencodeHost {
     }
 
     fn answer(&self, id: &str) {
-        let files = self.files(id);
-        let Ok(text) = fs::read_to_string(&files.answer) else {
-            return;
-        };
-        if let Err(message) = self.reply_permission(id, &text) {
-            self.fail(id, &message);
-        }
-        fs::remove_file(&files.answer).ok();
+        take_answer(&self.files(id), |text| self.reply_permission(id, text));
     }
 
     fn reply_permission(&self, id: &str, text: &str) -> Result<(), String> {

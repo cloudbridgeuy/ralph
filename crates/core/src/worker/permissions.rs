@@ -62,6 +62,10 @@ impl PermissionAnswer {
     }
 }
 
+pub fn process_request_id(process: &str, raw: &str) -> String {
+    format!("{process}.{raw}")
+}
+
 pub fn pending_position<'a>(
     pending: impl Iterator<Item = &'a str>,
     request_id: &str,
@@ -189,6 +193,12 @@ mod tests {
                     .into()
             )
         );
+    }
+
+    #[test]
+    fn a_request_id_carries_its_host_process_before_the_raw_id() {
+        assert_eq!(process_request_id("12-34", "0"), "12-34.0");
+        assert_ne!(process_request_id("a", "0"), process_request_id("b", "0"));
     }
 
     #[test]

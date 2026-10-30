@@ -1,6 +1,6 @@
 use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::config::AppConfig;
-use crate::cursor_owner::{now_secs, process_start, write_file};
+use crate::cursor_owner::{now_secs, process_start, request_ids, write_file};
 use crate::opencode_usage::{record_opencode_usage, OpencodeTurn};
 use crate::process_tree::process_table;
 use crate::transport::http::HttpSse;
@@ -400,6 +400,7 @@ impl OpencodeHost {
     pub(crate) fn new(store_dir: PathBuf) -> Arc<Self> {
         fs::remove_dir_all(store_dir.join(OPENCODE_OWNER_DIR)).ok();
         fs::remove_dir_all(store_dir.join(OPENCODE_INTERRUPT_RESULT_DIR)).ok();
+        clear_claims(&store_dir);
         Arc::new(Self {
             sessions: Mutex::new(load_sessions(
                 &store_dir,
@@ -854,6 +855,12 @@ fn post_problem(target: &Target, problem: &str) {
     Inbox::new(target.inbox.clone()).post(&report, 0).ok();
 }
 
+fn clear_claims(store: &Path) {
+    for id in request_ids(store, OPENCODE_SESSION_DIR) {
+        fs::remove_file(HandoffFiles::opencode(store, &id).claim).ok();
+    }
+}
+
 impl HeadlessHost for OpencodeHost {
     fn resume(&self) {
         self.supervise();
@@ -884,6 +891,22 @@ mod tests {
             inbox: PathBuf::from(inbox),
         }
         .render()
+    }
+
+    #[test]
+    fn a_claim_left_by_a_dead_chat_is_cleared_when_the_host_is_built() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join(OPENCODE_SESSION_DIR);
+        fs::create_dir_all(&session).unwrap();
+        fs::write(session.join("A"), record("ses_a", "/i")).unwrap();
+        let files = HandoffFiles::opencode(dir.path(), "A");
+        fs::write(&files.claim, "{}").unwrap();
+        let other = HandoffFiles::opencode(dir.path(), "B");
+        fs::write(&other.claim, "{}").unwrap();
+        OpencodeHost::new(dir.path().to_path_buf());
+        assert!(!files.claim.exists());
+        assert!(other.claim.exists());
+        assert!(session.join("A").exists());
     }
 
     #[test]

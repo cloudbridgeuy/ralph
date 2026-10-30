@@ -46,6 +46,10 @@ const OPENCODE_DIRS: [&str; 9] = [
     OPENCODE_SESSION_DIR,
 ];
 
+pub fn claimed_answer_path(store: &Path, answer_dir: &str, id: &str) -> PathBuf {
+    store.join(format!(".claimed-{answer_dir}-{id}"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HandoffFiles {
     pub spawn: PathBuf,
@@ -54,6 +58,7 @@ pub struct HandoffFiles {
     pub warning: PathBuf,
     pub owner: PathBuf,
     pub answer: PathBuf,
+    pub claim: PathBuf,
     pub prompt: PathBuf,
     pub interrupt: PathBuf,
     pub interrupt_result: PathBuf,
@@ -85,6 +90,7 @@ impl HandoffFiles {
         let [spawn, close, error, owner, answer, prompt, interrupt, interrupt_result, session] =
             dirs.map(|dir| store.join(dir).join(id));
         let warning = error.with_file_name(format!("{id}.warning"));
+        let claim = claimed_answer_path(store, dirs[4], id);
         Self {
             spawn,
             close,
@@ -92,6 +98,7 @@ impl HandoffFiles {
             warning,
             owner,
             answer,
+            claim,
             prompt,
             interrupt,
             interrupt_result,
@@ -99,7 +106,7 @@ impl HandoffFiles {
         }
     }
 
-    pub fn all(&self) -> [&Path; 9] {
+    pub fn all(&self) -> [&Path; 10] {
         [
             &self.spawn,
             &self.close,
@@ -107,6 +114,7 @@ impl HandoffFiles {
             &self.warning,
             &self.owner,
             &self.answer,
+            &self.claim,
             &self.prompt,
             &self.interrupt,
             &self.interrupt_result,
@@ -135,5 +143,17 @@ mod tests {
         );
         assert_eq!(cursor.warning, PathBuf::from("/s/cursor-error/A.warning"));
         assert!(!opencode.all().contains(&opencode.session.as_path()));
+    }
+
+    #[test]
+    fn a_claimed_answer_is_a_dot_file_in_the_store_root() {
+        assert_eq!(
+            claimed_answer_path(Path::new("/s"), "cursor-answer", "A"),
+            PathBuf::from("/s/.claimed-cursor-answer-A")
+        );
+        let files = HandoffFiles::opencode(Path::new("/s"), "A");
+        assert_eq!(files.claim, PathBuf::from("/s/.claimed-opencode-answer-A"));
+        assert!(files.all().contains(&files.claim.as_path()));
+        assert_ne!(files.claim, files.answer);
     }
 }

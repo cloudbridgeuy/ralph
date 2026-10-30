@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const TERM_GRACE: Duration = Duration::from_secs(3);
@@ -197,6 +198,29 @@ pub fn write_file(path: &Path, text: &str) -> io::Result<()> {
     fs::write(path, text)
 }
 
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn atomic_temp_name(file: &str, pid: u32, seq: u64) -> String {
+    format!(".{file}.{pid}.{seq}.tmp")
+}
+
+pub fn write_file_atomic(path: &Path, text: &str) -> io::Result<()> {
+    let file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::other("marker path has no file name"))?;
+    let temp = path.with_file_name(atomic_temp_name(
+        file,
+        process::id(),
+        TEMP_SEQ.fetch_add(1, Ordering::Relaxed),
+    ));
+    write_file(&temp, text)
+        .and_then(|()| fs::rename(&temp, path))
+        .inspect_err(|_| {
+            fs::remove_file(&temp).ok();
+        })
+}
+
 pub fn write_interrupt_result(results: &Path, entry: &str, cancelled: bool) {
     let pending = results.join(format!(".{entry}"));
     if write_file(&pending, interrupt_result_text(cancelled)).is_ok() {
@@ -221,6 +245,20 @@ pub(crate) fn request_ids(store_dir: &Path, dir: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+pub(crate) fn take_answer(files: &HandoffFiles, handle: impl FnOnce(&str) -> Result<(), String>) {
+    if fs::rename(&files.answer, &files.claim).is_err() {
+        return;
+    }
+    let outcome = match fs::read_to_string(&files.claim) {
+        Ok(text) => handle(&text),
+        Err(error) => Err(format!("could not read the permission answer: {error}")),
+    };
+    if let Err(message) = outcome {
+        write_file(&files.error, &message).ok();
+    }
+    fs::remove_file(&files.claim).ok();
+}
+
 pub(crate) fn queued_entries(dir: &Path) -> Vec<PathBuf> {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)
         .map(|dir| {
@@ -239,6 +277,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_atomic_write_replaces_the_text_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("blocked").join("A");
+        write_file_atomic(&marker, "old").unwrap();
+        write_file_atomic(&marker, "new").unwrap();
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "new");
+        let left: Vec<_> = fs::read_dir(marker.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["A"]);
+    }
+
+    #[test]
+    fn atomic_temp_names_stay_beside_the_target_per_process() {
+        assert_eq!(atomic_temp_name("A", 7, 1), ".A.7.1.tmp");
+        assert_ne!(atomic_temp_name("A", 7, 1), atomic_temp_name("A", 8, 1));
+        assert_ne!(atomic_temp_name("A", 7, 1), atomic_temp_name("A", 7, 2));
+    }
+
+    #[test]
+    fn a_failed_atomic_write_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("A");
+        fs::create_dir_all(target.join("child")).unwrap();
+        assert!(write_file_atomic(&target, "x").is_err());
+        let left: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["A"]);
+    }
+
+    #[test]
     fn claim_owner_succeeds_once_and_leaves_a_parseable_record() {
         let store = tempfile::tempdir().unwrap();
         let owner = store.path().join("codex").join("A");
@@ -248,5 +320,49 @@ mod tests {
         let record = OwnerRecord::parse(&fs::read_to_string(&owner).unwrap()).unwrap();
         assert_eq!(record.chat_pid, process::id());
         assert_eq!(fs::read_dir(store.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn taking_an_answer_claims_it_runs_the_handler_and_reports_its_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = HandoffFiles::codex(dir.path(), "A");
+        let mut calls = 0;
+        take_answer(&files, |_| {
+            calls += 1;
+            Ok(())
+        });
+        assert_eq!(calls, 0);
+        write_file(&files.answer, "body").unwrap();
+        let mut seen = None;
+        take_answer(&files, |text| {
+            seen = Some((
+                text.to_string(),
+                files.answer.exists(),
+                files.claim.exists(),
+            ));
+            Err("stale request".to_string())
+        });
+        assert_eq!(seen, Some(("body".to_string(), false, true)));
+        assert_eq!(fs::read_to_string(&files.error).unwrap(), "stale request");
+        assert!(!files.answer.exists() && !files.claim.exists());
+    }
+
+    #[test]
+    fn an_unreadable_claim_writes_an_error_instead_of_reporting_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = HandoffFiles::opencode(dir.path(), "A");
+        fs::create_dir_all(&files.answer).unwrap();
+        let mut called = false;
+        take_answer(&files, |_| {
+            called = true;
+            Ok(())
+        });
+        assert!(!called);
+        let error = fs::read_to_string(&files.error).unwrap_or_default();
+        assert!(
+            error.starts_with("could not read the permission answer: "),
+            "error file was {error:?}"
+        );
+        assert!(!files.answer.exists());
     }
 }
