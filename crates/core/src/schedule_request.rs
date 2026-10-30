@@ -141,7 +141,7 @@ fn timeout_arg(args: &Value) -> Result<Option<u64>, String> {
 }
 
 pub fn proposed_message(id: &str) -> String {
-    format!("schedule `{id}` proposed; the chat will ask the person to approve it")
+    format!("schedule `{id}` proposed; the chat will ask the person to approve it; do not suggest a reply to approve it")
 }
 
 pub fn duplicate_message(id: &str) -> String {
@@ -389,6 +389,7 @@ mod tests {
     fn messages_name_the_task() {
         assert!(proposed_message("a").contains("`a`"));
         assert!(proposed_message("a").contains("approve"));
+        assert!(proposed_message("a").ends_with("; do not suggest a reply to approve it"));
         assert!(duplicate_message("a").contains("`a`"));
     }
 }
