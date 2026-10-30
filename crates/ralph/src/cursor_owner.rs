@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const TERM_GRACE: Duration = Duration::from_secs(3);
@@ -197,8 +198,10 @@ pub fn write_file(path: &Path, text: &str) -> io::Result<()> {
     fs::write(path, text)
 }
 
-fn atomic_temp_name(file: &str, pid: u32) -> String {
-    format!(".{file}.{pid}.tmp")
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn atomic_temp_name(file: &str, pid: u32, seq: u64) -> String {
+    format!(".{file}.{pid}.{seq}.tmp")
 }
 
 pub fn write_file_atomic(path: &Path, text: &str) -> io::Result<()> {
@@ -206,11 +209,16 @@ pub fn write_file_atomic(path: &Path, text: &str) -> io::Result<()> {
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| io::Error::other("marker path has no file name"))?;
-    let temp = path.with_file_name(atomic_temp_name(file, process::id()));
-    write_file(&temp, text)?;
-    fs::rename(&temp, path).inspect_err(|_| {
-        fs::remove_file(&temp).ok();
-    })
+    let temp = path.with_file_name(atomic_temp_name(
+        file,
+        process::id(),
+        TEMP_SEQ.fetch_add(1, Ordering::Relaxed),
+    ));
+    write_file(&temp, text)
+        .and_then(|()| fs::rename(&temp, path))
+        .inspect_err(|_| {
+            fs::remove_file(&temp).ok();
+        })
 }
 
 pub fn write_interrupt_result(results: &Path, entry: &str, cancelled: bool) {
@@ -270,8 +278,22 @@ mod tests {
 
     #[test]
     fn atomic_temp_names_stay_beside_the_target_per_process() {
-        assert_eq!(atomic_temp_name("A", 7), ".A.7.tmp");
-        assert_ne!(atomic_temp_name("A", 7), atomic_temp_name("A", 8));
+        assert_eq!(atomic_temp_name("A", 7, 1), ".A.7.1.tmp");
+        assert_ne!(atomic_temp_name("A", 7, 1), atomic_temp_name("A", 8, 1));
+        assert_ne!(atomic_temp_name("A", 7, 1), atomic_temp_name("A", 7, 2));
+    }
+
+    #[test]
+    fn a_failed_atomic_write_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("A");
+        fs::create_dir_all(target.join("child")).unwrap();
+        assert!(write_file_atomic(&target, "x").is_err());
+        let left: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["A"]);
     }
 
     #[test]

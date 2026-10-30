@@ -2,7 +2,7 @@ use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
 use crate::cursor_owner::{
-    caller_owns, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file,
+    caller_owns, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file, write_file_atomic,
 };
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
@@ -428,16 +428,11 @@ impl Workers {
             request_id: request_id.to_string(),
             option_id: text.to_string(),
         })?;
-        clear_marker(&error)?;
-        let staging = self
-            .store_dir
-            .join(answer_staging_name(id, process::id(), now_nanos()));
-        write_file(&staging, &body)?;
         fs::create_dir_all(answer.parent().unwrap_or(&self.store_dir))?;
         let started = Instant::now();
-        let claimed = claim_answer(&staging, &answer, started);
-        fs::remove_file(&staging).ok();
-        claimed?;
+        let _lock = lock_reply(&reply_lock_path(&answer), id, started)?;
+        clear_marker(&error)?;
+        write_file_atomic(&answer, &body)?;
         loop {
             match close_handoff(answer.exists(), started.elapsed()) {
                 Handoff::Done => break,
@@ -582,29 +577,31 @@ fn now_nanos() -> u64 {
         })
 }
 
-fn claim_answer(staging: &Path, answer: &Path, started: Instant) -> io::Result<()> {
+fn reply_lock_path(answer: &Path) -> PathBuf {
+    let name = answer
+        .file_name()
+        .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+    answer.with_file_name(format!("{name}.lock"))
+}
+
+fn lock_reply(lock: &Path, id: &str, started: Instant) -> io::Result<fs::File> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock)?;
     loop {
-        if claim_answer_slot(staging, answer)? {
-            return Ok(());
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(fs::TryLockError::WouldBlock) => {}
+            Err(fs::TryLockError::Error(error)) => return Err(error),
         }
         if close_handoff(true, started.elapsed()) == Handoff::TimedOut {
-            return Err(io::Error::other(
-                "ralph chat did not pick up the previous permission answer in time",
-            ));
+            return Err(io::Error::other(format!(
+                "another reply to worker {id} is still in progress"
+            )));
         }
         thread::sleep(HANDOFF_POLL);
-    }
-}
-
-fn answer_staging_name(id: &str, pid: u32, nanos: u64) -> String {
-    format!(".answer-{id}-{pid}-{nanos}")
-}
-
-fn claim_answer_slot(staging: &Path, answer: &Path) -> io::Result<bool> {
-    match fs::hard_link(staging, answer) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error),
     }
 }
 
@@ -876,28 +873,69 @@ mod tests {
     }
 
     #[test]
-    fn a_second_answer_never_replaces_an_unread_one() {
+    fn concurrent_replies_to_one_worker_each_get_their_own_result() {
         let dir = tempfile::tempdir().unwrap();
-        let answer = dir.path().join("answer");
-        let first = dir.path().join(".first");
-        let second = dir.path().join(".second");
-        write_file(&first, "first").unwrap();
-        write_file(&second, "second").unwrap();
-        assert!(claim_answer_slot(&first, &answer).unwrap());
-        assert!(!claim_answer_slot(&second, &answer).unwrap());
-        assert_eq!(fs::read_to_string(&answer).unwrap(), "first");
-        assert_eq!(fs::read_to_string(&second).unwrap(), "second");
-        fs::remove_file(&answer).unwrap();
-        assert!(claim_answer_slot(&second, &answer).unwrap());
-        assert_eq!(fs::read_to_string(&answer).unwrap(), "second");
+        let workers = workers_in(dir.path());
+        let files = HandoffFiles::opencode(dir.path(), "A");
+        write_file(&files.owner, "").unwrap();
+        write_file(&blocked_path(dir.path(), "A"), "").unwrap();
+        let (answer, error) = (files.answer.clone(), files.error.clone());
+        let (stale_written, stale_written_rx) = std::sync::mpsc::channel();
+        let host = thread::spawn(move || {
+            let mut handled = 0;
+            while handled < 2 {
+                if let Ok(text) = fs::read_to_string(&answer) {
+                    if PermissionAnswer::decode(&text).unwrap().request_id == "stale" {
+                        write_file(&error, "stale request stale").unwrap();
+                        stale_written.send(()).unwrap();
+                        thread::sleep(Duration::from_millis(300));
+                    }
+                    fs::remove_file(&answer).unwrap();
+                    handled += 1;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let stale = {
+            let workers = workers.clone();
+            thread::spawn(move || workers.reply("A", "once", false, Some("stale")))
+        };
+        stale_written_rx.recv().unwrap();
+        let valid = {
+            let workers = workers.clone();
+            thread::spawn(move || workers.reply("A", "once", false, Some("valid")))
+        };
+        let stale = stale.join().unwrap();
+        let valid = valid.join().unwrap();
+        host.join().unwrap();
+        assert_eq!(stale.unwrap_err().to_string(), "stale request stale");
+        assert_eq!(
+            valid.unwrap(),
+            "Answered the permission request of worker A."
+        );
     }
 
     #[test]
-    fn answer_staging_names_differ_per_process_and_instant() {
-        let base = answer_staging_name("A", 1, 2);
-        assert_eq!(base, ".answer-A-1-2");
-        assert_ne!(base, answer_staging_name("A", 3, 2));
-        assert_ne!(base, answer_staging_name("A", 1, 4));
+    fn the_reply_lock_sits_next_to_the_answer() {
+        assert_eq!(
+            reply_lock_path(Path::new("/s/codex-answer/A")),
+            PathBuf::from("/s/codex-answer/A.lock")
+        );
+    }
+
+    #[test]
+    fn a_held_reply_lock_times_out_a_second_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = dir.path().join("A.lock");
+        let held = lock_reply(&lock, "A", Instant::now()).unwrap();
+        let waited = Instant::now() - HANDOFF_TIMEOUT;
+        let error = lock_reply(&lock, "A", waited).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "another reply to worker A is still in progress"
+        );
+        drop(held);
+        assert!(lock_reply(&lock, "A", Instant::now()).is_ok());
     }
 
     #[test]
