@@ -9,12 +9,14 @@ pub struct AcpAgent {
     pub name: &'static str,
     pub command: &'static str,
     pub tested_version: &'static str,
+    pub login_method: &'static str,
 }
 
 pub const CURSOR_AGENT: AcpAgent = AcpAgent {
     name: "cursor",
     command: "agent",
     tested_version: "2026.10.14",
+    login_method: "cursor_login",
 };
 pub const AUTH_REQUIRED_CODE: i32 = -32000;
 
@@ -56,6 +58,14 @@ pub fn check_protocol(agent: &AcpAgent, version: u16) -> Result<(), String> {
             agent.name
         ))
     }
+}
+
+pub fn auth_method<'a>(agent: &AcpAgent, advertised: &[&'a str]) -> Option<&'a str> {
+    advertised
+        .iter()
+        .find(|id| **id == agent.login_method)
+        .or_else(|| advertised.first())
+        .copied()
 }
 
 pub fn session_error(agent: &AcpAgent, code: i32, message: &str) -> String {
@@ -183,6 +193,16 @@ mod tests {
     fn auth_required_tells_the_user_to_log_in() {
         assert!(session_error(&CURSOR_AGENT, -32000, "x").contains("agent login"));
         assert!(session_error(&CURSOR_AGENT, -32603, "boom").contains("boom"));
+    }
+
+    #[test]
+    fn the_agent_login_method_wins_over_other_advertised_methods() {
+        assert_eq!(
+            auth_method(&CURSOR_AGENT, &["api_key", "cursor_login"]),
+            Some("cursor_login")
+        );
+        assert_eq!(auth_method(&CURSOR_AGENT, &["api_key"]), Some("api_key"));
+        assert_eq!(auth_method(&CURSOR_AGENT, &[]), None);
     }
 
     #[test]

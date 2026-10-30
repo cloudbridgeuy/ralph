@@ -91,7 +91,7 @@ On a `spawn_worker` start the host writes the warning to `<id>.warning` beside t
 | --- | --- | --- | --- |
 | version | `agent --version` is readable | `initialize` user agent is readable and not older than 0.162 | free |
 | spawn, initialize | `~/.cursor/projects/<slug>/.cursor/hooks.json` is written; `agent acp` starts; ACP protocol 1 | `codex app-server` starts; `initialize` answers | free |
-| login | `session/new` raises no -32000 | `account/read` shows a usable account | free |
+| login | `authenticate` (the advertised login method) and `session/new` raise no -32000 | `account/read` shows a usable account | free |
 | session | `session/new` returns a session; `loadSession` capability is advertised | `model/list` lists models; `thread/start` returns a thread, then `thread/archive` removes it | free |
 | prompt/reply | one short prompt ends `end_turn` with reply updates | one short prompt ends `completed` with reply deltas | `--live` |
 | session/reload | the prompted session loads again | none | `--live` |

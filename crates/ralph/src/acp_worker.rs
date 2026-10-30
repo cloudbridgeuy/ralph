@@ -12,9 +12,10 @@ use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use agent_client_protocol::schema::v1::{
-    CancelNotification, InitializeRequest, InitializeResponse, LoadSessionRequest, McpServer,
-    NewSessionRequest, PromptRequest, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionId, SessionNotification,
+    AuthenticateRequest, CancelNotification, InitializeRequest, InitializeResponse,
+    LoadSessionRequest, McpServer, NewSessionRequest, PromptRequest, RequestPermissionOutcome,
+    RequestPermissionRequest, RequestPermissionResponse, SelectedPermissionOutcome, SessionId,
+    SessionNotification,
 };
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::{Agent, ByteStreams, Client, ConnectionTo, Responder};
@@ -25,15 +26,16 @@ use futures::future::Either;
 use futures::{select, FutureExt, StreamExt};
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, auto_allow_option, cancels_turn, capabilities, check_protocol,
-    decide, decode_update, describe, encode, gone_path, permission_content, prompt_failure_report,
-    ready_path, reduce, request_stale, resume_decision, session_error, session_saved, stop_problem,
-    task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall, BlockedContent, Capabilities,
-    HandoffFiles, HarnessId, HeadlessEffect, HeadlessState, HeadlessWorker, Inbound, Marker,
-    PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope, SessionRecord, SpawnRequest,
-    Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT,
-    CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR,
-    CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
+    check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
+    prompt_failure_report, ready_path, reduce, request_stale, resume_decision, session_error,
+    session_saved, stop_problem, task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall,
+    BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect, HeadlessState,
+    HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope,
+    SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent,
+    WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
+    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
+    CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -350,6 +352,12 @@ impl AcpWorker {
                                 return Ok(());
                             }
                         };
+                        if let Err(e) = authenticate(&connection, &agent, &init).await {
+                            ready_tx
+                                .send(Err(session_error(&agent, i32::from(e.code), &e.message)))
+                                .ok();
+                            return Ok(());
+                        }
                         let opening = Opening {
                             agent,
                             launch,
@@ -559,6 +567,26 @@ async fn initialize(
         .block_task()
         .await?;
     Ok(check_protocol(agent, init.protocol_version.as_u16()).map(|()| init))
+}
+
+async fn authenticate(
+    connection: &ConnectionTo<Agent>,
+    agent: &AcpAgent,
+    init: &InitializeResponse,
+) -> Result<(), agent_client_protocol::Error> {
+    let advertised: Vec<&str> = init
+        .auth_methods
+        .iter()
+        .map(|method| method.id().0.as_ref())
+        .collect();
+    let Some(method) = auth_method(agent, &advertised) else {
+        return Ok(());
+    };
+    connection
+        .send_request(AuthenticateRequest::new(method.to_string()))
+        .block_task()
+        .await
+        .map(drop)
 }
 
 pub struct CursorHost {
