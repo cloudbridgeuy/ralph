@@ -7,8 +7,9 @@ use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     create_session_body, interrupt_result_text, opencode_session_id, request_stale, task_prompt,
     HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord, OpencodeSpawn, OpencodeTurnUsage,
-    TurnState, WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR,
-    OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
+    PermissionAnswer, TurnState, WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR,
+    OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR,
+    OPENCODE_SPAWN_DIR,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -229,6 +230,7 @@ impl OpencodeHost {
     }
 
     fn reply_permission(&self, id: &str, text: &str) -> Result<(), String> {
+        let answer = PermissionAnswer::decode(text)?;
         let (session_id, heartbeat) = {
             let sessions = self.sessions();
             let (session_id, session) = sessions
@@ -238,9 +240,7 @@ impl OpencodeHost {
             (session_id.clone(), Arc::clone(&session.heartbeat))
         };
         self.worker(id, &session_id)
-            .send(WorkerCommand::AnswerPermission {
-                option_id: text.to_string(),
-            })
+            .send(WorkerCommand::AnswerPermission(answer))
             .map(|()| heartbeat.touch())
     }
 

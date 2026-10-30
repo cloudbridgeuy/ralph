@@ -75,6 +75,7 @@ fn approval(
     Approval {
         kind,
         content: BlockedContent {
+            request_id: String::new(),
             tool: tool.to_string(),
             summary: summary.to_string(),
             options,

@@ -177,6 +177,7 @@ pub enum Command {
         id: String,
         text: String,
         interrupt: bool,
+        request: Option<String>,
     },
     Close {
         id: String,
@@ -635,6 +636,7 @@ mod tests {
             id: "A".into(),
             text: "t".into(),
             interrupt: false,
+            request: None,
         };
         assert!(command_allowed(&reply, Some(Trigger::User)).is_ok());
         assert!(command_allowed(&reply, Some(Trigger::Worker)).is_ok());

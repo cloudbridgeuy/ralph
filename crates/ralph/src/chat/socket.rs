@@ -259,12 +259,13 @@ fn run_command(
             id,
             text,
             interrupt,
+            request,
         } => {
             let schedule = ScheduleStore::new(store.dir().join(SCHEDULE_DIR));
             if let Some(refusal) = reply_refusal(id, &schedule.load_all()) {
                 return Err(refusal);
             }
-            workers.reply(id, text, *interrupt)
+            workers.reply(id, text, *interrupt, request.as_deref())
         }
         Command::Close { id, abandon, force } => workers.close(id, *abandon, *force),
         Command::Watch(request) => {

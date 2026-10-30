@@ -119,10 +119,15 @@ async fn open(
         },
         |_| format!("ACP protocol {ACP_PROTOCOL_VERSION}"),
     )?;
-    let created = connection
-        .send_request(NewSessionRequest::new(dir.to_path_buf()))
-        .block_task()
-        .await;
+    let created = match authenticate(connection, &CURSOR_AGENT, &init).await {
+        Ok(()) => {
+            connection
+                .send_request(NewSessionRequest::new(dir.to_path_buf()))
+                .block_task()
+                .await
+        }
+        Err(error) => Err(error),
+    };
     let logged_out = matches!(&created, Err(error) if i32::from(error.code) == AUTH_REQUIRED_CODE);
     let created = created
         .map_err(|error| session_error(&CURSOR_AGENT, i32::from(error.code), &error.message));
@@ -135,7 +140,7 @@ async fn open(
     }
     checks.add(CheckResult::pass(
         "login",
-        "session/new raised no auth error",
+        "authenticate and session/new raised no auth error",
     ));
     let created = step(checks, "session/new", created, |created| {
         format!("session {}", created.session_id)

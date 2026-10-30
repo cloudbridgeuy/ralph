@@ -16,8 +16,8 @@ use ralph_core::worker::{
     parse_interrupt_result, project_slug, prompt_entry_name, ready_path, resolve_worktree_dir,
     sent_path, session_name, session_owner, session_survived_kill, tagged_sessions,
     worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff, HandoffFiles, HarnessId,
-    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
-    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    Owner, PermissionAnswer, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
+    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -65,8 +65,17 @@ impl Workers {
         sent
     }
 
-    pub fn reply(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
-        let delivered = self.deliver(id, text, interrupt);
+    pub fn reply(
+        &self,
+        id: &str,
+        text: &str,
+        interrupt: bool,
+        request: Option<&str>,
+    ) -> io::Result<String> {
+        let delivered = match request.filter(|_| !interrupt) {
+            Some(request_id) => self.answer_permission(id, request_id, text),
+            None => self.deliver(id, text, interrupt),
+        };
         self.mark_sent(id, delivered)
     }
 
@@ -115,7 +124,7 @@ impl Workers {
         if let Some(queued) = self.deliver_headless(id, text, false, "Nudged") {
             return self.mark_sent(id, queued);
         }
-        self.reply(id, text, false)
+        self.reply(id, text, false, None)
     }
 
     fn codex_running(&self, id: &str) -> bool {
@@ -156,7 +165,7 @@ impl Workers {
                 )
             })
         } else if self.awaits_permission(id) {
-            self.answer_permission(id, text)
+            self.answer_permission(id, "", text)
         } else {
             self.queue_prompt(&files.prompt, id, text, verb)
         })
@@ -416,12 +425,21 @@ impl Workers {
         self.headless_files(id).is_some() && blocked_path(&self.store_dir, id).exists()
     }
 
-    fn answer_permission(&self, id: &str, text: &str) -> io::Result<String> {
-        let HandoffFiles { answer, error, .. } = self
-            .headless_files(id)
-            .ok_or_else(|| io::Error::other(format!("worker {id} is not running")))?;
+    fn answer_permission(&self, id: &str, request_id: &str, text: &str) -> io::Result<String> {
+        let HandoffFiles { answer, error, .. } = self.headless_files(id).ok_or_else(|| {
+            io::Error::other(format!(
+                "worker {id} is not a running Cursor, Codex or opencode worker"
+            ))
+        })?;
+        let body = serde_json::to_string(&PermissionAnswer {
+            request_id: request_id.to_string(),
+            option_id: text.to_string(),
+        })?;
         clear_marker(&error)?;
-        write_file(&answer, text)?;
+        let staging = self.store_dir.join(format!(".answer-{id}"));
+        write_file(&staging, &body)?;
+        fs::create_dir_all(answer.parent().unwrap_or(&self.store_dir))?;
+        fs::rename(&staging, &answer)?;
         let started = Instant::now();
         loop {
             match close_handoff(answer.exists(), started.elapsed()) {
@@ -793,12 +811,46 @@ mod tests {
     }
 
     #[test]
+    fn a_permission_answer_carries_its_request_id_to_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        let files = HandoffFiles::opencode(dir.path(), "A");
+        write_file(&files.owner, "").unwrap();
+        write_file(&blocked_path(dir.path(), "A"), "").unwrap();
+        let (answer, error) = (files.answer.clone(), files.error.clone());
+        let host = thread::spawn(move || {
+            let mut seen = Vec::new();
+            while seen.len() < 2 {
+                if let Ok(text) = fs::read_to_string(&answer) {
+                    let decoded = PermissionAnswer::decode(&text).unwrap();
+                    if decoded.request_id.is_empty() {
+                        write_file(&error, "pass request. pending: per_1").unwrap();
+                    }
+                    seen.push(decoded);
+                    fs::remove_file(&answer).unwrap();
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            seen
+        });
+        let unnamed = workers.reply("A", "once", false, None).unwrap_err();
+        assert_eq!(unnamed.to_string(), "pass request. pending: per_1");
+        assert_eq!(
+            workers.reply("A", "once", false, Some("per_1")).unwrap(),
+            "Answered the permission request of worker A."
+        );
+        let seen = host.join().unwrap();
+        assert_eq!(seen[1].request_id, "per_1");
+        assert_eq!(seen[1].option_id, "once");
+    }
+
+    #[test]
     fn a_reply_to_an_opencode_worker_queues_a_prompt_entry() {
         let dir = tempfile::tempdir().unwrap();
         let workers = workers_in(dir.path());
         write_file(&HandoffFiles::opencode(dir.path(), "A").owner, "").unwrap();
         assert_eq!(
-            workers.reply("A", "hello", false).unwrap(),
+            workers.reply("A", "hello", false, None).unwrap(),
             "Sent to worker A."
         );
         let files = HandoffFiles::opencode(dir.path(), "A");
@@ -819,7 +871,7 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         });
         assert_eq!(
-            workers.reply("A", "stop", true).unwrap(),
+            workers.reply("A", "stop", true, Some("per_1")).unwrap(),
             interrupt_reply("A", Some(true))
         );
         host.join().unwrap();

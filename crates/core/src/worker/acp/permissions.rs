@@ -12,6 +12,7 @@ pub fn permission_content(request: &Value) -> BlockedContent {
         .and_then(|options| serde_json::from_value(options.clone()).ok())
         .unwrap_or_default();
     BlockedContent {
+        request_id: String::new(),
         tool: tool.to_string(),
         summary: summary.to_string(),
         options,
@@ -85,6 +86,7 @@ mod tests {
 
     fn report_content(tool: &str, summary: &str) -> BlockedContent {
         BlockedContent {
+            request_id: "r".into(),
             tool: tool.into(),
             summary: summary.into(),
             options: options(),

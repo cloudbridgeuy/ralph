@@ -13,7 +13,12 @@ fn selected_response(command: WorkerCommand) -> Option<RequestPermissionResponse
 }
 
 fn respond_selected(responder: Reply, option_id: String) {
-    if let Some(response) = selected_response(WorkerCommand::AnswerPermission { option_id }) {
+    let request_id = responder.id().to_string();
+    let answer = PermissionAnswer {
+        request_id,
+        option_id,
+    };
+    if let Some(response) = selected_response(WorkerCommand::AnswerPermission(answer)) {
         responder.respond(response).ok();
     }
 }
@@ -41,7 +46,10 @@ impl Permissions {
 
     pub(super) fn push(&self, request: &RequestPermissionRequest, responder: Reply) -> bool {
         let value = serde_json::to_value(request).unwrap_or_default();
-        let content = permission_content(&value);
+        let content = BlockedContent {
+            request_id: responder.id().to_string(),
+            ..permission_content(&value)
+        };
         if let Some(option) = auto_allow_option(self.mode, &content) {
             respond_selected(responder, option.option_id.clone());
             return true;
@@ -50,8 +58,10 @@ impl Permissions {
         false
     }
 
-    pub(super) fn answer(&self, text: &str) -> Result<(), String> {
-        let (responder, option) = self.queue.take_answer(text)?;
+    pub(super) fn answer(&self, answer: &PermissionAnswer) -> Result<(), String> {
+        let (responder, option) = self
+            .queue
+            .take_answer(&answer.request_id, &answer.option_id)?;
         respond_selected(responder, option.option_id);
         self.heartbeat.touch();
         Ok(())
