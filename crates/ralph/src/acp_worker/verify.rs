@@ -1,5 +1,6 @@
 use super::*;
 use crate::subprocess::kill_process_group;
+use crate::watches::locked;
 use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
     cancel_check, cursor_verify_leftover, cursor_verify_project, permission_check, probed_version,
@@ -37,10 +38,6 @@ enum Plan {
     Plain,
     Allow,
     Cancel,
-}
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn permission_reply(

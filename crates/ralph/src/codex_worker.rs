@@ -11,6 +11,7 @@ use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::verified_agents;
 use crate::warn::warn;
+use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
@@ -40,7 +41,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -65,10 +66,6 @@ struct CodexReply {
 }
 
 type Permissions = PermissionQueue<CodexReply>;
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 enum Stop {
     Timeout,
