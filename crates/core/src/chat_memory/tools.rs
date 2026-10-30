@@ -107,7 +107,7 @@ fn memory_tool_definitions() -> Value {
         changes_tool_definition(),
         {
             "name": "workers",
-            "description": "List this chat's live workers, one line each: `<id> <harness> <state> <last report kind> <report age> <branch>`. State is running, busy, idle, permission, a worker's last report, or gone. Read-only; takes no arguments. Use it for worker status; never inspect system processes.",
+            "description": "List this chat's live workers, one line each: `<id> <harness> <state> <branch> <report>`. State is running, busy, idle, permission, a worker's last report, or gone. Report is the worker's status and its age when newer than its last report, else the last report kind and its age; unread inbox reports count. It is the same report /workers shows. Read-only; takes no arguments. Use it for worker status; never inspect system processes.",
             "inputSchema": {"type": "object", "properties": {}}
         }
     ])

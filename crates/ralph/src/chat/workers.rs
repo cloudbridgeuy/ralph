@@ -16,7 +16,7 @@ use ralph_core::wire::view::Pricing;
 use ralph_core::worker::{
     activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, decode_statuses,
     gone_path, sent_path, spawn_record_path, status_path, unreported_path, waiting_path,
-    worktree_for_branch, ActivityMark, HarnessId, StatusLine, Ticket,
+    worktree_for_branch, ActivityMark, HarnessId, Report, StatusLine, Ticket,
 };
 use ralph_core::worker_costs::costs_view;
 use ralph_core::workers_view::{
@@ -165,13 +165,14 @@ pub(super) fn tool_report(
     store: &Store,
     running: &[RunningWorker],
     states: &[WorkerState],
+    unread: Option<&[Report]>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> String {
     let dir = store.dir();
     let reports = store
-        .load_quiet()
+        .load_log_quiet()
         .ok()
-        .map(|(entries, _, _)| group_reports(&entries, &[]));
+        .and_then(|(entries, _)| Some(group_reports(&entries, unread?)));
     let rows: Vec<WorkerRow> = running
         .iter()
         .map(|worker| {
@@ -573,7 +574,10 @@ mod tests {
     fn the_tool_lists_only_the_given_workers_with_state_and_report() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
-        assert_eq!(tool_report(&store, &[], &[], now()), "no workers");
+        assert_eq!(
+            tool_report(&store, &[], &[], Some(&[]), now()),
+            "no workers"
+        );
         let log = "{\"role\":\"worker\",\"at\":\"2026-01-01T00:48:00Z\",\"text\":\"[worker A · done]\\nshipped\"}\n";
         std::fs::write(dir.path().join("log.jsonl"), log).unwrap();
         let gone = gone_path(dir.path(), "B");
@@ -588,13 +592,13 @@ mod tests {
             state: "done".into(),
         }];
         assert_eq!(
-            tool_report(&store, &running, &states, now()),
-            "A cursor done done 12m worker/A\nB codex gone - - worker/B"
+            tool_report(&store, &running, &states, Some(&[]), now()),
+            "A cursor done worker/A done 12m ago\nB codex gone worker/B -"
         );
     }
 
     #[test]
-    fn the_tool_shows_the_monitor_state_when_the_report_is_unread() {
+    fn the_tool_shows_an_unread_report() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
         let running = [RunningWorker::headless("A", HarnessId::Claude)];
@@ -602,8 +606,37 @@ mod tests {
             id: "A".into(),
             state: "done".into(),
         }];
-        let text = tool_report(&store, &running, &states, now());
-        assert_eq!(text, "A claude done - - worker/A");
+        let unread = [Report {
+            worker: "A".into(),
+            at: "2026-01-01T00:48:00Z".into(),
+            status: "done".into(),
+            text: "shipped".into(),
+        }];
+        let text = tool_report(&store, &running, &states, Some(&unread), now());
+        assert_eq!(text, "A claude done worker/A done 12m ago");
+    }
+
+    #[test]
+    fn the_tool_shows_a_question_mark_when_the_inbox_cannot_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let running = [RunningWorker::headless("A", HarnessId::Claude)];
+        let text = tool_report(&store, &running, &[], None, now());
+        assert_eq!(text, "A claude - worker/A ?");
+    }
+
+    #[test]
+    fn the_tool_shows_a_status_newer_than_the_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let log = "{\"role\":\"worker\",\"at\":\"2026-01-01T00:48:00Z\",\"text\":\"[worker A · done]\\nshipped\"}\n";
+        std::fs::write(dir.path().join("log.jsonl"), log).unwrap();
+        let status = status_path(dir.path(), "A");
+        std::fs::create_dir_all(status.parent().unwrap()).unwrap();
+        std::fs::write(status, "2026-01-01T00:55:00Z\nReading the tests.\n").unwrap();
+        let running = [RunningWorker::headless("A", HarnessId::Claude)];
+        let text = tool_report(&store, &running, &[], Some(&[]), now());
+        assert_eq!(text, "A claude - worker/A Reading the tests. · 5m ago");
     }
 
     fn table_markdown(rows: &[WorkerRow], color: bool) -> View {

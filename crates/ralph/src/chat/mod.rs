@@ -338,6 +338,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 &store,
                 &running_workers(&monitor.store_dir),
                 &monitor.status().workers,
+                monitor.inbox.peek().ok().as_deref(),
                 chrono::Utc::now(),
             )
         }
