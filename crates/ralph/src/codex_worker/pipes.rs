@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-pub(super) fn logged_stdin(stdin: ChildStdin, log: &Arc<CappedLog>) -> Stdin {
+pub(crate) fn logged_stdin(stdin: ChildStdin, log: &Arc<CappedLog>) -> Stdin {
     Arc::new(Mutex::new(Some(LoggedWrite {
         inner: stdin,
         log: Arc::clone(log),
@@ -14,7 +14,7 @@ pub(super) fn logged_stdin(stdin: ChildStdin, log: &Arc<CappedLog>) -> Stdin {
     })))
 }
 
-pub(super) fn pipe_lines(
+pub(crate) fn pipe_lines(
     stdout: ChildStdout,
     log: &Arc<CappedLog>,
 ) -> (mpsc::Receiver<String>, mpsc::Receiver<()>) {

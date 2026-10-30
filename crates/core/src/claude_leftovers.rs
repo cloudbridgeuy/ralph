@@ -26,7 +26,7 @@ pub fn claude_json(config_dir: Option<&Path>, home: &Path) -> PathBuf {
 }
 
 pub fn cleans_claude_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
-    matches!(state.kind, HarnessId::Claude)
+    matches!(state.kind, HarnessId::Claude | HarnessId::ClaudeHeadless)
         && steps
             .iter()
             .any(|step| matches!(step, CloseStep::RemoveWorktree { .. }))
@@ -154,6 +154,13 @@ mod tests {
     fn claude_worker_removing_its_worktree_is_cleaned() {
         let steps = [CloseStep::RemoveWorktree { force: false }];
         assert!(cleans_claude_leftovers(&state(HarnessId::Claude), &steps));
+    }
+
+    #[test]
+    fn claude_headless_worker_removing_its_worktree_is_cleaned() {
+        let steps = [CloseStep::RemoveWorktree { force: false }];
+        let state = state(HarnessId::ClaudeHeadless);
+        assert!(cleans_claude_leftovers(&state, &steps));
     }
 
     #[test]

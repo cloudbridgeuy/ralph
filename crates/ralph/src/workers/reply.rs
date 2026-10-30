@@ -1,6 +1,9 @@
 use super::{clear_marker, Workers};
 use crate::cursor_owner::write_file;
-use ralph_core::worker::{close_handoff, Handoff, HandoffFiles, PermissionAnswer, HANDOFF_POLL};
+use ralph_core::worker::{
+    capabilities, close_handoff, describe, Feature, Handoff, HandoffFiles, PermissionAnswer,
+    Support, HANDOFF_POLL,
+};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,16 +17,21 @@ impl Workers {
         request_id: &str,
         text: &str,
     ) -> io::Result<String> {
+        let (kind, files) = self.headless_files(id).ok_or_else(|| {
+            io::Error::other(format!(
+                "worker {id} is not a running Cursor, Codex, claude-headless or opencode worker"
+            ))
+        })?;
+        let caps = capabilities(kind);
+        if caps.support(Feature::PermAsk) == Support::None {
+            return Err(io::Error::other(describe(&caps, Feature::PermAsk)));
+        }
         let HandoffFiles {
             answer,
             error,
             claim,
             ..
-        } = self.headless_files(id).ok_or_else(|| {
-            io::Error::other(format!(
-                "worker {id} is not a running Cursor, Codex or opencode worker"
-            ))
-        })?;
+        } = files;
         let body = serde_json::to_string(&PermissionAnswer {
             request_id: request_id.to_string(),
             option_id: text.to_string(),

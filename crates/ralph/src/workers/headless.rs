@@ -1,5 +1,6 @@
 use crate::acp_worker::CursorHost;
 use crate::chat::socket::SocketFiles;
+use crate::claude_headless_worker::ClaudeHeadlessHost;
 use crate::codex_worker::CodexHost;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::opencode_worker::OpencodeHost;
@@ -95,7 +96,8 @@ impl HeadlessShutdown {
             hosts: vec![
                 CursorHost::new(store_dir.clone()),
                 OpencodeHost::new(store_dir.clone()),
-                CodexHost::new(store_dir),
+                CodexHost::new(store_dir.clone()),
+                ClaudeHeadlessHost::new(store_dir),
             ],
         }
     }

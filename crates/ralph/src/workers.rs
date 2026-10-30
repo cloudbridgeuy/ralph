@@ -2,7 +2,8 @@ use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
 use crate::cursor_owner::{
-    caller_owns, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file,
+    caller_owns, owned_claude_headless_ids, owned_codex_ids, owned_cursor_ids, sweep_owner,
+    write_file,
 };
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
@@ -11,13 +12,13 @@ use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::claude_leftovers::{cleans_claude_leftovers, trust_lock_path};
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
-    base_branch, base_config_key, blocked_path, branch_name, close_clear_paths, close_handoff,
-    close_plan, interrupt_reply, legacy_base_unset_warning, opencode_close_handoff,
-    parse_interrupt_result, project_slug, prompt_entry_name, ready_path, resolve_worktree_dir,
-    sent_path, session_name, session_owner, session_survived_kill, tagged_sessions,
-    worktree_for_branch, worktree_path, CloseState, CloseStep, Handoff, HandoffFiles, HarnessId,
-    Owner, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE,
-    OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    base_branch, base_config_key, blocked_path, branch_name, capabilities, close_clear_paths,
+    close_handoff, close_plan, describe, interrupt_reply, legacy_base_unset_warning,
+    opencode_close_handoff, parse_interrupt_result, project_slug, prompt_entry_name, ready_path,
+    resolve_worktree_dir, sent_path, session_name, session_owner, session_survived_kill,
+    tagged_sessions, worktree_for_branch, worktree_path, CloseState, CloseStep, Feature, Handoff,
+    HandoffFiles, HarnessId, Owner, Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL,
+    HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -139,17 +140,31 @@ impl Workers {
         files.owner.exists() || files.session.exists()
     }
 
-    fn headless_files(&self, id: &str) -> Option<HandoffFiles> {
+    fn claude_headless_running(&self, id: &str) -> bool {
+        HandoffFiles::claude_headless(&self.store_dir, id)
+            .owner
+            .exists()
+    }
+
+    fn headless_files(&self, id: &str) -> Option<(HarnessId, HandoffFiles)> {
         let cursor = HandoffFiles::cursor(&self.store_dir, id);
         if cursor.owner.exists() {
-            return Some(cursor);
+            return Some((HarnessId::Cursor, cursor));
         }
         let codex = HandoffFiles::codex(&self.store_dir, id);
         if codex.owner.exists() {
-            return Some(codex);
+            return Some((HarnessId::Codex, codex));
         }
-        self.opencode_http(id)
-            .then(|| HandoffFiles::opencode(&self.store_dir, id))
+        if self.claude_headless_running(id) {
+            let files = HandoffFiles::claude_headless(&self.store_dir, id);
+            return Some((HarnessId::ClaudeHeadless, files));
+        }
+        self.opencode_http(id).then(|| {
+            (
+                HarnessId::Opencode,
+                HandoffFiles::opencode(&self.store_dir, id),
+            )
+        })
     }
 
     fn deliver_headless(
@@ -159,19 +174,24 @@ impl Workers {
         interrupt: bool,
         verb: &str,
     ) -> Option<io::Result<String>> {
-        let files = self.headless_files(id)?;
-        Some(if interrupt {
-            self.queue_entry(&files.interrupt, text).map(|entry| {
-                interrupt_reply(
-                    id,
-                    self.await_interrupt_result(&files.interrupt_result, &entry),
-                )
-            })
-        } else if self.awaits_permission(id) {
-            self.answer_permission(id, "", text)
-        } else {
-            self.queue_prompt(&files.prompt, id, text, verb)
-        })
+        let (kind, files) = self.headless_files(id)?;
+        let caps = capabilities(kind);
+        Some(
+            if interrupt && caps.support(Feature::Interrupt) == Support::None {
+                Err(io::Error::other(describe(&caps, Feature::Interrupt)))
+            } else if interrupt {
+                self.queue_entry(&files.interrupt, text).map(|entry| {
+                    interrupt_reply(
+                        id,
+                        self.await_interrupt_result(&files.interrupt_result, &entry),
+                    )
+                })
+            } else if self.awaits_permission(id) {
+                self.answer_permission(id, "", text)
+            } else {
+                self.queue_prompt(&files.prompt, id, text, verb)
+            },
+        )
     }
 
     fn await_interrupt_result(&self, results: &Path, entry: &str) -> Option<bool> {
@@ -243,6 +263,8 @@ impl Workers {
             HarnessId::Cursor
         } else if self.codex_running(id) {
             HarnessId::Codex
+        } else if self.claude_headless_running(id) {
+            HarnessId::ClaudeHeadless
         } else if self.opencode_http(id) {
             HarnessId::Opencode
         } else {
@@ -380,6 +402,12 @@ impl Workers {
                     self.terminate_headless(&HandoffFiles::codex(&self.store_dir, id), "codex")?;
                 }
             }
+            CloseStep::TerminateClaudeHeadless => {
+                if self.claude_headless_running(id) {
+                    let files = HandoffFiles::claude_headless(&self.store_dir, id);
+                    self.terminate_headless(&files, "claude-headless")?;
+                }
+            }
             CloseStep::KillSession(session) => {
                 let ready = ready_path(&self.store_dir, id);
                 clear_marker(&ready)?;
@@ -449,9 +477,14 @@ impl Workers {
     }
 
     fn refuse_busy_headless(&self, id: &str, closing: bool) -> io::Result<()> {
-        for harness in [HarnessId::Cursor, HarnessId::Codex] {
+        for harness in [
+            HarnessId::Cursor,
+            HarnessId::Codex,
+            HarnessId::ClaudeHeadless,
+        ] {
             let files = match harness {
                 HarnessId::Codex => HandoffFiles::codex(&self.store_dir, id),
+                HarnessId::ClaudeHeadless => HandoffFiles::claude_headless(&self.store_dir, id),
                 _ => HandoffFiles::cursor(&self.store_dir, id),
             };
             match sweep_owner(&files) {
@@ -667,6 +700,11 @@ pub fn running_workers(store_dir: &Path) -> Vec<RunningWorker> {
         owned_codex_ids(store_dir)
             .iter()
             .map(|id| RunningWorker::headless(id, HarnessId::Codex)),
+    );
+    workers.extend(
+        owned_claude_headless_ids(store_dir)
+            .iter()
+            .map(|id| RunningWorker::headless(id, HarnessId::ClaudeHeadless)),
     );
     workers.extend(
         entry_ids(store_dir, OPENCODE_OWNER_DIR)
