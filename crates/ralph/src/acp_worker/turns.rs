@@ -124,25 +124,28 @@ pub(super) async fn run_turns(
             &turns.events,
             WorkerEvent::TurnEnded(turn_end(&result, interrupted)),
         );
+        let stop = reason.as_deref().map_err(|e| e.message.as_str());
         let outcome = turn_outcome(
-            reason.as_deref().map_err(|e| e.message.as_str()),
+            stop,
             turns.reported.load(Ordering::SeqCst),
             text == REPORT_REMINDER,
             turns.closing.load(Ordering::SeqCst),
             interrupted,
         );
+        if sweeps_permissions(stop, &outcome) {
+            turns.permissions.cancel_all();
+        }
         match outcome {
             TurnOutcome::Remind => queue.remind(),
             TurnOutcome::Unreported => {
                 write_file(&turns.markers.unreported, "").ok();
                 write_file(&turns.markers.waiting, "").ok();
             }
-            TurnOutcome::Cancelled => turns.permissions.cancel_all(),
             TurnOutcome::Problem(problem) => post_prompt_failure(turns, &problem),
             TurnOutcome::Stopped(reason) => {
                 post_prompt_failure(turns, &stop_problem(turns.agent.name, &reason));
             }
-            TurnOutcome::Reported | TurnOutcome::Closed => {}
+            TurnOutcome::Reported | TurnOutcome::Cancelled | TurnOutcome::Closed => {}
         }
         if stopping {
             return;

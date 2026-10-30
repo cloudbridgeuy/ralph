@@ -30,13 +30,13 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
     check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
     prompt_failure_report, ready_path, reduce, request_stale, resume_decision, session_error,
-    session_saved, stop_problem, task_prompt, turn_outcome, version_warning, AcpAgent, AcpCall,
-    BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect, HeadlessState,
-    HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue, Resume, Scope,
-    SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand, WorkerEvent,
-    WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_INTERRUPT_DIR,
-    CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR, CURSOR_SESSION_DIR,
-    CURSOR_SPAWN_DIR, REPORT_REMINDER,
+    session_saved, stop_problem, sweeps_permissions, task_prompt, turn_outcome, version_warning,
+    AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect,
+    HeadlessState, HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue,
+    Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand,
+    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
+    CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
 use std::collections::HashMap;
 use std::fs;

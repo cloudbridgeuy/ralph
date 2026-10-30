@@ -135,6 +135,10 @@ pub fn turn_outcome(
     }
 }
 
+pub fn sweeps_permissions(stop: Result<&str, &str>, outcome: &TurnOutcome) -> bool {
+    stop == Ok("cancelled") || *outcome == TurnOutcome::Cancelled
+}
+
 pub fn is_report_tool_call(update: &Value) -> bool {
     let title = format!("{SERVER_NAME}: {REPORT_TOOL}");
     update["sessionUpdate"] == "tool_call_update"
@@ -173,6 +177,17 @@ mod tests {
         assert_eq!(queue.start().as_deref(), Some("next"));
         assert_eq!(queue.start().as_deref(), Some(REPORT_REMINDER));
         assert_eq!(queue.start(), None);
+    }
+
+    #[test]
+    fn an_unasked_cancel_sweeps_permissions() {
+        assert!(sweeps_permissions(Ok("cancelled"), &TurnOutcome::Remind));
+        assert!(sweeps_permissions(Ok("end_turn"), &TurnOutcome::Cancelled));
+        assert!(!sweeps_permissions(Ok("end_turn"), &TurnOutcome::Remind));
+        assert!(!sweeps_permissions(
+            Err("boom"),
+            &TurnOutcome::Problem("boom".into())
+        ));
     }
 
     #[test]
