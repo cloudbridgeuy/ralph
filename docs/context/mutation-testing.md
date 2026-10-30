@@ -55,7 +55,7 @@ Examined:
 - `crates/core/src/stream/**/*.rs`
 - `crates/core/src/chunk/**/*.rs`
 - `crates/core/src/wire/**/*.rs`
-- `crates/core/src/worker.rs`, `worker/tools.rs`, `worker/status.rs`, `worker/worktree.rs`, `worker/rollback.rs`, `worker/startup.rs`, `worker/scheduled.rs`, `worker/guard.rs`, `worker/ticket.rs`
+- `crates/core/src/worker.rs`, `worker/tools.rs`, `worker/status.rs`, `worker/worktree.rs`, `worker/rollback.rs`, `worker/startup.rs`, `worker/scheduled.rs`, `worker/guard.rs`, `worker/ticket.rs`, `worker/verify.rs`
 - `crates/core/src/workers_view/remote.rs`
 - `crates/core/src/schedule.rs`, `crates/core/src/schedule_request.rs`, `crates/core/src/schedule_command.rs`, `crates/core/src/schedule_worker.rs`
 - `crates/core/src/watch.rs`, `crates/core/src/watch_store.rs` (time is passed in, not read)
@@ -173,6 +173,17 @@ After GUZ-619:
 | Targeted rerun, survivor lines (`-F`) | 82 mutants: 75 caught, 7 timeouts |
 | Excluded equivalents | 0 |
 | Scope after | 339 ralph mutants; 1,966 in total |
+
+After GUZ-1006:
+
+| Item | Value |
+| --- | --- |
+| SHA | eb786fd, with `worker/verify.rs` added |
+| Command | `cargo mutants -p ralph_core -F '^crates/core/src/worker/verify\.rs:' -j 2 --build-timeout 300` |
+| Listed | 70 mutants: 49 in `worker/verify.rs` + 21 struct "delete field" mutants from other files the regex does not filter, 4 min |
+| `worker/verify.rs` results | 39 caught / 0 missed / 10 unviable / 0 timeouts |
+| Other 21 | 21 caught |
+| Excluded equivalents | 0 |
 
 ## Survivors
 
