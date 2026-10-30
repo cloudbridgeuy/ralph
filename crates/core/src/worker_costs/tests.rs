@@ -105,6 +105,15 @@ fn main_cost_takes_the_last_running_total_per_run() {
 }
 
 #[test]
+fn main_cost_marks_a_run_with_an_uncosted_process() {
+    let bare = json!({"kind": "turn", "run": "r1", "process_turn": 1});
+    let rows = rows_of(&jsonl(&[turn("r1", 1, 0.1), bare]));
+    let main = find(&rows, "main", "unknown");
+    assert!(close(main.usd, 0.1));
+    assert!(main.usd.missing);
+}
+
+#[test]
 fn main_cost_sums_every_process_of_a_run() {
     let rows = rows_of(&jsonl(&[
         turn("r1", 1, 0.1),

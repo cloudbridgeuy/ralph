@@ -29,6 +29,7 @@ fn thread(reset: Option<ResetReason>) -> ThreadCell {
         cost: Some(SessionCost {
             total: 4.12,
             delta: Some(0.31),
+            missing: false,
         }),
         ..EXAMPLE_THREAD
     }

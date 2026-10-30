@@ -214,7 +214,15 @@ fn main_runs(lines: &[UsageLine]) -> (usize, Usd) {
     }
     let usd = runs
         .values()
-        .map(|rows| Usd::of(session_cost(rows).map(|cost| cost.total)))
+        .map(|rows| {
+            session_cost(rows).map_or_else(
+                || Usd::of(None),
+                |cost| Usd {
+                    known: Some(cost.total),
+                    missing: cost.missing,
+                },
+            )
+        })
         .fold(Usd::default(), Usd::plus);
     (runs.len(), usd)
 }

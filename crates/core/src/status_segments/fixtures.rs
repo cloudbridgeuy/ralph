@@ -36,6 +36,7 @@ pub(super) fn thread() -> ThreadCell {
         cost: Some(SessionCost {
             total: 4.123,
             delta: Some(0.314),
+            missing: false,
         }),
     }
 }

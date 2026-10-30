@@ -52,6 +52,7 @@ pub struct UsageLine {
 pub struct SessionCost {
     pub total: f64,
     pub delta: Option<f64>,
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,13 +199,15 @@ fn last_delta(rows: &[UsageLine]) -> Option<f64> {
 }
 
 pub fn session_cost(rows: &[UsageLine]) -> Option<SessionCost> {
-    let totals: Vec<f64> = processes(rows)
+    let processes = processes(rows);
+    let totals: Vec<f64> = processes
         .iter()
         .filter_map(|process| process.iter().rev().find_map(|turn| turn.cost_usd))
         .collect();
     (!totals.is_empty()).then(|| SessionCost {
         total: totals.iter().sum(),
         delta: last_delta(rows),
+        missing: totals.len() < processes.len(),
     })
 }
 
@@ -462,6 +465,20 @@ mod tests {
         let text = lines(&[turn_line(1, 1, 2.0), nap, "not json".to_string()]);
         let turns = session_rows(&text, RUN);
         assert_eq!(session_cost(&turns).unwrap().total, 2.0);
+    }
+
+    #[test]
+    fn session_cost_marks_a_process_without_cost() {
+        let bare = format!(
+            r#"{{"at":"{}","kind":"turn","process_turn":1,"run":"{RUN}"}}"#,
+            time(2).to_rfc3339()
+        );
+        let partial = lines(&[turn_line(1, 1, 1.0), bare]);
+        let cost = session_cost(&session_rows(&partial, RUN)).unwrap();
+        assert_eq!(cost.total, 1.0);
+        assert!(cost.missing);
+        let full = lines(&[turn_line(1, 1, 1.0), turn_line(2, 1, 2.0)]);
+        assert!(!session_cost(&session_rows(&full, RUN)).unwrap().missing);
     }
 
     #[test]
@@ -966,6 +983,7 @@ mod tests {
         let cost = SessionCost {
             total: 4.123,
             delta: Some(0.314),
+            missing: false,
         };
         assert_eq!(cost_variants(&cost), ["$4.12 (+0.31)", "$4.12"]);
         let flat = SessionCost {
