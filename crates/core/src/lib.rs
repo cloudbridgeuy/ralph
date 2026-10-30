@@ -30,6 +30,7 @@ pub mod claude_leftovers;
 pub mod cursor_leftovers;
 pub mod diff_command;
 pub mod directive;
+pub mod file_link;
 pub mod inbox;
 pub mod inbox_alert;
 pub mod kitty;

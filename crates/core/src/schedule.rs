@@ -130,6 +130,10 @@ pub fn escape_controls(text: &str) -> String {
             '\r' => "\\r".to_string(),
             '\t' => "\\t".to_string(),
             c if c.is_control() => format!("\\x{:02x}", u32::from(c)),
+            '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{feff}' => format!("\\u{{{:04x}}}", u32::from(c)),
             c => c.to_string(),
         })
         .collect()
@@ -481,6 +485,14 @@ mod tests {
             "rm -rf ~\\x1b[2K\\recho ok\\n\\tx\\x7f"
         );
         assert_eq!(escape_controls("make test"), "make test");
+    }
+
+    #[test]
+    fn escape_controls_shows_bidi_and_format_characters_visibly() {
+        assert_eq!(
+            escape_controls("a\u{200b}\u{200f}\u{202a}\u{202e}\u{2066}\u{2069}\u{feff}b é"),
+            "a\\u{200b}\\u{200f}\\u{202a}\\u{202e}\\u{2066}\\u{2069}\\u{feff}b é"
+        );
     }
 
     #[test]
