@@ -489,10 +489,15 @@ fn styled_tables_mark_name_sha_and_dim_fields_without_changing_widths() {
     let plain_md = table_of(super::workers_view(&rows, now(), 160, Layout::Table, false));
     let marked_md = table_of(super::workers_view(&rows, now(), 160, Layout::Table, true));
     assert!(
-        marked_md.contains("| **GUZ-1** | *claude* | busy | done *12m ago* | `2f7f8c0` fix(chat)"),
+        marked_md.contains(&format!(
+            "| **GUZ-1** | *claude* | {TONE_ACTIVE}busy{TONE_END} | {TONE_DONE}done{TONE_END} *12m ago* | `2f7f8c0` fix(chat)"
+        )),
         "{marked_md}"
     );
-    assert!(marked_md.ends_with("| 2 | *-* | *-* |"), "{marked_md}");
+    assert!(
+        marked_md.ends_with(&format!("| {TONE_WAITING}2{TONE_END} | *-* | *-* |")),
+        "{marked_md}"
+    );
     let narrow = |styled| list_text(super::workers_view(&rows, now(), 80, Layout::Table, styled));
     assert_eq!(narrow(true), narrow(false));
     assert!(plain_md.contains("| GUZ-1 | claude |"));
@@ -530,4 +535,78 @@ fn workers_text_is_one_plain_line_per_worker() {
 #[test]
 fn workers_text_without_workers_says_so() {
     assert_eq!(workers_text(&[], now()), "no workers");
+}
+
+fn tone_row(id: &str, state: &str, behind: usize) -> WorkerRow {
+    WorkerRow {
+        state: Some(state.into()),
+        behind: Lookup::Found(behind),
+        ..row(id)
+    }
+}
+
+fn styled_table(rows: &[WorkerRow]) -> String {
+    table_of(super::workers_view(rows, now(), 200, Layout::Table, true))
+}
+
+#[test]
+fn styled_diff_cells_mark_added_and_removed_counts() {
+    let markdown = styled_table(&[row("GUZ-1")]);
+    assert!(
+        markdown.contains(&format!(
+            "{TONE_DONE}+120{TONE_END} {TONE_BLOCKED}-40{TONE_END} 3f"
+        )),
+        "{markdown}"
+    );
+}
+
+#[test]
+fn styled_behind_marks_waiting_above_zero_and_keeps_zero_dim() {
+    let markdown = styled_table(&[tone_row("GUZ-1", "busy", 2), tone_row("GUZ-2", "busy", 0)]);
+    let lines: Vec<&str> = markdown.lines().collect();
+    assert!(
+        lines[2].contains(&format!("| {TONE_WAITING}2{TONE_END} |")),
+        "{markdown}"
+    );
+    assert!(lines[3].contains("| *0* |"), "{markdown}");
+}
+
+#[test]
+fn styled_state_cells_mark_their_tones() {
+    let states = [
+        ("done", TONE_DONE),
+        ("blocked", TONE_BLOCKED),
+        ("question", TONE_WAITING),
+        ("running", TONE_ACTIVE),
+    ];
+    for (state, marker) in states {
+        let markdown = styled_table(&[tone_row("GUZ-1", state, 2)]);
+        assert!(
+            markdown.contains(&format!("| {marker}{state}{TONE_END} |")),
+            "{state}: {markdown}"
+        );
+    }
+}
+
+#[test]
+fn tone_markers_in_a_subject_are_stripped_from_the_table() {
+    let mut worker = row("GUZ-1");
+    worker.head = Lookup::Found(Head {
+        hash: "2f7f8c0".into(),
+        subject: format!("fix {TONE_DONE}evil{TONE_END} {TONE_BLOCKED}x"),
+    });
+    let markdown = styled_table(&[worker]);
+    assert!(markdown.contains("fix evil x"), "{markdown}");
+    let clean = styled_table(&[row("GUZ-1")]);
+    let count = |text: &str| text.chars().filter(|ch| TONE_MARKERS.contains(ch)).count();
+    assert_eq!(count(&markdown), count(&clean), "{markdown}");
+}
+
+#[test]
+fn unstyled_tables_have_no_tone_markers() {
+    let markdown = table_of(workers_view(&[row("GUZ-1")], now(), 200));
+    assert!(
+        !markdown.chars().any(|ch| TONE_MARKERS.contains(&ch)),
+        "{markdown}"
+    );
 }

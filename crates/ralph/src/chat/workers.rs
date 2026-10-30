@@ -6,7 +6,7 @@ use crate::chat::prompt::screen_columns;
 use crate::chat::workers_remote::RemoteStatus;
 use crate::config::{AppConfig, WorkersSection};
 use crate::markdown::{MarkdownTheme, Palette};
-use crate::render::render_markdown;
+use crate::render::{render_markdown, COLOR_OFF};
 use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
 use crate::workers::running_workers;
 use ralph_core::chat_status::{RunningWorker, WorkerState};
@@ -22,7 +22,7 @@ use ralph_core::worker_costs::costs_view;
 use ralph_core::workers_view::{
     count_untracked, detail_view, group_reports, lines_text, not_live, parse_head, parse_numstat,
     workers_text, workers_view, Diff, Lookup, Remote, ReportLine, Span, Tone, View, WorkerDetail,
-    WorkerRow,
+    WorkerRow, TONE_ACTIVE, TONE_BLOCKED, TONE_DONE, TONE_END, TONE_WAITING,
 };
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -272,11 +272,43 @@ fn table_theme(theme: &MarkdownTheme) -> MarkdownTheme {
     }
 }
 
+fn paint_tones(rendered: &str, palette: &Palette) -> String {
+    let mut out = String::with_capacity(rendered.len());
+    let mut open = false;
+    for ch in rendered.chars() {
+        let start = match ch {
+            TONE_DONE => Some(palette.done),
+            TONE_BLOCKED => Some(palette.blocked),
+            TONE_WAITING => Some(palette.waiting),
+            TONE_ACTIVE => Some(palette.link),
+            _ => None,
+        };
+        match (ch, start) {
+            (_, Some(color)) => {
+                open = true;
+                out.push_str(&fg(color));
+            }
+            (TONE_END, None) => {
+                open = false;
+                out.push_str(COLOR_OFF);
+            }
+            ('\n', None) if open => {
+                open = false;
+                out.push_str(COLOR_OFF);
+                out.push('\n');
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 fn shown(view: &View, display: &Display) -> String {
     match view {
-        View::Table(markdown) => {
-            render_markdown(&display.ctx, markdown, &table_theme(display.theme))
-        }
+        View::Table(markdown) => paint_tones(
+            &render_markdown(&display.ctx, markdown, &table_theme(display.theme)),
+            &display.theme.palette,
+        ),
         View::Text(lines) => format!(
             "{}\n",
             paint_lines(lines, &display.theme.palette, display.color)
@@ -358,7 +390,7 @@ mod tests {
     use crate::markdown::MarkdownTheme;
     use crate::render::text::render_prose;
     use chrono::{DateTime, Utc};
-    use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote};
+    use ralph_core::workers_view::{Head, Pr, PrState, Remote, Review, TicketRemote, TONE_MARKERS};
     use unicode_width::UnicodeWidthStr;
 
     fn workers_view(rows: &[WorkerRow], now: DateTime<Utc>, width: usize) -> View {
@@ -572,5 +604,137 @@ mod tests {
         }];
         let text = tool_report(&store, &running, &states, now());
         assert_eq!(text, "A claude done - - worker/A");
+    }
+
+    fn table_markdown(rows: &[WorkerRow], color: bool) -> View {
+        super::workers_view(
+            rows,
+            now(),
+            200,
+            ralph_core::workers_view::Layout::Table,
+            color,
+        )
+    }
+
+    fn shown_plain(rows: &[WorkerRow]) -> String {
+        let highlighter = crate::highlight::Highlighter::new();
+        let mut ctx = crate::render::RenderContext::new(&highlighter, false);
+        ctx.width = 200;
+        let theme = MarkdownTheme::default();
+        let display = Display {
+            ctx,
+            theme: &theme,
+            color: false,
+        };
+        shown(&table_markdown(rows, false), &display)
+    }
+
+    fn painted_table(rows: &[WorkerRow]) -> String {
+        let theme = MarkdownTheme::default();
+        let skin = table_theme(&theme).skin;
+        match table_markdown(rows, true) {
+            View::Table(markdown) => {
+                paint_tones(&render_prose(&skin, &markdown, 200), &theme.palette)
+            }
+            other => panic!("not a table: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn colour_off_table_output_is_unchanged() {
+        let out = shown_plain(&[row("GUZ-1", "fix: x")]);
+        assert_eq!(out, concat!(
+                "| ID | HARNESS | STATE | REPORT | HEAD | +/- | BEHIND | TICKET | PR |\n",
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+                "| GUZ-1 | claude | busy | done 12m ago | 2f7f8c0 fix: x | +120 -40 3f ?2 | 2 | `-` | `-` |"
+            ));
+    }
+
+    #[test]
+    fn colour_on_tables_paint_diff_and_behind_cells() {
+        let palette = MarkdownTheme::default().palette;
+        let out = painted_table(&[row("GUZ-1", "fix: x")]);
+        assert!(
+            out.contains(&format!("{}+120", fg(palette.done))),
+            "{out:?}"
+        );
+        assert!(
+            out.contains(&format!("{}-40", fg(palette.blocked))),
+            "{out:?}"
+        );
+        assert!(
+            out.contains(&format!("{}2", fg(palette.waiting))),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn colour_on_tables_keep_equal_display_widths() {
+        let rows = [
+            row("GUZ-844", "fix(chat): exact /help and stricter tests"),
+            row("GUZ-2", "feat: short"),
+        ];
+        let out = painted_table(&rows);
+        let done = fg(MarkdownTheme::default().palette.done);
+        assert!(out.contains(&format!("{done}+120")), "{out:?}");
+        assert!(!out.chars().any(|ch| TONE_MARKERS.contains(&ch)), "{out:?}");
+        let plain = strip_ansi(&out);
+        let widths: Vec<usize> = plain.lines().map(|line| line.width()).collect();
+        assert!(widths.len() > 3, "{plain}");
+        assert!(
+            widths.iter().all(|w| *w == widths[0]),
+            "{widths:?}\n{plain}"
+        );
+    }
+
+    #[test]
+    fn paint_tones_maps_each_marker_to_its_palette_slot() {
+        let palette = MarkdownTheme::default().palette;
+        let cases = [
+            (TONE_DONE, palette.done),
+            (TONE_BLOCKED, palette.blocked),
+            (TONE_WAITING, palette.waiting),
+            (TONE_ACTIVE, palette.link),
+        ];
+        for (marker, color) in cases {
+            let text = format!("a {marker}x{TONE_END} b");
+            assert_eq!(
+                paint_tones(&text, &palette),
+                format!("a {}x{COLOR_OFF} b", fg(color))
+            );
+        }
+    }
+
+    #[test]
+    fn paint_tones_closes_an_open_tone_at_a_newline() {
+        let palette = MarkdownTheme::default().palette;
+        let text = format!("{TONE_DONE}a\nb{TONE_END}\nc");
+        assert_eq!(
+            paint_tones(&text, &palette),
+            format!("{}a{COLOR_OFF}\nb{COLOR_OFF}\nc", fg(palette.done))
+        );
+    }
+
+    #[test]
+    fn paint_tones_leaves_text_without_markers_alone() {
+        let palette = MarkdownTheme::default().palette;
+        assert_eq!(paint_tones("a\n\x1b[1mb", &palette), "a\n\x1b[1mb");
+    }
+
+    #[test]
+    fn paint_tones_turns_a_stray_end_into_a_colour_reset() {
+        let palette = MarkdownTheme::default().palette;
+        let text = format!("a{TONE_END}b");
+        assert_eq!(paint_tones(&text, &palette), format!("a{COLOR_OFF}b"));
+    }
+
+    #[test]
+    fn paint_tones_lets_a_second_start_replace_the_first() {
+        let palette = MarkdownTheme::default().palette;
+        let text = format!("{TONE_DONE}{TONE_BLOCKED}x{TONE_END}");
+        assert_eq!(
+            paint_tones(&text, &palette),
+            format!("{}{}x{COLOR_OFF}", fg(palette.done), fg(palette.blocked))
+        );
     }
 }

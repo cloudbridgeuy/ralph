@@ -27,7 +27,7 @@ use crate::markdown::Palette;
 const LINK_SYMBOL: &str = "↗";
 const UNDERLINE: &str = "\x1b[4m";
 const LABEL_STYLE_OFF: &str = "\x1b[24m";
-const COLOR_OFF: &str = "\x1b[39m";
+pub(crate) const COLOR_OFF: &str = "\x1b[39m";
 
 pub fn mark_links(text: &str) -> String {
     let chars: Vec<char> = text.chars().filter(|ch| !MARKERS.contains(ch)).collect();

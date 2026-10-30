@@ -31,6 +31,7 @@ pub use utils::{
 };
 
 pub use image::ImageSettings;
+pub(crate) use link::COLOR_OFF;
 pub use wrap::{cap_wrap_width, wrap_width};
 
 // Re-export text rendering
