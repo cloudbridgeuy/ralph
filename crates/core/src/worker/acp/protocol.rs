@@ -64,7 +64,6 @@ pub fn auth_method<'a>(agent: &AcpAgent, advertised: &[&'a str]) -> Option<&'a s
     advertised
         .iter()
         .find(|id| **id == agent.login_method)
-        .or_else(|| advertised.first())
         .copied()
 }
 
@@ -196,12 +195,12 @@ mod tests {
     }
 
     #[test]
-    fn the_agent_login_method_wins_over_other_advertised_methods() {
+    fn only_the_agent_login_method_is_ever_chosen() {
         assert_eq!(
             auth_method(&CURSOR_AGENT, &["api_key", "cursor_login"]),
             Some("cursor_login")
         );
-        assert_eq!(auth_method(&CURSOR_AGENT, &["api_key"]), Some("api_key"));
+        assert_eq!(auth_method(&CURSOR_AGENT, &["api_key"]), None);
         assert_eq!(auth_method(&CURSOR_AGENT, &[]), None);
     }
 
