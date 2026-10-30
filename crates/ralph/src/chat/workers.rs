@@ -15,8 +15,8 @@ use ralph_core::wire::provider::{provider, ProviderId};
 use ralph_core::wire::view::Pricing;
 use ralph_core::worker::{
     activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, decode_statuses,
-    gone_path, sent_path, spawn_record_path, status_path, unreported_path, waiting_path,
-    worktree_for_branch, ActivityMark, HarnessId, Report, StatusLine, Ticket,
+    gone_path, pending_requests, sent_path, spawn_record_path, status_path, unreported_path,
+    waiting_path, worktree_for_branch, ActivityMark, HarnessId, Report, StatusLine, Ticket,
 };
 use ralph_core::worker_costs::costs_view;
 use ralph_core::workers_view::{
@@ -95,6 +95,9 @@ fn cheap_row(
         id: worker.id.clone(),
         harness: worker.kind.as_str().to_string(),
         state,
+        pending: std::fs::read_to_string(blocked_path(store, &worker.id))
+            .map(|marker| pending_requests(&marker))
+            .unwrap_or_default(),
         report,
         status: status_line(store, &worker.id),
         head: Lookup::Missing,
@@ -415,6 +418,7 @@ mod tests {
             id: id.into(),
             harness: "claude".into(),
             state: Some("busy".into()),
+            pending: Vec::new(),
             report: Lookup::Found(ReportLine {
                 status: "done".into(),
                 at: "2026-01-01T00:48:00Z".into(),

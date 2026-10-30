@@ -314,6 +314,7 @@ mod tests {
                         name: "O".into(),
                         kind: (*kind).into(),
                     }],
+                    pending: Vec::new(),
                 })
                 .collect(),
             cancel_sent: replies > 0,

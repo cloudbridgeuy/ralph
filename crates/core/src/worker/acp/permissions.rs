@@ -16,6 +16,7 @@ pub fn permission_content(request: &Value) -> BlockedContent {
         tool: tool.to_string(),
         summary: summary.to_string(),
         options,
+        pending: Vec::new(),
     }
 }
 
@@ -73,6 +74,7 @@ mod tests {
         let rendered: Value = serde_json::from_str(&content.render()).unwrap();
         assert_eq!(rendered["options"][0]["optionId"], "allow-once");
         assert_eq!(rendered["options"][0]["kind"], "allow_once");
+        assert!(rendered.get("pending").is_none());
     }
 
     #[test]
@@ -90,6 +92,7 @@ mod tests {
             tool: tool.into(),
             summary: summary.into(),
             options: options(),
+            pending: Vec::new(),
         }
     }
 

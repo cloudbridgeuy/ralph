@@ -32,6 +32,7 @@ pub(super) fn row(id: &str) -> WorkerRow {
         id: id.into(),
         harness: "claude".into(),
         state: Some("busy".into()),
+        pending: Vec::new(),
         report: Lookup::Found(line("done", "2026-01-01T00:48:00Z", "")),
         status: None,
         head: Lookup::Found(Head {
@@ -529,6 +530,17 @@ fn workers_text_is_one_plain_line_per_worker() {
         "GUZ-1 claude busy worker/GUZ-1 done 12m ago\n\
          GUZ-2 claude gone worker/GUZ-2 -\n\
          GUZ-3 codex - worker/GUZ-3 ?"
+    );
+}
+
+#[test]
+fn workers_text_lists_every_pending_permission_request() {
+    let mut blocked = row("B");
+    blocked.state = Some("permission".into());
+    blocked.pending = vec!["a".into(), "b".into()];
+    assert_eq!(
+        workers_text(&[blocked], now()),
+        "B claude permission requests=a,b worker/B done 12m ago"
     );
 }
 

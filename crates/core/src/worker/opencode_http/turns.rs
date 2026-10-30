@@ -65,7 +65,10 @@ pub enum Effect {
 
 impl TurnState {
     fn front(&self) -> Option<BlockedContent> {
-        self.blocked.front().map(opencode_blocked_content)
+        self.blocked.front().map(|front| BlockedContent {
+            pending: self.blocked.iter().map(|asked| asked.id.clone()).collect(),
+            ..opencode_blocked_content(front)
+        })
     }
 
     pub fn prompted(&mut self, text: &str) {
@@ -276,10 +279,15 @@ mod tests {
         let first = asked();
         let mut second = asked();
         second.id = "per_second".to_string();
-        let front = opencode_blocked_content(&first);
+        let published = |asked: &PermissionAsked, pending: &[&str]| {
+            Effect::Publish(Some(BlockedContent {
+                pending: pending.iter().map(|id| id.to_string()).collect(),
+                ..opencode_blocked_content(asked)
+            }))
+        };
         assert_eq!(
             advance(&mut state, SessionUpdate::Blocked(first.clone()), facts()),
-            vec![Effect::Publish(Some(front.clone()))]
+            vec![published(&first, &[PERMISSION_ID])]
         );
         assert_eq!(
             advance(&mut state, SessionUpdate::Blocked(first.clone()), facts()),
@@ -287,7 +295,7 @@ mod tests {
         );
         assert_eq!(
             advance(&mut state, SessionUpdate::Blocked(second.clone()), facts()),
-            vec![Effect::Publish(Some(front))]
+            vec![published(&first, &[PERMISSION_ID, "per_second"])]
         );
         assert_eq!(
             advance(
@@ -297,7 +305,7 @@ mod tests {
                 },
                 facts()
             ),
-            vec![Effect::Publish(Some(opencode_blocked_content(&second)))]
+            vec![published(&second, &["per_second"])]
         );
         assert_eq!(
             advance(

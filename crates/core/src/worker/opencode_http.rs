@@ -186,6 +186,7 @@ pub fn opencode_blocked_content(asked: &PermissionAsked) -> BlockedContent {
             decision_option(PermissionDecision::Always, "Always allow", "allow_always"),
             decision_option(PermissionDecision::Reject, "Reject", "reject_once"),
         ],
+        pending: Vec::new(),
     }
 }
 
