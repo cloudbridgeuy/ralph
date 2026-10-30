@@ -5,11 +5,11 @@ use crate::warn::warn;
 use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
-    create_session_body, interrupt_result_text, opencode_session_id, request_stale, task_prompt,
-    HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord, OpencodeSpawn, OpencodeTurnUsage,
-    PermissionAnswer, TurnState, WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR,
-    OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR, OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR,
-    OPENCODE_SPAWN_DIR,
+    create_session_body, interrupt_result_text, keeps_interrupt_request, opencode_session_id,
+    request_stale, task_prompt, HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord,
+    OpencodeSpawn, OpencodeTurnUsage, PermissionAnswer, TurnState, WorkerCommand, WorkerEvent,
+    WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR,
+    OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -184,7 +184,7 @@ impl OpencodeHost {
                 if interrupt {
                     self.request_interrupt(&session_id, true);
                     let outcome = self.interrupt(id, &session_id, &text);
-                    if outcome != Some(true) {
+                    if !keeps_interrupt_request(outcome) {
                         self.request_interrupt(&session_id, false);
                     }
                     self.write_interrupt_result(id, &entry, outcome);

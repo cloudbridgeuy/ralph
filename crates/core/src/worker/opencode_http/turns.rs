@@ -26,6 +26,10 @@ pub fn running_sessions(body: &str) -> Option<Vec<String>> {
     Some(running)
 }
 
+pub fn keeps_interrupt_request(outcome: Option<bool>) -> bool {
+    outcome != Some(false)
+}
+
 pub fn parse_interrupted(body: &str) -> Option<bool> {
     #[derive(Deserialize)]
     struct Interrupt {
@@ -415,6 +419,13 @@ mod tests {
             vec![Effect::Snapshot, Effect::Send(REPORT_REMINDER.to_string())]
         );
         assert!(!state.interrupt_requested);
+    }
+
+    #[test]
+    fn unknown_interrupt_outcome_keeps_the_request() {
+        assert!(keeps_interrupt_request(Some(true)));
+        assert!(keeps_interrupt_request(None));
+        assert!(!keeps_interrupt_request(Some(false)));
     }
 
     #[test]
