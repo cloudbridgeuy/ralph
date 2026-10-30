@@ -165,11 +165,23 @@ fn file_url(path: &Path) -> String {
     url
 }
 
+fn escape_controls(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_control() {
+                format!("\\x{:02x}", u32::from(ch))
+            } else {
+                ch.to_string()
+            }
+        })
+        .collect()
+}
+
 fn path_line(path: &Path) -> String {
     format!(
         "{DIM}\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\{RESET}\n",
         file_url(path),
-        path.display()
+        escape_controls(&path.display().to_string())
     )
 }
 
@@ -305,6 +317,30 @@ mod tests {
             file_url(Path::new("/Users/me/A-z_0.9~/x.png")),
             "file:///Users/me/A-z_0.9~/x.png"
         );
+    }
+
+    const HOSTILE: &str = "/tmp/a\x1b]8;;evil\x1b\\b\x07\x7f\u{9b}.png";
+
+    #[test]
+    fn file_url_percent_encodes_control_bytes() {
+        assert_eq!(
+            file_url(Path::new(HOSTILE)),
+            "file:///tmp/a%1B%5D8%3B%3Bevil%1B%5Cb%07%7F%C2%9B.png"
+        );
+    }
+
+    #[test]
+    fn path_line_shows_control_chars_escaped() {
+        let line = path_line(Path::new(HOSTILE));
+        let url = file_url(Path::new(HOSTILE));
+        assert_eq!(
+            line,
+            format!(
+                "\x1b[2m\x1b]8;;{url}\x1b\\/tmp/a\\x1b]8;;evil\\x1b\\b\\x07\\x7f\\x9b.png\x1b]8;;\x1b\\\x1b[0m\n"
+            )
+        );
+        assert_eq!(line.matches('\x1b').count(), 6, "{line:?}");
+        assert!(!line.contains('\x07') && !line.contains('\x7f') && !line.contains('\u{9b}'));
     }
 
     #[test]
