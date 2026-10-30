@@ -182,9 +182,13 @@ impl OpencodeHost {
                 (fs::read_to_string(&entry), self.find(id))
             {
                 if interrupt {
+                    let was_in_flight = self
+                        .sessions()
+                        .get(&session_id)
+                        .is_some_and(|session| session.turn.in_flight);
                     self.request_interrupt(&session_id, true);
                     let outcome = self.interrupt(id, &session_id, &text);
-                    if !keeps_interrupt_request(outcome) {
+                    if !keeps_interrupt_request(outcome, was_in_flight) {
                         self.request_interrupt(&session_id, false);
                     }
                     self.write_interrupt_result(id, &entry, outcome);

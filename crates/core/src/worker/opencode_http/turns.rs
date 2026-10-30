@@ -26,8 +26,11 @@ pub fn running_sessions(body: &str) -> Option<Vec<String>> {
     Some(running)
 }
 
-pub fn keeps_interrupt_request(outcome: Option<bool>) -> bool {
-    outcome != Some(false)
+pub fn keeps_interrupt_request(outcome: Option<bool>, was_in_flight: bool) -> bool {
+    match outcome {
+        Some(confirmed) => confirmed,
+        None => was_in_flight,
+    }
 }
 
 pub fn parse_interrupted(body: &str) -> Option<bool> {
@@ -422,10 +425,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_interrupt_outcome_keeps_the_request() {
-        assert!(keeps_interrupt_request(Some(true)));
-        assert!(keeps_interrupt_request(None));
-        assert!(!keeps_interrupt_request(Some(false)));
+    fn interrupt_request_is_kept_by_outcome_and_prior_turn_state() {
+        assert!(keeps_interrupt_request(Some(true), true));
+        assert!(keeps_interrupt_request(Some(true), false));
+        assert!(keeps_interrupt_request(None, true));
+        assert!(!keeps_interrupt_request(None, false));
+        assert!(!keeps_interrupt_request(Some(false), true));
+        assert!(!keeps_interrupt_request(Some(false), false));
     }
 
     #[test]
