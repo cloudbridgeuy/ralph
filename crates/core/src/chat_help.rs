@@ -119,11 +119,11 @@ impl Command {
             Command::Workers => &[
                 (
                     "/workers",
-                    "list live workers: id, harness, state, report (the worker's status and its age when newer than its last report, else the last report), head, +/-, behind; BEHIND counts against local origin/<base>, stale until a fetch; no turn",
+                    "list live workers: id, harness, state, report (the worker's status and its age when newer than its last report, else the last report), head, +/-, behind; BEHIND counts against local origin/<base>, stale until a fetch; the model gets the same report from its `workers` tool, one line each, instead of inspecting processes; no turn",
                 ),
                 (
                     "/workers <id>",
-                    "one worker in detail with its status and last 5 reports; the model lists its own chat's workers with the `workers` tool, one line each, instead of inspecting processes",
+                    "one worker in detail with its status and last 5 reports",
                 ),
                 (
                     "/workers costs",
