@@ -35,7 +35,7 @@ pub fn command_definitions() -> [Value; 5] {
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
                     "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."},
-                    "request": {"type": "string", "description": "cursor, codex and opencode workers: the request id of the waiting permission request this answers, from its blocked alert or the reply error; text is then one optionId. Required to answer a permission request; a stale or unknown id is refused."},
+                    "request": {"type": "string", "description": "cursor, codex, claude-headless and opencode workers: the request id of the waiting permission request this answers, from its blocked alert or the reply error; text is then one optionId. Required to answer a permission request; a stale or unknown id is refused."},
                     "interrupt": {"type": "boolean", "description": "cursor, codex and opencode workers: cancel the running turn, if any, and run this message next. The result says whether a running turn was cancelled, or that the outcome is unknown if ralph chat does not confirm within 30 s. Default false."}
                 },
                 "required": ["id", "text"]

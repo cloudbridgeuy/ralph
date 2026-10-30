@@ -96,11 +96,13 @@ impl Capabilities {
             (HarnessId::Codex, Heartbeat) => Partial(
                 "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default",
             ),
-            (HarnessId::ClaudeHeadless, Spawn | Prompt | Report | Model | Close) => Full,
+            (HarnessId::ClaudeHeadless, Spawn | Prompt | Report | Model | Close | PermAsk | PermYolo) => {
+                Full
+            }
             (HarnessId::ClaudeHeadless, Heartbeat) => Partial(
                 "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
             ),
-            (HarnessId::ClaudeHeadless, Interrupt | PermAsk | PermYolo | Resume) => Support::None,
+            (HarnessId::ClaudeHeadless, Interrupt | Resume) => Support::None,
         }
     }
 }
@@ -358,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_headless_cells_match_the_s1_matrix() {
+    fn claude_headless_cells_match_the_s2_matrix() {
         let caps = capabilities(HarnessId::ClaudeHeadless);
         assert!(caps.headless());
         for feature in Feature::ALL {
@@ -367,13 +369,13 @@ mod tests {
                 | Feature::Prompt
                 | Feature::Report
                 | Feature::Model
-                | Feature::Close => Support::Full,
+                | Feature::Close
+                | Feature::PermAsk
+                | Feature::PermYolo => Support::Full,
                 Feature::Heartbeat => Support::Partial(
                     "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
                 ),
-                Feature::Interrupt | Feature::PermAsk | Feature::PermYolo | Feature::Resume => {
-                    Support::None
-                }
+                Feature::Interrupt | Feature::Resume => Support::None,
             };
             assert_eq!(caps.support(feature), expected, "{feature:?}");
         }
