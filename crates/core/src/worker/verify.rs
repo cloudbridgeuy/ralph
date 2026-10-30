@@ -308,6 +308,18 @@ mod tests {
     }
 
     #[test]
+    fn the_summary_names_the_outcome_and_the_check_scope() {
+        assert_eq!(
+            render_summary("codex", "0.164.0", false, true),
+            "PASS: codex 0.164.0 (free checks only; --live adds prompt, permission and cancel checks)"
+        );
+        assert_eq!(
+            render_summary("cursor", "unknown version", true, false),
+            "FAIL: cursor unknown version (free and live checks)"
+        );
+    }
+
+    #[test]
     fn an_unknown_version_fails_the_spec_even_when_every_check_passed() {
         let passed = [
             CheckResult::pass("spawn", "started"),

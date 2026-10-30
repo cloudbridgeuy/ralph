@@ -151,6 +151,18 @@ mod tests {
     }
 
     #[test]
+    fn version_output_edge_cases() {
+        assert_eq!(
+            parse_agent_version("\n  2026.10.14-0f9edde extra\n"),
+            Some("2026.10.14")
+        );
+        assert_eq!(parse_agent_version("2026.10.14 build"), Some("2026.10.14"));
+        assert_eq!(parse_agent_version("  \n\t"), None);
+        assert_eq!(parse_agent_version("-0f9edde"), None);
+        assert_eq!(parse_agent_version("v2026.10.14"), None);
+    }
+
+    #[test]
     fn version_warning_only_when_the_version_differs() {
         let none = VerifiedAgents::default();
         assert_eq!(
