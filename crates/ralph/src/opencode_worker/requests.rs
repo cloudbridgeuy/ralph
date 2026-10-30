@@ -182,7 +182,11 @@ impl OpencodeHost {
                 (fs::read_to_string(&entry), self.find(id))
             {
                 if interrupt {
+                    self.request_interrupt(&session_id, true);
                     let outcome = self.interrupt(id, &session_id, &text);
+                    if outcome != Some(true) {
+                        self.request_interrupt(&session_id, false);
+                    }
                     self.write_interrupt_result(id, &entry, outcome);
                 }
                 if let Some(session) = self.sessions().get_mut(&session_id) {
@@ -192,6 +196,12 @@ impl OpencodeHost {
                 self.send(&session_id, &target, &text);
             }
             fs::remove_file(&entry).ok();
+        }
+    }
+
+    fn request_interrupt(&self, session_id: &str, requested: bool) {
+        if let Some(session) = self.sessions().get_mut(session_id) {
+            session.turn.interrupt_requested = requested;
         }
     }
 

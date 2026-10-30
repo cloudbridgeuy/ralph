@@ -122,10 +122,9 @@ pub fn turn_outcome(
     }
     match stop {
         Err(message) => TurnOutcome::Problem(message.to_string()),
-        Ok("cancelled") => TurnOutcome::Cancelled,
-        Ok("end_turn") if interrupted => TurnOutcome::Cancelled,
-        Ok("end_turn") if reminded => TurnOutcome::Unreported,
-        Ok("end_turn") => TurnOutcome::Remind,
+        Ok("cancelled" | "end_turn") if interrupted => TurnOutcome::Cancelled,
+        Ok("cancelled" | "end_turn") if reminded => TurnOutcome::Unreported,
+        Ok("cancelled" | "end_turn") => TurnOutcome::Remind,
         Ok(other) => TurnOutcome::Stopped(other.to_string()),
     }
 }
@@ -211,6 +210,14 @@ mod tests {
         );
         assert_eq!(
             turn_outcome(Ok("cancelled"), false, false, false, false),
+            TurnOutcome::Remind
+        );
+        assert_eq!(
+            turn_outcome(Ok("cancelled"), false, true, false, false),
+            TurnOutcome::Unreported
+        );
+        assert_eq!(
+            turn_outcome(Ok("cancelled"), false, true, false, true),
             TurnOutcome::Cancelled
         );
         assert_eq!(
