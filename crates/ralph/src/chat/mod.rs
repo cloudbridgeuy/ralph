@@ -580,7 +580,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             editor.sync_history()?;
             break;
         }
-        approve_proposed(&schedule_store, watch_timeout);
+        let asked = approve_proposed(&schedule_store, watch_timeout);
         let suggestion = suggestions.take();
         let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {
@@ -602,7 +602,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Decision::Keep(entries) => (draft_with_queue(draft, &entries), suggestion),
         };
         let draft = draft_with_typed(draft, &typed);
-        let replied = outcome == TurnOutcome::Replied;
+        let replied = outcome == TurnOutcome::Replied && !asked;
         shown.clear();
         offered = None;
         if let Some(fill) = prefill(replied, draft, suggestion) {

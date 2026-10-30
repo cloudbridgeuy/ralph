@@ -36,9 +36,9 @@ fn read_answer() -> Option<String> {
     }
 }
 
-pub(super) fn approve_proposed(store: &ScheduleStore, default_timeout: Duration) {
+pub(super) fn approve_proposed(store: &ScheduleStore, default_timeout: Duration) -> bool {
     let mut out = io::stdout();
-    approve_with(store, default_timeout, &mut read_answer, &mut out);
+    approve_with(store, default_timeout, &mut read_answer, &mut out)
 }
 
 fn approve_with(
@@ -46,9 +46,10 @@ fn approve_with(
     default_timeout: Duration,
     read: &mut impl FnMut() -> Option<String>,
     out: &mut impl Write,
-) {
-    for task in proposed(store.load_all()) {
-        if decide(&task, default_timeout, read, out) {
+) -> bool {
+    let tasks = proposed(store.load_all());
+    for task in &tasks {
+        if decide(task, default_timeout, read, out) {
             let armed = store.save(&Task {
                 status: TaskStatus::Pending,
                 ..task.clone()
@@ -62,6 +63,7 @@ fn approve_with(
             say(out, &format!("Cancelled {}.", task.id));
         }
     }
+    !tasks.is_empty()
 }
 
 fn decide(
@@ -210,16 +212,16 @@ mod tests {
             .unwrap();
     }
 
-    fn run(store: &ScheduleStore, answers: &[Option<&str>]) -> String {
+    fn run(store: &ScheduleStore, answers: &[Option<&str>]) -> (bool, String) {
         let mut queue = answers.iter().map(|a| a.map(str::to_string));
         let mut out = Vec::new();
-        approve_with(
+        let asked = approve_with(
             store,
             Duration::from_secs(60),
             &mut || queue.next().flatten(),
             &mut out,
         );
-        String::from_utf8(out).unwrap()
+        (asked, String::from_utf8(out).unwrap())
     }
 
     fn statuses(store: &ScheduleStore) -> Vec<(String, TaskStatus)> {
@@ -238,7 +240,7 @@ mod tests {
         let store = ScheduleStore::new(dir.path().to_path_buf());
         propose(&store, "first", 5);
         propose(&store, "second", 10);
-        let out = run(&store, &[Some("YES\n"), Some("n\n")]);
+        let (_, out) = run(&store, &[Some("YES\n"), Some("n\n")]);
         assert_eq!(
             statuses(&store),
             vec![("first".to_string(), TaskStatus::Pending)]
@@ -253,7 +255,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ScheduleStore::new(dir.path().to_path_buf());
         propose(&store, "a", 5);
-        let out = run(&store, &[Some("go\n"), Some("\n"), Some("y\n")]);
+        let (_, out) = run(&store, &[Some("go\n"), Some("\n"), Some("y\n")]);
         assert_eq!(out.matches("Arm it? [y/n]").count(), 3);
         assert_eq!(
             statuses(&store),
@@ -266,7 +268,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ScheduleStore::new(dir.path().to_path_buf());
         propose(&store, "a", 5);
-        let out = run(&store, &[None]);
+        let (_, out) = run(&store, &[None]);
         assert!(statuses(&store).is_empty());
         assert!(out.contains("Cancelled a."));
     }
@@ -276,13 +278,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ScheduleStore::new(dir.path().to_path_buf());
         propose(&store, "a", 5);
-        run(&store, &[Some("y")]);
-        let out = run(&store, &[]);
+        assert!(run(&store, &[Some("y")]).0);
+        let (asked, out) = run(&store, &[]);
+        assert!(!asked);
         assert!(out.is_empty());
         assert_eq!(
             statuses(&store),
             vec![("a".to_string(), TaskStatus::Pending)]
         );
+    }
+
+    #[test]
+    fn an_empty_store_asks_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ScheduleStore::new(dir.path().to_path_buf());
+        assert_eq!(run(&store, &[]), (false, String::new()));
     }
 
     #[test]
@@ -329,7 +339,7 @@ mod tests {
             .path()
             .join(format!(".{}", ralph_core::watch_store::file_name("a")));
         std::fs::create_dir(&tmp).unwrap();
-        let out = run(&store, &[Some("y")]);
+        let (_, out) = run(&store, &[Some("y")]);
         assert!(out.contains("Could not arm a:"), "{out}");
         assert!(!out.contains("Armed a."), "{out}");
         assert_eq!(
