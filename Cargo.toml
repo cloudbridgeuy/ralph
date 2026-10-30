@@ -108,7 +108,7 @@ syntect = { version = "5.2", default-features = false, features = [
 ] }
 
 # Line editor for chat input
-reedline = "0.52.1"
+reedline = { version = "0.52.1", features = ["external_printer"] }
 
 # Testing
 tempfile = "3.10"
