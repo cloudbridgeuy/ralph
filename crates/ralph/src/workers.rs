@@ -2,7 +2,7 @@ use crate::claude_cleanup::cleanup_worktree_leftovers;
 use crate::config::AppConfig;
 use crate::cursor_cleanup::cleanup_cursor_leftovers;
 use crate::cursor_owner::{
-    caller_owns, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file, write_file_atomic,
+    caller_owns, owned_codex_ids, owned_cursor_ids, sweep_owner, write_file,
 };
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
@@ -430,9 +430,13 @@ impl Workers {
         })?;
         fs::create_dir_all(answer.parent().unwrap_or(&self.store_dir))?;
         let started = Instant::now();
-        let _lock = lock_reply(&reply_lock_path(&answer), id, started)?;
+        let _lock = lock_reply(&reply_lock_path(&self.store_dir, id), id, started)?;
         clear_marker(&error)?;
-        write_file_atomic(&answer, &body)?;
+        let staged = reply_staging_path(&self.store_dir, id);
+        write_file(&staged, &body)?;
+        fs::rename(&staged, &answer).inspect_err(|_| {
+            fs::remove_file(&staged).ok();
+        })?;
         loop {
             match close_handoff(answer.exists(), started.elapsed()) {
                 Handoff::Done => break,
@@ -577,11 +581,12 @@ fn now_nanos() -> u64 {
         })
 }
 
-fn reply_lock_path(answer: &Path) -> PathBuf {
-    let name = answer
-        .file_name()
-        .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
-    answer.with_file_name(format!("{name}.lock"))
+fn reply_lock_path(store_dir: &Path, id: &str) -> PathBuf {
+    store_dir.join(format!(".answer-{id}.lock"))
+}
+
+fn reply_staging_path(store_dir: &Path, id: &str) -> PathBuf {
+    store_dir.join(format!(".answer-{id}"))
 }
 
 fn lock_reply(lock: &Path, id: &str, started: Instant) -> io::Result<fs::File> {
@@ -916,11 +921,30 @@ mod tests {
     }
 
     #[test]
-    fn the_reply_lock_sits_next_to_the_answer() {
-        assert_eq!(
-            reply_lock_path(Path::new("/s/codex-answer/A")),
-            PathBuf::from("/s/codex-answer/A.lock")
-        );
+    fn a_reply_leaves_only_worker_ids_in_the_answer_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        let files = HandoffFiles::opencode(dir.path(), "A");
+        write_file(&files.owner, "").unwrap();
+        write_file(&blocked_path(dir.path(), "A"), "").unwrap();
+        let (store, answer) = (dir.path().to_path_buf(), files.answer.clone());
+        let host = thread::spawn(move || loop {
+            let ids = crate::cursor_owner::request_ids(&store, "opencode-answer");
+            if ids.contains(&"A".to_string()) && fs::remove_file(&answer).is_ok() {
+                return ids;
+            }
+            thread::sleep(Duration::from_millis(2));
+        });
+        workers.reply("A", "once", false, Some("per_1")).unwrap();
+        assert_eq!(host.join().unwrap(), ["A"]);
+        assert!(crate::cursor_owner::request_ids(dir.path(), "opencode-answer").is_empty());
+    }
+
+    #[test]
+    fn the_reply_lock_and_staging_files_sit_in_the_store_root() {
+        let store = Path::new("/s");
+        assert_eq!(reply_lock_path(store, "A"), Path::new("/s/.answer-A.lock"));
+        assert_eq!(reply_staging_path(store, "A"), Path::new("/s/.answer-A"));
     }
 
     #[test]
