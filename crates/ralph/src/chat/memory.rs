@@ -132,9 +132,13 @@ impl Store {
         Ok((entries, tree))
     }
 
-    pub fn load_quiet(&self) -> io::Result<(Vec<Entry>, Tree, Vec<String>)> {
+    pub fn load_log_quiet(&self) -> io::Result<(Vec<Entry>, Vec<String>)> {
         let log = read_optional(&self.dir.join("log.jsonl"))?;
-        let (entries, mut warnings) = parse_log(&log);
+        Ok(parse_log(&log))
+    }
+
+    pub fn load_quiet(&self) -> io::Result<(Vec<Entry>, Tree, Vec<String>)> {
+        let (entries, mut warnings) = self.load_log_quiet()?;
         let (tree, tree_warnings) = self.read_tree()?;
         warnings.extend(tree_warnings);
         Ok((entries, tree, warnings))

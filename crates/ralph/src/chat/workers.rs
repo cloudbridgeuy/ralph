@@ -169,9 +169,9 @@ pub(super) fn tool_report(
 ) -> String {
     let dir = store.dir();
     let reports = store
-        .load_quiet()
+        .load_log_quiet()
         .ok()
-        .map(|(entries, _, _)| group_reports(&entries, &[]));
+        .map(|(entries, _)| group_reports(&entries, &[]));
     let rows: Vec<WorkerRow> = running
         .iter()
         .map(|worker| {
