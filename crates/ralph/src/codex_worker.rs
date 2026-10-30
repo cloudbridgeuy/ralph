@@ -6,7 +6,7 @@ use crate::cursor_owner::{
     claim_owner, now_secs, queued_entries, report_start_warning, request_ids, sweep_owner,
     write_file, write_interrupt_result, write_owner_record,
 };
-use crate::permission_queue::PermissionQueue;
+use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::verified_agents;
@@ -496,6 +496,7 @@ impl CodexWorker {
         let (replies, reply_rx) = mpsc::channel();
         let events = Events::default();
         let permissions = Arc::new(PermissionQueue::new(
+            host_process_token(),
             id.to_string(),
             Inbox::new(request.inbox.clone()),
             Arc::clone(&events),

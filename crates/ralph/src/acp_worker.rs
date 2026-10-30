@@ -53,6 +53,7 @@ mod permissions;
 mod turns;
 mod verify;
 
+use crate::permission_queue::{host_process_token, PermissionQueue};
 use permissions::Permissions;
 use turns::{run_turns, Turns};
 pub(crate) use verify::verify;
@@ -227,9 +228,12 @@ impl AcpWorker {
         let permissions = Permissions::new(
             &markers,
             cursor_permissions(),
-            id.to_string(),
-            Inbox::new(request.inbox.clone()),
-            Arc::clone(&events),
+            PermissionQueue::new(
+                host_process_token(),
+                id.to_string(),
+                Inbox::new(request.inbox.clone()),
+                Arc::clone(&events),
+            ),
         );
         let (prompts, prompt_rx) = queue::unbounded();
         let (finished_tx, finished_rx) = mpsc::channel();
