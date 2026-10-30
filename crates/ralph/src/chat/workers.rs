@@ -16,7 +16,7 @@ use ralph_core::wire::view::Pricing;
 use ralph_core::worker::{
     activity_path, blocked_path, branch_name, decode_spawn_record, decode_status, decode_statuses,
     gone_path, sent_path, spawn_record_path, status_path, unreported_path, waiting_path,
-    worktree_for_branch, ActivityMark, HarnessId, StatusLine, Ticket,
+    worktree_for_branch, ActivityMark, HarnessId, Report, StatusLine, Ticket,
 };
 use ralph_core::worker_costs::costs_view;
 use ralph_core::workers_view::{
@@ -165,13 +165,14 @@ pub(super) fn tool_report(
     store: &Store,
     running: &[RunningWorker],
     states: &[WorkerState],
+    unread: &[Report],
     now: chrono::DateTime<chrono::Utc>,
 ) -> String {
     let dir = store.dir();
     let reports = store
         .load_log_quiet()
         .ok()
-        .map(|(entries, _)| group_reports(&entries, &[]));
+        .map(|(entries, _)| group_reports(&entries, unread));
     let rows: Vec<WorkerRow> = running
         .iter()
         .map(|worker| {
@@ -573,7 +574,7 @@ mod tests {
     fn the_tool_lists_only_the_given_workers_with_state_and_report() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
-        assert_eq!(tool_report(&store, &[], &[], now()), "no workers");
+        assert_eq!(tool_report(&store, &[], &[], &[], now()), "no workers");
         let log = "{\"role\":\"worker\",\"at\":\"2026-01-01T00:48:00Z\",\"text\":\"[worker A · done]\\nshipped\"}\n";
         std::fs::write(dir.path().join("log.jsonl"), log).unwrap();
         let gone = gone_path(dir.path(), "B");
@@ -588,8 +589,8 @@ mod tests {
             state: "done".into(),
         }];
         assert_eq!(
-            tool_report(&store, &running, &states, now()),
-            "A cursor done done 12m worker/A\nB codex gone - - worker/B"
+            tool_report(&store, &running, &states, &[], now()),
+            "A cursor done worker/A done 12m ago\nB codex gone worker/B -"
         );
     }
 
@@ -602,8 +603,14 @@ mod tests {
             id: "A".into(),
             state: "done".into(),
         }];
-        let text = tool_report(&store, &running, &states, now());
-        assert_eq!(text, "A claude done - - worker/A");
+        let unread = [Report {
+            worker: "A".into(),
+            at: "2026-01-01T00:48:00Z".into(),
+            status: "done".into(),
+            text: "shipped".into(),
+        }];
+        let text = tool_report(&store, &running, &states, &unread, now());
+        assert_eq!(text, "A claude done worker/A done 12m ago");
     }
 
     fn table_markdown(rows: &[WorkerRow], color: bool) -> View {

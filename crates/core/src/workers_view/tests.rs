@@ -526,10 +526,33 @@ fn workers_text_is_one_plain_line_per_worker() {
     let rows = [row("GUZ-1"), gone, unknown];
     assert_eq!(
         workers_text(&rows, now()),
-        "GUZ-1 claude busy done 12m worker/GUZ-1\n\
-         GUZ-2 claude gone - - worker/GUZ-2\n\
-         GUZ-3 codex - ? ? worker/GUZ-3"
+        "GUZ-1 claude busy worker/GUZ-1 done 12m ago\n\
+         GUZ-2 claude gone worker/GUZ-2 -\n\
+         GUZ-3 codex - worker/GUZ-3 ?"
     );
+}
+
+#[test]
+fn workers_text_shows_a_newer_status_with_its_age() {
+    let mut busy = with_status(row("B"));
+    busy.harness = "codex".into();
+    assert_eq!(
+        workers_text(&[busy], now()),
+        "B codex busy worker/B Reading the tests. · 5m ago"
+    );
+}
+
+#[test]
+fn workers_text_keeps_a_multiline_status_on_one_line() {
+    let mut busy = row("B");
+    busy.status = Some(StatusLine {
+        at: "2026-01-01T00:55:00Z".into(),
+        text: "first\r\nsecond\nthird".into(),
+    });
+    let text = workers_text(&[busy], now());
+    assert_eq!(text.lines().count(), 1);
+    assert!(!text.contains('\r'));
+    assert_eq!(text, "B claude busy worker/B first  second third · 5m ago");
 }
 
 #[test]

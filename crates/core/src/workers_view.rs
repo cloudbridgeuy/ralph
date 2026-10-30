@@ -588,13 +588,9 @@ pub fn workers_text(rows: &[WorkerRow], now: DateTime<Utc>) -> String {
     }
     rows.iter()
         .map(|row| {
-            let (kind, since) = match &row.report {
-                Lookup::Found(report) => (report.status.clone(), age(&report.at, now)),
-                Lookup::Missing => ("-".to_string(), "-".to_string()),
-                Lookup::Failed => ("?".to_string(), "?".to_string()),
-            };
+            let report = spans_text(&activity_cell(row, now, 80)).replace(['\r', '\n'], " ");
             format!(
-                "{} {} {} {kind} {since} {}",
+                "{} {} {} {} {report}",
                 row.id,
                 row.harness,
                 row.state.as_deref().unwrap_or("-"),
