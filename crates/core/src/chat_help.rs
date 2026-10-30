@@ -522,6 +522,7 @@ Images
 Only local files draw; http(s) and data: URLs stay text.
 Drawing is off with NO_COLOR, in pipes and in unsupported terminals: the raw ![alt](path) text shows.
 A missing file, a file over 10 MiB or one that can't be decoded prints [image: alt (path)].
+Under each drawn image a dim line with its full path shows; in terminals with OSC 8 links, click it to open the file.
 Ctrl-V pastes a clipboard image as [Image #N: path].
 ";
 

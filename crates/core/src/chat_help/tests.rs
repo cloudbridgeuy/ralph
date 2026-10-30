@@ -373,6 +373,7 @@ fn help_topic_images_returns_the_images_text() {
         let text = help_topic(Some(topic)).unwrap();
         assert!(text.starts_with("Images\n"));
         assert!(text.contains("[image: alt (path)]"));
+        assert!(text.contains("dim line with its full path"));
     }
 }
 
