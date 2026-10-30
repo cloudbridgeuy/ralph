@@ -132,19 +132,58 @@ fn parse_version(version: &str) -> Option<(u64, u64)> {
         .map(|_| (major, minor))
 }
 
+pub struct VersionGate {
+    pub agent: &'static str,
+    pub package: &'static str,
+    pub min: (u64, u64),
+    pub probed: &'static str,
+    pub protocol: &'static str,
+    pub verifiable: bool,
+}
+
+const CODEX_GATE: VersionGate = VersionGate {
+    agent: "codex",
+    package: "codex-cli",
+    min: MIN_VERSION,
+    probed: PROBED_VERSION,
+    protocol: "app-server",
+    verifiable: true,
+};
+
 pub fn check_version(found: &str, verified: &VerifiedAgents) -> Result<Option<String>, String> {
+    check_agent_version(&CODEX_GATE, found, verified)
+}
+
+pub fn check_agent_version(
+    gate: &VersionGate,
+    found: &str,
+    verified: &VerifiedAgents,
+) -> Result<Option<String>, String> {
+    let VersionGate {
+        agent,
+        package,
+        min,
+        probed,
+        protocol,
+        verifiable,
+    } = gate;
     let parsed = parse_version(found)
-        .ok_or_else(|| format!("could not read the codex version from `{found}`"))?;
-    let probed = parse_version(PROBED_VERSION).unwrap_or(MIN_VERSION);
-    match (parsed.cmp(&MIN_VERSION), parsed.cmp(&probed)) {
+        .ok_or_else(|| format!("could not read the {agent} version from `{found}`"))?;
+    let probed_pair = parse_version(probed).unwrap_or(*min);
+    match (parsed.cmp(min), parsed.cmp(&probed_pair)) {
         (std::cmp::Ordering::Less, _) => Err(format!(
-            "codex {found} is too old; needs codex-cli >= {}.{} (probed {PROBED_VERSION})",
-            MIN_VERSION.0, MIN_VERSION.1
+            "{agent} {found} is too old; needs {package} >= {}.{} (probed {probed})",
+            min.0, min.1
         )),
-        (_, std::cmp::Ordering::Greater) if verified.is_verified("codex", found) => Ok(None),
+        (_, std::cmp::Ordering::Greater) if *verifiable && verified.is_verified(agent, found) => {
+            Ok(None)
+        }
+        (_, std::cmp::Ordering::Greater) if *verifiable => Ok(Some(format!(
+            "{agent} {found} is newer than the probed {probed}; the {protocol} protocol may differ; {}",
+            verify_hint(agent)
+        ))),
         (_, std::cmp::Ordering::Greater) => Ok(Some(format!(
-            "codex {found} is newer than the probed {PROBED_VERSION}; the app-server protocol may differ; {}",
-            verify_hint("codex")
+            "{agent} {found} is newer than the probed {probed}; the {protocol} protocol may differ."
         ))),
         _ => Ok(None),
     }

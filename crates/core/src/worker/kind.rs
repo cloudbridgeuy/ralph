@@ -8,10 +8,18 @@ pub enum HarnessId {
     Cursor,
     Opencode,
     Codex,
+    #[serde(rename = "claude-headless")]
+    ClaudeHeadless,
 }
 
 impl HarnessId {
-    pub const ALL: [HarnessId; 4] = [Self::Claude, Self::Opencode, Self::Cursor, Self::Codex];
+    pub const ALL: [HarnessId; 5] = [
+        Self::Claude,
+        Self::Opencode,
+        Self::Cursor,
+        Self::Codex,
+        Self::ClaudeHeadless,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -19,6 +27,7 @@ impl HarnessId {
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Codex => "codex",
+            Self::ClaudeHeadless => "claude-headless",
         }
     }
 }
@@ -33,6 +42,8 @@ impl<'de> Deserialize<'de> for HarnessId {
             Cursor,
             Opencode,
             Codex,
+            #[serde(rename = "claude-headless")]
+            ClaudeHeadless,
         }
 
         #[derive(Deserialize)]
@@ -47,6 +58,7 @@ impl<'de> Deserialize<'de> for HarnessId {
             Compatible::Kind(Kind::Cursor) | Compatible::Cursor(true) => Self::Cursor,
             Compatible::Kind(Kind::Opencode) => Self::Opencode,
             Compatible::Kind(Kind::Codex) => Self::Codex,
+            Compatible::Kind(Kind::ClaudeHeadless) => Self::ClaudeHeadless,
         })
     }
 }
@@ -62,6 +74,7 @@ mod tests {
             (HarnessId::Cursor, "cursor"),
             (HarnessId::Opencode, "opencode"),
             (HarnessId::Codex, "codex"),
+            (HarnessId::ClaudeHeadless, "claude-headless"),
         ] {
             let json = format!("\"{name}\"");
             assert_eq!(serde_json::to_string(&kind).unwrap(), json);

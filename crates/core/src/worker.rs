@@ -7,6 +7,7 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
 mod acp;
+mod claude_headless;
 mod codex;
 mod cursor_model;
 mod files;
@@ -30,6 +31,7 @@ mod transcript_usage;
 mod verify;
 mod worktree;
 pub use acp::*;
+pub use claude_headless::*;
 pub use codex::*;
 pub use cursor_model::{
     cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,
@@ -75,6 +77,7 @@ pub const GONE_DIR: &str = "gone";
 pub const DEFAULT_OPENCODE_MODEL: &str = "openai/gpt-6.1-sol";
 pub const OPENCODE_HARNESS: &str = "opencode";
 pub const CODEX_HARNESS: &str = "codex";
+pub const CLAUDE_HEADLESS_HARNESS: &str = "claude-headless";
 pub const STORE_OPTION: &str = "@ralph_store";
 pub const ID_OPTION: &str = "@ralph_id";
 pub const SESSION_FORMAT: &str = "#{session_name}\t#{@ralph_store}\t#{@ralph_id}";

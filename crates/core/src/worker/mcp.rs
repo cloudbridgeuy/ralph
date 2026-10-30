@@ -1,7 +1,7 @@
 use super::{
     capabilities, decide, is_claude_model, is_cursor_model, is_model_id, is_token_model,
     model_refusal, Command, Feature, HarnessId, SpawnSpec, Support, WorkerCommand, WorkerEvent,
-    CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
+    CLAUDE_HEADLESS_HARNESS, CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
 use crate::chat_status::WORKER_COSTS;
 use crate::mcp::string_arg;
@@ -22,7 +22,7 @@ pub fn command_definitions() -> [Value; 5] {
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
                     "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
-                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default codex's own default."}
+                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default codex's own default. claude-headless: as claude."}
                 },
                 "required": ["id", "task"]
             }
@@ -205,20 +205,26 @@ struct ParsedSpawn {
     model: Option<String>,
 }
 
+fn claude_model(harness: HarnessId, model: &str) -> Result<(HarnessId, Option<String>), String> {
+    if capabilities(harness).support(Feature::Model) == Support::None {
+        Err(model_refusal(harness))
+    } else if is_claude_model(model) {
+        Ok((harness, Some(model.to_string())))
+    } else {
+        Err(format!(
+            "Model '{model}' must be non-empty with no whitespace."
+        ))
+    }
+}
+
 fn harness(args: &Value) -> Result<ParsedSpawn, String> {
     let model = args.get("model").and_then(Value::as_str);
     let (harness, model) = match (args.get("harness").and_then(Value::as_str), model) {
         (None | Some("claude"), None) => Ok((HarnessId::Claude, None)),
-        (None | Some("claude"), Some(model)) => {
-            if capabilities(HarnessId::Claude).support(Feature::Model) == Support::None {
-                Err(model_refusal(HarnessId::Claude))
-            } else if is_claude_model(model) {
-                Ok((HarnessId::Claude, Some(model.to_string())))
-            } else {
-                Err(format!(
-                    "Model '{model}' must be non-empty with no whitespace."
-                ))
-            }
+        (None | Some("claude"), Some(model)) => claude_model(HarnessId::Claude, model),
+        (Some(CLAUDE_HEADLESS_HARNESS), None) => Ok((HarnessId::ClaudeHeadless, None)),
+        (Some(CLAUDE_HEADLESS_HARNESS), Some(model)) => {
+            claude_model(HarnessId::ClaudeHeadless, model)
         }
         (Some(OPENCODE_HARNESS), None) => Ok((HarnessId::Opencode, None)),
         (Some(OPENCODE_HARNESS), Some(model)) if is_model_id(model) => {
@@ -482,6 +488,21 @@ mod tests {
         ] {
             assert!(spawn_harness(args.clone()).is_err(), "{args}");
         }
+    }
+
+    #[test]
+    fn spawn_harness_accepts_claude_headless_with_a_claude_model() {
+        assert_eq!(
+            spawn_harness(json!({"harness": "claude-headless"})),
+            Ok((HarnessId::ClaudeHeadless, None))
+        );
+        assert_eq!(
+            spawn_harness(json!({"harness": "claude-headless", "model": "haiku"})),
+            Ok((HarnessId::ClaudeHeadless, Some("haiku".into())))
+        );
+        assert!(
+            spawn_harness(json!({"harness": "claude-headless", "model": "two words"})).is_err()
+        );
     }
 
     #[test]

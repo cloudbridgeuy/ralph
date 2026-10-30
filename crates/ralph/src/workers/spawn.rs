@@ -21,9 +21,9 @@ use ralph_core::worker::{
     worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeShell,
     ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback,
     SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, UsageSink,
-    WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CODEX_COMMAND, CURSOR_AGENT,
-    FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE,
-    STORE_OPTION, WORKERS_DIR,
+    WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND,
+    CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -119,7 +119,7 @@ impl Workers {
                 );
                 (Some(model), warning)
             }
-            HarnessId::Claude => resolve_claude_model(
+            HarnessId::Claude | HarnessId::ClaudeHeadless => resolve_claude_model(
                 model,
                 config
                     .as_ref()
@@ -223,6 +223,7 @@ impl Workers {
             HarnessId::Opencode => self.preflight_opencode(id),
             HarnessId::Cursor => require_on_path(CURSOR_AGENT.command),
             HarnessId::Codex => require_on_path(CODEX_COMMAND),
+            HarnessId::ClaudeHeadless => require_on_path(CLAUDE_COMMAND),
         }
     }
 
@@ -295,6 +296,14 @@ impl Workers {
                     warning.as_deref(),
                 ));
             }
+            HarnessId::ClaudeHeadless => {
+                let files = HandoffFiles::claude_headless(&self.store_dir, id);
+                let warning = self.spawn_headless(launch, files, "claude-headless")?;
+                return Ok(with_start_warning(
+                    format!("{started} It runs headless inside ralph chat (no tmux session)."),
+                    warning.as_deref(),
+                ));
+            }
         };
         run(Command::new("tmux")
             .args(["new-session", "-d", "-s", session])
@@ -337,6 +346,9 @@ impl Workers {
                 .owner
                 .exists(),
             HarnessId::Codex => HandoffFiles::codex(&self.store_dir, launch.id)
+                .owner
+                .exists(),
+            HarnessId::ClaudeHeadless => HandoffFiles::claude_headless(&self.store_dir, launch.id)
                 .owner
                 .exists(),
         }

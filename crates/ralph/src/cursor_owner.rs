@@ -3,8 +3,8 @@ use crate::transport::stdio::stop_group;
 use crate::warn::warn;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
-    sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR,
-    CODEX_SESSION_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep, CLAUDE_HEADLESS_OWNER_DIR,
+    CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -89,6 +89,14 @@ fn owned_ids(store_dir: &Path, dir: &str, files: fn(&Path, &str) -> HandoffFiles
 
 pub fn owned_cursor_ids(store_dir: &Path) -> Vec<String> {
     owned_ids(store_dir, CURSOR_OWNER_DIR, HandoffFiles::cursor)
+}
+
+pub fn owned_claude_headless_ids(store_dir: &Path) -> Vec<String> {
+    owned_ids(
+        store_dir,
+        CLAUDE_HEADLESS_OWNER_DIR,
+        HandoffFiles::claude_headless,
+    )
 }
 
 pub fn owned_codex_ids(store_dir: &Path) -> Vec<String> {

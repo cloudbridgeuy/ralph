@@ -8,6 +8,7 @@ pub mod ansi;
 mod backoff;
 mod chat;
 mod claude_cleanup;
+mod claude_headless_worker;
 mod cli;
 mod clipboard;
 mod codex_usage;

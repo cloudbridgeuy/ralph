@@ -44,7 +44,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-mod pipes;
+pub(crate) mod pipes;
 mod resume;
 mod verify;
 
@@ -57,7 +57,7 @@ const REPLY_POLL: Duration = Duration::from_millis(100);
 const CLOSE_POLL: Duration = Duration::from_millis(20);
 const EXIT_REASON: &str = "codex app-server exited";
 
-type Stdin = Arc<Mutex<Option<LoggedWrite<ChildStdin>>>>;
+pub(crate) type Stdin = Arc<Mutex<Option<LoggedWrite<ChildStdin>>>>;
 
 struct CodexReply {
     id: Value,
@@ -99,7 +99,7 @@ fn exit_reason(status: ExitStatus) -> String {
     format!("{CODEX_COMMAND} app-server exited ({status})")
 }
 
-fn report_exit(
+pub(crate) fn report_exit(
     heartbeat: &Heartbeat,
     events: &Events,
     exited: &AtomicBool,

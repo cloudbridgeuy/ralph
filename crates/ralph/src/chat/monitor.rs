@@ -153,12 +153,7 @@ impl Monitor {
         let mut alerts = Vec::new();
         let ids: Vec<String> = running
             .iter()
-            .filter(|w| {
-                matches!(
-                    w.kind,
-                    HarnessId::Cursor | HarnessId::Opencode | HarnessId::Codex
-                )
-            })
+            .filter(|w| w.kind != HarnessId::Claude)
             .map(|w| w.id.clone())
             .chain(state.claude_dead.iter().cloned())
             .collect();

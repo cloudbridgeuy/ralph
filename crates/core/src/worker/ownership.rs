@@ -156,6 +156,7 @@ pub enum CloseStep {
     KillSession(String),
     TerminateCursor,
     TerminateCodex,
+    TerminateClaudeHeadless,
     RemoveWorktree { force: bool },
     DeleteBranch,
     PruneWorktrees,
@@ -219,6 +220,7 @@ pub fn close_plan(
         HarnessId::Cursor => steps.push(CloseStep::TerminateCursor),
         HarnessId::Opencode => steps.push(CloseStep::RemoveOpencodeSession),
         HarnessId::Codex => steps.push(CloseStep::TerminateCodex),
+        HarnessId::ClaudeHeadless => steps.push(CloseStep::TerminateClaudeHeadless),
         HarnessId::Claude => {
             if let Owner::Mine(session) | Owner::Foreign(session) = &state.owner {
                 steps.push(CloseStep::KillSession(session.name.clone()));
@@ -364,6 +366,15 @@ mod tests {
         state.kind = HarnessId::Codex;
         let steps = close_plan(&state, false, false).unwrap();
         assert_eq!(steps[0], CloseStep::TerminateCodex);
+        assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
+    }
+
+    #[test]
+    fn close_plan_terminates_a_claude_headless_worker_instead_of_killing_a_session() {
+        let mut state = close_state(Owner::Mine(tagged("ralph-p-A", "/s")));
+        state.kind = HarnessId::ClaudeHeadless;
+        let steps = close_plan(&state, false, false).unwrap();
+        assert_eq!(steps[0], CloseStep::TerminateClaudeHeadless);
         assert!(!steps.iter().any(|s| matches!(s, CloseStep::KillSession(_))));
     }
 

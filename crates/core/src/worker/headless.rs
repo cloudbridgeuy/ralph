@@ -96,6 +96,11 @@ impl Capabilities {
             (HarnessId::Codex, Heartbeat) => Partial(
                 "app-server frames count as activity, not progress; silent long tools can yield false Quiet; 300 s default",
             ),
+            (HarnessId::ClaudeHeadless, Spawn | Prompt | Report | Model | Close) => Full,
+            (HarnessId::ClaudeHeadless, Heartbeat) => Partial(
+                "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
+            ),
+            (HarnessId::ClaudeHeadless, Interrupt | PermAsk | PermYolo | Resume) => Support::None,
         }
     }
 }
@@ -352,6 +357,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn claude_headless_cells_match_the_s1_matrix() {
+        let caps = capabilities(HarnessId::ClaudeHeadless);
+        assert!(caps.headless());
+        for feature in Feature::ALL {
+            let expected = match feature {
+                Feature::Spawn
+                | Feature::Prompt
+                | Feature::Report
+                | Feature::Model
+                | Feature::Close => Support::Full,
+                Feature::Heartbeat => Support::Partial(
+                    "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
+                ),
+                Feature::Interrupt | Feature::PermAsk | Feature::PermYolo | Feature::Resume => {
+                    Support::None
+                }
+            };
+            assert_eq!(caps.support(feature), expected, "{feature:?}");
+        }
+    }
+
     fn command_for(feature: Feature) -> Option<WorkerCommand> {
         match feature {
             Feature::Spawn => Some(WorkerCommand::Spawn(SpawnSpec { model: None })),
@@ -417,7 +444,7 @@ mod tests {
     fn model_refusal_names_accepting_harnesses() {
         assert_eq!(
             model_refusal(HarnessId::Cursor),
-            "cursor does not accept a model; harnesses that do: claude, opencode, cursor, codex"
+            "cursor does not accept a model; harnesses that do: claude, opencode, cursor, codex, claude-headless"
         );
     }
 
