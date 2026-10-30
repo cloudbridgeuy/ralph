@@ -115,6 +115,19 @@ pub fn missing_checks<'a>(results: &[CheckResult], required: &[&'a str]) -> Vec<
         .collect()
 }
 
+pub fn required_failure(results: &[CheckResult], required: &[&str]) -> Option<CheckResult> {
+    let missing = missing_checks(results, required);
+    let earlier_failure = results
+        .iter()
+        .any(|result| result.blocking && result.verdict != Verdict::Pass);
+    (!earlier_failure && !missing.is_empty()).then(|| {
+        CheckResult::fail(
+            "required",
+            format!("these checks did not run: {}", missing.join(", ")),
+        )
+    })
+}
+
 pub fn spec_passed(results: &[CheckResult], version: Option<&str>, required: &[&str]) -> bool {
     version.is_some()
         && missing_checks(results, required).is_empty()
@@ -371,6 +384,19 @@ mod tests {
         ];
         assert!(spec_passed(&passed, Some("0.164.0"), &[]));
         assert!(!spec_passed(&passed, None, &[]));
+    }
+
+    #[test]
+    fn the_required_line_shows_only_when_no_earlier_check_failed() {
+        let passed = [CheckResult::pass("initialize", "answered")];
+        let failure = required_failure(&passed, CURSOR_REQUIRED_CHECKS).unwrap();
+        assert_eq!(failure.verdict, Verdict::Fail);
+        assert_eq!(failure.detail, "these checks did not run: session/new");
+        let failed = [CheckResult::fail("initialize", "no answer")];
+        assert_eq!(required_failure(&failed, CURSOR_REQUIRED_CHECKS), None);
+        let advisory = CheckResult::advisory("cancel", Verdict::Fail, "late");
+        assert!(required_failure(&[passed[0].clone(), advisory], CURSOR_REQUIRED_CHECKS).is_some());
+        assert!(!spec_passed(&failed, Some("1.0"), CURSOR_REQUIRED_CHECKS));
     }
 
     #[test]

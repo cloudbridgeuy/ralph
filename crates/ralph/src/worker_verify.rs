@@ -1,19 +1,12 @@
 use crate::cli::VerifyAgent;
-use crate::subprocess::kill_process_group;
+use crate::subprocess::TimedOutput;
 use crate::watches::locked;
 use crate::{acp_worker, codex_worker, verified_agents};
 use ralph_core::worker::{
-    finished_probe, missing_checks, render_check, render_summary, spec_passed, verified_entry,
+    finished_probe, render_check, render_summary, required_failure, spec_passed, verified_entry,
     CheckResult, VerifiedAgent, VersionProbe, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
 };
-use std::io::Read;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
-
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
 pub(crate) struct Checks(Arc<Mutex<Vec<CheckResult>>>);
@@ -47,49 +40,11 @@ pub(crate) fn step<T>(
     }
 }
 
-pub(crate) fn timed_output(command: &mut Command, limit: Duration) -> VersionProbe {
-    let deadline = Instant::now() + limit;
-    let spawned = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn();
-    let mut child = match spawned {
-        Ok(child) => child,
-        Err(error) => return VersionProbe::Failed(error.to_string()),
-    };
-    let Some(mut stdout) = child.stdout.take() else {
-        kill_process_group(&mut child);
-        return VersionProbe::Failed("no stdout".to_string());
-    };
-    let (sender, receiver) = mpsc::channel();
-    let reader = thread::Builder::new().spawn(move || {
-        let mut buffer = Vec::new();
-        let _ = sender.send(stdout.read_to_end(&mut buffer).map(|_| buffer));
-    });
-    if let Err(error) = reader {
-        kill_process_group(&mut child);
-        return VersionProbe::Failed(error.to_string());
-    }
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
-            Ok(None) => {
-                kill_process_group(&mut child);
-                return VersionProbe::TimedOut;
-            }
-            Err(error) => {
-                kill_process_group(&mut child);
-                return VersionProbe::Failed(error.to_string());
-            }
-        }
-    };
-    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        Ok(Ok(stdout)) => finished_probe(status.success(), stdout),
-        Ok(Err(error)) => VersionProbe::Failed(error.to_string()),
-        Err(_) => VersionProbe::TimedOut,
+pub(crate) fn version_probe(output: TimedOutput) -> VersionProbe {
+    match output {
+        TimedOutput::Finished { success, stdout } => finished_probe(success, stdout),
+        TimedOutput::TimedOut => VersionProbe::TimedOut,
+        TimedOutput::Failed(error) => VersionProbe::Failed(error),
     }
 }
 
@@ -140,12 +95,8 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
             CODEX_REQUIRED_CHECKS,
         ),
     };
-    let missing = missing_checks(&checks.results(), required);
-    if !missing.is_empty() {
-        checks.add(CheckResult::fail(
-            "required",
-            format!("these checks did not run: {}", missing.join(", ")),
-        ));
+    if let Some(failure) = required_failure(&checks.results(), required) {
+        checks.add(failure);
     }
     let outcome = Outcome {
         name,

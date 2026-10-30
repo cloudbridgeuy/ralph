@@ -178,7 +178,7 @@ After GUZ-1006:
 
 | Item | Value |
 | --- | --- |
-| SHA | eb786fd, with `worker/verify.rs` added |
+| SHA | 4ef1e8f (eb786fd before the rebase), with `worker/verify.rs` added |
 | Command | `cargo mutants -p ralph_core -F '^crates/core/src/worker/verify\.rs:' -j 2 --build-timeout 300` |
 | Listed | 70 mutants: 49 in `worker/verify.rs` + 21 struct "delete field" mutants from other files the regex does not filter, 4 min |
 | `worker/verify.rs` results | 39 caught / 0 missed / 10 unviable / 0 timeouts |

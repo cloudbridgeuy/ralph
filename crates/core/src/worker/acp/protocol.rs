@@ -31,17 +31,22 @@ pub fn parse_agent_version(output: &str) -> Option<&str> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionProbe {
     Exited(String),
-    Unreadable,
+    ExitedWithError(String),
+    Unreadable(String),
     TimedOut,
     Failed(String),
 }
 
 pub fn finished_probe(success: bool, stdout: Vec<u8>) -> VersionProbe {
     match (success, String::from_utf8(stdout)) {
-        (false, _) => VersionProbe::Failed("it exited with an error status".to_string()),
+        (false, text) => VersionProbe::ExitedWithError(lossy(text)),
         (true, Ok(text)) => VersionProbe::Exited(text),
-        (true, Err(_)) => VersionProbe::Unreadable,
+        (true, Err(error)) => VersionProbe::Unreadable(lossy(Err(error))),
     }
+}
+
+fn lossy(text: Result<String, std::string::FromUtf8Error>) -> String {
+    text.unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
 }
 
 pub fn probed_version<'a>(agent: &AcpAgent, probe: &'a VersionProbe) -> Result<&'a str, String> {
@@ -49,7 +54,10 @@ pub fn probed_version<'a>(agent: &AcpAgent, probe: &'a VersionProbe) -> Result<&
     match probe {
         VersionProbe::Exited(output) => parse_agent_version(output)
             .ok_or_else(|| format!("could not read the version from `{command} --version`")),
-        VersionProbe::Unreadable => Err(format!(
+        VersionProbe::ExitedWithError(_) => Err(format!(
+            "could not run `{command} --version`: it exited with an error status"
+        )),
+        VersionProbe::Unreadable(_) => Err(format!(
             "could not read the version from `{command} --version`"
         )),
         VersionProbe::TimedOut => Err(format!(
@@ -57,6 +65,19 @@ pub fn probed_version<'a>(agent: &AcpAgent, probe: &'a VersionProbe) -> Result<&
             VERSION_PROBE_LIMIT.as_secs()
         )),
         VersionProbe::Failed(error) => Err(format!("could not run `{command} --version`: {error}")),
+    }
+}
+
+pub fn probe_warning(
+    agent: &AcpAgent,
+    probe: &VersionProbe,
+    verified: &VerifiedAgents,
+) -> Option<String> {
+    match probe {
+        VersionProbe::Exited(output)
+        | VersionProbe::ExitedWithError(output)
+        | VersionProbe::Unreadable(output) => version_warning(agent, output, verified),
+        VersionProbe::TimedOut | VersionProbe::Failed(_) => None,
     }
 }
 
@@ -211,10 +232,12 @@ mod tests {
             finished_probe(true, b"2026.10.14\n".to_vec()),
             VersionProbe::Exited("2026.10.14\n".into())
         );
-        assert!(matches!(
-            finished_probe(false, b"2026.10.14\n".to_vec()),
-            VersionProbe::Failed(_)
-        ));
+        let failed = finished_probe(false, b"2026.10.14\n".to_vec());
+        assert_eq!(failed, VersionProbe::ExitedWithError("2026.10.14\n".into()));
+        assert_eq!(
+            probed_version(&CURSOR_AGENT, &failed),
+            Err("could not run `agent --version`: it exited with an error status".to_string())
+        );
     }
 
     #[test]
@@ -223,6 +246,25 @@ mod tests {
             probed_version(&CURSOR_AGENT, &finished_probe(true, vec![0xff])),
             Err("could not read the version from `agent --version`".to_string())
         );
+    }
+
+    #[test]
+    fn the_spawn_warning_reads_whatever_a_finished_probe_printed() {
+        let none = VerifiedAgents::default();
+        let warn = |probe| probe_warning(&CURSOR_AGENT, &probe, &none);
+        assert_eq!(
+            warn(finished_probe(false, b"error: not logged in\n".to_vec())),
+            Some(
+                "could not read the cursor agent version from 'error: not logged in'; tested with 2026.10.14."
+                    .to_string()
+            )
+        );
+        assert!(warn(finished_probe(true, b"\xff2026".to_vec()))
+            .unwrap()
+            .starts_with("could not read the cursor agent version"));
+        assert_eq!(warn(finished_probe(true, b"2026.10.14-abc".to_vec())), None);
+        assert_eq!(warn(VersionProbe::TimedOut), None);
+        assert_eq!(warn(VersionProbe::Failed("No such file".into())), None);
     }
 
     #[test]

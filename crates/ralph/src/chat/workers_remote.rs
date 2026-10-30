@@ -1,7 +1,7 @@
 use crate::config::{PrProvider, WorkersSection};
+use crate::subprocess::{timed_output, TimedOutput};
 use crate::watches::locked;
-use crate::worker_verify::timed_output;
-use ralph_core::worker::{Ticket, VersionProbe};
+use ralph_core::worker::Ticket;
 use ralph_core::workers_view::{
     fetched_of, lookup_command, ticket_lookup, wanted_keys, Fetched, LookupKey, Pr, Remote,
     RemoteCache, TicketRemote,
@@ -51,8 +51,11 @@ impl Drop for StoreGuard {
 fn fetch(key: &LookupKey, timeout: Duration) -> Fetched {
     let command = lookup_command(key);
     let output = match timed_output(Command::new(command.program).args(&command.args), timeout) {
-        VersionProbe::Exited(text) => Some(text),
-        VersionProbe::Unreadable | VersionProbe::TimedOut | VersionProbe::Failed(_) => None,
+        TimedOutput::Finished {
+            success: true,
+            stdout,
+        } => String::from_utf8(stdout).ok(),
+        TimedOutput::Finished { .. } | TimedOutput::TimedOut | TimedOutput::Failed(_) => None,
     };
     fetched_of(key, output.as_deref())
 }

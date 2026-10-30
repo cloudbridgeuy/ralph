@@ -15,6 +15,7 @@ use std::thread;
 mod gate;
 mod session;
 mod spinner;
+mod timed;
 mod timeout;
 mod types;
 
@@ -22,6 +23,7 @@ mod types;
 pub use gate::OutputGate;
 pub use session::Session;
 pub use spinner::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
+pub(crate) use timed::{timed_output, TimedOutput};
 pub use types::{StreamingSubprocessResult, SubprocessError};
 
 /// Kill a subprocess and its entire process group.
