@@ -165,7 +165,7 @@ pub fn absorb_usage(
     }
 }
 
-fn processes(rows: &[UsageLine]) -> Vec<&[UsageLine]> {
+pub(crate) fn processes(rows: &[UsageLine]) -> Vec<&[UsageLine]> {
     let starts: Vec<usize> = rows
         .iter()
         .enumerate()

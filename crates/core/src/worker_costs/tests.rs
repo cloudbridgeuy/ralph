@@ -321,3 +321,39 @@ fn counts_scale_to_one_decimal() {
     assert_eq!(count(3_100_000), "3.1M");
     assert_eq!(count(2_000_000_000), "2.0B");
 }
+
+fn with_model(mut row: Value, model: &str) -> Value {
+    row["model"] = json!(model);
+    row
+}
+
+#[test]
+fn one_run_with_a_late_model_counts_once() {
+    let rows = rows_of(&jsonl(&[
+        turn("r1", 1, 0.1),
+        with_model(turn("r1", 2, 0.5), "claude-opus-5-5"),
+    ]));
+    let mains: Vec<&CostRow> = rows.iter().filter(|row| row.harness == "main").collect();
+    assert_eq!(mains.len(), 1);
+    assert_eq!(mains[0].model, "claude-opus-5-5");
+    assert_eq!(mains[0].runs, Some(1));
+    assert!(close(mains[0].usd, 0.5));
+    assert!(close(total_row(&rows).usd, 0.5));
+}
+
+#[test]
+fn relaunched_processes_cost_in_their_own_model_group() {
+    let rows = rows_of(&jsonl(&[
+        with_model(turn("r1", 1, 0.2), "claude-opus-5-5"),
+        with_model(turn("r1", 2, 0.4), "claude-opus-5-5"),
+        turn("r1", 1, 0.05),
+        with_model(turn("r1", 2, 0.15), "claude-sonnet-5-5"),
+    ]));
+    let opus = find(&rows, "main", "claude-opus-5-5");
+    let sonnet = find(&rows, "main", "claude-sonnet-5-5");
+    assert_eq!(opus.runs, Some(1));
+    assert_eq!(sonnet.runs, Some(1));
+    assert!(close(opus.usd, 0.4));
+    assert!(close(sonnet.usd, 0.15));
+    assert!(close(total_row(&rows).usd, 0.55));
+}

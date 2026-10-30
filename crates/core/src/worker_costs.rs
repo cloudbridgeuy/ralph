@@ -1,4 +1,4 @@
-use crate::chat_thread::{session_cost, UsageLine};
+use crate::chat_thread::{processes, session_cost, UsageLine};
 use crate::wire::price::{prompt_tokens, resolve_price, usd, PriceTable};
 use crate::wire::usage::{CacheWrite, Usage, FIVE_MIN, ONE_HOUR};
 use crate::wire::view::Pricing;
@@ -258,19 +258,45 @@ fn cost_row(
     }
 }
 
+fn process_labeled(lines: Vec<UsageLine>) -> Vec<(String, UsageLine)> {
+    let mut runs: BTreeMap<Option<String>, Vec<UsageLine>> = BTreeMap::new();
+    for line in lines {
+        runs.entry(line.run.clone()).or_default().push(line);
+    }
+    runs.values()
+        .flat_map(|rows| processes(rows))
+        .flat_map(|process| {
+            let model = process
+                .iter()
+                .rev()
+                .find_map(|row| row.model.clone())
+                .unwrap_or_else(|| UNKNOWN.to_string());
+            process.iter().map(move |row| (model.clone(), row.clone()))
+        })
+        .collect()
+}
+
 fn cost_rows(usage_jsonl: &str, pricing: &Pricing) -> Vec<CostRow> {
     let mut table = pricing.provider.prices();
     table.entries.extend(openai_price::entries());
     let priced = |line: &UsageLine| computed_usd(line, pricing, &table);
     let mut groups: BTreeMap<(Source, String), Vec<UsageLine>> = BTreeMap::new();
+    let mut main = Vec::new();
     for line in usage_jsonl
         .lines()
         .filter_map(|line| serde_json::from_str::<UsageLine>(line).ok())
     {
-        if let Some(source) = Source::of(&line) {
-            let model = line.model.clone().unwrap_or_else(|| UNKNOWN.to_string());
-            groups.entry((source, model)).or_default().push(line);
+        match Source::of(&line) {
+            Some(Source::Main) => main.push(line),
+            Some(source) => {
+                let model = line.model.clone().unwrap_or_else(|| UNKNOWN.to_string());
+                groups.entry((source, model)).or_default().push(line);
+            }
+            None => {}
         }
+    }
+    for (model, line) in process_labeled(main) {
+        groups.entry((Source::Main, model)).or_default().push(line);
     }
     groups
         .into_iter()
