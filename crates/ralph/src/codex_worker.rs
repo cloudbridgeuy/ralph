@@ -78,8 +78,15 @@ enum Stop {
 
 impl Stop {
     fn message(self) -> String {
+        self.message_within(None)
+    }
+
+    fn message_within(self, verify_limit: Option<Duration>) -> String {
         match self {
-            Self::Timeout => format!("codex was not ready after {}s", READY_TIMEOUT.as_secs()),
+            Self::Timeout => match verify_limit {
+                Some(limit) => format!("codex did not answer within the {limit:?} verify limit"),
+                None => format!("codex was not ready after {READY_TIMEOUT:?}"),
+            },
             Self::Gone => "codex exited before it was ready".to_string(),
             Self::Bad(message) => message,
         }
@@ -93,6 +100,7 @@ struct Wire {
     startup: McpStartup,
     heartbeat: Arc<Heartbeat>,
     closing: Arc<AtomicBool>,
+    verify_limit: Option<Duration>,
 }
 
 fn exit_reason(status: ExitStatus) -> String {
@@ -172,7 +180,9 @@ impl Wire {
 
     fn call(&mut self, method: &str, params: Value, deadline: Instant) -> Result<Value, String> {
         let (id, line) = self.rpc.request(method, params);
-        self.send_line(&line).map_err(Stop::message)?;
+        let limit = self.verify_limit;
+        self.send_line(&line)
+            .map_err(|stop| stop.message_within(limit))?;
         loop {
             if self.closing.load(Ordering::SeqCst) {
                 return Err(format!("codex {method} failed: worker closed"));
@@ -180,7 +190,7 @@ impl Wire {
             let slice = deadline.min(Instant::now() + REPLY_POLL);
             let incoming = match self.next_frame(Some(slice)) {
                 Err(Stop::Timeout) if Instant::now() < deadline => continue,
-                other => other.map_err(Stop::message)?,
+                other => other.map_err(|stop| stop.message_within(limit))?,
             };
             if let Some(outcome) = self.rpc.settle(id, incoming) {
                 return outcome.map_err(|e| format!("codex {method} failed: {}", e.message));
@@ -528,6 +538,7 @@ impl CodexWorker {
             startup: McpStartup::default(),
             heartbeat: Arc::clone(&heartbeat),
             closing: Arc::clone(&closing),
+            verify_limit: None,
         };
         let server = acp_mcp_server(
             &request.exe,

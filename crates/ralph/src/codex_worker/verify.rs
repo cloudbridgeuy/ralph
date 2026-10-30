@@ -50,7 +50,7 @@ fn run_turn(wire: &mut Wire, run: &TurnRun) -> TurnSummary {
         let incoming = match wire.next(Some(run.deadline)) {
             Ok(incoming) => incoming,
             Err(stop) => {
-                summary.stop = Err(stop.message());
+                summary.stop = Err(stop.message_within(wire.verify_limit));
                 return summary;
             }
         };
@@ -88,7 +88,7 @@ fn run_turn(wire: &mut Wire, run: &TurnRun) -> TurnSummary {
                     .permissions
                     .extend(approval.map(|approval| approval.content));
                 if let Err(stop) = sent {
-                    summary.stop = Err(stop.message());
+                    summary.stop = Err(stop.message_within(wire.verify_limit));
                     return summary;
                 }
             }
@@ -134,7 +134,7 @@ fn identify(wire: &mut Wire, checks: &Checks, deadline: Instant) -> Option<Strin
         checks,
         "initialized",
         wire.send_line(&Rpc::notification(INITIALIZED))
-            .map_err(Stop::message),
+            .map_err(|stop| stop.message_within(wire.verify_limit)),
         |_| "initialized sent".to_string(),
     )?;
     let version = decode_version(&init);
@@ -208,6 +208,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     drain_stderr(stderr, Arc::clone(&log));
     let (lines, _) = pipe_lines(stdout, &log);
     let stdin = logged_stdin(stdin, &log);
+    let limit = if live { LIVE_DEADLINE } else { FREE_DEADLINE };
     let mut wire = Wire {
         rpc: Rpc::default(),
         stdin: Arc::clone(&stdin),
@@ -215,8 +216,9 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
         startup: McpStartup::default(),
         heartbeat: Heartbeat::new(dir.join(".verify-activity"), dir.join(".verify-gone")),
         closing: Arc::new(AtomicBool::new(false)),
+        verify_limit: Some(limit),
     };
-    let deadline = Instant::now() + if live { LIVE_DEADLINE } else { FREE_DEADLINE };
+    let deadline = Instant::now() + limit;
     let version = identify(&mut wire, checks, deadline);
     if ralph_core::worker::spec_passed(&checks.results(), version.as_deref()) {
         exercise(&mut wire, live, dir, checks, deadline);
@@ -224,4 +226,26 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     locked(&stdin).take();
     stop_child(&mut child);
     version
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_timeouts_name_the_verify_limit_not_the_spawn_limit() {
+        assert_eq!(
+            Stop::Timeout.message_within(Some(FREE_DEADLINE)),
+            "codex did not answer within the 90s verify limit"
+        );
+        assert_eq!(
+            Stop::Timeout.message_within(Some(LIVE_DEADLINE)),
+            "codex did not answer within the 420s verify limit"
+        );
+        assert_eq!(Stop::Timeout.message(), "codex was not ready after 20s");
+        assert_eq!(
+            Stop::Gone.message_within(Some(FREE_DEADLINE)),
+            "codex exited before it was ready"
+        );
+    }
 }
