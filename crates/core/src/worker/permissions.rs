@@ -16,6 +16,24 @@ pub struct BlockedContent {
     pub tool: String,
     pub summary: String,
     pub options: Vec<PermissionOption>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pending: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct PublishedRequest {
+    #[serde(default)]
+    request_id: String,
+    #[serde(default)]
+    pending: Vec<String>,
+}
+
+pub fn pending_requests(marker: &str) -> Vec<String> {
+    match serde_json::from_str::<PublishedRequest>(marker) {
+        Ok(published) if !published.pending.is_empty() => published.pending,
+        Ok(published) if !published.request_id.is_empty() => vec![published.request_id],
+        _ => Vec::new(),
+    }
 }
 
 impl BlockedContent {
@@ -144,11 +162,22 @@ mod tests {
             tool: "shell".into(),
             summary: "ls".into(),
             options: options(),
+            pending: Vec::new(),
         };
         let report = permission_alert_report("A", "t", &content);
         assert!(report.text.contains("shell"));
         assert!(report.text.contains("request 7"));
         assert!(report.text.contains("allow-once, reject-once"));
+    }
+
+    #[test]
+    fn pending_requests_keep_queue_order_and_fall_back_to_the_front() {
+        assert_eq!(
+            pending_requests(r#"{"request_id":"b","pending":["b","a"]}"#),
+            ["b", "a"]
+        );
+        assert_eq!(pending_requests(r#"{"request_id":"b","tool":"t"}"#), ["b"]);
+        assert!(pending_requests("").is_empty());
     }
 
     #[test]

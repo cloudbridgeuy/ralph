@@ -35,7 +35,13 @@ impl<R> PermissionQueue<R> {
 
     fn publish(&self, queue: &VecDeque<Pending<R>>) {
         let event = match queue.front() {
-            Some(pending) => WorkerEvent::PermissionAsked(pending.content.clone()),
+            Some(front) => WorkerEvent::PermissionAsked(BlockedContent {
+                pending: queue
+                    .iter()
+                    .map(|pending| pending.content.request_id.clone())
+                    .collect(),
+                ..front.content.clone()
+            }),
             None => WorkerEvent::PermissionSettled,
         };
         push_event(&self.events, event);
@@ -110,6 +116,7 @@ mod tests {
                     kind: "allow_once".into(),
                 })
                 .collect(),
+            pending: Vec::new(),
         }
     }
 
@@ -130,12 +137,15 @@ mod tests {
         let (queue, events) = queue(&dir);
         queue.enqueue(1, content("a", &["accept", "cancel"]));
         queue.enqueue(2, content("b", &["decline"]));
+        assert!(
+            matches!(drained(&events).last(), Some(WorkerEvent::PermissionAsked(c)) if c.pending == ["a", "b"])
+        );
         assert!(queue.take_answer("b", "accept").is_err());
         let (reply, option) = queue.take_answer(" b ", " decline\n").unwrap();
         assert_eq!((reply, option.option_id.as_str()), (2, "decline"));
         let events = drained(&events);
         assert!(
-            matches!(events.last(), Some(WorkerEvent::PermissionAsked(c)) if c.request_id == "a")
+            matches!(events.last(), Some(WorkerEvent::PermissionAsked(c)) if c.request_id == "a" && c.pending == ["a"])
         );
     }
 

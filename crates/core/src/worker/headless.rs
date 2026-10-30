@@ -376,6 +376,7 @@ mod tests {
             tool: "bash".into(),
             summary: "ls".into(),
             options: Vec::new(),
+            pending: Vec::new(),
         }
     }
 

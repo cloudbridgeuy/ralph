@@ -79,6 +79,7 @@ fn approval(
             tool: tool.to_string(),
             summary: summary.to_string(),
             options,
+            pending: Vec::new(),
         },
     }
 }

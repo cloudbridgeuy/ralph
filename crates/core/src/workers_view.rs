@@ -161,6 +161,7 @@ pub struct WorkerRow {
     pub id: String,
     pub harness: String,
     pub state: Option<String>,
+    pub pending: Vec<String>,
     pub report: Lookup<ReportLine>,
     pub status: Option<StatusLine>,
     pub head: Lookup<Head>,
@@ -593,11 +594,16 @@ pub fn workers_text(rows: &[WorkerRow], now: DateTime<Utc>) -> String {
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
+            let state = row.state.as_deref().unwrap_or("-");
+            let state = if row.pending.is_empty() {
+                state.to_string()
+            } else {
+                format!("{state} requests={}", row.pending.join(","))
+            };
             format!(
-                "{} {} {} {} {report}",
+                "{} {} {state} {} {report}",
                 row.id,
                 row.harness,
-                row.state.as_deref().unwrap_or("-"),
                 branch_name(&row.id)
             )
         })
