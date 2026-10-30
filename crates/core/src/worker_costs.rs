@@ -4,6 +4,7 @@ use crate::wire::provider::{provider, Provider, ProviderId};
 use crate::wire::usage::{CacheWrite, Usage, FIVE_MIN, ONE_HOUR};
 use crate::wire::view::Pricing;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::LazyLock;
 
 mod openai_price;
 
@@ -173,9 +174,11 @@ pub fn builtin_prices(provider: &dyn Provider) -> PriceTable {
     table
 }
 
+static ANTHROPIC_PRICES: LazyLock<PriceTable> =
+    LazyLock::new(|| builtin_prices(provider(ProviderId::Anthropic).as_ref()));
+
 pub fn long_prompt_call(model: &str, usage: &Usage) -> bool {
-    let table = builtin_prices(provider(ProviderId::Anthropic).as_ref());
-    long_prompt(&table, model, prompt_tokens(usage))
+    long_prompt(&ANTHROPIC_PRICES, model, prompt_tokens(usage))
 }
 
 fn tier_prompt(long: Option<bool>, summed: u64) -> u64 {

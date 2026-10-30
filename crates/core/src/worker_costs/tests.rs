@@ -418,3 +418,21 @@ fn relaunched_processes_cost_in_their_own_model_group() {
     assert!(close(sonnet.usd, 0.15));
     assert!(close(total_row(&rows).usd, 0.55));
 }
+
+#[test]
+fn a_relaunch_without_cost_marks_only_its_own_model_and_the_total() {
+    let mut bare = with_model(turn("r1", 1, 0.0), "claude-sonnet-5-5");
+    bare.as_object_mut().unwrap().remove("cost_usd");
+    let view = view_of(&jsonl(&[
+        with_model(turn("r1", 1, 0.2), "claude-opus-5-5"),
+        bare,
+    ]));
+    let lines: Vec<&str> = view.lines().collect();
+    assert_eq!(lines.len(), 5);
+    assert!(lines[2].starts_with("| main | claude-opus-5-5 | 1 |"));
+    assert!(lines[2].ends_with("| 0.20 |"));
+    assert!(lines[3].starts_with("| main | claude-sonnet-5-5 | 1 |"));
+    assert!(lines[3].ends_with("| n/a |"));
+    assert!(lines[4].starts_with("| total |"));
+    assert!(lines[4].ends_with("| 0.20+ |"));
+}
