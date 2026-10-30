@@ -156,7 +156,7 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
     }
 }
 
-const WORKER_COSTS: &str = "costs";
+pub(crate) const WORKER_COSTS: &str = "costs";
 
 fn workers_route(args: &str, line: &str) -> Route {
     let mut tokens = args.split_whitespace();

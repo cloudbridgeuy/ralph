@@ -3,6 +3,7 @@ use super::{
     model_refusal, Command, Feature, HarnessId, SpawnSpec, Support, WorkerCommand, WorkerEvent,
     CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
+use crate::chat_status::WORKER_COSTS;
 use crate::mcp::string_arg;
 use crate::schedule_request::parse_schedule_args;
 use crate::schedule_worker::{is_scheduled_worker_id, WORKER_ID_PREFIX};
@@ -65,6 +66,11 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
             if is_scheduled_worker_id(&id) {
                 return Err(format!(
                     "Worker ids starting with '{WORKER_ID_PREFIX}' are reserved for scheduled workers."
+                ));
+            }
+            if id == WORKER_COSTS {
+                return Err(format!(
+                    "Worker id '{WORKER_COSTS}' is reserved for /workers {WORKER_COSTS}."
                 ));
             }
             let spawn = harness(args)?;
@@ -347,6 +353,16 @@ mod tests {
         assert!(matches!(refused, Some(Err(message)) if message.contains("reserved")));
         assert!(matches!(
             parse_command("spawn_worker", &json!({"id": "scheduled", "task": "t"})),
+            Some(Ok(Command::Spawn { .. }))
+        ));
+    }
+
+    #[test]
+    fn spawn_refuses_the_costs_id() {
+        let refused = parse_command("spawn_worker", &json!({"id": "costs", "task": "t"}));
+        assert!(matches!(refused, Some(Err(message)) if message.contains("costs")));
+        assert!(matches!(
+            parse_command("spawn_worker", &json!({"id": "costs2", "task": "t"})),
             Some(Ok(Command::Spawn { .. }))
         ));
     }
