@@ -192,14 +192,7 @@ impl Workers {
     }
 
     fn queue_entry(&self, dir: &Path, text: &str) -> io::Result<String> {
-        let entry = prompt_entry_name(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |elapsed| {
-                    u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
-                }),
-            process::id(),
-        );
+        let entry = prompt_entry_name(now_nanos(), process::id());
         let pending = dir.join(format!(".{entry}"));
         write_file(&pending, text)?;
         fs::rename(&pending, dir.join(&entry))?;
@@ -436,11 +429,15 @@ impl Workers {
             option_id: text.to_string(),
         })?;
         clear_marker(&error)?;
-        let staging = self.store_dir.join(format!(".answer-{id}"));
+        let staging = self
+            .store_dir
+            .join(answer_staging_name(id, process::id(), now_nanos()));
         write_file(&staging, &body)?;
         fs::create_dir_all(answer.parent().unwrap_or(&self.store_dir))?;
-        fs::rename(&staging, &answer)?;
         let started = Instant::now();
+        let claimed = claim_answer(&staging, &answer, started);
+        fs::remove_file(&staging).ok();
+        claimed?;
         loop {
             match close_handoff(answer.exists(), started.elapsed()) {
                 Handoff::Done => break,
@@ -575,6 +572,40 @@ fn repo_root() -> io::Result<PathBuf> {
     Ok(PathBuf::from(stdout_line(run(
         Command::new("git").args(["rev-parse", "--show-toplevel"])
     )?)))
+}
+
+fn now_nanos() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX)
+        })
+}
+
+fn claim_answer(staging: &Path, answer: &Path, started: Instant) -> io::Result<()> {
+    loop {
+        if claim_answer_slot(staging, answer)? {
+            return Ok(());
+        }
+        if close_handoff(true, started.elapsed()) == Handoff::TimedOut {
+            return Err(io::Error::other(
+                "ralph chat did not pick up the previous permission answer in time",
+            ));
+        }
+        thread::sleep(HANDOFF_POLL);
+    }
+}
+
+fn answer_staging_name(id: &str, pid: u32, nanos: u64) -> String {
+    format!(".answer-{id}-{pid}-{nanos}")
+}
+
+fn claim_answer_slot(staging: &Path, answer: &Path) -> io::Result<bool> {
+    match fs::hard_link(staging, answer) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn clear_marker(marker: &Path) -> io::Result<()> {
@@ -842,6 +873,31 @@ mod tests {
         let seen = host.join().unwrap();
         assert_eq!(seen[1].request_id, "per_1");
         assert_eq!(seen[1].option_id, "once");
+    }
+
+    #[test]
+    fn a_second_answer_never_replaces_an_unread_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let answer = dir.path().join("answer");
+        let first = dir.path().join(".first");
+        let second = dir.path().join(".second");
+        write_file(&first, "first").unwrap();
+        write_file(&second, "second").unwrap();
+        assert!(claim_answer_slot(&first, &answer).unwrap());
+        assert!(!claim_answer_slot(&second, &answer).unwrap());
+        assert_eq!(fs::read_to_string(&answer).unwrap(), "first");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "second");
+        fs::remove_file(&answer).unwrap();
+        assert!(claim_answer_slot(&second, &answer).unwrap());
+        assert_eq!(fs::read_to_string(&answer).unwrap(), "second");
+    }
+
+    #[test]
+    fn answer_staging_names_differ_per_process_and_instant() {
+        let base = answer_staging_name("A", 1, 2);
+        assert_eq!(base, ".answer-A-1-2");
+        assert_ne!(base, answer_staging_name("A", 3, 2));
+        assert_ne!(base, answer_staging_name("A", 1, 4));
     }
 
     #[test]
