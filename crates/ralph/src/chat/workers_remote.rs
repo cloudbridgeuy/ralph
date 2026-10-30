@@ -1,18 +1,15 @@
 use crate::config::{PrProvider, WorkersSection};
-use crate::subprocess::kill_process_group;
-use ralph_core::worker::Ticket;
+use crate::watches::locked;
+use crate::worker_verify::timed_output;
+use ralph_core::worker::{Ticket, VersionProbe};
 use ralph_core::workers_view::{
     fetched_of, lookup_command, ticket_lookup, wanted_keys, Fetched, LookupKey, Pr, Remote,
     RemoteCache, TicketRemote,
 };
-use std::io::Read;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard, PoisonError};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub struct RemoteStatus {
     cache: Arc<Mutex<RemoteCache>>,
@@ -28,52 +25,6 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0)
-}
-
-fn locked(cache: &Mutex<RemoteCache>) -> MutexGuard<'_, RemoteCache> {
-    cache.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn timed_output(program: &str, args: &[String], timeout: Duration) -> Option<String> {
-    let deadline = Instant::now() + timeout;
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()
-        .ok()?;
-    let Some(mut stdout) = child.stdout.take() else {
-        kill_process_group(&mut child);
-        return None;
-    };
-    let (sender, receiver) = mpsc::channel();
-    let reader = thread::Builder::new().spawn(move || {
-        let mut buf = Vec::new();
-        let read = stdout.read_to_end(&mut buf).ok().map(|_| buf);
-        let _ = sender.send(read);
-    });
-    if reader.is_err() {
-        kill_process_group(&mut child);
-        return None;
-    }
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
-            _ => {
-                kill_process_group(&mut child);
-                return None;
-            }
-        }
-    };
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    let output = receiver.recv_timeout(remaining).ok()??;
-    if !status.success() {
-        return None;
-    }
-    String::from_utf8(output).ok()
 }
 
 struct StoreGuard {
@@ -99,7 +50,10 @@ impl Drop for StoreGuard {
 
 fn fetch(key: &LookupKey, timeout: Duration) -> Fetched {
     let command = lookup_command(key);
-    let output = timed_output(command.program, &command.args, timeout);
+    let output = match timed_output(Command::new(command.program).args(&command.args), timeout) {
+        VersionProbe::Exited(text) => Some(text),
+        VersionProbe::Unreadable | VersionProbe::TimedOut | VersionProbe::Failed(_) => None,
+    };
     fetched_of(key, output.as_deref())
 }
 

@@ -31,8 +31,17 @@ pub fn parse_agent_version(output: &str) -> Option<&str> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionProbe {
     Exited(String),
+    Unreadable,
     TimedOut,
     Failed(String),
+}
+
+pub fn finished_probe(success: bool, stdout: Vec<u8>) -> VersionProbe {
+    match (success, String::from_utf8(stdout)) {
+        (false, _) => VersionProbe::Failed("it exited with an error status".to_string()),
+        (true, Ok(text)) => VersionProbe::Exited(text),
+        (true, Err(_)) => VersionProbe::Unreadable,
+    }
 }
 
 pub fn probed_version<'a>(agent: &AcpAgent, probe: &'a VersionProbe) -> Result<&'a str, String> {
@@ -40,6 +49,9 @@ pub fn probed_version<'a>(agent: &AcpAgent, probe: &'a VersionProbe) -> Result<&
     match probe {
         VersionProbe::Exited(output) => parse_agent_version(output)
             .ok_or_else(|| format!("could not read the version from `{command} --version`")),
+        VersionProbe::Unreadable => Err(format!(
+            "could not read the version from `{command} --version`"
+        )),
         VersionProbe::TimedOut => Err(format!(
             "`{command} --version` did not answer within {}s",
             VERSION_PROBE_LIMIT.as_secs()
@@ -190,6 +202,26 @@ mod tests {
         assert_eq!(
             probe(VersionProbe::Failed("No such file or directory".into())),
             Err("could not run `agent --version`: No such file or directory".to_string())
+        );
+    }
+
+    #[test]
+    fn a_failed_exit_is_a_failed_probe_not_a_version() {
+        assert_eq!(
+            finished_probe(true, b"2026.10.14\n".to_vec()),
+            VersionProbe::Exited("2026.10.14\n".into())
+        );
+        assert!(matches!(
+            finished_probe(false, b"2026.10.14\n".to_vec()),
+            VersionProbe::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn version_text_that_is_not_utf8_is_unreadable_not_unrunnable() {
+        assert_eq!(
+            probed_version(&CURSOR_AGENT, &finished_probe(true, vec![0xff])),
+            Err("could not read the version from `agent --version`".to_string())
         );
     }
 

@@ -220,7 +220,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     };
     let deadline = Instant::now() + limit;
     let version = identify(&mut wire, checks, deadline);
-    if ralph_core::worker::spec_passed(&checks.results(), version.as_deref()) {
+    if ralph_core::worker::spec_passed(&checks.results(), version.as_deref(), &[]) {
         exercise(&mut wire, live, dir, checks, deadline);
     }
     locked(&stdin).take();

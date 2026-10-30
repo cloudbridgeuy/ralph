@@ -104,8 +104,20 @@ impl CheckResult {
     }
 }
 
-pub fn spec_passed(results: &[CheckResult], version: Option<&str>) -> bool {
+pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
+pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
+
+pub fn missing_checks<'a>(results: &[CheckResult], required: &[&'a str]) -> Vec<&'a str> {
+    required
+        .iter()
+        .copied()
+        .filter(|name| !results.iter().any(|result| result.name == *name))
+        .collect()
+}
+
+pub fn spec_passed(results: &[CheckResult], version: Option<&str>, required: &[&str]) -> bool {
     version.is_some()
+        && missing_checks(results, required).is_empty()
         && results
             .iter()
             .filter(|result| result.blocking)
@@ -324,17 +336,19 @@ mod tests {
         let version = Some("1.0");
         assert!(spec_passed(
             &[CheckResult::pass("a", "ok"), cancel.clone()],
-            version
+            version,
+            &[]
         ));
         assert!(!spec_passed(
             &[CheckResult::fail("a", "no"), cancel],
-            version
+            version,
+            &[]
         ));
         let unknown = CheckResult {
             verdict: Verdict::Unknown,
             ..CheckResult::pass("b", "")
         };
-        assert!(!spec_passed(&[unknown], version));
+        assert!(!spec_passed(&[unknown], version, &[]));
     }
 
     #[test]
@@ -355,8 +369,28 @@ mod tests {
             CheckResult::pass("spawn", "started"),
             CheckResult::pass("initialize", "answered"),
         ];
-        assert!(spec_passed(&passed, Some("0.164.0")));
-        assert!(!spec_passed(&passed, None));
+        assert!(spec_passed(&passed, Some("0.164.0"), &[]));
+        assert!(!spec_passed(&passed, None, &[]));
+    }
+
+    #[test]
+    fn a_spec_fails_unless_its_required_checks_ran() {
+        assert!(!spec_passed(&[], Some("1.0"), CURSOR_REQUIRED_CHECKS));
+        assert!(!spec_passed(&[], Some("1.0"), CODEX_REQUIRED_CHECKS));
+        let cursor = [
+            CheckResult::pass("initialize", "answered"),
+            CheckResult::pass("session/new", "session s"),
+        ];
+        assert!(spec_passed(&cursor, Some("1.0"), CURSOR_REQUIRED_CHECKS));
+        assert!(!spec_passed(
+            &cursor[..1],
+            Some("1.0"),
+            CURSOR_REQUIRED_CHECKS
+        ));
+        assert_eq!(
+            missing_checks(&cursor, CODEX_REQUIRED_CHECKS),
+            vec!["initialized", "thread/start"]
+        );
     }
 
     fn turn(stop: Result<&str, &str>, replies: usize, kinds: &[&str]) -> TurnSummary {

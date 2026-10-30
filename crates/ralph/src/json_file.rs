@@ -25,7 +25,12 @@ pub(crate) fn write_json(path: &Path, value: &Value) -> Result<(), String> {
         temporary
             .as_file()
             .set_permissions(metadata.permissions())
-            .ok();
+            .map_err(|error| {
+                format!(
+                    "could not copy the permissions of {}: {error}",
+                    path.display()
+                )
+            })?;
     }
     writeln!(temporary, "{text}")
         .map_err(|error| format!("could not write {}: {error}", temporary.path().display()))?;
@@ -40,12 +45,36 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
     #[test]
     fn write_json_does_not_share_one_temporary_name() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("records.json");
-        fs::create_dir(path.with_extension("json.ralph-tmp")).unwrap();
+        fs::create_dir(dir.path().join(".ralph-tmp")).unwrap();
         write_json(&path, &json!({"agents": []})).unwrap();
         assert_eq!(read_json(&path).unwrap(), json!({"agents": []}));
+    }
+
+    #[test]
+    fn write_json_keeps_the_permissions_of_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("records.json");
+        fs::write(&path, "{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+        write_json(&path, &json!({"agents": []})).unwrap();
+        assert_eq!(mode(&path), 0o640);
+    }
+
+    #[test]
+    fn write_json_makes_a_new_file_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("records.json");
+        write_json(&path, &json!({"agents": []})).unwrap();
+        assert_eq!(mode(&path), 0o600);
     }
 }

@@ -9,6 +9,7 @@ use crate::subprocess::{exited_unreaped, signal_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::verified_agents;
 use crate::warn::warn;
+use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
@@ -41,10 +42,10 @@ use ralph_core::worker::{
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -62,10 +63,7 @@ pub(crate) use verify::verify;
 pub(crate) type Events = Arc<Mutex<Vec<WorkerEvent>>>;
 
 pub(crate) fn push_event(events: &Events, event: WorkerEvent) {
-    events
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .push(event);
+    locked(events).push(event);
 }
 
 pub(crate) fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
@@ -256,10 +254,7 @@ impl AcpWorker {
             events: Arc::clone(&events),
         };
         worker.write_owner(&agent)?;
-        starting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(id.to_string(), worker.child.id());
+        locked(starting).insert(id.to_string(), worker.child.id());
         let server = serde_json::from_value::<McpServer>(acp_mcp_server(
             &request.exe,
             id,
@@ -538,7 +533,7 @@ impl HeadlessWorker for AcpWorker {
     }
 
     fn poll(&mut self) -> Vec<WorkerEvent> {
-        std::mem::take(&mut *self.events.lock().unwrap_or_else(PoisonError::into_inner))
+        std::mem::take(&mut *locked(&self.events))
     }
 }
 
@@ -555,7 +550,7 @@ fn exit_reason(status: ExitStatus) -> String {
 fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
     match agent_version_probe(agent) {
         VersionProbe::Exited(output) => version_warning(agent, &output, &verified_agents::load()),
-        VersionProbe::TimedOut | VersionProbe::Failed(_) => None,
+        VersionProbe::Unreadable | VersionProbe::TimedOut | VersionProbe::Failed(_) => None,
     }
 }
 
@@ -615,7 +610,7 @@ impl CursorHost {
     }
 
     fn workers(&self) -> MutexGuard<'_, HashMap<String, AcpWorker>> {
-        self.workers.lock().unwrap_or_else(PoisonError::into_inner)
+        locked(&self.workers)
     }
 
     fn files(&self, id: &str) -> HandoffFiles {
@@ -671,12 +666,7 @@ impl CursorHost {
             worker.finish_stop(deadline);
             self.forget(id);
         }
-        let starting: Vec<(String, u32)> = self
-            .starting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .drain()
-            .collect();
+        let starting: Vec<(String, u32)> = locked(&self.starting).drain().collect();
         if starting.is_empty() {
             return;
         }
@@ -726,11 +716,7 @@ impl CursorHost {
         deliver: fn(&mut AcpWorker, &str, &str),
     ) {
         let files = self.files(id);
-        let starting = self
-            .starting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .contains_key(id);
+        let starting = locked(&self.starting).contains_key(id);
         if starting && !self.workers().contains_key(id) {
             return;
         }
@@ -825,10 +811,7 @@ impl CursorHost {
                 warning,
             },
         );
-        self.starting
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(id);
+        locked(&self.starting).remove(id);
         started
     }
 
