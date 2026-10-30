@@ -1,5 +1,5 @@
 use std::io::{IsTerminal, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
@@ -17,6 +17,7 @@ use ralph_core::kitty_image::prepare;
 use super::text::render_markdown;
 use super::wrap::wrap_width;
 use super::RenderContext;
+use crate::ansi::{DIM, RESET};
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode};
 use crate::markdown::MarkdownTheme;
 use termimad::terminal_size;
@@ -142,14 +143,34 @@ fn resolve(path: &str) -> PathBuf {
     }
 }
 
-fn read_capped(path: &str) -> Option<Vec<u8>> {
+fn read_capped(path: &Path) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
-    std::fs::File::open(resolve(path))
+    std::fs::File::open(path)
         .ok()?
         .take(MAX_IMAGE_BYTES + 1)
         .read_to_end(&mut bytes)
         .ok()?;
     (bytes.len() as u64 <= MAX_IMAGE_BYTES).then_some(bytes)
+}
+
+fn file_url(path: &Path) -> String {
+    let mut url = String::from("file://");
+    for &byte in path.as_os_str().as_encoded_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            url.push(char::from(byte));
+        } else {
+            url.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    url
+}
+
+fn path_line(path: &Path) -> String {
+    format!(
+        "{DIM}\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\{RESET}\n",
+        file_url(path),
+        path.display()
+    )
 }
 
 fn fallback(alt: &str, path: &str) -> String {
@@ -184,25 +205,30 @@ pub fn render_attachments(text: &str, images: ImageSettings, bounds: ImageBounds
 }
 
 fn draw_image(path: &str, images: ImageSettings, bounds: ImageBounds) -> Option<String> {
-    let bytes = read_capped(path)?;
+    let resolved = resolve(path);
+    let bytes = read_capped(&resolved)?;
     let image = prepare(&bytes)?;
     let grid = cell_grid(image.size, images.cell_px, bounds.cols, bounds.rows);
-    match images.placement {
+    let drawn = match images.placement {
         Placement::Direct => {
             let (cols, rows) = grid;
             let newlines = (0..rows).map(|_| '\n').collect::<String>();
-            Some(format!("{}{newlines}", encode_apc(&image, cols, rows)))
+            format!("{}{newlines}", encode_apc(&image, cols, rows))
         }
         Placement::Tmux => {
             let (cols, rows) = clamp_placeholder_grid(grid);
             let id = next_image_id();
-            Some(format!(
+            format!(
                 "{}{}",
                 encode_virtual(&image, id, cols, rows),
                 placeholder_rows(id, cols, rows)
-            ))
+            )
         }
-    }
+    };
+    let shown = std::fs::canonicalize(&resolved)
+        .or_else(|_| std::path::absolute(&resolved))
+        .unwrap_or(resolved);
+    Some(drawn + &path_line(&shown))
 }
 
 pub fn render_with_markers(
@@ -266,6 +292,30 @@ mod tests {
     }
 
     #[test]
+    fn file_url_encodes_space_hash_question_percent_and_non_ascii() {
+        assert_eq!(
+            file_url(Path::new("/tmp/a b#c?d%é.png")),
+            "file:///tmp/a%20b%23c%3Fd%25%C3%A9.png"
+        );
+    }
+
+    #[test]
+    fn file_url_keeps_slashes_and_unreserved_chars() {
+        assert_eq!(
+            file_url(Path::new("/Users/me/A-z_0.9~/x.png")),
+            "file:///Users/me/A-z_0.9~/x.png"
+        );
+    }
+
+    #[test]
+    fn path_line_wraps_plain_path_in_dim_osc8_link() {
+        assert_eq!(
+            path_line(Path::new("/tmp/a b.png")),
+            "\x1b[2m\x1b]8;;file:///tmp/a%20b.png\x1b\\/tmp/a b.png\x1b]8;;\x1b\\\x1b[0m\n"
+        );
+    }
+
+    #[test]
     fn unreadable_path_falls_back_to_text() {
         assert_eq!(
             render_image("chart", "/definitely/not/here.png", SETTINGS, BOUNDS),
@@ -294,8 +344,10 @@ mod tests {
         let drawn = render_attachments(&text(&good), SETTINGS, BOUNDS);
         let plain = render_attachments(&text(&bad), SETTINGS, BOUNDS);
         let missing = render_attachments("[Image #1: /no/such.png]", SETTINGS, BOUNDS);
+        let shown = std::fs::canonicalize(&good).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(drawn.contains("\x1b_G"));
+        assert!(drawn.ends_with(&path_line(&shown)), "{drawn:?}");
         assert_eq!(plain, "");
         assert_eq!(missing, "");
     }
@@ -334,15 +386,10 @@ mod tests {
     }
 
     #[test]
-    fn valid_png_renders_kitty_apc_and_row_newlines() {
+    fn valid_png_renders_kitty_apc_row_newlines_then_path_line() {
         let dir = temp_dir("valid");
-        let path = dir.join("tall.png");
-        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        png.extend_from_slice(&13u32.to_be_bytes());
-        png.extend_from_slice(b"IHDR");
-        png.extend_from_slice(&16u32.to_be_bytes());
-        png.extend_from_slice(&64u32.to_be_bytes());
-        std::fs::write(&path, &png).unwrap();
+        let path = tall_png(&dir);
+        let shown = std::fs::canonicalize(&path).unwrap();
         let out = render_image("t", &path.to_string_lossy(), SETTINGS, BOUNDS);
         std::fs::remove_dir_all(&dir).unwrap();
         let (cols, rows) = cell_grid((16, 64), None, BOUNDS.cols, BOUNDS.rows);
@@ -350,21 +397,19 @@ mod tests {
         for key in ["f=100", "C=1", &format!("c={cols}"), &format!("r={rows}")] {
             assert!(out.contains(key), "{key} missing in {out:?}");
         }
-        let body = out.trim_end_matches('\n');
-        assert_eq!(out.len() - body.len(), rows as usize);
+        let image = out
+            .strip_suffix(&path_line(&shown))
+            .unwrap_or_else(|| panic!("no path line in {out:?}"));
+        let body = image.trim_end_matches('\n');
+        assert_eq!(image.len() - body.len(), rows as usize);
         assert!(body.ends_with("\x1b\\"));
     }
 
     #[test]
-    fn tmux_png_renders_wrapped_virtual_image_and_placeholder_rows() {
+    fn tmux_png_renders_virtual_image_placeholder_rows_then_path_line() {
         let dir = temp_dir("tmux");
-        let path = dir.join("tall.png");
-        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        png.extend_from_slice(&13u32.to_be_bytes());
-        png.extend_from_slice(b"IHDR");
-        png.extend_from_slice(&16u32.to_be_bytes());
-        png.extend_from_slice(&64u32.to_be_bytes());
-        std::fs::write(&path, &png).unwrap();
+        let path = tall_png(&dir);
+        let shown = std::fs::canonicalize(&path).unwrap();
         let tmux = ImageSettings {
             placement: Placement::Tmux,
             ..SETTINGS
@@ -374,8 +419,62 @@ mod tests {
         let (_, rows) = cell_grid((16, 64), None, BOUNDS.cols, BOUNDS.rows);
         assert!(out.starts_with("\x1bPtmux;"));
         assert!(out.contains("U=1"));
-        assert_eq!(out.matches('\n').count(), rows as usize);
-        assert_eq!(out.matches('\u{10EEEE}').count() % rows as usize, 0);
+        let image = out
+            .strip_suffix(&path_line(&shown))
+            .unwrap_or_else(|| panic!("no path line in {out:?}"));
+        assert_eq!(image.matches('\n').count(), rows as usize);
+        assert_eq!(image.matches('\u{10EEEE}').count() % rows as usize, 0);
+    }
+
+    #[test]
+    fn drawn_path_line_shows_the_canonical_absolute_path() {
+        let dir = temp_dir("canonical");
+        let path = tall_png(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let dotted = dir.join("sub").join("..").join("tall.png");
+        let shown = std::fs::canonicalize(&path).unwrap();
+        let out = render_image("t", &dotted.to_string_lossy(), SETTINGS, BOUNDS);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(out.ends_with(&path_line(&shown)), "{out:?}");
+        assert!(!shown.to_string_lossy().contains(".."));
+    }
+
+    fn visible(text: &str) -> String {
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(start) = rest.find("\x1b]8;") {
+            out.push_str(&rest[..start]);
+            let after = &rest[start..];
+            let end = after.find("\x1b\\").map_or(after.len(), |end| end + 2);
+            rest = &after[end..];
+        }
+        out.push_str(rest);
+        crate::frame::strip_ansi(&out)
+    }
+
+    #[test]
+    fn path_line_link_bytes_add_no_width_or_wrap_in_rendered_markdown() {
+        use unicode_width::UnicodeWidthStr;
+        let dir = temp_dir(&"long-directory-name-".repeat(5));
+        let path = tall_png(&dir);
+        let shown = std::fs::canonicalize(&path).unwrap();
+        let (highlighter, theme) = (
+            crate::highlight::Highlighter::with_config(Default::default()).unwrap(),
+            MarkdownTheme::default(),
+        );
+        let mut ctx = RenderContext::plain(&highlighter);
+        ctx.terminal = true;
+        ctx.images = Some(SETTINGS);
+        let text = format!("see ![t]({}) after\n", path.display());
+        let out = render_cell_display(&ctx, &text, &theme);
+        std::fs::remove_dir_all(&dir).unwrap();
+        let line = path_line(&shown);
+        assert!(out.contains(&line), "{out:?}");
+        let shown = shown.to_string_lossy();
+        assert!(shown.width() > BOUNDS.cols as usize);
+        let row = visible(line.trim_end_matches('\n'));
+        assert_eq!(row, shown);
+        assert_eq!(row.width(), shown.width());
     }
 
     #[test]
