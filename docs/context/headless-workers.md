@@ -90,7 +90,7 @@ Close cleans the worktree's `~/.claude/projects` folder as for tmux claude worke
 
 ## Verify an agent version
 
-`ralph worker verify <cursor|codex> [--live]` (`crates/ralph/src/worker_verify.rs`, `acp_worker/verify.rs`, `codex_worker/verify.rs`) runs a local spec against the installed agent in a temporary directory and exits 0 only when every blocking check passes. Pure types, verdicts and rendering are in `crates/core/src/worker/verify.rs`. The command spawns its own child and stops only that child. It does not touch worker stores or the ralph MCP server.
+`ralph worker verify <cursor|codex> [--live]` (`crates/ralph/src/worker_verify.rs`, `acp_worker/verify.rs`, `codex_worker/verify.rs`) runs a local spec against the installed agent in a temporary directory and exits 0 only when every blocking check passes and the agent version is known; an unknown version is a FAIL (`spec_passed`). Pure types, verdicts and rendering are in `crates/core/src/worker/verify.rs`. The command spawns its own child and stops only that child. It does not touch worker stores or the ralph MCP server.
 
 A full pass writes `{agent, version, live, verified_at}` to `verified-agents.json` in the config directory. Both version warnings (`version_warning` for Cursor, `check_version` for Codex) stay silent for the pinned version and for any recorded version, and their text ends with the verify command. A free pass records `live: false`; it never replaces a `live: true` record of the same version. A missing or unreadable file counts as empty.
 
@@ -99,7 +99,7 @@ On a `spawn_worker` start the host writes the warning to `<id>.warning` beside t
 | Check | Cursor | Codex | Mode |
 | --- | --- | --- | --- |
 | version | `agent --version` is readable | `initialize` user agent is readable and not older than 0.162 | free |
-| spawn, initialize | `~/.cursor/projects/<slug>/.cursor/hooks.json` is written; `agent acp` starts; ACP protocol 1 | `codex app-server` starts; `initialize` answers | free |
+| spawn, initialize | `~/.cursor/projects/<slug>/.cursor/hooks.json` is written; `agent acp` starts; ACP protocol 1 | `codex app-server` starts; `initialize` answers; `initialized` is sent | free |
 | login | `authenticate` (the advertised login method) and `session/new` raise no -32000 | `account/read` shows a usable account | free |
 | session | `session/new` returns a session; `loadSession` capability is advertised | `model/list` lists models; `thread/start` returns a thread, then `thread/archive` removes it | free |
 | prompt/reply | one short prompt ends `end_turn` with reply updates | one short prompt ends `completed` with reply deltas | `--live` |

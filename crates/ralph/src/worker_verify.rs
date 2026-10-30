@@ -50,7 +50,7 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
         VerifyAgent::Cursor => acp_worker::verify(live, dir.path(), &checks),
         VerifyAgent::Codex => codex_worker::verify(live, dir.path(), &checks),
     };
-    let passed = spec_passed(&checks.results());
+    let passed = spec_passed(&checks.results(), version.as_deref());
     let shown = version.as_deref().unwrap_or("unknown version");
     println!("{}", render_summary(name, shown, live, passed));
     if !passed {

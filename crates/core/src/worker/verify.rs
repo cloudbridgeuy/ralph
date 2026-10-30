@@ -91,11 +91,12 @@ impl CheckResult {
     }
 }
 
-pub fn spec_passed(results: &[CheckResult]) -> bool {
-    results
-        .iter()
-        .filter(|result| result.blocking)
-        .all(|result| result.verdict == Verdict::Pass)
+pub fn spec_passed(results: &[CheckResult], version: Option<&str>) -> bool {
+    version.is_some()
+        && results
+            .iter()
+            .filter(|result| result.blocking)
+            .all(|result| result.verdict == Verdict::Pass)
 }
 
 pub fn render_check(result: &CheckResult) -> String {
@@ -290,13 +291,30 @@ mod tests {
     #[test]
     fn advisory_checks_never_fail_the_spec_but_blocking_ones_do() {
         let cancel = CheckResult::advisory("cancel", Verdict::Fail, "x");
-        assert!(spec_passed(&[CheckResult::pass("a", "ok"), cancel.clone()]));
-        assert!(!spec_passed(&[CheckResult::fail("a", "no"), cancel]));
+        let version = Some("1.0");
+        assert!(spec_passed(
+            &[CheckResult::pass("a", "ok"), cancel.clone()],
+            version
+        ));
+        assert!(!spec_passed(
+            &[CheckResult::fail("a", "no"), cancel],
+            version
+        ));
         let unknown = CheckResult {
             verdict: Verdict::Unknown,
             ..CheckResult::pass("b", "")
         };
-        assert!(!spec_passed(&[unknown]));
+        assert!(!spec_passed(&[unknown], version));
+    }
+
+    #[test]
+    fn an_unknown_version_fails_the_spec_even_when_every_check_passed() {
+        let passed = [
+            CheckResult::pass("spawn", "started"),
+            CheckResult::pass("initialize", "answered"),
+        ];
+        assert!(spec_passed(&passed, Some("0.164.0")));
+        assert!(!spec_passed(&passed, None));
     }
 
     fn turn(stop: Result<&str, &str>, replies: usize, kinds: &[&str]) -> TurnSummary {

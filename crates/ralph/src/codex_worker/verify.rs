@@ -130,7 +130,13 @@ fn identify(wire: &mut Wire, checks: &Checks, deadline: Instant) -> Option<Strin
         ),
         |_| "app-server answered".to_string(),
     )?;
-    wire.send_line(&Rpc::notification(INITIALIZED)).ok()?;
+    step(
+        checks,
+        "initialized",
+        wire.send_line(&Rpc::notification(INITIALIZED))
+            .map_err(Stop::message),
+        |_| "initialized sent".to_string(),
+    )?;
     let version = decode_version(&init);
     let checked = version
         .as_deref()
@@ -212,7 +218,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     };
     let deadline = Instant::now() + if live { LIVE_DEADLINE } else { FREE_DEADLINE };
     let version = identify(&mut wire, checks, deadline);
-    if version.is_some() && ralph_core::worker::spec_passed(&checks.results()) {
+    if ralph_core::worker::spec_passed(&checks.results(), version.as_deref()) {
         exercise(&mut wire, live, dir, checks, deadline);
     }
     locked(&stdin).take();
