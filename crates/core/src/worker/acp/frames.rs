@@ -13,8 +13,8 @@ pub fn encode(command: WorkerCommand) -> Option<AcpCall> {
     match command {
         WorkerCommand::Prompt(text) => Some(AcpCall::Prompt(text)),
         WorkerCommand::Interrupt(_) => Some(AcpCall::Cancel),
-        WorkerCommand::AnswerPermission { option_id } => {
-            Some(AcpCall::PermissionResponse(option_id))
+        WorkerCommand::AnswerPermission(answer) => {
+            Some(AcpCall::PermissionResponse(answer.option_id))
         }
         WorkerCommand::Spawn(_) | WorkerCommand::Resume | WorkerCommand::Close => None,
     }
@@ -31,6 +31,7 @@ pub fn decode_update(update: &Value, at: u64) -> Vec<WorkerEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::worker::PermissionAnswer;
     use serde_json::json;
 
     #[test]
@@ -44,9 +45,10 @@ mod tests {
             Some(AcpCall::Cancel)
         );
         assert_eq!(
-            encode(WorkerCommand::AnswerPermission {
+            encode(WorkerCommand::AnswerPermission(PermissionAnswer {
+                request_id: "1".into(),
                 option_id: "allow-once".into()
-            }),
+            })),
             Some(AcpCall::PermissionResponse("allow-once".into()))
         );
         assert_eq!(encode(WorkerCommand::Close), None);

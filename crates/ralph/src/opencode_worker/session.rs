@@ -13,7 +13,7 @@ pub(super) struct OpencodeSession {
     pub(super) id: String,
     pub(super) session_id: String,
     pub(super) api: Option<HttpSse>,
-    pub(super) front: Option<PermissionAsked>,
+    pub(super) pending: Vec<PermissionAsked>,
     pub(super) caps: Capabilities,
     pub(super) events: Events,
 }
@@ -23,14 +23,14 @@ impl OpencodeSession {
         id: &str,
         session_id: &str,
         api: Option<HttpSse>,
-        front: Option<PermissionAsked>,
+        pending: Vec<PermissionAsked>,
         events: Events,
     ) -> Self {
         Self {
             id: id.to_string(),
             session_id: session_id.to_string(),
             api,
-            front,
+            pending,
             caps: capabilities(HarnessId::Opencode),
             events,
         }
@@ -92,8 +92,9 @@ impl HeadlessWorker for OpencodeSession {
                 );
                 Ok(())
             }
-            WorkerCommand::AnswerPermission { option_id } => {
-                let (request_id, decision) = answer_decision(self.front.as_ref(), &option_id)?;
+            WorkerCommand::AnswerPermission(answer) => {
+                let (request_id, decision) =
+                    answer_decision(&self.pending, &answer.request_id, &answer.option_id)?;
                 self.api()?
                     .post_retrying(
                         &permission_reply_path(&self.session_id, &request_id),

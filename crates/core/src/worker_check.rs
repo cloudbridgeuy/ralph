@@ -158,7 +158,7 @@ fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
         return match state {
             WorkerState::Waiting => Some(format!("Worker {id} stopped without calling report.")),
             WorkerState::BlockedPermission if obs.kind == HarnessId::Opencode => Some(format!(
-                "Worker {id} is waiting for a permission answer. Answer it with reply and an optionId."
+                "Worker {id} is waiting for a permission answer. Answer it with reply, its request id and an optionId; a reply without request lists the pending ids."
             )),
             _ => None,
         };
@@ -840,7 +840,7 @@ mod tests {
         assert_eq!(
             inbox_text(WorkerState::BlockedPermission, &on(HarnessId::Opencode)),
             Some(
-                "Worker w1 is waiting for a permission answer. Answer it with reply and an optionId."
+                "Worker w1 is waiting for a permission answer. Answer it with reply, its request id and an optionId; a reply without request lists the pending ids."
                     .to_string()
             )
         );

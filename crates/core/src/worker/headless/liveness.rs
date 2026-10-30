@@ -377,6 +377,7 @@ mod tests {
         let blocked = feed(
             &feed(&running, WorkerEvent::Activity { at: 10 }),
             WorkerEvent::PermissionAsked(BlockedContent {
+                request_id: "r".into(),
                 tool: "bash".into(),
                 summary: "ls".into(),
                 options: Vec::new(),

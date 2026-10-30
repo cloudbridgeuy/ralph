@@ -22,14 +22,14 @@ use ralph_core::worker::{
     model_list_params, next_cursor, prompt_failure_report, ready_path, record_selection, reduce,
     reject_server_request, request_stale, resolve_selection, resolved_request_id, response_body,
     session_saved, task_prompt, thread_resume_params, thread_start_params, turn_interrupt_params,
-    turn_start_params, turn_stop, yolo_option, Action, ApprovalKind, Capabilities, CodexCloseStep,
-    HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound, Incoming, McpStartup,
-    McpVerdict, PermissionMode, Resume, ResumeFacts, Rpc, Scope, Selection, SessionRecord,
-    SpawnRequest, ThreadInfo, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent,
-    WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_CLOSE_TURN_WAIT,
-    CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SESSION_DIR,
-    CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, MODEL_LIST_MAX_PAGES, SERVER_NAME,
-    THREAD_RESUME, THREAD_START, TURN_INTERRUPT, TURN_START,
+    turn_start_params, turn_stop, yolo_option, Action, ApprovalKind, BlockedContent, Capabilities,
+    CodexCloseStep, HandoffFiles, HarnessId, HeadlessState, HeadlessWorker, Inbound, Incoming,
+    McpStartup, McpVerdict, PermissionAnswer, PermissionMode, Resume, ResumeFacts, Rpc, Scope,
+    Selection, SessionRecord, SpawnRequest, ThreadInfo, ThreadSignal, TurnEnd, Turns,
+    WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR,
+    CODEX_CLOSE_TURN_WAIT, CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR,
+    CODEX_SESSION_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, MODEL_LIST_MAX_PAGES,
+    SERVER_NAME, THREAD_RESUME, THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -373,11 +373,15 @@ impl Pump {
                 self.wire.send_line(&answer_server_request(&id, &body))
             }
             None => {
+                let content = BlockedContent {
+                    request_id: id.as_str().map_or_else(|| id.to_string(), str::to_string),
+                    ..approval.content
+                };
                 let reply = CodexReply {
                     id,
                     kind: approval.kind,
                 };
-                self.permissions.enqueue(reply, approval.content);
+                self.permissions.enqueue(reply, content);
                 Ok(())
             }
         }
@@ -649,8 +653,10 @@ impl CodexWorker {
         }
     }
 
-    fn answer_permission(&self, text: &str) -> Result<(), String> {
-        let (reply, option) = self.permissions.take_answer(text)?;
+    fn answer_permission(&self, answer: &PermissionAnswer) -> Result<(), String> {
+        let (reply, option) = self
+            .permissions
+            .take_answer(&answer.request_id, &answer.option_id)?;
         let body = response_body(reply.kind, &option.option_id);
         write_line(&self.stdin, &answer_server_request(&reply.id, &body)).map_err(Stop::message)
     }
@@ -723,7 +729,7 @@ impl HeadlessWorker for CodexWorker {
                 .replies
                 .send(Inbound::Prompt(text))
                 .map_err(|_| "codex worker is not running".to_string()),
-            WorkerCommand::AnswerPermission { option_id } => self.answer_permission(&option_id),
+            WorkerCommand::AnswerPermission(answer) => self.answer_permission(&answer),
             WorkerCommand::Spawn(_) | WorkerCommand::Resume | WorkerCommand::Interrupt(_) => {
                 Err(format!(
                     "not sent: the host handles it ({})",
@@ -829,10 +835,12 @@ impl CodexHost {
         let Ok(text) = fs::read_to_string(&files.answer) else {
             return;
         };
-        let result = locked(&self.workers)
-            .get_mut(id)
-            .ok_or_else(|| "worker has no running codex agent".to_string())
-            .and_then(|worker| worker.send(WorkerCommand::AnswerPermission { option_id: text }));
+        let result = PermissionAnswer::decode(&text).and_then(|answer| {
+            locked(&self.workers)
+                .get_mut(id)
+                .ok_or_else(|| "worker has no running codex agent".to_string())
+                .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
+        });
         if let Err(message) = result {
             write_file(&files.error, &message).ok();
         }

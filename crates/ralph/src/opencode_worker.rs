@@ -528,17 +528,17 @@ impl OpencodeHost {
     }
 
     fn worker(&self, id: &str, session_id: &str) -> OpencodeSession {
-        let (front, events) = self
+        let (pending, events) = self
             .sessions()
             .get(session_id)
             .map(|session| {
                 (
-                    session.turn.blocked.front().cloned(),
+                    session.turn.blocked.iter().cloned().collect(),
                     session.events.clone(),
                 )
             })
             .unwrap_or_default();
-        OpencodeSession::new(id, session_id, self.api(), front, events)
+        OpencodeSession::new(id, session_id, self.api(), pending, events)
     }
 
     fn apply_events(&self, id: &str, session_id: &str) -> Vec<WorkerEvent> {

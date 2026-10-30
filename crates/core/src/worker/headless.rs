@@ -1,4 +1,4 @@
-use super::{interrupt_reply, BlockedContent, HarnessId, TurnEnd};
+use super::{interrupt_reply, BlockedContent, HarnessId, PermissionAnswer, TurnEnd};
 
 mod liveness;
 pub use liveness::*;
@@ -136,7 +136,7 @@ pub enum WorkerCommand {
     Spawn(SpawnSpec),
     Prompt(String),
     Interrupt(String),
-    AnswerPermission { option_id: String },
+    AnswerPermission(PermissionAnswer),
     Resume,
     Close,
 }
@@ -360,9 +360,10 @@ mod tests {
             })),
             Feature::Prompt => Some(WorkerCommand::Prompt("p".into())),
             Feature::Interrupt => Some(WorkerCommand::Interrupt("i".into())),
-            Feature::PermAsk => Some(WorkerCommand::AnswerPermission {
+            Feature::PermAsk => Some(WorkerCommand::AnswerPermission(PermissionAnswer {
+                request_id: "r".into(),
                 option_id: "o".into(),
-            }),
+            })),
             Feature::Resume => Some(WorkerCommand::Resume),
             Feature::Close => Some(WorkerCommand::Close),
             Feature::PermYolo | Feature::Report | Feature::Heartbeat => None,
@@ -371,6 +372,7 @@ mod tests {
 
     fn content() -> BlockedContent {
         BlockedContent {
+            request_id: "r".into(),
             tool: "bash".into(),
             summary: "ls".into(),
             options: Vec::new(),

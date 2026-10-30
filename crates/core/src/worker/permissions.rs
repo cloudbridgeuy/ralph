@@ -12,6 +12,7 @@ pub struct PermissionOption {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlockedContent {
+    pub request_id: String,
     pub tool: String,
     pub summary: String,
     pub options: Vec<PermissionOption>,
@@ -29,6 +30,42 @@ pub enum PermissionMode {
     #[default]
     Ask,
     Yolo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionAnswer {
+    pub request_id: String,
+    pub option_id: String,
+}
+
+impl PermissionAnswer {
+    pub fn decode(text: &str) -> Result<Self, String> {
+        serde_json::from_str(text).map_err(|e| format!("unreadable permission answer: {e}"))
+    }
+}
+
+pub fn pending_position<'a>(
+    pending: impl Iterator<Item = &'a str>,
+    request_id: &str,
+) -> Result<usize, String> {
+    let request_id = request_id.trim();
+    let ids: Vec<&str> = pending.collect();
+    ids.iter()
+        .position(|id| !request_id.is_empty() && *id == request_id)
+        .ok_or_else(|| {
+            let listed = if ids.is_empty() {
+                "none".to_string()
+            } else {
+                ids.join(", ")
+            };
+            if request_id.is_empty() {
+                format!(
+                    "this worker is waiting on a permission request; pass request. pending: {listed}"
+                )
+            } else {
+                format!("stale request {request_id}; pending: {listed}")
+            }
+        })
 }
 
 pub fn match_option<'a>(
@@ -61,9 +98,10 @@ pub fn permission_alert_report(id: &str, at: &str, content: &BlockedContent) -> 
         at: at.to_string(),
         status: ReportStatus::Blocked.as_str().to_string(),
         text: format!(
-            "Worker {id} is waiting for a permission answer on {}: {}. Answer it with reply and one optionId: {}.",
+            "Worker {id} is waiting for a permission answer on {}: {}. Answer it with reply, request {} and one optionId: {}.",
             content.tool,
             content.summary,
+            content.request_id,
             ids.join(", ")
         ),
     }
@@ -102,13 +140,26 @@ mod tests {
     #[test]
     fn the_permission_alert_names_the_tool_and_every_option() {
         let content = BlockedContent {
+            request_id: "7".into(),
             tool: "shell".into(),
             summary: "ls".into(),
             options: options(),
         };
         let report = permission_alert_report("A", "t", &content);
         assert!(report.text.contains("shell"));
+        assert!(report.text.contains("request 7"));
         assert!(report.text.contains("allow-once, reject-once"));
+    }
+
+    #[test]
+    fn an_answer_without_a_request_id_lists_every_pending_id() {
+        assert_eq!(
+            pending_position(["a", "b"].into_iter(), " "),
+            Err(
+                "this worker is waiting on a permission request; pass request. pending: a, b"
+                    .into()
+            )
+        );
     }
 
     #[test]

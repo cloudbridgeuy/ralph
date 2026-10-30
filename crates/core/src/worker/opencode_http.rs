@@ -178,6 +178,7 @@ pub fn opencode_blocked_content(asked: &PermissionAsked) -> BlockedContent {
         asked.resources.join("; ")
     };
     BlockedContent {
+        request_id: asked.id.clone(),
         tool: asked.action.clone(),
         summary,
         options: vec![

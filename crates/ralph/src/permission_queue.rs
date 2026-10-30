@@ -1,8 +1,8 @@
 use crate::acp_worker::{push_event, Events};
 use crate::worker_mcp::Inbox;
 use ralph_core::worker::{
-    match_option, no_option_message, permission_alert_report, BlockedContent, PermissionOption,
-    WorkerEvent,
+    match_option, no_option_message, pending_position, permission_alert_report, BlockedContent,
+    PermissionOption, WorkerEvent,
 };
 use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -50,17 +50,23 @@ impl<R> PermissionQueue<R> {
         self.inbox.post(&report, 0).ok();
     }
 
-    pub(crate) fn take_answer(&self, text: &str) -> Result<(R, PermissionOption), String> {
+    pub(crate) fn take_answer(
+        &self,
+        request_id: &str,
+        text: &str,
+    ) -> Result<(R, PermissionOption), String> {
         let mut queue = self.queue();
-        let front = queue
-            .front()
-            .ok_or("no permission request is pending for this worker")?;
-        let option = match_option(&front.content.options, text)
-            .ok_or_else(|| no_option_message(&front.content.options))?
+        let ids = queue
+            .iter()
+            .map(|pending| pending.content.request_id.as_str());
+        let index = pending_position(ids, request_id)?;
+        let options = &queue[index].content.options;
+        let option = match_option(options, text)
+            .ok_or_else(|| no_option_message(options))?
             .clone();
         let pending = queue
-            .pop_front()
-            .ok_or("no permission request is pending for this worker")?;
+            .remove(index)
+            .ok_or_else(|| format!("stale request {request_id}"))?;
         self.publish(&queue);
         Ok((pending.reply, option))
     }
@@ -91,8 +97,9 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    fn content(ids: &[&str]) -> BlockedContent {
+    fn content(request: &str, ids: &[&str]) -> BlockedContent {
         BlockedContent {
+            request_id: request.into(),
             tool: "shell".into(),
             summary: "ls".into(),
             options: ids
@@ -118,28 +125,40 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_takes_the_front_request_and_refuses_an_unpublished_option() {
+    fn an_answer_takes_the_request_it_names_and_refuses_an_unpublished_option() {
         let dir = TempDir::new().unwrap();
         let (queue, events) = queue(&dir);
-        queue.enqueue(1, content(&["accept", "cancel"]));
-        queue.enqueue(2, content(&["decline"]));
-        assert!(queue.take_answer("acceptForSession").is_err());
-        assert!(queue.take_answer("decline").is_err());
-        let (reply, option) = queue.take_answer(" accept\n").unwrap();
-        assert_eq!((reply, option.option_id.as_str()), (1, "accept"));
+        queue.enqueue(1, content("a", &["accept", "cancel"]));
+        queue.enqueue(2, content("b", &["decline"]));
+        assert!(queue.take_answer("b", "accept").is_err());
+        let (reply, option) = queue.take_answer(" b ", " decline\n").unwrap();
+        assert_eq!((reply, option.option_id.as_str()), (2, "decline"));
         let events = drained(&events);
         assert!(
-            matches!(events.last(), Some(WorkerEvent::PermissionAsked(c)) if c.options[0].option_id == "decline")
+            matches!(events.last(), Some(WorkerEvent::PermissionAsked(c)) if c.request_id == "a")
         );
     }
 
     #[test]
-    fn a_settled_request_can_no_longer_be_answered_and_the_marker_clears() {
+    fn a_settled_answered_or_unknown_request_is_rejected_as_stale() {
         let dir = TempDir::new().unwrap();
         let (queue, events) = queue(&dir);
-        queue.enqueue(7, content(&["accept"]));
+        queue.enqueue(7, content("a", &["accept"]));
+        queue.enqueue(8, content("b", &["accept"]));
         queue.settle(|reply| *reply == 7);
-        assert!(queue.take_answer("accept").is_err());
+        assert_eq!(
+            queue.take_answer("a", "accept").unwrap_err(),
+            "stale request a; pending: b"
+        );
+        assert_eq!(
+            queue.take_answer("zz", "accept").unwrap_err(),
+            "stale request zz; pending: b"
+        );
+        assert_eq!(queue.take_answer("b", "accept").unwrap().0, 8);
+        assert_eq!(
+            queue.take_answer("b", "accept").unwrap_err(),
+            "stale request b; pending: none"
+        );
         assert_eq!(
             drained(&events).last(),
             Some(&WorkerEvent::PermissionSettled)
@@ -150,10 +169,10 @@ mod tests {
     fn draining_drops_every_pending_request_and_settles() {
         let dir = TempDir::new().unwrap();
         let (queue, events) = queue(&dir);
-        queue.enqueue(1, content(&["accept"]));
-        queue.enqueue(2, content(&["accept"]));
+        queue.enqueue(1, content("a", &["accept"]));
+        queue.enqueue(2, content("b", &["accept"]));
         assert_eq!(queue.drain(), vec![1, 2]);
-        assert!(queue.take_answer("accept").is_err());
+        assert!(queue.take_answer("a", "accept").is_err());
         assert_eq!(
             drained(&events).last(),
             Some(&WorkerEvent::PermissionSettled)

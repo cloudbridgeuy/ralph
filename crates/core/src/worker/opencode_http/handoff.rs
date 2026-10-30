@@ -1,5 +1,5 @@
 use super::{opencode_blocked_content, permission_decision, PermissionAsked, PermissionDecision};
-use crate::worker::{close_handoff, match_option, no_option_message, Handoff};
+use crate::worker::{close_handoff, match_option, no_option_message, pending_position, Handoff};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -131,10 +131,12 @@ pub fn permission_reply_path(session_id: &str, request_id: &str) -> String {
 }
 
 pub fn answer_decision(
-    front: Option<&PermissionAsked>,
+    pending: &[PermissionAsked],
+    request_id: &str,
     text: &str,
 ) -> Result<(String, PermissionDecision), String> {
-    let asked = front.ok_or("no permission request is pending for this worker")?;
+    let asked =
+        &pending[pending_position(pending.iter().map(|asked| asked.id.as_str()), request_id)?];
     let options = opencode_blocked_content(asked).options;
     let option = match_option(&options, text).ok_or_else(|| no_option_message(&options))?;
     let decision =
@@ -335,30 +337,40 @@ mod tests {
     }
 
     #[test]
-    fn answer_decision_maps_an_option_id_to_the_front_request() {
-        let asked = asked();
+    fn answer_decision_maps_an_option_id_to_the_named_request() {
+        let pending = [
+            asked(),
+            PermissionAsked {
+                id: "per_2".to_string(),
+                ..asked()
+            },
+        ];
         assert_eq!(
-            answer_decision(Some(&asked), " always \n"),
-            Ok(("per_1".to_string(), PermissionDecision::Always))
+            answer_decision(&pending, " per_2 ", " always \n"),
+            Ok(("per_2".to_string(), PermissionDecision::Always))
         );
         assert_eq!(
-            answer_decision(Some(&asked), "once"),
+            answer_decision(&pending, "per_1", "once"),
             Ok(("per_1".to_string(), PermissionDecision::Once))
         );
         assert_eq!(
-            answer_decision(Some(&asked), "reject"),
-            Ok(("per_1".to_string(), PermissionDecision::Reject))
+            answer_decision(&pending, "per_2", "reject"),
+            Ok(("per_2".to_string(), PermissionDecision::Reject))
         );
     }
 
     #[test]
-    fn answer_decision_refuses_unknown_options_and_empty_queues() {
-        let asked = asked();
-        let unknown = answer_decision(Some(&asked), "yes").unwrap_err();
+    fn answer_decision_refuses_unknown_options_and_stale_requests() {
+        let pending = [asked()];
+        let unknown = answer_decision(&pending, "per_1", "yes").unwrap_err();
         assert!(unknown.contains("once, always, reject"), "{unknown}");
         assert_eq!(
-            answer_decision(None, "once").unwrap_err(),
-            "no permission request is pending for this worker"
+            answer_decision(&pending, "per_9", "once").unwrap_err(),
+            "stale request per_9; pending: per_1"
+        );
+        assert_eq!(
+            answer_decision(&[], "per_1", "once").unwrap_err(),
+            "stale request per_1; pending: none"
         );
     }
 

@@ -34,6 +34,7 @@ pub fn command_definitions() -> [Value; 5] {
                 "properties": {
                     "id": {"type": "string", "description": "The worker id."},
                     "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."},
+                    "request": {"type": "string", "description": "cursor, codex and opencode workers: the request id of the waiting permission request this answers, from its blocked alert or the reply error; text is then one optionId. Required to answer a permission request; a stale or unknown id is refused."},
                     "interrupt": {"type": "boolean", "description": "cursor, codex and opencode workers: cancel the running turn, if any, and run this message next. The result says whether a running turn was cancelled, or that the outcome is unknown if ralph chat does not confirm within 30 s. Default false."}
                 },
                 "required": ["id", "text"]
@@ -78,10 +79,12 @@ pub fn parse_command(name: &str, args: &Value) -> Option<Result<Command, String>
         "reply" => string_arg(args, "text").and_then(|text| {
             let id = worker_id(args)?;
             let interrupt = bool_flag(args, "interrupt")?;
+            let request = args.get("request").and_then(Value::as_str).map(str::to_string);
             Ok(Command::Reply {
                 id,
                 text,
                 interrupt,
+                request,
             })
         }),
         "close_worker" => worker_id(args).and_then(|id| {
@@ -179,7 +182,7 @@ fn harness_description() -> String {
         .collect::<Vec<_>>()
         .join(" | ");
     format!(
-        "Agent to run. Default claude. Headless harnesses run without a tmux session and take a reply as a new prompt between turns, or as the answer to a waiting permission request: {headless}."
+        "Agent to run. Default claude. Headless harnesses run without a tmux session and take a reply as a new prompt between turns, or, with request, as the answer to a waiting permission request: {headless}."
     )
 }
 
@@ -266,18 +269,20 @@ mod tests {
             Some(Ok(Command::Reply {
                 id: "GUZ-1".into(),
                 text: "merge".into(),
-                interrupt: false
+                interrupt: false,
+                request: None
             }))
         );
         assert_eq!(
             parse_command(
                 "reply",
-                &json!({"id": "GUZ-1", "text": "stop", "interrupt": true})
+                &json!({"id": "GUZ-1", "text": "stop", "interrupt": true, "request": "7"})
             ),
             Some(Ok(Command::Reply {
                 id: "GUZ-1".into(),
                 text: "stop".into(),
-                interrupt: true
+                interrupt: true,
+                request: Some("7".into())
             }))
         );
         assert_eq!(parse_command("zoom", &json!({})), None);

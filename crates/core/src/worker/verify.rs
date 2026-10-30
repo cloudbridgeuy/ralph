@@ -306,6 +306,7 @@ mod tests {
             permissions: kinds
                 .iter()
                 .map(|kind| BlockedContent {
+                    request_id: "r".into(),
                     tool: "edit".into(),
                     summary: "write".into(),
                     options: vec![crate::worker::PermissionOption {
