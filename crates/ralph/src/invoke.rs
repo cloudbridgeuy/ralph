@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn unset_config_dir_leaves_every_command_as_before() {
+    fn unset_config_dir_adds_no_env_prefix() {
         assert_eq!(
             build_command("hi", "auto", None, Some(Path::new("/home/u"))),
             "claude --verbose --permission-mode auto --output-format stream-json -p 'hi'"
