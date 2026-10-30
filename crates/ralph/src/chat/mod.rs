@@ -68,7 +68,7 @@ use crate::render::{cap_wrap_width, RenderContext};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use crate::subprocess::OutputGate;
-use crate::warn::{warn, warn_if_err};
+use crate::warn::{print_above_prompt, warn, warn_if_err};
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
@@ -92,7 +92,7 @@ use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
-use reedline::{EditCommand, HistoryItem};
+use reedline::{EditCommand, ExternalPrinter, HistoryItem};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
@@ -101,6 +101,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 const STORE_ENV: &str = "RALPH_CHAT_STORE";
+const PROMPT_ROWS: usize = 256;
 pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
 pub(crate) const CELL_OUTPUT_BYTES_ENV: &str = "RALPH_CELL_OUTPUT_BYTES";
@@ -396,8 +397,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     );
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
+    let printer = ExternalPrinter::new(PROMPT_ROWS);
+    let prompt_sink = printer.sender();
     let mut editor = build_editor(&store_dir, edit_mode, highlighter)?
-        .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)));
+        .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
+        .with_external_printer(printer);
     let repaint = editor.repaint_signal();
     watch_status(Arc::clone(&monitor), move || repaint.request_repaint());
     crate::render::image::enable_images(image_settings);
@@ -467,7 +471,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             None => {
                 at_prompt.store(true, Ordering::SeqCst);
                 idle.store(true, Ordering::SeqCst);
+                print_above_prompt(Some(prompt_sink.clone()));
                 let submitted = next_route(&mut editor, &prompt);
+                print_above_prompt(None);
                 at_prompt.store(false, Ordering::SeqCst);
                 idle.store(false, Ordering::SeqCst);
                 submitted?.map(|Submitted { line, route }| {

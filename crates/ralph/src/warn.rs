@@ -2,7 +2,8 @@ use crate::ansi::{BOLD, CLEAR_EOL, CR, RESET, YELLOW};
 use crate::frame::frame;
 use std::collections::BTreeSet;
 use std::fmt::Display;
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal, Write};
+use std::sync::mpsc::SyncSender;
 use std::sync::Mutex;
 
 const SYMBOL: &str = "\u{26a0}";
@@ -67,12 +68,17 @@ fn format_warning(message: &str, terminal_width: usize, color: bool) -> String {
     frame(&rows, YELLOW)
 }
 
-pub fn warning_line(message: impl Display) -> String {
+fn warning_text(message: impl Display) -> (String, bool) {
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let width = crossterm::terminal::size()
         .map(|(w, _)| usize::from(w))
         .unwrap_or(DEFAULT_TERMINAL_WIDTH);
-    line_of(&format_warning(&message.to_string(), width, color), color)
+    (format_warning(&message.to_string(), width, color), color)
+}
+
+pub fn warning_line(message: impl Display) -> String {
+    let (text, color) = warning_text(message);
+    line_of(&text, color)
 }
 
 fn line_of(text: &str, clear: bool) -> String {
@@ -84,8 +90,40 @@ fn line_of(text: &str, clear: bool) -> String {
     format!("{prefix}{text}\n")
 }
 
+static PROMPT: Mutex<Option<SyncSender<String>>> = Mutex::new(None);
+
+pub fn print_above_prompt(sink: Option<SyncSender<String>>) {
+    if let Ok(mut prompt) = PROMPT.lock() {
+        *prompt = sink;
+    }
+}
+
+fn prompt_rows(text: &str) -> Vec<String> {
+    text.lines().map(str::to_string).collect()
+}
+
+fn deliver(
+    text: &str,
+    clear: bool,
+    sink: Option<&SyncSender<String>>,
+    out: &mut impl Write,
+) -> io::Result<()> {
+    let rows = prompt_rows(text);
+    let sent = sink.map_or(0, |sink| {
+        rows.iter()
+            .take_while(|row| sink.try_send(row.to_string()).is_ok())
+            .count()
+    });
+    if sent == rows.len() {
+        return Ok(());
+    }
+    out.write_all(line_of(&rows[sent..].join("\n"), clear).as_bytes())
+}
+
 pub fn warn(message: impl Display) {
-    eprint!("{}", warning_line(message));
+    let (text, color) = warning_text(message);
+    let sink = PROMPT.lock().ok().and_then(|prompt| prompt.clone());
+    deliver(&text, color, sink.as_ref(), &mut io::stderr()).ok();
 }
 
 static SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
@@ -114,7 +152,10 @@ pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
 mod tests {
     use super::*;
     use crate::frame::strip_ansi;
+    use reedline::ExternalPrinter;
     use std::io;
+
+    const BOX: &str = "\u{256d}\u{2500}\u{256e}\n\u{2502}x\u{2502}\n\u{2570}\u{2500}\u{256f}";
 
     #[test]
     fn line_of_ends_with_one_newline() {
@@ -124,6 +165,43 @@ mod tests {
     #[test]
     fn line_of_clears_the_line_first_when_asked() {
         assert_eq!(line_of("x", true), "\r\x1b[Kx\n");
+    }
+
+    #[test]
+    fn prompt_rows_split_the_box_into_bare_rows() {
+        let rows = prompt_rows(&format_warning("codex session GUZ-881 resumed", 80, true));
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|row| !row.contains(['\r', '\n'])));
+    }
+
+    #[test]
+    fn deliver_sends_every_row_above_the_prompt() {
+        let printer = ExternalPrinter::<String>::new(8);
+        let mut out = Vec::new();
+        deliver(BOX, true, Some(&printer.sender()), &mut out).unwrap();
+        let sent: Vec<String> = printer.receiver().try_iter().collect();
+        assert_eq!(sent, prompt_rows(BOX));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn deliver_without_a_prompt_writes_the_line() {
+        let mut out = Vec::new();
+        deliver(BOX, true, None, &mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), line_of(BOX, true));
+    }
+
+    #[test]
+    fn deliver_writes_the_rows_a_full_prompt_drops() {
+        let printer = ExternalPrinter::<String>::new(1);
+        let mut out = Vec::new();
+        deliver(BOX, false, Some(&printer.sender()), &mut out).unwrap();
+        let rows = prompt_rows(BOX);
+        assert_eq!(printer.receiver().try_iter().collect::<Vec<_>>(), rows[..1]);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            line_of(&rows[1..].join("\n"), false)
+        );
     }
 
     #[test]
