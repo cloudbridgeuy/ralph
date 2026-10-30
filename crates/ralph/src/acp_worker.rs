@@ -2,8 +2,8 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
-    now_secs, report_start_warning, sweep_owner, write_file, write_interrupt_result,
-    write_owner_record,
+    now_secs, report_start_warning, sweep_owner, write_file, write_file_atomic,
+    write_interrupt_result, write_owner_record,
 };
 use crate::subprocess::{exited_unreaped, signal_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
@@ -82,7 +82,7 @@ pub(crate) fn apply_effect(markers: &WorkerMarkers, effect: &HeadlessEffect) {
             fs::remove_file(path(*marker)).ok();
         }
         HeadlessEffect::Publish(content) => {
-            write_file(&markers.blocked, &content.render()).ok();
+            write_file_atomic(&markers.blocked, &content.render()).ok();
         }
         HeadlessEffect::ReplyText(_) => {}
     }

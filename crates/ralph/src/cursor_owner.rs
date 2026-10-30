@@ -197,6 +197,22 @@ pub fn write_file(path: &Path, text: &str) -> io::Result<()> {
     fs::write(path, text)
 }
 
+fn atomic_temp_name(file: &str, pid: u32) -> String {
+    format!(".{file}.{pid}.tmp")
+}
+
+pub fn write_file_atomic(path: &Path, text: &str) -> io::Result<()> {
+    let file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::other("marker path has no file name"))?;
+    let temp = path.with_file_name(atomic_temp_name(file, process::id()));
+    write_file(&temp, text)?;
+    fs::rename(&temp, path).inspect_err(|_| {
+        fs::remove_file(&temp).ok();
+    })
+}
+
 pub fn write_interrupt_result(results: &Path, entry: &str, cancelled: bool) {
     let pending = results.join(format!(".{entry}"));
     if write_file(&pending, interrupt_result_text(cancelled)).is_ok() {
@@ -237,6 +253,26 @@ pub(crate) fn queued_entries(dir: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_atomic_write_replaces_the_text_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("blocked").join("A");
+        write_file_atomic(&marker, "old").unwrap();
+        write_file_atomic(&marker, "new").unwrap();
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "new");
+        let left: Vec<_> = fs::read_dir(marker.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["A"]);
+    }
+
+    #[test]
+    fn atomic_temp_names_stay_beside_the_target_per_process() {
+        assert_eq!(atomic_temp_name("A", 7), ".A.7.tmp");
+        assert_ne!(atomic_temp_name("A", 7), atomic_temp_name("A", 8));
+    }
 
     #[test]
     fn claim_owner_succeeds_once_and_leaves_a_parseable_record() {
