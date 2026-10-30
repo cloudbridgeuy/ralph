@@ -1,6 +1,7 @@
 use super::WORKERS_DIR;
 use crate::wire::provider::anthropic::map_usage;
 use crate::wire::usage::Usage;
+use crate::worker_costs::long_prompt_call;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct ModelUsage {
     pub model: String,
     pub usage: Usage,
+    pub long_prompt: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -64,7 +66,7 @@ pub fn transcript_usage(lines: &str, seen: &HashSet<String>) -> TranscriptUsage 
             latest.insert(id.to_string(), message.cloned().unwrap_or(Value::Null));
         }
     }
-    let mut by_model: BTreeMap<String, Usage> = BTreeMap::new();
+    let mut by_model: BTreeMap<(String, bool), Usage> = BTreeMap::new();
     let mut recorded = Vec::new();
     for (id, message) in latest {
         let finished = message
@@ -81,17 +83,22 @@ pub fn transcript_usage(lines: &str, seen: &HashSet<String>) -> TranscriptUsage 
         if model == SYNTHETIC_MODEL || is_empty(&part) {
             continue;
         }
-        match by_model.get_mut(model) {
+        let key = (model.to_string(), long_prompt_call(model, &part));
+        match by_model.get_mut(&key) {
             Some(total) => add(total, part),
             None => {
-                by_model.insert(model.to_string(), part);
+                by_model.insert(key, part);
             }
         }
     }
     TranscriptUsage {
         rows: by_model
             .into_iter()
-            .map(|(model, usage)| ModelUsage { model, usage })
+            .map(|((model, long_prompt), usage)| ModelUsage {
+                model,
+                usage,
+                long_prompt,
+            })
             .collect(),
         recorded,
     }
@@ -254,6 +261,46 @@ mod tests {
         assert_eq!(models, ["haiku", "opus"]);
         assert_eq!(found.rows[1].usage.output, 12);
         assert_eq!(found.rows[1].usage.cache_writes[0].tokens, 6);
+    }
+
+    fn call(id: &str, model: &str, input: u64) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "message": {
+                "id": id,
+                "model": model,
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": input, "output_tokens": 1}
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn many_short_calls_stay_one_short_row() {
+        let text: Vec<String> = (0..10)
+            .map(|n| call(&format!("m{n}"), "claude-haiku-5-5", 30_000))
+            .collect();
+        let found = transcript_usage(&text.join("\n"), &none());
+        assert_eq!(found.rows.len(), 1);
+        assert_eq!(found.rows[0].usage.input_uncached, 300_000);
+        assert!(!found.rows[0].long_prompt);
+    }
+
+    #[test]
+    fn a_long_call_gets_its_own_row() {
+        let text = [
+            call("m1", "claude-haiku-5-5", 150_000),
+            call("m2", "claude-haiku-5-5", 10_000),
+        ]
+        .join("\n");
+        let found = transcript_usage(&text, &none());
+        let rows: Vec<_> = found
+            .rows
+            .iter()
+            .map(|row| (row.long_prompt, row.usage.input_uncached))
+            .collect();
+        assert_eq!(rows, [(false, 10_000), (true, 150_000)]);
     }
 
     #[test]

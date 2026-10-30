@@ -127,6 +127,8 @@ pub struct UsageRecord {
     pub cache_write_5m: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write_1h: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub long_prompt: Option<bool>,
     #[serde(flatten)]
     pub view: Option<ViewStats>,
 }
@@ -177,6 +179,7 @@ pub fn usage_record(
         reasoning_tokens: None,
         cache_write_5m: None,
         cache_write_1h: None,
+        long_prompt: None,
         view: None,
     })
 }
@@ -218,6 +221,7 @@ pub fn worker_usage_record(
         reasoning_tokens: usage.reasoning,
         cache_write_5m: written(FIVE_MIN),
         cache_write_1h: written(ONE_HOUR),
+        long_prompt: Some(row.long_prompt),
         view: None,
     }
 }
@@ -269,6 +273,7 @@ mod tests {
                 reasoning: Some(6),
                 other: Vec::new(),
             },
+            long_prompt: true,
         };
         let kind = CallKind::Worker {
             worker_id: "w1".into(),
@@ -295,7 +300,44 @@ mod tests {
         assert_eq!(value["harness"], "claude");
         assert_eq!(value["model"], "m");
         assert_eq!(value["session_id"], "s");
+        assert_eq!(value["long_prompt"], true);
         assert!(value["cost_usd"].is_null());
+    }
+
+    #[test]
+    fn long_prompt_false_is_written_and_none_is_omitted() {
+        use crate::wire::usage::Usage;
+        let row = ModelUsage {
+            model: "m".into(),
+            usage: Usage {
+                input_uncached: 1,
+                cache_read: 0,
+                cache_writes: Vec::new(),
+                output: 0,
+                reasoning: None,
+                other: Vec::new(),
+            },
+            long_prompt: false,
+        };
+        let kind = CallKind::Worker {
+            worker_id: "w1".into(),
+            turn_id: None,
+        };
+        let worker =
+            serde_json::to_value(worker_usage_record(kind, "t".into(), None, "claude", &row))
+                .unwrap();
+        assert_eq!(worker["long_prompt"], false);
+        let main = serde_json::to_value(
+            usage_record(
+                CallKind::Nap,
+                "t".into(),
+                &costs(Some(1)),
+                &IterationMetadata::new(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(main.get("long_prompt").is_none());
     }
 
     #[test]

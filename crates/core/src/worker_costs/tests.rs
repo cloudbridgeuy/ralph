@@ -190,6 +190,67 @@ fn a_cache_write_tier_gap_prices_the_rest() {
     assert!(usd.missing);
 }
 
+fn haiku_row(input: u64, flag: Option<bool>) -> Value {
+    let mut row = json!({
+        "kind": "worker", "worker_id": "GUZ-1", "turn_id": 1, "harness": "claude",
+        "model": "claude-haiku-5-5", "session_id": "s1", "cost_usd": null,
+        "input_tokens": input, "output_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+    });
+    if let Some(flag) = flag {
+        row["long_prompt"] = json!(flag);
+    }
+    row
+}
+
+fn haiku_usd(row: Value) -> f64 {
+    let rows = rows_of(&jsonl(&[row]));
+    find(&rows, "claude", "claude-haiku-5-5").usd.known.unwrap()
+}
+
+#[test]
+fn a_short_flag_prices_a_large_summed_row_at_the_base_tier() {
+    assert!((haiku_usd(haiku_row(300_000, Some(false))) - 0.03).abs() < 1e-9);
+}
+
+#[test]
+fn a_long_flag_prices_a_small_row_at_the_long_tier() {
+    assert!((haiku_usd(haiku_row(10_000, Some(true))) - 0.005).abs() < 1e-9);
+}
+
+#[test]
+fn a_row_without_the_flag_prices_from_its_sum() {
+    assert!((haiku_usd(haiku_row(300_000, None)) - 0.15).abs() < 1e-9);
+    assert!((haiku_usd(haiku_row(10_000, None)) - 0.001).abs() < 1e-9);
+}
+
+#[test]
+fn tier_prompt_follows_the_flag_or_the_sum() {
+    assert_eq!(tier_prompt(Some(true), 5), u64::MAX);
+    assert_eq!(tier_prompt(Some(false), 5_000_000), 0);
+    assert_eq!(tier_prompt(None, 5), 5);
+}
+
+#[test]
+fn long_prompt_call_uses_the_builtin_table() {
+    let call = |model: &str, input: u64| {
+        long_prompt_call(
+            model,
+            &Usage {
+                input_uncached: input,
+                cache_read: 0,
+                cache_writes: Vec::new(),
+                output: 0,
+                reasoning: None,
+                other: Vec::new(),
+            },
+        )
+    };
+    assert!(!call("claude-haiku-5-5", 100_000));
+    assert!(call("claude-haiku-5-5", 100_001));
+    assert!(!call("gpt-6.1-sol", 1_000_000));
+}
+
 #[test]
 fn an_override_wins_over_the_table() {
     let overrides = BTreeMap::from([(

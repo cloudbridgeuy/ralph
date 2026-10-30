@@ -2,6 +2,7 @@ use super::ServerEvent;
 use crate::chat_memory::{worker_usage_record, CallKind, UsageRecord};
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
 use crate::worker::{ModelUsage, OPENCODE_HARNESS};
+use crate::worker_costs::long_prompt_call;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -97,7 +98,7 @@ struct Spend {
 #[derive(Debug, Default)]
 pub struct OpencodeTurnUsage {
     model: String,
-    by_model: BTreeMap<String, Spend>,
+    by_model: BTreeMap<(String, bool), Spend>,
 }
 
 impl OpencodeTurnUsage {
@@ -112,7 +113,8 @@ impl OpencodeTurnUsage {
         match event {
             OpencodeUsageEvent::Model(model) => self.model = model,
             OpencodeUsageEvent::Step { tokens, cost } => {
-                let spend = self.by_model.entry(self.model.clone()).or_default();
+                let long = long_prompt_call(&self.model, &tokens.usage());
+                let spend = self.by_model.entry((self.model.clone(), long)).or_default();
                 spend.tokens.add(tokens);
                 spend.cost += cost;
             }
@@ -123,10 +125,11 @@ impl OpencodeTurnUsage {
         std::mem::take(&mut self.by_model)
             .into_iter()
             .filter(|(_, spend)| spend.tokens != StepTokens::default() || spend.cost > 0.0)
-            .map(|(model, spend)| OpencodeModelUsage {
+            .map(|((model, long_prompt), spend)| OpencodeModelUsage {
                 row: ModelUsage {
                     model,
                     usage: spend.tokens.usage(),
+                    long_prompt,
                 },
                 cost_usd: (spend.cost > 0.0).then_some(spend.cost),
             })
@@ -230,6 +233,39 @@ mod tests {
         assert_eq!(rows[1].row.usage.input_uncached, 408);
         assert_eq!(rows[1].row.usage.cache_read, 25856);
         assert!(turn.take().is_empty());
+    }
+
+    fn step(input: u64) -> OpencodeUsageEvent {
+        OpencodeUsageEvent::Step {
+            tokens: StepTokens {
+                input,
+                ..StepTokens::default()
+            },
+            cost: 0.0,
+        }
+    }
+
+    #[test]
+    fn steps_split_by_prompt_tier() {
+        let mut turn = OpencodeTurnUsage::new("claude-haiku-5-5");
+        for input in [150_000, 10_000, 10_000] {
+            turn.observe(step(input));
+        }
+        let rows: Vec<_> = turn
+            .take()
+            .iter()
+            .map(|spend| (spend.row.long_prompt, spend.row.usage.input_uncached))
+            .collect();
+        assert_eq!(rows, [(false, 20_000), (true, 150_000)]);
+    }
+
+    #[test]
+    fn steps_on_a_model_without_a_tier_stay_short() {
+        let mut turn = OpencodeTurnUsage::new("gpt-6.1-sol");
+        turn.observe(step(150_000));
+        let rows = turn.take();
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].row.long_prompt);
     }
 
     #[test]

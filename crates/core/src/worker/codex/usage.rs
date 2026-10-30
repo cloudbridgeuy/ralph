@@ -1,5 +1,6 @@
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
 use crate::worker::ModelUsage;
+use crate::worker_costs::long_prompt_call;
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -100,7 +101,7 @@ pub struct TurnUsage {
     base: Option<String>,
     current: Option<String>,
     seen_total: Option<CallTokens>,
-    by_model: BTreeMap<String, CallTokens>,
+    by_model: BTreeMap<(String, bool), CallTokens>,
 }
 
 impl TurnUsage {
@@ -124,8 +125,9 @@ impl TurnUsage {
                     return;
                 }
                 let model = self.current.as_deref().unwrap_or(UNKNOWN_MODEL);
+                let long = long_prompt_call(model, &tokens.usage());
                 self.by_model
-                    .entry(model.to_string())
+                    .entry((model.to_string(), long))
                     .or_default()
                     .add(tokens);
             }
@@ -141,9 +143,10 @@ impl TurnUsage {
         std::mem::take(&mut self.by_model)
             .into_iter()
             .filter(|(_, tokens)| *tokens != CallTokens::default())
-            .map(|(model, tokens)| ModelUsage {
+            .map(|((model, long_prompt), tokens)| ModelUsage {
                 model,
                 usage: tokens.usage(),
+                long_prompt,
             })
             .collect()
     }
@@ -251,6 +254,30 @@ mod tests {
             (rows[1].model.as_str(), rows[1].usage.input_uncached),
             ("b", 7)
         );
+    }
+
+    #[test]
+    fn a_call_over_the_line_on_a_model_without_a_tier_stays_short() {
+        let mut turn = TurnUsage::new(Some("gpt-6.1-sol".into()));
+        turn.observe(call(150_000, 0, 1), true);
+        turn.observe(call(10, 0, 1), true);
+        let rows = turn.take();
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].long_prompt);
+    }
+
+    #[test]
+    fn calls_split_by_prompt_tier_per_model() {
+        let mut turn = TurnUsage::new(Some("claude-haiku-5-5".into()));
+        turn.observe(totals((150_000, 1), (150_000, 1)), true);
+        turn.observe(totals((10_000, 1), (160_000, 2)), true);
+        turn.observe(totals((20_000, 1), (180_000, 3)), true);
+        let rows: Vec<_> = turn
+            .take()
+            .iter()
+            .map(|row| (row.long_prompt, row.usage.input_uncached))
+            .collect();
+        assert_eq!(rows, [(false, 30_000), (true, 150_000)]);
     }
 
     #[test]

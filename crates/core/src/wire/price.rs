@@ -89,6 +89,10 @@ pub fn prompt_tokens(usage: &Usage) -> u64 {
 
 impl PriceTable {
     pub fn lookup(&self, model: &str, prompt: u64) -> Option<&ModelPrice> {
+        self.entry(model, prompt).map(|entry| &entry.price)
+    }
+
+    fn entry(&self, model: &str, prompt: u64) -> Option<&PriceEntry> {
         let model = normalize_model(model);
         let longest = self
             .entries
@@ -101,8 +105,13 @@ impl PriceTable {
             .filter(|entry| entry.model.len() == longest && matches_prefix(model, &entry.model))
             .filter(|entry| entry.above_prompt_tokens.is_none_or(|t| prompt > t))
             .max_by_key(|entry| entry.above_prompt_tokens)
-            .map(|entry| &entry.price)
     }
+}
+
+pub fn long_prompt(table: &PriceTable, model: &str, prompt: u64) -> bool {
+    table
+        .entry(model, prompt)
+        .is_some_and(|entry| entry.above_prompt_tokens.is_some())
 }
 
 fn derived_write(
@@ -201,6 +210,15 @@ mod tests {
             above_prompt_tokens: above,
             price: price(input),
         }
+    }
+
+    #[test]
+    fn long_prompt_is_true_only_above_the_tier_line() {
+        let table = table();
+        assert!(!long_prompt(&table, "claude-haiku-5-5", 100_000));
+        assert!(long_prompt(&table, "claude-haiku-5-5", 100_001));
+        assert!(!long_prompt(&table, "claude-opus-5", 1_000_000));
+        assert!(!long_prompt(&table, "unlisted", 1_000_000));
     }
 
     fn table() -> PriceTable {

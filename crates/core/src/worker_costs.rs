@@ -1,5 +1,6 @@
 use crate::chat_thread::{processes, session_cost, UsageLine};
-use crate::wire::price::{prompt_tokens, resolve_price, usd, PriceTable};
+use crate::wire::price::{long_prompt, prompt_tokens, resolve_price, usd, PriceTable};
+use crate::wire::provider::{provider, Provider, ProviderId};
 use crate::wire::usage::{CacheWrite, Usage, FIVE_MIN, ONE_HOUR};
 use crate::wire::view::Pricing;
 use std::collections::{BTreeMap, BTreeSet};
@@ -166,6 +167,25 @@ fn tiered_usage(line: &UsageLine) -> Usage {
     }
 }
 
+pub fn builtin_prices(provider: &dyn Provider) -> PriceTable {
+    let mut table = provider.prices();
+    table.entries.extend(openai_price::entries());
+    table
+}
+
+pub fn long_prompt_call(model: &str, usage: &Usage) -> bool {
+    let table = builtin_prices(provider(ProviderId::Anthropic).as_ref());
+    long_prompt(&table, model, prompt_tokens(usage))
+}
+
+fn tier_prompt(long: Option<bool>, summed: u64) -> u64 {
+    match long {
+        Some(true) => u64::MAX,
+        Some(false) => 0,
+        None => summed,
+    }
+}
+
 fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd {
     let untiered = untiered_writes(line);
     let priced = line.model.as_deref().and_then(|model| {
@@ -175,7 +195,10 @@ fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd 
             pricing.overrides,
             &pricing.provider.rates(model),
             model,
-            prompt_tokens(&usage).saturating_add(untiered),
+            tier_prompt(
+                line.long_prompt,
+                prompt_tokens(&usage).saturating_add(untiered),
+            ),
         )?;
         let at_30m = price
             .cache_writes
@@ -277,8 +300,7 @@ fn process_labeled(lines: Vec<UsageLine>) -> Vec<(String, UsageLine)> {
 }
 
 fn cost_rows(usage_jsonl: &str, pricing: &Pricing) -> Vec<CostRow> {
-    let mut table = pricing.provider.prices();
-    table.entries.extend(openai_price::entries());
+    let table = builtin_prices(pricing.provider);
     let priced = |line: &UsageLine| computed_usd(line, pricing, &table);
     let mut groups: BTreeMap<(Source, String), Vec<UsageLine>> = BTreeMap::new();
     let mut main = Vec::new();
