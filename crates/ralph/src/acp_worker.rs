@@ -33,8 +33,8 @@ use ralph_core::worker::{
     session_saved, stop_problem, sweeps_permissions, task_prompt, turn_outcome, version_warning,
     AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect,
     HeadlessState, HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue,
-    Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand,
-    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, VersionProbe,
+    WorkerCommand, WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
     CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
     CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
@@ -56,6 +56,7 @@ mod verify;
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use permissions::Permissions;
 use turns::{run_turns, Turns};
+use verify::agent_version_probe;
 pub(crate) use verify::verify;
 
 pub(crate) type Events = Arc<Mutex<Vec<WorkerEvent>>>;
@@ -551,22 +552,11 @@ fn exit_reason(status: ExitStatus) -> String {
     format!("{} acp exited ({status})", CURSOR_AGENT.command)
 }
 
-fn agent_version_output(agent: &AcpAgent) -> Option<String> {
-    let output = Command::new(agent.command)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    Some(String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
 fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
-    version_warning(
-        agent,
-        &agent_version_output(agent)?,
-        &verified_agents::load(),
-    )
+    match agent_version_probe(agent) {
+        VersionProbe::Exited(output) => version_warning(agent, &output, &verified_agents::load()),
+        VersionProbe::TimedOut | VersionProbe::Failed(_) => None,
+    }
 }
 
 async fn initialize(

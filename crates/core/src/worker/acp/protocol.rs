@@ -1,8 +1,10 @@
 use crate::worker::{verify_hint, VerifiedAgents, SERVER_NAME};
 use serde_json::{json, Value};
 use std::path::Path;
+use std::time::Duration;
 
 pub const ACP_PROTOCOL_VERSION: u16 = 1;
+pub const VERSION_PROBE_LIMIT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AcpAgent {
@@ -24,6 +26,26 @@ pub fn parse_agent_version(output: &str) -> Option<&str> {
     let token = output.split_whitespace().next()?;
     let version = token.split('-').next()?;
     version.chars().next()?.is_ascii_digit().then_some(version)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VersionProbe {
+    Exited(String),
+    TimedOut,
+    Failed(String),
+}
+
+pub fn probed_version<'a>(agent: &AcpAgent, probe: &'a VersionProbe) -> Result<&'a str, String> {
+    let command = agent.command;
+    match probe {
+        VersionProbe::Exited(output) => parse_agent_version(output)
+            .ok_or_else(|| format!("could not read the version from `{command} --version`")),
+        VersionProbe::TimedOut => Err(format!(
+            "`{command} --version` did not answer within {}s",
+            VERSION_PROBE_LIMIT.as_secs()
+        )),
+        VersionProbe::Failed(error) => Err(format!("could not run `{command} --version`: {error}")),
+    }
 }
 
 pub fn version_warning(
@@ -148,6 +170,27 @@ mod tests {
         );
         assert_eq!(parse_agent_version("error: nope"), None);
         assert_eq!(parse_agent_version(""), None);
+    }
+
+    #[test]
+    fn a_version_probe_names_why_it_has_no_version() {
+        let probe = |probe| probed_version(&CURSOR_AGENT, &probe).map(str::to_string);
+        assert_eq!(
+            probe(VersionProbe::Exited("2026.10.14-0f9edde\n".into())),
+            Ok("2026.10.14".to_string())
+        );
+        assert_eq!(
+            probe(VersionProbe::Exited(String::new())),
+            Err("could not read the version from `agent --version`".to_string())
+        );
+        assert_eq!(
+            probe(VersionProbe::TimedOut),
+            Err("`agent --version` did not answer within 10s".to_string())
+        );
+        assert_eq!(
+            probe(VersionProbe::Failed("No such file or directory".into())),
+            Err("could not run `agent --version`: No such file or directory".to_string())
+        );
     }
 
     #[test]

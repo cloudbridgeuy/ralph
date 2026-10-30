@@ -1,15 +1,19 @@
 use super::*;
+use crate::subprocess::kill_process_group;
 use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
-    cancel_check, cursor_verify_leftover, cursor_verify_project, parse_agent_version,
-    permission_check, prompt_check, BlockedContent, CheckResult, PermissionSetup, TurnSummary,
-    ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
+    cancel_check, cursor_verify_leftover, cursor_verify_project, permission_check, probed_version,
+    prompt_check, BlockedContent, CheckResult, PermissionSetup, TurnSummary, ACP_PROTOCOL_VERSION,
+    AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS, VERSION_PROBE_LIMIT,
 };
+use std::io::Read;
+use std::os::unix::process::CommandExt;
 use std::sync::atomic::AtomicUsize;
 
 const FREE_DEADLINE: Duration = Duration::from_secs(90);
 const LIVE_DEADLINE: Duration = Duration::from_secs(420);
 const KILL_GRACE: Duration = Duration::from_millis(200);
+const VERSION_POLL: Duration = Duration::from_millis(25);
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
 const PERMISSION_PROMPT: &str = "Run the shell command `date +%Y` and reply with its output.";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
@@ -210,6 +214,49 @@ async fn run_checks(
     Ok(())
 }
 
+pub(super) fn agent_version_probe(agent: &AcpAgent) -> VersionProbe {
+    let spawned = Command::new(agent.command)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(error) => return VersionProbe::Failed(error.to_string()),
+    };
+    let Some(mut stdout) = child.stdout.take() else {
+        kill_process_group(&mut child);
+        return VersionProbe::Failed("no stdout".to_string());
+    };
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut text = String::new();
+        let _ = sender.send(stdout.read_to_string(&mut text).map(|_| text));
+    });
+    let deadline = Instant::now() + VERSION_PROBE_LIMIT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => thread::sleep(VERSION_POLL),
+            Ok(None) => {
+                kill_process_group(&mut child);
+                return VersionProbe::TimedOut;
+            }
+            Err(error) => {
+                kill_process_group(&mut child);
+                return VersionProbe::Failed(error.to_string());
+            }
+        }
+    }
+    match receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(Ok(text)) => VersionProbe::Exited(text),
+        Ok(Err(error)) => VersionProbe::Failed(error.to_string()),
+        Err(_) => VersionProbe::TimedOut,
+    }
+}
+
 fn watchdog(group: u32, deadline: Duration) -> mpsc::Sender<()> {
     let (done, waiting) = mpsc::channel();
     thread::spawn(move || {
@@ -222,22 +269,13 @@ fn watchdog(group: u32, deadline: Duration) -> mpsc::Sender<()> {
 
 pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> {
     let agent = CURSOR_AGENT;
-    let output = agent_version_output(&agent);
-    let version = output
-        .as_deref()
-        .and_then(parse_agent_version)
-        .map(str::to_string);
-    step(
+    let probe = agent_version_probe(&agent);
+    let version = Some(step(
         checks,
         "version",
-        version.clone().ok_or_else(|| {
-            format!(
-                "could not read the version from `{} --version`",
-                agent.command
-            )
-        }),
+        probed_version(&agent, &probe).map(str::to_string),
         |version| format!("{version} (tested {})", agent.tested_version),
-    )?;
+    )?);
     let Some(home) = dirs::home_dir() else {
         checks.add(CheckResult::fail(
             "hooks",
