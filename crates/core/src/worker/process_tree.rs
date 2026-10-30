@@ -10,6 +10,36 @@ pub fn parse_ps(output: &str) -> Vec<(u32, u32)> {
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupRow {
+    pub pid: u32,
+    pub ppid: u32,
+    pub pgid: u32,
+    pub command: String,
+}
+
+pub fn parse_group_rows(output: &str) -> Vec<GroupRow> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut rest = line.trim_start();
+            let mut number = || {
+                let (field, tail) = rest.split_once(char::is_whitespace)?;
+                rest = tail.trim_start();
+                field.parse().ok()
+            };
+            let (pid, ppid, pgid) = (number()?, number()?, number()?);
+            let command = rest.trim_end().to_string();
+            Some(GroupRow {
+                pid,
+                ppid,
+                pgid,
+                command,
+            })
+        })
+        .collect()
+}
+
 pub fn descendants(rows: &[(u32, u32)], root: u32) -> Vec<u32> {
     let mut found = vec![root];
     let mut next = 0;
@@ -66,6 +96,21 @@ mod tests {
     fn descendants_survive_a_parent_cycle() {
         let rows = vec![(2, 1), (3, 2), (2, 3)];
         assert_eq!(descendants(&rows, 1), vec![2, 3]);
+    }
+
+    #[test]
+    fn parse_group_rows_keeps_the_whole_command() {
+        let rows =
+            parse_group_rows("  45373     1 44233 /v/node /v/index.js worker-server\nbogus\n");
+        assert_eq!(
+            rows,
+            vec![GroupRow {
+                pid: 45373,
+                ppid: 1,
+                pgid: 44233,
+                command: "/v/node /v/index.js worker-server".to_string(),
+            }]
+        );
     }
 
     #[test]

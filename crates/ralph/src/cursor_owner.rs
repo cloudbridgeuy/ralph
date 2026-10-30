@@ -1,9 +1,10 @@
+use crate::process_tree::group_table;
 use crate::transport::stdio::stop_group;
 use crate::warn::warn;
 use ralph_core::worker::{
-    agent_held, caller_owns_worker, interrupt_result_text, sweep_decision, HandoffFiles,
-    OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
-    CURSOR_SESSION_DIR,
+    agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
+    sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep, CODEX_OWNER_DIR,
+    CODEX_SESSION_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -120,12 +121,16 @@ fn owner_facts(owner: &Path) -> Option<(Option<OwnerRecord>, OwnerFacts)> {
         .is_some_and(|r| alive_since(r.chat_pid, &r.chat_start));
     let facts = OwnerFacts {
         chat_alive,
-        group_alive: record
-            .as_ref()
-            .is_some_and(|r| alive_since(r.group, &r.group_start)),
+        group_alive: record.as_ref().is_some_and(group_alive),
         mine: chat_alive && record.as_ref().is_some_and(|r| r.chat_pid == process::id()),
     };
     Some((record, facts))
+}
+
+fn group_alive(record: &OwnerRecord) -> bool {
+    let leader = process_start(record.group);
+    let reclaimable = leader.is_none() && cursor_group_reclaimable(&group_table(), record.group);
+    group_live(leader.as_deref(), &record.group_start, reclaimable)
 }
 
 pub fn sweep_owner(files: &HandoffFiles) -> Option<Sweep> {

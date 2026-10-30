@@ -1,5 +1,7 @@
 use crate::cursor_owner::{process_start, TERM_GRACE, TERM_POLL};
-use ralph_core::worker::{descendants, parse_ps, still_running, Tracked};
+use ralph_core::worker::{
+    descendants, parse_group_rows, parse_ps, still_running, GroupRow, Tracked,
+};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Instant;
@@ -11,6 +13,16 @@ pub(crate) fn process_table() -> Vec<(u32, u32)> {
         .stderr(Stdio::null())
         .output()
         .map(|output| parse_ps(&String::from_utf8_lossy(&output.stdout)))
+        .unwrap_or_default()
+}
+
+pub(crate) fn group_table() -> Vec<GroupRow> {
+    Command::new("ps")
+        .args(["-axo", "pid=,ppid=,pgid=,command="])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|output| parse_group_rows(&String::from_utf8_lossy(&output.stdout)))
         .unwrap_or_default()
 }
 
