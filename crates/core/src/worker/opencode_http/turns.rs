@@ -118,7 +118,8 @@ impl TurnState {
             return vec![Effect::Send(self.prompt.clone())];
         }
         self.retries = 0;
-        let requested = std::mem::take(&mut self.interrupt_requested);
+        let requested =
+            std::mem::take(&mut self.interrupt_requested) && matches!(end, TurnEnd::Interrupted);
         let dropped = matches!(end, TurnEnd::Interrupted)
             && !facts.closing
             && !std::mem::take(&mut self.blocked).is_empty();
@@ -402,6 +403,18 @@ mod tests {
             Vec::new()
         );
         assert!(!state.in_flight);
+    }
+
+    #[test]
+    fn stale_interrupt_request_does_not_cancel_a_finished_turn() {
+        let mut state = TurnState::default();
+        state.prompted("x");
+        state.interrupt_requested = true;
+        assert_eq!(
+            ended(&mut state, TurnEnd::Succeeded, facts()),
+            vec![Effect::Snapshot, Effect::Send(REPORT_REMINDER.to_string())]
+        );
+        assert!(!state.interrupt_requested);
     }
 
     #[test]
