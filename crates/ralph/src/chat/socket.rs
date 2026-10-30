@@ -588,6 +588,24 @@ mod tests {
     }
 
     #[test]
+    fn bound_socket_serves_workers_from_the_roster_without_a_pending_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = ChatSocket::bind(dir.path()).unwrap();
+        let path = socket.path().to_path_buf();
+        let files = socket.files().clone();
+        socket.serve(
+            Store::new(dir.path().to_path_buf()),
+            workers(),
+            SuggestionSlot::default(),
+            || "stub roster".to_string(),
+        );
+        let response = forward(&path, &request("workers", json!({}))).unwrap();
+        assert!(!response.is_error);
+        assert_eq!(response.text, "stub roster");
+        files.remove();
+    }
+
+    #[test]
     fn bind_sweeps_stale_sockets() {
         let dir = tempfile::tempdir().unwrap();
         let own_pid = process::id();
