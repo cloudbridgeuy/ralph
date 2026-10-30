@@ -43,6 +43,7 @@ pub struct TurnState {
     pub retries: u32,
     pub prompt: String,
     pub blocked: VecDeque<PermissionAsked>,
+    pub interrupt_requested: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,15 +118,19 @@ impl TurnState {
             return vec![Effect::Send(self.prompt.clone())];
         }
         self.retries = 0;
+        let requested = std::mem::take(&mut self.interrupt_requested);
+        let dropped = matches!(end, TurnEnd::Interrupted)
+            && !facts.closing
+            && !std::mem::take(&mut self.blocked).is_empty();
         let outcome = turn_outcome(
             turn_stop(end),
             facts.reported,
             self.reminded,
             facts.closing,
-            false,
+            requested,
         );
         self.reminded = outcome == TurnOutcome::Remind;
-        match outcome {
+        let effects = match outcome {
             TurnOutcome::Remind => {
                 self.in_flight = true;
                 self.prompt = REPORT_REMINDER.to_string();
@@ -135,13 +140,14 @@ impl TurnState {
             TurnOutcome::Problem(problem) | TurnOutcome::Stopped(problem) => {
                 vec![Effect::Problem(problem)]
             }
-            TurnOutcome::Cancelled => {
-                self.blocked.clear();
-                vec![Effect::Publish(None)]
-            }
             TurnOutcome::Reported => vec![Effect::ClearReported],
-            TurnOutcome::Closed => Vec::new(),
-        }
+            TurnOutcome::Cancelled | TurnOutcome::Closed => Vec::new(),
+        };
+        dropped
+            .then_some(Effect::Publish(None))
+            .into_iter()
+            .chain(effects)
+            .collect()
     }
 }
 
@@ -399,14 +405,30 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_turn_drops_pending_permissions() {
+    fn requested_interrupt_drops_pending_permissions_without_a_reminder() {
         let mut state = TurnState::default();
         advance(&mut state, SessionUpdate::Blocked(asked()), facts());
+        state.interrupt_requested = true;
         assert_eq!(
             ended(&mut state, TurnEnd::Interrupted, facts()),
             vec![Effect::Snapshot, Effect::Publish(None)]
         );
-        assert!(state.blocked.is_empty());
+        assert!(state.blocked.is_empty() && !state.interrupt_requested);
+    }
+
+    #[test]
+    fn unrequested_interrupt_drops_pending_permissions_and_reminds() {
+        let mut state = TurnState::default();
+        advance(&mut state, SessionUpdate::Blocked(asked()), facts());
+        assert_eq!(
+            ended(&mut state, TurnEnd::Interrupted, facts()),
+            vec![
+                Effect::Snapshot,
+                Effect::Publish(None),
+                Effect::Send(REPORT_REMINDER.to_string())
+            ]
+        );
+        assert!(state.blocked.is_empty() && state.reminded);
     }
 
     #[test]

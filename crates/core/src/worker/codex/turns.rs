@@ -223,7 +223,7 @@ impl Turns {
             self.reported,
             text == REPORT_REMINDER,
             closing,
-            cancelled,
+            cancelled && self.interrupt_sent,
         );
         let mut actions = Vec::new();
         if !closing {
@@ -381,6 +381,14 @@ mod tests {
         turns.accept("again".into());
         let closing = turns.signal(done(), true);
         assert!(!closing.contains(&Action::Snapshot));
+    }
+
+    #[test]
+    fn an_unrequested_interrupted_turn_gets_the_reminder() {
+        let mut turns = Turns::default();
+        turns.accept("task".into());
+        let ended = turns.signal(ThreadSignal::TurnEnded(TurnEnd::Interrupted), false);
+        assert_eq!(starts(&ended), [REPORT_REMINDER]);
     }
 
     #[test]
