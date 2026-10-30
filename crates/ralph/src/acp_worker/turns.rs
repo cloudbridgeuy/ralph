@@ -132,9 +132,7 @@ pub(super) async fn run_turns(
             interrupted,
         );
         match outcome {
-            TurnOutcome::Remind => {
-                queue.accept(Inbound::Prompt(REPORT_REMINDER.to_string()));
-            }
+            TurnOutcome::Remind => queue.remind(),
             TurnOutcome::Unreported => {
                 write_file(&turns.markers.unreported, "").ok();
                 write_file(&turns.markers.waiting, "").ok();

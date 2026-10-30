@@ -1,5 +1,5 @@
 use super::REPORT_TOOL;
-use crate::worker::{Report, ReportStatus, SERVER_NAME, WORKER_PROMPT};
+use crate::worker::{Report, ReportStatus, REPORT_REMINDER, SERVER_NAME, WORKER_PROMPT};
 use serde_json::Value;
 use std::collections::VecDeque;
 
@@ -57,6 +57,12 @@ impl PromptQueue {
                     vec![Step::CancelPermissions]
                 }
             }
+        }
+    }
+
+    pub fn remind(&mut self) {
+        if !self.pending.iter().any(|text| text == REPORT_REMINDER) {
+            self.pending.push_back(REPORT_REMINDER.to_string());
         }
     }
 
@@ -157,6 +163,17 @@ mod tests {
     use super::super::CURSOR_AGENT;
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn remind_queues_at_most_one_reminder() {
+        let mut queue = PromptQueue::default();
+        queue.accept(Inbound::Prompt("next".into()));
+        queue.remind();
+        queue.remind();
+        assert_eq!(queue.start().as_deref(), Some("next"));
+        assert_eq!(queue.start().as_deref(), Some(REPORT_REMINDER));
+        assert_eq!(queue.start(), None);
+    }
 
     #[test]
     fn prompt_entries_sort_in_arrival_order() {

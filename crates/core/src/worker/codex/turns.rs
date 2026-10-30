@@ -233,8 +233,7 @@ impl Turns {
         actions.extend(self.resolve_interrupts(cancelled));
         match outcome {
             TurnOutcome::Remind => {
-                self.queue
-                    .accept(Inbound::Prompt(REPORT_REMINDER.to_string()));
+                self.queue.remind();
             }
             TurnOutcome::Unreported => actions.push(Action::MarkUnreported),
             TurnOutcome::Problem(problem) => actions.push(Action::PostFailure(problem)),
@@ -381,6 +380,18 @@ mod tests {
         turns.accept("again".into());
         let closing = turns.signal(done(), true);
         assert!(!closing.contains(&Action::Snapshot));
+    }
+
+    #[test]
+    fn a_reminder_behind_a_queued_prompt_is_not_queued_twice() {
+        let mut turns = Turns::default();
+        turns.accept("one".into());
+        turns.accept("two".into());
+        assert!(starts(&turns.signal(done(), false)).contains(&"two"));
+        assert!(starts(&turns.signal(done(), false)).contains(&REPORT_REMINDER));
+        let last = turns.signal(done(), false);
+        assert!(last.contains(&Action::MarkUnreported));
+        assert!(starts(&last).is_empty());
     }
 
     #[test]
