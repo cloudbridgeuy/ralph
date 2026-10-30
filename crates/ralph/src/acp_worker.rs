@@ -2,7 +2,7 @@ use crate::acp_log::{drain_stderr, CappedLog, LoggedRead, LoggedWrite};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::request_ids;
 use crate::cursor_owner::{
-    now_secs, report_start_warning, sweep_owner, write_file, write_file_atomic,
+    now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_file_atomic,
     write_interrupt_result, write_owner_record,
 };
 use crate::subprocess::{exited_unreaped, signal_group};
@@ -719,20 +719,14 @@ impl CursorHost {
     }
 
     fn answer(&self, id: &str) {
-        let files = self.files(id);
-        let Ok(text) = fs::read_to_string(&files.answer) else {
-            return;
-        };
-        let result = PermissionAnswer::decode(&text).and_then(|answer| {
-            self.workers()
-                .get_mut(id)
-                .ok_or_else(|| format!("worker has no running {} agent", CURSOR_AGENT.name))
-                .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
+        take_answer(&self.files(id), |text| {
+            PermissionAnswer::decode(text).and_then(|answer| {
+                self.workers()
+                    .get_mut(id)
+                    .ok_or_else(|| format!("worker has no running {} agent", CURSOR_AGENT.name))
+                    .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
+            })
         });
-        if let Err(message) = result {
-            write_file(&files.error, &message).ok();
-        }
-        fs::remove_file(&files.answer).ok();
     }
 
     fn prompt(

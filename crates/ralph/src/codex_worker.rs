@@ -4,7 +4,7 @@ use crate::codex_usage::CodexUsage;
 use crate::config::{configured_codex, configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
     claim_owner, now_secs, queued_entries, report_start_warning, request_ids, sweep_owner,
-    write_file, write_interrupt_result, write_owner_record,
+    take_answer, write_file, write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
@@ -832,20 +832,14 @@ impl CodexHost {
     }
 
     fn answer(&self, id: &str) {
-        let files = self.files(id);
-        let Ok(text) = fs::read_to_string(&files.answer) else {
-            return;
-        };
-        let result = PermissionAnswer::decode(&text).and_then(|answer| {
-            locked(&self.workers)
-                .get_mut(id)
-                .ok_or_else(|| "worker has no running codex agent".to_string())
-                .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
+        take_answer(&self.files(id), |text| {
+            PermissionAnswer::decode(text).and_then(|answer| {
+                locked(&self.workers)
+                    .get_mut(id)
+                    .ok_or_else(|| "worker has no running codex agent".to_string())
+                    .and_then(|worker| worker.send(WorkerCommand::AnswerPermission(answer)))
+            })
         });
-        if let Err(message) = result {
-            write_file(&files.error, &message).ok();
-        }
-        fs::remove_file(&files.answer).ok();
     }
 
     fn deliver_queued(

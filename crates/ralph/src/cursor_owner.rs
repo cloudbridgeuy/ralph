@@ -245,6 +245,18 @@ pub(crate) fn request_ids(store_dir: &Path, dir: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+pub(crate) fn take_answer(files: &HandoffFiles, handle: impl FnOnce(&str) -> Result<(), String>) {
+    if fs::rename(&files.answer, &files.claim).is_err() {
+        return;
+    }
+    if let Ok(text) = fs::read_to_string(&files.claim) {
+        if let Err(message) = handle(&text) {
+            write_file(&files.error, &message).ok();
+        }
+    }
+    fs::remove_file(&files.claim).ok();
+}
+
 pub(crate) fn queued_entries(dir: &Path) -> Vec<PathBuf> {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)
         .map(|dir| {
@@ -306,5 +318,30 @@ mod tests {
         let record = OwnerRecord::parse(&fs::read_to_string(&owner).unwrap()).unwrap();
         assert_eq!(record.chat_pid, process::id());
         assert_eq!(fs::read_dir(store.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn taking_an_answer_claims_it_runs_the_handler_and_reports_its_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = HandoffFiles::codex(dir.path(), "A");
+        let mut calls = 0;
+        take_answer(&files, |_| {
+            calls += 1;
+            Ok(())
+        });
+        assert_eq!(calls, 0);
+        write_file(&files.answer, "body").unwrap();
+        let mut seen = None;
+        take_answer(&files, |text| {
+            seen = Some((
+                text.to_string(),
+                files.answer.exists(),
+                files.claim.exists(),
+            ));
+            Err("stale request".to_string())
+        });
+        assert_eq!(seen, Some(("body".to_string(), false, true)));
+        assert_eq!(fs::read_to_string(&files.error).unwrap(), "stale request");
+        assert!(!files.answer.exists() && !files.claim.exists());
     }
 }

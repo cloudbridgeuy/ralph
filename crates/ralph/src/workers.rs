@@ -25,7 +25,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command, Output, Stdio};
 use std::thread;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod guard;
 pub(crate) mod headless;
@@ -39,6 +39,7 @@ pub struct Workers {
     exe: PathBuf,
     permission_mode: String,
     worktree_dir: Option<String>,
+    handoff_timeout: Duration,
 }
 
 impl Workers {
@@ -53,6 +54,7 @@ impl Workers {
             exe,
             permission_mode,
             worktree_dir,
+            handoff_timeout: HANDOFF_TIMEOUT,
         }
     }
 
