@@ -249,10 +249,12 @@ pub(crate) fn take_answer(files: &HandoffFiles, handle: impl FnOnce(&str) -> Res
     if fs::rename(&files.answer, &files.claim).is_err() {
         return;
     }
-    if let Ok(text) = fs::read_to_string(&files.claim) {
-        if let Err(message) = handle(&text) {
-            write_file(&files.error, &message).ok();
-        }
+    let outcome = match fs::read_to_string(&files.claim) {
+        Ok(text) => handle(&text),
+        Err(error) => Err(format!("could not read the permission answer: {error}")),
+    };
+    if let Err(message) = outcome {
+        write_file(&files.error, &message).ok();
     }
     fs::remove_file(&files.claim).ok();
 }
@@ -343,5 +345,24 @@ mod tests {
         assert_eq!(seen, Some(("body".to_string(), false, true)));
         assert_eq!(fs::read_to_string(&files.error).unwrap(), "stale request");
         assert!(!files.answer.exists() && !files.claim.exists());
+    }
+
+    #[test]
+    fn an_unreadable_claim_writes_an_error_instead_of_reporting_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = HandoffFiles::opencode(dir.path(), "A");
+        fs::create_dir_all(&files.answer).unwrap();
+        let mut called = false;
+        take_answer(&files, |_| {
+            called = true;
+            Ok(())
+        });
+        assert!(!called);
+        let error = fs::read_to_string(&files.error).unwrap_or_default();
+        assert!(
+            error.starts_with("could not read the permission answer: "),
+            "error file was {error:?}"
+        );
+        assert!(!files.answer.exists());
     }
 }

@@ -1,6 +1,6 @@
 use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::config::AppConfig;
-use crate::cursor_owner::{now_secs, process_start, write_file};
+use crate::cursor_owner::{now_secs, process_start, request_ids, write_file};
 use crate::opencode_usage::{record_opencode_usage, OpencodeTurn};
 use crate::process_tree::process_table;
 use crate::transport::http::HttpSse;
@@ -854,8 +854,15 @@ fn post_problem(target: &Target, problem: &str) {
     Inbox::new(target.inbox.clone()).post(&report, 0).ok();
 }
 
+fn clear_claims(store: &Path) {
+    for id in request_ids(store, OPENCODE_SESSION_DIR) {
+        fs::remove_file(HandoffFiles::opencode(store, &id).claim).ok();
+    }
+}
+
 impl HeadlessHost for OpencodeHost {
     fn resume(&self) {
+        clear_claims(&self.store_dir);
         self.supervise();
     }
 
@@ -884,6 +891,22 @@ mod tests {
             inbox: PathBuf::from(inbox),
         }
         .render()
+    }
+
+    #[test]
+    fn a_claim_left_by_a_dead_chat_is_cleared_on_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = dir.path().join(OPENCODE_SESSION_DIR);
+        fs::create_dir_all(&session).unwrap();
+        fs::write(session.join("A"), record("ses_a", "/i")).unwrap();
+        let files = HandoffFiles::opencode(dir.path(), "A");
+        fs::write(&files.claim, "{}").unwrap();
+        let other = HandoffFiles::opencode(dir.path(), "B");
+        fs::write(&other.claim, "{}").unwrap();
+        clear_claims(dir.path());
+        assert!(!files.claim.exists());
+        assert!(other.claim.exists());
+        assert!(session.join("A").exists());
     }
 
     #[test]

@@ -155,7 +155,6 @@ mod tests {
     use super::*;
     use crate::cursor_owner::take_answer;
     use ralph_core::worker::{blocked_path, HANDOFF_TIMEOUT};
-    use std::time::Duration;
 
     #[test]
     fn a_permission_answer_carries_its_request_id_to_the_host() {
