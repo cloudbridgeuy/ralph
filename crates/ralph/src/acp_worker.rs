@@ -5,6 +5,7 @@ use crate::cursor_owner::{
     now_secs, report_start_warning, sweep_owner, write_file, write_interrupt_result,
     write_owner_record,
 };
+use crate::subprocess::{exited_unreaped, signal_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::verified_agents;
 use crate::warn::warn;
@@ -459,6 +460,10 @@ impl AcpWorker {
         if self.done || self.exit_seen {
             return;
         }
+        if !exited_unreaped(&self.child) {
+            return;
+        }
+        signal_group(&self.child);
         if let Ok(Some(status)) = self.child.try_wait() {
             self.exit_seen = true;
             if !self.closing.load(Ordering::SeqCst) {
@@ -482,7 +487,9 @@ impl AcpWorker {
         self.finished
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .ok();
-        stop_child(&mut self.child);
+        if !self.exit_seen {
+            stop_child(&mut self.child);
+        }
         fs::remove_file(&self.owner).ok();
     }
 

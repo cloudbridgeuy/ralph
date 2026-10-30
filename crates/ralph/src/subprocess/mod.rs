@@ -38,7 +38,7 @@ pub(crate) fn kill_process_group(child: &mut Child) {
 /// Sends SIGKILL to the child's process group. Call it only before the child
 /// is reaped: until then the child (or its zombie) holds the pid, so the
 /// group id cannot belong to another process.
-pub(super) fn signal_group(child: &Child) {
+pub(crate) fn signal_group(child: &Child) {
     let pid = child.id() as libc::pid_t;
     // Safety: killpg sends a signal to a process group. The pid is valid
     // because we just obtained it from the child process.
@@ -47,7 +47,7 @@ pub(super) fn signal_group(child: &Child) {
 
 /// Reports whether the child has exited, without reaping it. An error also
 /// counts as exited, so callers stop waiting and reap.
-pub(super) fn exited_unreaped(child: &Child) -> bool {
+pub(crate) fn exited_unreaped(child: &Child) -> bool {
     // Safety: an all-zero siginfo_t is a valid out-parameter for waitid.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     // Safety: waitid only writes to `info`. WNOWAIT leaves the child

@@ -27,7 +27,7 @@ The shell discovers running kinds from tagged tmux sessions, this chat's Cursor 
 | --- | --- | --- |
 | `resume(&self)` | Resume persisted workers or supervise shared resources on a dedicated thread | `CursorHost` calls `resume_all` to load eligible ACP session records; `OpencodeHost` runs its server/event supervision loop (its constructor loads session records) |
 | `poll(&self) -> bool` | Process queued worker requests; return false after host shutdown to end the poller | Each host consumes its own handoff directories; opencode also handles preflight requests |
-| `shutdown(&self)` | Stop this host's resources at chat exit, never on an individual close or report | Cursor terminates its owned worker groups, including starts in progress; opencode stops the shared server process group and sweeps tracked descendants |
+| `shutdown(&self)` | Stop this host's resources at chat exit, never on an individual close or report | Cursor terminates its owned worker groups, including starts in progress, and skips a worker whose `agent acp` already exited and was reaped (its group was killed then); opencode stops the shared server process group and sweeps tracked descendants |
 
 `chat::monitor::watch_headless` constructs `HeadlessShutdown` with an `Arc<dyn HeadlessHost>` for each of `CursorHost`, `OpencodeHost` and `CodexHost`. Each host gets a separate resume thread and a separate poll thread, sleeping `HANDOFF_POLL` (250 ms) between polls. Blocking ACP or HTTP handoffs therefore do not hold up the other host or the status/check loop.
 
@@ -117,7 +117,7 @@ Every Cursor, opencode and Codex cell of the capability matrix (`Capabilities::s
 | `model` | Full | [probed] | `composer-2.5` became `session/set_config_option` `composer-2.5[fast=true]`; the model keys of `~/.cursor/cli-config.json` were back to the user's default afterwards |
 | `report` | Full | [probed] | `report` reached the inbox and wrote `reported/<id>` |
 | `close` | Full | [probed] | Model keys are restored when a model is set (`acp_worker/model.rs:34-48`). Close removes `~/.cursor/projects/<slug>` and matching `acp-sessions` (`cursor_cleanup.rs:64-75`). Only Cursor's own `privacyCache.updatedAt` changes (inferred from the 2026-10-22 probe, not re-run) |
-| `heartbeat` | Partial: ACP traffic only; exit seen by polling the child every 250 ms | [probed] | `kill -9` of `agent acp` wrote `gone/<id>` within 1 s and posted one Dead message. Its `worker-server` child stayed alive with parent pid 1 |
+| `heartbeat` | Partial: ACP traffic only; exit seen by polling the child every 250 ms | [probed] | `kill -9` of `agent acp` wrote `gone/<id>` within 1 s and posted one Dead message. Its `worker-server` child stayed alive with parent pid 1. Probe 2026-10-30 (agent 2026.10.22): `worker-server` (`cursor-agent/versions/<v>/node .../index.js`) and the language servers it starts (`npm exec typescript-language-server`, `tsserver.js`, `typingsInstaller.js`) all keep the `agent acp` process group after the leader dies. Since GUZ-836 the host sees the exit with `waitid` `WNOWAIT`, sends SIGKILL to the group while the unreaped leader still holds the pid, then reaps it |
 
 ### opencode probe (opencode 2.0.29, 2026-10-19 and 2026-10-22)
 
