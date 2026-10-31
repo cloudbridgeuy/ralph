@@ -83,7 +83,7 @@ pub fn culprit_path<'a, E: PartialEq>(
         .map_or(fallback, |(path, _)| path)
 }
 
-const SECURITY_KEYS: [&str; 9] = [
+const SECURITY_KEYS: [&str; 14] = [
     "chat.permission_mode",
     "chat.mcp_servers",
     "chat.user_settings",
@@ -93,6 +93,11 @@ const SECURITY_KEYS: [&str; 9] = [
     "codex.permissions",
     "cursor.permissions",
     "claude.permissions",
+    "claude.config_dir",
+    "chat.editor",
+    "chat.user_claude_md",
+    "chat.empty_prompt",
+    "changes.diff_args",
 ];
 
 pub fn security_keys(layer: &Table) -> Vec<&'static str> {
@@ -285,6 +290,36 @@ mod tests {
             let layer = table(&format!("[{section}]\n{leaf} = 1\n"));
             assert_eq!(security_keys(&layer), [key]);
         }
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_claude_config_dir() {
+        let layer = table("[claude]\nconfig_dir = \"/x\"\n");
+        assert_eq!(security_keys(&layer), ["claude.config_dir"]);
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_changes_diff_args() {
+        let layer = table("[changes]\ndiff_args = [\"--stat\"]\n");
+        assert_eq!(security_keys(&layer), ["changes.diff_args"]);
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_chat_empty_prompt() {
+        let layer = table("[chat]\nempty_prompt = \"go on\"\n");
+        assert_eq!(security_keys(&layer), ["chat.empty_prompt"]);
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_chat_user_claude_md() {
+        let layer = table("[chat]\nuser_claude_md = true\n");
+        assert_eq!(security_keys(&layer), ["chat.user_claude_md"]);
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_chat_editor() {
+        let layer = table("[chat]\neditor = [\"vim\"]\n");
+        assert_eq!(security_keys(&layer), ["chat.editor"]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    Action, BlockedContent, PermissionMode, PermissionOption, ThreadSignal, TurnEnd, Turns,
-    VersionGate, SERVER_NAME,
+    Action, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal,
+    TurnEnd, Turns, VersionGate, SERVER_NAME,
 };
 use crate::stream::result_is_error;
 use serde_json::{json, Value};
@@ -36,6 +36,7 @@ pub enum ClaudeLine {
     Signal(ThreadSignal),
     Permission(ClaudePermission),
     Cancel(String),
+    Malformed,
     Other,
 }
 
@@ -43,6 +44,15 @@ pub enum ClaudeLine {
 pub struct ClaudePermission {
     pub input: Value,
     pub content: BlockedContent,
+}
+
+pub fn stuck_permission_report(id: &str, at: &str) -> Report {
+    Report {
+        worker: id.to_string(),
+        at: at.to_string(),
+        status: ReportStatus::Blocked.as_str().to_string(),
+        text: "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it.".to_string(),
+    }
 }
 
 pub fn decode_line(line: &str) -> ClaudeLine {
@@ -56,18 +66,28 @@ pub fn decode_line(line: &str) -> ClaudeLine {
         }
         (Some("result"), _) => ClaudeLine::Signal(ThreadSignal::TurnEnded(turn_end(line, &value))),
         (Some("control_request"), _) if value["request"]["subtype"] == "can_use_tool" => {
-            ClaudeLine::Permission(permission(&value))
+            permission(&value).map_or(ClaudeLine::Malformed, ClaudeLine::Permission)
         }
-        (Some("control_cancel_request"), _) => {
-            ClaudeLine::Cancel(value["request_id"].as_str().unwrap_or_default().to_string())
-        }
+        (Some("control_cancel_request"), _) => control_cancel_request(&value),
         _ => ClaudeLine::Other,
     }
 }
 
-fn permission(control: &Value) -> ClaudePermission {
+fn control_cancel_request(control: &Value) -> ClaudeLine {
+    request_id(control).map_or(ClaudeLine::Other, |id| ClaudeLine::Cancel(id.to_string()))
+}
+
+fn request_id(control: &Value) -> Option<&str> {
+    control["request_id"].as_str().filter(|id| !id.is_empty())
+}
+
+fn permission(control: &Value) -> Option<ClaudePermission> {
     let request = &control["request"];
+    let request_id = request_id(control)?;
     let input = request["input"].clone();
+    if !input.is_object() {
+        return None;
+    }
     let tool = request["tool_name"].as_str().unwrap_or("tool");
     let summary = request["description"]
         .as_str()
@@ -79,12 +99,9 @@ fn permission(control: &Value) -> ClaudePermission {
         name: name.to_string(),
         kind: kind.to_string(),
     };
-    ClaudePermission {
+    Some(ClaudePermission {
         content: BlockedContent {
-            request_id: control["request_id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+            request_id: request_id.to_string(),
             tool: tool.to_string(),
             summary: summary.to_string(),
             options: vec![
@@ -94,7 +111,7 @@ fn permission(control: &Value) -> ClaudePermission {
             pending: Vec::new(),
         },
         input,
-    }
+    })
 }
 
 pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> String {
@@ -105,6 +122,17 @@ pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> 
     };
     json!({"type": "control_response", "response": {"subtype": "success", "request_id": request_id, "response": decision}})
         .to_string()
+}
+
+pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<String> {
+    match mode {
+        PermissionMode::Yolo => Some(permission_response(
+            &ask.content.request_id,
+            ALLOW_ONCE,
+            &ask.input,
+        )),
+        PermissionMode::Ask => None,
+    }
 }
 
 fn init_status(init: &Value) -> Result<String, String> {
@@ -328,6 +356,50 @@ mod tests {
     }
 
     #[test]
+    fn permission_lines_without_a_request_id_or_input_are_malformed() {
+        let malformed = |line: &str| matches!(decode_line(line), ClaudeLine::Malformed);
+        assert!(malformed(&ASK.replace(r#""request_id":"r1","#, "")));
+        assert!(malformed(
+            &ASK.replace(r#""request_id":"r1""#, r#""request_id":"""#)
+        ));
+        assert!(malformed(&ASK.replace(r#""input":{"command":"ls"},"#, "")));
+        assert!(malformed(&ASK.replace(r#"{"command":"ls"}"#, r#""ls""#)));
+        let empty_input = ASK.replace(r#"{"command":"ls"}"#, "{}");
+        assert!(matches!(
+            decode_line(&empty_input),
+            ClaudeLine::Permission(ask) if ask.input == json!({})
+        ));
+    }
+
+    #[test]
+    fn a_cancel_without_a_request_id_is_ignored() {
+        assert_eq!(
+            decode_line(r#"{"type":"control_cancel_request"}"#),
+            ClaudeLine::Other
+        );
+        assert_eq!(
+            decode_line(r#"{"type":"control_cancel_request","request_id":""}"#),
+            ClaudeLine::Other
+        );
+    }
+
+    #[test]
+    fn yolo_answers_allow_once_and_ask_answers_nothing() {
+        let ClaudeLine::Permission(ask) = decode_line(ASK) else {
+            panic!("not a permission request");
+        };
+        let line = auto_answer(PermissionMode::Yolo, &ask).unwrap();
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(answer["response"]["request_id"], "r1");
+        assert_eq!(answer["response"]["response"]["behavior"], "allow");
+        assert_eq!(
+            answer["response"]["response"]["updatedInput"],
+            json!({"command": "ls"})
+        );
+        assert_eq!(auto_answer(PermissionMode::Ask, &ask), None);
+    }
+
+    #[test]
     fn allow_echoes_the_input_without_updated_permissions_and_deny_carries_a_message() {
         let input = json!({"command": "ls"});
         let allow: Value =
@@ -511,5 +583,16 @@ mod tests {
             "claude 2.2.0 is newer than the probed 2.1.314; the stream-json protocol may differ."
         );
         assert!(check_agent_version(&CLAUDE_GATE, "garbage", &verified).is_err());
+    }
+
+    #[test]
+    fn a_stuck_permission_report_blocks_the_worker_with_the_close_hint() {
+        let report = stuck_permission_report("A", "2026-01-01T00:00:00Z");
+        assert_eq!(report.worker, "A");
+        assert_eq!(report.status, "blocked");
+        assert_eq!(
+            report.text,
+            "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
+        );
     }
 }
