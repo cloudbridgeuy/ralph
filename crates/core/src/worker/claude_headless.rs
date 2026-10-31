@@ -119,6 +119,17 @@ pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> 
         .to_string()
 }
 
+pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<String> {
+    match mode {
+        PermissionMode::Yolo => Some(permission_response(
+            &ask.content.request_id,
+            ALLOW_ONCE,
+            &ask.input,
+        )),
+        PermissionMode::Ask => None,
+    }
+}
+
 fn init_status(init: &Value) -> Result<(), String> {
     let Some(servers) = init["mcp_servers"].as_array() else {
         return Ok(());
@@ -334,6 +345,22 @@ mod tests {
             decode_line(r#"{"type":"control_cancel_request","request_id":""}"#),
             ClaudeLine::Other
         );
+    }
+
+    #[test]
+    fn yolo_answers_allow_once_and_ask_answers_nothing() {
+        let ClaudeLine::Permission(ask) = decode_line(ASK) else {
+            panic!("not a permission request");
+        };
+        let line = auto_answer(PermissionMode::Yolo, &ask).unwrap();
+        let answer: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(answer["response"]["request_id"], "r1");
+        assert_eq!(answer["response"]["response"]["behavior"], "allow");
+        assert_eq!(
+            answer["response"]["response"]["updatedInput"],
+            json!({"command": "ls"})
+        );
+        assert_eq!(auto_answer(PermissionMode::Ask, &ask), None);
     }
 
     #[test]

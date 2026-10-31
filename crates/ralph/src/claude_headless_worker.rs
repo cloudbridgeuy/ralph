@@ -16,11 +16,11 @@ use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::{interrupt_line, user_line};
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, bind_started_turn, check_agent_version, claude_headless_args,
-    decode_claude_version, decode_line, gone_path, interrupted_end, permission_response,
-    prompt_failure_report, ready_path, reduce, request_stale, task_prompt, Action, ClaudeLine,
-    ClaudePermission, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer, PermissionMode,
-    SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ALLOW_ONCE,
+    acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
+    claude_headless_args, decode_claude_version, decode_line, gone_path, interrupted_end,
+    permission_response, prompt_failure_report, ready_path, reduce, request_stale, task_prompt,
+    Action, ClaudeLine, ClaudePermission, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer,
+    PermissionMode, SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers,
     ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
     CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
     CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
@@ -100,20 +100,17 @@ impl Shared {
     }
 
     fn ask(&self, ask: ClaudePermission) {
-        let reply = ClaudeReply {
-            request_id: ask.content.request_id.clone(),
-            input: ask.input,
-        };
-        match self.mode {
-            PermissionMode::Yolo => {
-                self.send(&permission_response(
-                    &reply.request_id,
-                    ALLOW_ONCE,
-                    &reply.input,
-                ))
-                .ok();
+        match auto_answer(self.mode, &ask) {
+            Some(line) => {
+                self.send(&line).ok();
             }
-            PermissionMode::Ask => self.permissions.enqueue(reply, ask.content),
+            None => {
+                let reply = ClaudeReply {
+                    request_id: ask.content.request_id.clone(),
+                    input: ask.input,
+                };
+                self.permissions.enqueue(reply, ask.content);
+            }
         }
     }
 
@@ -502,6 +499,7 @@ mod tests {
     const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
 
     struct Run {
+        shared: Shared,
         dir: TempDir,
         events: Vec<WorkerEvent>,
     }
@@ -559,7 +557,11 @@ mod tests {
         let (ready, _) = mpsc::channel();
         shared.read(rx, ready);
         let events = locked(&events).clone();
-        Run { dir, events }
+        Run {
+            shared,
+            dir,
+            events,
+        }
     }
 
     #[test]
@@ -571,5 +573,31 @@ mod tests {
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].status, "blocked");
         assert!(reports[0].text.contains("no request_id"));
+    }
+
+    #[test]
+    fn yolo_answers_at_once_and_never_queues_or_publishes() {
+        let run = run(PermissionMode::Yolo, &[ASK]);
+        assert!(run.permission_events().is_empty());
+        assert!(run.reports().is_empty());
+    }
+
+    #[test]
+    fn a_cancel_settles_by_the_raw_id_after_the_queue_published_the_prefixed_id() {
+        let cancel = r#"{"type":"control_cancel_request","request_id":"r1"}"#;
+        let run = run(PermissionMode::Ask, &[ASK, cancel]);
+        let asked = run.permission_events();
+        assert!(matches!(
+            asked.as_slice(),
+            [WorkerEvent::PermissionAsked(content), WorkerEvent::PermissionSettled]
+                if content.request_id == "p.r1"
+        ));
+        let stale = run
+            .shared
+            .permissions
+            .take_answer("p.r1", "allow_once")
+            .err()
+            .unwrap();
+        assert!(stale.starts_with("stale request"));
     }
 }
