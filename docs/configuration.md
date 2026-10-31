@@ -296,7 +296,7 @@ Codex setup and limits:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `model` | string | unset (claude's own default) | Model name or alias passed as `--model` to Claude workers that `spawn_worker` starts without a `model` |
-| `shell` | `zsh` or `bash` | `zsh` | Login shell that starts Claude workers (`<shell> -lic`) and the spawn preflight checks `claude` in; other values fail `ralph config check`. A store config can set it per store |
+| `shell` | `zsh` or `bash` | `zsh` | Login shell that starts Claude workers (`<shell> -lic`) and the spawn preflight checks `claude` in; a wrong value warns and uses `zsh`, and `ralph config check` reports it as an error. A store config can set it per store |
 | `config_dir` | path | unset (claude uses `~/.claude`) | Folder ralph passes as `CLAUDE_CONFIG_DIR` to every `claude` it starts: chat turns, the memory nap, `ralph ask` and Claude workers. Relative paths are read from the config file's folder; `~` expands to the home directory. A store config can set it per store; `ralph ask` has no `--store`, so only the global key applies to it. `ralph config check` notes a folder that does not exist |
 | `permissions` | `"ask"` or `"yolo"` | `"ask"` | `claude-headless` workers only. `"ask"` spawns claude with `--permission-mode default`, `"yolo"` with `auto`; the worker's own `report` and `set_status` tools never ask. `"yolo"` allows every `can_use_tool` request at once, for that request only (no `updatedPermissions`); `"ask"` waits for the person, but allow rules in the project or user `.claude/settings.json` (under `config_dir` when set) still skip the prompt, because claude sends no `can_use_tool` for them. Read when a worker starts; a wrong value warns and uses `"ask"` |
 
