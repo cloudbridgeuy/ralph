@@ -6,6 +6,7 @@
 use crate::diff_highlight::highlight_with_basic_colors;
 use ralph_core::chunk::{parse_chunks, ChunkType, ParsedChunk};
 use ralph_core::kitty::{split_apc, strip_kitty_apc, Piece, Placement};
+use ralph_core::shell_format::{format_fence, is_shell_fence};
 use termimad::terminal_size;
 
 use super::image::{render_with_markers, ImageBounds};
@@ -168,7 +169,9 @@ fn enhance_tables(rendered: &str) -> String {
 
 /// Render a fenced code block with syntax highlighting.
 ///
-/// Renders code blocks with visible fences.
+/// Renders code blocks with visible fences. Shell fences (`bash`, `sh`, `zsh`, `shell`) are
+/// laid out by `format_fence` and highlighted as `sh`, like a Bash tool call; only the display
+/// changes.
 ///
 /// # Arguments
 ///
@@ -188,6 +191,14 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
             return format!("{opening_fence}\n{diagram}\n```");
         }
     }
+
+    let formatted = (is_shell_fence(language) && !content.contains('\x1b'))
+        .then(|| format_fence(content, ctx.width))
+        .flatten();
+    let (content, language) = match formatted.as_deref() {
+        Some(formatted) => (formatted, Some("sh")),
+        None => (content, language),
+    };
 
     let highlight = |text: &str| {
         if ctx.terminal {
@@ -641,5 +652,55 @@ changed in worker GUZ-628 during turn 6
         let chunk = ParsedChunk::directive("Review please", "ask", "reviewer");
         let result = render_text_block(&ctx, &chunk, Some(&skin));
         assert!(result.is_empty());
+    }
+
+    fn fence_body(fence: &str) -> &str {
+        let body = fence.split_once('\n').unwrap().1;
+        body.strip_suffix("\n```").unwrap()
+    }
+
+    fn bash_tool_body(output: &str) -> &str {
+        let body = output.split_once("```sh\n").unwrap().1;
+        body.strip_suffix("```\n").unwrap().trim_end_matches('\n')
+    }
+
+    #[test]
+    fn bash_fence_renders_like_bash_tool_call() {
+        let (highlighter, _) = create_test_context();
+        for terminal in [false, true] {
+            let mut ctx = RenderContext::new(&highlighter, terminal);
+            ctx.width = 5;
+            ctx.images = None;
+            let fence = render_code_block(&ctx, "a && b | c", Some("bash"));
+            let tool = crate::render::render_bash_invocation(&ctx, "a && b | c");
+            assert!(fence.starts_with("```bash\n"), "{fence:?}");
+            assert_eq!(fence_body(&fence), bash_tool_body(&tool), "{terminal}");
+        }
+    }
+
+    #[test]
+    fn shell_fence_keeps_semicolon_but_bash_tool_does_not() {
+        let (highlighter, _) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let fence = render_code_block(&ctx, "a; b", Some("sh"));
+        assert_eq!(fence, "```sh\na;\nb\n```");
+        let tool = crate::render::render_bash_invocation(&ctx, "a; b");
+        assert_eq!(tool, "> Bash\n```sh\na\nb\n```\n");
+    }
+
+    #[test]
+    fn unparsable_shell_fence_is_unchanged() {
+        let (highlighter, _) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let fence = render_code_block(&ctx, "a ||", Some("zsh"));
+        assert_eq!(fence, "```zsh\na ||\n```");
+    }
+
+    #[test]
+    fn non_shell_fence_is_unchanged() {
+        let (highlighter, _) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let fence = render_code_block(&ctx, "a; b", Some("rust"));
+        assert_eq!(fence, "```rust\na; b\n```");
     }
 }
