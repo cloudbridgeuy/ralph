@@ -2,19 +2,24 @@ const INDENT: usize = 2;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Sep {
+    None,
     Semi,
     And,
     Or,
     Background,
+    Pipe,
 }
 
 impl Sep {
-    fn suffix(self) -> &'static str {
+    fn suffix(self, fence: bool) -> &'static str {
         match self {
+            Sep::None => "",
+            Sep::Semi if fence => ";",
             Sep::Semi => "",
             Sep::And => " &&",
             Sep::Or => " ||",
             Sep::Background => " &",
+            Sep::Pipe => " |",
         }
     }
 
@@ -96,11 +101,11 @@ impl Scanner {
         if self.current.trim().is_empty() && self.stages.is_empty() {
             let last = self.segments.last()?;
             return match last.sep {
-                Sep::Semi | Sep::Background => Some(self.segments),
+                Sep::None | Sep::Semi | Sep::Background | Sep::Pipe => Some(self.segments),
                 Sep::And | Sep::Or => None,
             };
         }
-        self.end_segment(Sep::Semi)?;
+        self.end_segment(Sep::None)?;
         Some(self.segments)
     }
 }
@@ -312,6 +317,7 @@ struct Layout {
     stack: Vec<Block>,
     header_open: bool,
     width: usize,
+    fence: bool,
 }
 
 impl Layout {
@@ -320,13 +326,19 @@ impl Layout {
     }
 
     fn push_line(&mut self, indent: usize, text: &str, sep: Sep) {
-        self.lines
-            .push(format!("{}{}{}", " ".repeat(indent), text, sep.suffix()));
+        self.lines.push(format!(
+            "{}{}{}",
+            " ".repeat(indent),
+            text,
+            sep.suffix(self.fence)
+        ));
     }
 
     fn push_stage(&mut self, indent: usize, prefix: &str, stage: &Stage, sep: Sep) {
-        let total =
-            indent + prefix.chars().count() + stage.text.chars().count() + sep.suffix().len();
+        let total = indent
+            + prefix.chars().count()
+            + stage.text.chars().count()
+            + sep.suffix(self.fence).len();
         if total <= self.width || stage.flags.is_empty() {
             self.push_line(indent, &format!("{prefix}{}", stage.text), sep);
             return;
@@ -335,9 +347,9 @@ impl Layout {
         for &end in &stage.flags {
             let text = &stage.text[start..end - 1];
             if start == 0 {
-                self.push_line(indent, &format!("{prefix}{text} \\"), Sep::Semi);
+                self.push_line(indent, &format!("{prefix}{text} \\"), Sep::None);
             } else {
-                self.push_line(indent + INDENT, &format!("{text} \\"), Sep::Semi);
+                self.push_line(indent + INDENT, &format!("{text} \\"), Sep::None);
             }
             start = end;
         }
@@ -352,18 +364,22 @@ impl Layout {
         };
         let indent = base + if chain { INDENT } else { 0 };
         let joined = join_stages(stages);
-        let total = indent + joined.chars().count() + sep.suffix().chars().count();
+        let total = indent + joined.chars().count() + sep.suffix(self.fence).chars().count();
         if stages.len() > 1 && total > self.width {
             for (index, stage) in stages.iter().enumerate() {
                 let (indent, prefix) = if index == 0 {
                     (indent, "")
+                } else if self.fence {
+                    (indent + INDENT, "")
                 } else {
                     (indent + INDENT, "| ")
                 };
                 let suffix = if index + 1 == stages.len() {
                     sep
+                } else if self.fence {
+                    Sep::Pipe
                 } else {
-                    Sep::Semi
+                    Sep::None
                 };
                 self.push_stage(indent, prefix, stage, suffix);
             }
@@ -414,14 +430,15 @@ impl Layout {
                     if !self.header_open || self.stack.last() != Some(&expected) {
                         return None;
                     }
-                    self.lines.last_mut()?.push_str(&format!("; {word}"));
+                    let joiner = if self.fence { " " } else { "; " };
+                    self.lines.last_mut()?.push_str(&format!("{joiner}{word}"));
                     self.header_open = false;
                 }
                 Keyword::Else => {
                     if self.stack.last() != Some(&Block::If) {
                         return None;
                     }
-                    self.push_line(INDENT * (self.stack.len() - 1), "else", Sep::Semi);
+                    self.push_line(INDENT * (self.stack.len() - 1), "else", Sep::None);
                     self.header_open = false;
                 }
                 Keyword::Done | Keyword::Fi => {
@@ -451,9 +468,10 @@ impl Layout {
                 if stages.len() > 1 {
                     return None;
                 }
-                if seg.sep != Sep::Semi {
+                if !matches!(seg.sep, Sep::None | Sep::Semi) {
                     return None;
                 }
+                self.lines.last_mut()?.push_str(seg.sep.suffix(self.fence));
                 return Some(());
             }
             chain = false;
@@ -461,12 +479,13 @@ impl Layout {
     }
 }
 
-fn layout(segments: &[Segment], width: usize) -> Option<Vec<String>> {
+fn layout(segments: &[Segment], width: usize, fence: bool) -> Option<Vec<String>> {
     let mut state = Layout {
         lines: Vec::new(),
         stack: Vec::new(),
         header_open: false,
         width,
+        fence,
     };
     let mut prev = Sep::Semi;
     for segment in segments {
@@ -485,7 +504,7 @@ fn has_sequence(segments: &[Segment]) -> bool {
         .is_some_and(|(_, rest)| rest.iter().any(|segment| segment.sep == Sep::Semi))
 }
 
-pub fn format_command(command: &str, width: usize) -> Option<String> {
+fn format(command: &str, width: usize, fence: bool) -> Option<String> {
     if command.contains(['\n', '\r']) {
         return None;
     }
@@ -494,11 +513,71 @@ pub fn format_command(command: &str, width: usize) -> Option<String> {
     if chars.len() <= width && !has_sequence(&segments) {
         return None;
     }
-    let lines = layout(&segments, width)?;
+    let lines = layout(&segments, width, fence)?;
     if lines.len() < 2 {
         return None;
     }
     Some(lines.join("\n"))
+}
+
+pub fn format_command(command: &str, width: usize) -> Option<String> {
+    format(command, width, false)
+}
+
+pub fn is_shell_fence(language: Option<&str>) -> bool {
+    matches!(language, Some("bash" | "sh" | "zsh" | "shell"))
+}
+
+/// Whether a line ends inside a single or double quote, so the quote spans lines.
+fn leaves_quote_open(line: &str) -> bool {
+    let mut quote = None;
+    let mut prev = None;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (None, '#') if is_word_start(prev) => return false,
+            (Some(open), _) if c == open => quote = None,
+            (None, '\'' | '"') => quote = Some(c),
+            (None | Some('"'), '\\') => {
+                chars.next();
+            }
+            _ => {}
+        }
+        prev = Some(c);
+    }
+    quote.is_some()
+}
+
+/// Lay out each line of a shell fence like `format_command`, but keep the block valid shell
+/// when pasted: every `;` stays visible and a split pipeline ends its line with ` |`.
+///
+/// Returns `None` when no line changes, or when any line ends with `\`, opens a heredoc or
+/// leaves a quote open.
+pub fn format_fence(content: &str, width: usize) -> Option<String> {
+    if content.lines().any(|line| {
+        line.trim_end().ends_with('\\') || line.contains("<<") || leaves_quote_open(line)
+    }) {
+        return None;
+    }
+    let mut changed = false;
+    let lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            let body = line.trim_start();
+            let indent = &line[..line.len() - body.len()];
+            let Some(formatted) = format(body, width.saturating_sub(indent.chars().count()), true)
+            else {
+                return line.to_string();
+            };
+            changed = true;
+            formatted
+                .lines()
+                .map(|formatted_line| format!("{indent}{formatted_line}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect();
+    changed.then(|| lines.join("\n"))
 }
 
 #[cfg(test)]
