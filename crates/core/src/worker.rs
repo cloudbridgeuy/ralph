@@ -361,9 +361,11 @@ impl ClaudeShell {
     }
 }
 
-pub fn resolve_claude_shell(config: Result<ClaudeShell, &str>) -> (ClaudeShell, Option<String>) {
+pub fn resolve_claude_shell(
+    config: Result<(ClaudeShell, Option<String>), &str>,
+) -> (ClaudeShell, Option<String>) {
     match config {
-        Ok(shell) => (shell, None),
+        Ok((shell, warning)) => (shell, warning.map(|w| format!("Warning: {w}"))),
         Err(error) => (
             ClaudeShell::default(),
             Some(format!(
@@ -675,7 +677,7 @@ mod tests {
     #[test]
     fn claude_shell_resolves_config_or_warns_and_uses_zsh() {
         assert_eq!(
-            resolve_claude_shell(Ok(ClaudeShell::Bash)),
+            resolve_claude_shell(Ok((ClaudeShell::Bash, None))),
             (ClaudeShell::Bash, None)
         );
         let (shell, warning) = resolve_claude_shell(Err("bad toml"));

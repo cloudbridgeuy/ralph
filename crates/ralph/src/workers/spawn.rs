@@ -72,7 +72,7 @@ impl Workers {
         let (shell, shell_warning) = resolve_claude_shell(
             config
                 .as_ref()
-                .map(|config| config.claude.shell)
+                .map(|config| config.claude.shell_setting())
                 .map_err(String::as_str),
         );
         let shell_warning = shell_warning.filter(|_| harness == HarnessId::Claude);

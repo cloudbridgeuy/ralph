@@ -44,6 +44,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(chat.empty_submit_setting().1)
         .chain(chat.editor_setting().1)
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)
+        .chain(config.claude.shell_setting().1)
         .chain(hard_errors(&config))
         .collect();
     Ok(CheckReport {
@@ -70,7 +71,10 @@ mod tests {
 
     #[test]
     fn claude_shell_accepts_bash_and_rejects_unknown() {
-        assert!(check("[claude]\nshell = \"fish\"\n", "c").is_err());
+        assert_eq!(
+            errors("[claude]\nshell = \"fish\"\n"),
+            ["[claude] shell must be \"zsh\" or \"bash\"; using \"zsh\""]
+        );
         assert!(check("[claude]\nshell = \"bash\"\n", "c")
             .unwrap()
             .errors

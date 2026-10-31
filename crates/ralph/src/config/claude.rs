@@ -8,7 +8,7 @@ pub struct ClaudeSection {
     #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
-    pub shell: ClaudeShell,
+    pub shell: Option<toml::Value>,
     #[serde(default)]
     pub config_dir: Option<PathBuf>,
     #[serde(default)]
@@ -16,6 +16,19 @@ pub struct ClaudeSection {
 }
 
 impl ClaudeSection {
+    pub fn shell_setting(&self) -> (ClaudeShell, Option<String>) {
+        match &self.shell {
+            None => (ClaudeShell::Zsh, None),
+            Some(value) => match value.clone().try_into::<ClaudeShell>() {
+                Ok(shell) => (shell, None),
+                Err(_) => (
+                    ClaudeShell::Zsh,
+                    Some("[claude] shell must be \"zsh\" or \"bash\"; using \"zsh\"".to_string()),
+                ),
+            },
+        }
+    }
+
     pub fn permissions_setting(&self) -> (PermissionMode, Option<String>) {
         permission_setting("claude", self.permissions.as_ref())
     }
@@ -42,6 +55,33 @@ mod tests {
         let (mode, warning) = parse("[claude]\npermissions = 1\n");
         assert_eq!(mode, PermissionMode::Ask);
         assert!(warning.unwrap().starts_with("[claude]"));
+    }
+
+    #[test]
+    fn claude_shell_parse_default_to_zsh_and_warn_on_wrong_values() {
+        let parse = |text: &str| {
+            toml::from_str::<AppConfig>(text)
+                .unwrap()
+                .claude
+                .shell_setting()
+        };
+        for bad in ["\"fish\"", "1", "[\"bash\"]"] {
+            let (shell, warning) = parse(&format!("[claude]\nshell = {bad}\n"));
+            assert_eq!(shell, ClaudeShell::Zsh);
+            assert_eq!(
+                warning.as_deref(),
+                Some("[claude] shell must be \"zsh\" or \"bash\"; using \"zsh\"")
+            );
+        }
+        assert_eq!(parse(""), (ClaudeShell::Zsh, None));
+        assert_eq!(
+            parse("[claude]\nshell = \"bash\"\n"),
+            (ClaudeShell::Bash, None)
+        );
+        assert_eq!(
+            parse("[claude]\nshell = \"zsh\"\n"),
+            (ClaudeShell::Zsh, None)
+        );
     }
 
     #[test]

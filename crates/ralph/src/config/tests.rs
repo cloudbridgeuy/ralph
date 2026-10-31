@@ -1,5 +1,6 @@
 use super::*;
 use ralph_core::diff_command::DiffPager;
+use ralph_core::worker::ClaudeShell;
 use tempfile::TempDir;
 
 #[test]
@@ -692,4 +693,28 @@ fn valid_layers_load_without_value_errors() {
     let store = write_layer(&dir, "s.toml", "[chat]\nwrap_width = 100\n");
     let config = AppConfig::load_layers(&global, Some(&store)).unwrap();
     assert_eq!(config.chat.wrap_width, Some(100));
+}
+
+#[test]
+fn global_bad_claude_shell_keeps_other_keys() {
+    let (_dir, global, _store) = layer_files("[claude]\nshell = \"fish\"\nmodel = \"x\"\n", "");
+    let (result, _notices) = AppConfig::load_from(&global, None);
+    let config = result.unwrap();
+    assert_eq!(config.claude.model.as_deref(), Some("x"));
+    let (shell, warning) = config.claude.shell_setting();
+    assert_eq!(shell, ClaudeShell::Zsh);
+    assert!(warning.is_some());
+}
+
+#[test]
+fn store_bad_claude_shell_keeps_store_keys() {
+    let (_dir, global, store) = layer_files(
+        "",
+        "[claude]\nshell = \"fish\"\n[theme]\nname = \"store\"\n",
+    );
+    let (result, notices) = AppConfig::load_from(&global, Some(&store));
+    assert_eq!(result.unwrap().theme.name.as_deref(), Some("store"));
+    assert!(notices
+        .iter()
+        .all(|n| !n.key.starts_with("store-fallback:")));
 }
