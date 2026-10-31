@@ -479,3 +479,56 @@ fn semicolon_right_after_do_is_accepted() {
     let expected = ["for a in 1; do", "  echo x", "done"];
     assert_lines("for a in 1; do; echo x; done", 10, &expected);
 }
+
+#[test]
+fn shell_fence_tags_are_detected() {
+    for tag in ["bash", "sh", "zsh", "shell"] {
+        assert!(is_shell_fence(Some(tag)), "{tag}");
+    }
+    for tag in [Some("rust"), Some(""), Some("!shell"), None] {
+        assert!(!is_shell_fence(tag), "{tag:?}");
+    }
+}
+
+#[test]
+fn single_line_fence_matches_format_command() {
+    let command = "a && b | c";
+    assert!(format_command(command, 5).is_some());
+    assert_eq!(format_fence(command, 5), format_command(command, 5));
+}
+
+#[test]
+fn fence_keeps_semicolon_separators_visible() {
+    assert_eq!(format_fence("a; b", 80), Some("a;\nb".to_string()));
+    assert_eq!(format_fence("a; b;", 80), Some("a;\nb;".to_string()));
+}
+
+#[test]
+fn fence_keeps_semicolons_inside_blocks() {
+    let lines = ["if a; then", "  b;", "else", "  c;", "fi"].join("\n");
+    assert_eq!(format_fence("if a; then b; else c; fi", 80), Some(lines));
+    let lines = ["for x in 1; do;", "  echo $x;", "done"].join("\n");
+    assert_eq!(
+        format_fence("for x in 1; do; echo $x; done", 80),
+        Some(lines)
+    );
+}
+
+#[test]
+fn fence_with_continuation_or_heredoc_is_not_formatted() {
+    assert_eq!(format_fence("a; b \\\n  --flag", 80), None);
+    assert_eq!(format_fence("cat <<EOF\na; b\nEOF", 80), None);
+}
+
+#[test]
+fn each_line_of_a_multi_command_fence_is_formatted() {
+    let fence = "a; b\n# note\n\n  c && d | e\nls";
+    let expected = "a;\nb\n# note\n\n  c &&\n    d\n      | e\nls";
+    assert_eq!(format_fence(fence, 8), Some(expected.to_string()));
+}
+
+#[test]
+fn fence_with_no_formattable_line_is_unchanged() {
+    assert_eq!(format_fence("ls -la\ncd x && cargo test", 80), None);
+    assert_eq!(format_fence("", 80), None);
+}
