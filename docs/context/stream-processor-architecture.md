@@ -163,6 +163,8 @@ Each block captures **data**, not rendered strings. `extract_response_text()` jo
 
 Prose text uses **block buffering** (`prose_threshold = usize::MAX`) so that `render_prose()` receives complete multi-line content. This enables proper markdown block rendering (tables, lists, paragraphs) rather than line-by-line rendering.
 
+Code fences render through `render_code_block` (`render/text.rs`). Shell fences (`bash`, `sh`, `zsh`, `shell`) first go through `ralph_core::shell_format::format_fence`, so they show like a Bash tool call; the stored `ParsedChunk` keeps the raw text.
+
 ### Flush points
 
 Buffered prose is flushed (rendered and emitted) at these points:
