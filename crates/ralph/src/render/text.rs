@@ -671,8 +671,8 @@ changed in worker GUZ-628 during turn 6
             let mut ctx = RenderContext::new(&highlighter, terminal);
             ctx.width = 5;
             ctx.images = None;
-            let fence = render_code_block(&ctx, "a && b | c", Some("bash"));
-            let tool = crate::render::render_bash_invocation(&ctx, "a && b | c");
+            let fence = render_code_block(&ctx, "a && b && c", Some("bash"));
+            let tool = crate::render::render_bash_invocation(&ctx, "a && b && c");
             assert!(fence.starts_with("```bash\n"), "{fence:?}");
             assert_eq!(fence_body(&fence), bash_tool_body(&tool), "{terminal}");
         }
@@ -702,5 +702,24 @@ changed in worker GUZ-628 during turn 6
         let ctx = RenderContext::plain(&highlighter);
         let fence = render_code_block(&ctx, "a; b", Some("rust"));
         assert_eq!(fence, "```rust\na; b\n```");
+    }
+
+    #[test]
+    fn shell_fence_pipe_ends_the_line_but_bash_tool_keeps_its_prefix() {
+        let (highlighter, _) = create_test_context();
+        let mut ctx = RenderContext::plain(&highlighter);
+        ctx.width = 4;
+        let fence = render_code_block(&ctx, "a | b", Some("bash"));
+        assert_eq!(fence, "```bash\na |\n  b\n```");
+        let tool = crate::render::render_bash_invocation(&ctx, "a | b");
+        assert_eq!(tool, "> Bash\n```sh\na\n  | b\n```\n");
+    }
+
+    #[test]
+    fn shell_fence_with_an_escape_sequence_is_unchanged() {
+        let (highlighter, _) = create_test_context();
+        let ctx = RenderContext::plain(&highlighter);
+        let fence = render_code_block(&ctx, "a; b\x1b[0m", Some("sh"));
+        assert_eq!(fence, "```sh\na; b\x1b[0m\n```");
     }
 }

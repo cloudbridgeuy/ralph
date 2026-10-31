@@ -7,16 +7,19 @@ enum Sep {
     And,
     Or,
     Background,
+    Pipe,
 }
 
 impl Sep {
-    fn suffix(self, semi: &'static str) -> &'static str {
+    fn suffix(self, fence: bool) -> &'static str {
         match self {
             Sep::None => "",
-            Sep::Semi => semi,
+            Sep::Semi if fence => ";",
+            Sep::Semi => "",
             Sep::And => " &&",
             Sep::Or => " ||",
             Sep::Background => " &",
+            Sep::Pipe => " |",
         }
     }
 
@@ -98,7 +101,7 @@ impl Scanner {
         if self.current.trim().is_empty() && self.stages.is_empty() {
             let last = self.segments.last()?;
             return match last.sep {
-                Sep::None | Sep::Semi | Sep::Background => Some(self.segments),
+                Sep::None | Sep::Semi | Sep::Background | Sep::Pipe => Some(self.segments),
                 Sep::And | Sep::Or => None,
             };
         }
@@ -314,7 +317,7 @@ struct Layout {
     stack: Vec<Block>,
     header_open: bool,
     width: usize,
-    semi: &'static str,
+    fence: bool,
 }
 
 impl Layout {
@@ -327,7 +330,7 @@ impl Layout {
             "{}{}{}",
             " ".repeat(indent),
             text,
-            sep.suffix(self.semi)
+            sep.suffix(self.fence)
         ));
     }
 
@@ -335,7 +338,7 @@ impl Layout {
         let total = indent
             + prefix.chars().count()
             + stage.text.chars().count()
-            + sep.suffix(self.semi).len();
+            + sep.suffix(self.fence).len();
         if total <= self.width || stage.flags.is_empty() {
             self.push_line(indent, &format!("{prefix}{}", stage.text), sep);
             return;
@@ -361,16 +364,20 @@ impl Layout {
         };
         let indent = base + if chain { INDENT } else { 0 };
         let joined = join_stages(stages);
-        let total = indent + joined.chars().count() + sep.suffix(self.semi).chars().count();
+        let total = indent + joined.chars().count() + sep.suffix(self.fence).chars().count();
         if stages.len() > 1 && total > self.width {
             for (index, stage) in stages.iter().enumerate() {
                 let (indent, prefix) = if index == 0 {
                     (indent, "")
+                } else if self.fence {
+                    (indent + INDENT, "")
                 } else {
                     (indent + INDENT, "| ")
                 };
                 let suffix = if index + 1 == stages.len() {
                     sep
+                } else if self.fence {
+                    Sep::Pipe
                 } else {
                     Sep::None
                 };
@@ -423,7 +430,7 @@ impl Layout {
                     if !self.header_open || self.stack.last() != Some(&expected) {
                         return None;
                     }
-                    let joiner = if self.semi.is_empty() { "; " } else { " " };
+                    let joiner = if self.fence { " " } else { "; " };
                     self.lines.last_mut()?.push_str(&format!("{joiner}{word}"));
                     self.header_open = false;
                 }
@@ -464,7 +471,7 @@ impl Layout {
                 if !matches!(seg.sep, Sep::None | Sep::Semi) {
                     return None;
                 }
-                self.lines.last_mut()?.push_str(seg.sep.suffix(self.semi));
+                self.lines.last_mut()?.push_str(seg.sep.suffix(self.fence));
                 return Some(());
             }
             chain = false;
@@ -472,13 +479,13 @@ impl Layout {
     }
 }
 
-fn layout(segments: &[Segment], width: usize, semi: &'static str) -> Option<Vec<String>> {
+fn layout(segments: &[Segment], width: usize, fence: bool) -> Option<Vec<String>> {
     let mut state = Layout {
         lines: Vec::new(),
         stack: Vec::new(),
         header_open: false,
         width,
-        semi,
+        fence,
     };
     let mut prev = Sep::Semi;
     for segment in segments {
@@ -497,7 +504,7 @@ fn has_sequence(segments: &[Segment]) -> bool {
         .is_some_and(|(_, rest)| rest.iter().any(|segment| segment.sep == Sep::Semi))
 }
 
-fn format(command: &str, width: usize, semi: &'static str) -> Option<String> {
+fn format(command: &str, width: usize, fence: bool) -> Option<String> {
     if command.contains(['\n', '\r']) {
         return None;
     }
@@ -506,7 +513,7 @@ fn format(command: &str, width: usize, semi: &'static str) -> Option<String> {
     if chars.len() <= width && !has_sequence(&segments) {
         return None;
     }
-    let lines = layout(&segments, width, semi)?;
+    let lines = layout(&segments, width, fence)?;
     if lines.len() < 2 {
         return None;
     }
@@ -514,21 +521,42 @@ fn format(command: &str, width: usize, semi: &'static str) -> Option<String> {
 }
 
 pub fn format_command(command: &str, width: usize) -> Option<String> {
-    format(command, width, "")
+    format(command, width, false)
 }
 
 pub fn is_shell_fence(language: Option<&str>) -> bool {
     matches!(language, Some("bash" | "sh" | "zsh" | "shell"))
 }
 
-/// Lay out each line of a shell fence like `format_command`, but keep every `;` visible.
+/// Whether a line ends inside a single or double quote, so the quote spans lines.
+fn leaves_quote_open(line: &str) -> bool {
+    let mut quote = None;
+    let mut prev = None;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (None, '#') if is_word_start(prev) => return false,
+            (Some(open), _) if c == open => quote = None,
+            (None, '\'' | '"') => quote = Some(c),
+            (None | Some('"'), '\\') => {
+                chars.next();
+            }
+            _ => {}
+        }
+        prev = Some(c);
+    }
+    quote.is_some()
+}
+
+/// Lay out each line of a shell fence like `format_command`, but keep the block valid shell
+/// when pasted: every `;` stays visible and a split pipeline ends its line with ` |`.
 ///
-/// Returns `None` when no line changes, or when any line ends with `\` or opens a heredoc.
+/// Returns `None` when no line changes, or when any line ends with `\`, opens a heredoc or
+/// leaves a quote open.
 pub fn format_fence(content: &str, width: usize) -> Option<String> {
-    if content
-        .lines()
-        .any(|line| line.trim_end().ends_with('\\') || line.contains("<<"))
-    {
+    if content.lines().any(|line| {
+        line.trim_end().ends_with('\\') || line.contains("<<") || leaves_quote_open(line)
+    }) {
         return None;
     }
     let mut changed = false;
@@ -537,7 +565,7 @@ pub fn format_fence(content: &str, width: usize) -> Option<String> {
         .map(|line| {
             let body = line.trim_start();
             let indent = &line[..line.len() - body.len()];
-            let Some(formatted) = format(body, width.saturating_sub(indent.chars().count()), ";")
+            let Some(formatted) = format(body, width.saturating_sub(indent.chars().count()), true)
             else {
                 return line.to_string();
             };

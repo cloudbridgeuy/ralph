@@ -492,7 +492,7 @@ fn shell_fence_tags_are_detected() {
 
 #[test]
 fn single_line_fence_matches_format_command() {
-    let command = "a && b | c";
+    let command = "a && b && c";
     assert!(format_command(command, 5).is_some());
     assert_eq!(format_fence(command, 5), format_command(command, 5));
 }
@@ -523,7 +523,7 @@ fn fence_with_continuation_or_heredoc_is_not_formatted() {
 #[test]
 fn each_line_of_a_multi_command_fence_is_formatted() {
     let fence = "a; b\n# note\n\n  c && d | e\nls";
-    let expected = "a;\nb\n# note\n\n  c &&\n    d\n      | e\nls";
+    let expected = "a;\nb\n# note\n\n  c &&\n    d |\n      e\nls";
     assert_eq!(format_fence(fence, 8), Some(expected.to_string()));
 }
 
@@ -531,4 +531,26 @@ fn each_line_of_a_multi_command_fence_is_formatted() {
 fn fence_with_no_formattable_line_is_unchanged() {
     assert_eq!(format_fence("ls -la\ncd x && cargo test", 80), None);
     assert_eq!(format_fence("", 80), None);
+}
+
+#[test]
+fn fence_pipelines_end_lines_with_the_pipe() {
+    let fence = ["a &&", "  b |", "    c"].join("\n");
+    assert_eq!(format_fence("a && b | c", 5), Some(fence));
+    let tool = ["a &&", "  b", "    | c"].join("\n");
+    assert_eq!(format_command("a && b | c", 5), Some(tool));
+}
+
+#[test]
+fn fence_with_a_quote_spanning_lines_is_not_formatted() {
+    assert_eq!(format_fence("echo \"\nstep one; step two\n\"", 80), None);
+    let python = "python -c '\nimport os; print(os.getcwd())\n'";
+    assert_eq!(format_fence(python, 80), None);
+}
+
+#[test]
+fn quotes_in_comments_or_escapes_do_not_block_formatting() {
+    let fence = "# don't stop\necho it\\'s; b";
+    let expected = "# don't stop\necho it\\'s;\nb";
+    assert_eq!(format_fence(fence, 80), Some(expected.to_string()));
 }
