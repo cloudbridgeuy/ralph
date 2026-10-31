@@ -1,6 +1,7 @@
 use crate::acp_log::{drain_stderr, CappedLog};
 use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::codex_worker::pipes::{logged_stdin, pipe_lines};
+use crate::codex_worker::resume::Resumed;
 use crate::codex_worker::{report_exit, Stdin};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
@@ -9,7 +10,7 @@ use crate::cursor_owner::{
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
-use crate::transport::stdio::{spawn_piped, stop_child};
+use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
@@ -18,12 +19,13 @@ use ralph_core::stream::{interrupt_line, user_line};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, bind_started_turn, check_agent_version, claude_headless_args,
     decode_claude_version, decode_line, gone_path, interrupted_end, permission_response,
-    prompt_failure_report, ready_path, reduce, request_stale, task_prompt, Action, ClaudeLine,
-    ClaudePermission, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer, PermissionMode,
-    SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ALLOW_ONCE,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
-    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
-    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
+    prompt_failure_report, ready_path, reduce, request_stale, resumed_session, task_prompt, Action,
+    ClaudeLine, ClaudePermission, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer,
+    PermissionMode, SessionRecord, SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent,
+    WorkerMarkers, ALLOW_ONCE, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
+    CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR,
+    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR,
+    CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -39,6 +41,7 @@ use std::time::Duration;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
+const LOST_TURN: &str = "the turn in flight was lost when the chat exited; prompt it again";
 
 struct ClaudeReply {
     request_id: String,
@@ -56,6 +59,7 @@ struct Shared {
     markers: WorkerMarkers,
     inbox: Inbox,
     results: PathBuf,
+    resumed: Option<String>,
     turn_seq: AtomicU64,
     closing: AtomicBool,
     exited: AtomicBool,
@@ -166,14 +170,21 @@ impl Shared {
         }
     }
 
-    fn read(&self, lines: mpsc::Receiver<String>, ready: mpsc::Sender<Result<(), String>>) {
-        let mut ready = Some(ready);
+    fn read(
+        &self,
+        lines: mpsc::Receiver<String>,
+        mut ready: Option<mpsc::Sender<Result<String, String>>>,
+    ) {
         for line in lines {
             self.heartbeat.touch();
             match decode_line(&line) {
                 ClaudeLine::Init(status) => {
+                    let status =
+                        status.and_then(|found| resumed_session(self.resumed.as_deref(), found));
                     if let Some(ready) = ready.take() {
                         ready.send(status).ok();
+                    } else if let Err(problem) = status {
+                        self.perform(vec![Action::PostFailure(problem)]);
                     }
                 }
                 ClaudeLine::Signal(signal) => self.signal(signal),
@@ -216,10 +227,17 @@ struct ClaudeWorker {
     finished: mpsc::Receiver<()>,
     owner: PathBuf,
     state: HeadlessState,
+    session: String,
 }
 
 impl ClaudeWorker {
-    fn start(id: &str, request: &SpawnRequest, files: &HandoffFiles) -> Result<Self, String> {
+    fn start(
+        id: &str,
+        request: &SpawnRequest,
+        files: &HandoffFiles,
+        resume: Option<&SessionRecord>,
+        starting: &Mutex<HashMap<String, u32>>,
+    ) -> Result<Self, String> {
         check_installed_version(&files.warning)?;
         let store = request.inbox.parent().unwrap_or(Path::new("."));
         let server = acp_mcp_server(
@@ -231,13 +249,17 @@ impl ClaudeWorker {
         );
         let mcp = json!({"mcpServers": {SERVER_NAME: {"command": server["command"], "args": server["args"]}}});
         let attachments = store.join(ATTACHMENTS_DIR);
-        let mode =
-            configured_permission_mode("claude", |config| config.claude.permissions_setting());
+        let mode = resume
+            .and_then(|record| record.permissions)
+            .unwrap_or_else(|| {
+                configured_permission_mode("claude", |config| config.claude.permissions_setting())
+            });
         let args = claude_headless_args(
             request.model.as_deref(),
             &mcp.to_string(),
             &attachments,
             mode,
+            resume.map(|record| record.session_id.as_str()),
         );
         let mut command = Command::new(CLAUDE_COMMAND);
         command.args(args).current_dir(&request.worktree);
@@ -252,6 +274,7 @@ impl ClaudeWorker {
         }
         let (mut child, stdin, stdout, stderr) =
             spawn_piped(command).map_err(|e| format!("could not start `{CLAUDE_COMMAND}`: {e}"))?;
+        locked(starting).insert(id.to_string(), child.id());
         let log = CappedLog::new(Some(store), id);
         drain_stderr(stderr, Arc::clone(&log));
         let markers = WorkerMarkers::new(store, id);
@@ -275,6 +298,7 @@ impl ClaudeWorker {
             markers,
             inbox: Inbox::new(request.inbox.clone()),
             results: files.interrupt_result.clone(),
+            resumed: resume.map(|record| record.session_id.clone()),
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
@@ -289,18 +313,27 @@ impl ClaudeWorker {
             finished,
             owner: files.owner.clone(),
             state: HeadlessState::default(),
+            session: String::new(),
         };
         let (ready_tx, ready) = mpsc::channel();
         let reader = Arc::clone(&shared);
-        thread::spawn(move || reader.read(lines, ready_tx));
-        shared.accept(task_prompt(&request.task));
-        let ready = ready.recv_timeout(READY_TIMEOUT).unwrap_or_else(|_| {
-            Err(format!(
-                "claude was not ready after {}s",
-                READY_TIMEOUT.as_secs()
-            ))
-        });
-        ready.inspect_err(|_| worker.terminate()).map(|()| worker)
+        let waits = resume.is_none().then_some(ready_tx);
+        thread::spawn(move || reader.read(lines, waits));
+        let session = match resume {
+            Some(record) => Ok(record.session_id.clone()),
+            None => {
+                shared.accept(task_prompt(&request.task));
+                ready.recv_timeout(READY_TIMEOUT).unwrap_or_else(|_| {
+                    Err(format!(
+                        "claude was not ready after {}s",
+                        READY_TIMEOUT.as_secs()
+                    ))
+                })
+            }
+        };
+        let session = session.inspect_err(|_| worker.terminate())?;
+        worker.session = session;
+        Ok(worker)
     }
 
     fn apply_events(&mut self) {
@@ -337,6 +370,7 @@ impl Drop for ClaudeWorker {
 pub(crate) struct ClaudeHeadlessHost {
     store_dir: PathBuf,
     workers: Mutex<HashMap<String, ClaudeWorker>>,
+    starting: Mutex<HashMap<String, u32>>,
     closed: AtomicBool,
 }
 
@@ -348,6 +382,7 @@ impl ClaudeHeadlessHost {
         Arc::new(Self {
             store_dir,
             workers: Mutex::new(HashMap::new()),
+            starting: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
         })
     }
@@ -362,6 +397,9 @@ impl ClaudeHeadlessHost {
         dir: fn(&HandoffFiles) -> &PathBuf,
         deliver: fn(&Shared, String, String),
     ) {
+        if locked(&self.starting).contains_key(id) && !locked(&self.workers).contains_key(id) {
+            return;
+        }
         for entry in queued_entries(dir(&self.files(id))) {
             let name = entry
                 .file_name()
@@ -394,6 +432,7 @@ impl ClaudeHeadlessHost {
         self.forget(id);
         let files = self.files(id);
         fs::remove_file(ready_path(&self.store_dir, id)).ok();
+        fs::remove_file(&files.session).ok();
         fs::remove_file(&files.close).ok();
     }
 
@@ -418,18 +457,39 @@ impl ClaudeHeadlessHost {
             self.fail(id, "worker is already running");
             return;
         }
-        match ClaudeWorker::start(id, &request, &files) {
-            Ok(worker) => self.adopt(id, worker),
+        match self.launch(id, &request, None) {
+            Ok(worker) => self.adopt(id, worker, &request),
             Err(message) => self.fail(id, &message),
         }
     }
 
-    fn adopt(&self, id: &str, worker: ClaudeWorker) {
+    fn launch(
+        &self,
+        id: &str,
+        request: &SpawnRequest,
+        resume: Option<&SessionRecord>,
+    ) -> Result<ClaudeWorker, String> {
+        let started = ClaudeWorker::start(id, request, &self.files(id), resume, &self.starting);
+        locked(&self.starting).remove(id);
+        started
+    }
+
+    fn adopt(&self, id: &str, worker: ClaudeWorker, request: &SpawnRequest) {
         let files = self.files(id);
         let claimed = !self.closed.load(Ordering::SeqCst)
             && fs::remove_file(&files.spawn).is_ok()
             && write_file(&ready_path(&self.store_dir, id), "").is_ok();
         if claimed {
+            let record = SessionRecord {
+                session_id: worker.session.clone(),
+                cwd: request.worktree.clone(),
+                inbox: request.inbox.clone(),
+                store: Some(self.store_dir.clone()),
+                model: request.model.clone(),
+                effort: None,
+                permissions: Some(worker.shared.mode),
+            };
+            write_file(&files.session, &record.render()).ok();
             locked(&self.workers).insert(id.to_string(), worker);
         } else {
             drop(worker);
@@ -445,7 +505,24 @@ impl ClaudeHeadlessHost {
 }
 
 impl HeadlessHost for ClaudeHeadlessHost {
-    fn resume(&self) {}
+    fn resume(&self) {
+        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_SESSION_DIR) {
+            let files = self.files(&id);
+            let resumed = Resumed {
+                agent: HarnessId::ClaudeHeadless.as_str(),
+                id: &id,
+                store: &self.store_dir,
+                files: &files,
+            };
+            let worker =
+                resumed.launch(|record, request| self.launch(&id, &request, Some(&record)));
+            if let Some(worker) = worker {
+                if resumed.adopt(&self.closed) {
+                    locked(&self.workers).insert(id.clone(), worker);
+                }
+            }
+        }
+    }
 
     fn poll(&self) -> bool {
         if self.closed.load(Ordering::SeqCst) {
@@ -484,8 +561,19 @@ impl HeadlessHost for ClaudeHeadlessHost {
         self.closed.store(true, Ordering::SeqCst);
         let drained: Vec<(String, ClaudeWorker)> = locked(&self.workers).drain().collect();
         for (id, worker) in drained {
+            if worker.shared.heartbeat.running() {
+                worker
+                    .shared
+                    .perform(vec![Action::PostFailure(LOST_TURN.to_string())]);
+            }
             drop(worker);
             self.forget(&id);
+        }
+        let starting: Vec<(String, u32)> = locked(&self.starting).drain().collect();
+        let groups: Vec<u32> = starting.iter().map(|(_, group)| *group).collect();
+        stop_groups(&groups, SHUTDOWN_GRACE, || true);
+        for (id, _) in &starting {
+            self.forget(id);
         }
     }
 }

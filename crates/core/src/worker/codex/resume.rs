@@ -7,13 +7,14 @@ pub struct ResumeFacts {
     pub worktree_exists: bool,
 }
 
-pub fn codex_resume_decision(
+pub fn resume_decision_for(
+    agent: &str,
     id: &str,
     record: &SessionRecord,
     store: &Path,
     facts: ResumeFacts,
 ) -> Resume {
-    let skip = |why: String| Resume::Skip(format!("codex session {id} not resumed: {why}"));
+    let skip = |why: String| Resume::Skip(format!("{agent} session {id} not resumed: {why}"));
     if facts.owned {
         return skip("a running chat owns it".to_string());
     }
@@ -55,7 +56,7 @@ mod tests {
     #[test]
     fn resume_needs_a_free_worker_in_this_store_with_its_worktree() {
         let store = Path::new("/store");
-        let go = codex_resume_decision("a", &record(Some("/store")), store, FREE);
+        let go = resume_decision_for("codex", "a", &record(Some("/store")), store, FREE);
         assert_eq!(go, Resume::Go);
         let cases = [
             (
@@ -78,9 +79,9 @@ mod tests {
             ),
         ];
         for (rec, facts, why) in cases {
-            match codex_resume_decision("a", &rec, store, facts) {
+            match resume_decision_for("claude-headless", "a", &rec, store, facts) {
                 Resume::Skip(message) => {
-                    assert!(message.starts_with("codex session a not resumed: "));
+                    assert!(message.starts_with("claude-headless session a not resumed: "));
                     assert!(message.contains(why), "{message}");
                 }
                 Resume::Go => panic!("must skip"),
