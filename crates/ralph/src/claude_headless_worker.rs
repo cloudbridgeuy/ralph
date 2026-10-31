@@ -2,11 +2,12 @@ use crate::acp_log::{drain_stderr, CappedLog};
 use crate::acp_worker::{apply_effect, push_event, Events};
 use crate::codex_worker::pipes::{logged_stdin, pipe_lines};
 use crate::codex_worker::{report_exit, Stdin};
-use crate::config::AppConfig;
+use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
-    now_secs, queued_entries, report_start_warning, request_ids, sweep_owner, write_file,
-    write_owner_record,
+    now_secs, queued_entries, report_start_warning, request_ids, sweep_owner, take_answer,
+    write_file, write_owner_record,
 };
+use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child};
 use crate::watches::locked;
@@ -16,13 +17,14 @@ use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, check_agent_version, claude_headless_args,
-    decode_claude_version, decode_line, gone_path, prompt_failure_report, ready_path, reduce,
-    request_stale, task_prompt, Action, ClaudeLine, HandoffFiles, HarnessId, HeadlessState,
-    SpawnRequest, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
-    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    decode_claude_version, decode_line, gone_path, permission_response, prompt_failure_report,
+    ready_path, reduce, request_stale, task_prompt, Action, ClaudeLine, ClaudePermission,
+    HandoffFiles, HarnessId, HeadlessState, PermissionAnswer, PermissionMode, SpawnRequest, Turns,
+    VerifiedAgents, WorkerEvent, WorkerMarkers, ALLOW_ONCE, ATTACHMENTS_DIR, CLAUDE_COMMAND,
+    CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_OWNER_DIR,
     CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -37,11 +39,18 @@ use std::time::Duration;
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 
+struct ClaudeReply {
+    request_id: String,
+    input: Value,
+}
+
 struct Shared {
     id: String,
     turns: Mutex<Turns>,
     stdin: Stdin,
     events: Events,
+    permissions: PermissionQueue<ClaudeReply>,
+    mode: PermissionMode,
     heartbeat: Arc<Heartbeat>,
     markers: WorkerMarkers,
     inbox: Inbox,
@@ -56,15 +65,49 @@ impl Shared {
         self.perform(actions);
     }
 
+    fn send(&self, line: &str) -> Result<(), String> {
+        let mut stdin = locked(&self.stdin);
+        let stdin = stdin.as_mut().ok_or("claude stdin is closed")?;
+        writeln!(stdin, "{line}")
+            .and_then(|()| stdin.flush())
+            .map_err(|e| format!("could not write to claude: {e}"))
+    }
+
+    fn ask(&self, ask: ClaudePermission) {
+        let reply = ClaudeReply {
+            request_id: ask.content.request_id.clone(),
+            input: ask.input,
+        };
+        match self.mode {
+            PermissionMode::Yolo => {
+                self.send(&permission_response(
+                    &reply.request_id,
+                    ALLOW_ONCE,
+                    &reply.input,
+                ))
+                .ok();
+            }
+            PermissionMode::Ask => self.permissions.enqueue(reply, ask.content),
+        }
+    }
+
+    fn answer(&self, text: &str) -> Result<(), String> {
+        let answer = PermissionAnswer::decode(text)?;
+        let (reply, option) = self
+            .permissions
+            .take_answer(&answer.request_id, &answer.option_id)?;
+        self.send(&permission_response(
+            &reply.request_id,
+            &option.option_id,
+            &reply.input,
+        ))
+    }
+
     fn perform(&self, actions: Vec<Action>) {
         for action in actions {
             match action {
                 Action::Start(text) => {
-                    if let Some(stdin) = locked(&self.stdin).as_mut() {
-                        writeln!(stdin, "{}", user_line(&text))
-                            .and_then(|()| stdin.flush())
-                            .ok();
-                    }
+                    self.send(&user_line(&text)).ok();
                 }
                 Action::Emit(event) => {
                     match &event {
@@ -104,6 +147,8 @@ impl Shared {
                     let actions = turns.signal(signal, self.closing.load(Ordering::SeqCst));
                     self.perform(actions);
                 }
+                ClaudeLine::Permission(ask) => self.ask(ask),
+                ClaudeLine::Cancel(id) => self.permissions.settle(|reply| reply.request_id == id),
                 ClaudeLine::Other => {}
             }
         }
@@ -156,7 +201,14 @@ impl ClaudeWorker {
         );
         let mcp = json!({"mcpServers": {SERVER_NAME: {"command": server["command"], "args": server["args"]}}});
         let attachments = store.join(ATTACHMENTS_DIR);
-        let args = claude_headless_args(request.model.as_deref(), &mcp.to_string(), &attachments);
+        let mode =
+            configured_permission_mode("claude", |config| config.claude.permissions_setting());
+        let args = claude_headless_args(
+            request.model.as_deref(),
+            &mcp.to_string(),
+            &attachments,
+            mode,
+        );
         let mut command = Command::new(CLAUDE_COMMAND);
         command.args(args).current_dir(&request.worktree);
         let config_dir = AppConfig::load().ok().and_then(|config| {
@@ -176,11 +228,19 @@ impl ClaudeWorker {
         let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
         heartbeat.clear();
         let (lines, finished) = pipe_lines(stdout, &log);
+        let events = Events::default();
         let shared = Arc::new(Shared {
             id: id.to_string(),
             turns: Mutex::new(Turns::default()),
             stdin: logged_stdin(stdin, &log),
-            events: Events::default(),
+            permissions: PermissionQueue::new(
+                host_process_token(),
+                id.to_string(),
+                Inbox::new(request.inbox.clone()),
+                Arc::clone(&events),
+            ),
+            mode,
+            events,
             heartbeat,
             markers,
             inbox: Inbox::new(request.inbox.clone()),
@@ -226,6 +286,7 @@ impl ClaudeWorker {
         if self.shared.closing.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.shared.permissions.drain();
         let tree = snapshot_tree(self.child.id());
         locked(&self.shared.stdin).take();
         self.finished.recv_timeout(SHUTDOWN_GRACE).ok();
@@ -271,6 +332,15 @@ impl ClaudeHeadlessHost {
             }
             fs::remove_file(&entry).ok();
         }
+    }
+
+    fn answer(&self, id: &str) {
+        take_answer(&self.files(id), |text| {
+            let worker = locked(&self.workers).get(id).map(|w| Arc::clone(&w.shared));
+            worker
+                .ok_or_else(|| "worker has no running claude process".to_string())
+                .and_then(|shared| shared.answer(text))
+        });
     }
 
     fn close(&self, id: &str) {
@@ -345,6 +415,9 @@ impl HeadlessHost for ClaudeHeadlessHost {
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_CLOSE_DIR) {
             self.close(&id);
+        }
+        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_ANSWER_DIR) {
+            self.answer(&id);
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_PROMPT_DIR) {
             self.deliver_prompts(&id);
