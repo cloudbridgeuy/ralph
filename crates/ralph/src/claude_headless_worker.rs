@@ -179,6 +179,9 @@ impl Shared {
                 ClaudeLine::Signal(signal) => self.signal(signal),
                 ClaudeLine::Permission(ask) => self.ask(ask),
                 ClaudeLine::Cancel(id) => self.permissions.settle(|reply| reply.request_id == id),
+                ClaudeLine::Malformed(problem) => {
+                    self.perform(vec![Action::PostFailure(problem)]);
+                }
                 ClaudeLine::Other => {}
             }
         }
@@ -487,5 +490,86 @@ impl HeadlessHost for ClaudeHeadlessHost {
             drop(worker);
             self.forget(&id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ralph_core::worker::Report;
+    use tempfile::TempDir;
+
+    const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
+
+    struct Run {
+        dir: TempDir,
+        events: Vec<WorkerEvent>,
+    }
+
+    impl Run {
+        fn reports(&self) -> Vec<Report> {
+            let Ok(entries) = fs::read_dir(self.dir.path().join("inbox")) else {
+                return Vec::new();
+            };
+            entries
+                .filter_map(Result::ok)
+                .filter_map(|entry| fs::read(entry.path()).ok())
+                .filter_map(|bytes| serde_json::from_slice(&bytes).ok())
+                .collect()
+        }
+
+        fn permission_events(&self) -> Vec<&WorkerEvent> {
+            self.events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        WorkerEvent::PermissionAsked(_) | WorkerEvent::PermissionSettled
+                    )
+                })
+                .collect()
+        }
+    }
+
+    fn run(mode: PermissionMode, lines: &[&str]) -> Run {
+        let dir = TempDir::new().unwrap();
+        let store = dir.path();
+        let events = Events::default();
+        let inbox = || Inbox::new(store.join("inbox"));
+        let shared = Shared {
+            id: "w".into(),
+            turns: Mutex::default(),
+            stdin: Arc::new(Mutex::new(None)),
+            events: Arc::clone(&events),
+            permissions: PermissionQueue::new("p".into(), "w".into(), inbox(), Arc::clone(&events)),
+            mode,
+            heartbeat: Heartbeat::new(store.join("activity"), store.join("gone")),
+            markers: WorkerMarkers::new(store, "w"),
+            inbox: inbox(),
+            closing: AtomicBool::new(false),
+            exited: AtomicBool::new(false),
+            results: store.join("interrupt-result"),
+            turn_seq: AtomicU64::new(0),
+        };
+        let (tx, rx) = mpsc::channel();
+        for line in lines {
+            tx.send((*line).to_string()).unwrap();
+        }
+        drop(tx);
+        let (ready, _) = mpsc::channel();
+        shared.read(rx, ready);
+        let events = locked(&events).clone();
+        Run { dir, events }
+    }
+
+    #[test]
+    fn a_permission_line_without_a_request_id_posts_one_failure_and_queues_nothing() {
+        let line = ASK.replace(r#""request_id":"r1","#, "");
+        let run = run(PermissionMode::Ask, &[&line]);
+        assert!(run.permission_events().is_empty());
+        let reports = run.reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].status, "blocked");
+        assert!(reports[0].text.contains("no request_id"));
     }
 }

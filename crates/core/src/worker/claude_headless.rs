@@ -20,6 +20,7 @@ pub const CLAUDE_HEADLESS_SESSION_DIR: &str = "claude-headless-session";
 
 pub const ALLOW_ONCE: &str = "allow_once";
 const DENY: &str = "deny";
+const MALFORMED_PERMISSION: &str = "claude sent a can_use_tool request with no request_id or no input object; it waits for an answer ralph cannot send";
 
 pub const CLAUDE_GATE: VersionGate = VersionGate {
     agent: "claude",
@@ -36,6 +37,7 @@ pub enum ClaudeLine {
     Signal(ThreadSignal),
     Permission(ClaudePermission),
     Cancel(String),
+    Malformed(String),
     Other,
 }
 
@@ -56,18 +58,31 @@ pub fn decode_line(line: &str) -> ClaudeLine {
         }
         (Some("result"), _) => ClaudeLine::Signal(ThreadSignal::TurnEnded(turn_end(line, &value))),
         (Some("control_request"), _) if value["request"]["subtype"] == "can_use_tool" => {
-            ClaudeLine::Permission(permission(&value))
+            permission(&value).map_or_else(
+                || ClaudeLine::Malformed(MALFORMED_PERMISSION.to_string()),
+                ClaudeLine::Permission,
+            )
         }
-        (Some("control_cancel_request"), _) => {
-            ClaudeLine::Cancel(value["request_id"].as_str().unwrap_or_default().to_string())
-        }
+        (Some("control_cancel_request"), _) => control_cancel_request(&value),
         _ => ClaudeLine::Other,
     }
 }
 
-fn permission(control: &Value) -> ClaudePermission {
+fn control_cancel_request(control: &Value) -> ClaudeLine {
+    request_id(control).map_or(ClaudeLine::Other, |id| ClaudeLine::Cancel(id.to_string()))
+}
+
+fn request_id(control: &Value) -> Option<&str> {
+    control["request_id"].as_str().filter(|id| !id.is_empty())
+}
+
+fn permission(control: &Value) -> Option<ClaudePermission> {
     let request = &control["request"];
+    let request_id = request_id(control)?;
     let input = request["input"].clone();
+    if !input.is_object() {
+        return None;
+    }
     let tool = request["tool_name"].as_str().unwrap_or("tool");
     let summary = request["description"]
         .as_str()
@@ -79,12 +94,9 @@ fn permission(control: &Value) -> ClaudePermission {
         name: name.to_string(),
         kind: kind.to_string(),
     };
-    ClaudePermission {
+    Some(ClaudePermission {
         content: BlockedContent {
-            request_id: control["request_id"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
+            request_id: request_id.to_string(),
             tool: tool.to_string(),
             summary: summary.to_string(),
             options: vec![
@@ -94,7 +106,7 @@ fn permission(control: &Value) -> ClaudePermission {
             pending: Vec::new(),
         },
         input,
-    }
+    })
 }
 
 pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> String {
@@ -293,6 +305,34 @@ mod tests {
         assert_eq!(
             decode_line(r#"{"type":"control_cancel_request","request_id":"r1"}"#),
             ClaudeLine::Cancel("r1".into())
+        );
+    }
+
+    #[test]
+    fn permission_lines_without_a_request_id_or_input_are_malformed() {
+        let malformed = |line: &str| matches!(decode_line(line), ClaudeLine::Malformed(_));
+        assert!(malformed(&ASK.replace(r#""request_id":"r1","#, "")));
+        assert!(malformed(
+            &ASK.replace(r#""request_id":"r1""#, r#""request_id":"""#)
+        ));
+        assert!(malformed(&ASK.replace(r#""input":{"command":"ls"},"#, "")));
+        assert!(malformed(&ASK.replace(r#"{"command":"ls"}"#, r#""ls""#)));
+        let empty_input = ASK.replace(r#"{"command":"ls"}"#, "{}");
+        assert!(matches!(
+            decode_line(&empty_input),
+            ClaudeLine::Permission(ask) if ask.input == json!({})
+        ));
+    }
+
+    #[test]
+    fn a_cancel_without_a_request_id_is_ignored() {
+        assert_eq!(
+            decode_line(r#"{"type":"control_cancel_request"}"#),
+            ClaudeLine::Other
+        );
+        assert_eq!(
+            decode_line(r#"{"type":"control_cancel_request","request_id":""}"#),
+            ClaudeLine::Other
         );
     }
 
