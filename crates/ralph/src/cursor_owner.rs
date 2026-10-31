@@ -4,7 +4,8 @@ use crate::warn::warn;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
     sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep, CLAUDE_HEADLESS_OWNER_DIR,
-    CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
+    CLAUDE_HEADLESS_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
+    CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -118,6 +119,7 @@ pub fn acp_alive_ids(store_dir: &Path) -> Vec<String> {
 pub fn resumable_ids(store_dir: &Path) -> Vec<String> {
     let mut ids = request_ids(store_dir, CURSOR_SESSION_DIR);
     ids.extend(request_ids(store_dir, CODEX_SESSION_DIR));
+    ids.extend(request_ids(store_dir, CLAUDE_HEADLESS_SESSION_DIR));
     ids.sort();
     ids
 }
@@ -372,5 +374,19 @@ mod tests {
             "error file was {error:?}"
         );
         assert!(!files.answer.exists());
+    }
+
+    #[test]
+    fn resumable_ids_include_every_harness_session_record() {
+        let store = tempfile::tempdir().unwrap();
+        for (dir, id) in [
+            (CURSOR_SESSION_DIR, "C-1"),
+            (CODEX_SESSION_DIR, "X-1"),
+            (CLAUDE_HEADLESS_SESSION_DIR, "H-1"),
+        ] {
+            fs::create_dir_all(store.path().join(dir)).unwrap();
+            fs::write(store.path().join(dir).join(id), "{}").unwrap();
+        }
+        assert_eq!(resumable_ids(store.path()), ["C-1", "H-1", "X-1"]);
     }
 }

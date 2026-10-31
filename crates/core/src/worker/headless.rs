@@ -103,7 +103,9 @@ impl Capabilities {
                 "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
             ),
             (HarnessId::ClaudeHeadless, Interrupt) => Partial("outcome unknown after 30 s"),
-            (HarnessId::ClaudeHeadless, Resume) => Support::None,
+            (HarnessId::ClaudeHeadless, Resume) => {
+                Partial("turn in flight lost; same cwd required")
+            }
         }
     }
 }
@@ -377,7 +379,7 @@ mod tests {
                     "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
                 ),
                 Feature::Interrupt => Support::Partial("outcome unknown after 30 s"),
-                Feature::Resume => Support::None,
+                Feature::Resume => Support::Partial("turn in flight lost; same cwd required"),
             };
             assert_eq!(caps.support(feature), expected, "{feature:?}");
         }

@@ -32,7 +32,7 @@ pub const CLAUDE_GATE: VersionGate = VersionGate {
 
 #[derive(Debug, PartialEq)]
 pub enum ClaudeLine {
-    Init(Result<(), String>),
+    Init(Result<String, String>),
     Signal(ThreadSignal),
     Permission(ClaudePermission),
     Cancel(String),
@@ -135,16 +135,20 @@ pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<Strin
     }
 }
 
-fn init_status(init: &Value) -> Result<(), String> {
+fn init_status(init: &Value) -> Result<String, String> {
+    let session = init["session_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or("claude init has no session id")?;
     let Some(servers) = init["mcp_servers"].as_array() else {
-        return Ok(());
+        return Ok(session.to_string());
     };
     let status = servers
         .iter()
         .find(|server| server["name"] == SERVER_NAME)
         .map(|server| server["status"].as_str().unwrap_or("unknown"));
     match status {
-        Some("connected") => Ok(()),
+        Some("connected") => Ok(session.to_string()),
         Some(other) => Err(format!("the {SERVER_NAME} MCP server is {other}")),
         None => Err(format!("the {SERVER_NAME} MCP server is not listed")),
     }
@@ -198,6 +202,7 @@ pub fn claude_headless_args(
     mcp_config: &str,
     attachments: &Path,
     mode: PermissionMode,
+    resume: Option<&str>,
 ) -> Vec<String> {
     let native_mode = match mode {
         PermissionMode::Ask => "default",
@@ -226,6 +231,9 @@ pub fn claude_headless_args(
     if let Some(model) = model {
         args.extend(["--model".to_string(), model.to_string()]);
     }
+    if let Some(session) = resume {
+        args.extend(["--resume".to_string(), session.to_string()]);
+    }
     args
 }
 
@@ -237,6 +245,15 @@ fn own_tool_names() -> String {
         .map(|name| format!("mcp__{SERVER_NAME}__{name}"))
         .collect::<Vec<_>>()
         .join(",")
+}
+
+pub fn resumed_session(expected: Option<&str>, found: String) -> Result<String, String> {
+    match expected {
+        Some(expected) if expected != found => Err(format!(
+            "claude resumed session {found} instead of {expected}"
+        )),
+        _ => Ok(found),
+    }
 }
 
 pub fn decode_claude_version(output: &str) -> Option<&str> {
@@ -279,13 +296,27 @@ mod tests {
 
     #[test]
     fn init_needs_a_connected_report_server() {
-        assert_eq!(decode_line(INIT), ClaudeLine::Init(Ok(())));
+        assert_eq!(decode_line(INIT), ClaudeLine::Init(Ok("s".into())));
         let failed = INIT.replace("connected", "failed");
         assert!(matches!(decode_line(&failed), ClaudeLine::Init(Err(e)) if e.contains("failed")));
         let missing = INIT.replace("ralph-worker\",\"status", "other\",\"status");
         assert!(matches!(decode_line(&missing), ClaudeLine::Init(Err(_))));
         let unlisted = r#"{"type":"system","subtype":"init","session_id":"s"}"#;
-        assert_eq!(decode_line(unlisted), ClaudeLine::Init(Ok(())));
+        assert_eq!(decode_line(unlisted), ClaudeLine::Init(Ok("s".into())));
+        let anonymous = r#"{"type":"system","subtype":"init"}"#;
+        assert!(
+            matches!(decode_line(anonymous), ClaudeLine::Init(Err(e)) if e.contains("session id"))
+        );
+    }
+
+    #[test]
+    fn a_resumed_worker_must_keep_its_session_id() {
+        assert_eq!(resumed_session(None, "n".into()), Ok("n".into()));
+        assert_eq!(resumed_session(Some("s"), "s".into()), Ok("s".into()));
+        assert_eq!(
+            resumed_session(Some("s"), "n".into()),
+            Err("claude resumed session n instead of s".into())
+        );
     }
 
     #[test]
@@ -497,7 +528,13 @@ mod tests {
 
     #[test]
     fn args_run_prompt_less_stream_json_with_the_report_server() {
-        let args = claude_headless_args(Some("haiku"), "{}", Path::new("/a"), PermissionMode::Ask);
+        let args = claude_headless_args(
+            Some("haiku"),
+            "{}",
+            Path::new("/a"),
+            PermissionMode::Ask,
+            None,
+        );
         let joined = args.join(" ");
         assert!(joined
             .starts_with("-p --verbose --input-format stream-json --output-format stream-json"));
@@ -506,11 +543,20 @@ mod tests {
         assert!(joined.contains(
             "--mcp-config {} --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
         ));
-        let yolo = claude_headless_args(None, "{}", Path::new("/a"), PermissionMode::Yolo);
+        assert!(!args.contains(&"--resume".into()));
+        let yolo = claude_headless_args(None, "{}", Path::new("/a"), PermissionMode::Yolo, None);
         assert!(yolo
             .join(" ")
             .contains("--permission-mode auto --permission-prompt-tool stdio"));
         assert!(!yolo.contains(&"--model".into()));
+        let resumed = claude_headless_args(
+            None,
+            "{}",
+            Path::new("/a"),
+            PermissionMode::Ask,
+            Some("abc"),
+        );
+        assert!(resumed.join(" ").ends_with("--resume abc"));
     }
 
     #[test]
