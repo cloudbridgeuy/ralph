@@ -1,7 +1,7 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    Action, BlockedContent, PermissionMode, PermissionOption, ThreadSignal, TurnEnd, Turns,
-    VersionGate, SERVER_NAME,
+    Action, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal,
+    TurnEnd, Turns, VersionGate, SERVER_NAME,
 };
 use crate::stream::result_is_error;
 use serde_json::{json, Value};
@@ -20,7 +20,6 @@ pub const CLAUDE_HEADLESS_SESSION_DIR: &str = "claude-headless-session";
 
 pub const ALLOW_ONCE: &str = "allow_once";
 const DENY: &str = "deny";
-const MALFORMED_PERMISSION: &str = "claude sent a can_use_tool request with no request_id or no input object; it waits for an answer ralph cannot send";
 
 pub const CLAUDE_GATE: VersionGate = VersionGate {
     agent: "claude",
@@ -37,7 +36,7 @@ pub enum ClaudeLine {
     Signal(ThreadSignal),
     Permission(ClaudePermission),
     Cancel(String),
-    Malformed(String),
+    Malformed,
     Other,
 }
 
@@ -45,6 +44,15 @@ pub enum ClaudeLine {
 pub struct ClaudePermission {
     pub input: Value,
     pub content: BlockedContent,
+}
+
+pub fn stuck_permission_report(id: &str, at: &str) -> Report {
+    Report {
+        worker: id.to_string(),
+        at: at.to_string(),
+        status: ReportStatus::Blocked.as_str().to_string(),
+        text: "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it.".to_string(),
+    }
 }
 
 pub fn decode_line(line: &str) -> ClaudeLine {
@@ -58,10 +66,7 @@ pub fn decode_line(line: &str) -> ClaudeLine {
         }
         (Some("result"), _) => ClaudeLine::Signal(ThreadSignal::TurnEnded(turn_end(line, &value))),
         (Some("control_request"), _) if value["request"]["subtype"] == "can_use_tool" => {
-            permission(&value).map_or_else(
-                || ClaudeLine::Malformed(MALFORMED_PERMISSION.to_string()),
-                ClaudeLine::Permission,
-            )
+            permission(&value).map_or(ClaudeLine::Malformed, ClaudeLine::Permission)
         }
         (Some("control_cancel_request"), _) => control_cancel_request(&value),
         _ => ClaudeLine::Other,
@@ -321,7 +326,7 @@ mod tests {
 
     #[test]
     fn permission_lines_without_a_request_id_or_input_are_malformed() {
-        let malformed = |line: &str| matches!(decode_line(line), ClaudeLine::Malformed(_));
+        let malformed = |line: &str| matches!(decode_line(line), ClaudeLine::Malformed);
         assert!(malformed(&ASK.replace(r#""request_id":"r1","#, "")));
         assert!(malformed(
             &ASK.replace(r#""request_id":"r1""#, r#""request_id":"""#)
@@ -532,5 +537,16 @@ mod tests {
             "claude 2.2.0 is newer than the probed 2.1.314; the stream-json protocol may differ."
         );
         assert!(check_agent_version(&CLAUDE_GATE, "garbage", &verified).is_err());
+    }
+
+    #[test]
+    fn a_stuck_permission_report_blocks_the_worker_with_the_close_hint() {
+        let report = stuck_permission_report("A", "2026-01-01T00:00:00Z");
+        assert_eq!(report.worker, "A");
+        assert_eq!(report.status, "blocked");
+        assert_eq!(
+            report.text,
+            "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
+        );
     }
 }

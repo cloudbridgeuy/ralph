@@ -18,12 +18,12 @@ use ralph_core::stream::{interrupt_line, user_line};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, decode_claude_version, decode_line, gone_path, interrupted_end,
-    permission_response, prompt_failure_report, ready_path, reduce, request_stale, task_prompt,
-    Action, ClaudeLine, ClaudePermission, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer,
-    PermissionMode, SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
-    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
-    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
+    permission_response, prompt_failure_report, ready_path, reduce, request_stale,
+    stuck_permission_report, task_prompt, Action, ClaudeLine, ClaudePermission, HandoffFiles,
+    HarnessId, HeadlessState, PermissionAnswer, PermissionMode, SpawnRequest, ThreadSignal, Turns,
+    VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
+    CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR,
+    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -176,8 +176,10 @@ impl Shared {
                 ClaudeLine::Signal(signal) => self.signal(signal),
                 ClaudeLine::Permission(ask) => self.ask(ask),
                 ClaudeLine::Cancel(id) => self.permissions.settle(|reply| reply.request_id == id),
-                ClaudeLine::Malformed(problem) => {
-                    self.perform(vec![Action::PostFailure(problem)]);
+                ClaudeLine::Malformed => {
+                    let at = chrono::Utc::now().to_rfc3339();
+                    let report = stuck_permission_report(&self.id, &at);
+                    self.inbox.post(&report, 0).ok();
                 }
                 ClaudeLine::Other => {}
             }
@@ -572,11 +574,15 @@ mod tests {
         let reports = run.reports();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].status, "blocked");
-        assert!(reports[0].text.contains("no request_id"));
+        assert_eq!(
+            reports[0].text,
+            "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
+        );
     }
 
+    // stdin is None here; core test yolo_answers_allow_once_and_ask_answers_nothing covers the bytes.
     #[test]
-    fn yolo_answers_at_once_and_never_queues_or_publishes() {
+    fn yolo_never_queues_or_publishes() {
         let run = run(PermissionMode::Yolo, &[ASK]);
         assert!(run.permission_events().is_empty());
         assert!(run.reports().is_empty());
