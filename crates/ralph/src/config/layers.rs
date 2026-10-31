@@ -83,7 +83,7 @@ pub fn culprit_path<'a, E: PartialEq>(
         .map_or(fallback, |(path, _)| path)
 }
 
-const SECURITY_KEYS: [&str; 12] = [
+const SECURITY_KEYS: [&str; 13] = [
     "chat.permission_mode",
     "chat.mcp_servers",
     "chat.user_settings",
@@ -96,6 +96,7 @@ const SECURITY_KEYS: [&str; 12] = [
     "claude.config_dir",
     "chat.editor",
     "chat.user_claude_md",
+    "chat.empty_prompt",
 ];
 
 pub fn security_keys(layer: &Table) -> Vec<&'static str> {
@@ -294,6 +295,12 @@ mod tests {
     fn security_keys_flags_a_store_claude_config_dir() {
         let layer = table("[claude]\nconfig_dir = \"/x\"\n");
         assert_eq!(security_keys(&layer), ["claude.config_dir"]);
+    }
+
+    #[test]
+    fn security_keys_flags_a_store_chat_empty_prompt() {
+        let layer = table("[chat]\nempty_prompt = \"go on\"\n");
+        assert_eq!(security_keys(&layer), ["chat.empty_prompt"]);
     }
 
     #[test]
