@@ -304,6 +304,8 @@ Codex setup and limits:
 
 A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses claude's default. A config that fails to load warns and uses claude's default. The key is read at each spawn. A config that fails to load warns in the spawn result and uses `zsh`. A failed preflight error also carries that warning.
 
+`claude-headless` workers: `reply` with `interrupt` is partial. It sends a `control_request` interrupt and drops pending permission requests. If chat gets no confirmation within 30 s, the outcome is unknown.
+
 A bash login shell reads `~/.bash_profile` (or `~/.profile`), not `~/.bashrc`. Set the PATH for `claude` there, or make `~/.bash_profile` source `~/.bashrc`.
 
 ### `[opencode]` - opencode Workers

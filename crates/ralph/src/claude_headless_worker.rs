@@ -5,7 +5,7 @@ use crate::codex_worker::{report_exit, Stdin};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
     now_secs, queued_entries, report_start_warning, request_ids, sweep_owner, take_answer,
-    write_file, write_owner_record,
+    write_file, write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
@@ -14,14 +14,15 @@ use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::claude_leftovers::configured_dir;
-use ralph_core::stream::user_line;
+use ralph_core::stream::{interrupt_line, user_line};
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, check_agent_version, claude_headless_args,
-    decode_claude_version, decode_line, gone_path, permission_response, prompt_failure_report,
-    ready_path, reduce, request_stale, task_prompt, Action, ClaudeLine, ClaudePermission,
-    HandoffFiles, HarnessId, HeadlessState, PermissionAnswer, PermissionMode, SpawnRequest, Turns,
-    VerifiedAgents, WorkerEvent, WorkerMarkers, ALLOW_ONCE, ATTACHMENTS_DIR, CLAUDE_COMMAND,
-    CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    acp_mcp_server, activity_path, bind_started_turn, check_agent_version, claude_headless_args,
+    decode_claude_version, decode_line, gone_path, interrupted_end, permission_response,
+    prompt_failure_report, ready_path, reduce, request_stale, task_prompt, Action, ClaudeLine,
+    ClaudePermission, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer, PermissionMode,
+    SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ALLOW_ONCE,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
     CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
 };
 use serde_json::{json, Value};
@@ -30,7 +31,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -54,15 +55,40 @@ struct Shared {
     heartbeat: Arc<Heartbeat>,
     markers: WorkerMarkers,
     inbox: Inbox,
+    results: PathBuf,
+    turn_seq: AtomicU64,
     closing: AtomicBool,
     exited: AtomicBool,
 }
 
 impl Shared {
-    fn accept(&self, text: String) {
+    fn drive(&self, step: impl FnOnce(&mut Turns) -> Vec<Action>) {
         let mut turns = locked(&self.turns);
-        let actions = turns.accept(text);
+        let actions = step(&mut turns);
+        let seq = self.turn_seq.fetch_add(1, Ordering::SeqCst);
+        let actions = bind_started_turn(&mut turns, actions, seq);
         self.perform(actions);
+    }
+
+    fn accept(&self, text: String) {
+        self.drive(|turns| turns.accept(text));
+    }
+
+    fn interrupt(&self, text: String, entry: String) {
+        self.drive(|turns| turns.interrupt(text, entry));
+    }
+
+    fn signal(&self, signal: ThreadSignal) {
+        let closing = self.closing.load(Ordering::SeqCst);
+        self.drive(|turns| {
+            let signal = match signal {
+                ThreadSignal::TurnEnded(end) => {
+                    ThreadSignal::TurnEnded(interrupted_end(end, turns.interrupt_sent()))
+                }
+                other => other,
+            };
+            turns.signal(signal, closing)
+        });
     }
 
     fn send(&self, line: &str) -> Result<(), String> {
@@ -127,7 +153,15 @@ impl Shared {
                     let report = prompt_failure_report(agent, &self.id, &at, &problem);
                     self.inbox.post(&report, 0).ok();
                 }
-                Action::Interrupt(_) | Action::InterruptResult { .. } | Action::Snapshot => {}
+                Action::Interrupt(turn_id) => {
+                    self.send(&interrupt_line(&format!("interrupt-{turn_id}")))
+                        .ok();
+                    self.permissions.drain();
+                }
+                Action::InterruptResult { entry, cancelled } => {
+                    write_interrupt_result(&self.results, &entry, cancelled);
+                }
+                Action::Snapshot => {}
             }
         }
     }
@@ -142,11 +176,7 @@ impl Shared {
                         ready.send(status).ok();
                     }
                 }
-                ClaudeLine::Signal(signal) => {
-                    let mut turns = locked(&self.turns);
-                    let actions = turns.signal(signal, self.closing.load(Ordering::SeqCst));
-                    self.perform(actions);
-                }
+                ClaudeLine::Signal(signal) => self.signal(signal),
                 ClaudeLine::Permission(ask) => self.ask(ask),
                 ClaudeLine::Cancel(id) => self.permissions.settle(|reply| reply.request_id == id),
                 ClaudeLine::Other => {}
@@ -244,6 +274,8 @@ impl ClaudeWorker {
             heartbeat,
             markers,
             inbox: Inbox::new(request.inbox.clone()),
+            results: files.interrupt_result.clone(),
+            turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
         });
@@ -324,11 +356,20 @@ impl ClaudeHeadlessHost {
         HandoffFiles::claude_headless(&self.store_dir, id)
     }
 
-    fn deliver_prompts(&self, id: &str) {
-        for entry in queued_entries(&self.files(id).prompt) {
+    fn deliver_queued(
+        &self,
+        id: &str,
+        dir: fn(&HandoffFiles) -> &PathBuf,
+        deliver: fn(&Shared, String, String),
+    ) {
+        for entry in queued_entries(dir(&self.files(id))) {
+            let name = entry
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
             let worker = locked(&self.workers).get(id).map(|w| Arc::clone(&w.shared));
             if let (Ok(text), Some(shared)) = (fs::read_to_string(&entry), worker) {
-                shared.accept(text);
+                deliver(&shared, text, name);
             }
             fs::remove_file(&entry).ok();
         }
@@ -420,7 +461,18 @@ impl HeadlessHost for ClaudeHeadlessHost {
             self.answer(&id);
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_PROMPT_DIR) {
-            self.deliver_prompts(&id);
+            self.deliver_queued(
+                &id,
+                |files| &files.prompt,
+                |shared, text, _| shared.accept(text),
+            );
+        }
+        for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_INTERRUPT_DIR) {
+            self.deliver_queued(
+                &id,
+                |files| &files.interrupt,
+                |shared, text, entry| shared.interrupt(text, entry),
+            );
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_SPAWN_DIR) {
             self.spawn(&id);
