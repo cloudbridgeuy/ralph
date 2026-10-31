@@ -1,7 +1,7 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    BlockedContent, PermissionMode, PermissionOption, ThreadSignal, TurnEnd, VersionGate,
-    SERVER_NAME,
+    Action, BlockedContent, PermissionMode, PermissionOption, ThreadSignal, TurnEnd, Turns,
+    VersionGate, SERVER_NAME,
 };
 use crate::stream::result_is_error;
 use serde_json::{json, Value};
@@ -145,6 +145,24 @@ fn turn_end(line: &str, result: &Value) -> TurnEnd {
         message: message.to_string(),
         transient: false,
     }
+}
+
+pub fn interrupted_end(end: TurnEnd, interrupt_sent: bool) -> TurnEnd {
+    match end {
+        TurnEnd::Succeeded => TurnEnd::Succeeded,
+        _ if interrupt_sent => TurnEnd::Interrupted,
+        other => other,
+    }
+}
+
+pub fn bind_started_turn(turns: &mut Turns, mut actions: Vec<Action>, seq: u64) -> Vec<Action> {
+    if actions
+        .iter()
+        .any(|action| matches!(action, Action::Start(_)))
+    {
+        actions.extend(turns.bind_turn(Some(format!("turn-{seq}"))));
+    }
+    actions
 }
 
 pub fn claude_headless_args(
@@ -336,6 +354,73 @@ mod tests {
             [Action::Emit(WorkerEvent::Reported)]
         );
         assert_eq!(starts(&turns.signal(signal(RESULT_OK), false)), ["go"]);
+    }
+
+    fn failed() -> TurnEnd {
+        TurnEnd::Failed {
+            message: "x".into(),
+            transient: false,
+        }
+    }
+
+    #[test]
+    fn a_failed_end_after_an_interrupt_counts_as_interrupted() {
+        assert_eq!(interrupted_end(failed(), true), TurnEnd::Interrupted);
+        assert_eq!(interrupted_end(failed(), false), failed());
+        assert_eq!(
+            interrupted_end(TurnEnd::Succeeded, true),
+            TurnEnd::Succeeded
+        );
+    }
+
+    fn started(turns: &mut Turns, seq: u64) -> Vec<Action> {
+        let actions = turns.accept("task".into());
+        bind_started_turn(turns, actions, seq)
+    }
+
+    #[test]
+    fn an_interrupt_while_running_fires_once_the_turn_is_bound_and_cancels_on_the_error_result() {
+        let mut turns = Turns::default();
+        let actions = started(&mut turns, 1);
+        assert_eq!(starts(&actions), ["task"]);
+        assert!(!actions.iter().any(|a| matches!(a, Action::Interrupt(_))));
+        let sent = turns.interrupt("stop".into(), "e1".into());
+        assert_eq!(sent, [Action::Interrupt("turn-1".into())]);
+        let end = interrupted_end(failed(), turns.interrupt_sent());
+        let done = turns.signal(ThreadSignal::TurnEnded(end), false);
+        assert!(done.contains(&Action::InterruptResult {
+            entry: "e1".into(),
+            cancelled: true
+        }));
+    }
+
+    #[test]
+    fn an_interrupt_while_idle_reports_not_cancelled_and_starts_the_prompt() {
+        let mut turns = Turns::default();
+        let actions = turns.interrupt("stop".into(), "e1".into());
+        let actions = bind_started_turn(&mut turns, actions, 1);
+        assert_eq!(
+            actions[0],
+            Action::InterruptResult {
+                entry: "e1".into(),
+                cancelled: false
+            }
+        );
+        assert_eq!(starts(&actions), ["stop"]);
+        assert!(!actions.iter().any(|a| matches!(a, Action::Interrupt(_))));
+    }
+
+    #[test]
+    fn binding_runs_on_the_same_turns_borrow_and_a_queued_interrupt_fires_at_start() {
+        let turns = std::sync::Mutex::new(Turns::default());
+        let mut guard = turns.lock().unwrap();
+        let actions = guard.accept("task".into());
+        let actions = bind_started_turn(&mut guard, actions, 7);
+        assert_eq!(starts(&actions), ["task"]);
+        assert_eq!(
+            guard.interrupt("s".into(), "e".into()),
+            [Action::Interrupt("turn-7".into())]
+        );
     }
 
     #[test]

@@ -118,6 +118,10 @@ impl Turns {
         actions
     }
 
+    pub fn interrupt_sent(&self) -> bool {
+        self.interrupt_sent
+    }
+
     pub fn close(&mut self) -> Vec<Action> {
         if self.running.is_none() {
             return Vec::new();
