@@ -5,3 +5,4 @@
 # Default is 7, but we enforce 5 for better code quality.
 # Functions with more than 5 arguments should use config/options structs.
 too-many-arguments-threshold = 5
+allow-unwrap-in-tests = true
