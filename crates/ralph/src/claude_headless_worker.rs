@@ -20,17 +20,18 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, decode_claude_version, decode_line, gone_path, interrupt_lines,
     interrupted_end, permission_response, prompt_failure_report, ready_path, reduce, request_stale,
-    resumed_session, stuck_permission_report, task_prompt, Action, ClaudeLine, ClaudePermission,
-    HandoffFiles, HarnessId, HeadlessState, PermissionAnswer, PermissionMode, SessionRecord,
-    SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
-    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
-    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
-    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
+    resumed_session, stuck_permission_report, task_prompt, uuid_v4, Action, ClaudeLine,
+    ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer,
+    PermissionMode, SessionRecord, SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent,
+    WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
+    SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -59,7 +60,7 @@ struct Shared {
     markers: WorkerMarkers,
     inbox: Inbox,
     results: PathBuf,
-    resumed: Option<String>,
+    expected_session: Option<String>,
     turn_seq: AtomicU64,
     closing: AtomicBool,
     exited: AtomicBool,
@@ -182,8 +183,8 @@ impl Shared {
             self.heartbeat.touch();
             match decode_line(&line) {
                 ClaudeLine::Init(status) => {
-                    let status =
-                        status.and_then(|found| resumed_session(self.resumed.as_deref(), found));
+                    let status = status
+                        .and_then(|found| resumed_session(self.expected_session.as_deref(), found));
                     if let Some(ready) = ready.take() {
                         ready.send(status).ok();
                     } else if let Err(problem) = status {
@@ -214,6 +215,31 @@ impl Shared {
             "claude exited",
         );
     }
+}
+
+fn session_record(
+    session_id: &str,
+    request: &SpawnRequest,
+    store: &Path,
+    mode: PermissionMode,
+) -> SessionRecord {
+    SessionRecord {
+        session_id: session_id.to_string(),
+        cwd: request.worktree.clone(),
+        inbox: request.inbox.clone(),
+        store: Some(store.to_path_buf()),
+        model: request.model.clone(),
+        effort: None,
+        permissions: Some(mode),
+    }
+}
+
+fn random_bytes() -> Result<[u8; 16], String> {
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|e| format!("could not read random bytes for the session id: {e}"))?;
+    Ok(bytes)
 }
 
 fn check_installed_version(warning: &Path) -> Result<(), String> {
@@ -262,12 +288,23 @@ impl ClaudeWorker {
             .unwrap_or_else(|| {
                 configured_permission_mode("claude", |config| config.claude.permissions_setting())
             });
+        let new_id = match resume {
+            Some(_) => String::new(),
+            None => uuid_v4(random_bytes()?),
+        };
+        let session = match resume {
+            Some(record) => ClaudeSession::Resume(&record.session_id),
+            None => ClaudeSession::New(&new_id),
+        };
+        let expected_session = match session {
+            ClaudeSession::New(id) | ClaudeSession::Resume(id) => id.to_string(),
+        };
         let args = claude_headless_args(
             request.model.as_deref(),
             &mcp.to_string(),
             &attachments,
             mode,
-            resume.map(|record| record.session_id.as_str()),
+            session,
         );
         let mut command = Command::new(CLAUDE_COMMAND);
         command.args(args).current_dir(&request.worktree);
@@ -306,7 +343,7 @@ impl ClaudeWorker {
             markers,
             inbox: Inbox::new(request.inbox.clone()),
             results: files.interrupt_result.clone(),
-            resumed: resume.map(|record| record.session_id.clone()),
+            expected_session: Some(expected_session),
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
@@ -314,6 +351,13 @@ impl ClaudeWorker {
         if let Err(message) = write_owner_record(&files.owner, child.id(), "claude") {
             stop_child(&mut child);
             return Err(message);
+        }
+        if resume.is_none() {
+            let record = session_record(&new_id, request, store, mode);
+            if let Err(e) = write_file(&files.session, &record.render()) {
+                stop_child(&mut child);
+                return Err(format!("could not write the session record: {e}"));
+            }
         }
         let mut worker = Self {
             child,
@@ -339,7 +383,10 @@ impl ClaudeWorker {
                 })
             }
         };
-        let session = session.inspect_err(|_| worker.terminate())?;
+        let session = session.inspect_err(|_| {
+            worker.terminate();
+            fs::remove_file(&files.session).ok();
+        })?;
         worker.session = session;
         Ok(worker)
     }
@@ -488,20 +535,18 @@ impl ClaudeHeadlessHost {
             && fs::remove_file(&files.spawn).is_ok()
             && write_file(&ready_path(&self.store_dir, id), "").is_ok();
         if claimed {
-            let record = SessionRecord {
-                session_id: worker.session.clone(),
-                cwd: request.worktree.clone(),
-                inbox: request.inbox.clone(),
-                store: Some(self.store_dir.clone()),
-                model: request.model.clone(),
-                effort: None,
-                permissions: Some(worker.shared.mode),
-            };
+            let record = session_record(
+                &worker.session,
+                request,
+                &self.store_dir,
+                worker.shared.mode,
+            );
             write_file(&files.session, &record.render()).ok();
             locked(&self.workers).insert(id.to_string(), worker);
         } else {
             drop(worker);
             fs::remove_file(ready_path(&self.store_dir, id)).ok();
+            fs::remove_file(&files.session).ok();
         }
     }
 
@@ -643,7 +688,7 @@ mod tests {
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
             results: store.join("interrupt-result"),
-            resumed: None,
+            expected_session: None,
             turn_seq: AtomicU64::new(0),
         };
         let (tx, rx) = mpsc::channel();
@@ -700,5 +745,24 @@ mod tests {
             .err()
             .unwrap();
         assert!(stale.starts_with("stale request"));
+    }
+
+    #[test]
+    fn the_session_record_holds_the_session_id_and_spawn_settings() {
+        let request = SpawnRequest {
+            worktree: "/w".into(),
+            exe: "/ralph".into(),
+            inbox: "/store/inbox".into(),
+            task: "t".into(),
+            at: 1,
+            snapshots: false,
+            model: Some("haiku".into()),
+        };
+        let record = session_record("sid", &request, Path::new("/store"), PermissionMode::Yolo);
+        assert_eq!(record.session_id, "sid");
+        assert_eq!(record.cwd, PathBuf::from("/w"));
+        assert_eq!(record.store, Some(PathBuf::from("/store")));
+        assert_eq!(record.model.as_deref(), Some("haiku"));
+        assert_eq!(record.permissions, Some(PermissionMode::Yolo));
     }
 }

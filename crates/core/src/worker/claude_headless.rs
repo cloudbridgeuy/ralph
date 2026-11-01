@@ -210,7 +210,7 @@ pub fn claude_headless_args(
     mcp_config: &str,
     attachments: &Path,
     mode: PermissionMode,
-    resume: Option<&str>,
+    session: ClaudeSession,
 ) -> Vec<String> {
     let native_mode = match mode {
         PermissionMode::Ask => "default",
@@ -239,10 +239,32 @@ pub fn claude_headless_args(
     if let Some(model) = model {
         args.extend(["--model".to_string(), model.to_string()]);
     }
-    if let Some(session) = resume {
-        args.extend(["--resume".to_string(), session.to_string()]);
-    }
+    let (flag, id) = match session {
+        ClaudeSession::New(id) => ("--session-id", id),
+        ClaudeSession::Resume(id) => ("--resume", id),
+    };
+    args.extend([flag.to_string(), id.to_string()]);
     args
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClaudeSession<'a> {
+    New(&'a str),
+    Resume(&'a str),
+}
+
+pub fn uuid_v4(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = bytes.map(|byte| format!("{byte:02x}")).concat();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 fn own_tool_names() -> String {
@@ -541,7 +563,7 @@ mod tests {
             "{}",
             Path::new("/a"),
             PermissionMode::Ask,
-            None,
+            ClaudeSession::New("sid"),
         );
         let joined = args.join(" ");
         assert!(joined
@@ -552,7 +574,13 @@ mod tests {
             "--mcp-config {} --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
         ));
         assert!(!args.contains(&"--resume".into()));
-        let yolo = claude_headless_args(None, "{}", Path::new("/a"), PermissionMode::Yolo, None);
+        let yolo = claude_headless_args(
+            None,
+            "{}",
+            Path::new("/a"),
+            PermissionMode::Yolo,
+            ClaudeSession::New("sid"),
+        );
         assert!(yolo
             .join(" ")
             .contains("--permission-mode auto --permission-prompt-tool stdio"));
@@ -562,9 +590,38 @@ mod tests {
             "{}",
             Path::new("/a"),
             PermissionMode::Ask,
-            Some("abc"),
+            ClaudeSession::Resume("abc"),
         );
         assert!(resumed.join(" ").ends_with("--resume abc"));
+        assert!(!resumed.contains(&"--session-id".into()));
+    }
+
+    #[test]
+    fn a_new_session_passes_its_id_and_never_resume() {
+        let args = claude_headless_args(
+            None,
+            "{}",
+            Path::new("/a"),
+            PermissionMode::Ask,
+            ClaudeSession::New("11111111-2222-4333-8444-555555555555"),
+        );
+        assert!(args
+            .join(" ")
+            .ends_with("--session-id 11111111-2222-4333-8444-555555555555"));
+        assert!(!args.contains(&"--resume".into()));
+    }
+
+    #[test]
+    fn uuid_v4_formats_lowercase_hex_with_version_and_variant() {
+        let id = uuid_v4([
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0xff, 0x77, 0xff, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ]);
+        assert_eq!(id, "00112233-4455-4f77-bf99-aabbccddeeff");
+        let parts = id.split('-').map(str::len).collect::<Vec<_>>();
+        assert_eq!(parts, [8, 4, 4, 4, 12]);
+        assert_eq!(uuid_v4([0; 16]), "00000000-0000-4000-8000-000000000000");
+        assert_eq!(uuid_v4([0xff; 16]), "ffffffff-ffff-4fff-bfff-ffffffffffff");
     }
 
     #[test]
