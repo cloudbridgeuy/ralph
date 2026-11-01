@@ -36,6 +36,7 @@ pub mod inbox_alert;
 pub mod kitty;
 pub mod kitty_image;
 pub mod mcp;
+pub mod program_status;
 pub mod retry;
 pub mod sanitize;
 pub mod schedule;
