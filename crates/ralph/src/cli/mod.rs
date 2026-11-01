@@ -324,7 +324,10 @@ pub struct MermaidArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct ChatArgs {
-    #[arg(long, value_name = "DIR")]
+    #[command(subcommand)]
+    pub command: Option<ChatCommand>,
+
+    #[arg(long, value_name = "DIR", global = true)]
     pub store: Option<std::path::PathBuf>,
 
     #[arg(long, value_name = "TOKENS")]
@@ -347,6 +350,56 @@ pub struct ChatArgs {
 
     #[arg(long)]
     pub no_inbox_notification: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ChatCommand {
+    #[command(
+        about = "Print the chat memory the way the model's read, zoom, recall and search tools see it.",
+        long_about = "Answers from the store with no model and no turn, with the same text as the \
+model's tool. It takes only a shared read lock, so it works while a chat runs on the same store. \
+read <id> [raw|summary] pages a range such as 16-40; zoom <id> opens a node such as 4-7 or 5; \
+recall <regex> lists matching messages; search <words> ranks messages. read and search end a \
+partial page with `next cursor:`; pass it back as --cursor."
+    )]
+    History(HistoryArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct HistoryArgs {
+    #[arg(value_enum, help = "Model tool to run")]
+    pub tool: HistoryTool,
+
+    #[arg(
+        required = true,
+        help = "The id, pattern or words, as in the chat slash command"
+    )]
+    pub words: Vec<String>,
+
+    #[arg(
+        long,
+        help = "The `next cursor:` value from the last read or search page"
+    )]
+    pub cursor: Option<String>,
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryTool {
+    Read,
+    Zoom,
+    Recall,
+    Search,
+}
+
+impl HistoryTool {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Zoom => "zoom",
+            Self::Recall => "recall",
+            Self::Search => "search",
+        }
+    }
 }
 
 #[derive(clap::Args, Debug)]

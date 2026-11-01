@@ -19,10 +19,14 @@ pub enum Command {
     Workers,
     Hold,
     Config,
+    Read,
+    Zoom,
+    Recall,
+    Search,
 }
 
 impl Command {
-    pub const ALL: [Command; 8] = [
+    pub const ALL: [Command; 12] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -31,6 +35,10 @@ impl Command {
         Command::Workers,
         Command::Hold,
         Command::Config,
+        Command::Read,
+        Command::Zoom,
+        Command::Recall,
+        Command::Search,
     ];
 
     pub fn name(self) -> &'static str {
@@ -43,6 +51,10 @@ impl Command {
             Command::Workers => "/workers",
             Command::Hold => "/hold",
             Command::Config => "/config",
+            Command::Read => "/read",
+            Command::Zoom => "/zoom",
+            Command::Recall => "/recall",
+            Command::Search => "/search",
         }
     }
 
@@ -139,6 +151,22 @@ impl Command {
             Command::Config => &[(
                 "/config",
                 "the config this chat resolved at start: warnings, source files and paths, set RALPH_* and editor or color variables, start flags, and every merged key with its source (default, global, store, env or flag); notes config files changed on disk since start; starts no turn",
+            )],
+            Command::Read => &[(
+                "/read <id> [raw|summary] [--cursor <c>]",
+                "print chat memory messages in order: an index like 5 or a range like 16-40; summary shows the leaf summary of each long message; a long range ends with `next cursor:`, pass it as --cursor with the same id and mode for the next page; the same text as the model's read tool; starts no turn",
+            )],
+            Command::Zoom => &[(
+                "/zoom <id>",
+                "open one chat memory node: a block id like 4-7 shows its two halves, an index like 5 the raw message; the same text as the model's zoom tool; starts no turn",
+            )],
+            Command::Recall => &[(
+                "/recall <regex>",
+                "list the raw messages that match the case-insensitive regex, newest first, at most 50; the rest of the line is the pattern; the same text as the model's recall tool; starts no turn",
+            )],
+            Command::Search => &[(
+                "/search <words> [--cursor <c>]",
+                "rank the raw messages by bare words, \"quoted phrases\" and identifiers such as GUZ-709; more hits end with `next cursor:`, pass it as --cursor with the same words; the same text as the model's search tool, without its role, date and limit filters; starts no turn",
             )],
         }
     }

@@ -6,7 +6,7 @@ use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
     holder_pid, log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall,
     retry_prompt, search, Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot,
-    RangeRequest, Role, SearchRequest, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    RangeRequest, Role, SearchRequest, Tool, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
 use ralph_core::chat_suggestion::SuggestionRecord;
 use ralph_core::chat_thread::{absorb_usage, tail_read, FileStamp, UsageTail};
@@ -208,6 +208,16 @@ impl Store {
 
     pub fn search(&self, request: &SearchRequest) -> io::Result<Result<String, String>> {
         self.with_archive(|archive| search(archive, request))
+    }
+
+    pub fn call(&self, tool: &Tool) -> Result<String, String> {
+        let result = match tool {
+            Tool::Zoom(node) => self.zoom(*node),
+            Tool::Recall(pattern) => self.recall(pattern),
+            Tool::Read(request) => self.read(request),
+            Tool::Search(request) => self.search(request),
+        };
+        result.unwrap_or_else(|e| Err(format!("Could not read chat memory: {e}")))
     }
 
     fn open_lock(&self) -> io::Result<File> {

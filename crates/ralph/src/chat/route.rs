@@ -1,6 +1,7 @@
 use crate::chat::config;
 use crate::chat::diff::{self, DiffContext};
 use crate::chat::inbox::{self, Display};
+use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::schedule;
@@ -62,6 +63,14 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::WorkerCosts => workers::costs(ctx.display, ctx.prices),
         Route::Help => print!("{}", help_text(screen_columns())),
         Route::Config => config::print(ctx.config),
+        Route::History(tool) => {
+            let store = Store::new(ctx.store.to_path_buf());
+            println!(
+                "{}",
+                tool.and_then(|tool| store.call(&tool))
+                    .unwrap_or_else(|e| e)
+            );
+        }
         Route::Send(_) | Route::ReadInbox(_) | Route::Hold(_) | Route::Ignore => {}
     }
     Ok(())

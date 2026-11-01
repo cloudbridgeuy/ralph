@@ -1,5 +1,6 @@
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
+use crate::chat_memory::{history_tool, Tool};
 use crate::chat_thread::ThreadCell;
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -90,6 +91,7 @@ pub enum Route {
     Workers(Option<String>),
     WorkerCosts,
     Hold(HoldFilter),
+    History(Result<Tool, String>),
     Help,
     Config,
     Ignore,
@@ -104,6 +106,7 @@ impl Route {
             | Route::ListInbox
             | Route::Help
             | Route::Config
+            | Route::History(_)
             | Route::InboxUsage
             | Route::Watch(WatchCommand::List | WatchCommand::Usage)
             | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
@@ -150,12 +153,32 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
                 Command::Workers => workers_route(args, line),
                 Command::Hold => hold_route(args, line),
                 Command::Config => Route::Config,
+                Command::Read | Command::Search => {
+                    let (words, cursor) = split_cursor(args);
+                    Route::History(history_tool(&command.name()[1..], words, cursor))
+                }
+                Command::Zoom | Command::Recall => {
+                    Route::History(history_tool(&command.name()[1..], args, None))
+                }
             };
         }
     }
     match line {
         "" => empty_route(unread, empty),
         message => Route::Send(message.to_string()),
+    }
+}
+
+fn split_cursor(args: &str) -> (&str, Option<&str>) {
+    let args = args.trim();
+    let Some((head, cursor)) = args.rsplit_once(char::is_whitespace) else {
+        return (args, None);
+    };
+    match head.trim_end().strip_suffix("--cursor") {
+        Some(words) if words.is_empty() || words.ends_with(char::is_whitespace) => {
+            (words, Some(cursor))
+        }
+        _ => (args, None),
     }
 }
 

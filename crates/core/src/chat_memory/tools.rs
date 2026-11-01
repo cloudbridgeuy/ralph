@@ -123,6 +123,26 @@ pub fn parse_tool_call(name: &str, args: &Value) -> Result<Tool, String> {
     }
 }
 
+pub fn history_tool(name: &str, words: &str, cursor: Option<&str>) -> Result<Tool, String> {
+    let words = words.trim();
+    let args = match name {
+        "read" => {
+            let mut parts = words.split_whitespace();
+            let (id, mode) = (parts.next(), parts.next());
+            if parts.next().is_some() {
+                return Err("read takes an id and an optional mode, raw or summary.".to_string());
+            }
+            json!({"id": id, "mode": mode, "cursor": cursor})
+        }
+        "search" => json!({"query": words, "cursor": cursor}),
+        _ if cursor.is_some() => return Err(format!("{name} takes no cursor.")),
+        "zoom" => json!({"id": words}),
+        "recall" => json!({"pattern": words}),
+        _ => Value::Null,
+    };
+    parse_tool_call(name, &args)
+}
+
 pub fn handle_request(request: &Value) -> Outcome {
     match dispatch(SERVER_NAME, &tool_definitions(), request) {
         Dispatch::Silent => Outcome::Silent,
