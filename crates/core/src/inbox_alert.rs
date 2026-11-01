@@ -1,3 +1,4 @@
+use crate::program_status::tmux_wrap;
 use crate::worker::Report;
 use serde::{Deserialize, Serialize};
 
@@ -106,7 +107,7 @@ pub fn osc9(body: &str, in_tmux: bool) -> String {
     let clean: String = body.chars().filter(|c| !c.is_control()).collect();
     let osc = format!("\x1b]9;{clean}\x07");
     if in_tmux {
-        format!("\x1bPtmux;{}\x1b\\", osc.replace('\x1b', "\x1b\x1b"))
+        tmux_wrap(&osc)
     } else {
         osc
     }

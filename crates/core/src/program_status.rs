@@ -54,9 +54,7 @@ pub struct Report {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TooLong {
-    pub bytes: usize,
-}
+pub struct TooLong;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -101,9 +99,7 @@ fn clean_msg(msg: &str) -> String {
 
 fn bounded(sequence: String) -> Result<String, TooLong> {
     if sequence.len() > MAX_SEQUENCE_BYTES {
-        Err(TooLong {
-            bytes: sequence.len(),
-        })
+        Err(TooLong)
     } else {
         Ok(sequence)
     }
@@ -230,7 +226,7 @@ mod tests {
 
     #[test]
     fn sequences_over_the_limit_are_rejected() {
-        assert_eq!(bounded("x".repeat(4097)), Err(TooLong { bytes: 4097 }));
+        assert_eq!(bounded("x".repeat(4097)), Err(TooLong));
         assert_eq!(bounded("x".repeat(4096)), Ok("x".repeat(4096)));
     }
 

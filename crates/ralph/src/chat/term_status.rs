@@ -1,8 +1,6 @@
+use crate::inbox_alert::{write_terminal, TMUX_PANE_ENV};
 use ralph_core::program_status::{encode, tmux_wrap, Report, State};
-use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
-
-const TMUX_PANE_ENV: &str = "TMUX_PANE";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Sent {
@@ -21,12 +19,6 @@ fn frame(report: &Report, in_tmux: bool) -> Option<String> {
 
 fn changed(sent: &Sent, bytes: &str) -> bool {
     !sent.closed && sent.last.as_deref() != Some(bytes)
-}
-
-fn write_terminal(bytes: &str) -> io::Result<()> {
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(bytes.as_bytes())?;
-    stdout.flush()
 }
 
 pub(super) struct TermStatus {

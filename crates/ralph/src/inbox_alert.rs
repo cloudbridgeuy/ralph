@@ -6,7 +6,7 @@ use ralph_core::inbox_alert::{
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 
-const TMUX_PANE_ENV: &str = "TMUX_PANE";
+pub(crate) const TMUX_PANE_ENV: &str = "TMUX_PANE";
 const SOUND_FILE: &str = "/System/Library/Sounds/Glass.aiff";
 const BELL: &str = "\x07";
 
@@ -35,7 +35,7 @@ pub fn focus() -> Focus {
     tmux_focus(pane.as_ref(), clients.as_deref())
 }
 
-fn write_terminal(text: &str) -> io::Result<()> {
+pub(crate) fn write_terminal(text: &str) -> io::Result<()> {
     let mut stdout = io::stdout();
     stdout.write_all(text.as_bytes())?;
     stdout.flush()

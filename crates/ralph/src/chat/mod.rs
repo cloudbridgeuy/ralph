@@ -550,12 +550,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 (outcome, draft_after(outcome, message))
             }
             Route::ReadInbox(selection) => {
+                monitor.set_phase(Phase::Turn);
                 let reports = monitor.drain(selection)?;
                 monitor.refresh(true);
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
+                    monitor.set_phase(Phase::Prompt);
                     continue;
                 };
-                monitor.set_phase(Phase::Turn);
                 let (result, queued) = snapshots.around(|| {
                     keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
                 });
@@ -564,13 +565,14 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
             Route::Hold(filter) => {
                 idle.store(true, Ordering::SeqCst);
+                monitor.set_phase(Phase::Turn);
                 let held = hold::run(&filter, &monitor, &prompt.bar);
                 idle.store(false, Ordering::SeqCst);
                 match held {
                     Held::Item(position) => {
                         pending = Some(Route::ReadInbox(Selection::At(position)));
                     }
-                    Held::Left => {}
+                    Held::Left => monitor.set_phase(Phase::Prompt),
                     Held::Quit => break,
                 }
                 continue;
