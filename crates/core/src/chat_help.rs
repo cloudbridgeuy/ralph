@@ -148,13 +148,13 @@ impl Command {
             Command::Hold => &[
                 (
                     "/hold [<worker-id> | watch:<name> | schedule:<id>]",
-                    "wait with no prompt; the model suggests it when the next step is waiting, and when it suggests exactly /hold <target> for a listed worker, watch or schedule, ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
+                    "wait with no prompt; the model suggests it when the next step is waiting (after the person approves a plan it suggests /send-it <ticket> instead), and when it suggests exactly /hold <target> for a listed worker, watch or schedule, ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
             Command::SendIt => &[
                 (
                     "/send-it <ticket>",
-                    "auto-send the model's suggested replies for routine steps after a countdown ([chat] send_it_seconds); any key cancels one send; it stops at a turn or cost cap, a repeated reply, or a reply that mentions push, merge, PR or abandon",
+                    "auto-send the model's suggested replies for routine steps after a countdown ([chat] send_it_seconds); any key cancels one send; it stops at a turn or cost cap, a repeated reply, or a reply that mentions push, merge, PR or abandon; the model suggests it after the person approves a plan, in place of /hold <ticket>, and again to resume after a stop; only replies it marks as routine steps (fix rounds, free live checks, the four checks, reinstalls, post-push cleanup) send, never approval, merge, push, paid runs or abandon",
                 ),
                 ("/send-it off", "stop auto-sending; /send-it alone shows its state"),
             ],
