@@ -343,6 +343,27 @@ impl Pump {
     }
 }
 
+type PromptWrite = thread::Result<io::Result<()>>;
+
+fn prompt_write_warning(outcome: &PromptWrite) -> Option<String> {
+    match outcome {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(format!(
+            "claude stopped reading before the whole prompt was sent (short write): {error}"
+        )),
+        Err(_) => Some(
+            "the prompt writer thread panicked; claude may have received a short prompt"
+                .to_string(),
+        ),
+    }
+}
+
+fn report_prompt_write(writer: Option<thread::JoinHandle<io::Result<()>>>) {
+    if let Some(message) = writer.and_then(|handle| prompt_write_warning(&handle.join())) {
+        crate::warn::warn(message);
+    }
+}
+
 fn run_subprocess_with_spinner(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
@@ -351,9 +372,12 @@ fn run_subprocess_with_spinner(
         None => Stdio::null(),
     };
     let mut child = spawn_piped(&config.command, stdin)?;
-    if let (Some(text), Some(mut pipe)) = (config.stdin.clone(), child.stdin.take()) {
-        thread::spawn(move || pipe.write_all(text.as_bytes()));
-    }
+    let writer = match (config.stdin.clone(), child.stdin.take()) {
+        (Some(text), Some(mut pipe)) => {
+            Some(thread::spawn(move || pipe.write_all(text.as_bytes())))
+        }
+        _ => None,
+    };
     let mut readers = Readers::start(&mut child)?;
     let mut pump = Pump::start(config, Display::Shown)?;
     let start = Instant::now();
@@ -362,6 +386,7 @@ fn run_subprocess_with_spinner(
         if let Some(status) = try_wait_child(&mut child)? {
             let exit_code = status.code().ok_or(SubprocessError::Signaled)?;
             readers.join();
+            report_prompt_write(writer);
             return Ok(pump.finish(&readers, exit_code, true));
         }
 
@@ -396,5 +421,39 @@ fn run_subprocess_with_spinner(
         }
 
         pump.step(&readers, pump.gate_paused())?;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn failed(kind: io::ErrorKind) -> PromptWrite {
+        Ok(Err(io::Error::from(kind)))
+    }
+
+    #[test]
+    fn complete_write_has_no_warning() {
+        assert_eq!(prompt_write_warning(&Ok(Ok(()))), None);
+    }
+
+    #[test]
+    fn broken_pipe_warns_of_a_short_write() {
+        let message = prompt_write_warning(&failed(io::ErrorKind::BrokenPipe)).unwrap();
+        assert!(message.contains("short write"), "{message}");
+        assert!(message.contains("broken pipe"), "{message}");
+    }
+
+    #[test]
+    fn other_io_error_warns_with_its_text() {
+        let message = prompt_write_warning(&failed(io::ErrorKind::PermissionDenied)).unwrap();
+        assert!(message.contains("permission denied"), "{message}");
+    }
+
+    #[test]
+    fn writer_panic_warns_without_panicking() {
+        let panicked: PromptWrite = thread::spawn(|| -> io::Result<()> { panic!("boom") }).join();
+        let message = prompt_write_warning(&panicked).unwrap();
+        assert!(message.contains("panicked"), "{message}");
     }
 }
