@@ -188,6 +188,30 @@ fn chat_auto_hold_defaults_on_and_can_be_disabled() {
 }
 
 #[test]
+fn chat_send_it_keys_have_defaults_and_overrides() {
+    let chat = AppConfig::new().chat;
+    assert_eq!(chat.send_it_seconds, 10);
+    assert_eq!(chat.send_it_max_turns, 15);
+    assert!((chat.send_it_max_usd - 5.0).abs() < f64::EPSILON);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(
+        &path,
+        "[chat]\nsend_it_seconds = 3\nsend_it_max_turns = 4\nsend_it_max_usd = 0.5\n",
+    )
+    .unwrap();
+    let chat = AppConfig::load_layers(&path, None).unwrap().chat;
+    assert_eq!(chat.send_it_seconds, 3);
+    assert_eq!(chat.send_it_max_turns, 4);
+    assert!((chat.send_it_max_usd - 0.5).abs() < f64::EPSILON);
+    fs::write(&path, "[chat]\nedit_mode = \"vi\"\n").unwrap();
+    let chat = AppConfig::load_layers(&path, None).unwrap().chat;
+    assert_eq!(chat.send_it_seconds, 10);
+    assert_eq!(chat.send_it_max_turns, 15);
+    assert!((chat.send_it_max_usd - 5.0).abs() < f64::EPSILON);
+}
+
+#[test]
 fn theme_status_table_loads_and_reports_warnings() {
     let config: AppConfig = toml::from_str(
         "[theme.status]\nmode_idle_bg = \"#102030\"\nmode_nap_bg = \"nope\"\nbranch_fg = \"red\"\n",
