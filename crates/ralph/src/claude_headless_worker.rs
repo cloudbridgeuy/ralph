@@ -20,14 +20,14 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, cleanup, decode_claude_version, decode_line, deny_line, gone_path,
     interrupt_lines, interrupted_end, permission_response, prompt_failure_report, ready_path,
-    reduce, request_stale, resumed_session, start_steps, stuck_permission_report, task_prompt,
-    turn_lost_at_resume, uuid_v4, Action, ClaudeLine, ClaudePermission, ClaudeSession,
+    reduce, request_stale, resumed_session, shutdown_steps, start_steps, stuck_permission_report,
+    task_prompt, turn_lost_at_resume, uuid_v4, Action, ClaudeLine, ClaudePermission, ClaudeSession,
     HandoffFiles, HarnessId, HeadlessState, InterruptOutcome, Leftover, PermissionAnswer,
-    PermissionMode, SessionRecord, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns,
-    VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
-    CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR,
-    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR,
-    CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
+    PermissionMode, SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal,
+    Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND,
+    CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
+    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
+    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -695,14 +695,17 @@ impl HeadlessHost for ClaudeHeadlessHost {
     fn shutdown(&self) {
         self.closed.store(true, Ordering::SeqCst);
         let drained: Vec<(String, ClaudeWorker)> = locked(&self.workers).drain().collect();
-        for (id, worker) in drained {
-            if worker.shared.heartbeat.running() {
-                worker
-                    .shared
-                    .perform(vec![Action::PostFailure(LOST_TURN.to_string())]);
+        for (id, mut worker) in drained {
+            for step in shutdown_steps(worker.shared.heartbeat.running()) {
+                match step {
+                    ShutdownStep::PostLostTurn => worker
+                        .shared
+                        .perform(vec![Action::PostFailure(LOST_TURN.to_string())]),
+                    ShutdownStep::ClearActivity => worker.shared.heartbeat.clear(),
+                    ShutdownStep::Stop => worker.terminate(),
+                    ShutdownStep::Forget => self.forget(&id),
+                }
             }
-            drop(worker);
-            self.forget(&id);
         }
         let starting: Vec<(String, u32)> = locked(&self.starting).drain().collect();
         let groups: Vec<u32> = starting.iter().map(|(_, group)| *group).collect();

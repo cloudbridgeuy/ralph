@@ -271,6 +271,31 @@ pub fn start_steps(session: &ClaudeSession) -> &'static [StartStep] {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownStep {
+    PostLostTurn,
+    ClearActivity,
+    Stop,
+    Forget,
+}
+
+pub fn shutdown_steps(running: bool) -> &'static [ShutdownStep] {
+    if running {
+        &[
+            ShutdownStep::PostLostTurn,
+            ShutdownStep::ClearActivity,
+            ShutdownStep::Stop,
+            ShutdownStep::Forget,
+        ]
+    } else {
+        &[
+            ShutdownStep::ClearActivity,
+            ShutdownStep::Stop,
+            ShutdownStep::Forget,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartFault {
     OwnerWrite,
     RecordWrite,
@@ -675,6 +700,27 @@ mod tests {
             .join(" ")
             .ends_with("--session-id 11111111-2222-4333-8444-555555555555"));
         assert!(!args.contains(&"--resume".into()));
+    }
+
+    #[test]
+    fn shutdown_steps_clear_the_activity_marker_right_after_the_report_and_before_the_stop() {
+        assert_eq!(
+            shutdown_steps(true),
+            [
+                ShutdownStep::PostLostTurn,
+                ShutdownStep::ClearActivity,
+                ShutdownStep::Stop,
+                ShutdownStep::Forget
+            ]
+        );
+        assert_eq!(
+            shutdown_steps(false),
+            [
+                ShutdownStep::ClearActivity,
+                ShutdownStep::Stop,
+                ShutdownStep::Forget
+            ]
+        );
     }
 
     #[test]
