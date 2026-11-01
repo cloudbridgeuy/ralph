@@ -419,6 +419,7 @@ fn test_save_and_load() {
             agent: None,
             status: StatusTheme::default(),
             input: InputTheme::default(),
+            diff: DiffTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -476,6 +477,7 @@ fn test_serialize_omits_none() {
             agent: None,
             status: StatusTheme::default(),
             input: InputTheme::default(),
+            diff: DiffTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -730,4 +732,20 @@ fn store_bad_claude_shell_keeps_store_keys() {
     assert!(notices
         .iter()
         .all(|n| !n.key.starts_with("store-fallback:")));
+}
+
+#[test]
+fn theme_diff_table_loads_and_reports_warnings() {
+    let config: AppConfig =
+        toml::from_str("[theme.diff]\nadd_bg = \"#000000\"\nctx_fg = \"red\"\n").unwrap();
+    assert_eq!(config.theme.diff.colors.len(), 2);
+    assert_eq!(
+        config.theme.warnings(),
+        ["[theme.diff] unknown key \"ctx_fg\"; ignored"]
+    );
+    let bad: AppConfig = toml::from_str("[theme.diff]\nadd_bg = \"nope\"\n").unwrap();
+    assert_eq!(
+        bad.theme.warnings(),
+        ["[theme.diff] add_bg = \"nope\" is not a color; using the default"]
+    );
 }

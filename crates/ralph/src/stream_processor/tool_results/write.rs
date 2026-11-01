@@ -104,7 +104,7 @@ fn format_before_after_highlighted(
         "Before:",
         before,
         language,
-        ansi::RED_BG,
+        &ansi::bg(Some(processor.diff_colors.del_bg)),
     ));
 
     // Horizontal separator
@@ -120,7 +120,7 @@ fn format_before_after_highlighted(
         "After:",
         after,
         language,
-        ansi::GREEN_BG,
+        &ansi::bg(Some(processor.diff_colors.add_bg)),
     ));
 
     output
@@ -342,7 +342,7 @@ fn format_new_file_highlighted(
         let line_num = i + 1;
         output.push_str(&format!(
             "{}{:>width$} {}│{} {}\n",
-            ansi::GREEN_BG,
+            ansi::bg(Some(processor.diff_colors.add_bg)),
             line_num,
             ansi::RESET,
             ansi::RESET,
@@ -617,5 +617,34 @@ mod tests {
 
         assert!(output.contains("(no changes)"));
         assert!(!output.contains("(new file)"));
+    }
+
+    fn colored_processor() -> StreamProcessor {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        processor.diff_colors = crate::diff_theme::test_colors();
+        processor
+    }
+
+    #[test]
+    fn before_after_uses_the_configured_backgrounds() {
+        let out = format_before_after_highlighted(&colored_processor(), "a.rs", "x", "y", None);
+        assert!(out.contains("\x1b[48;2;4;5;6m"));
+        assert!(out.contains("\x1b[48;2;1;2;3m"));
+        assert!(!out.contains(ansi::RED_BG));
+        assert!(!out.contains(ansi::GREEN_BG));
+    }
+
+    #[test]
+    fn new_file_uses_the_configured_add_background() {
+        let out = format_new_file_highlighted(&colored_processor(), "a.rs", "x", None);
+        assert!(out.contains("\x1b[48;2;1;2;3m"));
+        assert!(!out.contains(ansi::GREEN_BG));
+    }
+
+    #[test]
+    fn plain_processor_has_no_escape_byte() {
+        let processor = StreamProcessor::with_highlighting(false);
+        assert!(!format_before_after_display(&processor, "a.rs", "x", "y").contains('\x1b'));
+        assert!(!format_new_file_display(&processor, "a.rs", "x\ny").contains('\x1b'));
     }
 }

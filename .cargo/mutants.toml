@@ -45,6 +45,7 @@ examine_globs = [
   "crates/ralph/src/formatting.rs",
   "crates/ralph/src/status_theme.rs",
   "crates/ralph/src/input_theme.rs",
+  "crates/ralph/src/diff_theme.rs",
   "crates/ralph/src/theme_slots.rs",
 ]
 exclude_globs = [

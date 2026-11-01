@@ -89,7 +89,7 @@ fn format_before_after_highlighted(
         "Before:",
         old_str,
         language,
-        ansi::RED_BG,
+        &ansi::bg(Some(processor.diff_colors.del_bg)),
     ));
 
     // Horizontal separator
@@ -105,7 +105,7 @@ fn format_before_after_highlighted(
         "After:",
         new_str,
         language,
-        ansi::GREEN_BG,
+        &ansi::bg(Some(processor.diff_colors.add_bg)),
     ));
 
     output
@@ -348,7 +348,8 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
 
     if processor.highlighting_enabled {
         // Highlight the diff
-        let highlighted_diff = highlight_with_basic_colors(&display_content);
+        let highlighted_diff =
+            highlight_with_basic_colors(&display_content, &processor.diff_colors);
 
         // Build output with header
         let mut output = String::new();
@@ -579,5 +580,43 @@ mod tests {
         assert!(output.contains("no changes"));
         // Should not contain ANSI codes
         assert!(!output.contains("\x1b["));
+    }
+
+    fn colored_processor() -> StreamProcessor {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        processor.diff_colors = crate::diff_theme::test_colors();
+        processor
+    }
+
+    #[test]
+    fn before_after_uses_the_configured_backgrounds() {
+        let out = format_before_after_highlighted(&colored_processor(), "a.rs", "x", "y", None);
+        assert!(out.contains("\x1b[48;2;4;5;6m"));
+        assert!(out.contains("\x1b[48;2;1;2;3m"));
+        assert!(!out.contains(ansi::RED_BG));
+        assert!(!out.contains(ansi::GREEN_BG));
+    }
+
+    #[test]
+    fn unified_diff_uses_the_configured_foregrounds() {
+        let out = format_diff_output(&colored_processor(), "a.rs", "+x\n-y");
+        assert!(out.contains("\x1b[94m+x"));
+        assert!(out.contains("\x1b[95m-y"));
+    }
+
+    #[test]
+    fn plain_processor_has_no_escape_byte() {
+        let processor = StreamProcessor::with_highlighting(false);
+        assert!(!format_diff_output(&processor, "a.rs", "+x\n-y\n@@ -1 @@").contains('\x1b'));
+        assert!(!format_before_after_display(
+            &processor,
+            &EditSnapshot {
+                file_path: "a.rs".to_string(),
+                content: None,
+                old_string: Some("x".to_string()),
+                new_string: Some("y".to_string()),
+            }
+        )
+        .contains('\x1b'));
     }
 }

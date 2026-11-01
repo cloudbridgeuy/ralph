@@ -150,7 +150,8 @@ fn format_diff_output(
 
     if processor.highlighting_enabled {
         // Highlight the diff
-        let highlighted_diff = highlight_with_basic_colors(&display_content);
+        let highlighted_diff =
+            highlight_with_basic_colors(&display_content, &processor.diff_colors);
 
         // Build output with header
         let mut output = String::new();
@@ -377,5 +378,30 @@ mod tests {
         let output = format_diff_output(&processor, &snapshot, short_diff);
 
         assert!(!output.contains("more lines"));
+    }
+
+    fn snapshot() -> NotebookSnapshot {
+        NotebookSnapshot {
+            notebook_path: "n.ipynb".to_string(),
+            cell_identifier: "0".to_string(),
+            content: None,
+            edit_mode: "replace".to_string(),
+            cell_type: None,
+        }
+    }
+
+    #[test]
+    fn diff_uses_the_configured_foregrounds() {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        processor.diff_colors = crate::diff_theme::test_colors();
+        let out = format_diff_output(&processor, &snapshot(), "+x\n-y");
+        assert!(out.contains("\x1b[94m+x"));
+        assert!(out.contains("\x1b[95m-y"));
+    }
+
+    #[test]
+    fn plain_processor_has_no_escape_byte() {
+        let processor = StreamProcessor::with_highlighting(false);
+        assert!(!format_diff_output(&processor, &snapshot(), "+x\n-y\n@@ -1 @@").contains('\x1b'));
     }
 }

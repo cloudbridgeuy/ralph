@@ -245,6 +245,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .map(|plugin| build_plugin_args(plugin.path()))
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
+    let diff_colors = config.theme.diff.resolve().0;
     let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());
     let setting_warnings: Vec<String> = config
         .theme
@@ -488,7 +489,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         empty_submit,
     };
     let inbox_display = |color| Display {
-        ctx: RenderContext::new(&agent_highlighter, color),
+        ctx: RenderContext::new(&agent_highlighter, color).with_diff(diff_colors),
         theme: &agent_theme,
         color,
     };
@@ -571,7 +572,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
-                            let ctx = RenderContext::new(&agent_highlighter, color);
+                            let ctx = RenderContext::new(&agent_highlighter, color)
+                                .with_diff(diff_colors);
                             print!(
                                 "{}",
                                 crate::render::image::render_cell_display(

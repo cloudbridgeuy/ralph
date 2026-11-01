@@ -156,6 +156,27 @@ The default `base_bg` is ANSI color 236, written `#303030` above. `reset` is the
 suggestion = "cyan"  # suggest_reply pre-fill text
 ```
 
+#### Diff colors: `[theme.diff]`
+
+ralph paints diffs and Edit, Write and NotebookEdit results with this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. File and diff headers stay bold and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+
+| Key | Default | Paints |
+|-----|---------|--------|
+| `add_fg` | `dark_green` | Added diff lines (`+`) |
+| `del_fg` | `dark_red` | Removed diff lines (`-`) |
+| `hunk_fg` | `dark_cyan` | Hunk headers (`@@`) |
+| `add_bg` | `#2d822d` | Line-number background of added and "After" blocks |
+| `del_bg` | `#8c2d2d` | Line-number background of "Before" blocks |
+
+```toml
+[theme.diff]
+add_fg = "dark_green"
+del_fg = "dark_red"
+hunk_fg = "dark_cyan"
+add_bg = "#2d822d"
+del_bg = "#8c2d2d"
+```
+
 Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.
 
 The old `[theme] agent = "<theme>"` string still works as `[theme.agent] code = "<theme>"`; `ralph chat` prints a deprecation warning for it.

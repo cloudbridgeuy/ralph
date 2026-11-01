@@ -17,6 +17,7 @@ pub mod config;
 mod cursor_cleanup;
 mod cursor_owner;
 pub mod diff_highlight;
+mod diff_theme;
 pub mod formatting;
 mod frame;
 pub mod highlight;

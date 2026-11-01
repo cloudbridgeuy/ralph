@@ -4,6 +4,7 @@
 //! constructor methods and accessors. The actual event processing logic
 //! is in the event_handler module.
 
+use crate::diff_theme::DiffColors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::markdown::MarkdownTheme;
 use ralph_core::chunk::{ParsedChunk, StreamingChunkBuffer};
@@ -39,6 +40,7 @@ pub struct StreamProcessor {
     pub(super) code_highlighter: Highlighter,
     /// Markdown skin for prose rendering via termimad.
     pub(super) markdown: MarkdownTheme,
+    pub(super) diff_colors: DiffColors,
     /// Whether highlighting is enabled (terminal detection).
     pub(super) highlighting_enabled: bool,
     /// Whether to display tool invocations.
@@ -163,6 +165,11 @@ impl StreamProcessorBuilder {
                 .map(|config| config.palette().clone())
                 .unwrap_or_default(),
         );
+        let diff_colors = self
+            .theme_config
+            .as_ref()
+            .map(|config| *config.diff())
+            .unwrap_or_default();
         let code_highlighter = match self.theme_config {
             Some(config) => Highlighter::with_config(config)?,
             None => Highlighter::new(),
@@ -176,6 +183,7 @@ impl StreamProcessorBuilder {
             chunk_buffer: StreamingChunkBuffer::with_prose_threshold(usize::MAX),
             code_highlighter,
             markdown,
+            diff_colors,
             highlighting_enabled,
             show_tool_invocations,
             current_message_id: None,
@@ -401,11 +409,8 @@ impl StreamProcessor {
     /// Returns a terminal context (with ANSI codes) when highlighting is enabled,
     /// or a plain context otherwise.
     pub fn render_context(&self) -> crate::render::RenderContext<'_> {
-        if self.highlighting_enabled {
-            crate::render::RenderContext::terminal(&self.code_highlighter)
-        } else {
-            crate::render::RenderContext::plain(&self.code_highlighter)
-        }
+        crate::render::RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
+            .with_diff(self.diff_colors)
     }
 
     /// Get the accumulated output blocks.

@@ -1,5 +1,6 @@
 //! Render context and ANSI color constants.
 
+use crate::diff_theme::DiffColors;
 use crate::highlight::Highlighter;
 
 pub use crate::ansi;
@@ -16,6 +17,7 @@ pub struct RenderContext<'a> {
     pub width: usize,
     pub mermaid: fn(&str, usize) -> Option<String>,
     pub images: Option<crate::render::ImageSettings>,
+    pub diff: DiffColors,
 }
 
 const DEFAULT_WIDTH: usize = 80;
@@ -39,7 +41,13 @@ impl<'a> RenderContext<'a> {
             width,
             mermaid: crate::mermaid_guard::render,
             images: crate::render::image::enabled(),
+            diff: DiffColors::default(),
         }
+    }
+
+    pub fn with_diff(mut self, diff: DiffColors) -> Self {
+        self.diff = diff;
+        self
     }
 
     /// Create a context for terminal rendering (with ANSI codes).

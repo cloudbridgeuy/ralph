@@ -21,11 +21,11 @@ pub fn render_content_block(
 
         if ctx.terminal {
             // Line number with background color
-            let bg_color = if is_before {
-                ansi::RED_BG
+            let bg_color = ansi::bg(Some(if is_before {
+                ctx.diff.del_bg
             } else {
-                ansi::GREEN_BG
-            };
+                ctx.diff.add_bg
+            }));
             output.push_str(&format!("{}{} {} ", bg_color, line_num_str, ansi::RESET));
 
             // Content with syntax highlighting
@@ -89,7 +89,7 @@ pub fn render_edit_diff(ctx: &RenderContext, file_path: &str, diff_content: &str
 
     if ctx.terminal {
         output.push_str(&format!("{}{}{}\n", ansi::GREY, file_path, ansi::RESET));
-        output.push_str(&highlight_with_basic_colors(diff_content));
+        output.push_str(&highlight_with_basic_colors(diff_content, &ctx.diff));
     } else {
         output.push_str(&format!("{}\n", file_path));
         output.push_str(diff_content);
@@ -113,5 +113,36 @@ pub fn render_no_changes_message(ctx: &RenderContext, file_path: &str, tool: &st
         )
     } else {
         format!("{}\nNo changes ({})\n", file_path, tool)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diff_theme::test_colors;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn diff_result_uses_the_context_diff_colors() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::terminal(&highlighter).with_diff(test_colors());
+        assert!(render_edit_diff(&ctx, "a.rs", "+x\n-y").contains("\x1b[94m+x"));
+    }
+
+    #[test]
+    fn content_block_uses_the_context_background_colors() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::terminal(&highlighter).with_diff(test_colors());
+        assert!(render_content_block(&ctx, "x", None, true).contains("\x1b[48;2;4;5;6m"));
+        assert!(render_content_block(&ctx, "x", None, false).contains("\x1b[48;2;1;2;3m"));
+    }
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_edit_diff(&ctx, "a.rs", "+x\n-y\n@@ -1 @@").contains('\x1b'));
+        assert!(!render_content_block(&ctx, "x", Some("rust"), true).contains('\x1b'));
+        assert!(!render_edit_before_after(&ctx, "a.rs", "x", "y").contains('\x1b'));
     }
 }
