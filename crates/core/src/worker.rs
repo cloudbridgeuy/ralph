@@ -10,6 +10,7 @@ mod acp;
 mod claude_headless;
 mod codex;
 mod cursor_model;
+mod delivery;
 mod files;
 mod guard;
 mod headless;
@@ -38,6 +39,7 @@ pub use cursor_model::{
     restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,
     CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
 };
+pub use delivery::*;
 pub use files::*;
 pub use guard::*;
 pub use headless::*;

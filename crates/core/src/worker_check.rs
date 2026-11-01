@@ -120,7 +120,7 @@ fn counts_running_agents(footer: &str) -> bool {
     })
 }
 
-fn pane_busy(pane: &str) -> bool {
+pub fn pane_busy(pane: &str) -> bool {
     let footer = pane_footer(pane);
     footer.contains("esc to interrupt") || counts_running_agents(&footer)
 }

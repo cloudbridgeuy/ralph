@@ -12,14 +12,16 @@ use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::claude_leftovers::{cleans_claude_leftovers, trust_lock_path};
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
-    base_branch, base_config_key, blocked_path, branch_name, capabilities, close_clear_paths,
-    close_handoff, close_plan, describe, interrupt_reply, legacy_base_unset_warning,
-    opencode_close_handoff, parse_interrupt_result, project_slug, prompt_entry_name, ready_path,
-    resolve_worktree_dir, sent_path, session_name, session_owner, session_survived_kill,
-    tagged_sessions, worktree_for_branch, worktree_path, CloseState, CloseStep, Feature, Handoff,
-    HandoffFiles, HarnessId, Owner, Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL,
-    HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    activity_path, base_branch, base_config_key, blocked_path, branch_name, capabilities,
+    close_clear_paths, close_handoff, close_plan, delivery_line, describe, interrupt_reply,
+    legacy_base_unset_warning, opencode_close_handoff, parse_interrupt_result, project_slug,
+    prompt_entry_name, ready_path, resolve_worktree_dir, sent_path, session_name, session_owner,
+    session_survived_kill, tagged_sessions, uptake, worktree_for_branch, worktree_path,
+    ActivityMark, CloseState, CloseStep, Feature, Handoff, HandoffFiles, HarnessId, Owner, Probe,
+    Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
+    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
+use ralph_core::worker_check::pane_busy;
 use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Write};
@@ -41,6 +43,23 @@ pub struct Workers {
     permission_mode: String,
     worktree_dir: Option<String>,
     handoff_timeout: Duration,
+    confirm_timeout: Duration,
+}
+
+enum Watch {
+    Pane(String),
+    Entry(PathBuf),
+}
+
+struct Sent {
+    line: String,
+    watch: Option<Watch>,
+}
+
+impl Sent {
+    fn plain(line: String) -> Self {
+        Self { line, watch: None }
+    }
 }
 
 impl Workers {
@@ -56,10 +75,11 @@ impl Workers {
             permission_mode,
             worktree_dir,
             handoff_timeout: HANDOFF_TIMEOUT,
+            confirm_timeout: REPLY_CONFIRM,
         }
     }
 
-    fn mark_sent(&self, id: &str, sent: io::Result<String>) -> io::Result<String> {
+    fn mark_sent<T>(&self, id: &str, sent: io::Result<T>) -> io::Result<T> {
         if sent.is_ok() {
             warn_if_err(
                 write_file(&sent_path(&self.store_dir, id), ""),
@@ -77,13 +97,47 @@ impl Workers {
         request: Option<&str>,
     ) -> io::Result<String> {
         let delivered = match request.filter(|_| !interrupt) {
-            Some(request_id) => self.answer_permission(id, request_id, text),
+            Some(request_id) => self
+                .answer_permission(id, request_id, text)
+                .map(Sent::plain),
             None => self.deliver(id, text, interrupt),
         };
-        self.mark_sent(id, delivered)
+        let sent = self.mark_sent(id, delivered)?;
+        Ok(match sent.watch {
+            Some(watch) => self.confirm(id, &watch),
+            None => sent.line,
+        })
     }
 
-    fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<String> {
+    fn confirm(&self, id: &str, watch: &Watch) -> String {
+        let started = Instant::now();
+        loop {
+            let found = uptake(&self.probe(id, watch));
+            let waited = started.elapsed();
+            if found.settled() || waited >= self.confirm_timeout {
+                return delivery_line(id, found, waited);
+            }
+            thread::sleep(HANDOFF_POLL);
+        }
+    }
+
+    fn probe(&self, id: &str, watch: &Watch) -> Probe {
+        let (pane_busy, entry_pending) = match watch {
+            Watch::Pane(session) => (capture_pane(session).map(|pane| pane_busy(&pane)), None),
+            Watch::Entry(entry) => (None, Some(entry.exists())),
+        };
+        Probe {
+            pane_busy,
+            entry_pending,
+            running: fs::read_to_string(activity_path(&self.store_dir, id))
+                .ok()
+                .and_then(|text| ActivityMark::parse(&text))
+                .is_some_and(|mark| mark.running),
+            sent: sent_path(&self.store_dir, id).exists(),
+        }
+    }
+
+    fn deliver(&self, id: &str, text: &str, interrupt: bool) -> io::Result<Sent> {
         if let Some(sent) = self.deliver_headless(id, text, interrupt, "Sent to") {
             return sent;
         }
@@ -121,14 +175,18 @@ impl Workers {
             &target,
         ]))?;
         run(Command::new("tmux").args(["send-keys", "-t", &target, "Enter"]))?;
-        Ok(format!("Sent to worker {id}."))
+        Ok(Sent {
+            line: format!("Sent to worker {id}."),
+            watch: Some(Watch::Pane(session)),
+        })
     }
 
     pub fn nudge(&self, id: &str, text: &str) -> io::Result<String> {
         if let Some(queued) = self.deliver_headless(id, text, false, "Nudged") {
-            return self.mark_sent(id, queued);
+            return self.mark_sent(id, queued).map(|sent| sent.line);
         }
-        self.reply(id, text, false, None)
+        let sent = self.mark_sent(id, self.deliver(id, text, false))?;
+        Ok(sent.line)
     }
 
     fn codex_running(&self, id: &str) -> bool {
@@ -173,7 +231,7 @@ impl Workers {
         text: &str,
         interrupt: bool,
         verb: &str,
-    ) -> Option<io::Result<String>> {
+    ) -> Option<io::Result<Sent>> {
         let (kind, files) = self.headless_files(id)?;
         let caps = capabilities(kind);
         Some(
@@ -181,13 +239,13 @@ impl Workers {
                 Err(io::Error::other(describe(&caps, Feature::Interrupt)))
             } else if interrupt {
                 self.queue_entry(&files.interrupt, text).map(|entry| {
-                    interrupt_reply(
+                    Sent::plain(interrupt_reply(
                         id,
                         self.await_interrupt_result(&files.interrupt_result, &entry),
-                    )
+                    ))
                 })
             } else if self.awaits_permission(id) {
-                self.answer_permission(id, "", text)
+                self.answer_permission(id, "", text).map(Sent::plain)
             } else {
                 self.queue_prompt(&files.prompt, id, text, verb)
             },
@@ -209,9 +267,12 @@ impl Workers {
         }
     }
 
-    fn queue_prompt(&self, dir: &Path, id: &str, text: &str, verb: &str) -> io::Result<String> {
-        self.queue_entry(dir, text)?;
-        Ok(format!("{verb} worker {id}."))
+    fn queue_prompt(&self, dir: &Path, id: &str, text: &str, verb: &str) -> io::Result<Sent> {
+        let entry = self.queue_entry(dir, text)?;
+        Ok(Sent {
+            line: format!("{verb} worker {id}."),
+            watch: Some(Watch::Entry(dir.join(entry))),
+        })
     }
 
     fn queue_entry(&self, dir: &Path, text: &str) -> io::Result<String> {
@@ -773,7 +834,10 @@ mod tests {
     }
 
     pub(super) fn workers_in(dir: &Path) -> Workers {
-        Workers::new(dir.to_path_buf(), "/bin/ralph".into(), "auto".into(), None)
+        Workers {
+            confirm_timeout: Duration::ZERO,
+            ..Workers::new(dir.to_path_buf(), "/bin/ralph".into(), "auto".into(), None)
+        }
     }
 
     #[test]
@@ -789,7 +853,7 @@ mod tests {
     fn a_failed_send_writes_no_sent_marker() {
         let dir = tempfile::tempdir().unwrap();
         let workers = workers_in(dir.path());
-        let result = workers.mark_sent("A", Err(io::Error::other("no pane")));
+        let result = workers.mark_sent("A", Err::<String, _>(io::Error::other("no pane")));
         assert_eq!(result.unwrap_err().to_string(), "no pane");
         assert!(!sent_path(&workers.store_dir, "A").exists());
     }
@@ -816,13 +880,25 @@ mod tests {
     }
 
     #[test]
+    fn a_reply_reports_a_running_turn_as_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        write_file(&HandoffFiles::opencode(dir.path(), "A").owner, "").unwrap();
+        write_file(&activity_path(dir.path(), "A"), "1 running").unwrap();
+        assert_eq!(
+            workers.reply("A", "hello", false, None).unwrap(),
+            "Sent to worker A; busy."
+        );
+    }
+
+    #[test]
     fn a_reply_to_an_opencode_worker_queues_a_prompt_entry() {
         let dir = tempfile::tempdir().unwrap();
         let workers = workers_in(dir.path());
         write_file(&HandoffFiles::opencode(dir.path(), "A").owner, "").unwrap();
         assert_eq!(
             workers.reply("A", "hello", false, None).unwrap(),
-            "Sent to worker A."
+            "Sent to worker A; no reaction after 0s."
         );
         let files = HandoffFiles::opencode(dir.path(), "A");
         let only = |dir: &Path| {
