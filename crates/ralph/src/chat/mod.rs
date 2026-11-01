@@ -246,8 +246,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
     crate::warn::set_warning_color(theme_config.ui().warning);
-    let diff_colors = config.theme.diff.resolve().0;
-    let tool_colors = config.theme.tools.resolve().0;
+    let diff_colors = *theme_config.diff();
+    let tool_colors = *theme_config.tools();
     let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());
     let setting_warnings: Vec<String> = config
         .theme
