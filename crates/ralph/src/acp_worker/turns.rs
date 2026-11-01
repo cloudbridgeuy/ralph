@@ -44,7 +44,7 @@ fn accept_inbound(
     };
     let steps = queue.accept(item);
     if let Some(entry) = entry {
-        write_interrupt_result(&turns.results, &entry, cancels_turn(&steps));
+        write_interrupt_result(&turns.results, &entry, cancels_turn(&steps).into());
     }
     run_steps(connection, turns, steps);
 }

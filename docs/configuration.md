@@ -305,7 +305,7 @@ Codex setup and limits:
 
 A `model` passed to `spawn_worker` wins over this key. A value that is empty or has whitespace warns in the spawn result and uses claude's default. A config that fails to load warns and uses claude's default. The key is read at each spawn. A config that fails to load warns in the spawn result and uses `zsh`. A failed preflight error also carries that warning.
 
-`claude-headless` workers: `reply` with `interrupt` is partial. It sends a `control_request` interrupt and drops pending permission requests. If chat gets no confirmation within 30 s, the outcome is unknown. Resume is partial: a restarted chat resumes each worker with `claude --resume` in its worktree, but a turn running when the chat exited is lost and reported as `blocked`; a moved or deleted worktree is not resumed.
+`claude-headless` workers: `reply` with `interrupt` is partial. It denies pending permission requests, then sends a `control_request` interrupt. The reply says the turn was cancelled, that nothing was running, or that the worker exited. Only when claude ignores the interrupt for 30 s is the outcome unknown. Resume is partial: a restarted chat resumes each worker with `claude --resume` in its worktree, but a turn running when the chat exited is lost and reported as `blocked`; a moved or deleted worktree is not resumed.
 
 A bash login shell reads `~/.bash_profile` (or `~/.profile`), not `~/.bashrc`. Set the PATH for `claude` there, or make `~/.bash_profile` source `~/.bashrc`.
 

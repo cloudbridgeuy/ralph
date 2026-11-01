@@ -55,6 +55,10 @@ impl Run {
 }
 
 fn run(mode: PermissionMode, lines: &[&str]) -> Run {
+    run_after(mode, |_| {}, lines)
+}
+
+fn run_after(mode: PermissionMode, setup: impl FnOnce(&Shared), lines: &[&str]) -> Run {
     let dir = TempDir::new().unwrap();
     let store = dir.path();
     let sink = Sink::default();
@@ -76,6 +80,7 @@ fn run(mode: PermissionMode, lines: &[&str]) -> Run {
         expected_session: None,
         turn_seq: AtomicU64::new(0),
     };
+    setup(&shared);
     let (tx, rx) = mpsc::channel();
     for line in lines {
         tx.send((*line).to_string()).unwrap();
@@ -286,4 +291,34 @@ fn an_interrupt_after_the_turn_end_clear_keeps_the_refusal() {
     run.shared.ask(ask_from(ASK));
     assert_eq!(run.written(), format!("{}\n", deny_line("r1")));
     assert!(run.shared.permissions.take_answer("p.r1", "deny").is_err());
+}
+
+#[test]
+fn an_interrupt_pending_when_claude_exits_writes_gone() {
+    let run = run_after(
+        PermissionMode::Ask,
+        |shared| {
+            shared.accept("task".into());
+            shared.interrupt("stop".into(), "e1".into());
+        },
+        &[],
+    );
+    let result = fs::read_to_string(run.dir.path().join("interrupt-result").join("e1"));
+    assert_eq!(result.ok().as_deref(), Some("gone"));
+}
+
+#[test]
+fn an_interrupt_for_a_worker_without_a_process_writes_gone() {
+    let dir = TempDir::new().unwrap();
+    let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
+    let files = host.files("w");
+    write_file(&files.interrupt.join("e1"), "stop").unwrap();
+    host.poll();
+    assert!(!files.interrupt.join("e1").exists());
+    assert_eq!(
+        fs::read_to_string(files.interrupt_result.join("e1"))
+            .ok()
+            .as_deref(),
+        Some("gone")
+    );
 }

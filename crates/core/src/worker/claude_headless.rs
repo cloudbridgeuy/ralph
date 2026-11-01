@@ -338,7 +338,8 @@ pub fn decode_claude_version(output: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::worker::{
-        check_agent_version, Action, Turns, VerifiedAgents, WorkerEvent, REPORT_REMINDER,
+        check_agent_version, Action, InterruptOutcome, Turns, VerifiedAgents, WorkerEvent,
+        REPORT_REMINDER,
     };
     use serde_json::json;
     use std::path::Path;
@@ -567,8 +568,23 @@ mod tests {
         let done = turns.signal(ThreadSignal::TurnEnded(end), false);
         assert!(done.contains(&Action::InterruptResult {
             entry: "e1".into(),
-            cancelled: true
+            outcome: InterruptOutcome::Cancelled
         }));
+    }
+
+    #[test]
+    fn a_process_that_exits_after_the_interrupt_resolves_it_as_gone() {
+        let mut turns = Turns::default();
+        started(&mut turns, 1);
+        let sent = turns.interrupt("stop".into(), "e1".into());
+        assert_eq!(sent, [Action::Interrupt("turn-1".into())]);
+        assert_eq!(
+            turns.process_gone(),
+            [Action::InterruptResult {
+                entry: "e1".into(),
+                outcome: InterruptOutcome::Gone
+            }]
+        );
     }
 
     #[test]
@@ -580,7 +596,7 @@ mod tests {
             actions[0],
             Action::InterruptResult {
                 entry: "e1".into(),
-                cancelled: false
+                outcome: InterruptOutcome::Sent
             }
         );
         assert_eq!(starts(&actions), ["stop"]);

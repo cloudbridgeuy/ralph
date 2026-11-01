@@ -1,4 +1,6 @@
-use super::{interrupt_reply, BlockedContent, HarnessId, PermissionAnswer, TurnEnd};
+use super::{
+    interrupt_reply, BlockedContent, HarnessId, InterruptOutcome, PermissionAnswer, TurnEnd,
+};
 
 mod liveness;
 pub use liveness::*;
@@ -102,7 +104,9 @@ impl Capabilities {
             (HarnessId::ClaudeHeadless, Heartbeat) => Partial(
                 "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
             ),
-            (HarnessId::ClaudeHeadless, Interrupt) => Partial("outcome unknown after 30 s"),
+            (HarnessId::ClaudeHeadless, Interrupt) => {
+                Partial("outcome unknown if claude ignores the interrupt for 30 s")
+            }
             (HarnessId::ClaudeHeadless, Resume) => {
                 Partial("turn in flight lost; same cwd required")
             }
@@ -279,9 +283,13 @@ pub fn reduce(state: &HeadlessState, event: &WorkerEvent) -> (HeadlessState, Vec
         }
         WorkerEvent::PermissionSettled => (at(Phase::Running), vec![Clear(Marker::Blocked)]),
         WorkerEvent::Reported => (same, vec![Set(Marker::Reported)]),
-        WorkerEvent::Interrupted { id, outcome } => {
-            (same, vec![ReplyText(interrupt_reply(id, *outcome))])
-        }
+        WorkerEvent::Interrupted { id, outcome } => (
+            same,
+            vec![ReplyText(interrupt_reply(
+                id,
+                outcome.map(InterruptOutcome::from),
+            ))],
+        ),
         WorkerEvent::Closed => (
             at(Phase::Closed),
             vec![
@@ -378,7 +386,9 @@ mod tests {
                 Feature::Heartbeat => Support::Partial(
                     "stream-json lines count as activity, not progress; silent long tools can yield false Quiet",
                 ),
-                Feature::Interrupt => Support::Partial("outcome unknown after 30 s"),
+                Feature::Interrupt => Support::Partial(
+                    "outcome unknown if claude ignores the interrupt for 30 s",
+                ),
                 Feature::Resume => Support::Partial("turn in flight lost; same cwd required"),
             };
             assert_eq!(caps.support(feature), expected, "{feature:?}");
@@ -571,7 +581,10 @@ mod tests {
                     outcome: Some(true),
                 },
                 Phase::Running,
-                vec![ReplyText(interrupt_reply("w", Some(true)))],
+                vec![ReplyText(interrupt_reply(
+                    "w",
+                    Some(InterruptOutcome::Cancelled),
+                ))],
             ),
             (
                 Phase::Idle,

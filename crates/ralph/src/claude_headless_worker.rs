@@ -22,9 +22,9 @@ use ralph_core::worker::{
     interrupt_lines, interrupted_end, permission_response, prompt_failure_report, ready_path,
     reduce, request_stale, resumed_session, start_steps, stuck_permission_report, task_prompt,
     uuid_v4, Action, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId,
-    HeadlessState, Leftover, PermissionAnswer, PermissionMode, SessionRecord, SpawnRequest,
-    StartFault, StartStep, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    HeadlessState, InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord,
+    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, VerifiedAgents, WorkerEvent,
+    WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
     CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
     CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
     SERVER_NAME,
@@ -179,8 +179,8 @@ impl Shared {
                         self.send(&line).ok();
                     }
                 }
-                Action::InterruptResult { entry, cancelled } => {
-                    write_interrupt_result(&self.results, &entry, cancelled);
+                Action::InterruptResult { entry, outcome } => {
+                    write_interrupt_result(&self.results, &entry, outcome);
                 }
                 Action::Snapshot => {}
             }
@@ -220,6 +220,7 @@ impl Shared {
                 .send(Err("claude exited before it was ready".to_string()))
                 .ok();
         }
+        self.drive(Turns::process_gone);
         report_exit(
             &self.heartbeat,
             &self.events,
@@ -517,18 +518,22 @@ impl ClaudeHeadlessHost {
         id: &str,
         dir: fn(&HandoffFiles) -> &PathBuf,
         deliver: fn(&Shared, String, String),
+        orphan: fn(&HandoffFiles, &str),
     ) {
         if locked(&self.starting).contains_key(id) && !locked(&self.workers).contains_key(id) {
             return;
         }
-        for entry in queued_entries(dir(&self.files(id))) {
+        let files = self.files(id);
+        for entry in queued_entries(dir(&files)) {
             let name = entry
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let worker = locked(&self.workers).get(id).map(|w| Arc::clone(&w.shared));
-            if let (Ok(text), Some(shared)) = (fs::read_to_string(&entry), worker) {
-                deliver(&shared, text, name);
+            match (fs::read_to_string(&entry), worker) {
+                (Ok(text), Some(shared)) => deliver(&shared, text, name),
+                (_, None) => orphan(&files, &name),
+                (Err(_), Some(_)) => {}
             }
             fs::remove_file(&entry).ok();
         }
@@ -661,6 +666,7 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 &id,
                 |files| &files.prompt,
                 |shared, text, _| shared.accept(text),
+                |_, _| {},
             );
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_INTERRUPT_DIR) {
@@ -668,6 +674,9 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 &id,
                 |files| &files.interrupt,
                 |shared, text, entry| shared.interrupt(text, entry),
+                |files, entry| {
+                    write_interrupt_result(&files.interrupt_result, entry, InterruptOutcome::Gone);
+                },
             );
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_SPAWN_DIR) {
