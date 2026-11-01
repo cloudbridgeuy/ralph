@@ -59,6 +59,7 @@ pub struct TooLong;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Turn,
+    Cell,
     Replied,
     Prompt,
 }
@@ -73,7 +74,7 @@ fn unread_msg(unread: usize) -> String {
 pub fn report_for(phase: Phase, status: &Status) -> Report {
     let (state, msg) = if let Some(hold) = &status.hold {
         (State::Working, Some(format!("holding {}", hold.label())))
-    } else if phase == Phase::Turn {
+    } else if matches!(phase, Phase::Turn | Phase::Cell) {
         (State::Working, None)
     } else if status.unread > 0 {
         (
@@ -316,6 +317,21 @@ mod tests {
                 Phase::Turn,
                 status_with(5, None),
                 expect(State::Working, None),
+            ),
+            (
+                Phase::Cell,
+                status_with(0, None),
+                expect(State::Working, None),
+            ),
+            (
+                Phase::Cell,
+                status_with(2, None),
+                expect(State::Working, None),
+            ),
+            (
+                Phase::Cell,
+                status_with(0, Some(HoldFilter::Any)),
+                expect(State::Working, Some("holding anyone")),
             ),
         ];
         for (phase, status, expected) in cases {

@@ -152,11 +152,12 @@ The pure `program_status::report_for(phase, status)` picks the report. The first
 | --- | --- |
 | `/hold` is active | `working`, msg `holding <filter>` (`anyone` for a bare `/hold`) |
 | A chat turn is running | `working` |
+| A cell (`!` shorthand or `!<runtime>` fence) is running | `working` |
 | Unread worker reports at the prompt | `blocked`, `kind=question`, msg `1 worker report` or `N worker reports` |
 | The last turn replied and nothing was submitted since | `done` |
 | Anything else, including nap and background workers with no turn | `idle` |
 
-"Working" means only that a chat turn is running. A worker report that arrives mid-turn does not change it. The phase (`Turn`, `Replied`, `Prompt`) lives on the monitor: the chat loop sets it around each turn and when a line is submitted, and `/hold` publishes its filter there.
+"Working" means only that a chat turn or a cell is running. A worker report that arrives mid-turn or mid-cell does not change it. The phase (`Turn`, `Cell`, `Replied`, `Prompt`) lives on the monitor: the chat loop sets it when a line is submitted, to `Cell` before the message's cells run (a message with no cells passes through at once), to `Turn` around each turn, and `/hold` publishes its filter there. A cancelled (Ctrl-C) or unstartable cell sends no message, so the phase goes to `Prompt` and the report to `idle`; a cell that exits non-zero still sends the message, so `working` stays on into the turn. A cell shorter than one watcher tick may never show `working`.
 
 Reports are sent from one place, the status watcher tick (every 500 ms, so a state change shows within about half a second plus the tick work). The shell in `chat/term_status.rs` writes one `write_all` plus flush to stdout and only when the bytes differ from the last report. Write errors are ignored. Inside tmux (`TMUX_PANE` set) the sequence is wrapped in a DCS passthrough, which needs `allow-passthrough on`.
 
