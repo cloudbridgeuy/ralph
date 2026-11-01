@@ -19,7 +19,7 @@ use crate::diff_theme::DiffColors;
 ///
 /// # Example
 ///
-/// ```
+/// ```text
 /// use ralph::diff_highlight::highlight_with_basic_colors;
 /// use ralph::diff_theme::DiffColors;
 ///

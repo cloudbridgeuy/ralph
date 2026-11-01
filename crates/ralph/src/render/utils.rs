@@ -136,7 +136,7 @@ pub fn group_files_by_directory<'a>(files: &[&'a str]) -> BTreeMap<String, Vec<&
 ///
 /// # Examples
 ///
-/// ```
+/// ```text
 /// use ralph::render::highlight_grep_match;
 /// use ralph::tool_theme::ToolColors;
 ///
