@@ -28,16 +28,28 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// Configuration for subprocess invocation with spinner.
+///
+/// Groups parameters to keep function signatures under 5 arguments.
 #[derive(Debug, Clone)]
 pub struct SpinnerSubprocessConfig {
+    /// The command string to execute.
     pub command: String,
+    /// Time limit for one-shot runs. `Session` ignores it: chat turns have no
+    /// time limit.
     pub timeout_secs: Option<u64>,
+    /// Configuration for syntax highlighting theme.
     pub theme_config: ThemeConfig,
+    /// Accumulated time from previous iterations in this session.
     pub session_elapsed_ms: u64,
+    /// Configuration for verbose tool output.
     pub verbose_tools: VerboseToolsConfig,
+    /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
     pub gate: Option<Arc<OutputGate>>,
     pub cancel: Option<Arc<AtomicBool>>,
+    /// Prompt text written to the child's stdin, then closed. `Session` ignores
+    /// it: it owns stdin for stream-json.
     pub stdin: Option<String>,
 }
 
