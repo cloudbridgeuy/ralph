@@ -254,9 +254,21 @@ fn completion_ignores_a_cursor_inside_a_character() {
 }
 
 #[test]
-fn targets_are_running_workers_watches_and_schedules() {
-    let mut status = status(&["GUZ-1", "GUZ-2"], &["watch:ci"], &["nightly"]);
+fn targets_are_every_listed_worker_watches_and_schedules() {
+    let mut status = status(&["GUZ-1", "GUZ-2", "GUZ-3"], &["watch:ci"], &["nightly"]);
     status.workers[1].state = "done".to_string();
+    status.workers[2].state = "idle".to_string();
     let targets: Vec<String> = hold_targets(&status).into_iter().collect();
-    assert_eq!(targets, ["GUZ-1", "schedule:nightly", "watch:ci"]);
+    assert_eq!(
+        targets,
+        ["GUZ-1", "GUZ-2", "GUZ-3", "schedule:nightly", "watch:ci"]
+    );
+}
+
+#[test]
+fn completion_offers_idle_and_done_workers() {
+    let mut status = status(&["w1", "w2"], &[], &[]);
+    status.workers[0].state = "idle".to_string();
+    status.workers[1].state = "done".to_string();
+    assert_eq!(values("/hold ", &status), ["w1", "w2"]);
 }

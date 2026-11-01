@@ -54,7 +54,6 @@ pub fn hold_targets(status: &Status) -> BTreeSet<String> {
     status
         .workers
         .iter()
-        .filter(|worker| worker.is_running())
         .map(|worker| worker.id.clone())
         .chain(status.watches.iter().map(|watch| watch.id.clone()))
         .chain(status.schedule.iter().map(|task| watch_id(&task.id)))

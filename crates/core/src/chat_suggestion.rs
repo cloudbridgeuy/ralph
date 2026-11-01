@@ -345,6 +345,10 @@ mod tests {
                     id: "GUZ-9".to_string(),
                     state: "done".to_string(),
                 },
+                WorkerState {
+                    id: "GUZ-5".to_string(),
+                    state: "idle".to_string(),
+                },
             ],
             watches: vec![WatchState {
                 id: "watch:ci".to_string(),
@@ -386,8 +390,13 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_worker_target_prefills() {
-        assert_eq!(end("/hold GUZ-9"), fill("/hold GUZ-9"));
+    fn a_done_worker_target_holds() {
+        assert_eq!(end("/hold GUZ-9"), hold("GUZ-9"));
+    }
+
+    #[test]
+    fn an_idle_worker_target_holds() {
+        assert_eq!(end("/hold GUZ-5"), hold("GUZ-5"));
     }
 
     #[test]

@@ -133,7 +133,7 @@ impl Command {
             Command::Hold => &[
                 (
                     "/hold [<worker-id> | watch:<name> | schedule:<id>]",
-                    "wait with no prompt; the model suggests it when the next step is waiting, and when it suggests exactly /hold <target> for a running worker, watch or schedule, ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
+                    "wait with no prompt; the model suggests it when the next step is waiting, and when it suggests exactly /hold <target> for a listed worker, watch or schedule, ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
             Command::Config => &[(
