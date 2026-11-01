@@ -1,3 +1,4 @@
+use crate::chat_status::Status;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 
@@ -57,6 +58,38 @@ pub struct TooLong {
     pub bytes: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    Turn,
+    Replied,
+    Prompt,
+}
+
+fn unread_msg(unread: usize) -> String {
+    match unread {
+        1 => "1 worker report".to_string(),
+        n => format!("{n} worker reports"),
+    }
+}
+
+pub fn report_for(phase: Phase, status: &Status) -> Report {
+    let (state, msg) = if let Some(hold) = &status.hold {
+        (State::Working, Some(format!("holding {}", hold.label())))
+    } else if phase == Phase::Turn {
+        (State::Working, None)
+    } else if status.unread > 0 {
+        (
+            State::Blocked(Kind::Question),
+            Some(unread_msg(status.unread)),
+        )
+    } else if phase == Phase::Replied {
+        (State::Done, None)
+    } else {
+        (State::Idle, None)
+    };
+    Report { state, msg }
+}
+
 fn clean_msg(msg: &str) -> String {
     let stripped: String = msg.chars().filter(|c| !c.is_control()).collect();
     let mut end = stripped.len().min(MAX_MSG_BYTES);
@@ -100,6 +133,8 @@ pub fn tmux_wrap(sequence: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat_hold::HoldFilter;
+    use crate::chat_status::WorkerState;
 
     fn report(state: State, msg: Option<&str>) -> Report {
         Report {
@@ -204,6 +239,141 @@ mod tests {
         assert_eq!(
             tmux_wrap("\x1b]7501;state=idle:app=ralph\x07"),
             "\x1bPtmux;\x1b\x1b]7501;state=idle:app=ralph\x07\x1b\\"
+        );
+    }
+
+    fn status_with(unread: usize, hold: Option<HoldFilter>) -> Status {
+        Status {
+            unread,
+            hold,
+            ..Status::default()
+        }
+    }
+
+    fn running_worker() -> WorkerState {
+        WorkerState {
+            id: "w".into(),
+            state: "running".into(),
+        }
+    }
+
+    fn expect(state: State, msg: Option<&str>) -> Report {
+        report(state, msg)
+    }
+
+    #[test]
+    fn report_for_follows_the_priority_table() {
+        let question = State::Blocked(Kind::Question);
+        let hold_w1 = Some(HoldFilter::Source("w1".into()));
+        let cases = [
+            (
+                Phase::Prompt,
+                status_with(0, None),
+                expect(State::Idle, None),
+            ),
+            (
+                Phase::Turn,
+                status_with(0, None),
+                expect(State::Working, None),
+            ),
+            (
+                Phase::Replied,
+                status_with(0, None),
+                expect(State::Done, None),
+            ),
+            (
+                Phase::Prompt,
+                status_with(0, hold_w1.clone()),
+                expect(State::Working, Some("holding w1")),
+            ),
+            (
+                Phase::Prompt,
+                status_with(0, Some(HoldFilter::Any)),
+                expect(State::Working, Some("holding anyone")),
+            ),
+            (
+                Phase::Prompt,
+                status_with(4, hold_w1.clone()),
+                expect(State::Working, Some("holding w1")),
+            ),
+            (
+                Phase::Turn,
+                status_with(0, hold_w1),
+                expect(State::Working, Some("holding w1")),
+            ),
+            (
+                Phase::Prompt,
+                status_with(1, None),
+                expect(question, Some("1 worker report")),
+            ),
+            (
+                Phase::Prompt,
+                status_with(3, None),
+                expect(question, Some("3 worker reports")),
+            ),
+            (
+                Phase::Replied,
+                status_with(2, None),
+                expect(question, Some("2 worker reports")),
+            ),
+            (
+                Phase::Turn,
+                status_with(5, None),
+                expect(State::Working, None),
+            ),
+        ];
+        for (phase, status, expected) in cases {
+            assert_eq!(report_for(phase, &status), expected, "{phase:?} {status:?}");
+        }
+    }
+
+    #[test]
+    fn nap_reports_idle() {
+        let status = Status {
+            napping: true,
+            ..Status::default()
+        };
+        assert_eq!(
+            report_for(Phase::Prompt, &status),
+            expect(State::Idle, None)
+        );
+    }
+
+    #[test]
+    fn running_workers_without_a_turn_report_idle() {
+        let status = Status {
+            workers: vec![running_worker()],
+            ..Status::default()
+        };
+        assert_eq!(
+            report_for(Phase::Prompt, &status),
+            expect(State::Idle, None)
+        );
+    }
+
+    #[test]
+    fn running_workers_after_a_reply_report_done() {
+        let status = Status {
+            workers: vec![running_worker()],
+            ..Status::default()
+        };
+        assert_eq!(
+            report_for(Phase::Replied, &status),
+            expect(State::Done, None)
+        );
+    }
+
+    #[test]
+    fn a_report_arriving_mid_turn_stays_working() {
+        let before = status_with(0, None);
+        let after = status_with(1, None);
+        assert_eq!(
+            report_for(Phase::Turn, &before),
+            report_for(Phase::Turn, &after)
+        );
+        assert_eq!(
+            report_for(Phase::Turn, &after),
+            expect(State::Working, None)
         );
     }
 }
