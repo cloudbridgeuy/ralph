@@ -1,4 +1,5 @@
 use super::*;
+use crate::chat_status::{ScheduleState, Status, WatchState, WorkerState};
 use crate::worker::Report;
 
 fn entry(worker: &str) -> Entry {
@@ -116,4 +117,138 @@ fn other_keys_do_not_leave() {
 fn redraw_returns_to_the_line_start_and_drops_the_newline() {
     assert_eq!(redraw("bar\n"), "\r\x1b[2Kbar");
     assert_eq!(redraw("bar"), "\r\x1b[2Kbar");
+}
+
+fn status(workers: &[&str], watches: &[&str], schedule: &[&str]) -> Status {
+    Status {
+        workers: workers
+            .iter()
+            .map(|id| WorkerState {
+                id: id.to_string(),
+                state: "running".to_string(),
+            })
+            .collect(),
+        watches: watches
+            .iter()
+            .map(|id| WatchState {
+                id: id.to_string(),
+                left: None,
+            })
+            .collect(),
+        schedule: schedule
+            .iter()
+            .map(|id| ScheduleState {
+                id: id.to_string(),
+                time: "09:00".to_string(),
+            })
+            .collect(),
+        ..Status::default()
+    }
+}
+
+fn complete(line: &str, status: &Status) -> Option<HoldCompletion> {
+    hold_completions(line, line.len(), status)
+}
+
+fn values(line: &str, status: &Status) -> Vec<String> {
+    complete(line, status).map(|c| c.values).unwrap_or_default()
+}
+
+#[test]
+fn completion_offers_every_kind_sorted() {
+    let status = status(&["GUZ-2", "GUZ-1"], &["watch:ci"], &["nightly"]);
+    assert_eq!(
+        complete("/hold ", &status),
+        Some(HoldCompletion {
+            span: 6..6,
+            values: vec![
+                "GUZ-1".to_string(),
+                "GUZ-2".to_string(),
+                "schedule:nightly".to_string(),
+                "watch:ci".to_string(),
+            ],
+        })
+    );
+}
+
+#[test]
+fn completion_filters_by_the_partial_word() {
+    let status = status(&["GUZ-1", "w1"], &["watch:ci", "watch:docs"], &["nightly"]);
+    let completion = complete("/hold watch:c", &status).unwrap();
+    assert_eq!(completion.span, 6..13);
+    assert_eq!(completion.values, ["watch:ci"]);
+    assert_eq!(values("/hold w", &status), ["w1", "watch:ci", "watch:docs"]);
+    assert_eq!(values("/hold sch", &status), ["schedule:nightly"]);
+    assert_eq!(values("/hold GUZ", &status), ["GUZ-1"]);
+}
+
+#[test]
+fn completion_offers_each_kind_alone() {
+    assert_eq!(values("/hold ", &status(&["w1"], &[], &[])), ["w1"]);
+    assert_eq!(
+        values("/hold ", &status(&[], &["watch:ci"], &[])),
+        ["watch:ci"]
+    );
+    assert_eq!(values("/hold ", &status(&[], &[], &["a"])), ["schedule:a"]);
+}
+
+#[test]
+fn completion_lists_a_running_schedule_once() {
+    let status = status(&[], &["schedule:nightly"], &["nightly"]);
+    assert_eq!(values("/hold ", &status), ["schedule:nightly"]);
+}
+
+#[test]
+fn completion_with_nothing_to_offer_is_empty() {
+    assert_eq!(
+        complete("/hold ", &Status::default()),
+        Some(HoldCompletion {
+            span: 6..6,
+            values: vec![],
+        })
+    );
+    assert_eq!(
+        values("/hold zz", &status(&["w1"], &[], &[])),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn completion_allows_spaces_around_the_command() {
+    let status = status(&["w1"], &[], &[]);
+    let completion = complete("  /hold   w", &status).unwrap();
+    assert_eq!(completion.span, 10..11);
+    assert_eq!(completion.values, ["w1"]);
+}
+
+#[test]
+fn completion_only_applies_to_the_hold_argument() {
+    let status = status(&["w1"], &["watch:ci"], &["a"]);
+    for line in [
+        "",
+        "/hold",
+        "/holdw",
+        "/hold w1 w",
+        "/workers ",
+        "hello /hold ",
+        "/inbox ",
+    ] {
+        assert_eq!(complete(line, &status), None, "{line:?}");
+    }
+}
+
+#[test]
+fn completion_reads_only_the_text_before_the_cursor() {
+    let status = status(&["w1"], &[], &[]);
+    let completion = hold_completions("/hold w trailing", 7, &status).unwrap();
+    assert_eq!(completion.span, 6..7);
+    assert_eq!(completion.values, ["w1"]);
+    assert_eq!(hold_completions("/hold w1", 3, &status), None);
+}
+
+#[test]
+fn completion_ignores_a_cursor_inside_a_character() {
+    let status = status(&["w1"], &[], &[]);
+    assert_eq!(hold_completions("/hold é", 7, &status), None);
+    assert_eq!(hold_completions("/hold w", 99, &status), None);
 }

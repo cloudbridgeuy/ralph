@@ -1,19 +1,23 @@
 use crate::chat::memory::Store;
+use crate::chat::monitor::Monitor;
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::clipboard::PASTE_IMAGE;
 use crate::signal::default_sigttou_in;
 use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
 use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
+use ralph_core::chat_hold::hold_completions;
 use ralph_core::chat_memory::Role;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
-    default_vi_visual_keybindings, EditCommand, EditMode, Emacs, FileBackedHistory, KeyCode,
-    KeyModifiers, Keybindings, PromptEditMode, PromptViMode, Reedline, ReedlineEvent,
-    ReedlineRawEvent, Vi,
+    default_vi_visual_keybindings, ColumnarMenu, Completer, CompletionResult, EditCommand,
+    EditMode, Emacs, FileBackedHistory, KeyCode, KeyModifiers, Keybindings, MenuBuilder,
+    PromptEditMode, PromptViMode, Reedline, ReedlineEvent, ReedlineMenu, ReedlineRawEvent, Span,
+    Suggestion, Vi,
 };
 use std::io;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 pub(super) const OPEN_EDITOR: &str = "open-editor";
 pub(super) const BACK_OUT: &str = "back-out-queue";
@@ -21,6 +25,29 @@ pub(super) const QUEUE_CTRL_C: &str = "queue-ctrl-c";
 const HISTORY_FILE: &str = "history.txt";
 const EDITOR_FILE: &str = "editor.md";
 const HISTORY_CAPACITY: usize = 1000;
+const COMPLETION_MENU: &str = "completion_menu";
+
+struct HoldCompleter(Arc<Monitor>);
+
+impl Completer for HoldCompleter {
+    fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
+        let suggestions: Vec<Suggestion> = hold_completions(line, pos, &self.0.status())
+            .map(|completion| {
+                let span = Span::new(completion.span.start, completion.span.end);
+                completion
+                    .values
+                    .into_iter()
+                    .map(|value| Suggestion {
+                        value,
+                        span,
+                        ..Suggestion::default()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        CompletionResult::fresh(suggestions)
+    }
+}
 
 pub(super) struct ChatEditMode {
     inner: Box<dyn EditMode>,
@@ -89,6 +116,19 @@ fn add_chat_bindings(keybindings: &mut Keybindings) {
         KeyModifiers::CONTROL,
         KeyCode::Char('o'),
         ReedlineEvent::Edit(vec![EditCommand::Redo]),
+    );
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu(COMPLETION_MENU.to_string()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+    keybindings.add_binding(
+        KeyModifiers::SHIFT,
+        KeyCode::BackTab,
+        ReedlineEvent::MenuPrevious,
     );
 }
 
@@ -159,11 +199,16 @@ pub(super) fn build_editor(
     store_dir: &Path,
     mode: EditModeConfig,
     highlighter: Option<SuggestionHighlighter>,
+    monitor: Arc<Monitor>,
 ) -> Result<Reedline, Box<dyn std::error::Error>> {
     let history = FileBackedHistory::with_file(HISTORY_CAPACITY, store_dir.join(HISTORY_FILE))?;
     let editor = Reedline::create()
         .with_history(Box::new(history))
         .with_edit_mode(Box::new(edit_mode(mode)))
+        .with_completer(Box::new(HoldCompleter(monitor)))
+        .with_menu(ReedlineMenu::EngineCompleter(Box::new(
+            ColumnarMenu::default().with_name(COMPLETION_MENU),
+        )))
         .use_bracketed_paste(true);
     Ok(match highlighter {
         Some(highlighter) => editor.with_highlighter(Box::new(highlighter)),

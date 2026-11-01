@@ -409,7 +409,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));
     let printer = ExternalPrinter::new(PROMPT_ROWS);
     let prompt_sink = printer.sender();
-    let mut editor = build_editor(&store_dir, edit_mode, highlighter)?
+    let mut editor = build_editor(&store_dir, edit_mode, highlighter, Arc::clone(&monitor))?
         .with_wrap_width(wrap_cap.map(|cap| u16::try_from(cap).unwrap_or(u16::MAX)))
         .with_external_printer(printer);
     let repaint = editor.repaint_signal();

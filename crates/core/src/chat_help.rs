@@ -133,7 +133,7 @@ impl Command {
             Command::Hold => &[
                 (
                     "/hold [<worker-id> | watch:<name> | schedule:<id>]",
-                    "wait with no prompt; the model suggests it when the next step is waiting; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Ctrl-Q or Ctrl-D leaves",
+                    "wait with no prompt; the model suggests it when the next step is waiting; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
         }
@@ -187,6 +187,10 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
         effect: "undo, redo",
     },
     KeyHelp {
+        keys: "Tab, Shift-Tab",
+        effect: "after /hold , complete the argument from this chat's worker ids, watch:<name> and schedule:<id>; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
+    },
+    KeyHelp {
         keys: "Up, Down, Ctrl-R",
         effect: "browse and search the message history",
     },
@@ -210,7 +214,7 @@ pub const VI_KEYS: &[KeyHelp] = &[
         effect: "clear the whole draft (insert and normal mode)",
     },
     KeyHelp {
-        keys: "Alt-Enter, Ctrl-J, Ctrl-V, Ctrl-O",
+        keys: "Alt-Enter, Ctrl-J, Ctrl-V, Ctrl-O, Tab, Shift-Tab",
         effect: "insert mode only; normal mode adds just Ctrl-G and Ctrl-U",
     },
 ];
