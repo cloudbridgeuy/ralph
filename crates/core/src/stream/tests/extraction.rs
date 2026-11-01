@@ -127,7 +127,6 @@ fn test_iteration_metadata_new() {
     assert!(metadata.is_empty());
     assert_eq!(metadata.session_id, None);
     assert_eq!(metadata.model, None);
-    assert!(metadata.tools.is_empty());
 }
 
 #[test]
@@ -146,15 +145,6 @@ fn test_iteration_metadata_is_empty() {
         ..Default::default()
     };
     assert!(!with_model.is_empty());
-
-    let with_tools = IterationMetadata {
-        tools: vec![Tool {
-            name: "Read".to_string(),
-            description: None,
-        }],
-        ..Default::default()
-    };
-    assert!(!with_tools.is_empty());
 }
 
 #[test]
@@ -163,7 +153,6 @@ fn test_system_event_is_init() {
         subtype: Some("init".to_string()),
         session_id: None,
         model: None,
-        tools: vec![],
     };
     assert!(init_event.is_init());
 
@@ -171,7 +160,6 @@ fn test_system_event_is_init() {
         subtype: Some("other".to_string()),
         session_id: None,
         model: None,
-        tools: vec![],
     };
     assert!(!other_event.is_init());
 
@@ -179,7 +167,6 @@ fn test_system_event_is_init() {
         subtype: None,
         session_id: None,
         model: None,
-        tools: vec![],
     };
     assert!(!no_subtype.is_init());
 }
@@ -190,29 +177,11 @@ fn test_system_event_extract_metadata() {
         subtype: Some("init".to_string()),
         session_id: Some("session-123".to_string()),
         model: Some("claude-opus-4-5-20251101".to_string()),
-        tools: vec![
-            Tool {
-                name: "Read".to_string(),
-                description: Some("Read files".to_string()),
-            },
-            Tool {
-                name: "Edit".to_string(),
-                description: None,
-            },
-        ],
     };
 
     let metadata = event.extract_metadata();
     assert_eq!(metadata.session_id, Some("session-123".to_string()));
     assert_eq!(metadata.model, Some("claude-opus-4-5-20251101".to_string()));
-    assert_eq!(metadata.tools.len(), 2);
-    assert_eq!(metadata.tools[0].name, "Read");
-    assert_eq!(
-        metadata.tools[0].description,
-        Some("Read files".to_string())
-    );
-    assert_eq!(metadata.tools[1].name, "Edit");
-    assert_eq!(metadata.tools[1].description, None);
 }
 
 #[test]
@@ -221,13 +190,11 @@ fn test_system_event_extract_metadata_missing_fields() {
         subtype: Some("init".to_string()),
         session_id: None,
         model: None,
-        tools: vec![],
     };
 
     let metadata = event.extract_metadata();
     assert_eq!(metadata.session_id, None);
     assert_eq!(metadata.model, None);
-    assert!(metadata.tools.is_empty());
     assert!(metadata.is_empty());
 }
 
@@ -238,16 +205,6 @@ fn test_extract_metadata_from_events_init_present() {
             subtype: Some("init".to_string()),
             session_id: Some("f5b6aaac-4316-454a".to_string()),
             model: Some("claude-opus-4-5-20251101".to_string()),
-            tools: vec![
-                Tool {
-                    name: "Glob".to_string(),
-                    description: Some("Find files".to_string()),
-                },
-                Tool {
-                    name: "Read".to_string(),
-                    description: None,
-                },
-            ],
         }),
         StreamEvent::Assistant(AssistantEvent {
             message: AssistantMessage {
@@ -267,9 +224,6 @@ fn test_extract_metadata_from_events_init_present() {
     let meta = metadata.unwrap();
     assert_eq!(meta.session_id, Some("f5b6aaac-4316-454a".to_string()));
     assert_eq!(meta.model, Some("claude-opus-4-5-20251101".to_string()));
-    assert_eq!(meta.tools.len(), 2);
-    assert_eq!(meta.tools[0].name, "Glob");
-    assert_eq!(meta.tools[1].name, "Read");
 }
 
 #[test]
@@ -296,7 +250,6 @@ fn test_extract_metadata_from_events_non_init_system_event() {
         subtype: Some("other".to_string()),
         session_id: Some("abc".to_string()),
         model: Some("claude".to_string()),
-        tools: vec![],
     })];
 
     let metadata = extract_metadata_from_events(&events);
@@ -318,13 +271,11 @@ fn test_extract_metadata_from_events_first_init_wins() {
             subtype: Some("init".to_string()),
             session_id: Some("first-session".to_string()),
             model: Some("model-1".to_string()),
-            tools: vec![],
         }),
         StreamEvent::System(SystemEvent {
             subtype: Some("init".to_string()),
             session_id: Some("second-session".to_string()),
             model: Some("model-2".to_string()),
-            tools: vec![],
         }),
     ];
 
@@ -341,17 +292,12 @@ fn test_extract_metadata_from_events_or_default_with_init() {
         subtype: Some("init".to_string()),
         session_id: Some("session-456".to_string()),
         model: Some("claude-sonnet".to_string()),
-        tools: vec![Tool {
-            name: "Write".to_string(),
-            description: None,
-        }],
     })];
 
     let metadata = extract_metadata_from_events_or_default(&events);
     assert!(!metadata.is_empty());
     assert_eq!(metadata.session_id, Some("session-456".to_string()));
     assert_eq!(metadata.model, Some("claude-sonnet".to_string()));
-    assert_eq!(metadata.tools.len(), 1);
 }
 
 #[test]
@@ -361,7 +307,6 @@ fn test_extract_metadata_from_events_or_default_no_init() {
     assert!(metadata.is_empty());
     assert_eq!(metadata.session_id, None);
     assert_eq!(metadata.model, None);
-    assert!(metadata.tools.is_empty());
 }
 
 #[test]
@@ -369,16 +314,6 @@ fn test_iteration_metadata_serialization() {
     let metadata = IterationMetadata {
         session_id: Some("abc-123".to_string()),
         model: Some("claude-opus-4-5".to_string()),
-        tools: vec![
-            Tool {
-                name: "Read".to_string(),
-                description: Some("Read files".to_string()),
-            },
-            Tool {
-                name: "Edit".to_string(),
-                description: None,
-            },
-        ],
     };
 
     let json = serde_json::to_string(&metadata).unwrap();
@@ -392,13 +327,10 @@ fn test_iteration_metadata_serialization_empty_fields_skipped() {
     let metadata = IterationMetadata {
         session_id: Some("abc".to_string()),
         model: None,
-        tools: vec![],
     };
 
     let json = serde_json::to_string(&metadata).unwrap();
-    // Empty model and tools should be skipped
     assert!(!json.contains("\"model\""));
-    assert!(!json.contains("\"tools\""));
     // But session_id should be present
     assert!(json.contains("\"session_id\""));
 }
@@ -434,7 +366,6 @@ fn test_extract_metadata_init_at_end() {
             subtype: Some("init".to_string()),
             session_id: Some("late-init".to_string()),
             model: Some("claude-late".to_string()),
-            tools: vec![],
         }),
     ];
 
@@ -451,7 +382,6 @@ fn test_extract_metadata_partial_fields() {
         subtype: Some("init".to_string()),
         session_id: Some("session-only".to_string()),
         model: None,
-        tools: vec![],
     })];
 
     let metadata = extract_metadata_from_events(&events);
@@ -459,6 +389,18 @@ fn test_extract_metadata_partial_fields() {
     let meta = metadata.unwrap();
     assert_eq!(meta.session_id, Some("session-only".to_string()));
     assert_eq!(meta.model, None);
-    assert!(meta.tools.is_empty());
     assert!(!meta.is_empty()); // Still not empty since session_id is set
+}
+
+const CLAUDE_INIT_LINE: &str = r#"{"type":"system","subtype":"init","cwd":"/tmp/guz1151","session_id":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","tools":["Task","Bash","Read","mcp__chat__help"],"mcp_servers":[{"name":"chat","status":"connected"}],"model":"claude-haiku-5-5","permissionMode":"default","slash_commands":["compact","context"],"apiKeySource":"none","claude_code_version":"2.1.0","output_style":"default","agents":["general-purpose"],"skills":[],"plugins":[{"name":"p","path":"/p"}],"uuid":"1a2b3c4d-0000-0000-0000-000000000000"}"#;
+
+#[test]
+fn claude_init_line_with_tool_names_yields_model_and_session() {
+    let (events, _) = parse_stream_output(CLAUDE_INIT_LINE);
+    let metadata = extract_metadata_from_events_or_default(&events);
+    assert_eq!(metadata.model.as_deref(), Some("claude-haiku-5-5"));
+    assert_eq!(
+        metadata.session_id.as_deref(),
+        Some("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")
+    );
 }

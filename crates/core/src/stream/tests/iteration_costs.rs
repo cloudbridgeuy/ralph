@@ -149,7 +149,6 @@ fn test_extract_costs_from_events_no_result() {
             subtype: Some("init".to_string()),
             session_id: Some("session-123".to_string()),
             model: Some("claude-opus-4-5".to_string()),
-            tools: vec![],
         }),
         StreamEvent::Assistant(AssistantEvent {
             message: AssistantMessage {
@@ -297,7 +296,6 @@ fn test_extract_costs_result_at_end() {
             subtype: Some("init".to_string()),
             session_id: Some("session-123".to_string()),
             model: Some("claude-opus-4-5".to_string()),
-            tools: vec![],
         }),
         StreamEvent::Assistant(AssistantEvent {
             message: AssistantMessage {

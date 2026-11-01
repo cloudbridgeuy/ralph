@@ -252,7 +252,7 @@ fn test_parse_stream_line_user_event() {
 #[test]
 fn test_parse_real_claude_output_simulation() {
     // Simulate a realistic Claude stream-json output sequence
-    let output = r#"{"type":"system","subtype":"init","session_id":"f5b6aaac-4316-454a","model":"claude-opus-4-5-20251101","tools":[{"name":"Read"},{"name":"Edit"}]}
+    let output = r#"{"type":"system","subtype":"init","session_id":"f5b6aaac-4316-454a","model":"claude-opus-4-5-20251101","tools":["Read","Edit"]}
 {"type":"assistant","message":{"id":"msg_01ABC","content":[{"type":"text","text":"I'll help you implement this feature."}],"stop_reason":"end_turn"}}
 {"type":"assistant","message":{"id":"msg_01DEF","content":[{"type":"text","text":"Let me read the file first."},{"type":"tool_use","id":"toolu_01XYZ","name":"Read","input":{"file_path":"/src/main.rs"}}],"stop_reason":"tool_use"}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01XYZ","content":"fn main() { }"}]}}
@@ -268,7 +268,6 @@ fn test_parse_real_claude_output_simulation() {
     match &events[0] {
         StreamEvent::System(sys) => {
             assert_eq!(sys.session_id, Some("f5b6aaac-4316-454a".to_string()));
-            assert_eq!(sys.tools.len(), 2);
         }
         _ => panic!("Expected System"),
     }

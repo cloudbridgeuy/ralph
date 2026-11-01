@@ -7,10 +7,7 @@ fn test_system_init_event() {
             "subtype": "init",
             "session_id": "f5b6aaac-4316-454a-b086-a3f9e4351b1e",
             "model": "claude-opus-4-5-20251101",
-            "tools": [
-                {"name": "Glob", "description": "Find files matching pattern"},
-                {"name": "Read"}
-            ]
+            "tools": ["Glob", "Read"]
         }"#;
 
     let event: StreamEvent = serde_json::from_str(json).unwrap();
@@ -22,14 +19,6 @@ fn test_system_init_event() {
                 Some("f5b6aaac-4316-454a-b086-a3f9e4351b1e".to_string())
             );
             assert_eq!(sys.model, Some("claude-opus-4-5-20251101".to_string()));
-            assert_eq!(sys.tools.len(), 2);
-            assert_eq!(sys.tools[0].name, "Glob");
-            assert_eq!(
-                sys.tools[0].description,
-                Some("Find files matching pattern".to_string())
-            );
-            assert_eq!(sys.tools[1].name, "Read");
-            assert_eq!(sys.tools[1].description, None);
         }
         _ => panic!("Expected System event"),
     }
@@ -258,7 +247,6 @@ fn test_missing_optional_fields() {
             assert_eq!(sys.subtype, None);
             assert_eq!(sys.session_id, None);
             assert_eq!(sys.model, None);
-            assert!(sys.tools.is_empty());
         }
         _ => panic!("Expected System event"),
     }
@@ -279,10 +267,6 @@ fn test_round_trip_serialization() {
         subtype: Some("init".to_string()),
         session_id: Some("test-session".to_string()),
         model: Some("claude-opus-4-5-20251101".to_string()),
-        tools: vec![Tool {
-            name: "Read".to_string(),
-            description: Some("Read a file".to_string()),
-        }],
     });
 
     let json = serde_json::to_string(&original).unwrap();

@@ -26,7 +26,7 @@ pub enum StreamEvent {
 /// System event for session initialization and other system messages.
 ///
 /// The `subtype` field indicates the kind of system event:
-/// - `"init"` - Session initialization with session_id, model, and tools
+/// - `"init"` - Session initialization with session_id and model
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SystemEvent {
     /// The subtype of system event (e.g., "init").
@@ -40,21 +40,6 @@ pub struct SystemEvent {
     /// The Claude model being used (e.g., "claude-opus-4-5-20251101").
     #[serde(default)]
     pub model: Option<String>,
-
-    /// List of tools available in this session.
-    #[serde(default)]
-    pub tools: Vec<Tool>,
-}
-
-/// A tool available in the Claude session.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Tool {
-    /// The name of the tool (e.g., "Glob", "Read", "Edit").
-    pub name: String,
-
-    /// Tool description, if available.
-    #[serde(default)]
-    pub description: Option<String>,
 }
 
 /// Assistant event containing LLM response content.

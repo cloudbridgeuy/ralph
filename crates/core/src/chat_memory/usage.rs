@@ -86,7 +86,6 @@ pub fn carry_metadata(
     IterationMetadata {
         session_id: seen.session_id.clone().or(base.session_id),
         model: seen.model.clone().or(base.model),
-        tools: Vec::new(),
     }
 }
 
@@ -598,7 +597,6 @@ mod tests {
         IterationMetadata {
             model: model.map(String::from),
             session_id: session.map(String::from),
-            ..IterationMetadata::new()
         }
     }
 

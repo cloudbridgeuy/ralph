@@ -2,26 +2,23 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::events::{StreamEvent, SystemEvent, Tool};
+use super::events::{StreamEvent, SystemEvent};
 
 /// Metadata extracted from a system init event.
 ///
 /// Contains session metadata from Claude's initialization event, including
-/// session ID, model name, and available tools.
+/// session ID and model name.
 ///
 /// # Example
 ///
 /// ```
-/// use ralph_core::stream::{extract_metadata_from_events, StreamEvent, SystemEvent, Tool};
+/// use ralph_core::stream::{extract_metadata_from_events, StreamEvent, SystemEvent};
 ///
 /// let events = vec![
 ///     StreamEvent::System(SystemEvent {
 ///         subtype: Some("init".to_string()),
 ///         session_id: Some("abc-123".to_string()),
 ///         model: Some("claude-opus-4-5-20251101".to_string()),
-///         tools: vec![
-///             Tool { name: "Read".to_string(), description: Some("Read files".to_string()) },
-///         ],
 ///     }),
 /// ];
 ///
@@ -30,7 +27,6 @@ use super::events::{StreamEvent, SystemEvent, Tool};
 /// let meta = metadata.unwrap();
 /// assert_eq!(meta.session_id, Some("abc-123".to_string()));
 /// assert_eq!(meta.model, Some("claude-opus-4-5-20251101".to_string()));
-/// assert_eq!(meta.tools.len(), 1);
 /// ```
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct IterationMetadata {
@@ -41,10 +37,6 @@ pub struct IterationMetadata {
     /// The Claude model being used (e.g., "claude-opus-4-5-20251101").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-
-    /// List of tools available in this session.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<Tool>,
 }
 
 impl IterationMetadata {
@@ -55,7 +47,7 @@ impl IterationMetadata {
 
     /// Check if any metadata fields are populated.
     pub fn is_empty(&self) -> bool {
-        self.session_id.is_none() && self.model.is_none() && self.tools.is_empty()
+        self.session_id.is_none() && self.model.is_none()
     }
 }
 
@@ -72,31 +64,28 @@ impl SystemEvent {
     ///
     /// # Returns
     ///
-    /// An [`IterationMetadata`] populated with the session_id, model, and tools
+    /// An [`IterationMetadata`] populated with the session_id and model
     /// from this system event.
     ///
     /// # Example
     ///
     /// ```
-    /// use ralph_core::stream::{SystemEvent, Tool};
+    /// use ralph_core::stream::SystemEvent;
     ///
     /// let event = SystemEvent {
     ///     subtype: Some("init".to_string()),
     ///     session_id: Some("session-123".to_string()),
     ///     model: Some("claude-opus-4-5".to_string()),
-    ///     tools: vec![Tool { name: "Read".to_string(), description: None }],
     /// };
     ///
     /// let metadata = event.extract_metadata();
     /// assert_eq!(metadata.session_id, Some("session-123".to_string()));
     /// assert_eq!(metadata.model, Some("claude-opus-4-5".to_string()));
-    /// assert_eq!(metadata.tools.len(), 1);
     /// ```
     pub fn extract_metadata(&self) -> IterationMetadata {
         IterationMetadata {
             session_id: self.session_id.clone(),
             model: self.model.clone(),
-            tools: self.tools.clone(),
         }
     }
 }
@@ -119,7 +108,7 @@ impl SystemEvent {
 /// ```
 /// use ralph_core::stream::{
 ///     extract_metadata_from_events, StreamEvent, SystemEvent, AssistantEvent,
-///     AssistantMessage, ContentBlock, Tool,
+///     AssistantMessage, ContentBlock,
 /// };
 ///
 /// let events = vec![
@@ -127,10 +116,6 @@ impl SystemEvent {
 ///         subtype: Some("init".to_string()),
 ///         session_id: Some("f5b6aaac-4316-454a".to_string()),
 ///         model: Some("claude-opus-4-5-20251101".to_string()),
-///         tools: vec![
-///             Tool { name: "Glob".to_string(), description: Some("Find files".to_string()) },
-///             Tool { name: "Read".to_string(), description: None },
-///         ],
 ///     }),
 ///     StreamEvent::Assistant(AssistantEvent {
 ///         message: AssistantMessage {
@@ -148,9 +133,6 @@ impl SystemEvent {
 /// let meta = metadata.unwrap();
 /// assert_eq!(meta.session_id, Some("f5b6aaac-4316-454a".to_string()));
 /// assert_eq!(meta.model, Some("claude-opus-4-5-20251101".to_string()));
-/// assert_eq!(meta.tools.len(), 2);
-/// assert_eq!(meta.tools[0].name, "Glob");
-/// assert_eq!(meta.tools[1].name, "Read");
 /// ```
 pub fn extract_metadata_from_events(events: &[StreamEvent]) -> Option<IterationMetadata> {
     events.iter().find_map(|event| {
@@ -202,7 +184,6 @@ pub fn extract_metadata_from_events(events: &[StreamEvent]) -> Option<IterationM
 /// assert!(metadata.is_empty());
 /// assert_eq!(metadata.session_id, None);
 /// assert_eq!(metadata.model, None);
-/// assert!(metadata.tools.is_empty());
 /// ```
 pub fn extract_metadata_from_events_or_default(events: &[StreamEvent]) -> IterationMetadata {
     extract_metadata_from_events(events).unwrap_or_default()

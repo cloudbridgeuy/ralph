@@ -40,7 +40,7 @@ mod tests;
 // Re-export all public types and functions
 pub use costs::{extract_costs_from_events, extract_costs_from_events_or_default, IterationCosts};
 pub use events::{
-    AssistantEvent, AssistantMessage, ContentBlock, ResultEvent, StreamEvent, SystemEvent, Tool,
+    AssistantEvent, AssistantMessage, ContentBlock, ResultEvent, StreamEvent, SystemEvent,
     ToolResult, Usage, UserEvent, UserMessage,
 };
 pub use extraction::ToolInvocation;

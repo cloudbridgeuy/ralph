@@ -505,7 +505,6 @@ mod tests {
                 metadata: IterationMetadata {
                     session_id: session_id.map(str::to_string),
                     model: model.map(str::to_string),
-                    tools: Vec::new(),
                 },
                 ..Default::default()
             },
@@ -513,11 +512,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn turn_row_names_the_model_from_the_claude_init_line() {
+        let mut processor = crate::stream_processor::StreamProcessor::new();
+        [
+            r#"{"type":"system","subtype":"init","session_id":"s1","tools":["Task","Bash","mcp__chat__help"],"mcp_servers":[{"name":"chat","status":"connected"}],"model":"claude-haiku-5-5","permissionMode":"default","slash_commands":["compact"],"agents":["general-purpose"]}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0018,"usage":{"input_tokens":3,"output_tokens":5},"session_id":"s1"}"#,
+        ]
+        .iter()
+        .for_each(|line| {
+            processor.process_line(line);
+        });
+        let result = Ok(StreamingSubprocessResult {
+            exit_code: 0,
+            stderr: String::new(),
+            stream_result: processor.finish(),
+            request_at: None,
+        });
+        let identity = carry_metadata(&IterationMetadata::new(), true, &turn_metadata(&result));
+        let costs = &result.as_ref().unwrap().stream_result.costs;
+        let row = usage_record(
+            CallKind::Turn {
+                trigger: Trigger::User,
+            },
+            "t".into(),
+            costs,
+            &identity,
+        )
+        .unwrap();
+        assert_eq!(row.model.as_deref(), Some("claude-haiku-5-5"));
+        assert_eq!(row.session_id.as_deref(), Some("s1"));
+    }
+
     fn previous() -> IterationMetadata {
         IterationMetadata {
             session_id: Some("old".to_string()),
             model: Some("old-model".to_string()),
-            tools: Vec::new(),
         }
     }
 
