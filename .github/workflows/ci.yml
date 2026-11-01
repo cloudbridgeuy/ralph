@@ -53,6 +53,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+      - name: Test vendored reedline
+        run: cargo test --locked --manifest-path vendor/reedline/Cargo.toml --features external_printer --target-dir target/vendor-reedline
+
   build:
     name: Build Check
     runs-on: ${{ matrix.os }}
