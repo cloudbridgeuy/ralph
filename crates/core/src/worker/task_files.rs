@@ -18,6 +18,10 @@ pub fn task_pointer(task_dir: &Path) -> String {
     )
 }
 
+pub fn close_remove_paths(store: &Path, id: &str) -> Vec<PathBuf> {
+    vec![task_dir_path(store, id)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -43,6 +47,14 @@ mod tests {
         assert_eq!(
             task_pointer(Path::new("/s/workers/A.task")),
             "Read your task from /s/workers/A.task/task.md"
+        );
+    }
+
+    #[test]
+    fn close_removes_the_task_dir() {
+        assert_eq!(
+            close_remove_paths(Path::new("/s"), "A"),
+            vec![PathBuf::from("/s/workers/A.task")]
         );
     }
 }

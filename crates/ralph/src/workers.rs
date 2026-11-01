@@ -13,11 +13,11 @@ use ralph_core::claude_leftovers::{cleans_claude_leftovers, trust_lock_path};
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     activity_path, base_branch, base_config_key, blocked_path, branch_name, capabilities,
-    close_clear_paths, close_handoff, close_plan, delivery_line, describe, interrupt_reply,
-    legacy_base_unset_warning, opencode_close_handoff, parse_interrupt_result, project_slug,
-    prompt_entry_name, ready_path, resolve_worktree_dir, sent_path, session_name, session_owner,
-    session_survived_kill, tagged_sessions, uptake, worktree_for_branch, worktree_path,
-    ActivityMark, CloseState, CloseStep, Feature, Handoff, HandoffFiles, HarnessId,
+    close_clear_paths, close_handoff, close_plan, close_remove_paths, delivery_line, describe,
+    interrupt_reply, legacy_base_unset_warning, opencode_close_handoff, parse_interrupt_result,
+    project_slug, prompt_entry_name, ready_path, resolve_worktree_dir, sent_path, session_name,
+    session_owner, session_survived_kill, tagged_sessions, uptake, worktree_for_branch,
+    worktree_path, ActivityMark, CloseState, CloseStep, Feature, Handoff, HandoffFiles, HarnessId,
     InterruptOutcome, Owner, Probe, Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL,
     HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT,
     WORKTREE_DIR_ENV,
@@ -342,6 +342,7 @@ impl Workers {
             opencode,
             markers: close_clear_paths(&self.store_dir, id)
                 .iter()
+                .chain(&close_remove_paths(&self.store_dir, id))
                 .any(|marker| marker.exists()),
             kind,
         };
@@ -501,6 +502,12 @@ impl Workers {
             CloseStep::ClearMarkers => {
                 for path in close_clear_paths(&self.store_dir, id) {
                     clear_marker(&path)?;
+                }
+                for path in close_remove_paths(&self.store_dir, id) {
+                    warn_if_err(
+                        clear_marker(&path),
+                        format!("Failed to remove {}", path.display()),
+                    );
                 }
             }
         }
