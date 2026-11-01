@@ -2,7 +2,7 @@ use crate::chat::changes::run_changes;
 use crate::chat::memory::Store;
 use crate::chat::socket::forward;
 use ralph_core::chat_help::config_help;
-use ralph_core::chat_memory::{finish_call, handle_request, Outcome, Tool};
+use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::chat_socket::SocketRequest;
 use ralph_core::mcp::tool_result;
 use serde_json::Value;
@@ -30,10 +30,7 @@ pub fn run_stdio_server(
         let response = match handle_request(&request) {
             Outcome::Silent => continue,
             Outcome::Respond(v) => v,
-            Outcome::Call { id, tool } => match memory_call(store, &tool) {
-                Ok(result) => finish_call(id, result),
-                Err(e) => tool_result(id, &format!("Could not read chat memory: {e}"), true),
-            },
+            Outcome::Call { id, tool } => finish_call(id, store.call(&tool)),
             Outcome::Changes { id, request } => {
                 let result = std::env::current_dir()
                     .map_err(|e| format!("Could not read the working directory: {e}"))
@@ -62,15 +59,6 @@ pub fn run_stdio_server(
         output.flush()?;
     }
     Ok(())
-}
-
-fn memory_call(store: &Store, tool: &Tool) -> io::Result<Result<String, String>> {
-    match tool {
-        Tool::Zoom(node) => store.zoom(*node),
-        Tool::Recall(pattern) => store.recall(pattern),
-        Tool::Read(request) => store.read(request),
-        Tool::Search(request) => store.search(request),
-    }
 }
 
 #[cfg(test)]
@@ -202,6 +190,30 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("no running ralph chat"));
+        }
+    }
+
+    #[test]
+    fn store_call_prints_what_the_model_tools_return() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let socket = dir.path().join("chat-1.sock");
+        let log = [
+            "{\"role\":\"user\",\"at\":\"2026-10-20T10:00:00+00:00\",\"text\":\"ship GUZ-7090 first\"}",
+            "{\"role\":\"assistant\",\"at\":\"2026-10-20T11:00:00+00:00\",\"text\":\"then ship GUZ-709\"}",
+        ]
+        .join("\n");
+        std::fs::write(dir.path().join("log.jsonl"), format!("{log}\n")).unwrap();
+        for (name, args) in [
+            ("read", serde_json::json!({"id": "0-1"})),
+            ("zoom", serde_json::json!({"id": "1"})),
+            ("zoom", serde_json::json!({"id": "9"})),
+            ("recall", serde_json::json!({"pattern": "ship"})),
+            ("search", serde_json::json!({"query": "GUZ-709"})),
+        ] {
+            let tool = ralph_core::chat_memory::parse_tool_call(name, &args).unwrap();
+            let served = text_of(&run(&store, &socket, &call(name, args))[0]);
+            assert_eq!(store.call(&tool).unwrap_or_else(|e| e), served, "{name}");
         }
     }
 }

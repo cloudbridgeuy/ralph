@@ -59,7 +59,7 @@ use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
-use crate::cli::ChatArgs;
+use crate::cli::{ChatArgs, ChatCommand, HistoryArgs};
 use crate::config::{load_for_chat, ConfigSnapshot, FileState, PromptFiles};
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
@@ -86,7 +86,7 @@ use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
-use ralph_core::chat_memory::{store_in_use_message, Trigger};
+use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
@@ -130,6 +130,30 @@ fn resolve_store(
     }
 }
 
+fn store_dir(flag: Option<PathBuf>) -> io::Result<PathBuf> {
+    resolve_store(
+        flag,
+        std::env::var_os(STORE_ENV).map(PathBuf::from),
+        &std::env::current_dir()?,
+        dirs::home_dir().as_deref(),
+    )
+}
+
+fn print_history(
+    store: Option<PathBuf>,
+    history: &HistoryArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let store_dir = store_dir(store)?;
+    let text = history_tool(
+        history.tool.name(),
+        &history.words.join(" "),
+        history.cursor.as_deref(),
+    )
+    .and_then(|tool| Store::new(store_dir).call(&tool))?;
+    println!("{text}");
+    Ok(())
+}
+
 fn read_prompt_file(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path)
         .map_err(|e| format!("Skipping prompt file {}: {e}", path.display()))
@@ -170,15 +194,13 @@ fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
 }
 
 pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(ChatCommand::History(history)) = args.command {
+        return print_history(args.store, &history);
+    }
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     signal::ignore_sigttou();
     let flags = config::flag_settings(&args);
-    let store_dir = resolve_store(
-        args.store,
-        std::env::var_os(STORE_ENV).map(PathBuf::from),
-        &std::env::current_dir()?,
-        dirs::home_dir().as_deref(),
-    )?;
+    let store_dir = store_dir(args.store)?;
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store_root = canonical_store(store_dir.clone());
     crate::config::set_store_layer(&store_root);

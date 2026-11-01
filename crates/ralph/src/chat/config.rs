@@ -93,6 +93,7 @@ mod tests {
 
     fn args() -> ChatArgs {
         ChatArgs {
+            command: None,
             store: None,
             recent_history_tokens: None,
             wrap_width: None,
@@ -120,6 +121,7 @@ mod tests {
     #[test]
     fn each_given_flag_names_the_key_it_overrides() {
         let args = ChatArgs {
+            command: None,
             store: Some(PathBuf::from("rel/store")),
             recent_history_tokens: Some(5000),
             wrap_width: Some(90),

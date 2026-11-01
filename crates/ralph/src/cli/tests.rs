@@ -154,3 +154,32 @@ fn test_cli_stop_hook_takes_usage_with_usage_seen() {
     let args = stop_hook_args(&["--worker", "X", "--usage-seen", "P", "--usage", "/u"]).unwrap();
     assert_eq!(args.usage, Some(std::path::PathBuf::from("/u")));
 }
+
+#[test]
+fn test_cli_chat_history_takes_a_tool_words_cursor_and_store() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from([
+        "ralph", "chat", "history", "search", "rate", "limit", "--cursor", "c1", "--store", "/s",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected chat");
+    };
+    assert_eq!(chat.store, Some(std::path::PathBuf::from("/s")));
+    let Some(ChatCommand::History(history)) = chat.command else {
+        panic!("expected chat history");
+    };
+    assert_eq!(history.tool, HistoryTool::Search);
+    assert_eq!(history.words, ["rate", "limit"]);
+    assert_eq!(history.cursor.as_deref(), Some("c1"));
+    let Some(Commands::Chat(chat)) =
+        Cli::try_parse_from(["ralph", "chat", "--store", "/s", "history", "zoom", "4-7"])
+            .unwrap()
+            .command
+    else {
+        panic!("expected chat");
+    };
+    assert_eq!(chat.store, Some(std::path::PathBuf::from("/s")));
+    assert!(Cli::try_parse_from(["ralph", "chat", "history", "zoom"]).is_err());
+    assert!(Cli::try_parse_from(["ralph", "chat", "history", "drop", "1"]).is_err());
+}

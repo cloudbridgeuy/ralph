@@ -80,7 +80,11 @@ fn lists_hold_every_variant() {
             Diff,
             Workers,
             Hold,
-            Config
+            Config,
+            Read,
+            Zoom,
+            Recall,
+            Search
         }
     );
     assert_lists_every!(
@@ -405,4 +409,19 @@ fn help_topic_images_returns_the_images_text() {
 fn unknown_help_topic_lists_images() {
     let error = help_topic(Some("nope")).unwrap_err();
     assert!(error.contains(", images, config,"));
+}
+
+#[test]
+fn history_help_rows_name_the_model_tools() {
+    let text = help_text(400);
+    for (label, tool) in [
+        ("/read <id> [raw|summary] [--cursor <c>]", "read"),
+        ("/zoom <id>", "zoom"),
+        ("/recall <regex>", "recall"),
+        ("/search <words> [--cursor <c>]", "search"),
+    ] {
+        assert!(has_row(&text, label), "{label}");
+        let row = text.lines().find(|line| line.contains(label)).unwrap();
+        assert!(row.contains(&format!("model's {tool} tool")), "{row}");
+    }
 }

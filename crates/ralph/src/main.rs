@@ -74,6 +74,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command.unwrap_or(Commands::Chat(ChatArgs {
+        command: None,
         store: None,
         recent_history_tokens: None,
         wrap_width: None,

@@ -673,3 +673,60 @@ fn schedule_routes_locally_and_only_list_runs_mid_turn() {
     assert!(!route("/schedule cancel a").runs_mid_turn());
     assert_eq!(route("/schedulefoo"), Route::Send("/schedulefoo".into()));
 }
+
+#[test]
+fn history_commands_route_to_the_model_tools() {
+    use crate::chat_memory::parse_tool_call;
+    use serde_json::json;
+    let route = |line: &str| route_input(line, 0, &EmptySubmit::Inbox);
+    let tool = |name: &str, args: serde_json::Value| Route::History(parse_tool_call(name, &args));
+    assert_eq!(route("/read 4-7"), tool("read", json!({"id": "4-7"})));
+    assert_eq!(
+        route("/read 4-7 summary --cursor 5.0@7s"),
+        tool(
+            "read",
+            json!({"id": "4-7", "mode": "summary", "cursor": "5.0@7s"})
+        )
+    );
+    assert_eq!(route("/zoom 4-7"), tool("zoom", json!({"id": "4-7"})));
+    assert_eq!(
+        route(" /recall  fix  (the|a) build "),
+        tool("recall", json!({"pattern": "fix  (the|a) build"}))
+    );
+    assert_eq!(
+        route("/search rate limit \"retry after\""),
+        tool("search", json!({"query": "rate limit \"retry after\""}))
+    );
+    assert_eq!(
+        route("/search rate limit --cursor bogus"),
+        tool("search", json!({"query": "rate limit", "cursor": "bogus"}))
+    );
+    assert_eq!(route("/readme"), Route::Send("/readme".into()));
+}
+
+#[test]
+fn bad_history_arguments_route_to_an_error_not_a_message() {
+    for line in [
+        "/read",
+        "/read x",
+        "/read 4-7 summary extra",
+        "/read 4-7 loud",
+        "/zoom",
+        "/recall",
+        "/search",
+        "/search --cursor 1",
+    ] {
+        let route = route_input(line, 0, &EmptySubmit::Inbox);
+        assert!(matches!(route, Route::History(Err(_))), "{line}: {route:?}");
+    }
+}
+
+#[test]
+fn history_commands_run_mid_turn() {
+    for line in ["/read 1", "/zoom 1", "/recall x", "/search x", "/read"] {
+        assert!(
+            route_input(line, 0, &EmptySubmit::Inbox).runs_mid_turn(),
+            "{line}"
+        );
+    }
+}
