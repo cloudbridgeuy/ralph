@@ -2,18 +2,46 @@
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{AskSummary, PromptDisplay};
-use crate::ansi::{BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET};
+use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::markdown::MarkdownRenderer;
+use crate::ui_theme::UiColors;
+
+pub(super) fn prompt_rule(ui: &UiColors, width: usize) -> String {
+    format!("{}{}{RESET}", fg(Some(ui.ask_header)), "─".repeat(width))
+}
+
+pub(super) fn prompt_header(ui: &UiColors, width: usize) -> String {
+    format!(
+        "{BOLD}{}▶ Prompt{RESET}\n{}",
+        fg(Some(ui.ask_header)),
+        prompt_rule(ui, width)
+    )
+}
+
+pub(super) fn attached_file_line(ui: &UiColors, path: &str, description: &str) -> String {
+    format!(
+        "  {}{path}{RESET}  {DIM}→{RESET}  {description}",
+        fg(Some(ui.ask_path))
+    )
+}
+
+pub(super) fn ask_status_line(ui: &UiColors, success: bool) -> String {
+    let (icon, color, text) = if success {
+        ("✓", fg(Some(ui.ask_ok)), "Complete")
+    } else {
+        ("✗", fg(Some(ui.ask_error)), "Failed")
+    };
+    format!("{color}{icon}{RESET} {color}Ask {text}{RESET}")
+}
 
 /// Display prompt with terminal formatting.
-pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
+pub(super) fn display_prompt_terminal(prompt: &PromptDisplay, ui: &UiColors) {
     let term_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
     let width = super::formatters::separator_width(&prompt.stripped_prompt(), term_width);
 
     // Header with visual indicator
     println!();
-    println!("{BOLD}{MAGENTA}▶ Prompt{RESET}");
-    println!("{MAGENTA}{}{RESET}", "─".repeat(width));
+    println!("{}", prompt_header(ui, width));
 
     // Display attached files as a table (if any)
     if !prompt.attached_files.is_empty() {
@@ -22,9 +50,8 @@ pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
         for file in &prompt.attached_files {
             // Format: "  path  →  Description"
             println!(
-                "  {CYAN}{}{RESET}  {DIM}→{RESET}  {}",
-                file.path.display(),
-                file.description
+                "{}",
+                attached_file_line(ui, &file.path.display().to_string(), file.description)
             );
         }
     }
@@ -37,27 +64,14 @@ pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
     println!("{}", rendered);
 
     // Closing separator
-    println!("{MAGENTA}{}{RESET}", "─".repeat(width));
+    println!("{}", prompt_rule(ui, width));
 }
 
 /// Display ask summary with terminal formatting.
-pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
+pub(super) fn display_ask_summary_terminal(summary: &AskSummary, ui: &UiColors) {
     println!();
 
-    // Status indicator based on success
-    let (status_icon, status_color) = if summary.success {
-        (format!("{GREEN}✓{RESET}"), GREEN) // Green checkmark
-    } else {
-        (format!("{RED}✗{RESET}"), RED) // Red X
-    };
-
-    // Header with status
-    let status_text = if summary.success {
-        "Complete"
-    } else {
-        "Failed"
-    };
-    println!("{} {}Ask {}{RESET}", status_icon, status_color, status_text);
+    println!("{}", ask_status_line(ui, summary.success));
     println!();
     println!("{DIM}─── Metrics ───{RESET}");
 

@@ -3,7 +3,7 @@ use super::editor::{
     OPEN_EDITOR,
 };
 use super::resolve_store;
-use super::turn::{draft_after, logged_before_reply, rule, shown_output, TurnOutcome};
+use super::turn::{draft_after, logged_before_reply, rule, rule_skin, shown_output, TurnOutcome};
 use crate::stream_processor::OutputBlock;
 use crossterm::event::{Event, KeyEvent};
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
@@ -299,4 +299,19 @@ fn every_chat_binding_has_a_help_entry() {
         added_labels(&queue, &default_emacs_keybindings()),
         &[QUEUE_KEYS, PROMPT_KEYS],
     );
+}
+
+#[test]
+fn rule_with_the_default_color_keeps_todays_bytes() {
+    let ui = crate::ui_theme::UiColors::default();
+    assert_eq!(rule(&rule_skin(&ui), 20), rule(&MadSkin::default(), 20));
+}
+
+#[test]
+fn rule_uses_the_configured_color() {
+    let ui = crate::ui_theme::UiColors {
+        rule: termimad::crossterm::style::Color::Rgb { r: 1, g: 2, b: 3 },
+        ..crate::ui_theme::UiColors::default()
+    };
+    assert!(rule(&rule_skin(&ui), 4).contains("38;2;1;2;3"));
 }

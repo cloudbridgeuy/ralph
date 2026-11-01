@@ -113,7 +113,8 @@ border = "magenta"
 | `code` | `[theme] name` | assistant code theme | Syntax theme for fenced code blocks |
 | `heading1`, `heading2`, `heading3` | `cyan`, `blue`, `magenta` | `green`, `dark_green`, `dark_yellow` | Headings (always bold) |
 | `bold`, `italic` | terminal default | terminal default | Emphasis color |
-| `inline_code` | `yellow` | `dark_cyan` | Inline code (on a dark gray background) |
+| `inline_code` | `yellow` | `dark_cyan` | Inline code text |
+| `inline_code_bg` | ANSI `235` (dark gray) | ANSI `235` (dark gray) | Inline code background |
 | `bullet` | `dark_grey` | `dark_green` | List bullets |
 | `quote`, `table` | termimad default | termimad default | Quote mark, table borders |
 | `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL |
@@ -202,6 +203,31 @@ error = "dark_red"
 accent = "dark_yellow"
 match_path = "dark_grey"
 match_text = "yellow"
+```
+
+#### UI colors: `[theme.ui]`
+
+ralph paints the spinner, the `ralph ask` prompt and summary, warnings, and the rule between chat turns with this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. Bold, dim, and underline stay hard-coded and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Warnings printed before the config loads use the default `warning` color. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+
+| Key | Default | Paints |
+|-----|---------|--------|
+| `spinner` | `dark_cyan` | Spinner frame |
+| `ask_header` | `dark_magenta` | `▶ Prompt` header and rules of `ralph ask` |
+| `ask_path` | `dark_cyan` | Attached file paths in the `ralph ask` prompt |
+| `ask_ok` | `dark_green` | `✓ Ask Complete` line |
+| `ask_error` | `dark_red` | `✗ Ask Failed` line |
+| `warning` | `dark_yellow` | Warning symbol and box border |
+| `rule` | ANSI `238` | Rule printed between chat turns |
+
+```toml
+[theme.ui]
+spinner = "dark_cyan"
+ask_header = "dark_magenta"
+ask_path = "dark_cyan"
+ask_ok = "dark_green"
+ask_error = "dark_red"
+warning = "dark_yellow"
+rule = "238"
 ```
 
 Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.

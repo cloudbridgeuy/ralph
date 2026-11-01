@@ -421,6 +421,7 @@ fn test_save_and_load() {
             input: InputTheme::default(),
             diff: DiffTheme::default(),
             tools: ToolTheme::default(),
+            ui: UiTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -480,6 +481,7 @@ fn test_serialize_omits_none() {
             input: InputTheme::default(),
             diff: DiffTheme::default(),
             tools: ToolTheme::default(),
+            ui: UiTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -765,5 +767,21 @@ fn theme_tools_table_loads_and_reports_warnings() {
     assert_eq!(
         bad.theme.warnings(),
         ["[theme.tools] name = \"nope\" is not a color; using the default"]
+    );
+}
+
+#[test]
+fn theme_ui_table_loads_and_reports_warnings() {
+    let config: AppConfig =
+        toml::from_str("[theme.ui]\nspinner = \"#000000\"\nbold = \"red\"\n").unwrap();
+    assert_eq!(config.theme.ui.colors.len(), 2);
+    assert_eq!(
+        config.theme.warnings(),
+        ["[theme.ui] unknown key \"bold\"; ignored"]
+    );
+    let bad: AppConfig = toml::from_str("[theme.ui]\nwarning = \"nope\"\n").unwrap();
+    assert_eq!(
+        bad.theme.warnings(),
+        ["[theme.ui] warning = \"nope\" is not a color; using the default"]
     );
 }

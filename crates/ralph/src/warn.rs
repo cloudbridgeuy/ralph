@@ -1,10 +1,12 @@
-use crate::ansi::{BOLD, CLEAR_EOL, CR, RESET, YELLOW};
+use crate::ansi::{fg, BOLD, CLEAR_EOL, CR, RESET};
 use crate::frame::frame;
+use crate::ui_theme::DEFAULT_WARNING_COLOR;
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::io::{self, IsTerminal, Write};
 use std::sync::mpsc::SyncSender;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use termimad::crossterm::style::Color;
 
 const SYMBOL: &str = "\u{26a0}";
 const FRAME_WIDTH: usize = 6;
@@ -48,24 +50,31 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
-fn format_warning(message: &str, terminal_width: usize, color: bool) -> String {
-    if !color {
+static WARNING_COLOR: OnceLock<Color> = OnceLock::new();
+
+pub fn set_warning_color(color: Color) {
+    let _ = WARNING_COLOR.set(color);
+}
+
+fn format_warning(message: &str, terminal_width: usize, color: Option<Color>) -> String {
+    let Some(color) = color else {
         return format!("Warning: {message}");
-    }
+    };
+    let accent = fg(Some(color));
     let body_width = terminal_width.saturating_sub(FRAME_WIDTH).max(1);
     let rows: Vec<String> = wrap_text(message, body_width)
         .iter()
         .enumerate()
         .map(|(i, line)| {
             let marker = if i == 0 {
-                format!("{BOLD}{YELLOW}{SYMBOL}{RESET}")
+                format!("{BOLD}{accent}{SYMBOL}{RESET}")
             } else {
                 " ".to_string()
             };
             format!("{marker} {line}")
         })
         .collect();
-    frame(&rows, YELLOW)
+    frame(&rows, &accent)
 }
 
 fn warning_text(message: impl Display) -> (String, bool) {
@@ -73,7 +82,13 @@ fn warning_text(message: impl Display) -> (String, bool) {
     let width = crossterm::terminal::size()
         .map(|(w, _)| usize::from(w))
         .unwrap_or(DEFAULT_TERMINAL_WIDTH);
-    (format_warning(&message.to_string(), width, color), color)
+    let accent = color.then(|| {
+        WARNING_COLOR
+            .get()
+            .copied()
+            .unwrap_or(DEFAULT_WARNING_COLOR)
+    });
+    (format_warning(&message.to_string(), width, accent), color)
 }
 
 pub fn warning_line(message: impl Display) -> String {
@@ -151,9 +166,11 @@ pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ansi::YELLOW;
     use crate::frame::strip_ansi;
     use reedline::ExternalPrinter;
     use std::io;
+    use termimad::crossterm::style::Color;
 
     const BOX: &str = "\u{256d}\u{2500}\u{256e}\n\u{2502}x\u{2502}\n\u{2570}\u{2500}\u{256f}";
 
@@ -169,7 +186,11 @@ mod tests {
 
     #[test]
     fn prompt_rows_split_the_box_into_bare_rows() {
-        let rows = prompt_rows(&format_warning("codex session GUZ-881 resumed", 80, true));
+        let rows = prompt_rows(&format_warning(
+            "codex session GUZ-881 resumed",
+            80,
+            Some(Color::DarkYellow),
+        ));
         assert_eq!(rows.len(), 3);
         assert!(rows.iter().all(|row| !row.contains(['\r', '\n'])));
     }
@@ -206,12 +227,12 @@ mod tests {
 
     #[test]
     fn plain_format_when_not_color() {
-        assert_eq!(format_warning("disk full", 80, false), "Warning: disk full");
+        assert_eq!(format_warning("disk full", 80, None), "Warning: disk full");
     }
 
     #[test]
     fn colored_single_line_is_boxed() {
-        let out = format_warning("disk full", 80, true);
+        let out = format_warning("disk full", 80, Some(Color::DarkYellow));
         assert!(out.contains(YELLOW));
         assert_eq!(
             strip_ansi(&out),
@@ -221,7 +242,11 @@ mod tests {
 
     #[test]
     fn colored_wrap_keeps_borders_aligned_within_width() {
-        let out = strip_ansi(&format_warning("one two three four five six", 16, true));
+        let out = strip_ansi(&format_warning(
+            "one two three four five six",
+            16,
+            Some(Color::DarkYellow),
+        ));
         let widths: Vec<usize> = out.lines().map(|l| l.chars().count()).collect();
         assert!(widths.len() > 3);
         assert!(widths.iter().all(|w| *w == widths[0] && *w <= 16));
@@ -229,7 +254,11 @@ mod tests {
 
     #[test]
     fn colored_keeps_newlines_and_splits_long_words() {
-        let out = strip_ansi(&format_warning("ab\nabcdefghij", 11, true));
+        let out = strip_ansi(&format_warning(
+            "ab\nabcdefghij",
+            11,
+            Some(Color::DarkYellow),
+        ));
         let rows: Vec<&str> = out.lines().skip(1).take(3).collect();
         assert_eq!(
             rows,
@@ -239,6 +268,26 @@ mod tests {
                 "\u{2502}   fghij \u{2502}"
             ]
         );
+    }
+
+    #[test]
+    fn warning_color_reaches_the_symbol_and_the_border() {
+        let out = format_warning("x", 80, Some(Color::Rgb { r: 1, g: 2, b: 3 }));
+        assert!(out.starts_with("\x1b[38;2;1;2;3m\u{256d}"));
+        assert!(out.contains("\x1b[1m\x1b[38;2;1;2;3m\u{26a0}"));
+        assert!(!out.contains(YELLOW));
+    }
+
+    #[test]
+    fn default_warning_color_keeps_todays_bytes() {
+        let out = format_warning("x", 80, Some(DEFAULT_WARNING_COLOR));
+        assert!(out.contains(&format!("{BOLD}{YELLOW}{SYMBOL}{RESET}")));
+        assert!(out.starts_with(&format!("{YELLOW}\u{256d}")));
+    }
+
+    #[test]
+    fn no_color_means_no_escape_byte() {
+        assert!(!format_warning("x", 80, None).contains('\x1b'));
     }
 
     #[test]

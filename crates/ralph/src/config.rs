@@ -9,6 +9,7 @@ use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
 use crate::tool_theme::ToolTheme;
+use crate::ui_theme::UiTheme;
 use crate::warn::warn_once;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::inbox_alert::UnknownFocus;
@@ -388,6 +389,9 @@ pub struct ThemeSection {
 
     #[serde(default)]
     pub tools: ToolTheme,
+
+    #[serde(default)]
+    pub ui: UiTheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -428,6 +432,7 @@ impl ThemeSection {
             .chain(self.input.resolve().1)
             .chain(self.diff.resolve().1)
             .chain(self.tools.resolve().1)
+            .chain(self.ui.resolve().1)
             .collect()
     }
 }

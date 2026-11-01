@@ -76,6 +76,7 @@ pub struct Palette {
     pub bold: Option<Color>,
     pub italic: Option<Color>,
     pub inline_code: Option<Color>,
+    pub inline_code_bg: Option<Color>,
     pub bullet: Option<Color>,
     pub quote: Option<Color>,
     pub table: Option<Color>,
@@ -95,6 +96,7 @@ impl Default for Palette {
             bold: None,
             italic: None,
             inline_code: Some(Color::Yellow),
+            inline_code_bg: Some(termimad::gray(3)),
             bullet: Some(Color::DarkGrey),
             quote: None,
             table: None,
@@ -118,6 +120,7 @@ impl Palette {
             "bold" => Some(&mut self.bold),
             "italic" => Some(&mut self.italic),
             "inline_code" => Some(&mut self.inline_code),
+            "inline_code_bg" => Some(&mut self.inline_code_bg),
             "bullet" => Some(&mut self.bullet),
             "quote" => Some(&mut self.quote),
             "table" => Some(&mut self.table),
@@ -196,7 +199,9 @@ pub fn markdown_skin(palette: &Palette) -> MadSkin {
     if let Some(color) = palette.italic {
         skin.italic.set_fg(color);
     }
-    skin.inline_code.set_bg(termimad::gray(3));
+    if let Some(color) = palette.inline_code_bg {
+        skin.inline_code.set_bg(color);
+    }
     if let Some(color) = palette.inline_code {
         skin.inline_code.set_fg(color);
     }
@@ -440,6 +445,7 @@ mod tests {
             "bold",
             "italic",
             "inline_code",
+            "inline_code_bg",
             "bullet",
             "quote",
             "table",
@@ -467,16 +473,17 @@ mod tests {
                 bold: rgb(4),
                 italic: rgb(5),
                 inline_code: rgb(6),
-                bullet: rgb(7),
-                quote: rgb(8),
-                table: rgb(9),
-                link: rgb(10),
-                url: rgb(11),
-                memory_ref: rgb(12),
-                border: rgb(13),
-                done: rgb(14),
-                blocked: rgb(15),
-                waiting: rgb(16),
+                inline_code_bg: rgb(7),
+                bullet: rgb(8),
+                quote: rgb(9),
+                table: rgb(10),
+                link: rgb(11),
+                url: rgb(12),
+                memory_ref: rgb(13),
+                border: rgb(14),
+                done: rgb(15),
+                blocked: rgb(16),
+                waiting: rgb(17),
             }
         );
     }
@@ -518,6 +525,25 @@ mod tests {
         assert_eq!(parse_color("255"), Some(Color::AnsiValue(255)));
         assert_eq!(parse_color("256"), None);
         assert_eq!(parse_color("-1"), None);
+    }
+
+    #[test]
+    fn skin_applies_inline_code_background() {
+        let palette = Palette {
+            inline_code_bg: Some(Color::Rgb { r: 1, g: 2, b: 3 }),
+            ..Palette::default()
+        };
+        let rendered = render_skin_inline(&markdown_skin(&palette), "`x`", true);
+        assert!(rendered.contains("48;2;1;2;3"));
+        assert!(!render_skin_inline(&markdown_skin(&palette), "`x`", false).contains('\x1b'));
+    }
+
+    #[test]
+    fn default_inline_code_background_is_gray_three() {
+        assert_eq!(Palette::default().inline_code_bg, Some(termimad::gray(3)));
+        assert_eq!(termimad::gray(3), Color::AnsiValue(235));
+        let rendered = render_skin_inline(&markdown_skin(&Palette::default()), "`x`", true);
+        assert!(rendered.contains("48;5;235"));
     }
 
     #[test]

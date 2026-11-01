@@ -259,3 +259,21 @@ fn test_spinner_with_session_context() {
     assert_eq!(spinner.session_elapsed_ms, 5000);
     assert_eq!(spinner.session_info.persona, Some("chat".to_string()));
 }
+
+#[test]
+fn spinner_line_paints_the_frame_with_the_given_color() {
+    let line = spinner_line(
+        '⠋',
+        "Thinking...",
+        "",
+        "1s",
+        Color::Rgb { r: 1, g: 2, b: 3 },
+    );
+    assert_eq!(line, "\r\x1b[K\x1b[38;2;1;2;3m⠋\x1b[0m Thinking... 1s");
+}
+
+#[test]
+fn spinner_line_with_the_default_color_keeps_todays_bytes() {
+    let line = spinner_line('⠋', "Thinking...", "dev", "1s", Spinner::new().color);
+    assert_eq!(line, "\r\x1b[K\x1b[36m⠋\x1b[0m Thinking... dev | 1s");
+}

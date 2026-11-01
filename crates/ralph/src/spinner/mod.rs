@@ -25,12 +25,14 @@
 //! spinner.stop(); // Clears the spinner line
 //! ```
 
-use crate::ansi::{CLEAR_EOL, CR, CYAN, RESET};
+use crate::ansi::{fg, CLEAR_EOL, CR, RESET};
+use crate::ui_theme::UiColors;
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use termimad::crossterm::style::Color;
 
 /// Braille spinner characters for animation.
 /// These create a smooth spinning effect: ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
@@ -103,6 +105,7 @@ pub struct Spinner {
     context: Arc<Mutex<SpinnerContext>>,
     /// Session metadata for display.
     session_info: Arc<SpinnerSessionInfo>,
+    color: Color,
 }
 
 impl Default for Spinner {
@@ -122,7 +125,13 @@ impl Spinner {
             session_elapsed_ms,
             context: Arc::new(Mutex::new(SpinnerContext::default())),
             session_info: Arc::new(session_info),
+            color: UiColors::default().spinner,
         }
+    }
+
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
     }
 
     /// Create a new spinner.
@@ -225,6 +234,7 @@ impl Spinner {
             session_elapsed_ms: self.session_elapsed_ms,
             context: Arc::clone(&self.context),
             session_info: Arc::clone(&self.session_info),
+            color: self.color,
         };
 
         // Spawn spinner thread
@@ -320,6 +330,7 @@ struct SpinnerThreadConfig {
     context: Arc<Mutex<SpinnerContext>>,
     /// Session metadata for display.
     session_info: Arc<SpinnerSessionInfo>,
+    color: Color,
 }
 
 /// Run the spinner animation loop.
@@ -333,6 +344,7 @@ fn run_spinner(config: SpinnerThreadConfig) {
         session_elapsed_ms,
         context,
         session_info,
+        color,
     } = config;
     let mut frame = 0;
     let mut stdout = std::io::stdout();
@@ -362,17 +374,13 @@ fn run_spinner(config: SpinnerThreadConfig) {
         // Use CR to return to start, then CLEAR_EOL to clear to end of line
         // This prevents residual characters when text length changes
         // (e.g., "59s" → "1m 0s" or context message changes)
-        let spinner_line = if session_display.is_empty() {
-            format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {}",
-                spinner_char, message, time_display
-            )
-        } else {
-            format!(
-                "{CR}{CLEAR_EOL}{CYAN}{}{RESET} {} {} | {}",
-                spinner_char, message, session_display, time_display
-            )
-        };
+        let spinner_line = spinner_line(
+            spinner_char,
+            message,
+            &session_display,
+            &time_display,
+            color,
+        );
 
         // Write and flush
         let _ = write!(stdout, "{}", spinner_line);
@@ -383,6 +391,23 @@ fn run_spinner(config: SpinnerThreadConfig) {
 
         // Sleep for the interval
         thread::sleep(SPINNER_INTERVAL);
+    }
+}
+
+fn spinner_line(
+    spinner_char: char,
+    message: &str,
+    session_display: &str,
+    time_display: &str,
+    color: Color,
+) -> String {
+    let paint = fg(Some(color));
+    if session_display.is_empty() {
+        format!("{CR}{CLEAR_EOL}{paint}{spinner_char}{RESET} {message} {time_display}")
+    } else {
+        format!(
+            "{CR}{CLEAR_EOL}{paint}{spinner_char}{RESET} {message} {session_display} | {time_display}"
+        )
     }
 }
 

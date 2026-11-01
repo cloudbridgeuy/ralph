@@ -211,7 +211,8 @@ impl Pump {
             config.verbose_tools.clone(),
         )?;
         let mut spinner =
-            Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone());
+            Spinner::with_session_context(config.session_elapsed_ms, config.session_info.clone())
+                .with_color(config.theme_config.ui().spinner);
         let spinner_active = display == Display::Shown;
         if spinner_active {
             spinner.start();

@@ -89,7 +89,7 @@ mod tests {
         let highlighter = Highlighter::new();
         let ctx = RenderContext::plain(&highlighter);
         let params = GrepInvocationParams {
-            pattern: "fo+",
+            pattern: "ab+",
             path: Some("src"),
             output_mode: Some("content"),
             glob: Some("*.rs"),

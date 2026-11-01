@@ -42,6 +42,7 @@ pub mod startup;
 mod status_theme;
 mod theme_slots;
 mod tool_theme;
+mod ui_theme;
 
 pub mod stream_processor;
 pub mod subprocess;
@@ -156,21 +157,25 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
 
     let config = build_invocation_config(&args)?;
+    let ui = *config.theme_config.ui();
 
     if !args.no_prompt {
         let prompt_display = startup::PromptDisplay::from_prompt(&config.prompt);
-        startup::display_prompt(&prompt_display);
+        startup::display_prompt(&prompt_display, &ui);
     }
 
     let result = invoke::invoke(config)?;
     let costs = &result.stream_result.costs;
-    startup::display_ask_summary(&startup::AskSummary {
-        success: result.exit_code == 0,
-        cost_usd: costs.cost_usd,
-        duration_ms: costs.duration_ms,
-        input_tokens: costs.usage.as_ref().map(|u| u.input_tokens),
-        output_tokens: costs.usage.as_ref().map(|u| u.output_tokens),
-    });
+    startup::display_ask_summary(
+        &startup::AskSummary {
+            success: result.exit_code == 0,
+            cost_usd: costs.cost_usd,
+            duration_ms: costs.duration_ms,
+            input_tokens: costs.usage.as_ref().map(|u| u.input_tokens),
+            output_tokens: costs.usage.as_ref().map(|u| u.output_tokens),
+        },
+        &ui,
+    );
 
     if result.exit_code != 0 {
         return Err(format!("LLM subprocess exited with code {}", result.exit_code).into());
@@ -187,6 +192,7 @@ fn build_invocation_config(args: &AskArgs) -> Result<InvocationConfig, Box<dyn s
         warn(warning);
     }
     let app_config = config::AppConfig::load().unwrap_or_default();
+    warn::set_warning_color(theme_config.ui().warning);
     Ok(InvocationConfig {
         prompt: resolve_ask_prompt(args.prompt.as_deref())?,
         timeout_secs: args.timeout,
