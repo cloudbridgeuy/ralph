@@ -162,6 +162,19 @@ fn chat_section_parses_inbox_alert() {
 }
 
 #[test]
+fn chat_terminal_status_defaults_on_and_can_be_disabled() {
+    assert!(AppConfig::new().chat.terminal_status);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(&path, "[chat]\nterminal_status = false\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(!config.chat.terminal_status);
+    fs::write(&path, "[chat]\nedit_mode = \"vi\"\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(config.chat.terminal_status);
+}
+
+#[test]
 fn theme_status_table_loads_and_reports_warnings() {
     let config: AppConfig = toml::from_str(
         "[theme.status]\nmode_idle_bg = \"#102030\"\nmode_nap_bg = \"nope\"\nbranch_fg = \"red\"\n",
