@@ -36,7 +36,7 @@ pub fn command_definitions() -> [Value; 5] {
                     "id": {"type": "string", "description": "The worker id."},
                     "text": {"type": "string", "description": "The message for the worker. Keep [Image #N: <path>] references verbatim when it needs the image."},
                     "request": {"type": "string", "description": "cursor, codex, claude-headless and opencode workers: the request id of the waiting permission request this answers, from its blocked alert or the reply error; text is then one optionId. Required to answer a permission request; a stale or unknown id is refused."},
-                    "interrupt": {"type": "boolean", "description": "cursor, codex and opencode workers: cancel the running turn, if any, and run this message next. The result says whether a running turn was cancelled, or that the outcome is unknown if ralph chat does not confirm within 30 s. Default false."}
+                    "interrupt": {"type": "boolean", "description": interrupt_description()}
                 },
                 "required": ["id", "text"]
             }
@@ -190,6 +190,26 @@ fn harness_description() -> String {
     format!(
         "Agent to run. Default claude. Headless harnesses run without a tmux session and take a reply as a new prompt between turns, or, with request, as the answer to a waiting permission request: {headless}."
     )
+}
+
+fn interrupt_description() -> String {
+    let names = HarnessId::ALL
+        .into_iter()
+        .filter(|harness| capabilities(*harness).support(Feature::Interrupt) != Support::None)
+        .map(HarnessId::as_str)
+        .collect::<Vec<_>>();
+    format!(
+        "{} workers: cancel the running turn, if any, and run this message next. The result says whether a running turn was cancelled, or that the outcome is unknown if ralph chat does not confirm within 30 s. Default false.",
+        join_names(&names)
+    )
+}
+
+fn join_names(names: &[&str]) -> String {
+    match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        Some((last, _)) => last.to_string(),
+        None => String::new(),
+    }
 }
 
 fn harness_choices() -> String {
@@ -565,6 +585,38 @@ mod tests {
         assert!(codex.contains("heartbeat (app-server frames"));
         assert!(!codex.contains("unsupported"));
         assert!(!text.contains("partial or unsupported"));
+    }
+
+    #[test]
+    fn interrupt_description_names_every_interruptible_harness() {
+        let [_, reply, ..] = command_definitions();
+        let text = reply["inputSchema"]["properties"]["interrupt"]["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let words = text
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+            .collect::<Vec<_>>();
+        let interruptible = HarnessId::ALL
+            .into_iter()
+            .filter(|harness| capabilities(*harness).support(Feature::Interrupt) != Support::None)
+            .collect::<Vec<_>>();
+        assert!(interruptible.contains(&HarnessId::ClaudeHeadless));
+        for harness in HarnessId::ALL {
+            assert_eq!(
+                words.contains(&harness.as_str()),
+                interruptible.contains(&harness),
+                "{harness:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn join_names_uses_commas_and_a_final_and() {
+        assert_eq!(join_names(&[]), "");
+        assert_eq!(join_names(&["a"]), "a");
+        assert_eq!(join_names(&["a", "b"]), "a and b");
+        assert_eq!(join_names(&["a", "b", "c"]), "a, b and c");
     }
 
     #[test]
