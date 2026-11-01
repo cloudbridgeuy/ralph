@@ -138,6 +138,28 @@ Usage string: `Usage: /inbox [next | N | list | peek N | drop N]`. `/inboxfoo` i
 - The status bar shows the `HOLD` mode, above `NAP` in the mode order, and the filter. It is redrawn in place (carriage return, clear line, bar, no newline) each time the status changes (for example a new unread report); one newline is printed when the hold ends, on every exit path. Hold clears a stale interrupt flag on entry. If the inbox ledger cannot be read, hold prints one warning and leaves. A nap or the store lock does not stop the hold; the turn that follows waits as any inbox turn does.
 - Pure logic in `ralph_core::chat_hold` (`HoldFilter`, `first_match`, `hold_key`, `redraw`); the polling loop is `crates/ralph/src/chat/hold.rs` and the dispatch is in the chat main loop.
 
+## Terminal status
+
+The chat reports its state to the terminal with OSC 7501 (Program Status Protocol rev 0.4), so a terminal or multiplexer can show it. Each report is `ESC ] 7501 ; state=<state>[:kind=question]:app=ralph[:msg=<base64>] BEL`. `msg` is the standard base64 of UTF-8 text with control characters removed and at most 2048 bytes (cut at a character boundary). The pure builder is `program_status::encode`; a sequence over 4096 bytes is dropped.
+
+The pure `program_status::report_for(phase, status)` picks the report. The first rule that matches wins.
+
+| Rule | Report |
+| --- | --- |
+| `/hold` is active | `working`, msg `holding <filter>` (`anyone` for a bare `/hold`) |
+| A chat turn is running | `working` |
+| Unread worker reports at the prompt | `blocked`, `kind=question`, msg `1 worker report` or `N worker reports` |
+| The last turn replied and nothing was submitted since | `done` |
+| Anything else, including nap and background workers with no turn | `idle` |
+
+"Working" means only that a chat turn is running. A worker report that arrives mid-turn does not change it. The phase (`Turn`, `Replied`, `Prompt`) lives on the monitor: the chat loop sets it around each turn and when a line is submitted, and `/hold` publishes its filter there.
+
+Reports are sent from one place, the status watcher tick (every 500 ms, so a state change shows within about half a second plus the tick work). The shell in `chat/term_status.rs` writes one `write_all` plus flush to stdout and only when the bytes differ from the last report. Write errors are ignored. Inside tmux (`TMUX_PANE` set) the sequence is wrapped in a DCS passthrough, which needs `allow-passthrough on`.
+
+On exit the chat sends `state=clear` with no id: on quit, Ctrl-D, an error or a panic (a drop guard in `chat::run`), and when the terminal is lost (before `process::exit`). After the clear the watcher writes nothing more. A hard kill (SIGKILL) cannot clear the record.
+
+Reports are off when stdout is not a terminal or `[chat] terminal_status = false`. `NO_COLOR` does not affect them.
+
 ## Watches
 
 A watch is a shell command (`sh -c`) that runs as a child process of `ralph chat`, in its own process group, with stdin closed. Ralph keeps only a bounded tail of its stdout and stderr.
