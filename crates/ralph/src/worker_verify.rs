@@ -80,17 +80,35 @@ fn conclude(
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum Spec {
+    Cursor,
+    Codex,
+}
+
+fn spec(agent: VerifyAgent) -> Result<Spec, String> {
+    match agent {
+        VerifyAgent::Cursor => Ok(Spec::Cursor),
+        VerifyAgent::Codex => Ok(Spec::Codex),
+        VerifyAgent::ClaudeHeadless => Err(format!(
+            "{} is not supported by worker verify yet",
+            agent.name()
+        )),
+    }
+}
+
 pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let spec = spec(agent)?;
     let dir = tempfile::tempdir()?;
     let name = agent.name();
     println!("verifying {name} in {}", dir.path().display());
     let checks = Checks::default();
-    let (version, required) = match agent {
-        VerifyAgent::Cursor => (
+    let (version, required) = match spec {
+        Spec::Cursor => (
             acp_worker::verify(live, dir.path(), &checks),
             CURSOR_REQUIRED_CHECKS,
         ),
-        VerifyAgent::Codex => (
+        Spec::Codex => (
             codex_worker::verify(live, dir.path(), &checks),
             CODEX_REQUIRED_CHECKS,
         ),
@@ -115,6 +133,8 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::{Cli, Commands, WorkerArgs, WorkerCommand};
+    use clap::Parser;
 
     fn passed(version: Option<&str>) -> Outcome<'_> {
         Outcome {
@@ -148,5 +168,39 @@ mod tests {
         });
         assert!(lines[0].starts_with("FAIL: cursor unknown version"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn the_cli_parses_claude_headless_as_a_verify_agent() {
+        let cli = Cli::try_parse_from(["ralph", "worker", "verify", "claude-headless"]).unwrap();
+        let Some(Commands::Worker(WorkerArgs {
+            command: WorkerCommand::Verify { agent, live },
+        })) = cli.command
+        else {
+            panic!("not a worker verify command");
+        };
+        assert_eq!(agent, VerifyAgent::ClaudeHeadless);
+        assert!(!live);
+    }
+
+    #[test]
+    fn spec_maps_each_agent_and_refuses_claude_headless() {
+        assert_eq!(spec(VerifyAgent::Cursor), Ok(Spec::Cursor));
+        assert_eq!(spec(VerifyAgent::Codex), Ok(Spec::Codex));
+        assert_eq!(
+            spec(VerifyAgent::ClaudeHeadless),
+            Err("claude-headless is not supported by worker verify yet".to_string())
+        );
+    }
+
+    #[test]
+    fn running_claude_headless_fails_before_spawning_or_printing() {
+        for live in [false, true] {
+            let error = run(VerifyAgent::ClaudeHeadless, live).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "claude-headless is not supported by worker verify yet"
+            );
+        }
     }
 }
