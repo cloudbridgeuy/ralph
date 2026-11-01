@@ -85,3 +85,130 @@ mod tests {
         assert_eq!(warnings.len(), 1);
     }
 }
+
+#[cfg(test)]
+mod docs_tests {
+    use super::SlotTable;
+
+    const DOCS: &str = include_str!("../../../docs/configuration.md");
+    const MARKDOWN_SOURCE: &str = include_str!("markdown.rs");
+
+    fn section<'a>(docs: &'a str, heading: &str) -> &'a str {
+        let Some(start) = docs.find(heading) else {
+            return "";
+        };
+        let body = &docs[start + heading.len()..];
+        let end = body.find("\n#").unwrap_or(body.len());
+        &body[..end]
+    }
+
+    fn is_documented(section: &str, key: &str) -> bool {
+        let line_start = format!("\n{key} =");
+        section.contains(&format!("`{key}`")) || section.contains(&line_start)
+    }
+
+    fn missing_keys<'a>(section: &str, keys: &[&'a str]) -> Vec<&'a str> {
+        keys.iter()
+            .copied()
+            .filter(|key| !is_documented(section, key))
+            .collect()
+    }
+
+    fn table_keys(table: &SlotTable) -> Vec<&'static str> {
+        table.iter().map(|(key, _)| *key).collect()
+    }
+
+    fn palette_keys(source: &str) -> Vec<&str> {
+        let Some(start) = source.find("fn slot(") else {
+            return Vec::new();
+        };
+        let body = &source[start..];
+        let body = &body[..body.find("_ => None").unwrap_or(body.len())];
+        body.lines()
+            .filter_map(|line| line.trim().strip_prefix('"'))
+            .filter_map(|rest| rest.split_once('"').map(|(key, _)| key))
+            .collect()
+    }
+
+    fn assert_documented(heading: &str, keys: &[&str]) {
+        let missing = missing_keys(section(DOCS, heading), keys);
+        assert!(
+            missing.is_empty(),
+            "docs/configuration.md under {heading} lacks keys: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn section_stops_at_the_next_heading() {
+        let docs = "#### A\n`x`\n#### B\n`y`\n";
+        assert_eq!(section(docs, "#### A"), "\n`x`");
+        assert_eq!(section(docs, "#### Z"), "");
+    }
+
+    #[test]
+    fn documented_key_is_a_backticked_cell_or_a_toml_line() {
+        assert!(is_documented("| `add_fg` | x |", "add_fg"));
+        assert!(is_documented("\nadd_fg = \"red\"", "add_fg"));
+        assert!(!is_documented("add_fg in prose", "add_fg"));
+    }
+
+    #[test]
+    fn missing_keys_lists_only_the_absent_ones() {
+        assert_eq!(missing_keys("`a` `b`", &["a", "c", "d"]), ["c", "d"]);
+    }
+
+    #[test]
+    fn palette_keys_are_read_from_the_slot_match() {
+        let source = "fn slot(&mut self) {\n match key {\n \"bold\" => x,\n \"link\" => y,\n _ => None,\n }\n}";
+        assert_eq!(palette_keys(source), ["bold", "link"]);
+        assert!(palette_keys(MARKDOWN_SOURCE).len() >= 17);
+    }
+
+    #[test]
+    fn docs_list_every_status_key() {
+        assert_documented(
+            "#### Status line colors: `[theme.status]`",
+            &table_keys(&crate::status_theme::DEFAULTS),
+        );
+    }
+
+    #[test]
+    fn docs_list_every_input_key() {
+        assert_documented(
+            "#### Input colors: `[theme.input]`",
+            &table_keys(&crate::input_theme::DEFAULTS),
+        );
+    }
+
+    #[test]
+    fn docs_list_every_diff_key() {
+        assert_documented(
+            "#### Diff colors: `[theme.diff]`",
+            &table_keys(&crate::diff_theme::DEFAULTS),
+        );
+    }
+
+    #[test]
+    fn docs_list_every_tools_key() {
+        assert_documented(
+            "#### Tool colors: `[theme.tools]`",
+            &table_keys(&crate::tool_theme::DEFAULTS),
+        );
+    }
+
+    #[test]
+    fn docs_list_every_ui_key() {
+        assert_documented(
+            "#### UI colors: `[theme.ui]`",
+            &table_keys(&crate::ui_theme::DEFAULTS),
+        );
+    }
+
+    #[test]
+    fn docs_list_every_palette_key() {
+        assert_documented(
+            "#### Per-role themes: `[theme.assistant]` and `[theme.agent]`",
+            &palette_keys(MARKDOWN_SOURCE),
+        );
+    }
+}

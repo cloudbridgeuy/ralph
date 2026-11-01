@@ -17,7 +17,7 @@ const DEL_BG_DEFAULT: Color = Color::Rgb {
     g: 45,
     b: 45,
 };
-const DEFAULTS: [(&str, Color); 5] = [
+pub(crate) const DEFAULTS: [(&str, Color); 5] = [
     ("add_fg", ADD_FG_DEFAULT),
     ("del_fg", DEL_FG_DEFAULT),
     ("hunk_fg", HUNK_FG_DEFAULT),

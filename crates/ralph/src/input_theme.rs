@@ -6,7 +6,7 @@ use termimad::crossterm::style::Color;
 
 const SECTION: &str = "theme.input";
 const SUGGESTION_DEFAULT: Color = Color::Cyan;
-const DEFAULTS: [(&str, Color); 1] = [("suggestion", SUGGESTION_DEFAULT)];
+pub(crate) const DEFAULTS: [(&str, Color); 1] = [("suggestion", SUGGESTION_DEFAULT)];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InputColors {

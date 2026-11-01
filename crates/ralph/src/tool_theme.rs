@@ -13,7 +13,7 @@ const ERROR_DEFAULT: Color = Color::DarkRed;
 const ACCENT_DEFAULT: Color = Color::DarkYellow;
 const MATCH_PATH_DEFAULT: Color = Color::DarkGrey;
 const MATCH_TEXT_DEFAULT: Color = Color::Yellow;
-const DEFAULTS: [(&str, Color); 8] = [
+pub(crate) const DEFAULTS: [(&str, Color); 8] = [
     ("name", NAME_DEFAULT),
     ("args", ARGS_DEFAULT),
     ("label", LABEL_DEFAULT),

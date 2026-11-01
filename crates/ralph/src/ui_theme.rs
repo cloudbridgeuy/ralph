@@ -11,7 +11,7 @@ const ASK_OK_DEFAULT: Color = Color::DarkGreen;
 const ASK_ERROR_DEFAULT: Color = Color::DarkRed;
 const WARNING_DEFAULT: Color = Color::DarkYellow;
 const RULE_DEFAULT: Color = Color::AnsiValue(238);
-const DEFAULTS: [(&str, Color); 7] = [
+pub(crate) const DEFAULTS: [(&str, Color); 7] = [
     ("spinner", SPINNER_DEFAULT),
     ("ask_header", ASK_HEADER_DEFAULT),
     ("ask_path", ASK_PATH_DEFAULT),

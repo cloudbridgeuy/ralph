@@ -23,7 +23,7 @@ const SHADES: [Shade; 14] = [
     Shade::BaseBg,
 ];
 
-const DEFAULTS: [(&str, Color); 14] = [
+pub(crate) const DEFAULTS: [(&str, Color); 14] = [
     ("mode_idle_fg", Color::Black),
     ("mode_idle_bg", Color::Green),
     ("mode_hold_fg", Color::Black),
