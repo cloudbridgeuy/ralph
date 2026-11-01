@@ -54,7 +54,7 @@ use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
-use crate::chat::term_status::TermStatus;
+use crate::chat::term_status::{ClearOnDrop, TermStatus};
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
@@ -333,10 +333,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         reset_limits,
         thread: Mutex::new(ThreadMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
-        term: TermStatus::new(chat_config.terminal_status && std::io::stdout().is_terminal()),
+        term: Arc::new(TermStatus::new(
+            chat_config.terminal_status && std::io::stdout().is_terminal(),
+        )),
         phase: Mutex::new(Phase::Prompt),
         hold: Mutex::new(None),
     });
+    let _term_clear = ClearOnDrop(Arc::clone(&monitor.term));
     let roster = {
         let monitor = Arc::clone(&monitor);
         let store = Store::new(store_dir.clone());
@@ -400,6 +403,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         Arc::clone(&turn.session),
         plugin.as_ref().map(|plugin| plugin.path().to_path_buf()),
         ExitCleanup::new(monitor.watches.clone(), &headless, socket_files),
+        Arc::clone(&monitor.term),
     );
     let highlighter = suggestion_color(&config.theme.input.resolve().0, color)
         .map(|suggestion| SuggestionHighlighter::new(shown.clone(), suggestion));

@@ -97,7 +97,7 @@ pub(super) struct Monitor {
     pub(super) reset_limits: ResetLimits,
     pub(super) thread: Mutex<ThreadMemo>,
     pub(super) usage_tail: Mutex<UsageTail>,
-    pub(super) term: TermStatus,
+    pub(super) term: Arc<TermStatus>,
     pub(super) phase: Mutex<Phase>,
     pub(super) hold: Mutex<Option<HoldFilter>>,
 }
@@ -463,6 +463,7 @@ pub(super) fn watch_input(
     session: Arc<Mutex<Option<Session>>>,
     plugin_dir: Option<PathBuf>,
     exit: ExitCleanup,
+    term: Arc<TermStatus>,
 ) {
     let started_on_terminal = io::stdin().is_terminal();
     std::thread::spawn(move || loop {
@@ -477,6 +478,7 @@ pub(super) fn watch_input(
             if let Some(dir) = &plugin_dir {
                 std::fs::remove_dir_all(dir).ok();
             }
+            term.clear();
             exit.run();
             std::process::exit(INPUT_LOST_EXIT);
         }

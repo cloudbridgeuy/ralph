@@ -1,12 +1,13 @@
-use ralph_core::program_status::{encode, tmux_wrap, Report};
+use ralph_core::program_status::{encode, tmux_wrap, Report, State};
 use std::io::{self, Write};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const TMUX_PANE_ENV: &str = "TMUX_PANE";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Sent {
     last: Option<String>,
+    closed: bool,
 }
 
 fn frame(report: &Report, in_tmux: bool) -> Option<String> {
@@ -19,7 +20,7 @@ fn frame(report: &Report, in_tmux: bool) -> Option<String> {
 }
 
 fn changed(sent: &Sent, bytes: &str) -> bool {
-    sent.last.as_deref() != Some(bytes)
+    !sent.closed && sent.last.as_deref() != Some(bytes)
 }
 
 fn write_terminal(bytes: &str) -> io::Result<()> {
@@ -56,6 +57,31 @@ impl TermStatus {
             sent.last = Some(bytes);
         }
     }
+
+    pub(super) fn clear(&self) {
+        if !self.enabled {
+            return;
+        }
+        let mut sent = crate::watches::locked(&self.sent);
+        if !sent.closed {
+            let clear = Report {
+                state: State::Clear,
+                msg: None,
+            };
+            if let Some(bytes) = frame(&clear, self.in_tmux) {
+                let _ = write_terminal(&bytes);
+            }
+            sent.closed = true;
+        }
+    }
+}
+
+pub(super) struct ClearOnDrop(pub(super) Arc<TermStatus>);
+
+impl Drop for ClearOnDrop {
+    fn drop(&mut self) {
+        self.0.clear();
+    }
 }
 
 #[cfg(test)]
@@ -90,9 +116,19 @@ mod tests {
     fn identical_bytes_are_not_resent() {
         let sent = Sent {
             last: Some("a".into()),
+            closed: false,
         };
         assert!(!changed(&sent, "a"));
         assert!(changed(&sent, "b"));
         assert!(changed(&Sent::default(), "a"));
+    }
+
+    #[test]
+    fn nothing_is_written_after_the_status_is_closed() {
+        let sent = Sent {
+            last: None,
+            closed: true,
+        };
+        assert!(!changed(&sent, "a"));
     }
 }
