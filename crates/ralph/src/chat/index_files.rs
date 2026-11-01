@@ -1,4 +1,5 @@
-use crate::chat::memory::{check_path, read_optional};
+use crate::chat::memory::read_optional;
+use crate::private_file::check_path;
 use ralph_core::chat_memory::{
     index_temp_prefix, is_index_temp, refresh, write_plan, Archive, ByteSource, Index, IndexWrite,
     NodeSlot, Slot, INDEX_TEMP_RAND, INDEX_TEMP_SUFFIX, LOG_INDEX_FILE, TREE_INDEX_FILE,

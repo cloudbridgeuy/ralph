@@ -1,6 +1,7 @@
 use crate::chat::index_files::{
     open_archive, save_stale, sweep_index_temps, update_index, FileSource,
 };
+use crate::private_file::check_path;
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
@@ -15,8 +16,6 @@ use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 const RECALL_CHUNK_ENTRIES: usize = 256;
@@ -80,22 +79,6 @@ pub fn append_usage(path: &Path, record: &UsageRecord) -> io::Result<()> {
 
 pub struct Store {
     dir: PathBuf,
-}
-
-pub(super) fn check_path(path: &Path) -> io::Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::other(format!(
-            "chat store path is a symlink: {}",
-            path.display()
-        ))),
-        #[cfg(unix)]
-        Ok(metadata) if metadata.is_file() && metadata.nlink() > 1 => Err(io::Error::other(
-            format!("chat store file has multiple links: {}", path.display()),
-        )),
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e),
-    }
 }
 
 pub(super) fn read_optional(path: &Path) -> io::Result<Vec<u8>> {
@@ -367,22 +350,6 @@ impl Store {
     pub fn pending_turn(&self) -> io::Result<Option<Trigger>> {
         let marker = read_optional(&self.dir.join(PENDING_TURN_FILE))?;
         Ok(parse_pending_turn(&String::from_utf8_lossy(&marker)))
-    }
-
-    pub fn write_private(&self, path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> {
-        check_path(&path)?;
-        let mut options = OpenOptions::new();
-        options.create(true).write(true).truncate(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let mut file = options.open(&path)?;
-        file.write_all(bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(path)
     }
 
     /// Holds `LOCK` only to snapshot and to commit; curator calls run unlocked.

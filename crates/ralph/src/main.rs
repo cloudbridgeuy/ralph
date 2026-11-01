@@ -31,6 +31,7 @@ mod opencode_usage;
 mod opencode_worker;
 pub mod paths;
 mod permission_queue;
+mod private_file;
 mod process_tree;
 pub mod prompt_source;
 pub mod render;

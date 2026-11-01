@@ -5,6 +5,7 @@ use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::highlight::ThemeConfig;
 use crate::invoke::{build_chat_command, Isolation};
+use crate::private_file::write_private;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::VerboseToolsConfig;
@@ -406,7 +407,7 @@ impl Turn<'_> {
             sent,
         );
         let system = turn_system_prompt(self.custom_prompt, self.reply_images, &split.older);
-        write_system_prompt(self.store, self.system_prompt_file, &system)?;
+        write_system_prompt(self.system_prompt_file, &system)?;
         let args = [
             self.mcp_args.to_vec(),
             build_attachments_args(self.store_dir),
@@ -450,8 +451,8 @@ impl Turn<'_> {
     }
 }
 
-fn write_system_prompt(store: &Store, path: &Path, system: &str) -> io::Result<PathBuf> {
-    store.write_private(path.to_path_buf(), strip_controls(system).as_bytes())
+fn write_system_prompt(path: &Path, system: &str) -> io::Result<PathBuf> {
+    write_private(path.to_path_buf(), strip_controls(system).as_bytes())
 }
 
 fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
@@ -494,11 +495,10 @@ mod tests {
     #[test]
     fn system_prompt_file_holds_the_old_argument_bytes_privately() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::new(dir.path().to_path_buf());
         let path = dir.path().join("system-prompt.md");
         let system = "rules\0 it's \"$HOME\"\n  ñ trailing \n";
-        write_system_prompt(&store, &path, &system.repeat(3)).unwrap();
-        write_system_prompt(&store, &path, system).unwrap();
+        write_system_prompt(&path, &system.repeat(3)).unwrap();
+        write_system_prompt(&path, system).unwrap();
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(bytes, b"rules it's \"$HOME\"\n  \xc3\xb1 trailing \n");
         assert_eq!(bytes, strip_controls(system).as_bytes());

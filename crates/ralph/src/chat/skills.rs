@@ -1,4 +1,4 @@
-use crate::chat::memory::Store;
+use crate::private_file::write_private;
 use crate::warn::warn;
 use ralph_core::chat::{build_mcp_args, mcp_config, ImportedServers};
 use ralph_core::chat_skills::{plan_links, plugin_manifest, ChatSkill};
@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 pub(crate) const SKILLS_ENV: &str = "RALPH_CHAT_SKILLS";
 
 pub(super) fn write_mcp_config(
-    store: &Store,
     store_dir: &Path,
     socket: &Path,
     exe: &Path,
@@ -22,7 +21,7 @@ pub(super) fn write_mcp_config(
         ));
     }
     let config = mcp_config(exe, store_dir, socket, &imported.servers);
-    let path = store.write_private(mcp_config_path(socket), config.to_string().as_bytes())?;
+    let path = write_private(mcp_config_path(socket), config.to_string().as_bytes())?;
     Ok(build_mcp_args(&path, &config))
 }
 
