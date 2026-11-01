@@ -15,6 +15,7 @@ const SOCKET_TOOLS: [&str; 7] = [
 const SOCKET_PREFIX: &str = "chat-";
 const SOCKET_FILE: &str = "chat.sock";
 const MCP_CONFIG_FILE: &str = "mcp.json";
+const SYSTEM_PROMPT_FILE: &str = "system-prompt.md";
 const SIDECAR_SUFFIX: &str = ".owner";
 pub const MAX_SOCKET_PATH_BYTES: usize = 103;
 
@@ -52,6 +53,10 @@ pub fn socket_file_name() -> &'static str {
 
 pub fn mcp_config_path(socket: &Path) -> PathBuf {
     socket.with_file_name(MCP_CONFIG_FILE)
+}
+
+pub fn system_prompt_path(socket: &Path) -> PathBuf {
+    socket.with_file_name(SYSTEM_PROMPT_FILE)
 }
 
 pub fn sidecar_name(pid: u32) -> String {
@@ -135,6 +140,14 @@ mod tests {
         assert_eq!(one, PathBuf::from("/s/chat-1/mcp.json"));
         assert_ne!(one, two);
         assert_ne!(one, PathBuf::from("/s/mcp.json"));
+    }
+
+    #[test]
+    fn system_prompt_lives_in_each_chats_private_dir() {
+        assert_eq!(
+            system_prompt_path(Path::new("/s/chat-1/chat.sock")),
+            PathBuf::from("/s/chat-1/system-prompt.md")
+        );
     }
 
     fn owner(pid: u32, start: &str) -> SocketOwner {

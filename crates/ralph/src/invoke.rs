@@ -46,11 +46,6 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", escaped)
 }
 
-/// Quote prompt text after dropping controls, so a stored NUL cannot reach `sh -c`.
-fn quote_prompt(value: &str) -> String {
-    shell_quote(&strip_controls(value))
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Isolation {
     pub user_settings: bool,
@@ -110,25 +105,24 @@ fn config_dir_env(config_dir: Option<&Path>, home: Option<&Path>) -> String {
         .unwrap_or_default()
 }
 
-pub fn build_memory_command(
-    prompt: &str,
-    home: Option<&Path>,
-    config_dir: Option<&Path>,
-) -> String {
+pub fn prompt_stdin(prompt: &str) -> String {
+    strip_controls(prompt).into_owned()
+}
+
+pub fn build_memory_command(home: Option<&Path>, config_dir: Option<&Path>) -> String {
     let isolation = Isolation {
         config_dir: config_dir.map(Path::to_path_buf),
         ..Isolation::default()
     };
     format!(
-        "{}claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p {}",
+        "{}claude --verbose --model haiku {} --tools '' --mcp-config '{{\"mcpServers\":{{}}}}' --strict-mcp-config --output-format stream-json -p",
         config_dir_env(config_dir, home),
         isolation_args(home, false, &isolation),
-        quote_prompt(prompt)
     )
 }
 
 pub fn build_chat_command(
-    system_prompt: &str,
+    system_prompt_file: &Path,
     extra_args: &[String],
     permission_mode: &str,
     home: Option<&Path>,
@@ -139,34 +133,31 @@ pub fn build_chat_command(
         .map(|arg| format!(" {}", shell_quote(arg)))
         .collect::<String>();
     format!(
-        "{} {}claude --verbose --permission-mode {} {} --append-system-prompt {}{} --input-format stream-json --output-format stream-json -p",
+        "{} {}claude --verbose --permission-mode {} {} --append-system-prompt-file {}{} --input-format stream-json --output-format stream-json -p",
         CHAT_DISABLE_BACKGROUND_TASKS_ENV,
         config_dir_env(isolation.config_dir.as_deref(), home),
         permission_mode,
         isolation_args(home, true, isolation),
-        quote_prompt(system_prompt),
+        shell_quote(&system_prompt_file.to_string_lossy()),
         extra
     )
 }
 
 pub fn build_command(
-    prompt: &str,
     permission_mode: &str,
     config_dir: Option<&Path>,
     home: Option<&Path>,
 ) -> String {
     format!(
-        "{}claude --verbose --permission-mode {} --output-format stream-json -p {}",
+        "{}claude --verbose --permission-mode {} --output-format stream-json -p",
         config_dir_env(config_dir, home),
         permission_mode,
-        quote_prompt(prompt)
     )
 }
 
 pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, SubprocessError> {
     invoke_subprocess_with_spinner_config(&SpinnerSubprocessConfig {
         command: build_command(
-            &config.prompt,
             &config.permission_mode,
             config.config_dir.as_deref(),
             dirs::home_dir().as_deref(),
@@ -178,6 +169,7 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
         session_info: SpinnerSessionInfo::default(),
         gate: None,
         cancel: None,
+        stdin: Some(prompt_stdin(&config.prompt)),
     })
 }
 
@@ -187,9 +179,9 @@ mod tests {
 
     #[test]
     fn build_command_is_plain_ask() {
-        let cmd = build_command("hello", "bypassPermissions", None, None);
+        let cmd = build_command("bypassPermissions", None, None);
         assert!(cmd.contains("--permission-mode bypassPermissions"));
-        assert!(cmd.contains("-p 'hello'"));
+        assert!(cmd.ends_with(" -p"), "{cmd}");
         assert!(!cmd.contains("--agent"));
         assert!(!cmd.contains("--append-system-prompt"));
         assert!(!cmd.contains("--setting-sources"));
@@ -197,14 +189,14 @@ mod tests {
 
     #[test]
     fn memory_curator_is_haiku_and_isolated_without_tools() {
-        let cmd = build_memory_command("merge it's notes", Some(Path::new("/home/u")), None);
+        let cmd = build_memory_command(Some(Path::new("/home/u")), None);
         assert!(cmd.contains("--model haiku"));
         assert!(cmd.contains("--setting-sources project,local"));
         assert!(cmd.contains("claudeMdExcludes"));
         assert!(cmd.contains("/home/u/.claude/CLAUDE.md"));
         assert!(cmd.contains("--tools ''"));
         assert!(cmd.contains("--strict-mcp-config"));
-        assert!(cmd.contains("--output-format stream-json -p 'merge it'\"'\"'s notes'"));
+        assert!(cmd.ends_with("--output-format stream-json -p"), "{cmd}");
         assert!(!cmd.contains("--agent"));
         assert!(!cmd.contains("--resume"));
     }
@@ -213,7 +205,7 @@ mod tests {
     fn chat_command_is_fresh_and_isolated() {
         let mcp = vec!["--strict-mcp-config".to_string()];
         let cmd = build_chat_command(
-            "sys",
+            Path::new("/s/chat-1/system-prompt.md"),
             &mcp,
             "plan",
             Some(Path::new("/home/u")),
@@ -223,7 +215,9 @@ mod tests {
         assert!(cmd.contains("--permission-mode plan "));
         assert!(!cmd.contains("--resume") && !cmd.contains("--agent"));
         assert!(cmd.contains("--setting-sources project,local"));
-        assert!(cmd.contains("--append-system-prompt 'sys' '--strict-mcp-config'"));
+        assert!(cmd.contains(
+            "--append-system-prompt-file '/s/chat-1/system-prompt.md' '--strict-mcp-config'"
+        ));
         assert!(cmd.contains("--input-format stream-json --output-format stream-json"));
         assert!(cmd.ends_with(" -p"));
         assert!(cmd.contains(r#"--settings '{"autoCompactEnabled":false,"#));
@@ -232,7 +226,7 @@ mod tests {
     #[test]
     fn chat_command_passes_agents_and_keeps_isolation() {
         let cmd = build_chat_command(
-            "sys",
+            Path::new("/s/p.md"),
             &ralph_core::chat::build_agents_args(),
             "auto",
             Some(Path::new("/home/u")),
@@ -244,40 +238,61 @@ mod tests {
 
     #[test]
     fn chat_and_nap_turn_off_the_total_tokens_reminder() {
-        let chat = build_chat_command("sys", &[], "auto", None, &Isolation::default());
-        let nap = build_memory_command("hi", None, None);
+        let chat = build_chat_command(
+            Path::new("/s/p.md"),
+            &[],
+            "auto",
+            None,
+            &Isolation::default(),
+        );
+        let nap = build_memory_command(None, None);
         for cmd in [chat, nap] {
             assert!(cmd.contains(r#""totalTokensReminder":"off""#), "{cmd}");
         }
     }
 
+    const SECRET_LIKE_PROMPT: &str = "use KEY=abc123 and it's \"$x\"\nñ";
+
     #[test]
-    fn build_command_escapes_single_quotes() {
-        let cmd = build_command("it's a test", "default", None, None);
-        assert!(cmd.contains("'\"'\"'"));
+    fn prompts_stay_off_every_command_line() {
+        let home = Some(Path::new("/home/u"));
+        let commands = [
+            build_command("auto", None, home),
+            build_memory_command(home, None),
+            build_chat_command(
+                Path::new("/s/p.md"),
+                &[],
+                "auto",
+                home,
+                &Isolation::default(),
+            ),
+        ];
+        for cmd in commands {
+            assert!(!cmd.contains("abc123"), "{cmd}");
+            assert!(!cmd.contains("--append-system-prompt '"), "{cmd}");
+            assert!(!cmd.contains("-p '"), "{cmd}");
+        }
     }
 
     #[test]
-    fn chat_command_strips_a_stored_nul_before_spawn() {
-        let cmd = build_chat_command("sys\0", &[], "auto", None, &Isolation::default());
-        assert!(std::ffi::CString::new(cmd.clone()).is_ok());
-        assert!(cmd.contains("--append-system-prompt 'sys'"));
-        assert!(!cmd.contains('\u{0001}'));
+    fn prompt_stdin_keeps_the_bytes_the_argument_carried() {
+        assert_eq!(prompt_stdin(SECRET_LIKE_PROMPT), SECRET_LIKE_PROMPT);
+        assert_eq!(prompt_stdin("hi\0 there\u{1}"), "hi there");
     }
 
     #[test]
     fn unset_config_dir_adds_no_env_prefix() {
         assert_eq!(
-            build_command("hi", "auto", None, Some(Path::new("/home/u"))),
-            "claude --verbose --permission-mode auto --output-format stream-json -p 'hi'"
+            build_command("auto", None, Some(Path::new("/home/u"))),
+            "claude --verbose --permission-mode auto --output-format stream-json -p"
         );
         assert_eq!(
-            build_memory_command("hi", Some(Path::new("/home/u")), None),
-            r#"claude --verbose --model haiku --setting-sources project,local --settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}' --tools '' --mcp-config '{"mcpServers":{}}' --strict-mcp-config --output-format stream-json -p 'hi'"#
+            build_memory_command(Some(Path::new("/home/u")), None),
+            r#"claude --verbose --model haiku --setting-sources project,local --settings '{"claudeMdExcludes":["/home/u/.claude/CLAUDE.md"],"totalTokensReminder":"off"}' --tools '' --mcp-config '{"mcpServers":{}}' --strict-mcp-config --output-format stream-json -p"#
         );
         assert_eq!(
-            build_chat_command("sys", &[], "auto", None, &Isolation::default()),
-            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings '{\"autoCompactEnabled\":false,\"totalTokensReminder\":\"off\"}' --append-system-prompt 'sys' --input-format stream-json --output-format stream-json -p"
+            build_chat_command(Path::new("/s/p.md"), &[], "auto", None, &Isolation::default()),
+            "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 claude --verbose --permission-mode auto --setting-sources project,local --settings '{\"autoCompactEnabled\":false,\"totalTokensReminder\":\"off\"}' --append-system-prompt-file '/s/p.md' --input-format stream-json --output-format stream-json -p"
         );
     }
 
@@ -285,13 +300,13 @@ mod tests {
     fn config_dir_prefixes_every_command_and_moves_the_exclude() {
         let home = Some(Path::new("/home/u"));
         let dir = Some(Path::new("~/alt dir"));
-        let ask = build_command("hi", "auto", dir, home);
+        let ask = build_command("auto", dir, home);
         assert!(ask.starts_with("CLAUDE_CONFIG_DIR='/home/u/alt dir' claude --verbose "));
-        let memory = build_memory_command("hi", home, dir);
+        let memory = build_memory_command(home, dir);
         assert!(memory.starts_with("CLAUDE_CONFIG_DIR='/home/u/alt dir' claude "));
         assert!(memory.contains(r#"["/home/u/alt dir/CLAUDE.md"]"#));
         let isolation = Isolation::for_chat(&ChatSection::default(), Path::new("/work"), dir);
-        let chat = build_chat_command("sys", &[], "auto", home, &isolation);
+        let chat = build_chat_command(Path::new("/s/p.md"), &[], "auto", home, &isolation);
         assert!(chat.starts_with(
             "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1 CLAUDE_CONFIG_DIR='/home/u/alt dir' claude "
         ));

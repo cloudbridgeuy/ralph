@@ -359,18 +359,14 @@ impl Store {
         Ok(parse_pending_turn(&String::from_utf8_lossy(&marker)))
     }
 
-    pub fn write_mcp_config(
-        &self,
-        path: PathBuf,
-        config: &serde_json::Value,
-    ) -> io::Result<PathBuf> {
+    pub fn write_private(&self, path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> {
         check_path(&path)?;
         let mut options = OpenOptions::new();
         options.create(true).write(true).truncate(true);
         #[cfg(unix)]
         options.mode(0o600);
         let mut file = options.open(&path)?;
-        file.write_all(config.to_string().as_bytes())?;
+        file.write_all(bytes)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -26,10 +26,11 @@ use ralph_core::chat_memory::{
 };
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
 use ralph_core::chat_thread::ResetReason;
+use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
 use std::borrow::Cow;
 use std::io::{self};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
@@ -88,6 +89,7 @@ pub(super) struct Turn<'a> {
     pub(super) store: &'a Store,
     pub(super) store_dir: &'a Path,
     pub(super) mcp_args: &'a [String],
+    pub(super) system_prompt_file: &'a Path,
     pub(super) permission_mode: &'a str,
     pub(super) plugin_args: &'a [String],
     pub(super) skills: &'a [ChatSkill],
@@ -395,6 +397,7 @@ impl Turn<'_> {
             sent,
         );
         let system = turn_system_prompt(self.custom_prompt, self.reply_images, &split.older);
+        write_system_prompt(self.store, self.system_prompt_file, &system)?;
         let args = [
             self.mcp_args.to_vec(),
             build_attachments_args(self.store_dir),
@@ -404,7 +407,7 @@ impl Turn<'_> {
         .concat();
         let config = SpinnerSubprocessConfig {
             command: build_chat_command(
-                &system,
+                self.system_prompt_file,
                 &args,
                 self.permission_mode,
                 dirs::home_dir().as_deref(),
@@ -417,6 +420,7 @@ impl Turn<'_> {
             session_info: chat_session_info(),
             gate: Some(Arc::clone(&self.gate)),
             cancel: Some(Arc::clone(&self.cancel)),
+            stdin: None,
         };
         Ok(Launch {
             config,
@@ -435,6 +439,10 @@ impl Turn<'_> {
             .iter()
             .try_for_each(|(role, text)| self.store.append(*role, text))
     }
+}
+
+fn write_system_prompt(store: &Store, path: &Path, system: &str) -> io::Result<PathBuf> {
+    store.write_private(path.to_path_buf(), strip_controls(system).as_bytes())
 }
 
 fn relaunch<T>(reused: bool, result: &Result<T, SubprocessError>) -> bool {
@@ -472,6 +480,22 @@ fn keeps_session(end: &TurnEnd) -> bool {
 mod tests {
     use super::*;
     use crate::stream_processor::StreamProcessorResult;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn system_prompt_file_holds_the_old_argument_bytes_privately() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let path = dir.path().join("system-prompt.md");
+        let system = "rules\0 it's \"$HOME\"\n  ñ trailing \n";
+        write_system_prompt(&store, &path, &system.repeat(3)).unwrap();
+        write_system_prompt(&store, &path, system).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(bytes, b"rules it's \"$HOME\"\n  \xc3\xb1 trailing \n");
+        assert_eq!(bytes, strip_controls(system).as_bytes());
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
 
     fn finished(session_id: Option<&str>, model: Option<&str>) -> StreamingSubprocessResult {
         StreamingSubprocessResult {

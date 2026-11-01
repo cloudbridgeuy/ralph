@@ -322,11 +322,9 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
         .claude
         .config_dir;
     store.nap(|prompt| {
-        let command = invoke::build_memory_command(
-            prompt,
-            dirs::home_dir().as_deref(),
-            config_dir.as_deref(),
-        );
+        let command =
+            invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
+        let stdin = invoke::prompt_stdin(prompt);
         let result = backoff::retry_on_outage(
             "chat memory nap",
             || {
@@ -342,6 +340,7 @@ fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>>
                         },
                         gate: None,
                         cancel: None,
+                        stdin: Some(stdin.clone()),
                     },
                 ))
             },

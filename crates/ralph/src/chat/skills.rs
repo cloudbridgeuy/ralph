@@ -22,7 +22,7 @@ pub(super) fn write_mcp_config(
         ));
     }
     let config = mcp_config(exe, store_dir, socket, &imported.servers);
-    let path = store.write_mcp_config(mcp_config_path(socket), &config)?;
+    let path = store.write_private(mcp_config_path(socket), config.to_string().as_bytes())?;
     Ok(build_mcp_args(&path, &config))
 }
 

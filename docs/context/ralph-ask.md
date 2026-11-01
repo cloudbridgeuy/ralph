@@ -56,6 +56,8 @@ The prompt can be provided from multiple sources:
 4. If no argument and stdin is piped (non-terminal), read from stdin
 5. If no argument and stdin is terminal, error (no prompt provided)
 
+The resolved prompt, with control characters dropped, goes to `claude -p` on its stdin and never on the command line, so `ps` cannot show it to another local user.
+
 ## Permission Modes
 
 The `--permission-mode` flag sets `claude --permission-mode`. `ask` has its own setting, default `bypassPermissions`: the user is present, watching, and can stop the run with Ctrl+C. Chat and its workers use `[chat] permission_mode` and `RALPH_CHAT_PERMISSION_MODE`, default `auto`, which do not change ask. Choices are claude's: `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` (see `claude --help`).

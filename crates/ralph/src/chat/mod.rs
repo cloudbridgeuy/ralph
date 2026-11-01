@@ -88,6 +88,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
+use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{prefill, Prefill, SuggestionRecord};
 use ralph_core::chat_thread::{run_id, UsageTail};
@@ -228,6 +229,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         &chat_config.mcp_servers,
     );
     let mcp_args = write_mcp_config(&store, &store_dir, chat_socket.path(), &exe, &imported)?;
+    let system_prompt_file = system_prompt_path(chat_socket.path());
     let skill_dirs = resolve_skills(
         &SkillSources {
             cli: &args.skills,
@@ -284,6 +286,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         store: &store,
         store_dir: &store_dir,
         mcp_args: &mcp_args,
+        system_prompt_file: &system_prompt_file,
         permission_mode: &permission_mode,
         plugin_args: &plugin_args,
         skills: &skills,

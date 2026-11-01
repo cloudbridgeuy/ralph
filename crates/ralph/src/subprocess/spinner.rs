@@ -19,7 +19,7 @@ use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
 use crate::stream_processor::{StreamProcessor, VerboseToolsConfig};
 use ralph_core::stream::{is_main_assistant_line, result_is_error};
 use std::io::IsTerminal;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,26 +28,17 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Configuration for subprocess invocation with spinner.
-///
-/// Groups parameters to keep function signatures under 5 arguments.
 #[derive(Debug, Clone)]
 pub struct SpinnerSubprocessConfig {
-    /// The command string to execute.
     pub command: String,
-    /// Time limit for one-shot runs. `Session` ignores it: chat turns have no
-    /// time limit.
     pub timeout_secs: Option<u64>,
-    /// Configuration for syntax highlighting theme.
     pub theme_config: ThemeConfig,
-    /// Accumulated time from previous iterations in this session.
     pub session_elapsed_ms: u64,
-    /// Configuration for verbose tool output.
     pub verbose_tools: VerboseToolsConfig,
-    /// Session metadata for spinner display (slug, iteration info).
     pub session_info: SpinnerSessionInfo,
     pub gate: Option<Arc<OutputGate>>,
     pub cancel: Option<Arc<AtomicBool>>,
+    pub stdin: Option<String>,
 }
 
 fn write_to(gate: Option<&OutputGate>, stream: Stream, text: &str) {
@@ -111,6 +102,7 @@ fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Opti
 ///     session_info: SpinnerSessionInfo::default(),
 ///     gate: None,
 ///     cancel: None,
+///     stdin: None,
 /// };
 /// let result = invoke_subprocess_with_spinner_config(&config);
 /// println!("{result:?}");
@@ -353,7 +345,14 @@ impl Pump {
 fn run_subprocess_with_spinner(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
-    let mut child = spawn_piped(&config.command, Stdio::null())?;
+    let stdin = match config.stdin {
+        Some(_) => Stdio::piped(),
+        None => Stdio::null(),
+    };
+    let mut child = spawn_piped(&config.command, stdin)?;
+    if let (Some(text), Some(mut pipe)) = (config.stdin.clone(), child.stdin.take()) {
+        thread::spawn(move || pipe.write_all(text.as_bytes()));
+    }
     let mut readers = Readers::start(&mut child)?;
     let mut pump = Pump::start(config, Display::Shown)?;
     let start = Instant::now();
