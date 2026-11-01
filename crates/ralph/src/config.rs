@@ -8,6 +8,7 @@ use crate::invoke::{
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
+use crate::tool_theme::ToolTheme;
 use crate::warn::warn_once;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::inbox_alert::UnknownFocus;
@@ -384,6 +385,9 @@ pub struct ThemeSection {
 
     #[serde(default)]
     pub diff: DiffTheme,
+
+    #[serde(default)]
+    pub tools: ToolTheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -423,6 +427,7 @@ impl ThemeSection {
             .chain(self.status.resolve().1)
             .chain(self.input.resolve().1)
             .chain(self.diff.resolve().1)
+            .chain(self.tools.resolve().1)
             .collect()
     }
 }

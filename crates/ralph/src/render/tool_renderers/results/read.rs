@@ -16,7 +16,7 @@ pub fn render_read_result(
     // Empty result
     if content.is_empty() {
         return if ctx.terminal {
-            format!("{}(empty file){}\n", ansi::GREY, ansi::RESET)
+            format!("{}(empty file){}\n", ctx.tools.label_fg(), ansi::RESET)
         } else {
             "(empty file)\n".to_string()
         };
@@ -25,7 +25,7 @@ pub fn render_read_result(
     // Check for binary file indicator
     if content.contains("(binary file)") || content.starts_with('\u{0}') {
         return if ctx.terminal {
-            format!("{}(binary file){}\n", ansi::GREY, ansi::RESET)
+            format!("{}(binary file){}\n", ctx.tools.label_fg(), ansi::RESET)
         } else {
             "(binary file)\n".to_string()
         };
@@ -51,9 +51,9 @@ pub fn render_read_result(
         let line_word = if line_count == 1 { "line" } else { "lines" };
         output.push_str(&format!(
             "{}✓{} {}{} {}{}\n",
-            ansi::GREEN,
+            ctx.tools.ok_fg(),
             ansi::RESET,
-            ansi::GREY,
+            ctx.tools.label_fg(),
             line_count,
             line_word,
             ansi::RESET
@@ -75,7 +75,7 @@ pub fn render_read_result(
         if should_truncate {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
-                ansi::GREY,
+                ctx.tools.label_fg(),
                 actual_line_count.saturating_sub(MAX_CONTENT_LINES),
                 ansi::RESET
             ));
@@ -98,4 +98,18 @@ pub fn render_read_result(
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_read_result(&ctx, "a.rs", "fn a() {}", 1, true).contains('\x1b'));
+        assert!(!render_read_result(&ctx, "a.rs", "", 0, false).contains('\x1b'));
+    }
 }

@@ -420,6 +420,7 @@ fn test_save_and_load() {
             status: StatusTheme::default(),
             input: InputTheme::default(),
             diff: DiffTheme::default(),
+            tools: ToolTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -478,6 +479,7 @@ fn test_serialize_omits_none() {
             status: StatusTheme::default(),
             input: InputTheme::default(),
             diff: DiffTheme::default(),
+            tools: ToolTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -747,5 +749,21 @@ fn theme_diff_table_loads_and_reports_warnings() {
     assert_eq!(
         bad.theme.warnings(),
         ["[theme.diff] add_bg = \"nope\" is not a color; using the default"]
+    );
+}
+
+#[test]
+fn theme_tools_table_loads_and_reports_warnings() {
+    let config: AppConfig =
+        toml::from_str("[theme.tools]\nname = \"#000000\"\nbold = \"red\"\n").unwrap();
+    assert_eq!(config.theme.tools.colors.len(), 2);
+    assert_eq!(
+        config.theme.warnings(),
+        ["[theme.tools] unknown key \"bold\"; ignored"]
+    );
+    let bad: AppConfig = toml::from_str("[theme.tools]\nname = \"nope\"\n").unwrap();
+    assert_eq!(
+        bad.theme.warnings(),
+        ["[theme.tools] name = \"nope\" is not a color; using the default"]
     );
 }

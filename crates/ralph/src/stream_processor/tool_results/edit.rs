@@ -78,7 +78,7 @@ fn format_before_after_highlighted(
     // File path header with box drawing
     output.push_str(&format!(
         "{}── {} ──{}\n",
-        ansi::CYAN,
+        processor.tool_colors.name_fg(),
         file_path,
         ansi::RESET
     ));
@@ -95,7 +95,7 @@ fn format_before_after_highlighted(
     // Horizontal separator
     output.push_str(&format!(
         "{}─────────────────────────{}\n",
-        ansi::GREY,
+        processor.tool_colors.label_fg(),
         ansi::RESET
     ));
 
@@ -122,11 +122,20 @@ fn format_highlighted_block(
     let mut output = String::new();
 
     // Label
-    output.push_str(&format!("{}{}{}\n", ansi::GREY, label, ansi::RESET));
+    output.push_str(&format!(
+        "{}{}{}\n",
+        processor.tool_colors.label_fg(),
+        label,
+        ansi::RESET
+    ));
 
     // Handle empty content
     if content.is_empty() {
-        output.push_str(&format!("{}(empty){}\n", ansi::GREY, ansi::RESET));
+        output.push_str(&format!(
+            "{}(empty){}\n",
+            processor.tool_colors.label_fg(),
+            ansi::RESET
+        ));
         return output;
     }
 
@@ -170,7 +179,7 @@ fn format_highlighted_block(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            ansi::GREY,
+            processor.tool_colors.label_fg(),
             line_count - MAX_BLOCK_LINES,
             ansi::RESET
         ));
@@ -244,9 +253,9 @@ fn format_no_changes_message(processor: &StreamProcessor, file_path: &str) -> St
     if processor.highlighting_enabled {
         format!(
             "{}✓{} {}Edit: {} (no changes){}\n",
-            ansi::GREEN,
+            processor.tool_colors.ok_fg(),
             ansi::RESET,
-            ansi::GREY,
+            processor.tool_colors.label_fg(),
             file_path,
             ansi::RESET
         )
@@ -357,7 +366,7 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
         // File path header with box drawing
         output.push_str(&format!(
             "{}── {} ──{}\n",
-            ansi::CYAN,
+            processor.tool_colors.name_fg(),
             file_path,
             ansi::RESET
         ));
@@ -374,7 +383,7 @@ fn format_diff_output(processor: &StreamProcessor, file_path: &str, diff_content
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
-                ansi::GREY,
+                processor.tool_colors.label_fg(),
                 line_count - MAX_DIFF_LINES,
                 ansi::RESET
             ));
@@ -618,5 +627,15 @@ mod tests {
             }
         )
         .contains('\x1b'));
+    }
+
+    #[test]
+    fn headers_and_marks_use_the_configured_tool_colors() {
+        let mut processor = colored_processor();
+        processor.tool_colors = crate::tool_theme::test_colors();
+        let out = format_before_after_highlighted(&processor, "a.rs", "x", "y", None);
+        assert!(out.starts_with("\x1b[94m── a.rs"));
+        assert!(out.contains("\x1b[96mBefore:"));
+        assert!(format_no_changes_message(&processor, "a.rs").starts_with("\x1b[97m✓"));
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::diff_theme::DiffColors;
 use crate::highlight::Highlighter;
+use crate::tool_theme::ToolColors;
 
 pub use crate::ansi;
 
@@ -18,6 +19,7 @@ pub struct RenderContext<'a> {
     pub mermaid: fn(&str, usize) -> Option<String>,
     pub images: Option<crate::render::ImageSettings>,
     pub diff: DiffColors,
+    pub tools: ToolColors,
 }
 
 const DEFAULT_WIDTH: usize = 80;
@@ -42,11 +44,17 @@ impl<'a> RenderContext<'a> {
             mermaid: crate::mermaid_guard::render,
             images: crate::render::image::enabled(),
             diff: DiffColors::default(),
+            tools: ToolColors::default(),
         }
     }
 
     pub fn with_diff(mut self, diff: DiffColors) -> Self {
         self.diff = diff;
+        self
+    }
+
+    pub fn with_tools(mut self, tools: ToolColors) -> Self {
+        self.tools = tools;
         self
     }
 

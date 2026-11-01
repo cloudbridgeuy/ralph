@@ -12,14 +12,14 @@ pub fn render_todowrite_result(
         if is_error {
             format!(
                 "{}✗{} {}\n",
-                ansi::RED,
+                ctx.tools.error_fg(),
                 ansi::RESET,
                 message.unwrap_or("Failed to update todos")
             )
         } else {
             format!(
                 "{}✓{} {}\n",
-                ansi::GREEN,
+                ctx.tools.ok_fg(),
                 ansi::RESET,
                 message.unwrap_or("Todos updated")
             )

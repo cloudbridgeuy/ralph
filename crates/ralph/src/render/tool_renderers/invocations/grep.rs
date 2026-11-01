@@ -8,7 +8,7 @@ pub fn render_grep_invocation(ctx: &RenderContext, params: &GrepInvocationParams
     let mut output = String::new();
 
     if ctx.terminal {
-        output.push_str(&format!("{}▶ Grep{}\n", ansi::CYAN, ansi::RESET));
+        output.push_str(&format!("{}▶ Grep{}\n", ctx.tools.name_fg(), ansi::RESET));
 
         // Pattern with regex highlighting
         output.push_str(&format!("  {}Pattern:{} ", ansi::BOLD, ansi::RESET));
@@ -18,21 +18,41 @@ pub fn render_grep_invocation(ctx: &RenderContext, params: &GrepInvocationParams
 
         // Optional fields
         if let Some(p) = params.path {
-            output.push_str(&format!("  {}Path:{} {}\n", ansi::GREY, ansi::RESET, p));
+            output.push_str(&format!(
+                "  {}Path:{} {}\n",
+                ctx.tools.label_fg(),
+                ansi::RESET,
+                p
+            ));
         }
         if let Some(mode) = params.output_mode {
-            output.push_str(&format!("  {}Mode:{} {}\n", ansi::GREY, ansi::RESET, mode));
+            output.push_str(&format!(
+                "  {}Mode:{} {}\n",
+                ctx.tools.label_fg(),
+                ansi::RESET,
+                mode
+            ));
         }
         if let Some(g) = params.glob {
-            output.push_str(&format!("  {}glob:{} {}\n", ansi::GREY, ansi::RESET, g));
+            output.push_str(&format!(
+                "  {}glob:{} {}\n",
+                ctx.tools.label_fg(),
+                ansi::RESET,
+                g
+            ));
         }
         if let Some(ft) = params.file_type {
-            output.push_str(&format!("  {}type:{} {}\n", ansi::GREY, ansi::RESET, ft));
+            output.push_str(&format!(
+                "  {}type:{} {}\n",
+                ctx.tools.label_fg(),
+                ansi::RESET,
+                ft
+            ));
         }
         if params.case_insensitive {
             output.push_str(&format!(
                 "  {}case-insensitive:{} true\n",
-                ansi::GREY,
+                ctx.tools.label_fg(),
                 ansi::RESET
             ));
         }

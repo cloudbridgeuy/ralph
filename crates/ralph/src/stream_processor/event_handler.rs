@@ -271,6 +271,7 @@ impl StreamProcessor {
     fn create_render_context(&self) -> RenderContext<'_> {
         RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
             .with_diff(self.diff_colors)
+            .with_tools(self.tool_colors)
     }
 
     /// Flush any pending chunks from the buffer.

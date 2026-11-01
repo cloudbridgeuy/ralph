@@ -7,6 +7,7 @@
 use crate::diff_theme::DiffColors;
 use crate::highlight::{Highlighter, ThemeConfig, ThemeError};
 use crate::markdown::MarkdownTheme;
+use crate::tool_theme::ToolColors;
 use ralph_core::chunk::{ParsedChunk, StreamingChunkBuffer};
 use ralph_core::stream::{
     extract_costs_from_events_or_default, extract_metadata_from_events_or_default, StreamEvent,
@@ -41,6 +42,7 @@ pub struct StreamProcessor {
     /// Markdown skin for prose rendering via termimad.
     pub(super) markdown: MarkdownTheme,
     pub(super) diff_colors: DiffColors,
+    pub(super) tool_colors: ToolColors,
     /// Whether highlighting is enabled (terminal detection).
     pub(super) highlighting_enabled: bool,
     /// Whether to display tool invocations.
@@ -170,6 +172,11 @@ impl StreamProcessorBuilder {
             .as_ref()
             .map(|config| *config.diff())
             .unwrap_or_default();
+        let tool_colors = self
+            .theme_config
+            .as_ref()
+            .map(|config| *config.tools())
+            .unwrap_or_default();
         let code_highlighter = match self.theme_config {
             Some(config) => Highlighter::with_config(config)?,
             None => Highlighter::new(),
@@ -184,6 +191,7 @@ impl StreamProcessorBuilder {
             code_highlighter,
             markdown,
             diff_colors,
+            tool_colors,
             highlighting_enabled,
             show_tool_invocations,
             current_message_id: None,
@@ -411,6 +419,7 @@ impl StreamProcessor {
     pub fn render_context(&self) -> crate::render::RenderContext<'_> {
         crate::render::RenderContext::new(&self.code_highlighter, self.highlighting_enabled)
             .with_diff(self.diff_colors)
+            .with_tools(self.tool_colors)
     }
 
     /// Get the accumulated output blocks.

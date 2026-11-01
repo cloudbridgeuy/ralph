@@ -3,7 +3,8 @@
 //! This module contains stateless helper functions used by the stream processor.
 //! All functions are pure with no side effects.
 
-use crate::ansi::{BRIGHT_YELLOW, GREY, RESET};
+use crate::ansi::RESET;
+use crate::tool_theme::ToolColors;
 use std::collections::BTreeMap;
 
 /// Extract line number from a cat-n formatted line, if present.
@@ -137,13 +138,14 @@ pub fn group_files_by_directory<'a>(files: &[&'a str]) -> BTreeMap<String, Vec<&
 ///
 /// ```
 /// use ralph::render::highlight_grep_match;
+/// use ralph::tool_theme::ToolColors;
 ///
 /// let line = "src/main.rs:10:fn main() {}";
-/// let result = highlight_grep_match(line);
+/// let result = highlight_grep_match(line, &ToolColors::default());
 /// assert!(result.contains("\x1b[90m")); // dim
 /// assert!(result.contains("\x1b[93m")); // yellow
 /// ```
-pub fn highlight_grep_match(line: &str) -> String {
+pub fn highlight_grep_match(line: &str, colors: &ToolColors) -> String {
     // Parse the line format: filename:line_number:content or just filename
     // We apply dim styling to the filename:line_number prefix
     // and yellow styling to the content
@@ -158,13 +160,19 @@ pub fn highlight_grep_match(line: &str) -> String {
                 // This looks like filename:line_number:content format
                 let prefix = &line[..second_colon + 1];
                 let content = &line[second_colon + 1..];
-                return format!("{GREY}{}{RESET}{BRIGHT_YELLOW}{}{RESET}", prefix, content);
+                return format!(
+                    "{}{}{RESET}{}{}{RESET}",
+                    colors.match_path_fg(),
+                    prefix,
+                    colors.match_text_fg(),
+                    content
+                );
             }
         }
     }
 
     // Default: just show the line in dim color
-    format!("{GREY}{}{RESET}", line)
+    format!("{}{}{RESET}", colors.match_path_fg(), line)
 }
 
 /// Extract programming language hint from a file path based on extension.
@@ -480,7 +488,7 @@ mod tests {
     #[test]
     fn test_highlight_grep_match_content_format() {
         let line = "src/main.rs:10:fn main() {}";
-        let result = highlight_grep_match(line);
+        let result = highlight_grep_match(line, &ToolColors::default());
         // Should contain ANSI codes for highlighting
         assert!(result.contains("\x1b[90m"));
         assert!(result.contains("\x1b[93m"));
@@ -491,7 +499,7 @@ mod tests {
     #[test]
     fn test_highlight_grep_match_simple_path() {
         let line = "src/main.rs";
-        let result = highlight_grep_match(line);
+        let result = highlight_grep_match(line, &ToolColors::default());
         // Should be dimmed but not split
         assert!(result.contains("\x1b[90m"));
         assert!(result.contains("src/main.rs"));
@@ -500,7 +508,7 @@ mod tests {
     #[test]
     fn test_highlight_grep_match_no_line_number() {
         let line = "filename:not_a_number:content";
-        let result = highlight_grep_match(line);
+        let result = highlight_grep_match(line, &ToolColors::default());
         // Should be dimmed entirely (not split)
         assert_eq!(result, "\x1b[90mfilename:not_a_number:content\x1b[0m");
     }
@@ -568,7 +576,7 @@ mod tests {
     #[test]
     fn test_highlight_grep_match_exact_split() {
         assert_eq!(
-            highlight_grep_match("a.rs:7:x"),
+            highlight_grep_match("a.rs:7:x", &ToolColors::default()),
             "\x1b[90ma.rs:7:\x1b[0m\x1b[93mx\x1b[0m"
         );
     }
@@ -637,5 +645,25 @@ mod tests {
         assert_eq!(extract_language_from_path("Makefile"), Some("makefile"));
         assert_eq!(extract_language_from_path("makefile"), Some("makefile"));
         assert_eq!(extract_language_from_path("Dockerfile.dev"), None);
+    }
+
+    #[test]
+    fn grep_match_uses_the_configured_colors() {
+        let colors = crate::tool_theme::test_colors();
+        let out = highlight_grep_match("a.rs:1:hit", &colors);
+        assert!(out.contains("\x1b[30ma.rs:1:"));
+        assert!(out.contains("\x1b[37mhit"));
+        assert!(!out.contains("\x1b[90m"));
+        assert!(!out.contains("\x1b[93m"));
+    }
+
+    #[test]
+    fn grep_match_default_colors_keep_todays_bytes() {
+        let colors = crate::tool_theme::ToolColors::default();
+        assert_eq!(
+            highlight_grep_match("a.rs:1:hit", &colors),
+            "\x1b[90ma.rs:1:\x1b[0m\x1b[93mhit\x1b[0m"
+        );
+        assert_eq!(highlight_grep_match("a.rs", &colors), "\x1b[90ma.rs\x1b[0m");
     }
 }

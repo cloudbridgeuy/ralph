@@ -41,6 +41,7 @@ pub mod spinner;
 pub mod startup;
 mod status_theme;
 mod theme_slots;
+mod tool_theme;
 
 pub mod stream_processor;
 pub mod subprocess;

@@ -40,6 +40,7 @@ use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
 use crate::diff_theme::DiffColors;
 use crate::markdown::{Palette, ThemeRole};
+use crate::tool_theme::ToolColors;
 
 /// Default theme name used when no theme is specified.
 pub const DEFAULT_THEME: &str = "base16-ocean.dark";
@@ -97,6 +98,7 @@ pub struct ThemeConfig {
     no_background: bool,
     palette: Palette,
     diff: DiffColors,
+    tools: ToolColors,
 }
 
 impl ThemeConfig {
@@ -123,6 +125,7 @@ impl ThemeConfig {
             no_background,
             palette: Palette::default(),
             diff: DiffColors::default(),
+            tools: ToolColors::default(),
         }
     }
 
@@ -144,6 +147,10 @@ impl ThemeConfig {
             .as_ref()
             .map(|c| c.theme.diff.resolve().0)
             .unwrap_or_default();
+        let tools = app_config
+            .as_ref()
+            .map(|c| c.theme.tools.resolve().0)
+            .unwrap_or_default();
         let config_no_background = app_config.map(|c| c.theme.no_background).unwrap_or(false);
 
         let env_theme = std::env::var(RALPH_THEME_ENV).ok();
@@ -159,6 +166,7 @@ impl ThemeConfig {
             no_background,
             palette,
             diff,
+            tools,
         }
     }
 
@@ -204,6 +212,10 @@ impl ThemeConfig {
 
     pub fn diff(&self) -> &DiffColors {
         &self.diff
+    }
+
+    pub fn tools(&self) -> &ToolColors {
+        &self.tools
     }
 
     /// Check if the theme looks like a file path.

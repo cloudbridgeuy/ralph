@@ -9,7 +9,7 @@ pub fn render_glob_invocation(ctx: &RenderContext, pattern: &str, path: Option<&
 
     if ctx.terminal {
         let mut output = String::new();
-        output.push_str(&format!("{}▶ Glob{}\n", ansi::CYAN, ansi::RESET));
+        output.push_str(&format!("{}▶ Glob{}\n", ctx.tools.name_fg(), ansi::RESET));
         output.push_str(&format!(
             "  {}Pattern:{} {}\n",
             ansi::BOLD,
@@ -18,7 +18,7 @@ pub fn render_glob_invocation(ctx: &RenderContext, pattern: &str, path: Option<&
         ));
         output.push_str(&format!(
             "  {}Path:{} {}\n",
-            ansi::GREY,
+            ctx.tools.label_fg(),
             ansi::RESET,
             search_path
         ));

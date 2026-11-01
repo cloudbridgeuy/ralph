@@ -15,7 +15,7 @@ pub fn render_grep_result(
     // Empty result
     if content.is_empty() {
         return if ctx.terminal {
-            format!("{}(no matches){}\n", ansi::GREY, ansi::RESET)
+            format!("{}(no matches){}\n", ctx.tools.label_fg(), ansi::RESET)
         } else {
             "(no matches)\n".to_string()
         };
@@ -37,9 +37,9 @@ pub fn render_grep_result(
         let match_word = if match_count == 1 { "match" } else { "matches" };
         output.push_str(&format!(
             "{}✓{} {}{} {}{}\n",
-            ansi::GREEN,
+            ctx.tools.ok_fg(),
             ansi::RESET,
-            ansi::GREY,
+            ctx.tools.label_fg(),
             match_count,
             match_word,
             ansi::RESET
@@ -49,19 +49,29 @@ pub fn render_grep_result(
         match output_mode {
             "files_with_matches" => {
                 for line in display_lines {
-                    output.push_str(&format!("  {}{}{}\n", ansi::GREY, line, ansi::RESET));
+                    output.push_str(&format!(
+                        "  {}{}{}\n",
+                        ctx.tools.label_fg(),
+                        line,
+                        ansi::RESET
+                    ));
                 }
             }
             "content" => {
                 for line in display_lines {
-                    let highlighted_line = highlight_grep_match(line);
+                    let highlighted_line = highlight_grep_match(line, &ctx.tools);
                     output.push_str(&format!("  {}\n", highlighted_line));
                 }
             }
             _ => {
                 // count mode and other modes
                 for line in display_lines {
-                    output.push_str(&format!("  {}{}{}\n", ansi::GREY, line, ansi::RESET));
+                    output.push_str(&format!(
+                        "  {}{}{}\n",
+                        ctx.tools.label_fg(),
+                        line,
+                        ansi::RESET
+                    ));
                 }
             }
         }
@@ -69,7 +79,7 @@ pub fn render_grep_result(
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
-                ansi::GREY,
+                ctx.tools.label_fg(),
                 line_count - MAX_RESULT_LINES,
                 ansi::RESET
             ));
@@ -92,4 +102,30 @@ pub fn render_grep_result(
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+    use crate::tool_theme::test_colors;
+
+    #[test]
+    fn match_colors_come_from_the_context() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::terminal(&highlighter).with_tools(test_colors());
+        let out = render_grep_result(&ctx, 1, "content", "a.rs:1:hit");
+        assert!(out.contains("\x1b[97m✓"));
+        assert!(out.contains("\x1b[30ma.rs:1:\x1b[0m\x1b[37mhit"));
+    }
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        for mode in ["content", "files_with_matches", "count"] {
+            assert!(!render_grep_result(&ctx, 1, mode, "a.rs:1:hit").contains('\x1b'));
+        }
+        assert!(!render_grep_result(&ctx, 0, "content", "").contains('\x1b'));
+    }
 }

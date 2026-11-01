@@ -177,6 +177,33 @@ add_bg = "#2d822d"
 del_bg = "#8c2d2d"
 ```
 
+#### Tool colors: `[theme.tools]`
+
+ralph paints tool calls and tool results with this table. It covers the invocation line (`▶ Name args`), the result marks, and the labels of Edit, Write and NotebookEdit results. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. Bold and dim text stay hard-coded and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+
+| Key | Default | Paints |
+|-----|---------|--------|
+| `name` | `dark_cyan` | Tool name and result headers |
+| `args` | `dark_grey` | Invocation arguments |
+| `label` | `dark_grey` | Secondary labels and dimmed result output |
+| `ok` | `dark_green` | Success marks (`✓`) |
+| `error` | `dark_red` | Error marks and messages (`✗`) |
+| `accent` | `dark_yellow` | Pending marks (`⋯`) and inline indicators such as `(new file)` |
+| `match_path` | `dark_grey` | Grep `file:line:` prefix |
+| `match_text` | `yellow` | Grep match text |
+
+```toml
+[theme.tools]
+name = "dark_cyan"
+args = "dark_grey"
+label = "dark_grey"
+ok = "dark_green"
+error = "dark_red"
+accent = "dark_yellow"
+match_path = "dark_grey"
+match_text = "yellow"
+```
+
 Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.
 
 The old `[theme] agent = "<theme>"` string still works as `[theme.agent] code = "<theme>"`; `ralph chat` prints a deprecation warning for it.

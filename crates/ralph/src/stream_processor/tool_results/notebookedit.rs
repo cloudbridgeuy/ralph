@@ -17,7 +17,7 @@ use crate::diff_highlight::highlight_with_basic_colors;
 
 use super::super::processor::StreamProcessor;
 use super::super::types::NotebookSnapshot;
-use crate::ansi::{CYAN, GREEN, GREY, RESET, YELLOW};
+use crate::ansi::RESET;
 
 /// Maximum lines to show in a diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
@@ -102,7 +102,9 @@ pub fn format_notebook_result_with_snapshot(
         let cell_display = format!("{}:{}", snapshot.notebook_path, snapshot.cell_identifier);
         if processor.highlighting_enabled {
             format!(
-                "{GREEN}\u{2713}{RESET} {GREY}NotebookEdit: {} (no changes){RESET}\n",
+                "{}\u{2713}{RESET} {}NotebookEdit: {} (no changes){RESET}\n",
+                processor.tool_colors.ok_fg(),
+                processor.tool_colors.label_fg(),
                 cell_display
             )
         } else {
@@ -159,13 +161,19 @@ fn format_diff_output(
         // Cell path header with box drawing and indicators
         if !edit_mode_indicator.is_empty() {
             output.push_str(&format!(
-                "{CYAN}\u{2500}\u{2500} {}{}{YELLOW}{}{CYAN} \u{2500}\u{2500}{RESET}\n",
-                cell_display, cell_type_indicator, edit_mode_indicator
+                "{name}\u{2500}\u{2500} {}{}{}{}{name} \u{2500}\u{2500}{RESET}\n",
+                cell_display,
+                cell_type_indicator,
+                processor.tool_colors.accent_fg(),
+                edit_mode_indicator,
+                name = processor.tool_colors.name_fg()
             ));
         } else {
             output.push_str(&format!(
-                "{CYAN}\u{2500}\u{2500} {}{} \u{2500}\u{2500}{RESET}\n",
-                cell_display, cell_type_indicator
+                "{}\u{2500}\u{2500} {}{} \u{2500}\u{2500}{RESET}\n",
+                processor.tool_colors.name_fg(),
+                cell_display,
+                cell_type_indicator
             ));
         }
 
@@ -180,7 +188,8 @@ fn format_diff_output(
         // Truncation indicator
         if truncated {
             output.push_str(&format!(
-                "{GREY}... {} more lines{RESET}\n",
+                "{}... {} more lines{RESET}\n",
+                processor.tool_colors.label_fg(),
                 line_count - MAX_DIFF_LINES
             ));
         }
@@ -403,5 +412,16 @@ mod tests {
     fn plain_processor_has_no_escape_byte() {
         let processor = StreamProcessor::with_highlighting(false);
         assert!(!format_diff_output(&processor, &snapshot(), "+x\n-y\n@@ -1 @@").contains('\x1b'));
+    }
+
+    #[test]
+    fn header_uses_the_configured_tool_colors() {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        processor.tool_colors = crate::tool_theme::test_colors();
+        let mut inserted = snapshot();
+        inserted.edit_mode = "insert".to_string();
+        let out = format_diff_output(&processor, &inserted, "+x");
+        assert!(out.starts_with("\x1b[94m\u{2500}\u{2500} n.ipynb:0"));
+        assert!(out.contains("\x1b[91m (new cell)"));
     }
 }
