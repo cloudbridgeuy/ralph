@@ -227,7 +227,7 @@ impl OpencodeHost {
         };
         let results = self.files(id).interrupt_result;
         let pending = results.join(format!(".{}", name.to_string_lossy()));
-        if write_file(&pending, interrupt_result_text(cancelled)).is_ok() {
+        if write_file(&pending, interrupt_result_text(cancelled.into())).is_ok() {
             fs::rename(&pending, results.join(name)).ok();
         }
     }

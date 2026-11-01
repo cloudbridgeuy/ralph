@@ -3,9 +3,9 @@ use crate::transport::stdio::stop_group;
 use crate::warn::warn;
 use ralph_core::worker::{
     agent_held, caller_owns_worker, cursor_group_reclaimable, group_live, interrupt_result_text,
-    sweep_decision, HandoffFiles, OwnerFacts, OwnerRecord, Sweep, CLAUDE_HEADLESS_OWNER_DIR,
-    CLAUDE_HEADLESS_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR, CURSOR_OWNER_DIR,
-    CURSOR_SESSION_DIR,
+    sweep_decision, HandoffFiles, InterruptOutcome, OwnerFacts, OwnerRecord, Sweep,
+    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_SESSION_DIR, CODEX_OWNER_DIR, CODEX_SESSION_DIR,
+    CURSOR_OWNER_DIR, CURSOR_SESSION_DIR,
 };
 use std::fs;
 use std::io;
@@ -231,9 +231,9 @@ pub fn write_file_atomic(path: &Path, text: &str) -> io::Result<()> {
         })
 }
 
-pub fn write_interrupt_result(results: &Path, entry: &str, cancelled: bool) {
+pub fn write_interrupt_result(results: &Path, entry: &str, outcome: InterruptOutcome) {
     let pending = results.join(format!(".{entry}"));
-    if write_file(&pending, interrupt_result_text(cancelled)).is_ok() {
+    if write_file(&pending, interrupt_result_text(outcome)).is_ok() {
         fs::rename(&pending, results.join(entry)).ok();
     }
 }

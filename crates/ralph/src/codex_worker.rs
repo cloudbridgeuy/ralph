@@ -314,8 +314,8 @@ impl Pump {
                     self.wire.send_line(&line).map_err(Stop::message)?;
                     self.permissions.drain();
                 }
-                Action::InterruptResult { entry, cancelled } => {
-                    write_interrupt_result(&self.results, &entry, cancelled);
+                Action::InterruptResult { entry, outcome } => {
+                    write_interrupt_result(&self.results, &entry, outcome);
                 }
                 Action::Emit(event) => {
                     match &event {

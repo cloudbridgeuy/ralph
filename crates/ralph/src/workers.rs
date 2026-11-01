@@ -17,9 +17,10 @@ use ralph_core::worker::{
     legacy_base_unset_warning, opencode_close_handoff, parse_interrupt_result, project_slug,
     prompt_entry_name, ready_path, resolve_worktree_dir, sent_path, session_name, session_owner,
     session_survived_kill, tagged_sessions, uptake, worktree_for_branch, worktree_path,
-    ActivityMark, CloseState, CloseStep, Feature, Handoff, HandoffFiles, HarnessId, Owner, Probe,
-    Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
-    OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT, WORKTREE_DIR_ENV,
+    ActivityMark, CloseState, CloseStep, Feature, Handoff, HandoffFiles, HarnessId,
+    InterruptOutcome, Owner, Probe, Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL,
+    HANDOFF_TIMEOUT, OPENCODE_CONFIG_FILE, OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT,
+    WORKTREE_DIR_ENV,
 };
 use ralph_core::worker_check::pane_busy;
 use std::collections::HashSet;
@@ -252,7 +253,7 @@ impl Workers {
         )
     }
 
-    fn await_interrupt_result(&self, results: &Path, entry: &str) -> Option<bool> {
+    fn await_interrupt_result(&self, results: &Path, entry: &str) -> Option<InterruptOutcome> {
         let result = results.join(entry);
         let started = Instant::now();
         loop {
@@ -919,7 +920,7 @@ mod tests {
         });
         assert_eq!(
             workers.reply("A", "stop", true, Some("per_1")).unwrap(),
-            interrupt_reply("A", Some(true))
+            interrupt_reply("A", Some(InterruptOutcome::Cancelled))
         );
         host.join().unwrap();
         assert_eq!(only(&files.interrupt).unwrap(), "stop");

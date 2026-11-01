@@ -21,8 +21,8 @@ use ralph_core::worker::{
     claude_headless_args, decode_claude_version, decode_line, gone_path, interrupted_end,
     permission_response, prompt_failure_report, ready_path, reduce, request_stale, resumed_session,
     stuck_permission_report, task_prompt, Action, ClaudeLine, ClaudePermission, HandoffFiles,
-    HarnessId, HeadlessState, PermissionAnswer, PermissionMode, SessionRecord, SpawnRequest,
-    ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
+    HarnessId, HeadlessState, InterruptOutcome, PermissionAnswer, PermissionMode, SessionRecord,
+    SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
     CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
     CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
     CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
@@ -139,7 +139,10 @@ impl Shared {
                 Action::Emit(event) => {
                     match &event {
                         WorkerEvent::TurnStarted => self.heartbeat.set_running(true),
-                        WorkerEvent::TurnEnded(_) => self.heartbeat.set_running(false),
+                        WorkerEvent::TurnEnded(_) => {
+                            self.permissions.drain();
+                            self.heartbeat.set_running(false);
+                        }
                         _ => {}
                     }
                     push_event(&self.events, event);
@@ -159,8 +162,8 @@ impl Shared {
                         .ok();
                     self.permissions.drain();
                 }
-                Action::InterruptResult { entry, cancelled } => {
-                    write_interrupt_result(&self.results, &entry, cancelled);
+                Action::InterruptResult { entry, outcome } => {
+                    write_interrupt_result(&self.results, &entry, outcome);
                 }
                 Action::Snapshot => {}
             }
@@ -200,6 +203,7 @@ impl Shared {
                 .send(Err("claude exited before it was ready".to_string()))
                 .ok();
         }
+        self.drive(Turns::process_gone);
         report_exit(
             &self.heartbeat,
             &self.events,
@@ -398,18 +402,22 @@ impl ClaudeHeadlessHost {
         id: &str,
         dir: fn(&HandoffFiles) -> &PathBuf,
         deliver: fn(&Shared, String, String),
+        orphan: fn(&HandoffFiles, &str),
     ) {
         if locked(&self.starting).contains_key(id) && !locked(&self.workers).contains_key(id) {
             return;
         }
-        for entry in queued_entries(dir(&self.files(id))) {
+        let files = self.files(id);
+        for entry in queued_entries(dir(&files)) {
             let name = entry
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let worker = locked(&self.workers).get(id).map(|w| Arc::clone(&w.shared));
-            if let (Ok(text), Some(shared)) = (fs::read_to_string(&entry), worker) {
-                deliver(&shared, text, name);
+            match (fs::read_to_string(&entry), worker) {
+                (Ok(text), Some(shared)) => deliver(&shared, text, name),
+                (_, None) => orphan(&files, &name),
+                (Err(_), Some(_)) => {}
             }
             fs::remove_file(&entry).ok();
         }
@@ -544,6 +552,7 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 &id,
                 |files| &files.prompt,
                 |shared, text, _| shared.accept(text),
+                |_, _| {},
             );
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_INTERRUPT_DIR) {
@@ -551,6 +560,9 @@ impl HeadlessHost for ClaudeHeadlessHost {
                 &id,
                 |files| &files.interrupt,
                 |shared, text, entry| shared.interrupt(text, entry),
+                |files, entry| {
+                    write_interrupt_result(&files.interrupt_result, entry, InterruptOutcome::Gone);
+                },
             );
         }
         for id in request_ids(&self.store_dir, CLAUDE_HEADLESS_SPAWN_DIR) {
@@ -587,6 +599,7 @@ mod tests {
     use tempfile::TempDir;
 
     const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
+    const DONE: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#;
 
     struct Run {
         shared: Shared,
@@ -606,6 +619,10 @@ mod tests {
                 .collect()
         }
 
+        fn interrupt_result(&self, entry: &str) -> Option<String> {
+            fs::read_to_string(self.dir.path().join("interrupt-result").join(entry)).ok()
+        }
+
         fn permission_events(&self) -> Vec<&WorkerEvent> {
             self.events
                 .iter()
@@ -620,6 +637,10 @@ mod tests {
     }
 
     fn run(mode: PermissionMode, lines: &[&str]) -> Run {
+        run_after(mode, |_| {}, lines)
+    }
+
+    fn run_after(mode: PermissionMode, setup: impl FnOnce(&Shared), lines: &[&str]) -> Run {
         let dir = TempDir::new().unwrap();
         let store = dir.path();
         let events = Events::default();
@@ -640,6 +661,7 @@ mod tests {
             resumed: None,
             turn_seq: AtomicU64::new(0),
         };
+        setup(&shared);
         let (tx, rx) = mpsc::channel();
         for line in lines {
             tx.send((*line).to_string()).unwrap();
@@ -694,5 +716,57 @@ mod tests {
             .err()
             .unwrap();
         assert!(stale.starts_with("stale request"));
+    }
+
+    #[test]
+    fn an_interrupt_pending_when_claude_exits_writes_gone() {
+        let run = run_after(
+            PermissionMode::Ask,
+            |shared| {
+                shared.accept("task".into());
+                shared.interrupt("stop".into(), "e1".into());
+            },
+            &[],
+        );
+        assert_eq!(run.interrupt_result("e1").as_deref(), Some("gone"));
+    }
+
+    #[test]
+    fn a_turn_end_settles_a_permission_claude_never_cancelled() {
+        let run = run_after(
+            PermissionMode::Ask,
+            |shared| shared.accept("task".into()),
+            &[ASK, DONE],
+        );
+        assert!(matches!(
+            run.permission_events().as_slice(),
+            [
+                WorkerEvent::PermissionAsked(_),
+                WorkerEvent::PermissionSettled
+            ]
+        ));
+        let stale = run
+            .shared
+            .permissions
+            .take_answer("p.r1", "allow_once")
+            .err()
+            .unwrap();
+        assert!(stale.starts_with("stale request"));
+    }
+
+    #[test]
+    fn an_interrupt_for_a_worker_without_a_process_writes_gone() {
+        let dir = TempDir::new().unwrap();
+        let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
+        let files = host.files("w");
+        write_file(&files.interrupt.join("e1"), "stop").unwrap();
+        host.poll();
+        assert!(!files.interrupt.join("e1").exists());
+        assert_eq!(
+            fs::read_to_string(files.interrupt_result.join("e1"))
+                .ok()
+                .as_deref(),
+            Some("gone")
+        );
     }
 }

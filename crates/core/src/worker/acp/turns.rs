@@ -83,29 +83,50 @@ pub fn cancels_turn(steps: &[Step]) -> bool {
     steps.contains(&Step::CancelSession)
 }
 
-pub fn interrupt_result_text(cancelled: bool) -> &'static str {
-    if cancelled {
-        "cancelled"
-    } else {
-        "sent"
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptOutcome {
+    Cancelled,
+    Sent,
+    Gone,
+}
+
+impl From<bool> for InterruptOutcome {
+    fn from(cancelled: bool) -> Self {
+        if cancelled {
+            Self::Cancelled
+        } else {
+            Self::Sent
+        }
     }
 }
 
-pub fn parse_interrupt_result(text: &str) -> Option<bool> {
+pub fn interrupt_result_text(outcome: InterruptOutcome) -> &'static str {
+    match outcome {
+        InterruptOutcome::Cancelled => "cancelled",
+        InterruptOutcome::Sent => "sent",
+        InterruptOutcome::Gone => "gone",
+    }
+}
+
+pub fn parse_interrupt_result(text: &str) -> Option<InterruptOutcome> {
     match text.trim() {
-        "cancelled" => Some(true),
-        "sent" => Some(false),
+        "cancelled" => Some(InterruptOutcome::Cancelled),
+        "sent" => Some(InterruptOutcome::Sent),
+        "gone" => Some(InterruptOutcome::Gone),
         _ => None,
     }
 }
 
-pub fn interrupt_reply(id: &str, outcome: Option<bool>) -> String {
+pub fn interrupt_reply(id: &str, outcome: Option<InterruptOutcome>) -> String {
     match outcome {
-        Some(true) => format!(
+        Some(InterruptOutcome::Cancelled) => format!(
             "Interrupted worker {id}: its running turn was cancelled and this message runs next."
         ),
-        Some(false) => {
+        Some(InterruptOutcome::Sent) => {
             format!("Sent to worker {id}: no turn was running, so nothing was cancelled.")
+        }
+        Some(InterruptOutcome::Gone) => {
+            format!("Worker {id} exited: its turn ended and this message was not delivered.")
         }
         None => format!(
             "Interrupt queued for worker {id}, but ralph chat did not confirm within 30 s: outcome unknown."
@@ -313,12 +334,16 @@ mod tests {
     #[test]
     fn interrupt_reply_reports_each_outcome() {
         assert_eq!(
-            interrupt_reply("GUZ-1", Some(true)),
+            interrupt_reply("GUZ-1", Some(InterruptOutcome::Cancelled)),
             "Interrupted worker GUZ-1: its running turn was cancelled and this message runs next."
         );
         assert_eq!(
-            interrupt_reply("GUZ-1", Some(false)),
+            interrupt_reply("GUZ-1", Some(InterruptOutcome::Sent)),
             "Sent to worker GUZ-1: no turn was running, so nothing was cancelled."
+        );
+        assert_eq!(
+            interrupt_reply("GUZ-1", Some(InterruptOutcome::Gone)),
+            "Worker GUZ-1 exited: its turn ended and this message was not delivered."
         );
         assert_eq!(
             interrupt_reply("GUZ-1", None),
@@ -337,14 +362,16 @@ mod tests {
 
     #[test]
     fn interrupt_result_text_round_trips() {
-        assert_eq!(
-            parse_interrupt_result(interrupt_result_text(true)),
-            Some(true)
-        );
-        assert_eq!(
-            parse_interrupt_result(interrupt_result_text(false)),
-            Some(false)
-        );
+        for outcome in [
+            InterruptOutcome::Cancelled,
+            InterruptOutcome::Sent,
+            InterruptOutcome::Gone,
+        ] {
+            assert_eq!(
+                parse_interrupt_result(interrupt_result_text(outcome)),
+                Some(outcome)
+            );
+        }
         assert_eq!(parse_interrupt_result(""), None);
     }
 

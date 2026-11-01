@@ -1,8 +1,8 @@
 use super::{MCP_STARTUP_STATUS, MODEL_REROUTED, SERVER_REQUEST_RESOLVED, TOKEN_USAGE_UPDATED};
 use crate::worker::acp::REPORT_TOOL;
 use crate::worker::{
-    cancels_turn, stop_problem, turn_outcome, turn_stop, HarnessId, Inbound, PromptQueue, TurnEnd,
-    TurnOutcome, WorkerEvent, REPORT_REMINDER, SERVER_NAME,
+    cancels_turn, stop_problem, turn_outcome, turn_stop, HarnessId, Inbound, InterruptOutcome,
+    PromptQueue, TurnEnd, TurnOutcome, WorkerEvent, REPORT_REMINDER, SERVER_NAME,
 };
 use serde_json::Value;
 
@@ -79,7 +79,10 @@ pub fn is_current(current: Option<&str>, event: Option<&str>) -> bool {
 pub enum Action {
     Start(String),
     Interrupt(String),
-    InterruptResult { entry: String, cancelled: bool },
+    InterruptResult {
+        entry: String,
+        outcome: InterruptOutcome,
+    },
     Emit(WorkerEvent),
     MarkUnreported,
     Snapshot,
@@ -95,6 +98,7 @@ pub struct Turns {
     interrupts: Vec<String>,
     interrupt_sent: bool,
     close_requested: bool,
+    gone: bool,
     reported: bool,
 }
 
@@ -105,6 +109,12 @@ impl Turns {
     }
 
     pub fn interrupt(&mut self, text: String, entry: String) -> Vec<Action> {
+        if self.gone {
+            return vec![Action::InterruptResult {
+                entry,
+                outcome: InterruptOutcome::Gone,
+            }];
+        }
         let steps = self.queue.accept(Inbound::Interrupt(text, entry.clone()));
         if cancels_turn(&steps) {
             self.interrupts.push(entry);
@@ -112,7 +122,7 @@ impl Turns {
         }
         let mut actions = vec![Action::InterruptResult {
             entry,
-            cancelled: false,
+            outcome: InterruptOutcome::Sent,
         }];
         actions.extend(self.advance());
         actions
@@ -120,6 +130,11 @@ impl Turns {
 
     pub fn interrupt_sent(&self) -> bool {
         self.interrupt_sent
+    }
+
+    pub fn process_gone(&mut self) -> Vec<Action> {
+        self.gone = true;
+        self.resolve_interrupts(InterruptOutcome::Gone)
     }
 
     pub fn close(&mut self) -> Vec<Action> {
@@ -142,7 +157,7 @@ impl Turns {
         if code != NO_ACTIVE_TURN {
             return Vec::new();
         }
-        self.resolve_interrupts(false)
+        self.resolve_interrupts(InterruptOutcome::Sent)
     }
 
     pub fn is_stale_request(&self, method: &str, params: &Value) -> bool {
@@ -184,10 +199,10 @@ impl Turns {
         }
     }
 
-    fn resolve_interrupts(&mut self, cancelled: bool) -> Vec<Action> {
+    fn resolve_interrupts(&mut self, outcome: InterruptOutcome) -> Vec<Action> {
         std::mem::take(&mut self.interrupts)
             .into_iter()
-            .map(|entry| Action::InterruptResult { entry, cancelled })
+            .map(|entry| Action::InterruptResult { entry, outcome })
             .collect()
     }
 
@@ -234,7 +249,7 @@ impl Turns {
             actions.push(Action::Snapshot);
         }
         actions.push(Action::Emit(WorkerEvent::TurnEnded(end)));
-        actions.extend(self.resolve_interrupts(cancelled));
+        actions.extend(self.resolve_interrupts(cancelled.into()));
         match outcome {
             TurnOutcome::Remind => {
                 self.queue.remind();
@@ -436,14 +451,32 @@ mod tests {
         json!({"threadId": "t", "turn": {"id": turn, "status": status, "items": []}})
     }
 
-    fn results(actions: &[Action]) -> Vec<(&str, bool)> {
+    fn results(actions: &[Action]) -> Vec<(&str, InterruptOutcome)> {
         actions
             .iter()
             .filter_map(|a| match a {
-                Action::InterruptResult { entry, cancelled } => Some((entry.as_str(), *cancelled)),
+                Action::InterruptResult { entry, outcome } => Some((entry.as_str(), *outcome)),
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_gone_process_resolves_the_pending_interrupt_as_gone_and_starts_nothing() {
+        let mut turns = running("task", "u1");
+        turns.interrupt("now".into(), "e1".into());
+        let gone = turns.process_gone();
+        assert_eq!(results(&gone), [("e1", InterruptOutcome::Gone)]);
+        assert!(starts(&gone).is_empty());
+    }
+
+    #[test]
+    fn an_interrupt_after_the_process_is_gone_resolves_as_gone_at_once() {
+        let mut turns = Turns::default();
+        assert!(turns.process_gone().is_empty());
+        let actions = turns.interrupt("now".into(), "e2".into());
+        assert_eq!(results(&actions), [("e2", InterruptOutcome::Gone)]);
+        assert!(starts(&actions).is_empty());
     }
 
     fn running(text: &str, turn: &str) -> Turns {
@@ -460,7 +493,7 @@ mod tests {
         let sent = turns.interrupt("now".into(), "e1".into());
         assert_eq!(sent, [Action::Interrupt("u1".into())]);
         let ended = turns.notification(TURN_COMPLETED, &completed("u1", "interrupted"), false);
-        assert_eq!(results(&ended), [("e1", true)]);
+        assert_eq!(results(&ended), [("e1", InterruptOutcome::Cancelled)]);
         assert_eq!(starts(&ended), ["now"]);
         assert!(!ended.contains(&Action::MarkUnreported));
         assert!(!ended.iter().any(|a| matches!(a, Action::PostFailure(_))));
@@ -474,7 +507,7 @@ mod tests {
     fn an_idle_interrupt_reports_nothing_cancelled_and_sends_no_turn_interrupt() {
         let mut turns = Turns::default();
         let actions = turns.interrupt("now".into(), "e1".into());
-        assert_eq!(results(&actions), [("e1", false)]);
+        assert_eq!(results(&actions), [("e1", InterruptOutcome::Sent)]);
         assert_eq!(starts(&actions), ["now"]);
         assert!(!actions.iter().any(|a| matches!(a, Action::Interrupt(_))));
     }
@@ -486,7 +519,7 @@ mod tests {
         assert!(turns.interrupt_failed(-32000).is_empty());
         assert_eq!(
             results(&turns.interrupt_failed(NO_ACTIVE_TURN)),
-            [("e1", false)]
+            [("e1", InterruptOutcome::Sent)]
         );
     }
 
@@ -495,7 +528,7 @@ mod tests {
         let mut turns = running("task", "u1");
         turns.interrupt("now".into(), "e1".into());
         let refused = turns.interrupt_failed(NO_ACTIVE_TURN);
-        assert_eq!(results(&refused), [("e1", false)]);
+        assert_eq!(results(&refused), [("e1", InterruptOutcome::Sent)]);
         assert!(starts(&refused).is_empty());
         let ended = turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
         assert!(results(&ended).is_empty());
@@ -517,7 +550,7 @@ mod tests {
         );
         assert!(late_item.is_empty());
         let ended = turns.notification(TURN_COMPLETED, &completed("u1", "completed"), false);
-        assert_eq!(results(&ended), [("e1", false)]);
+        assert_eq!(results(&ended), [("e1", InterruptOutcome::Sent)]);
         assert_eq!(starts(&ended), ["now"]);
     }
 
