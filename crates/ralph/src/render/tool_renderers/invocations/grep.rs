@@ -78,3 +78,24 @@ pub fn render_grep_invocation(ctx: &RenderContext, params: &GrepInvocationParams
 
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        let params = GrepInvocationParams {
+            pattern: "fo+",
+            path: Some("src"),
+            output_mode: Some("content"),
+            glob: Some("*.rs"),
+            file_type: Some("rust"),
+            case_insensitive: true,
+        };
+        assert!(!render_grep_invocation(&ctx, &params).contains('\x1b'));
+    }
+}

@@ -30,3 +30,17 @@ pub fn render_todowrite_result(
         format!("  {}\n", message.unwrap_or("Todos updated"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_todowrite_result(&ctx, false, None).contains('\x1b'));
+        assert!(!render_todowrite_result(&ctx, true, Some("bad")).contains('\x1b'));
+    }
+}

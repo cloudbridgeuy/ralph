@@ -49,3 +49,17 @@ pub fn render_read_invocation(
 
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        let out = render_read_invocation(&ctx, "a.rs", Some(1), Some(2));
+        assert!(!out.contains('\x1b'));
+    }
+}

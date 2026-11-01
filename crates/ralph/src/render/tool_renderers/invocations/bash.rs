@@ -47,3 +47,17 @@ pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
         format!("> Bash\n  {}\n", command)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_bash_invocation(&ctx, "ls -la").contains('\x1b'));
+        assert!(!render_bash_invocation(&ctx, "ls\npwd").contains('\x1b'));
+    }
+}

@@ -31,3 +31,17 @@ pub fn render_glob_invocation(ctx: &RenderContext, pattern: &str, path: Option<&
         output
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_glob_invocation(&ctx, "*.rs", Some("src")).contains('\x1b'));
+        assert!(!render_glob_invocation(&ctx, "*.rs", None).contains('\x1b'));
+    }
+}
