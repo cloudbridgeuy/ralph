@@ -3,7 +3,7 @@ use super::{
     Action, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal,
     TurnEnd, Turns, VersionGate, SERVER_NAME,
 };
-use crate::stream::result_is_error;
+use crate::stream::{interrupt_line, result_is_error};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -122,6 +122,14 @@ pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> 
     };
     json!({"type": "control_response", "response": {"subtype": "success", "request_id": request_id, "response": decision}})
         .to_string()
+}
+
+pub fn interrupt_lines(pending: &[String], turn_id: &str) -> Vec<String> {
+    pending
+        .iter()
+        .map(|request_id| permission_response(request_id, DENY, &Value::Null))
+        .chain([interrupt_line(&format!("interrupt-{turn_id}"))])
+        .collect()
 }
 
 pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<String> {
@@ -593,6 +601,28 @@ mod tests {
         assert_eq!(
             report.text,
             "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
+        );
+    }
+
+    #[test]
+    fn interrupt_lines_deny_each_pending_request_before_the_interrupt() {
+        let pending = ["r1".to_string(), "r2".to_string()];
+        let lines = interrupt_lines(&pending, "turn-3");
+        assert_eq!(
+            lines,
+            [
+                permission_response("r1", "deny", &Value::Null),
+                permission_response("r2", "deny", &Value::Null),
+                interrupt_line("interrupt-turn-3"),
+            ]
+        );
+    }
+
+    #[test]
+    fn interrupt_lines_without_pending_requests_is_only_the_interrupt() {
+        assert_eq!(
+            interrupt_lines(&[], "turn-3"),
+            [interrupt_line("interrupt-turn-3")]
         );
     }
 }

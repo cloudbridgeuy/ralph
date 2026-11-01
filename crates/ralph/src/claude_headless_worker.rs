@@ -15,14 +15,14 @@ use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::claude_leftovers::configured_dir;
-use ralph_core::stream::{interrupt_line, user_line};
+use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
-    claude_headless_args, decode_claude_version, decode_line, gone_path, interrupted_end,
-    permission_response, prompt_failure_report, ready_path, reduce, request_stale, resumed_session,
-    stuck_permission_report, task_prompt, Action, ClaudeLine, ClaudePermission, HandoffFiles,
-    HarnessId, HeadlessState, PermissionAnswer, PermissionMode, SessionRecord, SpawnRequest,
-    ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
+    claude_headless_args, decode_claude_version, decode_line, gone_path, interrupt_lines,
+    interrupted_end, permission_response, prompt_failure_report, ready_path, reduce, request_stale,
+    resumed_session, stuck_permission_report, task_prompt, Action, ClaudeLine, ClaudePermission,
+    HandoffFiles, HarnessId, HeadlessState, PermissionAnswer, PermissionMode, SessionRecord,
+    SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
     CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
     CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
     CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
@@ -155,9 +155,15 @@ impl Shared {
                     self.inbox.post(&report, 0).ok();
                 }
                 Action::Interrupt(turn_id) => {
-                    self.send(&interrupt_line(&format!("interrupt-{turn_id}")))
-                        .ok();
-                    self.permissions.drain();
+                    let pending = self
+                        .permissions
+                        .drain()
+                        .into_iter()
+                        .map(|reply| reply.request_id)
+                        .collect::<Vec<_>>();
+                    for line in interrupt_lines(&pending, &turn_id) {
+                        self.send(&line).ok();
+                    }
                 }
                 Action::InterruptResult { entry, cancelled } => {
                     write_interrupt_result(&self.results, &entry, cancelled);
