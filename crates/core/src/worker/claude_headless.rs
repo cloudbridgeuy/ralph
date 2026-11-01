@@ -124,10 +124,14 @@ pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> 
         .to_string()
 }
 
+pub fn deny_line(request_id: &str) -> String {
+    permission_response(request_id, DENY, &Value::Null)
+}
+
 pub fn interrupt_lines(pending: &[String], turn_id: &str) -> Vec<String> {
     pending
         .iter()
-        .map(|request_id| permission_response(request_id, DENY, &Value::Null))
+        .map(|request_id| deny_line(request_id))
         .chain([interrupt_line(&format!("interrupt-{turn_id}"))])
         .collect()
 }
@@ -741,6 +745,16 @@ mod tests {
                 interrupt_line("interrupt-turn-3"),
             ]
         );
+    }
+
+    #[test]
+    fn deny_line_answers_the_request_with_a_deny() {
+        assert_eq!(
+            deny_line("r9"),
+            permission_response("r9", "deny", &Value::Null)
+        );
+        assert!(deny_line("r9").contains(r#""request_id":"r9""#));
+        assert!(deny_line("r9").contains(r#""behavior":"deny""#));
     }
 
     #[test]

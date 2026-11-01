@@ -5,6 +5,7 @@ use ralph_core::worker::{
     BlockedContent, PermissionOption, WorkerEvent,
 };
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 struct Pending<R> {
@@ -26,6 +27,7 @@ pub(crate) struct PermissionQueue<R> {
     worker_id: String,
     inbox: Inbox,
     queue: Mutex<VecDeque<Pending<R>>>,
+    refusing: AtomicBool,
 }
 
 impl<R> PermissionQueue<R> {
@@ -36,6 +38,7 @@ impl<R> PermissionQueue<R> {
             worker_id,
             inbox,
             queue: Mutex::new(VecDeque::new()),
+            refusing: AtomicBool::new(false),
         }
     }
 
@@ -62,6 +65,10 @@ impl<R> PermissionQueue<R> {
     }
 
     pub(crate) fn enqueue(&self, reply: R, content: BlockedContent) {
+        self.enqueue_unless_refusing(reply, content);
+    }
+
+    pub(crate) fn enqueue_unless_refusing(&self, reply: R, content: BlockedContent) -> Option<R> {
         let content = BlockedContent {
             request_id: self.published_id(&content.request_id),
             ..content
@@ -69,9 +76,13 @@ impl<R> PermissionQueue<R> {
         let at = chrono::Utc::now().to_rfc3339();
         let report = permission_alert_report(&self.worker_id, &at, &content);
         let mut queue = self.queue();
+        if self.refusing.load(Ordering::SeqCst) {
+            return Some(reply);
+        }
         queue.push_back(Pending { reply, content });
         self.publish(&queue);
         self.inbox.post(&report, 0).ok();
+        None
     }
 
     pub(crate) fn take_answer(
@@ -102,6 +113,19 @@ impl<R> PermissionQueue<R> {
         if queue.len() != before {
             self.publish(&queue);
         }
+    }
+
+    pub(crate) fn drain_and_refuse(&self) -> Vec<R> {
+        let mut queue = self.queue();
+        self.refusing.store(true, Ordering::SeqCst);
+        let drained = queue.drain(..).map(|pending| pending.reply).collect();
+        push_event(&self.events, WorkerEvent::PermissionSettled);
+        drained
+    }
+
+    pub(crate) fn accept_again(&self) {
+        let _queue = self.queue();
+        self.refusing.store(false, Ordering::SeqCst);
     }
 
     pub(crate) fn drain(&self) -> Vec<R> {
@@ -232,5 +256,33 @@ mod tests {
             drained(&events).last(),
             Some(&WorkerEvent::PermissionSettled)
         );
+    }
+
+    #[test]
+    fn after_drain_and_refuse_a_new_request_is_handed_back_and_not_queued() {
+        let dir = TempDir::new().unwrap();
+        let (queue, events) = queue(&dir);
+        queue.enqueue(1, content("a", &["accept"]));
+        assert_eq!(queue.drain_and_refuse(), vec![1]);
+        let before = drained(&events).len();
+        assert_eq!(
+            queue.enqueue_unless_refusing(2, content("b", &["accept"])),
+            Some(2)
+        );
+        assert!(queue.take_answer("p.b", "accept").is_err());
+        assert!(drained(&events).len() <= before);
+    }
+
+    #[test]
+    fn accept_again_queues_requests_after_a_refusal() {
+        let dir = TempDir::new().unwrap();
+        let (queue, _events) = queue(&dir);
+        queue.drain_and_refuse();
+        queue.accept_again();
+        assert_eq!(
+            queue.enqueue_unless_refusing(3, content("c", &["accept"])),
+            None
+        );
+        assert_eq!(queue.take_answer("p.c", "accept").unwrap().0, 3);
     }
 }

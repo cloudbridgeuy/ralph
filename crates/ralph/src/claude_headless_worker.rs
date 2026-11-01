@@ -18,15 +18,16 @@ use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
-    claude_headless_args, cleanup, decode_claude_version, decode_line, gone_path, interrupt_lines,
-    interrupted_end, permission_response, prompt_failure_report, ready_path, reduce, request_stale,
-    resumed_session, start_steps, stuck_permission_report, task_prompt, uuid_v4, Action,
-    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
-    PermissionAnswer, PermissionMode, SessionRecord, SpawnRequest, StartFault, StartStep,
-    ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
-    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
-    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
-    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
+    claude_headless_args, cleanup, decode_claude_version, decode_line, deny_line, gone_path,
+    interrupt_lines, interrupted_end, permission_response, prompt_failure_report, ready_path,
+    reduce, request_stale, resumed_session, start_steps, stuck_permission_report, task_prompt,
+    uuid_v4, Action, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId,
+    HeadlessState, Leftover, PermissionAnswer, PermissionMode, SessionRecord, SpawnRequest,
+    StartFault, StartStep, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
+    SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -85,6 +86,7 @@ impl Shared {
 
     fn signal(&self, signal: ThreadSignal) {
         let closing = self.closing.load(Ordering::SeqCst);
+        let ended = matches!(signal, ThreadSignal::TurnEnded(_));
         self.drive(|turns| {
             let signal = match signal {
                 ThreadSignal::TurnEnded(end) => {
@@ -94,6 +96,9 @@ impl Shared {
             };
             turns.signal(signal, closing)
         });
+        if ended {
+            self.permissions.accept_again();
+        }
     }
 
     fn send(&self, line: &str) -> Result<(), String> {
@@ -114,7 +119,10 @@ impl Shared {
                     request_id: ask.content.request_id.clone(),
                     input: ask.input,
                 };
-                self.permissions.enqueue(reply, ask.content);
+                if let Some(refused) = self.permissions.enqueue_unless_refusing(reply, ask.content)
+                {
+                    self.send(&deny_line(&refused.request_id)).ok();
+                }
             }
         }
     }
@@ -134,7 +142,7 @@ impl Shared {
     fn interrupt_sends(&self, turn_id: &str) -> Vec<String> {
         let pending = self
             .permissions
-            .drain()
+            .drain_and_refuse()
             .into_iter()
             .map(|reply| reply.request_id)
             .collect::<Vec<_>>();
@@ -145,6 +153,7 @@ impl Shared {
         for action in actions {
             match action {
                 Action::Start(text) => {
+                    self.permissions.accept_again();
                     self.send(&user_line(&text)).ok();
                 }
                 Action::Emit(event) => {
@@ -896,5 +905,41 @@ mod tests {
             assert!(!files.owner.exists());
             assert!(!files.session.exists());
         }
+    }
+
+    fn ask_from(line: &str) -> ClaudePermission {
+        let ClaudeLine::Permission(ask) = decode_line(line) else {
+            panic!("not a permission line");
+        };
+        ask
+    }
+
+    #[test]
+    fn a_permission_that_arrives_after_the_interrupt_drain_is_not_queued() {
+        let run = run(PermissionMode::Ask, &[]);
+        run.shared.interrupt_sends("turn-4");
+        run.shared.ask(ask_from(ASK));
+        let stale = run
+            .shared
+            .permissions
+            .take_answer("p.r1", "deny")
+            .err()
+            .unwrap();
+        assert!(stale.starts_with("stale request"), "{stale}");
+    }
+
+    #[test]
+    fn permissions_queue_again_once_the_interrupted_turn_ends() {
+        let run = run(PermissionMode::Ask, &[]);
+        run.shared.interrupt_sends("turn-4");
+        run.shared.signal(ThreadSignal::TurnEnded(
+            ralph_core::worker::TurnEnd::Succeeded,
+        ));
+        run.shared.ask(ask_from(ASK));
+        assert!(run
+            .shared
+            .permissions
+            .take_answer("p.r1", "allow_once")
+            .is_ok());
     }
 }
