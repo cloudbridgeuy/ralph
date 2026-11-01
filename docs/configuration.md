@@ -329,6 +329,9 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `inbox_alert_unknown_focus` | `"alert"` or `"silent"` | `"alert"` | What to do when focus cannot be detected (outside tmux, no attached client, tmux query failed) |
 | `status_powerline` | bool | `false` | Use powerline glyphs (`\ue0b0`, `\ue0b2`) between status line segments; needs a patched font. Off draws plain colour blocks |
 | `auto_hold` | bool | `true` | When a turn ends with a suggested reply of exactly `/hold <target>` for a listed worker, watch, or schedule, enter that hold at once instead of pre-filling the prompt; `false` always pre-fills |
+| `send_it_seconds` | integer | `10` | Countdown length in seconds before `/send-it` sends a suggested reply. See [ralph chat](context/ralph-chat.md#send-it) |
+| `send_it_max_turns` | integer | `15` | Turn cap for one `/send-it` run; the run stops when it reaches the cap |
+| `send_it_max_usd` | float | `5.0` | Cost cap in USD for one `/send-it` run, summed from the cost of each auto-sent turn; the run stops when it reaches the cap |
 | `terminal_status` | bool | `true` | Report chat state to the terminal with OSC 7501 (Program Status Protocol): working, blocked, done, idle, cleared on exit. Sent only when stdout is a terminal; `NO_COLOR` does not affect it. See [ralph chat](context/ralph-chat.md#terminal-status) |
 | `editor` | list of strings | unset | Ctrl-G editor argv, draft path appended, e.g. `["nvim", "-c", "normal! Go", "-c", "startinsert"]`; unset uses `$VISUAL`, `$EDITOR`, then `vi`; empty or wrong type warns and falls back |
 | `edit_mode` | `"emacs"` or `"vi"` | `"emacs"` | Key bindings of the chat prompt; another value prints a warning and uses `"emacs"`. See [ralph chat](context/ralph-chat.md) |
