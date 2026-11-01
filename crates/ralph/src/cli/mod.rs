@@ -98,7 +98,6 @@ pub struct WorkerArgs {
 pub enum VerifyAgent {
     Cursor,
     Codex,
-    ClaudeHeadless,
 }
 
 impl VerifyAgent {
@@ -106,7 +105,6 @@ impl VerifyAgent {
         match self {
             Self::Cursor => "cursor",
             Self::Codex => "codex",
-            Self::ClaudeHeadless => "claude-headless",
         }
     }
 }

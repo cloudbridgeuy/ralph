@@ -288,13 +288,13 @@ impl ClaudeWorker {
             .unwrap_or_else(|| {
                 configured_permission_mode("claude", |config| config.claude.permissions_setting())
             });
-        let new_id = match resume {
-            Some(_) => String::new(),
-            None => uuid_v4(random_bytes()?),
-        };
+        let new_id;
         let session = match resume {
             Some(record) => ClaudeSession::Resume(&record.session_id),
-            None => ClaudeSession::New(&new_id),
+            None => {
+                new_id = uuid_v4(random_bytes()?);
+                ClaudeSession::New(&new_id)
+            }
         };
         let expected_session = match session {
             ClaudeSession::New(id) | ClaudeSession::Resume(id) => id.to_string(),
@@ -343,7 +343,7 @@ impl ClaudeWorker {
             markers,
             inbox: Inbox::new(request.inbox.clone()),
             results: files.interrupt_result.clone(),
-            expected_session: Some(expected_session),
+            expected_session: Some(expected_session.clone()),
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
@@ -353,9 +353,10 @@ impl ClaudeWorker {
             return Err(message);
         }
         if resume.is_none() {
-            let record = session_record(&new_id, request, store, mode);
+            let record = session_record(&expected_session, request, store, mode);
             if let Err(e) = write_file(&files.session, &record.render()) {
                 stop_child(&mut child);
+                fs::remove_file(&files.owner).ok();
                 return Err(format!("could not write the session record: {e}"));
             }
         }
