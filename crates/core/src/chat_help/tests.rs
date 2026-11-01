@@ -104,6 +104,11 @@ fn lists_hold_every_variant() {
 }
 
 #[test]
+fn the_hold_row_names_the_auto_hold_setting() {
+    assert!(help_text(160).contains("chat.auto_hold"));
+}
+
+#[test]
 fn every_command_routes_locally_and_has_help() {
     let text = help_text(160);
     for command in Command::ALL {
