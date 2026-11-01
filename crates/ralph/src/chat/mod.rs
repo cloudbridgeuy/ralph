@@ -24,6 +24,7 @@ mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
 mod suggestion;
+mod term_status;
 pub(crate) mod terminal;
 mod turn;
 mod watch;
@@ -53,6 +54,7 @@ use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
+use crate::chat::term_status::TermStatus;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
@@ -89,6 +91,7 @@ use ralph_core::chat_suggestion::{prefill, Prefill, SuggestionRecord};
 use ralph_core::chat_thread::{run_id, UsageTail};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
+use ralph_core::program_status::Phase;
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
@@ -330,6 +333,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         reset_limits,
         thread: Mutex::new(ThreadMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
+        term: TermStatus::new(chat_config.terminal_status && std::io::stdout().is_terminal()),
+        phase: Mutex::new(Phase::Prompt),
+        hold: Mutex::new(None),
     });
     let roster = {
         let monitor = Arc::clone(&monitor);
@@ -476,6 +482,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 print_above_prompt(None);
                 at_prompt.store(false, Ordering::SeqCst);
                 idle.store(false, Ordering::SeqCst);
+                monitor.set_phase(Phase::Prompt);
                 submitted?.map(|Submitted { line, route }| {
                     if let Some((suggestion, turn_number)) = offered.take() {
                         let record = SuggestionRecord::new(
@@ -525,6 +532,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                         let sent = prepared.sent;
+                        monitor.set_phase(Phase::Turn);
                         let (result, queued) = snapshots.around(|| {
                             keys.during(|| {
                                 turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
@@ -543,6 +551,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     continue;
                 };
+                monitor.set_phase(Phase::Turn);
                 let (result, queued) = snapshots.around(|| {
                     keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
                 });
@@ -569,6 +578,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+        monitor.set_phase(if outcome == TurnOutcome::Replied {
+            Phase::Replied
+        } else {
+            Phase::Prompt
+        });
         monitor.refresh(true);
         if outcome == TurnOutcome::Exit {
             let lost = unsent(&queue);

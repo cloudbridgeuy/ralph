@@ -42,10 +42,12 @@ impl Drop for LineEnd {
 
 pub(super) fn run(filter: &HoldFilter, monitor: &Monitor, bar: &StatusBar) -> Held {
     let _terminal = io::stdin().is_terminal().then(PartialMode::enter).flatten();
+    monitor.set_hold(Some(filter.clone()));
     let outcome = {
         let _line = LineEnd;
         wait(filter, monitor, bar)
     };
+    monitor.set_hold(None);
     match outcome {
         Ok(held) => held,
         Err(error) => {

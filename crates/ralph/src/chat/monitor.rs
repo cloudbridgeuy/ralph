@@ -3,6 +3,7 @@ use crate::chat::keepalive::{Stamp, PING_TIMEOUT};
 use crate::chat::memory::{self, Store};
 use crate::chat::schedule::fire_due;
 use crate::chat::schedule_worker::tick_workers;
+use crate::chat::term_status::TermStatus;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::inbox_alert;
 use crate::schedule_store::ScheduleStore;
@@ -15,6 +16,7 @@ use crate::worker_mcp::Inbox;
 use crate::workers::headless::{ExitCleanup, HeadlessShutdown};
 use crate::workers::{capture_pane, opencode_active, running_workers, Workers};
 use ralph_core::chat::ResetLimits;
+use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_keepalive::lock_wait_continues;
 use ralph_core::chat_memory::entries_to_shift;
@@ -24,6 +26,7 @@ use ralph_core::chat_status::{
 use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage, UsageTail};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
+use ralph_core::program_status::{report_for, Phase};
 use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
@@ -94,11 +97,29 @@ pub(super) struct Monitor {
     pub(super) reset_limits: ResetLimits,
     pub(super) thread: Mutex<ThreadMemo>,
     pub(super) usage_tail: Mutex<UsageTail>,
+    pub(super) term: TermStatus,
+    pub(super) phase: Mutex<Phase>,
+    pub(super) hold: Mutex<Option<HoldFilter>>,
 }
 
 impl Monitor {
     pub(super) fn status(&self) -> Status {
         locked(&self.status).clone()
+    }
+
+    pub(super) fn set_phase(&self, phase: Phase) {
+        *locked(&self.phase) = phase;
+    }
+
+    pub(super) fn set_hold(&self, hold: Option<HoldFilter>) {
+        *locked(&self.hold) = hold;
+    }
+
+    fn report_terminal(&self) {
+        let mut status = self.status();
+        status.hold = locked(&self.hold).clone();
+        let phase = *locked(&self.phase);
+        self.term.send(&report_for(phase, &status));
     }
 
     pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
@@ -375,6 +396,7 @@ pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 's
             if monitor.refresh(tick.is_multiple_of(MEMORY_EVERY_POLLS)) {
                 repaint();
             }
+            monitor.report_terminal();
             if check_every.is_some_and(|every| tick.is_multiple_of(every)) {
                 monitor.check();
             }

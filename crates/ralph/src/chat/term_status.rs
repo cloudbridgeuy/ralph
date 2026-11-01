@@ -1,0 +1,98 @@
+use ralph_core::program_status::{encode, tmux_wrap, Report};
+use std::io::{self, Write};
+use std::sync::Mutex;
+
+const TMUX_PANE_ENV: &str = "TMUX_PANE";
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Sent {
+    last: Option<String>,
+}
+
+fn frame(report: &Report, in_tmux: bool) -> Option<String> {
+    let sequence = encode(report).ok()?;
+    Some(if in_tmux {
+        tmux_wrap(&sequence)
+    } else {
+        sequence
+    })
+}
+
+fn changed(sent: &Sent, bytes: &str) -> bool {
+    sent.last.as_deref() != Some(bytes)
+}
+
+fn write_terminal(bytes: &str) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(bytes.as_bytes())?;
+    stdout.flush()
+}
+
+pub(super) struct TermStatus {
+    enabled: bool,
+    in_tmux: bool,
+    sent: Mutex<Sent>,
+}
+
+impl TermStatus {
+    pub(super) fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            in_tmux: std::env::var_os(TMUX_PANE_ENV).is_some(),
+            sent: Mutex::new(Sent::default()),
+        }
+    }
+
+    pub(super) fn send(&self, report: &Report) {
+        if !self.enabled {
+            return;
+        }
+        let Some(bytes) = frame(report, self.in_tmux) else {
+            return;
+        };
+        let mut sent = crate::watches::locked(&self.sent);
+        if changed(&sent, &bytes) {
+            let _ = write_terminal(&bytes);
+            sent.last = Some(bytes);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ralph_core::program_status::State;
+
+    fn working() -> Report {
+        Report {
+            state: State::Working,
+            msg: None,
+        }
+    }
+
+    #[test]
+    fn frame_is_the_plain_sequence_outside_tmux() {
+        assert_eq!(
+            frame(&working(), false).as_deref(),
+            Some("\x1b]7501;state=working:app=ralph\x07")
+        );
+    }
+
+    #[test]
+    fn frame_wraps_the_sequence_inside_tmux() {
+        assert_eq!(
+            frame(&working(), true).as_deref(),
+            Some("\x1bPtmux;\x1b\x1b]7501;state=working:app=ralph\x07\x1b\\")
+        );
+    }
+
+    #[test]
+    fn identical_bytes_are_not_resent() {
+        let sent = Sent {
+            last: Some("a".into()),
+        };
+        assert!(!changed(&sent, "a"));
+        assert!(changed(&sent, "b"));
+        assert!(changed(&Sent::default(), "a"));
+    }
+}
