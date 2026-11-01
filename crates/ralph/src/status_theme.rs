@@ -1,43 +1,66 @@
-use crate::markdown::parse_color;
+use crate::theme_slots::resolve_slots;
 use ralph_core::status_segments::Shade;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
-const SLOTS: [(&str, Shade, Color); 14] = [
-    ("mode_idle_fg", Shade::ModeIdleFg, Color::Black),
-    ("mode_idle_bg", Shade::ModeIdleBg, Color::Green),
-    ("mode_hold_fg", Shade::ModeHoldFg, Color::Black),
-    ("mode_hold_bg", Shade::ModeHoldBg, Color::Cyan),
-    ("mode_nap_fg", Shade::ModeNapFg, Color::Black),
-    ("mode_nap_bg", Shade::ModeNapBg, Color::Magenta),
-    ("mode_inbox_fg", Shade::ModeInboxFg, Color::Black),
-    ("mode_inbox_bg", Shade::ModeInboxBg, Color::Yellow),
-    ("mode_work_fg", Shade::ModeWorkFg, Color::White),
-    ("mode_work_bg", Shade::ModeWorkBg, Color::Blue),
-    ("store_fg", Shade::StoreFg, Color::Reset),
-    ("workers_fg", Shade::WorkersFg, Color::Reset),
-    ("watches_fg", Shade::WatchesFg, Color::Reset),
-    ("base_bg", Shade::BaseBg, Color::AnsiValue(236)),
+const SECTION: &str = "theme.status";
+
+const SHADES: [Shade; 14] = [
+    Shade::ModeIdleFg,
+    Shade::ModeIdleBg,
+    Shade::ModeHoldFg,
+    Shade::ModeHoldBg,
+    Shade::ModeNapFg,
+    Shade::ModeNapBg,
+    Shade::ModeInboxFg,
+    Shade::ModeInboxBg,
+    Shade::ModeWorkFg,
+    Shade::ModeWorkBg,
+    Shade::StoreFg,
+    Shade::WorkersFg,
+    Shade::WatchesFg,
+    Shade::BaseBg,
+];
+
+const DEFAULTS: [(&str, Color); 14] = [
+    ("mode_idle_fg", Color::Black),
+    ("mode_idle_bg", Color::Green),
+    ("mode_hold_fg", Color::Black),
+    ("mode_hold_bg", Color::Cyan),
+    ("mode_nap_fg", Color::Black),
+    ("mode_nap_bg", Color::Magenta),
+    ("mode_inbox_fg", Color::Black),
+    ("mode_inbox_bg", Color::Yellow),
+    ("mode_work_fg", Color::White),
+    ("mode_work_bg", Color::Blue),
+    ("store_fg", Color::Reset),
+    ("workers_fg", Color::Reset),
+    ("watches_fg", Color::Reset),
+    ("base_bg", Color::AnsiValue(236)),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusColors {
-    colors: [(&'static str, Shade, Color); 14],
+    colors: Vec<Color>,
 }
 
 impl Default for StatusColors {
     fn default() -> Self {
-        Self { colors: SLOTS }
+        Self {
+            colors: DEFAULTS.iter().map(|(_, color)| *color).collect(),
+        }
     }
 }
 
 impl StatusColors {
     pub fn color(&self, shade: Shade) -> Color {
-        self.colors
+        SHADES
             .iter()
-            .find(|(_, slot, _)| *slot == shade)
-            .map_or(Color::Reset, |(_, _, color)| *color)
+            .position(|slot| *slot == shade)
+            .and_then(|at| self.colors.get(at))
+            .copied()
+            .unwrap_or(Color::Reset)
     }
 }
 
@@ -49,21 +72,8 @@ pub struct StatusTheme {
 
 impl StatusTheme {
     pub fn resolve(&self) -> (StatusColors, Vec<String>) {
-        let mut resolved = StatusColors::default();
-        let mut warnings = Vec::new();
-        for (key, value) in &self.colors {
-            let slot = resolved.colors.iter_mut().find(|(name, _, _)| name == key);
-            match (slot, parse_color(value)) {
-                (Some((_, _, color)), Some(parsed)) => *color = parsed,
-                (Some(_), None) => warnings.push(format!(
-                    "[theme.status] {key} = \"{value}\" is not a color; using the default"
-                )),
-                (None, _) => {
-                    warnings.push(format!("[theme.status] unknown key \"{key}\"; ignored"))
-                }
-            }
-        }
-        (resolved, warnings)
+        let (colors, warnings) = resolve_slots(SECTION, &DEFAULTS, &self.colors);
+        (StatusColors { colors }, warnings)
     }
 }
 
@@ -96,8 +106,9 @@ mod tests {
 
     #[test]
     fn every_slot_has_a_distinct_key_and_shade() {
-        for (at, (key, shade, _)) in SLOTS.iter().enumerate() {
-            assert!(SLOTS[..at].iter().all(|(k, s, _)| k != key && s != shade));
+        for at in 0..DEFAULTS.len() {
+            assert!(DEFAULTS[..at].iter().all(|(k, _)| *k != DEFAULTS[at].0));
+            assert!(SHADES[..at].iter().all(|s| *s != SHADES[at]));
         }
     }
 

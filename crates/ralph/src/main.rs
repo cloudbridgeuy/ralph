@@ -39,6 +39,7 @@ mod snapshot;
 pub mod spinner;
 pub mod startup;
 mod status_theme;
+mod theme_slots;
 
 pub mod stream_processor;
 pub mod subprocess;

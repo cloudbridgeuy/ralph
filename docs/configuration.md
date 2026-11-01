@@ -121,7 +121,7 @@ border = "magenta"
 | `border` | `dark_blue` | `dark_blue` | Worker header box border |
 | `done`, `blocked`, `waiting` | `dark_green`, `dark_red`, `dark_yellow` | same | Worker status (`failed` uses `blocked`, `check` uses `waiting`) |
 
-A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `grey`, their `dark_` forms, `dark_grey`, `reset`) or `#rrggbb`. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `grey`, their `dark_` forms, `dark_grey`, `reset`), `#rrggbb`, or an ANSI 256 number from `0` to `255` (for example `236`). `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
 
 #### Status line colors: `[theme.status]`
 

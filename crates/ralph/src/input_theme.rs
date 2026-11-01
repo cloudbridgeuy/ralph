@@ -1,11 +1,12 @@
-use crate::markdown::parse_color;
+use crate::theme_slots::resolve_slots;
 use reedline::Color as Nu;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use termimad::crossterm::style::Color;
 
-const SUGGESTION_KEY: &str = "suggestion";
+const SECTION: &str = "theme.input";
 const SUGGESTION_DEFAULT: Color = Color::Cyan;
+const DEFAULTS: [(&str, Color); 1] = [("suggestion", SUGGESTION_DEFAULT)];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct InputColors {
@@ -28,18 +29,9 @@ pub struct InputTheme {
 
 impl InputTheme {
     pub fn resolve(&self) -> (InputColors, Vec<String>) {
-        let mut resolved = InputColors::default();
-        let mut warnings = Vec::new();
-        for (key, value) in &self.colors {
-            match (key.as_str(), parse_color(value)) {
-                (SUGGESTION_KEY, Some(parsed)) => resolved.suggestion = parsed,
-                (SUGGESTION_KEY, None) => warnings.push(format!(
-                    "[theme.input] {key} = \"{value}\" is not a color; using the default"
-                )),
-                _ => warnings.push(format!("[theme.input] unknown key \"{key}\"; ignored")),
-            }
-        }
-        (resolved, warnings)
+        let (colors, warnings) = resolve_slots(SECTION, &DEFAULTS, &self.colors);
+        let suggestion = colors.first().copied().unwrap_or(SUGGESTION_DEFAULT);
+        (InputColors { suggestion }, warnings)
     }
 }
 

@@ -135,6 +135,9 @@ impl Palette {
 
 pub fn parse_color(value: &str) -> Option<Color> {
     let Some(hex) = value.strip_prefix('#') else {
+        if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+            return value.parse().ok().map(Color::AnsiValue);
+        }
         return Color::try_from(value).ok();
     };
     if hex.len() != 6 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
@@ -506,6 +509,15 @@ mod tests {
         assert_eq!(parse_color("#+f0000"), None);
         assert_eq!(parse_color("#ffff"), None);
         assert_eq!(parse_color("pink"), None);
+    }
+
+    #[test]
+    fn parse_color_accepts_ansi_numbers_in_range() {
+        assert_eq!(parse_color("236"), Some(Color::AnsiValue(236)));
+        assert_eq!(parse_color("0"), Some(Color::AnsiValue(0)));
+        assert_eq!(parse_color("255"), Some(Color::AnsiValue(255)));
+        assert_eq!(parse_color("256"), None);
+        assert_eq!(parse_color("-1"), None);
     }
 
     #[test]
