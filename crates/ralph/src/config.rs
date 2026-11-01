@@ -302,6 +302,8 @@ pub struct ChatSection {
     pub status_powerline: bool,
     #[serde(default = "default_true")]
     pub terminal_status: bool,
+    #[serde(default = "default_true")]
+    pub auto_hold: bool,
     #[serde(default)]
     pub editor: Option<EditorSetting>,
     #[serde(default)]
@@ -355,6 +357,7 @@ impl Default for ChatSection {
             inbox_alert_unknown_focus: UnknownFocus::Alert,
             status_powerline: false,
             terminal_status: true,
+            auto_hold: true,
             editor: None,
             edit_mode: None,
             empty_submit: None,
