@@ -85,7 +85,7 @@ mod tests {
             settings: Path::new("/s/workers/A.settings.json"),
             permission_mode: "auto",
             attachments: Path::new("/s/attachments"),
-            task: "do it",
+            task_dir: Path::new("/s/workers/A.task"),
             model: None,
             scheduled: false,
             shell: ClaudeShell::Zsh,
@@ -110,9 +110,11 @@ mod tests {
                 "/s/workers/A.settings.json",
                 "--add-dir",
                 "/s/attachments",
+                "--add-dir",
+                "/s/workers/A.task",
                 "--append-system-prompt",
                 worker_prompt(false),
-                "do it",
+                "Read your task from /s/workers/A.task/task.md",
             ]
         );
     }
@@ -215,7 +217,10 @@ mod tests {
                 "--append-system-prompt"
             ]
         );
-        assert_eq!(args.last().unwrap(), "do it");
+        assert_eq!(
+            args.last().unwrap(),
+            "Read your task from /s/workers/A.task/task.md"
+        );
     }
 
     fn mode_after_flag(args: &[String]) -> &str {

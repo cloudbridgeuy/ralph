@@ -26,6 +26,7 @@ mod rollback;
 mod scheduled;
 mod startup;
 mod status;
+mod task_files;
 mod ticket;
 mod tools;
 mod transcript_usage;
@@ -55,6 +56,7 @@ pub use rollback::*;
 pub use scheduled::*;
 pub use startup::*;
 pub use status::*;
+pub use task_files::*;
 pub use ticket::*;
 pub use tools::*;
 pub use transcript_usage::*;
@@ -382,7 +384,7 @@ pub struct ClaudeWorkerArgs<'a> {
     pub settings: &'a Path,
     pub permission_mode: &'a str,
     pub attachments: &'a Path,
-    pub task: &'a str,
+    pub task_dir: &'a Path,
     pub model: Option<&'a str>,
     pub scheduled: bool,
     pub shell: ClaudeShell,
@@ -419,6 +421,8 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
             &args.settings.to_string_lossy(),
             "--add-dir",
             &args.attachments.to_string_lossy(),
+            "--add-dir",
+            &args.task_dir.to_string_lossy(),
         ]
         .map(str::to_string),
     );
@@ -429,7 +433,7 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
     if let Some(model) = args.model {
         command.extend(["--model".to_string(), model.to_string()]);
     }
-    command.push(args.task.to_string());
+    command.push(task_pointer(args.task_dir));
     command
 }
 
@@ -668,7 +672,7 @@ mod tests {
             settings: Path::new("/s/workers/A.settings.json"),
             permission_mode: "auto",
             attachments: Path::new("/s/attachments"),
-            task: "do it",
+            task_dir: Path::new("/s/workers/A.task"),
             model,
             scheduled: false,
             shell: ClaudeShell::Zsh,
@@ -707,9 +711,36 @@ mod tests {
     }
 
     #[test]
+    fn worker_command_ends_with_the_pointer_to_the_task_file() {
+        let args = worker_command(&claude_args(None));
+        assert_eq!(
+            args.last().unwrap(),
+            "Read your task from /s/workers/A.task/task.md"
+        );
+    }
+
+    #[test]
+    fn worker_command_adds_the_task_dir_once_beside_attachments() {
+        let args = worker_command(&claude_args(None));
+        let dirs: Vec<&String> = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--add-dir")
+            .map(|pair| &pair[1])
+            .collect();
+        assert_eq!(dirs, ["/s/attachments", "/s/workers/A.task"]);
+    }
+
+    #[test]
     fn worker_command_puts_model_before_the_task() {
         let args = worker_command(&claude_args(Some("opus")));
-        assert_eq!(args[args.len() - 3..], ["--model", "opus", "do it"]);
+        assert_eq!(
+            args[args.len() - 3..],
+            [
+                "--model",
+                "opus",
+                "Read your task from /s/workers/A.task/task.md"
+            ]
+        );
     }
 
     #[test]
@@ -736,7 +767,10 @@ mod tests {
                 "/s/attachments"
             ]
         );
-        assert_eq!(args.last().unwrap(), "do it");
+        assert_eq!(
+            args.last().unwrap(),
+            "Read your task from /s/workers/A.task/task.md"
+        );
     }
 
     #[test]
@@ -757,9 +791,11 @@ mod tests {
                 "/s/workers/A.settings.json".to_string(),
                 "--add-dir".to_string(),
                 "/s/attachments".to_string(),
+                "--add-dir".to_string(),
+                "/s/workers/A.task".to_string(),
                 "--append-system-prompt".to_string(),
                 WORKER_PROMPT.to_string(),
-                "do it".to_string(),
+                "Read your task from /s/workers/A.task/task.md".to_string(),
             ]
         );
     }
