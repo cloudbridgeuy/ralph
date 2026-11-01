@@ -1,7 +1,7 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    Action, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal,
-    TurnEnd, Turns, VersionGate, SERVER_NAME,
+    Action, ActivityMark, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus,
+    ThreadSignal, TurnEnd, Turns, VersionGate, SERVER_NAME,
 };
 use crate::stream::{interrupt_line, result_is_error};
 use serde_json::{json, Value};
@@ -328,6 +328,12 @@ pub fn resumed_session(expected: Option<&str>, found: String) -> Result<String, 
         )),
         _ => Ok(found),
     }
+}
+
+pub fn turn_lost_at_resume(activity: Option<&str>) -> bool {
+    activity
+        .and_then(ActivityMark::parse)
+        .is_some_and(|mark| mark.running)
 }
 
 pub fn decode_claude_version(output: &str) -> Option<&str> {
@@ -779,5 +785,15 @@ mod tests {
             interrupt_lines(&[], "turn-3"),
             [interrupt_line("interrupt-turn-3")]
         );
+    }
+
+    #[test]
+    fn a_running_mark_left_at_resume_means_the_turn_was_lost() {
+        assert!(turn_lost_at_resume(Some("42 running")));
+        assert!(turn_lost_at_resume(Some("42 running\n")));
+        assert!(!turn_lost_at_resume(Some("42 idle")));
+        assert!(!turn_lost_at_resume(Some("running")));
+        assert!(!turn_lost_at_resume(Some("")));
+        assert!(!turn_lost_at_resume(None));
     }
 }
