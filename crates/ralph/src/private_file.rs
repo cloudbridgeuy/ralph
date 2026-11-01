@@ -9,12 +9,12 @@ use std::path::{Path, PathBuf};
 pub(crate) fn check_path(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(io::Error::other(format!(
-            "chat store path is a symlink: {}",
+            "path is a symlink: {}",
             path.display()
         ))),
         #[cfg(unix)]
         Ok(metadata) if metadata.is_file() && metadata.nlink() > 1 => Err(io::Error::other(
-            format!("chat store file has multiple links: {}", path.display()),
+            format!("file has multiple links: {}", path.display()),
         )),
         Ok(_) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),

@@ -187,6 +187,10 @@ impl Workers {
                 clear_marker(&spawn_record_path(&self.store_dir, id)),
                 "Failed to clear worker spawn record",
             );
+            warn_if_err(
+                clear_marker(&task_dir_path(&self.store_dir, id)),
+                "Failed to clear worker task dir",
+            );
             let footprint = SpawnFootprint {
                 created_worktree,
                 created_branch,
