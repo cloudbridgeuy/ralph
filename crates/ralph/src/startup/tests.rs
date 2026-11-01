@@ -297,3 +297,59 @@ fn test_ask_summary_large_values() {
     assert_eq!(summary.cost_usd, Some(5.5678));
     assert_eq!(summary.input_tokens, Some(100_000));
 }
+
+#[test]
+fn ask_status_line_uses_the_ok_and_error_colors() {
+    use super::terminal::ask_status_line;
+    use termimad::crossterm::style::Color;
+    let ui = crate::ui_theme::UiColors {
+        ask_ok: Color::Blue,
+        ask_error: Color::Magenta,
+        ..crate::ui_theme::UiColors::default()
+    };
+    assert_eq!(
+        ask_status_line(&ui, true),
+        "\x1b[94m✓\x1b[0m \x1b[94mAsk Complete\x1b[0m"
+    );
+    assert_eq!(
+        ask_status_line(&ui, false),
+        "\x1b[95m✗\x1b[0m \x1b[95mAsk Failed\x1b[0m"
+    );
+}
+
+#[test]
+fn default_ask_colors_keep_todays_bytes() {
+    use super::terminal::{ask_status_line, attached_file_line, prompt_header, prompt_rule};
+    let ui = crate::ui_theme::UiColors::default();
+    assert_eq!(
+        ask_status_line(&ui, true),
+        "\x1b[32m✓\x1b[0m \x1b[32mAsk Complete\x1b[0m"
+    );
+    assert_eq!(
+        ask_status_line(&ui, false),
+        "\x1b[31m✗\x1b[0m \x1b[31mAsk Failed\x1b[0m"
+    );
+    assert_eq!(
+        prompt_header(&ui, 3),
+        "\x1b[1m\x1b[35m▶ Prompt\x1b[0m\n\x1b[35m───\x1b[0m"
+    );
+    assert_eq!(prompt_rule(&ui, 2), "\x1b[35m──\x1b[0m");
+    assert_eq!(
+        attached_file_line(&ui, "a/b", "desc"),
+        "  \x1b[36ma/b\x1b[0m  \x1b[2m→\x1b[0m  desc"
+    );
+}
+
+#[test]
+fn prompt_header_rule_and_path_use_their_own_colors() {
+    use super::terminal::{attached_file_line, prompt_header, prompt_rule};
+    use termimad::crossterm::style::Color;
+    let ui = crate::ui_theme::UiColors {
+        ask_header: Color::Blue,
+        ask_path: Color::Magenta,
+        ..crate::ui_theme::UiColors::default()
+    };
+    assert!(prompt_header(&ui, 3).starts_with("\x1b[1m\x1b[94m▶ Prompt"));
+    assert_eq!(prompt_rule(&ui, 1), "\x1b[94m─\x1b[0m");
+    assert!(attached_file_line(&ui, "p", "d").contains("\x1b[95mp\x1b[0m"));
+}

@@ -2,6 +2,7 @@ use crate::prelude::*;
 use error::Result;
 use std::io::BufRead;
 
+mod colour;
 pub mod error;
 mod hooks;
 
@@ -19,6 +20,7 @@ Rust checks:
 4. cargo test - Run all tests including doctests
 5. cargo rail unify --check - Dependency unification, unused deps, dead features
 6. File length check - Ensures no .rs file exceeds 1000 lines
+7. Raw colour check - Ensures no colour SGR escapes outside the ansi module
 
 When used with --install-hooks, this command also manages git pre-commit hooks that
 run these same checks automatically before each commit.
@@ -126,6 +128,10 @@ async fn run_lint_checks(command: &LintCommand, global: &crate::Global) -> Resul
 
     // 6. Run file length check
     if !run_file_length_check(global).await? {
+        all_passed = false;
+    }
+
+    if !colour::run_raw_colour_check(global).await? {
         all_passed = false;
     }
 

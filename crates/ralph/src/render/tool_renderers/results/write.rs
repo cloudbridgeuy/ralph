@@ -14,10 +14,10 @@ pub fn render_write_new_file(ctx: &RenderContext, file_path: &str, content: &str
     if ctx.terminal {
         output.push_str(&format!(
             "{}{}{} {}(new file){}\n",
-            ansi::DIM,
+            ctx.tools.label_fg(),
             file_path,
             ansi::RESET,
-            ansi::GREEN,
+            ctx.tools.ok_fg(),
             ansi::RESET
         ));
     } else {
@@ -37,12 +37,12 @@ pub fn render_write_no_changes(ctx: &RenderContext, file_path: &str, is_new_file
         if ctx.terminal {
             format!(
                 "{}{}{} {}(new file){}\n{}⚠ Empty file created{}\n",
-                ansi::DIM,
+                ctx.tools.label_fg(),
                 file_path,
                 ansi::RESET,
-                ansi::GREEN,
+                ctx.tools.ok_fg(),
                 ansi::RESET,
-                ansi::YELLOW,
+                ctx.tools.accent_fg(),
                 ansi::RESET
             )
         } else {
@@ -50,5 +50,31 @@ pub fn render_write_no_changes(ctx: &RenderContext, file_path: &str, is_new_file
         }
     } else {
         render_no_changes_message(ctx, file_path, "write")
+    }
+}
+
+#[cfg(test)]
+mod tool_color_tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+    use crate::tool_theme::test_colors;
+
+    #[test]
+    fn header_uses_the_context_tool_colors() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::terminal(&highlighter).with_tools(test_colors());
+        let out = render_write_new_file(&ctx, "a.rs", "x");
+        assert!(out.starts_with("\x1b[96ma.rs"));
+        assert!(out.contains("\x1b[97m(new file)"));
+        assert!(!out.contains("\x1b[90m"));
+    }
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_write_new_file(&ctx, "a.rs", "x").contains('\x1b'));
+        assert!(!render_write_no_changes(&ctx, "a.rs", true).contains('\x1b'));
+        assert!(!render_write_no_changes(&ctx, "a.rs", false).contains('\x1b'));
     }
 }

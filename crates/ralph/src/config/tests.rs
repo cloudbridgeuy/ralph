@@ -419,6 +419,9 @@ fn test_save_and_load() {
             agent: None,
             status: StatusTheme::default(),
             input: InputTheme::default(),
+            diff: DiffTheme::default(),
+            tools: ToolTheme::default(),
+            ui: UiTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -476,6 +479,9 @@ fn test_serialize_omits_none() {
             agent: None,
             status: StatusTheme::default(),
             input: InputTheme::default(),
+            diff: DiffTheme::default(),
+            tools: ToolTheme::default(),
+            ui: UiTheme::default(),
         },
         ..AppConfig::new()
     };
@@ -730,4 +736,52 @@ fn store_bad_claude_shell_keeps_store_keys() {
     assert!(notices
         .iter()
         .all(|n| !n.key.starts_with("store-fallback:")));
+}
+
+#[test]
+fn theme_diff_table_loads_and_reports_warnings() {
+    let config: AppConfig =
+        toml::from_str("[theme.diff]\nadd_bg = \"#000000\"\nctx_fg = \"red\"\n").unwrap();
+    assert_eq!(config.theme.diff.colors.len(), 2);
+    assert_eq!(
+        config.theme.warnings(),
+        ["[theme.diff] unknown key \"ctx_fg\"; ignored"]
+    );
+    let bad: AppConfig = toml::from_str("[theme.diff]\nadd_bg = \"nope\"\n").unwrap();
+    assert_eq!(
+        bad.theme.warnings(),
+        ["[theme.diff] add_bg = \"nope\" is not a color; using the default"]
+    );
+}
+
+#[test]
+fn theme_tools_table_loads_and_reports_warnings() {
+    let config: AppConfig =
+        toml::from_str("[theme.tools]\nname = \"#000000\"\nbold = \"red\"\n").unwrap();
+    assert_eq!(config.theme.tools.colors.len(), 2);
+    assert_eq!(
+        config.theme.warnings(),
+        ["[theme.tools] unknown key \"bold\"; ignored"]
+    );
+    let bad: AppConfig = toml::from_str("[theme.tools]\nname = \"nope\"\n").unwrap();
+    assert_eq!(
+        bad.theme.warnings(),
+        ["[theme.tools] name = \"nope\" is not a color; using the default"]
+    );
+}
+
+#[test]
+fn theme_ui_table_loads_and_reports_warnings() {
+    let config: AppConfig =
+        toml::from_str("[theme.ui]\nspinner = \"#000000\"\nbold = \"red\"\n").unwrap();
+    assert_eq!(config.theme.ui.colors.len(), 2);
+    assert_eq!(
+        config.theme.warnings(),
+        ["[theme.ui] unknown key \"bold\"; ignored"]
+    );
+    let bad: AppConfig = toml::from_str("[theme.ui]\nwarning = \"nope\"\n").unwrap();
+    assert_eq!(
+        bad.theme.warnings(),
+        ["[theme.ui] warning = \"nope\" is not a color; using the default"]
+    );
 }

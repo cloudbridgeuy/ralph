@@ -15,7 +15,7 @@ pub fn render_glob_result(
     // Empty result
     if content.is_empty() {
         return if ctx.terminal {
-            format!("{}(no matches){}\n", ansi::DIM, ansi::RESET)
+            format!("{}(no matches){}\n", ctx.tools.label_fg(), ansi::RESET)
         } else {
             "(no matches)\n".to_string()
         };
@@ -41,9 +41,9 @@ pub fn render_glob_result(
         let file_word = if file_count == 1 { "file" } else { "files" };
         output.push_str(&format!(
             "{}✓{} {}{} {} matched{}\n",
-            ansi::GREEN,
+            ctx.tools.ok_fg(),
             ansi::RESET,
-            ansi::DIM,
+            ctx.tools.label_fg(),
             file_count,
             file_word,
             ansi::RESET
@@ -70,7 +70,12 @@ pub fn render_glob_result(
                     break;
                 }
                 let filename = path.rsplit('/').next().unwrap_or(path);
-                output.push_str(&format!("    {}{}{}\n", ansi::DIM, filename, ansi::RESET));
+                output.push_str(&format!(
+                    "    {}{}{}\n",
+                    ctx.tools.label_fg(),
+                    filename,
+                    ansi::RESET
+                ));
                 lines_shown += 1;
             }
         }
@@ -78,7 +83,7 @@ pub fn render_glob_result(
         if should_truncate && lines_shown < file_count {
             output.push_str(&format!(
                 "{}... {} more files{}\n",
-                ansi::DIM,
+                ctx.tools.label_fg(),
                 file_count.saturating_sub(lines_shown),
                 ansi::RESET
             ));
@@ -122,4 +127,18 @@ pub fn render_glob_result(
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_glob_result(&ctx, 2, "src/a.rs\nsrc/b.rs", true).contains('\x1b'));
+        assert!(!render_glob_result(&ctx, 0, "", false).contains('\x1b'));
+    }
 }

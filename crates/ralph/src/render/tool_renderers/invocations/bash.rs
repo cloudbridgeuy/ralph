@@ -15,7 +15,7 @@ pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
 
     if ctx.terminal {
         let mut output = String::new();
-        output.push_str(&format!("{}▶ Bash{}\n", ansi::CYAN, ansi::RESET));
+        output.push_str(&format!("{}▶ Bash{}\n", ctx.tools.name_fg(), ansi::RESET));
 
         if is_multiline {
             output.push_str("```sh\n");
@@ -45,5 +45,19 @@ pub fn render_bash_invocation(ctx: &RenderContext, command: &str) -> String {
         output
     } else {
         format!("> Bash\n  {}\n", command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_bash_invocation(&ctx, "ls -la").contains('\x1b'));
+        assert!(!render_bash_invocation(&ctx, "ls\npwd").contains('\x1b'));
     }
 }

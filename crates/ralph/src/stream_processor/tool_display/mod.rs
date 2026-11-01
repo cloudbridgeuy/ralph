@@ -14,6 +14,7 @@ use ralph_core::stream::ToolInvocation;
 
 use super::processor::StreamProcessor;
 use super::utils::{extract_key_argument, truncate_string};
+use crate::ansi::RESET;
 
 /// Format a tool invocation for display.
 ///
@@ -66,10 +67,11 @@ pub fn format_tool_invocation(processor: &StreamProcessor, invocation: &ToolInvo
     if processor.highlighting_enabled {
         // Use colors for terminal display
         format!(
-            "\x1b[36m▶ {}\x1b[0m{}\n",
+            "{}▶ {}{RESET}{}\n",
+            processor.tool_colors.name_fg(),
             invocation.name,
             if let Some(arg) = formatted_arg {
-                format!(" \x1b[90m{}\x1b[0m", arg)
+                format!(" {}{}{RESET}", processor.tool_colors.args_fg(), arg)
             } else {
                 String::new()
             }
@@ -81,5 +83,32 @@ pub fn format_tool_invocation(processor: &StreamProcessor, invocation: &ToolInvo
             invocation.name,
             formatted_arg.unwrap_or_default()
         )
+    }
+}
+
+#[cfg(test)]
+mod tool_color_tests {
+    use super::*;
+    use crate::stream_processor::test_helpers::create_test_invocation;
+
+    fn processor(color: bool) -> StreamProcessor {
+        let mut processor = StreamProcessor::with_highlighting(color);
+        processor.tool_colors = crate::tool_theme::test_colors();
+        processor
+    }
+
+    #[test]
+    fn name_and_args_use_the_configured_colors() {
+        let invocation = create_test_invocation("Foo", serde_json::json!({"path": "a.rs"}));
+        let out = format_tool_invocation(&processor(true), &invocation);
+        assert!(out.starts_with("\x1b[94m▶ Foo"));
+        assert!(!out.contains("\x1b[36m"));
+        assert!(!out.contains("\x1b[90m"));
+    }
+
+    #[test]
+    fn plain_processor_has_no_escape_byte() {
+        let invocation = create_test_invocation("Foo", serde_json::json!({"path": "a.rs"}));
+        assert!(!format_tool_invocation(&processor(false), &invocation).contains('\x1b'));
     }
 }

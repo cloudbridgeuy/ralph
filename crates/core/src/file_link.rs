@@ -2,10 +2,8 @@
 
 use std::path::Path;
 
+use crate::ansi::{DIM, RESET};
 use crate::schedule::escape_controls;
-
-const DIM: &str = "\x1b[2m";
-const RESET: &str = "\x1b[0m";
 
 pub fn file_url(path: &Path) -> String {
     let mut url = String::from("file://");

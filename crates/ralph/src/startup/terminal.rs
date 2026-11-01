@@ -2,28 +2,56 @@
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{AskSummary, PromptDisplay};
+use crate::ansi::{fg, BOLD, DIM, RESET};
 use crate::markdown::MarkdownRenderer;
+use crate::ui_theme::UiColors;
+
+pub(super) fn prompt_rule(ui: &UiColors, width: usize) -> String {
+    format!("{}{}{RESET}", fg(Some(ui.ask_header)), "─".repeat(width))
+}
+
+pub(super) fn prompt_header(ui: &UiColors, width: usize) -> String {
+    format!(
+        "{BOLD}{}▶ Prompt{RESET}\n{}",
+        fg(Some(ui.ask_header)),
+        prompt_rule(ui, width)
+    )
+}
+
+pub(super) fn attached_file_line(ui: &UiColors, path: &str, description: &str) -> String {
+    format!(
+        "  {}{path}{RESET}  {DIM}→{RESET}  {description}",
+        fg(Some(ui.ask_path))
+    )
+}
+
+pub(super) fn ask_status_line(ui: &UiColors, success: bool) -> String {
+    let (icon, color, text) = if success {
+        ("✓", fg(Some(ui.ask_ok)), "Complete")
+    } else {
+        ("✗", fg(Some(ui.ask_error)), "Failed")
+    };
+    format!("{color}{icon}{RESET} {color}Ask {text}{RESET}")
+}
 
 /// Display prompt with terminal formatting.
-pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
+pub(super) fn display_prompt_terminal(prompt: &PromptDisplay, ui: &UiColors) {
     let term_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
     let width = super::formatters::separator_width(&prompt.stripped_prompt(), term_width);
 
     // Header with visual indicator
     println!();
-    println!("\x1b[1m\x1b[35m▶ Prompt\x1b[0m");
-    println!("\x1b[35m{}\x1b[0m", "─".repeat(width));
+    println!("{}", prompt_header(ui, width));
 
     // Display attached files as a table (if any)
     if !prompt.attached_files.is_empty() {
         println!();
-        println!("\x1b[2mAttached files:\x1b[0m");
+        println!("{DIM}Attached files:{RESET}");
         for file in &prompt.attached_files {
             // Format: "  path  →  Description"
             println!(
-                "  \x1b[36m{}\x1b[0m  \x1b[2m→\x1b[0m  {}",
-                file.path.display(),
-                file.description
+                "{}",
+                attached_file_line(ui, &file.path.display().to_string(), file.description)
             );
         }
     }
@@ -36,43 +64,30 @@ pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
     println!("{}", rendered);
 
     // Closing separator
-    println!("\x1b[35m{}\x1b[0m", "─".repeat(width));
+    println!("{}", prompt_rule(ui, width));
 }
 
 /// Display ask summary with terminal formatting.
-pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
+pub(super) fn display_ask_summary_terminal(summary: &AskSummary, ui: &UiColors) {
     println!();
 
-    // Status indicator based on success
-    let (status_icon, status_color) = if summary.success {
-        ("\x1b[32m✓\x1b[0m", "\x1b[32m") // Green checkmark
-    } else {
-        ("\x1b[31m✗\x1b[0m", "\x1b[31m") // Red X
-    };
-
-    // Header with status
-    let status_text = if summary.success {
-        "Complete"
-    } else {
-        "Failed"
-    };
-    println!("{} {}Ask {}\x1b[0m", status_icon, status_color, status_text);
+    println!("{}", ask_status_line(ui, summary.success));
     println!();
-    println!("\x1b[2m─── Metrics ───\x1b[0m");
+    println!("{DIM}─── Metrics ───{RESET}");
 
     // Cost
     let cost_str = summary
         .cost_usd
         .map(|c| format!("${:.4}", c))
         .unwrap_or_else(|| "N/A".to_string());
-    println!("\x1b[2mCost:\x1b[0m {}", cost_str);
+    println!("{DIM}Cost:{RESET} {}", cost_str);
 
     // Duration
     let duration_str = summary
         .duration_ms
         .map(format_duration)
         .unwrap_or_else(|| "N/A".to_string());
-    println!("\x1b[2mDuration:\x1b[0m {}", duration_str);
+    println!("{DIM}Duration:{RESET} {}", duration_str);
 
     // Tokens
     let has_tokens = summary.input_tokens.is_some() || summary.output_tokens.is_some();
@@ -86,7 +101,7 @@ pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
             .map(format_token_count)
             .unwrap_or_else(|| "N/A".to_string());
         println!(
-            "\x1b[2mTokens:\x1b[0m {} input | {} output",
+            "{DIM}Tokens:{RESET} {} input | {} output",
             input_str, output_str
         );
     }

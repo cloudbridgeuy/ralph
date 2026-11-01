@@ -9,6 +9,7 @@ use crate::render::render_glob_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
+use crate::ansi::RESET;
 
 /// Format a Glob tool result with verbose output.
 ///
@@ -24,7 +25,11 @@ pub fn format_glob_tool_result_verbose(processor: &StreamProcessor, result: &Too
             .unwrap_or_else(|| "(glob failed)".to_string());
 
         return if processor.highlighting_enabled {
-            format!("\x1b[31m✗ Glob error:\x1b[0m {}\n", error_content)
+            format!(
+                "{}✗ Glob error:{RESET} {}\n",
+                processor.tool_colors.error_fg(),
+                error_content
+            )
         } else {
             format!("! Glob error: {}\n", error_content)
         };

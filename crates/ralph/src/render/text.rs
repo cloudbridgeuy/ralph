@@ -230,7 +230,7 @@ pub fn render_code_block(ctx: &RenderContext<'_>, content: &str, language: Optio
 /// The rendered diff block with opening and closing fences.
 pub fn render_diff_block(ctx: &RenderContext<'_>, content: &str) -> String {
     let highlighted_content = if ctx.terminal {
-        highlight_with_basic_colors(content)
+        highlight_with_basic_colors(content, &ctx.diff)
     } else {
         content.to_string()
     };
@@ -721,5 +721,20 @@ changed in worker GUZ-628 during turn 6
         let ctx = RenderContext::plain(&highlighter);
         let fence = render_code_block(&ctx, "a; b\x1b[0m", Some("sh"));
         assert_eq!(fence, "```sh\na; b\x1b[0m\n```");
+    }
+
+    #[test]
+    fn diff_block_uses_the_context_diff_colors() {
+        let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
+        let ctx = RenderContext::terminal(&highlighter).with_diff(crate::diff_theme::test_colors());
+        let out = render_diff_block(&ctx, "+a");
+        assert!(out.contains("\x1b[94m+a"));
+    }
+
+    #[test]
+    fn diff_block_has_no_escape_byte_when_color_is_off() {
+        let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_diff_block(&ctx, "+a\n-b\n@@ -1 @@").contains('\x1b'));
     }
 }

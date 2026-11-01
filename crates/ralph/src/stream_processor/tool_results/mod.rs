@@ -18,6 +18,7 @@ use ralph_core::stream::{ToolInvocation, ToolResult};
 
 use super::processor::StreamProcessor;
 use super::utils::truncate_string;
+use crate::ansi::RESET;
 
 // Re-export for use in event_handler
 pub use edit::format_edit_result_with_snapshot;
@@ -79,10 +80,19 @@ pub fn format_tool_result_with_context(
     if processor.highlighting_enabled {
         if result.is_error {
             // Red for errors
-            format!("\x1b[31m✗ Error:\x1b[0m {}\n", truncated_content)
+            format!(
+                "{}✗ Error:{RESET} {}\n",
+                processor.tool_colors.error_fg(),
+                truncated_content
+            )
         } else {
             // Green check for success (dim output)
-            format!("\x1b[32m✓\x1b[0m \x1b[90m{}\x1b[0m\n", truncated_content)
+            format!(
+                "{}✓{RESET} {}{}{RESET}\n",
+                processor.tool_colors.ok_fg(),
+                processor.tool_colors.label_fg(),
+                truncated_content
+            )
         }
     } else {
         // Plain text for non-terminal
@@ -90,6 +100,37 @@ pub fn format_tool_result_with_context(
             format!("! Error: {}\n", truncated_content)
         } else {
             format!("  {}\n", truncated_content)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_color_tests {
+    use super::*;
+
+    fn processor(color: bool) -> StreamProcessor {
+        let mut processor = StreamProcessor::with_highlighting(color);
+        processor.tool_colors = crate::tool_theme::test_colors();
+        processor
+    }
+
+    fn result(is_error: bool) -> ToolResult {
+        serde_json::from_value(serde_json::json!({"content": "out", "is_error": is_error})).unwrap()
+    }
+
+    #[test]
+    fn success_and_error_marks_use_the_configured_colors() {
+        let ok = format_tool_result_with_context(&processor(true), &result(false), None);
+        assert!(ok.starts_with("\x1b[97m✓"));
+        let err = format_tool_result_with_context(&processor(true), &result(true), None);
+        assert!(err.starts_with("\x1b[92m✗"));
+    }
+
+    #[test]
+    fn plain_processor_has_no_escape_byte() {
+        for is_error in [false, true] {
+            let out = format_tool_result_with_context(&processor(false), &result(is_error), None);
+            assert!(!out.contains('\x1b'));
         }
     }
 }

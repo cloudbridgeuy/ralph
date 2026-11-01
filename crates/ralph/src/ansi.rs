@@ -3,32 +3,23 @@
 //! This module provides common ANSI escape codes used throughout the application
 //! for terminal manipulation and text styling.
 
-/// Carriage return - moves cursor to beginning of line.
+pub use ralph_core::ansi::*;
+
+#[cfg(test)]
+mod test_colours {
+    pub const BLUE: &str = "\x1b[34m";
+    pub const MAGENTA: &str = "\x1b[35m";
+    pub const GREY: &str = "\x1b[90m";
+    pub const BRIGHT_YELLOW: &str = "\x1b[93m";
+    pub const RED_BG: &str = "\x1b[48;2;140;45;45m";
+    pub const GREEN_BG: &str = "\x1b[48;2;45;130;45m";
+}
+
+#[cfg(test)]
+pub use test_colours::*;
+
 pub const CR: &str = "\r";
-
-/// Clear from cursor to end of line.
 pub const CLEAR_EOL: &str = "\x1b[K";
-
-/// Set foreground color to cyan.
-pub const CYAN: &str = "\x1b[36m";
-
-/// Set foreground color to yellow.
-pub const YELLOW: &str = "\x1b[33m";
-
-pub const GREEN: &str = "\x1b[32m";
-
-pub const RED: &str = "\x1b[31m";
-
-pub const BLUE: &str = "\x1b[34m";
-
-/// Set text to bold.
-pub const BOLD: &str = "\x1b[1m";
-
-/// Set text to dim.
-pub const DIM: &str = "\x1b[2m";
-
-/// Reset all text formatting.
-pub const RESET: &str = "\x1b[0m";
 
 fn color_code(color: termimad::crossterm::style::Color) -> String {
     use termimad::crossterm::style::Color;

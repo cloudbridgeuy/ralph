@@ -1,30 +1,10 @@
 //! Render context and ANSI color constants.
 
+use crate::diff_theme::DiffColors;
 use crate::highlight::Highlighter;
+use crate::tool_theme::ToolColors;
 
-/// ANSI codes for consistent terminal styling across all renderers.
-pub mod ansi {
-    /// Cyan text (tool headers)
-    pub const CYAN: &str = "\x1b[36m";
-    /// Green text (success indicators)
-    pub const GREEN: &str = "\x1b[32m";
-    /// Red text (error indicators)
-    pub const RED: &str = "\x1b[31m";
-    /// Yellow text (warnings, highlights)
-    pub const YELLOW: &str = "\x1b[33m";
-    /// Dim text (secondary info)
-    pub const DIM: &str = "\x1b[90m";
-    /// Bold text
-    pub const BOLD: &str = "\x1b[1m";
-    /// Reset all formatting
-    pub const RESET: &str = "\x1b[0m";
-    /// Vibrant red background for "before" blocks in diffs (RGB: 140, 45, 45)
-    /// Saturated enough to be immediately distinguishable, but not harsh
-    pub const RED_BG: &str = "\x1b[48;2;140;45;45m";
-    /// Vibrant green background for "after" blocks in diffs (RGB: 45, 130, 45)
-    /// Saturated enough to be immediately distinguishable, but not harsh
-    pub const GREEN_BG: &str = "\x1b[48;2;45;130;45m";
-}
+pub use crate::ansi;
 
 /// Configuration for rendering operations.
 ///
@@ -38,6 +18,8 @@ pub struct RenderContext<'a> {
     pub width: usize,
     pub mermaid: fn(&str, usize) -> Option<String>,
     pub images: Option<crate::render::ImageSettings>,
+    pub diff: DiffColors,
+    pub tools: ToolColors,
 }
 
 const DEFAULT_WIDTH: usize = 80;
@@ -61,7 +43,19 @@ impl<'a> RenderContext<'a> {
             width,
             mermaid: crate::mermaid_guard::render,
             images: crate::render::image::enabled(),
+            diff: DiffColors::default(),
+            tools: ToolColors::default(),
         }
+    }
+
+    pub fn with_diff(mut self, diff: DiffColors) -> Self {
+        self.diff = diff;
+        self
+    }
+
+    pub fn with_tools(mut self, tools: ToolColors) -> Self {
+        self.tools = tools;
+        self
     }
 
     /// Create a context for terminal rendering (with ANSI codes).

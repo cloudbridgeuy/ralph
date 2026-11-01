@@ -5,6 +5,7 @@ use std::io::IsTerminal;
 use super::plain;
 use super::terminal;
 use super::types::{AskSummary, PromptDisplay};
+use crate::ui_theme::UiColors;
 
 fn colored_stdout() -> bool {
     std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
@@ -16,9 +17,9 @@ fn colored_stdout() -> bool {
 /// The output format adapts based on whether stdout is a terminal:
 /// - Terminal, and `NO_COLOR` unset: markdown rendering with ANSI formatting
 /// - Piped, or `NO_COLOR` set: plain text without ANSI codes
-pub fn display_prompt(prompt: &PromptDisplay) {
+pub fn display_prompt(prompt: &PromptDisplay, ui: &UiColors) {
     if colored_stdout() {
-        terminal::display_prompt_terminal(prompt);
+        terminal::display_prompt_terminal(prompt, ui);
     } else {
         plain::display_prompt_plain(prompt);
     }
@@ -29,9 +30,9 @@ pub fn display_prompt(prompt: &PromptDisplay) {
 /// The output format adapts based on whether stdout is a terminal:
 /// - Terminal, and `NO_COLOR` unset: colors and formatting
 /// - Piped, or `NO_COLOR` set: plain ASCII with no ANSI codes
-pub fn display_ask_summary(summary: &AskSummary) {
+pub fn display_ask_summary(summary: &AskSummary, ui: &UiColors) {
     if colored_stdout() {
-        terminal::display_ask_summary_terminal(summary);
+        terminal::display_ask_summary_terminal(summary, ui);
     } else {
         plain::display_ask_summary_plain(summary);
     }

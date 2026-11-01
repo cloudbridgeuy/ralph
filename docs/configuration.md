@@ -113,7 +113,8 @@ border = "magenta"
 | `code` | `[theme] name` | assistant code theme | Syntax theme for fenced code blocks |
 | `heading1`, `heading2`, `heading3` | `cyan`, `blue`, `magenta` | `green`, `dark_green`, `dark_yellow` | Headings (always bold) |
 | `bold`, `italic` | terminal default | terminal default | Emphasis color |
-| `inline_code` | `yellow` | `dark_cyan` | Inline code (on a dark gray background) |
+| `inline_code` | `yellow` | `dark_cyan` | Inline code text |
+| `inline_code_bg` | ANSI `235` (dark gray) | ANSI `235` (dark gray) | Inline code background |
 | `bullet` | `dark_grey` | `dark_green` | List bullets |
 | `quote`, `table` | termimad default | termimad default | Quote mark, table borders |
 | `link`, `url` | `blue`, `cyan` | `blue`, `cyan` | Link label (underlined), link URL |
@@ -121,7 +122,7 @@ border = "magenta"
 | `border` | `dark_blue` | `dark_blue` | Worker header box border |
 | `done`, `blocked`, `waiting` | `dark_green`, `dark_red`, `dark_yellow` | same | Worker status (`failed` uses `blocked`, `check` uses `waiting`) |
 
-A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `grey`, their `dark_` forms, `dark_grey`, `reset`) or `#rrggbb`. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+A color is a name (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `grey`, their `dark_` forms, `dark_grey`, `reset`), `#rrggbb`, or an ANSI 256 number from `0` to `255` (for example `236`). `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
 
 #### Status line colors: `[theme.status]`
 
@@ -154,6 +155,79 @@ The default `base_bg` is ANSI color 236, written `#303030` above. `reset` is the
 ```toml
 [theme.input]
 suggestion = "cyan"  # suggest_reply pre-fill text
+```
+
+#### Diff colors: `[theme.diff]`
+
+ralph paints diffs and Edit, Write and NotebookEdit results with this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. File and diff headers stay bold and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+
+| Key | Default | Paints |
+|-----|---------|--------|
+| `add_fg` | `dark_green` | Added diff lines (`+`) |
+| `del_fg` | `dark_red` | Removed diff lines (`-`) |
+| `hunk_fg` | `dark_cyan` | Hunk headers (`@@`) |
+| `add_bg` | `#2d822d` | Line-number background of added and "After" blocks |
+| `del_bg` | `#8c2d2d` | Line-number background of "Before" blocks |
+
+```toml
+[theme.diff]
+add_fg = "dark_green"
+del_fg = "dark_red"
+hunk_fg = "dark_cyan"
+add_bg = "#2d822d"
+del_bg = "#8c2d2d"
+```
+
+#### Tool colors: `[theme.tools]`
+
+ralph paints tool calls and tool results with this table. It covers the invocation line (`▶ Name args`), the result marks, and the labels of Edit, Write and NotebookEdit results. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. Bold and dim text stay hard-coded and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+
+| Key | Default | Paints |
+|-----|---------|--------|
+| `name` | `dark_cyan` | Tool name and result headers |
+| `args` | `dark_grey` | Invocation arguments |
+| `label` | `dark_grey` | Secondary labels and dimmed result output |
+| `ok` | `dark_green` | Success marks (`✓`) |
+| `error` | `dark_red` | Error marks and messages (`✗`) |
+| `accent` | `dark_yellow` | Pending marks (`⋯`) and inline indicators such as `(new file)` |
+| `match_path` | `dark_grey` | Grep `file:line:` prefix |
+| `match_text` | `yellow` | Grep match text |
+
+```toml
+[theme.tools]
+name = "dark_cyan"
+args = "dark_grey"
+label = "dark_grey"
+ok = "dark_green"
+error = "dark_red"
+accent = "dark_yellow"
+match_path = "dark_grey"
+match_text = "yellow"
+```
+
+#### UI colors: `[theme.ui]`
+
+ralph paints the spinner, the `ralph ask` prompt and summary, warnings, and the rule between chat turns with this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. Bold, dim, and underline stay hard-coded and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Warnings printed before the config loads use the default `warning` color. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+
+| Key | Default | Paints |
+|-----|---------|--------|
+| `spinner` | `dark_cyan` | Spinner frame |
+| `ask_header` | `dark_magenta` | `▶ Prompt` header and rules of `ralph ask` |
+| `ask_path` | `dark_cyan` | Attached file paths in the `ralph ask` prompt |
+| `ask_ok` | `dark_green` | `✓ Ask Complete` line |
+| `ask_error` | `dark_red` | `✗ Ask Failed` line |
+| `warning` | `dark_yellow` | Warning symbol and box border |
+| `rule` | ANSI `238` | Rule printed between chat turns |
+
+```toml
+[theme.ui]
+spinner = "dark_cyan"
+ask_header = "dark_magenta"
+ask_path = "dark_cyan"
+ask_ok = "dark_green"
+ask_error = "dark_red"
+warning = "dark_yellow"
+rule = "238"
 ```
 
 Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.

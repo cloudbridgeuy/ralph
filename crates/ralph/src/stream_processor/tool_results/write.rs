@@ -93,7 +93,7 @@ fn format_before_after_highlighted(
     // File path header with box drawing
     output.push_str(&format!(
         "{}── {} ──{}\n",
-        ansi::CYAN,
+        processor.tool_colors.name_fg(),
         file_path,
         ansi::RESET
     ));
@@ -104,13 +104,13 @@ fn format_before_after_highlighted(
         "Before:",
         before,
         language,
-        ansi::RED_BG,
+        &ansi::bg(Some(processor.diff_colors.del_bg)),
     ));
 
     // Horizontal separator
     output.push_str(&format!(
         "{}─────────────────────────{}\n",
-        ansi::DIM,
+        processor.tool_colors.label_fg(),
         ansi::RESET
     ));
 
@@ -120,7 +120,7 @@ fn format_before_after_highlighted(
         "After:",
         after,
         language,
-        ansi::GREEN_BG,
+        &ansi::bg(Some(processor.diff_colors.add_bg)),
     ));
 
     output
@@ -137,11 +137,20 @@ fn format_highlighted_block(
     let mut output = String::new();
 
     // Label
-    output.push_str(&format!("{}{}{}\n", ansi::DIM, label, ansi::RESET));
+    output.push_str(&format!(
+        "{}{}{}\n",
+        processor.tool_colors.label_fg(),
+        label,
+        ansi::RESET
+    ));
 
     // Handle empty content
     if content.is_empty() {
-        output.push_str(&format!("{}(empty){}\n", ansi::DIM, ansi::RESET));
+        output.push_str(&format!(
+            "{}(empty){}\n",
+            processor.tool_colors.label_fg(),
+            ansi::RESET
+        ));
         return output;
     }
 
@@ -185,7 +194,7 @@ fn format_highlighted_block(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            ansi::DIM,
+            processor.tool_colors.label_fg(),
             line_count - MAX_BLOCK_LINES,
             ansi::RESET
         ));
@@ -268,9 +277,9 @@ fn format_no_changes_message(
     if processor.highlighting_enabled {
         format!(
             "{}✓{} {}Write: {} {}{}\n",
-            ansi::GREEN,
+            processor.tool_colors.ok_fg(),
             ansi::RESET,
-            ansi::DIM,
+            processor.tool_colors.label_fg(),
             file_path,
             indicator,
             ansi::RESET
@@ -308,11 +317,11 @@ fn format_new_file_highlighted(
     // File path header with box drawing and (new file) indicator
     output.push_str(&format!(
         "{}── {} {}(new file){} {}──{}\n",
-        ansi::CYAN,
+        processor.tool_colors.name_fg(),
         file_path,
-        ansi::YELLOW,
+        processor.tool_colors.accent_fg(),
         ansi::RESET,
-        ansi::CYAN,
+        processor.tool_colors.name_fg(),
         ansi::RESET
     ));
 
@@ -342,7 +351,7 @@ fn format_new_file_highlighted(
         let line_num = i + 1;
         output.push_str(&format!(
             "{}{:>width$} {}│{} {}\n",
-            ansi::GREEN_BG,
+            ansi::bg(Some(processor.diff_colors.add_bg)),
             line_num,
             ansi::RESET,
             ansi::RESET,
@@ -355,7 +364,7 @@ fn format_new_file_highlighted(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            ansi::DIM,
+            processor.tool_colors.label_fg(),
             line_count - MAX_NEW_FILE_LINES,
             ansi::RESET
         ));
@@ -617,5 +626,49 @@ mod tests {
 
         assert!(output.contains("(no changes)"));
         assert!(!output.contains("(new file)"));
+    }
+
+    fn colored_processor() -> StreamProcessor {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        processor.diff_colors = crate::diff_theme::test_colors();
+        processor
+    }
+
+    #[test]
+    fn before_after_uses_the_configured_backgrounds() {
+        let out = format_before_after_highlighted(&colored_processor(), "a.rs", "x", "y", None);
+        assert!(out.contains("\x1b[48;2;4;5;6m"));
+        assert!(out.contains("\x1b[48;2;1;2;3m"));
+        assert!(!out.contains(ansi::RED_BG));
+        assert!(!out.contains(ansi::GREEN_BG));
+    }
+
+    #[test]
+    fn new_file_uses_the_configured_add_background() {
+        let out = format_new_file_highlighted(&colored_processor(), "a.rs", "x", None);
+        assert!(out.contains("\x1b[48;2;1;2;3m"));
+        assert!(!out.contains(ansi::GREEN_BG));
+    }
+
+    #[test]
+    fn plain_processor_has_no_escape_byte() {
+        let processor = StreamProcessor::with_highlighting(false);
+        assert!(!format_before_after_display(&processor, "a.rs", "x", "y").contains('\x1b'));
+        assert!(!format_new_file_display(&processor, "a.rs", "x\ny").contains('\x1b'));
+    }
+
+    #[test]
+    fn new_file_header_uses_the_configured_tool_colors() {
+        let mut processor = StreamProcessor::with_highlighting(true);
+        processor.tool_colors = crate::tool_theme::test_colors();
+        let out = format_new_file_display(&processor, "a.rs", "x");
+        assert!(out.starts_with("\x1b[94m── a.rs \x1b[91m(new file)"));
+    }
+
+    #[test]
+    fn plain_processor_has_no_escape_byte_for_tool_headers() {
+        let processor = StreamProcessor::with_highlighting(false);
+        assert!(!format_new_file_display(&processor, "a.rs", "x").contains('\x1b'));
+        assert!(!format_no_changes_message(&processor, "a.rs", true).contains('\x1b'));
     }
 }

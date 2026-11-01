@@ -13,6 +13,7 @@ use crate::subprocess::{
     spawn_detached, OutputGate, Session, SpinnerSubprocessConfig, StreamingSubprocessResult,
     SubprocessError,
 };
+use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
 use crate::watches::locked;
 use ralph_core::chat::{
@@ -38,6 +39,12 @@ use termimad::MadSkin;
 
 pub(super) fn rule(skin: &MadSkin, width: usize) -> String {
     skin.text("---", Some(width)).to_string()
+}
+
+pub(super) fn rule_skin(ui: &UiColors) -> MadSkin {
+    let mut skin = MadSkin::default();
+    skin.horizontal_rule.set_fg(ui.rule);
+    skin
 }
 
 pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
@@ -114,7 +121,7 @@ pub(super) struct Turn<'a> {
 impl Turn<'_> {
     fn print_rule(&self) {
         self.gate
-            .write_out(&rule(&MadSkin::default(), screen_columns()));
+            .write_out(&rule(&rule_skin(self.theme_config.ui()), screen_columns()));
     }
 
     fn print_rule_after(&self, blocks: &[OutputBlock]) {
@@ -151,7 +158,8 @@ impl Turn<'_> {
             Ok(mut slot) => slot.take(),
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner().take(),
             Err(TryLockError::WouldBlock) => {
-                let mut spinner = Spinner::with_session_context(0, chat_session_info());
+                let mut spinner = Spinner::with_session_context(0, chat_session_info())
+                    .with_color(self.theme_config.ui().spinner);
                 spinner.start_with_context(SpinnerContext::WaitingForResponse);
                 let taken = locked(&self.session).take();
                 spinner.stop();
@@ -384,7 +392,8 @@ impl Turn<'_> {
 
     fn launch(&self, pre_log_len: Option<usize>, sent: &str) -> Result<Launch, SubprocessError> {
         let (mut entries, tree) = self.store.load_after_nap(|| {
-            let mut spinner = Spinner::with_session_context(0, chat_session_info());
+            let mut spinner = Spinner::with_session_context(0, chat_session_info())
+                .with_color(self.theme_config.ui().spinner);
             spinner.start_with_context(SpinnerContext::WaitingForMemory);
             spinner
         })?;

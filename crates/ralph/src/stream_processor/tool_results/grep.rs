@@ -9,6 +9,7 @@ use crate::render::render_grep_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
+use crate::ansi::RESET;
 
 /// Format a Grep tool result with verbose output.
 ///
@@ -28,7 +29,11 @@ pub fn format_grep_tool_result_verbose(
             .unwrap_or_else(|| "(grep failed)".to_string());
 
         return if processor.highlighting_enabled {
-            format!("\x1b[31m✗ Grep error:\x1b[0m {}\n", error_content)
+            format!(
+                "{}✗ Grep error:{RESET} {}\n",
+                processor.tool_colors.error_fg(),
+                error_content
+            )
         } else {
             format!("! Grep error: {}\n", error_content)
         };

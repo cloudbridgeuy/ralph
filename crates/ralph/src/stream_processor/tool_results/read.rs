@@ -9,6 +9,7 @@ use crate::render::render_read_result;
 
 use super::super::processor::StreamProcessor;
 use super::super::utils::truncate_string;
+use crate::ansi::RESET;
 
 /// Format a Read tool result with verbose output.
 ///
@@ -29,7 +30,11 @@ pub fn format_read_tool_result_verbose(
             .unwrap_or_else(|| "(read failed)".to_string());
 
         return if processor.highlighting_enabled {
-            format!("\x1b[31m✗ Read error:\x1b[0m {}\n", error_content)
+            format!(
+                "{}✗ Read error:{RESET} {}\n",
+                processor.tool_colors.error_fg(),
+                error_content
+            )
         } else {
             format!("! Read error: {}\n", error_content)
         };

@@ -1,5 +1,6 @@
 //! Loads `config.toml`. Locations, precedence, and keys are in `docs/configuration.md`.
 
+use crate::diff_theme::DiffTheme;
 use crate::input_theme::InputTheme;
 use crate::invoke::{
     resolve_permission_mode, ASK_DEFAULT_PERMISSION_MODE, CHAT_DEFAULT_PERMISSION_MODE,
@@ -7,6 +8,8 @@ use crate::invoke::{
 use crate::markdown::{RoleTheme, ThemeRole};
 use crate::paths;
 use crate::status_theme::StatusTheme;
+use crate::tool_theme::ToolTheme;
+use crate::ui_theme::UiTheme;
 use crate::warn::warn_once;
 use ralph_core::chat::WORKER_QUIET_SECS;
 use ralph_core::inbox_alert::UnknownFocus;
@@ -380,6 +383,15 @@ pub struct ThemeSection {
 
     #[serde(default)]
     pub input: InputTheme,
+
+    #[serde(default)]
+    pub diff: DiffTheme,
+
+    #[serde(default)]
+    pub tools: ToolTheme,
+
+    #[serde(default)]
+    pub ui: UiTheme,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -418,6 +430,9 @@ impl ThemeSection {
             .chain(self.agent().palette(ThemeRole::Agent).1)
             .chain(self.status.resolve().1)
             .chain(self.input.resolve().1)
+            .chain(self.diff.resolve().1)
+            .chain(self.tools.resolve().1)
+            .chain(self.ui.resolve().1)
             .collect()
     }
 }

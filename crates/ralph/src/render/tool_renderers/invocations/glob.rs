@@ -9,7 +9,7 @@ pub fn render_glob_invocation(ctx: &RenderContext, pattern: &str, path: Option<&
 
     if ctx.terminal {
         let mut output = String::new();
-        output.push_str(&format!("{}▶ Glob{}\n", ansi::CYAN, ansi::RESET));
+        output.push_str(&format!("{}▶ Glob{}\n", ctx.tools.name_fg(), ansi::RESET));
         output.push_str(&format!(
             "  {}Pattern:{} {}\n",
             ansi::BOLD,
@@ -18,7 +18,7 @@ pub fn render_glob_invocation(ctx: &RenderContext, pattern: &str, path: Option<&
         ));
         output.push_str(&format!(
             "  {}Path:{} {}\n",
-            ansi::DIM,
+            ctx.tools.label_fg(),
             ansi::RESET,
             search_path
         ));
@@ -29,5 +29,19 @@ pub fn render_glob_invocation(ctx: &RenderContext, pattern: &str, path: Option<&
         output.push_str(&format!("  Pattern: {}\n", pattern));
         output.push_str(&format!("  Path: {}\n", search_path));
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        assert!(!render_glob_invocation(&ctx, "*.rs", Some("src")).contains('\x1b'));
+        assert!(!render_glob_invocation(&ctx, "*.rs", None).contains('\x1b'));
     }
 }

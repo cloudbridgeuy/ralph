@@ -12,14 +12,29 @@ pub fn render_read_invocation(
     let mut output = String::new();
 
     if ctx.terminal {
-        output.push_str(&format!("{}▶ Read{}\n", ansi::CYAN, ansi::RESET));
-        output.push_str(&format!("  {}{}{}\n", ansi::DIM, file_path, ansi::RESET));
+        output.push_str(&format!("{}▶ Read{}\n", ctx.tools.name_fg(), ansi::RESET));
+        output.push_str(&format!(
+            "  {}{}{}\n",
+            ctx.tools.label_fg(),
+            file_path,
+            ansi::RESET
+        ));
 
         if let Some(off) = offset {
-            output.push_str(&format!("  offset: {}{}{}\n", ansi::DIM, off, ansi::RESET));
+            output.push_str(&format!(
+                "  offset: {}{}{}\n",
+                ctx.tools.label_fg(),
+                off,
+                ansi::RESET
+            ));
         }
         if let Some(lim) = limit {
-            output.push_str(&format!("  limit: {}{}{}\n", ansi::DIM, lim, ansi::RESET));
+            output.push_str(&format!(
+                "  limit: {}{}{}\n",
+                ctx.tools.label_fg(),
+                lim,
+                ansi::RESET
+            ));
         }
     } else {
         output.push_str("> Read\n");
@@ -33,4 +48,18 @@ pub fn render_read_invocation(
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::highlight::Highlighter;
+
+    #[test]
+    fn plain_context_has_no_escape_byte() {
+        let highlighter = Highlighter::new();
+        let ctx = RenderContext::plain(&highlighter);
+        let out = render_read_invocation(&ctx, "a.rs", Some(1), Some(2));
+        assert!(!out.contains('\x1b'));
+    }
 }
