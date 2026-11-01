@@ -46,8 +46,12 @@ pub fn first_match(entries: &[Entry], filter: &HoldFilter) -> Option<Position> {
         .and_then(Position::at_index)
 }
 
-pub fn redraw(bar: &str) -> String {
-    format!("\r\x1b[2K{}", bar.trim_end_matches('\n'))
+pub fn redraw(bar: &str, painted: usize, columns: usize) -> String {
+    let up = match painted.div_ceil(columns.max(1)).saturating_sub(1) {
+        0 => String::new(),
+        rows => format!("\x1b[{rows}A"),
+    };
+    format!("\r{up}\x1b[J{}", bar.trim_end_matches('\n'))
 }
 
 pub fn hold_targets(status: &Status) -> BTreeSet<String> {

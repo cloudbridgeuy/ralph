@@ -39,12 +39,14 @@ impl ChatPrompt {
     }
 }
 
+pub(super) fn terminal_columns() -> usize {
+    crossterm::terminal::size()
+        .map(|(w, _)| usize::from(w))
+        .unwrap_or(DEFAULT_TERMINAL_WIDTH)
+}
+
 pub(super) fn screen_columns() -> usize {
-    wrap_width(
-        crossterm::terminal::size()
-            .map(|(w, _)| usize::from(w))
-            .unwrap_or(DEFAULT_TERMINAL_WIDTH),
-    )
+    wrap_width(terminal_columns())
 }
 
 impl ChatPrompt {

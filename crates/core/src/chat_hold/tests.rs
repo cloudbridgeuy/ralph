@@ -115,8 +115,14 @@ fn other_keys_do_not_leave() {
 
 #[test]
 fn redraw_returns_to_the_line_start_and_drops_the_newline() {
-    assert_eq!(redraw("bar\n"), "\r\x1b[2Kbar");
-    assert_eq!(redraw("bar"), "\r\x1b[2Kbar");
+    assert_eq!(redraw("bar\n", 0, 80), "\r\x1b[Jbar");
+    assert_eq!(redraw("bar", 80, 80), "\r\x1b[Jbar");
+}
+
+#[test]
+fn redraw_climbs_over_the_rows_a_narrower_terminal_wrapped_the_old_bar_onto() {
+    assert_eq!(redraw("bar", 120, 50), "\r\x1b[2A\x1b[Jbar");
+    assert_eq!(redraw("bar", 50, 120), "\r\x1b[Jbar");
 }
 
 fn status(workers: &[&str], watches: &[&str], schedule: &[&str]) -> Status {
