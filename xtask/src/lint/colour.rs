@@ -2,8 +2,6 @@ use crate::prelude::*;
 
 const ALLOWLIST: &[&str] = &["crates/core/src/ansi.rs", "crates/core/src/kitty.rs"];
 
-const ESCAPE_PREFIXES: &[&str] = &["\\x1b[", "\\u{1b}["];
-
 #[derive(Debug, PartialEq, Eq)]
 pub struct ColourViolation {
     pub line: usize,
@@ -18,7 +16,9 @@ fn is_exempt_path(path: &str) -> bool {
     let mut parts = normalized.split('/').peekable();
     while let Some(part) = parts.next() {
         let is_last = parts.peek().is_none();
-        if (!is_last && (part == "tests" || part == "vendor")) || (is_last && part == "tests.rs") {
+        if (!is_last && (part == "tests" || part == "vendor"))
+            || (is_last && (part == "tests.rs" || part.ends_with("_tests.rs")))
+        {
             return true;
         }
     }
@@ -45,10 +45,27 @@ fn sgr_sets_colour(after_prefix: &str) -> bool {
     parts.into_iter().any(is_colour_param)
 }
 
+fn escape_prefix_len(escaped: &str) -> Option<usize> {
+    let lower = escaped.to_ascii_lowercase();
+    if lower.starts_with("x1b[") {
+        return Some(4);
+    }
+    if lower.starts_with("033[") {
+        return Some(4);
+    }
+    let digits = lower.strip_prefix("u{")?;
+    let close = digits.find('}')?;
+    let value = &digits[..close];
+    let is_escape = (1..=6).contains(&value.len())
+        && value.trim_start_matches('0') == "1b"
+        && digits[close + 1..].starts_with('[');
+    is_escape.then_some(2 + close + 2)
+}
+
 fn line_has_colour_escape(line: &str) -> bool {
-    ESCAPE_PREFIXES.iter().any(|prefix| {
-        line.match_indices(prefix)
-            .any(|(at, _)| sgr_sets_colour(&line[at + prefix.len()..]))
+    line.match_indices('\\').any(|(at, _)| {
+        let escaped = &line[at + 1..];
+        escape_prefix_len(escaped).is_some_and(|len| sgr_sets_colour(&escaped[len..]))
     })
 }
 
@@ -412,5 +429,38 @@ mod tests {
     #[test]
     fn byte_raw_strings_hide_their_braces() {
         assert_eq!(delta("let s = br\"{\"; {"), 1);
+    }
+
+    #[test]
+    fn flags_every_escape_spelling() {
+        assert_eq!(hits(PROD, "let s = \"\\x1B[31m\";\n"), vec![1]);
+        assert_eq!(hits(PROD, "let s = \"\\033[31m\";\n"), vec![1]);
+        assert_eq!(hits(PROD, "let s = \"\\u{001b}[31m\";\n"), vec![1]);
+        assert_eq!(hits(PROD, "let s = \"\\u{1B}[31m\";\n"), vec![1]);
+        assert_eq!(hits(PROD, "let s = \"\\u{00001B}[31m\";\n"), vec![1]);
+    }
+
+    #[test]
+    fn other_spellings_keep_the_attribute_exemption() {
+        let text = "let a = \"\\033[0m\";\nlet b = \"\\x1B[1m\";\nlet c = \"\\u{001b}[22m\";\n";
+        assert!(hits(PROD, text).is_empty());
+    }
+
+    #[test]
+    fn skips_files_named_tests_suffix() {
+        let text = "let s = \"\\x1b[31m\";\n";
+        assert!(hits("crates/ralph/src/render_tests.rs", text).is_empty());
+    }
+
+    #[test]
+    fn escape_prefix_len_measures_each_spelling() {
+        assert_eq!(escape_prefix_len("x1B[31m"), Some(4));
+        assert_eq!(escape_prefix_len("033[31m"), Some(4));
+        assert_eq!(escape_prefix_len("u{1b}[31m"), Some(6));
+        assert_eq!(escape_prefix_len("u{001B}[31m"), Some(8));
+        assert_eq!(escape_prefix_len("u{1b}x"), None);
+        assert_eq!(escape_prefix_len("u{0000001b}["), None);
+        assert_eq!(escape_prefix_len("u{2b}["), None);
+        assert_eq!(escape_prefix_len("n[31m"), None);
     }
 }
