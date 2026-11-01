@@ -1,8 +1,8 @@
-use crate::acp_log::{drain_stderr, CappedLog};
+use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
-use crate::codex_worker::pipes::{logged_stdin, pipe_lines};
+use crate::codex_worker::pipes::pipe_lines;
+use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;
-use crate::codex_worker::{report_exit, Stdin};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
     now_secs, queued_entries, report_start_warning, request_ids, sweep_owner, take_answer,
@@ -45,6 +45,8 @@ const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const LOST_TURN: &str = "the turn in flight was lost when the chat exited; prompt it again";
 
+type ClaudeStdin = Mutex<Option<Box<dyn Write + Send>>>;
+
 struct ClaudeReply {
     request_id: String,
     input: Value,
@@ -53,7 +55,7 @@ struct ClaudeReply {
 struct Shared {
     id: String,
     turns: Mutex<Turns>,
-    stdin: Stdin,
+    stdin: ClaudeStdin,
     events: Events,
     permissions: PermissionQueue<ClaudeReply>,
     mode: PermissionMode,
@@ -86,7 +88,6 @@ impl Shared {
 
     fn signal(&self, signal: ThreadSignal) {
         let closing = self.closing.load(Ordering::SeqCst);
-        let ended = matches!(signal, ThreadSignal::TurnEnded(_));
         self.drive(|turns| {
             let signal = match signal {
                 ThreadSignal::TurnEnded(end) => {
@@ -96,9 +97,6 @@ impl Shared {
             };
             turns.signal(signal, closing)
         });
-        if ended {
-            self.permissions.accept_again();
-        }
     }
 
     fn send(&self, line: &str) -> Result<(), String> {
@@ -153,13 +151,15 @@ impl Shared {
         for action in actions {
             match action {
                 Action::Start(text) => {
-                    self.permissions.accept_again();
                     self.send(&user_line(&text)).ok();
                 }
                 Action::Emit(event) => {
                     match &event {
                         WorkerEvent::TurnStarted => self.heartbeat.set_running(true),
-                        WorkerEvent::TurnEnded(_) => self.heartbeat.set_running(false),
+                        WorkerEvent::TurnEnded(_) => {
+                            self.permissions.accept_again();
+                            self.heartbeat.set_running(false);
+                        }
                         _ => {}
                     }
                     push_event(&self.events, event);
@@ -388,7 +388,11 @@ impl ClaudeWorker {
         let shared = Arc::new(Shared {
             id: id.to_string(),
             turns: Mutex::new(Turns::default()),
-            stdin: logged_stdin(stdin, &log),
+            stdin: Mutex::new(Some(Box::new(LoggedWrite {
+                inner: stdin,
+                log: Arc::clone(&log),
+                tag: "in",
+            }))),
             permissions: PermissionQueue::new(
                 host_process_token(),
                 id.to_string(),
@@ -694,252 +698,5 @@ impl HeadlessHost for ClaudeHeadlessHost {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use ralph_core::worker::Report;
-    use tempfile::TempDir;
-
-    const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
-
-    struct Run {
-        shared: Shared,
-        dir: TempDir,
-        events: Vec<WorkerEvent>,
-    }
-
-    impl Run {
-        fn reports(&self) -> Vec<Report> {
-            let Ok(entries) = fs::read_dir(self.dir.path().join("inbox")) else {
-                return Vec::new();
-            };
-            entries
-                .filter_map(Result::ok)
-                .filter_map(|entry| fs::read(entry.path()).ok())
-                .filter_map(|bytes| serde_json::from_slice(&bytes).ok())
-                .collect()
-        }
-
-        fn permission_events(&self) -> Vec<&WorkerEvent> {
-            self.events
-                .iter()
-                .filter(|event| {
-                    matches!(
-                        event,
-                        WorkerEvent::PermissionAsked(_) | WorkerEvent::PermissionSettled
-                    )
-                })
-                .collect()
-        }
-    }
-
-    fn run(mode: PermissionMode, lines: &[&str]) -> Run {
-        let dir = TempDir::new().unwrap();
-        let store = dir.path();
-        let events = Events::default();
-        let inbox = || Inbox::new(store.join("inbox"));
-        let shared = Shared {
-            id: "w".into(),
-            turns: Mutex::default(),
-            stdin: Arc::new(Mutex::new(None)),
-            events: Arc::clone(&events),
-            permissions: PermissionQueue::new("p".into(), "w".into(), inbox(), Arc::clone(&events)),
-            mode,
-            heartbeat: Heartbeat::new(store.join("activity"), store.join("gone")),
-            markers: WorkerMarkers::new(store, "w"),
-            inbox: inbox(),
-            closing: AtomicBool::new(false),
-            exited: AtomicBool::new(false),
-            results: store.join("interrupt-result"),
-            expected_session: None,
-            turn_seq: AtomicU64::new(0),
-        };
-        let (tx, rx) = mpsc::channel();
-        for line in lines {
-            tx.send((*line).to_string()).unwrap();
-        }
-        drop(tx);
-        let (ready, _) = mpsc::channel();
-        shared.read(rx, Some(ready));
-        let events = locked(&events).clone();
-        Run {
-            shared,
-            dir,
-            events,
-        }
-    }
-
-    #[test]
-    fn a_permission_line_without_a_request_id_posts_one_failure_and_queues_nothing() {
-        let line = ASK.replace(r#""request_id":"r1","#, "");
-        let run = run(PermissionMode::Ask, &[&line]);
-        assert!(run.permission_events().is_empty());
-        let reports = run.reports();
-        assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].status, "blocked");
-        assert_eq!(
-            reports[0].text,
-            "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
-        );
-    }
-
-    // stdin is None here; core test yolo_answers_allow_once_and_ask_answers_nothing covers the bytes.
-    #[test]
-    fn yolo_never_queues_or_publishes() {
-        let run = run(PermissionMode::Yolo, &[ASK]);
-        assert!(run.permission_events().is_empty());
-        assert!(run.reports().is_empty());
-    }
-
-    #[test]
-    fn a_cancel_settles_by_the_raw_id_after_the_queue_published_the_prefixed_id() {
-        let cancel = r#"{"type":"control_cancel_request","request_id":"r1"}"#;
-        let run = run(PermissionMode::Ask, &[ASK, cancel]);
-        let asked = run.permission_events();
-        assert!(matches!(
-            asked.as_slice(),
-            [WorkerEvent::PermissionAsked(content), WorkerEvent::PermissionSettled]
-                if content.request_id == "p.r1"
-        ));
-        let stale = run
-            .shared
-            .permissions
-            .take_answer("p.r1", "allow_once")
-            .err()
-            .unwrap();
-        assert!(stale.starts_with("stale request"));
-    }
-
-    #[test]
-    fn the_session_record_holds_the_session_id_and_spawn_settings() {
-        let request = SpawnRequest {
-            worktree: "/w".into(),
-            exe: "/ralph".into(),
-            inbox: "/store/inbox".into(),
-            task: "t".into(),
-            at: 1,
-            snapshots: false,
-            model: Some("haiku".into()),
-        };
-        let record = session_record("sid", &request, Path::new("/store"), PermissionMode::Yolo);
-        assert_eq!(record.session_id, "sid");
-        assert_eq!(record.cwd, PathBuf::from("/w"));
-        assert_eq!(record.store, Some(PathBuf::from("/store")));
-        assert_eq!(record.model.as_deref(), Some("haiku"));
-        assert_eq!(record.permissions, Some(PermissionMode::Yolo));
-    }
-
-    fn spawn_request() -> SpawnRequest {
-        SpawnRequest {
-            worktree: "/w".into(),
-            exe: "/ralph".into(),
-            inbox: "/store/inbox".into(),
-            task: "t".into(),
-            at: 1,
-            snapshots: false,
-            model: None,
-        }
-    }
-
-    fn start_files(dir: &TempDir) -> (HandoffFiles, SessionRecord) {
-        let files = HandoffFiles::claude_headless(dir.path(), "w");
-        let record = session_record("sid", &spawn_request(), dir.path(), PermissionMode::Ask);
-        (files, record)
-    }
-
-    #[test]
-    fn an_interrupt_denies_each_queued_permission_before_the_interrupt_line() {
-        let second = ASK.replace(r#""request_id":"r1""#, r#""request_id":"r2""#);
-        let run = run(PermissionMode::Ask, &[ASK, &second]);
-        let lines = run.shared.interrupt_sends("turn-4");
-        assert_eq!(
-            lines,
-            interrupt_lines(&["r1".into(), "r2".into()], "turn-4")
-        );
-        assert_eq!(lines.len(), 3);
-        assert!(lines[0].contains(r#""behavior":"deny""#));
-        assert!(lines[2].contains("interrupt-turn-4"));
-        assert!(run.shared.permissions.take_answer("p.r1", "deny").is_err());
-    }
-
-    #[test]
-    fn a_new_session_writes_the_owner_and_the_record_before_turn_one() {
-        let dir = TempDir::new().unwrap();
-        let (files, record) = start_files(&dir);
-        let steps = start_steps(&ClaudeSession::New("sid"));
-        write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
-        assert!(files.owner.exists());
-        assert_eq!(fs::read_to_string(&files.session).unwrap(), record.render());
-    }
-
-    #[test]
-    fn a_resume_writes_the_owner_and_leaves_the_record_alone() {
-        let dir = TempDir::new().unwrap();
-        let (files, record) = start_files(&dir);
-        let steps = start_steps(&ClaudeSession::Resume("sid"));
-        write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
-        assert!(files.owner.exists());
-        assert!(!files.session.exists());
-    }
-
-    #[test]
-    fn a_failed_record_write_removes_the_owner_file_and_reports_the_error() {
-        let dir = TempDir::new().unwrap();
-        let (files, record) = start_files(&dir);
-        fs::write(dir.path().join(CLAUDE_HEADLESS_SESSION_DIR), "").unwrap();
-        let steps = start_steps(&ClaudeSession::New("sid"));
-        let error =
-            write_start_files(steps, &files, &record, std::process::id(), None).unwrap_err();
-        assert!(error.starts_with("could not write the session record"));
-        assert!(!files.owner.exists());
-        assert!(!files.session.exists());
-    }
-
-    #[test]
-    fn init_failure_and_not_adopted_remove_the_owner_and_the_record() {
-        for fault in [StartFault::InitFailed, StartFault::NotAdopted] {
-            let dir = TempDir::new().unwrap();
-            let (files, record) = start_files(&dir);
-            let steps = start_steps(&ClaudeSession::New("sid"));
-            write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
-            remove_leftovers(cleanup(fault), &files, None);
-            assert!(!files.owner.exists());
-            assert!(!files.session.exists());
-        }
-    }
-
-    fn ask_from(line: &str) -> ClaudePermission {
-        let ClaudeLine::Permission(ask) = decode_line(line) else {
-            panic!("not a permission line");
-        };
-        ask
-    }
-
-    #[test]
-    fn a_permission_that_arrives_after_the_interrupt_drain_is_not_queued() {
-        let run = run(PermissionMode::Ask, &[]);
-        run.shared.interrupt_sends("turn-4");
-        run.shared.ask(ask_from(ASK));
-        let stale = run
-            .shared
-            .permissions
-            .take_answer("p.r1", "deny")
-            .err()
-            .unwrap();
-        assert!(stale.starts_with("stale request"), "{stale}");
-    }
-
-    #[test]
-    fn permissions_queue_again_once_the_interrupted_turn_ends() {
-        let run = run(PermissionMode::Ask, &[]);
-        run.shared.interrupt_sends("turn-4");
-        run.shared.signal(ThreadSignal::TurnEnded(
-            ralph_core::worker::TurnEnd::Succeeded,
-        ));
-        run.shared.ask(ask_from(ASK));
-        assert!(run
-            .shared
-            .permissions
-            .take_answer("p.r1", "allow_once")
-            .is_ok());
-    }
-}
+#[path = "claude_headless_worker_tests.rs"]
+mod tests;

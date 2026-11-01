@@ -64,24 +64,34 @@ impl<R> PermissionQueue<R> {
         process_request_id(&self.process, raw)
     }
 
-    pub(crate) fn enqueue(&self, reply: R, content: BlockedContent) {
-        self.enqueue_unless_refusing(reply, content);
-    }
-
-    pub(crate) fn enqueue_unless_refusing(&self, reply: R, content: BlockedContent) -> Option<R> {
+    fn push(
+        &self,
+        mut queue: MutexGuard<'_, VecDeque<Pending<R>>>,
+        reply: R,
+        content: BlockedContent,
+    ) {
         let content = BlockedContent {
             request_id: self.published_id(&content.request_id),
             ..content
         };
         let at = chrono::Utc::now().to_rfc3339();
         let report = permission_alert_report(&self.worker_id, &at, &content);
-        let mut queue = self.queue();
-        if self.refusing.load(Ordering::SeqCst) {
-            return Some(reply);
-        }
         queue.push_back(Pending { reply, content });
         self.publish(&queue);
         self.inbox.post(&report, 0).ok();
+    }
+
+    pub(crate) fn enqueue(&self, reply: R, content: BlockedContent) {
+        let queue = self.queue();
+        self.push(queue, reply, content);
+    }
+
+    pub(crate) fn enqueue_unless_refusing(&self, reply: R, content: BlockedContent) -> Option<R> {
+        let queue = self.queue();
+        if self.refusing.load(Ordering::SeqCst) {
+            return Some(reply);
+        }
+        self.push(queue, reply, content);
         None
     }
 
@@ -200,6 +210,25 @@ mod tests {
         assert!(
             matches!(events.last(), Some(WorkerEvent::PermissionAsked(c)) if c.request_id == "p.a" && c.pending == ["p.a"])
         );
+    }
+
+    #[test]
+    fn only_the_refusing_enqueue_honours_a_drain_and_refuse() {
+        let dir = TempDir::new().unwrap();
+        let (queue, _events) = queue(&dir);
+        assert!(queue.drain_and_refuse().is_empty());
+        assert_eq!(
+            queue.enqueue_unless_refusing(1, content("a", &["accept"])),
+            Some(1)
+        );
+        queue.enqueue(2, content("b", &["accept"]));
+        assert_eq!(queue.take_answer("p.b", "accept").unwrap().0, 2);
+        queue.accept_again();
+        assert_eq!(
+            queue.enqueue_unless_refusing(3, content("c", &["accept"])),
+            None
+        );
+        assert_eq!(queue.take_answer("p.c", "accept").unwrap().0, 3);
     }
 
     #[test]
