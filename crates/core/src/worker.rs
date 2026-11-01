@@ -210,7 +210,7 @@ pub const PENDING_TURN_FILE: &str = "turn";
 
 pub fn pending_turn_marker(trigger: Trigger) -> &'static str {
     match trigger {
-        Trigger::User => "user",
+        Trigger::User | Trigger::SendIt => "user",
         Trigger::Worker => "worker",
     }
 }

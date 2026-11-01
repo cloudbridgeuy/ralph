@@ -205,7 +205,7 @@ impl Turn<'_> {
             self.append_logged(trigger, logged)?;
         }
         let sent = match trigger {
-            Trigger::User => expand_slash_command(message, self.skills),
+            Trigger::User | Trigger::SendIt => expand_slash_command(message, self.skills),
             Trigger::Worker => Cow::Borrowed(message),
         };
         self.print_rule();

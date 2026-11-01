@@ -229,7 +229,7 @@ fn run_command(
     request: &SocketRequest,
 ) -> Result<String, String> {
     if request.tool == SUGGEST_REPLY {
-        suggestions.set(parse_suggestion(&request.args)?);
+        suggestions.set(parse_suggestion(&request.args)?.text);
         return Ok(
             "Suggested reply set. Now write your reply; do not mention the suggestion.".to_string(),
         );
