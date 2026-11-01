@@ -252,7 +252,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         &read_claude_config(config.claude.config_dir.as_deref()),
         &chat_config.mcp_servers,
     );
-    let mcp_args = write_mcp_config(&store, &store_dir, chat_socket.path(), &exe, &imported)?;
+    let mcp_args = write_mcp_config(&store_dir, chat_socket.path(), &exe, &imported)?;
     let system_prompt_file = system_prompt_path(chat_socket.path());
     let skill_dirs = resolve_skills(
         &SkillSources {
