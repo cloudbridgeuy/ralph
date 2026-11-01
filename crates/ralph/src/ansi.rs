@@ -5,6 +5,19 @@
 
 pub use ralph_core::ansi::*;
 
+#[cfg(test)]
+mod test_colours {
+    pub const BLUE: &str = "\x1b[34m";
+    pub const MAGENTA: &str = "\x1b[35m";
+    pub const GREY: &str = "\x1b[90m";
+    pub const BRIGHT_YELLOW: &str = "\x1b[93m";
+    pub const RED_BG: &str = "\x1b[48;2;140;45;45m";
+    pub const GREEN_BG: &str = "\x1b[48;2;45;130;45m";
+}
+
+#[cfg(test)]
+pub use test_colours::*;
+
 pub const CR: &str = "\r";
 pub const CLEAR_EOL: &str = "\x1b[K";
 
