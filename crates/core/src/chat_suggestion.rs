@@ -1,3 +1,5 @@
+use crate::chat_hold::{hold_targets, HoldFilter};
+use crate::chat_status::Status;
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -60,6 +62,43 @@ pub fn prefill(
     }
 }
 
+#[derive(Debug)]
+pub struct TurnEnd<'a> {
+    pub auto_hold: bool,
+    pub replied: bool,
+    pub draft: Option<String>,
+    pub suggestion: Option<String>,
+    pub status: &'a Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Next {
+    Hold(HoldFilter),
+    Prefill(Prefill),
+    Nothing,
+}
+
+fn auto_hold_target(suggestion: &str, status: &Status) -> Option<HoldFilter> {
+    let target = suggestion.strip_prefix("/hold ")?;
+    (!target.contains(char::is_whitespace) && hold_targets(status).contains(target))
+        .then(|| HoldFilter::Source(target.to_string()))
+}
+
+pub fn turn_end(end: TurnEnd) -> Next {
+    let hold = end
+        .suggestion
+        .as_deref()
+        .filter(|_| end.auto_hold && end.replied && end.draft.is_none())
+        .and_then(|suggestion| auto_hold_target(suggestion, end.status));
+    if let Some(filter) = hold {
+        return Next::Hold(filter);
+    }
+    match prefill(end.replied, end.draft, end.suggestion) {
+        Some(fill) => Next::Prefill(fill),
+        None => Next::Nothing,
+    }
+}
+
 pub fn untouched(suggestion: &str, buffer: &str) -> bool {
     suggestion == buffer
 }
@@ -110,6 +149,9 @@ impl SuggestionRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat_status::{ScheduleState, WatchState, WorkerState};
+    use crate::inbox::Entry;
+    use crate::worker::Report;
 
     fn parse(text: &str) -> Result<String, String> {
         parse_suggestion(&json!({"text": text}))
@@ -277,5 +319,150 @@ mod tests {
             serde_json::to_string(&record).unwrap(),
             r#"{"ts":"2026-01-01T00:00:00+00:00","run":"7-t","turn":7,"outcome":"extended","suggestion":"yes","sent":"yes ok"}"#
         );
+    }
+
+    fn running(id: &str) -> WorkerState {
+        WorkerState {
+            id: id.to_string(),
+            state: "running".to_string(),
+        }
+    }
+
+    fn status() -> Status {
+        Status {
+            workers: vec![
+                running("GUZ-1"),
+                WorkerState {
+                    id: "GUZ-9".to_string(),
+                    state: "done".to_string(),
+                },
+            ],
+            watches: vec![WatchState {
+                id: "watch:ci".to_string(),
+                left: None,
+            }],
+            schedule: vec![ScheduleState {
+                id: "nightly".to_string(),
+                time: "09:00".to_string(),
+            }],
+            ..Status::default()
+        }
+    }
+
+    fn end(suggestion: &str) -> Next {
+        end_with(true, true, None, suggestion)
+    }
+
+    fn end_with(auto_hold: bool, replied: bool, draft: Option<&str>, suggestion: &str) -> Next {
+        turn_end(TurnEnd {
+            auto_hold,
+            replied,
+            draft: draft.map(str::to_string),
+            suggestion: some(suggestion),
+            status: &status(),
+        })
+    }
+
+    fn hold(target: &str) -> Next {
+        Next::Hold(HoldFilter::Source(target.to_string()))
+    }
+
+    fn fill(text: &str) -> Next {
+        Next::Prefill(Prefill::Suggestion(text.to_string()))
+    }
+
+    #[test]
+    fn a_running_worker_target_holds() {
+        assert_eq!(end("/hold GUZ-1"), hold("GUZ-1"));
+    }
+
+    #[test]
+    fn a_finished_worker_target_prefills() {
+        assert_eq!(end("/hold GUZ-9"), fill("/hold GUZ-9"));
+    }
+
+    #[test]
+    fn a_watch_target_holds() {
+        assert_eq!(end("/hold watch:ci"), hold("watch:ci"));
+    }
+
+    #[test]
+    fn a_schedule_target_holds_and_matches_the_task_reports() {
+        assert_eq!(end("/hold schedule:nightly"), hold("schedule:nightly"));
+        let Next::Hold(filter) = end("/hold schedule:nightly") else {
+            panic!("expected a hold");
+        };
+        for worker in ["schedule:nightly", "sched-nightly"] {
+            let entry = Entry {
+                source: "s".to_string(),
+                report: Report {
+                    worker: worker.to_string(),
+                    at: "t".to_string(),
+                    status: "done".to_string(),
+                    text: String::new(),
+                },
+            };
+            assert!(filter.matches(&entry));
+        }
+        assert_eq!(end("/hold nightly"), fill("/hold nightly"));
+    }
+
+    #[test]
+    fn an_unknown_target_prefills() {
+        assert_eq!(end("/hold nobody"), fill("/hold nobody"));
+    }
+
+    #[test]
+    fn a_hold_without_a_target_prefills() {
+        assert_eq!(end("/hold"), fill("/hold"));
+        assert_eq!(end("/hold "), fill("/hold "));
+    }
+
+    #[test]
+    fn two_tokens_or_odd_spacing_prefill() {
+        assert_eq!(end("/hold GUZ-1 watch:ci"), fill("/hold GUZ-1 watch:ci"));
+        assert_eq!(end("/hold  GUZ-1"), fill("/hold  GUZ-1"));
+        assert_eq!(end("/hold GUZ-1 "), fill("/hold GUZ-1 "));
+        assert_eq!(end(" /hold GUZ-1"), fill(" /hold GUZ-1"));
+        assert_eq!(end("/hold\tGUZ-1"), fill("/hold\tGUZ-1"));
+        assert_eq!(end("/holdGUZ-1"), fill("/holdGUZ-1"));
+    }
+
+    #[test]
+    fn auto_hold_off_prefills() {
+        assert_eq!(
+            end_with(false, true, None, "/hold GUZ-1"),
+            fill("/hold GUZ-1")
+        );
+    }
+
+    #[test]
+    fn without_a_reply_nothing_happens() {
+        assert_eq!(end_with(true, false, None, "/hold GUZ-1"), Next::Nothing);
+    }
+
+    #[test]
+    fn a_draft_beats_a_hold() {
+        assert_eq!(
+            end_with(true, true, Some("d"), "/hold GUZ-1"),
+            Next::Prefill(Prefill::Draft("d".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_plain_suggestion_prefills() {
+        assert_eq!(end("yes"), fill("yes"));
+    }
+
+    #[test]
+    fn no_suggestion_means_nothing() {
+        let next = turn_end(TurnEnd {
+            auto_hold: true,
+            replied: true,
+            draft: None,
+            suggestion: None,
+            status: &status(),
+        });
+        assert_eq!(next, Next::Nothing);
     }
 }

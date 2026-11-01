@@ -50,6 +50,17 @@ pub fn redraw(bar: &str) -> String {
     format!("\r\x1b[2K{}", bar.trim_end_matches('\n'))
 }
 
+pub fn hold_targets(status: &Status) -> BTreeSet<String> {
+    status
+        .workers
+        .iter()
+        .filter(|worker| worker.is_running())
+        .map(|worker| worker.id.clone())
+        .chain(status.watches.iter().map(|watch| watch.id.clone()))
+        .chain(status.schedule.iter().map(|task| watch_id(&task.id)))
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HoldCompletion {
     pub span: Range<usize>,
@@ -62,12 +73,8 @@ pub fn hold_completions(line: &str, cursor: usize, status: &Status) -> Option<Ho
     if partial.len() == args.len() || partial.contains(char::is_whitespace) {
         return None;
     }
-    let candidates: BTreeSet<String> = status
-        .workers
-        .iter()
-        .map(|worker| worker.id.clone())
-        .chain(status.watches.iter().map(|watch| watch.id.clone()))
-        .chain(status.schedule.iter().map(|task| watch_id(&task.id)))
+    let candidates: BTreeSet<String> = hold_targets(status)
+        .into_iter()
         .filter(|candidate| candidate.starts_with(partial))
         .collect();
     Some(HoldCompletion {

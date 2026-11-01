@@ -252,3 +252,11 @@ fn completion_ignores_a_cursor_inside_a_character() {
     assert_eq!(hold_completions("/hold é", 7, &status), None);
     assert_eq!(hold_completions("/hold w", 99, &status), None);
 }
+
+#[test]
+fn targets_are_running_workers_watches_and_schedules() {
+    let mut status = status(&["GUZ-1", "GUZ-2"], &["watch:ci"], &["nightly"]);
+    status.workers[1].state = "done".to_string();
+    let targets: Vec<String> = hold_targets(&status).into_iter().collect();
+    assert_eq!(targets, ["GUZ-1", "schedule:nightly", "watch:ci"]);
+}
