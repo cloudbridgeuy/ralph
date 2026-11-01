@@ -18,15 +18,15 @@ use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
-    claude_headless_args, decode_claude_version, decode_line, gone_path, interrupt_lines,
+    claude_headless_args, cleanup, decode_claude_version, decode_line, gone_path, interrupt_lines,
     interrupted_end, permission_response, prompt_failure_report, ready_path, reduce, request_stale,
-    resumed_session, stuck_permission_report, task_prompt, uuid_v4, Action, ClaudeLine,
-    ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, PermissionAnswer,
-    PermissionMode, SessionRecord, SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent,
-    WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
-    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
-    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
-    SERVER_NAME,
+    resumed_session, start_steps, stuck_permission_report, task_prompt, uuid_v4, Action,
+    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, Leftover,
+    PermissionAnswer, PermissionMode, SessionRecord, SpawnRequest, StartFault, StartStep,
+    ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
+    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
+    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
+    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -131,6 +131,16 @@ impl Shared {
         ))
     }
 
+    fn interrupt_sends(&self, turn_id: &str) -> Vec<String> {
+        let pending = self
+            .permissions
+            .drain()
+            .into_iter()
+            .map(|reply| reply.request_id)
+            .collect::<Vec<_>>();
+        interrupt_lines(&pending, turn_id)
+    }
+
     fn perform(&self, actions: Vec<Action>) {
         for action in actions {
             match action {
@@ -156,13 +166,7 @@ impl Shared {
                     self.inbox.post(&report, 0).ok();
                 }
                 Action::Interrupt(turn_id) => {
-                    let pending = self
-                        .permissions
-                        .drain()
-                        .into_iter()
-                        .map(|reply| reply.request_id)
-                        .collect::<Vec<_>>();
-                    for line in interrupt_lines(&pending, &turn_id) {
+                    for line in self.interrupt_sends(&turn_id) {
                         self.send(&line).ok();
                     }
                 }
@@ -232,6 +236,51 @@ fn session_record(
         effort: None,
         permissions: Some(mode),
     }
+}
+
+fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Option<&mut Child>) {
+    for leftover in leftovers {
+        match leftover {
+            Leftover::StopChild => {
+                if let Some(child) = child.as_deref_mut() {
+                    stop_child(child);
+                }
+            }
+            Leftover::RemoveOwner => {
+                fs::remove_file(&files.owner).ok();
+            }
+            Leftover::RemoveRecord => {
+                fs::remove_file(&files.session).ok();
+            }
+        }
+    }
+}
+
+fn write_start_files(
+    steps: &[StartStep],
+    files: &HandoffFiles,
+    record: &SessionRecord,
+    group: u32,
+    mut child: Option<&mut Child>,
+) -> Result<(), String> {
+    for step in steps {
+        let (fault, written) = match step {
+            StartStep::WriteOwner => (
+                StartFault::OwnerWrite,
+                write_owner_record(&files.owner, group, "claude"),
+            ),
+            StartStep::WriteRecord => (
+                StartFault::RecordWrite,
+                write_file(&files.session, &record.render())
+                    .map_err(|e| format!("could not write the session record: {e}")),
+            ),
+        };
+        if let Err(message) = written {
+            remove_leftovers(cleanup(fault), files, child.as_deref_mut());
+            return Err(message);
+        }
+    }
+    Ok(())
 }
 
 fn random_bytes() -> Result<[u8; 16], String> {
@@ -348,18 +397,21 @@ impl ClaudeWorker {
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
         });
-        if let Err(message) = write_owner_record(&files.owner, child.id(), "claude") {
-            stop_child(&mut child);
-            return Err(message);
-        }
-        if resume.is_none() {
-            let record = session_record(&expected_session, request, store, mode);
-            if let Err(e) = write_file(&files.session, &record.render()) {
-                stop_child(&mut child);
-                fs::remove_file(&files.owner).ok();
-                return Err(format!("could not write the session record: {e}"));
+        let fresh;
+        let record = match resume {
+            Some(record) => record,
+            None => {
+                fresh = session_record(&expected_session, request, store, mode);
+                &fresh
             }
-        }
+        };
+        write_start_files(
+            start_steps(&session),
+            files,
+            record,
+            child.id(),
+            Some(&mut child),
+        )?;
         let mut worker = Self {
             child,
             shared: Arc::clone(&shared),
@@ -386,7 +438,7 @@ impl ClaudeWorker {
         };
         let session = session.inspect_err(|_| {
             worker.terminate();
-            fs::remove_file(&files.session).ok();
+            remove_leftovers(cleanup(StartFault::InitFailed), files, None);
         })?;
         worker.session = session;
         Ok(worker)
@@ -547,7 +599,7 @@ impl ClaudeHeadlessHost {
         } else {
             drop(worker);
             fs::remove_file(ready_path(&self.store_dir, id)).ok();
-            fs::remove_file(&files.session).ok();
+            remove_leftovers(cleanup(StartFault::NotAdopted), &files, None);
         }
     }
 
@@ -765,5 +817,84 @@ mod tests {
         assert_eq!(record.store, Some(PathBuf::from("/store")));
         assert_eq!(record.model.as_deref(), Some("haiku"));
         assert_eq!(record.permissions, Some(PermissionMode::Yolo));
+    }
+
+    fn spawn_request() -> SpawnRequest {
+        SpawnRequest {
+            worktree: "/w".into(),
+            exe: "/ralph".into(),
+            inbox: "/store/inbox".into(),
+            task: "t".into(),
+            at: 1,
+            snapshots: false,
+            model: None,
+        }
+    }
+
+    fn start_files(dir: &TempDir) -> (HandoffFiles, SessionRecord) {
+        let files = HandoffFiles::claude_headless(dir.path(), "w");
+        let record = session_record("sid", &spawn_request(), dir.path(), PermissionMode::Ask);
+        (files, record)
+    }
+
+    #[test]
+    fn an_interrupt_denies_each_queued_permission_before_the_interrupt_line() {
+        let second = ASK.replace(r#""request_id":"r1""#, r#""request_id":"r2""#);
+        let run = run(PermissionMode::Ask, &[ASK, &second]);
+        let lines = run.shared.interrupt_sends("turn-4");
+        assert_eq!(
+            lines,
+            interrupt_lines(&["r1".into(), "r2".into()], "turn-4")
+        );
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].contains(r#""behavior":"deny""#));
+        assert!(lines[2].contains("interrupt-turn-4"));
+        assert!(run.shared.permissions.take_answer("p.r1", "deny").is_err());
+    }
+
+    #[test]
+    fn a_new_session_writes_the_owner_and_the_record_before_turn_one() {
+        let dir = TempDir::new().unwrap();
+        let (files, record) = start_files(&dir);
+        let steps = start_steps(&ClaudeSession::New("sid"));
+        write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
+        assert!(files.owner.exists());
+        assert_eq!(fs::read_to_string(&files.session).unwrap(), record.render());
+    }
+
+    #[test]
+    fn a_resume_writes_the_owner_and_leaves_the_record_alone() {
+        let dir = TempDir::new().unwrap();
+        let (files, record) = start_files(&dir);
+        let steps = start_steps(&ClaudeSession::Resume("sid"));
+        write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
+        assert!(files.owner.exists());
+        assert!(!files.session.exists());
+    }
+
+    #[test]
+    fn a_failed_record_write_removes_the_owner_file_and_reports_the_error() {
+        let dir = TempDir::new().unwrap();
+        let (files, record) = start_files(&dir);
+        fs::write(dir.path().join(CLAUDE_HEADLESS_SESSION_DIR), "").unwrap();
+        let steps = start_steps(&ClaudeSession::New("sid"));
+        let error =
+            write_start_files(steps, &files, &record, std::process::id(), None).unwrap_err();
+        assert!(error.starts_with("could not write the session record"));
+        assert!(!files.owner.exists());
+        assert!(!files.session.exists());
+    }
+
+    #[test]
+    fn init_failure_and_not_adopted_remove_the_owner_and_the_record() {
+        for fault in [StartFault::InitFailed, StartFault::NotAdopted] {
+            let dir = TempDir::new().unwrap();
+            let (files, record) = start_files(&dir);
+            let steps = start_steps(&ClaudeSession::New("sid"));
+            write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
+            remove_leftovers(cleanup(fault), &files, None);
+            assert!(!files.owner.exists());
+            assert!(!files.session.exists());
+        }
     }
 }

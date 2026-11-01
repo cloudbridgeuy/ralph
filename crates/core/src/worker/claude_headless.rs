@@ -253,6 +253,46 @@ pub enum ClaudeSession<'a> {
     Resume(&'a str),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartStep {
+    WriteOwner,
+    WriteRecord,
+}
+
+pub fn start_steps(session: &ClaudeSession) -> &'static [StartStep] {
+    match session {
+        ClaudeSession::New(_) => &[StartStep::WriteOwner, StartStep::WriteRecord],
+        ClaudeSession::Resume(_) => &[StartStep::WriteOwner],
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartFault {
+    OwnerWrite,
+    RecordWrite,
+    InitFailed,
+    NotAdopted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Leftover {
+    StopChild,
+    RemoveOwner,
+    RemoveRecord,
+}
+
+pub fn cleanup(fault: StartFault) -> &'static [Leftover] {
+    match fault {
+        StartFault::OwnerWrite => &[Leftover::StopChild],
+        StartFault::RecordWrite => &[Leftover::StopChild, Leftover::RemoveOwner],
+        StartFault::InitFailed | StartFault::NotAdopted => &[
+            Leftover::StopChild,
+            Leftover::RemoveOwner,
+            Leftover::RemoveRecord,
+        ],
+    }
+}
+
 pub fn uuid_v4(mut bytes: [u8; 16]) -> String {
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
@@ -609,6 +649,34 @@ mod tests {
             .join(" ")
             .ends_with("--session-id 11111111-2222-4333-8444-555555555555"));
         assert!(!args.contains(&"--resume".into()));
+    }
+
+    #[test]
+    fn a_new_session_writes_the_owner_then_the_record_and_a_resume_only_the_owner() {
+        assert_eq!(
+            start_steps(&ClaudeSession::New("a")),
+            [StartStep::WriteOwner, StartStep::WriteRecord]
+        );
+        assert_eq!(
+            start_steps(&ClaudeSession::Resume("a")),
+            [StartStep::WriteOwner]
+        );
+    }
+
+    #[test]
+    fn each_start_fault_cleans_exactly_what_it_left_behind() {
+        assert_eq!(cleanup(StartFault::OwnerWrite), [Leftover::StopChild]);
+        assert_eq!(
+            cleanup(StartFault::RecordWrite),
+            [Leftover::StopChild, Leftover::RemoveOwner]
+        );
+        let full = [
+            Leftover::StopChild,
+            Leftover::RemoveOwner,
+            Leftover::RemoveRecord,
+        ];
+        assert_eq!(cleanup(StartFault::InitFailed), full);
+        assert_eq!(cleanup(StartFault::NotAdopted), full);
     }
 
     #[test]
