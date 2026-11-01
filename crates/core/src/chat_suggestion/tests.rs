@@ -416,3 +416,24 @@ fn the_notice_names_the_target_and_the_way_out() {
         "auto-hold: GUZ-1 · Ctrl-Q to type"
     );
 }
+
+#[test]
+fn an_auto_sent_record_has_the_auto_sent_outcome_and_the_sent_line() {
+    let record = SuggestionRecord::auto_sent(
+        "2026-01-01T00:00:00+00:00".to_string(),
+        "7-t",
+        7,
+        "run the checks",
+    );
+    assert_eq!(
+        serde_json::to_value(&record).unwrap(),
+        json!({
+            "ts": "2026-01-01T00:00:00+00:00",
+            "run": "7-t",
+            "turn": 7,
+            "outcome": "autosent",
+            "suggestion": "run the checks",
+            "sent": "[send-it] run the checks"
+        })
+    );
+}

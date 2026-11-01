@@ -1,3 +1,17 @@
+use crate::chat_hold::hold_targets;
+use crate::chat_status::Status;
+use crate::inbox_alert::{Alert, AlertConfig};
+use crate::program_status::{Kind, Report as ProgramReport, State};
+use crate::worker::Report;
+
+const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
+const COUNTDOWN_PREFIX: &str = "send-it in ";
+const COUNTDOWN_HINT: &str = "  (any key cancels)";
+pub const CLEAR_LINE: &str = "\r\x1b[2K";
+const DIM: &str = "\x1b[2m";
+const RESET: &str = "\x1b[0m";
+const AUTO_PREFIX: &str = "[send-it] ";
+
 const VETO_TOKENS: [&str; 14] = [
     "push",
     "pushed",
@@ -207,6 +221,86 @@ pub fn decide(run: &Run, limits: &Limits, facts: &Facts) -> Decision {
         Decision::Stop(StopReason::Repeated)
     } else {
         Decision::Countdown
+    }
+}
+
+pub fn worker_flagged(reports: &[Report]) -> bool {
+    reports
+        .iter()
+        .any(|report| FLAGGED_STATUSES.contains(&report.status.as_str()))
+}
+
+pub fn remaining_seconds(elapsed_ms: u64, total_seconds: u64) -> u64 {
+    (total_seconds * 1_000)
+        .saturating_sub(elapsed_ms)
+        .div_ceil(1_000)
+}
+
+pub fn countdown_frame(seconds_left: u64, text: &str, columns: usize, color: bool) -> String {
+    let head = format!("{COUNTDOWN_PREFIX}{seconds_left}s: ");
+    let budget = columns.saturating_sub(head.chars().count() + COUNTDOWN_HINT.chars().count() + 1);
+    let shown = if text.chars().count() <= budget {
+        text.to_string()
+    } else {
+        let kept: String = text.chars().take(budget.saturating_sub(1)).collect();
+        format!("{kept}…")
+    };
+    let line = format!("{head}{shown}{COUNTDOWN_HINT}");
+    if color {
+        format!("{CLEAR_LINE}{DIM}{line}{RESET}")
+    } else {
+        format!("{CLEAR_LINE}{line}")
+    }
+}
+
+pub fn auto_line(text: &str) -> String {
+    format!("{AUTO_PREFIX}{text}")
+}
+
+pub fn status_text(run: Option<&Run>, limits: &Limits, seconds: u64) -> String {
+    match run {
+        None => "send-it is off. Arm it with /send-it <ticket>.".to_string(),
+        Some(run) => format!(
+            "send-it armed for {}: {} of {} turns, ${:.2} of ${:.2}. Countdown: {seconds}s.",
+            run.ticket, run.turns, limits.max_turns, run.spent_usd, limits.max_usd
+        ),
+    }
+}
+
+pub fn cancel_notice(run: &Run) -> String {
+    format!("send-it cancelled by a key press. {}", run.resume_hint())
+}
+
+pub fn no_terminal_notice(run: &Run) -> String {
+    format!(
+        "send-it paused: the countdown needs a terminal. {}",
+        run.resume_hint()
+    )
+}
+
+pub fn closed_notice(run: &Run) -> String {
+    format!("send-it off: worker {} is no longer listed.", run.ticket)
+}
+
+pub fn tracks_worker(ticket: &str, status: &Status) -> bool {
+    hold_targets(status).contains(ticket)
+}
+
+pub fn worker_closed(tracked: bool, ticket: &str, status: &Status) -> bool {
+    tracked && !tracks_worker(ticket, status)
+}
+
+pub fn blocked_alert(notice: &str, config: &AlertConfig) -> Option<Alert> {
+    config.enabled().then(|| Alert {
+        sound: config.sound,
+        notification: config.notification.then(|| notice.to_string()),
+    })
+}
+
+pub fn blocked_report(notice: &str) -> ProgramReport {
+    ProgramReport {
+        state: State::Blocked(Kind::Question),
+        msg: Some(notice.to_string()),
     }
 }
 

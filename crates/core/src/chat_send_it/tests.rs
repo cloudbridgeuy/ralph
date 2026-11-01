@@ -1,4 +1,8 @@
 use super::*;
+use crate::chat_status::WorkerState;
+use crate::inbox_alert::UnknownFocus;
+use crate::program_status::{Kind, Report as ProgramReport, State};
+use crate::worker::Report;
 
 fn limits() -> Limits {
     Limits {
@@ -192,4 +196,186 @@ fn send_it_args_parse_to_arm_off_or_status() {
     );
     assert_eq!(SendIt::parse("GUZ-1 now"), None);
     assert_eq!(SendIt::parse("off now"), None);
+}
+
+fn report(status: &str) -> Report {
+    Report {
+        worker: "GUZ-1".to_string(),
+        at: "2026-01-01T00:00:00Z".to_string(),
+        status: status.to_string(),
+        text: "text".to_string(),
+    }
+}
+
+#[test]
+fn only_question_and_blocked_reports_flag_a_worker() {
+    assert!(worker_flagged(&[report("done"), report("question")]));
+    assert!(worker_flagged(&[report("blocked")]));
+    assert!(!worker_flagged(&[report("done"), report("progress")]));
+    assert!(!worker_flagged(&[]));
+}
+
+#[test]
+fn remaining_seconds_round_up_and_reach_zero() {
+    assert_eq!(remaining_seconds(0, 10), 10);
+    assert_eq!(remaining_seconds(1, 10), 10);
+    assert_eq!(remaining_seconds(999, 10), 10);
+    assert_eq!(remaining_seconds(1_000, 10), 9);
+    assert_eq!(remaining_seconds(9_001, 10), 1);
+    assert_eq!(remaining_seconds(10_000, 10), 0);
+    assert_eq!(remaining_seconds(99_000, 10), 0);
+    assert_eq!(remaining_seconds(0, 0), 0);
+}
+
+#[test]
+fn the_frame_rewrites_one_line_and_names_the_text_and_the_cancel() {
+    let frame = countdown_frame(7, "run the checks", 80, false);
+    assert_eq!(
+        frame,
+        "\r\x1b[2Ksend-it in 7s: run the checks  (any key cancels)"
+    );
+}
+
+#[test]
+fn the_frame_has_no_escape_other_than_the_clear_when_color_is_off() {
+    let frame = countdown_frame(3, "go", 80, false);
+    assert_eq!(frame.matches('\x1b').count(), 1);
+}
+
+#[test]
+fn the_frame_is_dim_when_color_is_on() {
+    let frame = countdown_frame(3, "go", 80, true);
+    assert!(frame.starts_with("\r\x1b[2K\x1b[2m"));
+    assert!(frame.ends_with("\x1b[0m"));
+}
+
+#[test]
+fn a_long_text_is_cut_to_fit_one_row() {
+    let text = "x".repeat(300);
+    let frame = countdown_frame(10, &text, 60, false);
+    let visible = frame.trim_start_matches("\r\x1b[2K");
+    assert!(visible.chars().count() < 60, "{visible}");
+    assert!(visible.contains('…'));
+    assert!(visible.ends_with("(any key cancels)"));
+}
+
+#[test]
+fn a_narrow_row_still_keeps_the_cancel_hint() {
+    let frame = countdown_frame(10, "abcdefghij", 10, false);
+    assert!(frame.ends_with("(any key cancels)"));
+}
+
+#[test]
+fn the_auto_line_carries_the_send_it_prefix() {
+    assert_eq!(auto_line("run the checks"), "[send-it] run the checks");
+}
+
+fn limits_for_text() -> Limits {
+    Limits {
+        max_turns: 15,
+        max_usd: 5.0,
+    }
+}
+
+#[test]
+fn the_status_text_names_ticket_turns_spend_and_caps() {
+    let mut run = Run::new("GUZ-9");
+    run.record(Step::Checks, "run the checks", Some(0.5));
+    let text = status_text(Some(&run), &limits_for_text(), 10);
+    assert_eq!(
+        text,
+        "send-it armed for GUZ-9: 1 of 15 turns, $0.50 of $5.00. Countdown: 10s."
+    );
+}
+
+#[test]
+fn the_status_text_when_off_says_so() {
+    assert_eq!(
+        status_text(None, &limits_for_text(), 10),
+        "send-it is off. Arm it with /send-it <ticket>."
+    );
+}
+
+#[test]
+fn the_cancel_and_terminal_notices_end_with_the_resume_hint() {
+    let run = Run::new("GUZ-9");
+    assert_eq!(
+        cancel_notice(&run),
+        "send-it cancelled by a key press. Resume with /send-it GUZ-9"
+    );
+    assert!(no_terminal_notice(&run).ends_with("Resume with /send-it GUZ-9"));
+    assert_eq!(
+        closed_notice(&run),
+        "send-it off: worker GUZ-9 is no longer listed."
+    );
+}
+
+fn status_with(workers: &[&str]) -> Status {
+    Status {
+        workers: workers
+            .iter()
+            .map(|id| WorkerState {
+                id: (*id).to_string(),
+                state: "idle".to_string(),
+            })
+            .collect(),
+        ..Status::default()
+    }
+}
+
+#[test]
+fn a_ticket_matching_a_hold_target_is_tracked() {
+    assert!(tracks_worker("GUZ-1", &status_with(&["GUZ-1"])));
+    assert!(!tracks_worker("GUZ-2", &status_with(&["GUZ-1"])));
+}
+
+#[test]
+fn a_tracked_ticket_closes_when_it_is_no_longer_listed() {
+    assert!(worker_closed(true, "GUZ-1", &status_with(&[])));
+    assert!(!worker_closed(true, "GUZ-1", &status_with(&["GUZ-1"])));
+    assert!(!worker_closed(false, "GUZ-1", &status_with(&[])));
+}
+
+#[test]
+fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
+    let config = AlertConfig {
+        sound: true,
+        notification: true,
+        unknown_focus: UnknownFocus::Alert,
+    };
+    assert_eq!(
+        blocked_alert("send-it paused", &config),
+        Some(Alert {
+            sound: true,
+            notification: Some("send-it paused".to_string()),
+        })
+    );
+    let quiet = AlertConfig {
+        sound: false,
+        notification: false,
+        ..config
+    };
+    assert_eq!(blocked_alert("send-it paused", &quiet), None);
+    let sound_only = AlertConfig {
+        notification: false,
+        ..config
+    };
+    assert_eq!(
+        blocked_alert("x", &sound_only),
+        Some(Alert {
+            sound: true,
+            notification: None
+        })
+    );
+}
+
+#[test]
+fn the_blocked_frame_report_is_a_question_with_the_notice() {
+    assert_eq!(
+        blocked_report("send-it paused"),
+        ProgramReport {
+            state: State::Blocked(Kind::Question),
+            msg: Some("send-it paused".to_string()),
+        }
+    );
 }

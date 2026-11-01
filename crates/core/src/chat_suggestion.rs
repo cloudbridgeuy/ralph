@@ -1,5 +1,5 @@
 use crate::chat_hold::{hold_targets, HoldFilter};
-use crate::chat_send_it::Step;
+use crate::chat_send_it::{auto_line, Step};
 use crate::chat_status::Status;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -164,6 +164,13 @@ impl SuggestionRecord {
         Self {
             outcome: Outcome::Held,
             ..Self::new(ts, run, turn, suggestion, suggestion)
+        }
+    }
+
+    pub fn auto_sent(ts: String, run: &str, turn: u64, suggestion: &str) -> Self {
+        Self {
+            outcome: Outcome::AutoSent,
+            ..Self::new(ts, run, turn, suggestion, &auto_line(suggestion))
         }
     }
 
