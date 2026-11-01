@@ -132,7 +132,7 @@ Parses the config file and reports every problem on stderr. Without `--path` it 
 
 With `--store DIR` it also checks `DIR/config.toml` on its own, then the merged result of both files for errors only the combination causes. Each line from a file is prefixed with that file's path. A missing store file is fine.
 
-`config show` prints the merged config, one `key = value  [source]` line per value, where source is `default`, `global` or `store`. When an environment variable for that key is set and not empty, the line shows its value instead, as `key = "value"  [env NAME; source = file value]`, and such a key with no file value gets its own `[env NAME]` line. Flags do not apply to `config show`; in a chat, `/config` also shows the start flags and every source path (see [ralph chat](context/ralph-chat.md#config)).
+`config show` prints the merged config, one `key = value  [source]` line per value, where source is `default`, `global` or `store`. A store value that hides a global one adds it, as `key = value  [store; global = file value]`. When an environment variable for that key is set and not empty, the line shows its value instead, then every file value it hides, as `key = "value"  [env NAME; store = file value, global = file value]`, and such a key with no file value gets its own `[env NAME]` line. Flags do not apply to `config show`; in a chat, `/config` also shows the start flags and every source path (see [ralph chat](context/ralph-chat.md#config)).
 
 | Line | Meaning |
 |------|---------|

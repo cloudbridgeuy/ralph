@@ -105,51 +105,54 @@ pub fn security_keys(layer: &Table) -> Vec<&'static str> {
         .into_iter()
         .filter(|key| {
             let path: Vec<String> = key.split('.').map(str::to_string).collect();
-            defines(layer, &path)
+            lookup(layer, &path).is_some()
         })
         .collect()
 }
 
-fn defines(table: &Table, path: &[String]) -> bool {
+fn lookup<'a>(table: &'a Table, path: &[String]) -> Option<&'a Value> {
     match path {
-        [] => false,
-        [key] => table.contains_key(key),
+        [] => None,
+        [key] => table.get(key),
         [key, rest @ ..] => table
             .get(key)
             .and_then(Value::as_table)
-            .is_some_and(|inner| defines(inner, rest)),
+            .and_then(|inner| lookup(inner, rest)),
     }
 }
 
-pub fn leaf_sources(
-    effective: &Table,
-    global: &Table,
-    store: &Table,
-) -> Vec<(String, Value, Source)> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Row {
+    pub key: String,
+    pub value: Value,
+    pub source: Source,
+    pub shadowed_global: Option<Value>,
+}
+
+pub fn leaf_sources(effective: &Table, global: &Table, store: &Table) -> Vec<Row> {
     let mut rows = Vec::new();
     collect(effective, &[], (global, store), &mut rows);
     rows
 }
 
-fn collect(
-    table: &Table,
-    prefix: &[String],
-    layers: (&Table, &Table),
-    rows: &mut Vec<(String, Value, Source)>,
-) {
+fn collect(table: &Table, prefix: &[String], layers: (&Table, &Table), rows: &mut Vec<Row>) {
     for (key, value) in table {
         let path: Vec<String> = prefix.iter().cloned().chain([key.clone()]).collect();
         match value {
             Value::Table(inner) => collect(inner, &path, layers, rows),
             leaf => {
-                let source = if defines(layers.1, &path) {
-                    Source::Store
-                } else if defines(layers.0, &path) {
-                    Source::Global
-                } else {
-                    Source::Default
+                let global = lookup(layers.0, &path);
+                let (source, shadowed_global) = match (lookup(layers.1, &path), global) {
+                    (Some(_), global) => (Source::Store, global.cloned()),
+                    (None, Some(_)) => (Source::Global, None),
+                    (None, None) => (Source::Default, None),
                 };
-                rows.push((path.join("."), leaf.clone(), source));
+                rows.push(Row {
+                    key: path.join("."),
+                    value: leaf.clone(),
+                    source,
+                    shadowed_global,
+                });
             }
         }
     }
@@ -341,14 +344,18 @@ mod tests {
             .insert("inbox_alert_sound".into(), Value::Boolean(true));
         let sources: Vec<_> = leaf_sources(&effective, &global, &store)
             .into_iter()
-            .map(|(key, _, source)| (key, source))
+            .map(|row| (row.key, row.source, row.shadowed_global))
             .collect();
         assert_eq!(
             sources,
             [
-                ("chat.inbox_alert_sound".to_string(), Source::Default),
-                ("chat.worker_base".to_string(), Source::Global),
-                ("chat.wrap_width".to_string(), Source::Store),
+                ("chat.inbox_alert_sound".to_string(), Source::Default, None),
+                ("chat.worker_base".to_string(), Source::Global, None),
+                (
+                    "chat.wrap_width".to_string(),
+                    Source::Store,
+                    Some(Value::Integer(80))
+                ),
             ]
         );
     }

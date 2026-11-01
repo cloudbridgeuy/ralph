@@ -1,4 +1,4 @@
-use super::{leaf_sources, read_layer, AppConfig, Notice, PromptFiles, Source};
+use super::{leaf_sources, read_layer, AppConfig, Notice, Row};
 use crate::chat::{CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, SKILLS_ENV, WRAP_WIDTH_ENV};
 use crate::highlight::{RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV};
 use crate::invoke::{ASK_PERMISSION_MODE_ENV, CHAT_PERMISSION_MODE_ENV};
@@ -19,8 +19,6 @@ pub(super) const ENV_KEYS: [(&str, &str); 9] = [
     ("theme.name", RALPH_THEME_ENV),
     ("theme.no_background", RALPH_NO_BACKGROUND_ENV),
 ];
-
-pub type Row = (String, Value, Source);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
@@ -55,6 +53,10 @@ impl FileState {
         let exists = path.exists();
         Self { path, exists }
     }
+
+    fn rechecked(&self) -> Self {
+        Self::of(self.path.clone())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -63,14 +65,30 @@ pub struct ConfigSnapshot {
     pub global: FileState,
     pub store_file: FileState,
     pub store_dir: PathBuf,
-    pub usage: PathBuf,
+    pub usage: FileState,
     pub claude_dir: Option<PathBuf>,
-    pub prompt_files: PromptFiles,
-    pub skills: Vec<PathBuf>,
+    pub prompt_file: Option<FileState>,
+    pub append_prompts: Vec<FileState>,
+    pub skills: Vec<FileState>,
     pub env: Vec<Setting>,
     pub flags: Vec<Setting>,
     pub rows: Vec<Row>,
     pub effective: Option<Table>,
+}
+
+impl ConfigSnapshot {
+    pub fn rechecked(&self) -> Self {
+        let all = |files: &[FileState]| files.iter().map(FileState::rechecked).collect();
+        Self {
+            global: self.global.rechecked(),
+            store_file: self.store_file.rechecked(),
+            usage: self.usage.rechecked(),
+            prompt_file: self.prompt_file.as_ref().map(FileState::rechecked),
+            append_prompts: all(&self.append_prompts),
+            skills: all(&self.skills),
+            ..self.clone()
+        }
+    }
 }
 
 pub struct ChatLoad {
@@ -102,22 +120,34 @@ pub fn env_settings(
 
 pub fn merged_rows(rows: &[Row], overrides: &[Setting]) -> Vec<String> {
     let winner = |key: &str| overrides.iter().find(|setting| setting.key == Some(key));
-    let layered = rows.iter().map(|(key, value, source)| {
-        let text = match winner(key) {
-            Some(setting) => format!(
-                "{key} = {}  [{}; {} = {value}]",
-                setting.value,
-                setting.origin,
-                source.label()
-            ),
-            None => format!("{key} = {value}  [{}]", source.label()),
+    let layered = rows.iter().map(|row| {
+        let Row { key, value, .. } = row;
+        let source = row.source.label();
+        let shadowed = row
+            .shadowed_global
+            .as_ref()
+            .map(|global| format!("global = {global}"));
+        let text = match (winner(key), shadowed) {
+            (Some(setting), shadowed) => {
+                let layers: Vec<String> = std::iter::once(format!("{source} = {value}"))
+                    .chain(shadowed)
+                    .collect();
+                format!(
+                    "{key} = {}  [{}; {}]",
+                    setting.value,
+                    setting.origin,
+                    layers.join(", ")
+                )
+            }
+            (None, Some(shadowed)) => format!("{key} = {value}  [{source}; {shadowed}]"),
+            (None, None) => format!("{key} = {value}  [{source}]"),
         };
         (key.clone(), text)
     });
     let mut added: Vec<(String, String)> = Vec::new();
     for setting in overrides {
         let Some(key) = setting.key else { continue };
-        let known = rows.iter().any(|(row, ..)| row == key) || added.iter().any(|(k, _)| k == key);
+        let known = rows.iter().any(|row| row.key == key) || added.iter().any(|(k, _)| k == key);
         if !known {
             let text = format!("{key} = {}  [{}]", setting.value, setting.origin);
             added.push((key.to_string(), text));
@@ -171,7 +201,6 @@ fn settings_block(title: &str, settings: &[Setting], empty: &str) -> Vec<String>
 }
 
 fn sources(snapshot: &ConfigSnapshot) -> Vec<String> {
-    let files = &snapshot.prompt_files;
     let config_dir = snapshot.global.path.parent();
     let claude = snapshot.claude_dir.as_deref();
     std::iter::once("Sources".to_string())
@@ -180,22 +209,22 @@ fn sources(snapshot: &ConfigSnapshot) -> Vec<String> {
             file_line("global config", &snapshot.global),
             file_line("store config", &snapshot.store_file),
             path_line("store", &snapshot.store_dir),
-            path_line("usage record", &snapshot.usage),
+            file_line("usage record", &snapshot.usage),
         ])
         .chain(claude.map(|dir| path_line("claude dir", dir)))
         .chain(
-            files
-                .behaviour
+            snapshot
+                .prompt_file
                 .iter()
-                .map(|file| path_line("prompt file", file)),
+                .map(|file| file_line("prompt file", file)),
         )
         .chain(
-            files
-                .appends
+            snapshot
+                .append_prompts
                 .iter()
-                .map(|file| path_line("append prompt", file)),
+                .map(|file| file_line("append prompt", file)),
         )
-        .chain(snapshot.skills.iter().map(|dir| path_line("skill", dir)))
+        .chain(snapshot.skills.iter().map(|dir| file_line("skill", dir)))
         .collect()
 }
 
@@ -263,6 +292,7 @@ pub fn effective_now(global: &Path, store: &Path) -> Option<Table> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Source;
 
     fn env(name: &'static str, value: &str, key: Option<&'static str>) -> Setting {
         Setting {
@@ -281,28 +311,32 @@ mod tests {
     }
 
     fn row(key: &str, value: Value, source: Source) -> Row {
-        (key.to_string(), value, source)
+        Row {
+            key: key.to_string(),
+            value,
+            source,
+            shadowed_global: None,
+        }
+    }
+
+    fn file(path: &str) -> FileState {
+        FileState {
+            path: PathBuf::from(path),
+            exists: true,
+        }
     }
 
     fn snapshot() -> ConfigSnapshot {
         ConfigSnapshot {
             warnings: Vec::new(),
-            global: FileState {
-                path: PathBuf::from("/cfg/ralph/config.toml"),
-                exists: true,
-            },
-            store_file: FileState {
-                path: PathBuf::from("/s/config.toml"),
-                exists: true,
-            },
+            global: file("/cfg/ralph/config.toml"),
+            store_file: file("/s/config.toml"),
             store_dir: PathBuf::from("/s"),
-            usage: PathBuf::from("/cfg/ralph/usage.jsonl"),
+            usage: file("/cfg/ralph/usage.jsonl"),
             claude_dir: Some(PathBuf::from("/h/.claude")),
-            prompt_files: PromptFiles {
-                behaviour: Some(PathBuf::from("/cfg/ralph/p.md")),
-                appends: vec![PathBuf::from("/s/a.md")],
-            },
-            skills: vec![PathBuf::from("/h/skills/x")],
+            prompt_file: Some(file("/cfg/ralph/p.md")),
+            append_prompts: vec![file("/s/a.md")],
+            skills: vec![file("/h/skills/x")],
             env: Vec::new(),
             flags: Vec::new(),
             rows: vec![row("chat.wrap_width", Value::Integer(80), Source::Global)],
@@ -334,11 +368,50 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_store_file_is_marked() {
+    fn every_missing_file_row_is_marked() {
         let mut snapshot = snapshot();
-        snapshot.store_file.exists = false;
+        let gone = |file: &mut FileState| file.exists = false;
+        gone(&mut snapshot.global);
+        gone(&mut snapshot.store_file);
+        gone(&mut snapshot.usage);
+        snapshot.prompt_file.iter_mut().for_each(gone);
+        snapshot.append_prompts.iter_mut().for_each(gone);
+        snapshot.skills.iter_mut().for_each(gone);
         let view = config_view(&snapshot, false);
-        assert!(lines(&view).contains(&"  store config  /s/config.toml (missing)"));
+        let lines = lines(&view);
+        for expected in [
+            "  global config /cfg/ralph/config.toml (missing)",
+            "  store config  /s/config.toml (missing)",
+            "  usage record  /cfg/ralph/usage.jsonl (missing)",
+            "  prompt file   /cfg/ralph/p.md (missing)",
+            "  append prompt /s/a.md (missing)",
+            "  skill         /h/skills/x (missing)",
+        ] {
+            assert!(lines.contains(&expected), "missing {expected:?} in\n{view}");
+        }
+        assert!(lines.contains(&"  store         /s"));
+    }
+
+    #[test]
+    fn every_overridden_layer_is_listed() {
+        let store_row = Row {
+            shadowed_global: Some(Value::Integer(80)),
+            ..row("chat.wrap_width", Value::Integer(100), Source::Store)
+        };
+        let rows = [store_row];
+        assert_eq!(
+            merged_rows(&rows, &[]),
+            ["chat.wrap_width = 100  [store; global = 80]"]
+        );
+        let overrides = [flag(
+            "--wrap-width",
+            Value::Integer(90),
+            Some("chat.wrap_width"),
+        )];
+        assert_eq!(
+            merged_rows(&rows, &overrides),
+            ["chat.wrap_width = 90  [flag --wrap-width; store = 100, global = 80]"]
+        );
     }
 
     #[test]
@@ -463,8 +536,8 @@ mod tests {
         let wrap = loaded
             .rows
             .iter()
-            .find(|(key, ..)| key == "chat.wrap_width")
-            .map(|(_, _, source)| *source);
+            .find(|row| row.key == "chat.wrap_width")
+            .map(|row| row.source);
         assert_eq!(wrap, Some(Source::Global));
         assert_eq!(effective_now(&global, &store), loaded.effective);
         std::fs::write(&global, "[chat]\nwrap_width = 70\n").unwrap();

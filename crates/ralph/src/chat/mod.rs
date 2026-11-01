@@ -228,25 +228,31 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         &chat_config.mcp_servers,
     );
     let mcp_args = write_mcp_config(&store, &store_dir, chat_socket.path(), &exe, &imported)?;
-    let skills = link_skills(usable_skills(resolve_skills(
+    let skill_dirs = resolve_skills(
         &SkillSources {
             cli: &args.skills,
             env: &env_skills(),
             config: &chat_config.skills,
         },
         dirs::home_dir().as_deref(),
-    )));
+    );
+    let skills = link_skills(usable_skills(skill_dirs.clone()));
     let plugin = write_skill_plugin(&skills)?;
     let plugin_args = plugin
         .as_ref()
         .map(|plugin| build_plugin_args(plugin.path()))
         .unwrap_or_default();
     let theme_config = ThemeConfig::from_config_and_env();
-    config.theme.deprecations().into_iter().for_each(warn);
-    config.theme.warnings().into_iter().for_each(warn);
-    config.changes.warnings().into_iter().for_each(warn);
     let (edit_mode, edit_mode_warning) = resolve_edit_mode(chat_config.edit_mode.as_deref());
-    edit_mode_warning.into_iter().for_each(warn);
+    let setting_warnings: Vec<String> = config
+        .theme
+        .deprecations()
+        .into_iter()
+        .chain(config.theme.warnings())
+        .chain(config.changes.warnings())
+        .chain(edit_mode_warning)
+        .collect();
+    setting_warnings.iter().for_each(warn);
     let agent = config.theme.agent();
     let agent_highlighter =
         Highlighter::with_config(theme_config.clone().merge_cli(agent.code.as_deref(), false))
@@ -257,22 +263,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
     let prompt_files = chat_config.prompt_files(dirs::home_dir().as_deref());
     let (custom_prompt, prompt_warnings) = load_custom_prompt(&prompt_files);
-    prompt_warnings.into_iter().for_each(warn);
-    let config_snapshot = ConfigSnapshot {
-        warnings: loaded.warnings,
-        global: FileState::of(global_config),
-        store_file: FileState::of(store_config),
-        store_dir: store_root.clone(),
-        usage: absolute_from(&memory::usage_path(), &cwd),
-        claude_dir: dirs::home_dir()
-            .map(|home| claude_dir(config.claude.config_dir.as_deref(), &home)),
-        prompt_files,
-        skills: skills.iter().map(|skill| skill.dir.clone()).collect(),
-        env: config::chat_env(),
-        flags,
-        rows: loaded.rows,
-        effective: loaded.effective,
-    };
+    prompt_warnings.iter().for_each(warn);
     let isolation = Isolation::for_chat(
         &chat_config,
         &std::env::current_dir()?,
@@ -326,7 +317,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
         inbox,
         store: Store::new(store_dir.clone()),
-        store_dir: store_root,
+        store_dir: store_root.clone(),
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
@@ -443,13 +434,43 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("EDITOR").ok().as_deref(),
     );
     let (empty_submit, empty_warning) = chat_config.empty_submit_setting();
-    config_warning
+    let late_warnings: Vec<String> = config_warning
         .into_iter()
         .chain(editor_warning)
         .chain(quiet_warning)
         .chain(reset_warnings)
         .chain(empty_warning)
-        .for_each(warn);
+        .collect();
+    late_warnings.iter().for_each(warn);
+    let config_snapshot = ConfigSnapshot {
+        warnings: [
+            loaded.warnings,
+            setting_warnings,
+            prompt_warnings,
+            late_warnings,
+        ]
+        .concat(),
+        global: FileState::of(global_config),
+        store_file: FileState::of(store_config),
+        store_dir: store_root,
+        usage: FileState::of(absolute_from(&memory::usage_path(), &cwd)),
+        claude_dir: dirs::home_dir()
+            .map(|home| claude_dir(config.claude.config_dir.as_deref(), &home)),
+        prompt_file: prompt_files.behaviour.map(FileState::of),
+        append_prompts: prompt_files
+            .appends
+            .into_iter()
+            .map(FileState::of)
+            .collect(),
+        skills: skill_dirs
+            .iter()
+            .map(|dir| FileState::of(absolute_from(dir, &cwd)))
+            .collect(),
+        env: config::chat_env(),
+        flags,
+        rows: loaded.rows,
+        effective: loaded.effective,
+    };
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
         color,

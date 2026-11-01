@@ -18,7 +18,7 @@ fn positive_setting(value: Option<&toml::Value>, key: &str, default: u64) -> (u6
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct PromptFiles {
     pub behaviour: Option<PathBuf>,
     pub appends: Vec<PathBuf>,

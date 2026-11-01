@@ -82,7 +82,8 @@ pub(super) fn chat_env() -> Vec<Setting> {
 
 pub(super) fn print(snapshot: &ConfigSnapshot) {
     let now = effective_now(&snapshot.global.path, &snapshot.store_file.path);
-    print!("{}", config_view(snapshot, now != snapshot.effective));
+    let changed = now != snapshot.effective;
+    print!("{}", config_view(&snapshot.rechecked(), changed));
 }
 
 #[cfg(test)]
