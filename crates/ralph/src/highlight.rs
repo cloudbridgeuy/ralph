@@ -409,7 +409,7 @@ impl Highlighter {
         }
 
         // Reset terminal colors at the end
-        output.push_str("\x1b[0m");
+        output.push_str(crate::ansi::RESET);
 
         output
     }

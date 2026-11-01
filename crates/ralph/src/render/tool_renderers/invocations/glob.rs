@@ -18,7 +18,7 @@ pub fn render_glob_invocation(ctx: &RenderContext, pattern: &str, path: Option<&
         ));
         output.push_str(&format!(
             "  {}Path:{} {}\n",
-            ansi::DIM,
+            ansi::GREY,
             ansi::RESET,
             search_path
         ));

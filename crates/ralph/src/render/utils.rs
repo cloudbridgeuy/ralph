@@ -3,6 +3,7 @@
 //! This module contains stateless helper functions used by the stream processor.
 //! All functions are pure with no side effects.
 
+use crate::ansi::{BRIGHT_YELLOW, GREY, RESET};
 use std::collections::BTreeMap;
 
 /// Extract line number from a cat-n formatted line, if present.
@@ -157,13 +158,13 @@ pub fn highlight_grep_match(line: &str) -> String {
                 // This looks like filename:line_number:content format
                 let prefix = &line[..second_colon + 1];
                 let content = &line[second_colon + 1..];
-                return format!("\x1b[90m{}\x1b[0m\x1b[93m{}\x1b[0m", prefix, content);
+                return format!("{GREY}{}{RESET}{BRIGHT_YELLOW}{}{RESET}", prefix, content);
             }
         }
     }
 
     // Default: just show the line in dim color
-    format!("\x1b[90m{}\x1b[0m", line)
+    format!("{GREY}{}{RESET}", line)
 }
 
 /// Extract programming language hint from a file path based on extension.

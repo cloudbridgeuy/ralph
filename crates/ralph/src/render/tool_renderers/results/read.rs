@@ -16,7 +16,7 @@ pub fn render_read_result(
     // Empty result
     if content.is_empty() {
         return if ctx.terminal {
-            format!("{}(empty file){}\n", ansi::DIM, ansi::RESET)
+            format!("{}(empty file){}\n", ansi::GREY, ansi::RESET)
         } else {
             "(empty file)\n".to_string()
         };
@@ -25,7 +25,7 @@ pub fn render_read_result(
     // Check for binary file indicator
     if content.contains("(binary file)") || content.starts_with('\u{0}') {
         return if ctx.terminal {
-            format!("{}(binary file){}\n", ansi::DIM, ansi::RESET)
+            format!("{}(binary file){}\n", ansi::GREY, ansi::RESET)
         } else {
             "(binary file)\n".to_string()
         };
@@ -53,7 +53,7 @@ pub fn render_read_result(
             "{}✓{} {}{} {}{}\n",
             ansi::GREEN,
             ansi::RESET,
-            ansi::DIM,
+            ansi::GREY,
             line_count,
             line_word,
             ansi::RESET
@@ -75,7 +75,7 @@ pub fn render_read_result(
         if should_truncate {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
-                ansi::DIM,
+                ansi::GREY,
                 actual_line_count.saturating_sub(MAX_CONTENT_LINES),
                 ansi::RESET
             ));

@@ -110,7 +110,7 @@ fn format_before_after_highlighted(
     // Horizontal separator
     output.push_str(&format!(
         "{}─────────────────────────{}\n",
-        ansi::DIM,
+        ansi::GREY,
         ansi::RESET
     ));
 
@@ -137,11 +137,11 @@ fn format_highlighted_block(
     let mut output = String::new();
 
     // Label
-    output.push_str(&format!("{}{}{}\n", ansi::DIM, label, ansi::RESET));
+    output.push_str(&format!("{}{}{}\n", ansi::GREY, label, ansi::RESET));
 
     // Handle empty content
     if content.is_empty() {
-        output.push_str(&format!("{}(empty){}\n", ansi::DIM, ansi::RESET));
+        output.push_str(&format!("{}(empty){}\n", ansi::GREY, ansi::RESET));
         return output;
     }
 
@@ -185,7 +185,7 @@ fn format_highlighted_block(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            ansi::DIM,
+            ansi::GREY,
             line_count - MAX_BLOCK_LINES,
             ansi::RESET
         ));
@@ -270,7 +270,7 @@ fn format_no_changes_message(
             "{}✓{} {}Write: {} {}{}\n",
             ansi::GREEN,
             ansi::RESET,
-            ansi::DIM,
+            ansi::GREY,
             file_path,
             indicator,
             ansi::RESET
@@ -355,7 +355,7 @@ fn format_new_file_highlighted(
     if truncated {
         output.push_str(&format!(
             "{}... {} more lines{}\n",
-            ansi::DIM,
+            ansi::GREY,
             line_count - MAX_NEW_FILE_LINES,
             ansi::RESET
         ));

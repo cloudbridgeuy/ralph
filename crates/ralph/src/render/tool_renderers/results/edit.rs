@@ -55,7 +55,7 @@ pub fn render_edit_before_after(
 
     // File header
     if ctx.terminal {
-        output.push_str(&format!("{}{}{}\n", ansi::DIM, file_path, ansi::RESET));
+        output.push_str(&format!("{}{}{}\n", ansi::GREY, file_path, ansi::RESET));
     } else {
         output.push_str(&format!("{}\n", file_path));
     }
@@ -70,7 +70,7 @@ pub fn render_edit_before_after(
     if ctx.terminal {
         output.push_str(&format!(
             "{}────────────────────{}\n",
-            ansi::DIM,
+            ansi::GREY,
             ansi::RESET
         ));
     } else {
@@ -88,7 +88,7 @@ pub fn render_edit_diff(ctx: &RenderContext, file_path: &str, diff_content: &str
     let mut output = String::new();
 
     if ctx.terminal {
-        output.push_str(&format!("{}{}{}\n", ansi::DIM, file_path, ansi::RESET));
+        output.push_str(&format!("{}{}{}\n", ansi::GREY, file_path, ansi::RESET));
         output.push_str(&highlight_with_basic_colors(diff_content));
     } else {
         output.push_str(&format!("{}\n", file_path));
@@ -104,7 +104,7 @@ pub fn render_no_changes_message(ctx: &RenderContext, file_path: &str, tool: &st
     if ctx.terminal {
         format!(
             "{}{}{}\n{}⚠ No changes ({}){}\n",
-            ansi::DIM,
+            ansi::GREY,
             file_path,
             ansi::RESET,
             ansi::YELLOW,

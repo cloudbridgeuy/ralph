@@ -14,7 +14,7 @@ pub fn render_default_result(ctx: &RenderContext, is_error: bool, content: Optio
                 "{}✓{} {}{}{}\n",
                 ansi::GREEN,
                 ansi::RESET,
-                ansi::DIM,
+                ansi::GREY,
                 display_content,
                 ansi::RESET
             )

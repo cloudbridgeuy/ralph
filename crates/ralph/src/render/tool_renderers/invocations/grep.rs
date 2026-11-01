@@ -18,21 +18,21 @@ pub fn render_grep_invocation(ctx: &RenderContext, params: &GrepInvocationParams
 
         // Optional fields
         if let Some(p) = params.path {
-            output.push_str(&format!("  {}Path:{} {}\n", ansi::DIM, ansi::RESET, p));
+            output.push_str(&format!("  {}Path:{} {}\n", ansi::GREY, ansi::RESET, p));
         }
         if let Some(mode) = params.output_mode {
-            output.push_str(&format!("  {}Mode:{} {}\n", ansi::DIM, ansi::RESET, mode));
+            output.push_str(&format!("  {}Mode:{} {}\n", ansi::GREY, ansi::RESET, mode));
         }
         if let Some(g) = params.glob {
-            output.push_str(&format!("  {}glob:{} {}\n", ansi::DIM, ansi::RESET, g));
+            output.push_str(&format!("  {}glob:{} {}\n", ansi::GREY, ansi::RESET, g));
         }
         if let Some(ft) = params.file_type {
-            output.push_str(&format!("  {}type:{} {}\n", ansi::DIM, ansi::RESET, ft));
+            output.push_str(&format!("  {}type:{} {}\n", ansi::GREY, ansi::RESET, ft));
         }
         if params.case_insensitive {
             output.push_str(&format!(
                 "  {}case-insensitive:{} true\n",
-                ansi::DIM,
+                ansi::GREY,
                 ansi::RESET
             ));
         }

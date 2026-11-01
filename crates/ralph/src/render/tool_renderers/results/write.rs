@@ -14,7 +14,7 @@ pub fn render_write_new_file(ctx: &RenderContext, file_path: &str, content: &str
     if ctx.terminal {
         output.push_str(&format!(
             "{}{}{} {}(new file){}\n",
-            ansi::DIM,
+            ansi::GREY,
             file_path,
             ansi::RESET,
             ansi::GREEN,
@@ -37,7 +37,7 @@ pub fn render_write_no_changes(ctx: &RenderContext, file_path: &str, is_new_file
         if ctx.terminal {
             format!(
                 "{}{}{} {}(new file){}\n{}⚠ Empty file created{}\n",
-                ansi::DIM,
+                ansi::GREY,
                 file_path,
                 ansi::RESET,
                 ansi::GREEN,

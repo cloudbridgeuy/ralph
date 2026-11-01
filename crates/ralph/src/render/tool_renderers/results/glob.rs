@@ -15,7 +15,7 @@ pub fn render_glob_result(
     // Empty result
     if content.is_empty() {
         return if ctx.terminal {
-            format!("{}(no matches){}\n", ansi::DIM, ansi::RESET)
+            format!("{}(no matches){}\n", ansi::GREY, ansi::RESET)
         } else {
             "(no matches)\n".to_string()
         };
@@ -43,7 +43,7 @@ pub fn render_glob_result(
             "{}✓{} {}{} {} matched{}\n",
             ansi::GREEN,
             ansi::RESET,
-            ansi::DIM,
+            ansi::GREY,
             file_count,
             file_word,
             ansi::RESET
@@ -70,7 +70,7 @@ pub fn render_glob_result(
                     break;
                 }
                 let filename = path.rsplit('/').next().unwrap_or(path);
-                output.push_str(&format!("    {}{}{}\n", ansi::DIM, filename, ansi::RESET));
+                output.push_str(&format!("    {}{}{}\n", ansi::GREY, filename, ansi::RESET));
                 lines_shown += 1;
             }
         }
@@ -78,7 +78,7 @@ pub fn render_glob_result(
         if should_truncate && lines_shown < file_count {
             output.push_str(&format!(
                 "{}... {} more files{}\n",
-                ansi::DIM,
+                ansi::GREY,
                 file_count.saturating_sub(lines_shown),
                 ansi::RESET
             ));

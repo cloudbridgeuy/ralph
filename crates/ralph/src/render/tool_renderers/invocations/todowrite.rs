@@ -13,7 +13,7 @@ pub fn render_todowrite_invocation(ctx: &RenderContext, todos: &[TodoDisplayItem
         if todos.is_empty() {
             output.push_str(&format!(
                 "  {}(clearing todo list){}\n",
-                ansi::DIM,
+                ansi::GREY,
                 ansi::RESET
             ));
         } else {
@@ -21,14 +21,14 @@ pub fn render_todowrite_invocation(ctx: &RenderContext, todos: &[TodoDisplayItem
                 let status_icon = match todo.status {
                     "completed" => format!("{}✓{}", ansi::GREEN, ansi::RESET),
                     "in_progress" => format!("{}⋯{}", ansi::YELLOW, ansi::RESET),
-                    _ => format!("{}○{}", ansi::DIM, ansi::RESET),
+                    _ => format!("{}○{}", ansi::GREY, ansi::RESET),
                 };
                 output.push_str(&format!("  {} {}", status_icon, todo.content));
 
                 // Show activeForm if different from content
                 if let Some(af) = todo.active_form {
                     if af != todo.content {
-                        output.push_str(&format!(" {}({}){}", ansi::DIM, af, ansi::RESET));
+                        output.push_str(&format!(" {}({}){}", ansi::GREY, af, ansi::RESET));
                     }
                 }
                 output.push('\n');

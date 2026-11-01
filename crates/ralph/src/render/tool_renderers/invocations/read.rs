@@ -13,13 +13,13 @@ pub fn render_read_invocation(
 
     if ctx.terminal {
         output.push_str(&format!("{}▶ Read{}\n", ansi::CYAN, ansi::RESET));
-        output.push_str(&format!("  {}{}{}\n", ansi::DIM, file_path, ansi::RESET));
+        output.push_str(&format!("  {}{}{}\n", ansi::GREY, file_path, ansi::RESET));
 
         if let Some(off) = offset {
-            output.push_str(&format!("  offset: {}{}{}\n", ansi::DIM, off, ansi::RESET));
+            output.push_str(&format!("  offset: {}{}{}\n", ansi::GREY, off, ansi::RESET));
         }
         if let Some(lim) = limit {
-            output.push_str(&format!("  limit: {}{}{}\n", ansi::DIM, lim, ansi::RESET));
+            output.push_str(&format!("  limit: {}{}{}\n", ansi::GREY, lim, ansi::RESET));
         }
     } else {
         output.push_str("> Read\n");

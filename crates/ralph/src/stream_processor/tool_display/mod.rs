@@ -14,6 +14,7 @@ use ralph_core::stream::ToolInvocation;
 
 use super::processor::StreamProcessor;
 use super::utils::{extract_key_argument, truncate_string};
+use crate::ansi::{CYAN, GREY, RESET};
 
 /// Format a tool invocation for display.
 ///
@@ -66,10 +67,10 @@ pub fn format_tool_invocation(processor: &StreamProcessor, invocation: &ToolInvo
     if processor.highlighting_enabled {
         // Use colors for terminal display
         format!(
-            "\x1b[36m▶ {}\x1b[0m{}\n",
+            "{CYAN}▶ {}{RESET}{}\n",
             invocation.name,
             if let Some(arg) = formatted_arg {
-                format!(" \x1b[90m{}\x1b[0m", arg)
+                format!(" {GREY}{}{RESET}", arg)
             } else {
                 String::new()
             }

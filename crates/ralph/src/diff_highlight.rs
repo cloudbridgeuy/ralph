@@ -134,12 +134,7 @@ pub fn highlight_with_delta(diff: &str) -> Option<String> {
 /// assert!(highlighted.contains("\x1b[")); // Contains ANSI codes
 /// ```
 pub fn highlight_with_basic_colors(diff: &str) -> String {
-    // ANSI color codes
-    const RED: &str = "\x1b[31m";
-    const GREEN: &str = "\x1b[32m";
-    const CYAN: &str = "\x1b[36m";
-    const BOLD: &str = "\x1b[1m";
-    const RESET: &str = "\x1b[0m";
+    use crate::ansi::{BOLD, CYAN, GREEN, RED, RESET};
 
     let mut output = String::with_capacity(diff.len() * 2);
 

@@ -15,7 +15,7 @@ pub fn render_grep_result(
     // Empty result
     if content.is_empty() {
         return if ctx.terminal {
-            format!("{}(no matches){}\n", ansi::DIM, ansi::RESET)
+            format!("{}(no matches){}\n", ansi::GREY, ansi::RESET)
         } else {
             "(no matches)\n".to_string()
         };
@@ -39,7 +39,7 @@ pub fn render_grep_result(
             "{}✓{} {}{} {}{}\n",
             ansi::GREEN,
             ansi::RESET,
-            ansi::DIM,
+            ansi::GREY,
             match_count,
             match_word,
             ansi::RESET
@@ -49,7 +49,7 @@ pub fn render_grep_result(
         match output_mode {
             "files_with_matches" => {
                 for line in display_lines {
-                    output.push_str(&format!("  {}{}{}\n", ansi::DIM, line, ansi::RESET));
+                    output.push_str(&format!("  {}{}{}\n", ansi::GREY, line, ansi::RESET));
                 }
             }
             "content" => {
@@ -61,7 +61,7 @@ pub fn render_grep_result(
             _ => {
                 // count mode and other modes
                 for line in display_lines {
-                    output.push_str(&format!("  {}{}{}\n", ansi::DIM, line, ansi::RESET));
+                    output.push_str(&format!("  {}{}{}\n", ansi::GREY, line, ansi::RESET));
                 }
             }
         }
@@ -69,7 +69,7 @@ pub fn render_grep_result(
         if truncated {
             output.push_str(&format!(
                 "{}... {} more lines{}\n",
-                ansi::DIM,
+                ansi::GREY,
                 line_count - MAX_RESULT_LINES,
                 ansi::RESET
             ));

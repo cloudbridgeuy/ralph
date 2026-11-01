@@ -16,13 +16,17 @@ pub fn render_bash_result(
         if is_error {
             let mut output = format!("{}✗ Error{}\n", ansi::RED, ansi::RESET);
             if let Some(c) = content {
-                output.push_str(&format!("{}{}{}\n", ansi::DIM, c, ansi::RESET));
+                output.push_str(&format!("{}{}{}\n", ansi::GREY, c, ansi::RESET));
             }
             output
         } else if let Some(c) = content {
-            let mut output = format!("{}{}{}\n", ansi::DIM, c, ansi::RESET);
+            let mut output = format!("{}{}{}\n", ansi::GREY, c, ansi::RESET);
             if truncated {
-                output.push_str(&format!("{}(output truncated){}\n", ansi::DIM, ansi::RESET));
+                output.push_str(&format!(
+                    "{}(output truncated){}\n",
+                    ansi::GREY,
+                    ansi::RESET
+                ));
             }
             output
         } else {

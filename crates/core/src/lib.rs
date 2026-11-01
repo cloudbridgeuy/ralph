@@ -8,6 +8,7 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::too_many_arguments))]
 
+pub mod ansi;
 pub mod attachment;
 pub mod changes;
 pub mod chat;

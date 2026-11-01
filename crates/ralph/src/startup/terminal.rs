@@ -2,6 +2,7 @@
 
 use super::formatters::{format_duration, format_token_count};
 use super::types::{AskSummary, PromptDisplay};
+use crate::ansi::{BOLD, CYAN, DIM, GREEN, MAGENTA, RED, RESET};
 use crate::markdown::MarkdownRenderer;
 
 /// Display prompt with terminal formatting.
@@ -11,17 +12,17 @@ pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
 
     // Header with visual indicator
     println!();
-    println!("\x1b[1m\x1b[35m▶ Prompt\x1b[0m");
-    println!("\x1b[35m{}\x1b[0m", "─".repeat(width));
+    println!("{BOLD}{MAGENTA}▶ Prompt{RESET}");
+    println!("{MAGENTA}{}{RESET}", "─".repeat(width));
 
     // Display attached files as a table (if any)
     if !prompt.attached_files.is_empty() {
         println!();
-        println!("\x1b[2mAttached files:\x1b[0m");
+        println!("{DIM}Attached files:{RESET}");
         for file in &prompt.attached_files {
             // Format: "  path  →  Description"
             println!(
-                "  \x1b[36m{}\x1b[0m  \x1b[2m→\x1b[0m  {}",
+                "  {CYAN}{}{RESET}  {DIM}→{RESET}  {}",
                 file.path.display(),
                 file.description
             );
@@ -36,7 +37,7 @@ pub(super) fn display_prompt_terminal(prompt: &PromptDisplay) {
     println!("{}", rendered);
 
     // Closing separator
-    println!("\x1b[35m{}\x1b[0m", "─".repeat(width));
+    println!("{MAGENTA}{}{RESET}", "─".repeat(width));
 }
 
 /// Display ask summary with terminal formatting.
@@ -45,9 +46,9 @@ pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
 
     // Status indicator based on success
     let (status_icon, status_color) = if summary.success {
-        ("\x1b[32m✓\x1b[0m", "\x1b[32m") // Green checkmark
+        (format!("{GREEN}✓{RESET}"), GREEN) // Green checkmark
     } else {
-        ("\x1b[31m✗\x1b[0m", "\x1b[31m") // Red X
+        (format!("{RED}✗{RESET}"), RED) // Red X
     };
 
     // Header with status
@@ -56,23 +57,23 @@ pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
     } else {
         "Failed"
     };
-    println!("{} {}Ask {}\x1b[0m", status_icon, status_color, status_text);
+    println!("{} {}Ask {}{RESET}", status_icon, status_color, status_text);
     println!();
-    println!("\x1b[2m─── Metrics ───\x1b[0m");
+    println!("{DIM}─── Metrics ───{RESET}");
 
     // Cost
     let cost_str = summary
         .cost_usd
         .map(|c| format!("${:.4}", c))
         .unwrap_or_else(|| "N/A".to_string());
-    println!("\x1b[2mCost:\x1b[0m {}", cost_str);
+    println!("{DIM}Cost:{RESET} {}", cost_str);
 
     // Duration
     let duration_str = summary
         .duration_ms
         .map(format_duration)
         .unwrap_or_else(|| "N/A".to_string());
-    println!("\x1b[2mDuration:\x1b[0m {}", duration_str);
+    println!("{DIM}Duration:{RESET} {}", duration_str);
 
     // Tokens
     let has_tokens = summary.input_tokens.is_some() || summary.output_tokens.is_some();
@@ -86,7 +87,7 @@ pub(super) fn display_ask_summary_terminal(summary: &AskSummary) {
             .map(format_token_count)
             .unwrap_or_else(|| "N/A".to_string());
         println!(
-            "\x1b[2mTokens:\x1b[0m {} input | {} output",
+            "{DIM}Tokens:{RESET} {} input | {} output",
             input_str, output_str
         );
     }

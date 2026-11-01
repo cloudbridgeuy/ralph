@@ -11,7 +11,7 @@ pub fn render_notebook_edit(ctx: &RenderContext, params: &NotebookEditParams) ->
     if ctx.terminal {
         output.push_str(&format!(
             "{}{}{} cell {} ({}) [{}]\n",
-            ansi::DIM,
+            ansi::GREY,
             params.notebook_path,
             ansi::RESET,
             params.cell_identifier,

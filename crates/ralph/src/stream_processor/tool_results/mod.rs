@@ -18,6 +18,7 @@ use ralph_core::stream::{ToolInvocation, ToolResult};
 
 use super::processor::StreamProcessor;
 use super::utils::truncate_string;
+use crate::ansi::{GREEN, GREY, RED, RESET};
 
 // Re-export for use in event_handler
 pub use edit::format_edit_result_with_snapshot;
@@ -79,10 +80,10 @@ pub fn format_tool_result_with_context(
     if processor.highlighting_enabled {
         if result.is_error {
             // Red for errors
-            format!("\x1b[31m✗ Error:\x1b[0m {}\n", truncated_content)
+            format!("{RED}✗ Error:{RESET} {}\n", truncated_content)
         } else {
             // Green check for success (dim output)
-            format!("\x1b[32m✓\x1b[0m \x1b[90m{}\x1b[0m\n", truncated_content)
+            format!("{GREEN}✓{RESET} {GREY}{}{RESET}\n", truncated_content)
         }
     } else {
         // Plain text for non-terminal

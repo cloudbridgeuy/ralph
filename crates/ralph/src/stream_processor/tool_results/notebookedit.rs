@@ -17,6 +17,7 @@ use crate::diff_highlight::highlight_with_basic_colors;
 
 use super::super::processor::StreamProcessor;
 use super::super::types::NotebookSnapshot;
+use crate::ansi::{CYAN, GREEN, GREY, RESET, YELLOW};
 
 /// Maximum lines to show in a diff before truncating.
 const MAX_DIFF_LINES: usize = 50;
@@ -101,7 +102,7 @@ pub fn format_notebook_result_with_snapshot(
         let cell_display = format!("{}:{}", snapshot.notebook_path, snapshot.cell_identifier);
         if processor.highlighting_enabled {
             format!(
-                "\x1b[32m\u{2713}\x1b[0m \x1b[90mNotebookEdit: {} (no changes)\x1b[0m\n",
+                "{GREEN}\u{2713}{RESET} {GREY}NotebookEdit: {} (no changes){RESET}\n",
                 cell_display
             )
         } else {
@@ -157,12 +158,12 @@ fn format_diff_output(
         // Cell path header with box drawing and indicators
         if !edit_mode_indicator.is_empty() {
             output.push_str(&format!(
-                "\x1b[36m\u{2500}\u{2500} {}{}\x1b[33m{}\x1b[36m \u{2500}\u{2500}\x1b[0m\n",
+                "{CYAN}\u{2500}\u{2500} {}{}{YELLOW}{}{CYAN} \u{2500}\u{2500}{RESET}\n",
                 cell_display, cell_type_indicator, edit_mode_indicator
             ));
         } else {
             output.push_str(&format!(
-                "\x1b[36m\u{2500}\u{2500} {}{} \u{2500}\u{2500}\x1b[0m\n",
+                "{CYAN}\u{2500}\u{2500} {}{} \u{2500}\u{2500}{RESET}\n",
                 cell_display, cell_type_indicator
             ));
         }
@@ -178,7 +179,7 @@ fn format_diff_output(
         // Truncation indicator
         if truncated {
             output.push_str(&format!(
-                "\x1b[90m... {} more lines\x1b[0m\n",
+                "{GREY}... {} more lines{RESET}\n",
                 line_count - MAX_DIFF_LINES
             ));
         }

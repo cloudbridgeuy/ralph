@@ -15,7 +15,7 @@ pub fn render_default_invocation(
             tool_name,
             ansi::RESET,
             if let Some(arg) = key_argument {
-                format!(" {}{}{}", ansi::DIM, arg, ansi::RESET)
+                format!(" {}{}{}", ansi::GREY, arg, ansi::RESET)
             } else {
                 String::new()
             }
