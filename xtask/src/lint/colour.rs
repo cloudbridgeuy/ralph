@@ -52,28 +52,142 @@ fn line_has_colour_escape(line: &str) -> bool {
     })
 }
 
-fn brace_delta(line: &str) -> i64 {
-    let mut delta = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-    for c in line.chars() {
-        match c {
-            _ if escaped => escaped = false,
-            '\\' if in_string => escaped = true,
-            '"' => in_string = !in_string,
-            '{' if !in_string => delta += 1,
-            '}' if !in_string => delta -= 1,
-            _ => {}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lex {
+    Code,
+    Str,
+    Raw(usize),
+    Block(usize),
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct LineBraces {
+    opens: i64,
+    delta: i64,
+    starts_in_code: bool,
+}
+
+fn raw_string_open(chars: &[char], at: usize) -> Option<(usize, usize)> {
+    if chars[at] != 'r' {
+        return None;
+    }
+    let after_ident = at > 0 && (chars[at - 1].is_alphanumeric() || chars[at - 1] == '_');
+    let byte_prefix = at > 0 && chars[at - 1] == 'b';
+    if after_ident && !byte_prefix {
+        return None;
+    }
+    let hashes = chars[at + 1..].iter().take_while(|c| **c == '#').count();
+    (chars.get(at + 1 + hashes) == Some(&'"')).then_some((hashes, at + 2 + hashes))
+}
+
+fn char_literal_len(chars: &[char], at: usize) -> Option<usize> {
+    match chars.get(at + 1)? {
+        '\\' => chars[at + 2..]
+            .iter()
+            .position(|c| *c == '\'')
+            .map(|close| close + 3),
+        _ => (chars.get(at + 2) == Some(&'\'')).then_some(3),
+    }
+}
+
+fn raw_string_closes(chars: &[char], at: usize, hashes: usize) -> bool {
+    chars[at] == '"'
+        && chars.len() >= at + 1 + hashes
+        && chars[at + 1..at + 1 + hashes].iter().all(|c| *c == '#')
+}
+
+fn scan_line(mut state: Lex, line: &str) -> (Lex, LineBraces) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut braces = LineBraces {
+        starts_in_code: state == Lex::Code,
+        ..LineBraces::default()
+    };
+    let mut at = 0;
+    while at < chars.len() {
+        let c = chars[at];
+        match state {
+            Lex::Str => {
+                match c {
+                    '\\' => at += 1,
+                    '"' => state = Lex::Code,
+                    _ => {}
+                }
+                at += 1;
+            }
+            Lex::Raw(hashes) => {
+                if raw_string_closes(&chars, at, hashes) {
+                    state = Lex::Code;
+                    at += hashes;
+                }
+                at += 1;
+            }
+            Lex::Block(depth) => {
+                if c == '/' && chars.get(at + 1) == Some(&'*') {
+                    state = Lex::Block(depth + 1);
+                    at += 2;
+                } else if c == '*' && chars.get(at + 1) == Some(&'/') {
+                    state = if depth == 1 {
+                        Lex::Code
+                    } else {
+                        Lex::Block(depth - 1)
+                    };
+                    at += 2;
+                } else {
+                    at += 1;
+                }
+            }
+            Lex::Code => {
+                if c == '/' && chars.get(at + 1) == Some(&'/') {
+                    break;
+                }
+                if c == '/' && chars.get(at + 1) == Some(&'*') {
+                    state = Lex::Block(1);
+                    at += 2;
+                    continue;
+                }
+                if let Some((hashes, next)) = raw_string_open(&chars, at) {
+                    state = Lex::Raw(hashes);
+                    at = next;
+                    continue;
+                }
+                if c == '\'' {
+                    at += char_literal_len(&chars, at).unwrap_or(1);
+                    continue;
+                }
+                match c {
+                    '"' => state = Lex::Str,
+                    '{' => {
+                        braces.opens += 1;
+                        braces.delta += 1;
+                    }
+                    '}' => braces.delta -= 1,
+                    _ => {}
+                }
+                at += 1;
+            }
         }
     }
-    delta
+    (state, braces)
+}
+
+fn line_braces(lines: &[&str]) -> Vec<LineBraces> {
+    let mut state = Lex::Code;
+    lines
+        .iter()
+        .map(|line| {
+            let (next, braces) = scan_line(state, line);
+            state = next;
+            braces
+        })
+        .collect()
 }
 
 fn test_module_lines(lines: &[&str]) -> Vec<bool> {
+    let braces = line_braces(lines);
     let mut skipped = vec![false; lines.len()];
     let mut index = 0;
     while index < lines.len() {
-        if lines[index].trim() != "#[cfg(test)]" {
+        if lines[index].trim() != "#[cfg(test)]" || !braces[index].starts_in_code {
             index += 1;
             continue;
         }
@@ -82,8 +196,8 @@ fn test_module_lines(lines: &[&str]) -> Vec<bool> {
         let mut end = index;
         for (offset, line) in lines[index..].iter().enumerate() {
             end = index + offset;
-            depth += brace_delta(line);
-            opened |= line.contains('{');
+            depth += braces[end].delta;
+            opened |= braces[end].opens > 0;
             if (opened && depth <= 0) || (!opened && offset > 0 && line.trim_end().ends_with(';')) {
                 break;
             }
@@ -244,5 +358,59 @@ mod tests {
         assert!(hits("crates/ralph/tests/render.rs", text).is_empty());
         assert!(hits("vendor/x/src/lib.rs", text).is_empty());
         assert!(hits("xtask/src/lint/mod.rs", text).is_empty());
+    }
+
+    #[test]
+    fn test_module_with_brace_char_literals_and_raw_strings_does_not_hide_production() {
+        let text = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    fn t() {\n",
+            "        let open = '{';\n",
+            "        let quote = '\"';\n",
+            "        let raw = r#\"\n",
+            "{ { {\n",
+            "\"#;\n",
+            "        let esc = \"\\x1b[31m\";\n",
+            "    }\n",
+            "}\n",
+            "fn prod() { let s = \"\\x1b[32m\"; }\n",
+        );
+        assert_eq!(hits(PROD, text), vec![12]);
+    }
+
+    fn delta(line: &str) -> i64 {
+        scan_line(Lex::Code, line).1.delta
+    }
+
+    #[test]
+    fn scan_ignores_braces_in_strings_chars_and_comments() {
+        assert_eq!(delta("let a = \"{\"; let b = '{'; let c = '\"'; {"), 1);
+        assert_eq!(delta("let a = '\\'' ; }"), -1);
+        assert_eq!(delta("fn f<'a>(x: &'a str) {"), 1);
+        assert_eq!(delta("// {{{"), 0);
+        assert_eq!(delta("{ /* } } */ }"), 0);
+        assert_eq!(delta("let s = \"\\\"{\";"), 0);
+    }
+
+    #[test]
+    fn scan_carries_raw_string_and_block_state_across_lines() {
+        let (state, _) = scan_line(Lex::Code, "let s = r##\"{");
+        assert_eq!(state, Lex::Raw(2));
+        let (state, braces) = scan_line(state, "\"# } \"##; {");
+        assert_eq!(state, Lex::Code);
+        assert_eq!(braces.delta, 1);
+        let (state, _) = scan_line(Lex::Code, "/* { /* {");
+        assert_eq!(state, Lex::Block(2));
+        let (state, braces) = scan_line(state, "*/ } */ {");
+        assert_eq!(state, Lex::Code);
+        assert_eq!(braces.delta, 1);
+        let (state, _) = scan_line(Lex::Code, "let s = \"abc");
+        assert_eq!(state, Lex::Str);
+    }
+
+    #[test]
+    fn byte_raw_strings_hide_their_braces() {
+        assert_eq!(delta("let s = br\"{\"; {"), 1);
     }
 }
