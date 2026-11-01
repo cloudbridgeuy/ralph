@@ -180,3 +180,16 @@ fn notices_point_back_to_the_ticket() {
         assert!(notice.ends_with("/send-it GUZ-9"), "{notice}");
     }
 }
+
+#[test]
+fn send_it_args_parse_to_arm_off_or_status() {
+    assert_eq!(SendIt::parse(""), Some(SendIt::Status));
+    assert_eq!(SendIt::parse("  "), Some(SendIt::Status));
+    assert_eq!(SendIt::parse(" off "), Some(SendIt::Off));
+    assert_eq!(
+        SendIt::parse("GUZ-1162"),
+        Some(SendIt::Arm("GUZ-1162".to_string()))
+    );
+    assert_eq!(SendIt::parse("GUZ-1 now"), None);
+    assert_eq!(SendIt::parse("off now"), None);
+}

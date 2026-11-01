@@ -1,6 +1,7 @@
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
 use crate::chat_memory::{history_tool, Tool};
+use crate::chat_send_it::SendIt;
 use crate::chat_thread::ThreadCell;
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -91,6 +92,7 @@ pub enum Route {
     Workers(Option<String>),
     WorkerCosts,
     Hold(HoldFilter),
+    SendIt(SendIt),
     History(Result<Tool, String>),
     Help,
     Config,
@@ -115,6 +117,7 @@ impl Route {
             | Route::ReadInbox(_)
             | Route::DropInbox(_)
             | Route::Hold(_)
+            | Route::SendIt(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
             | Route::Diff(DiffArgs::Target(_))
@@ -152,6 +155,7 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
                 Command::Diff => Route::Diff(parse_diff_args(args)),
                 Command::Workers => workers_route(args, line),
                 Command::Hold => hold_route(args, line),
+                Command::SendIt => send_it_route(args, line),
                 Command::Config => Route::Config,
                 Command::Read | Command::Search => {
                     let (words, cursor) = split_cursor(args);
@@ -203,6 +207,10 @@ fn scheduled_worker_id(id: &str) -> String {
 
 fn hold_route(args: &str, line: &str) -> Route {
     HoldFilter::parse(args).map_or_else(|| Route::Send(line.to_string()), Route::Hold)
+}
+
+fn send_it_route(args: &str, line: &str) -> Route {
+    SendIt::parse(args).map_or_else(|| Route::Send(line.to_string()), Route::SendIt)
 }
 
 fn inbox_route(args: &str) -> Route {

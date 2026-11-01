@@ -48,6 +48,25 @@ impl Step {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendIt {
+    Arm(String),
+    Off,
+    Status,
+}
+
+impl SendIt {
+    pub fn parse(args: &str) -> Option<SendIt> {
+        let mut tokens = args.split_whitespace();
+        match (tokens.next(), tokens.next()) {
+            (None, _) => Some(SendIt::Status),
+            (Some("off"), None) => Some(SendIt::Off),
+            (Some(ticket), None) => Some(SendIt::Arm(ticket.to_string())),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
     pub max_turns: u32,

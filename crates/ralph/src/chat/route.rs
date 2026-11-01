@@ -71,6 +71,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
                     .unwrap_or_else(|e| e)
             );
         }
+        Route::SendIt(_) => println!("/send-it is not available yet."),
         Route::Send(_) | Route::ReadInbox(_) | Route::Hold(_) | Route::Ignore => {}
     }
     Ok(())

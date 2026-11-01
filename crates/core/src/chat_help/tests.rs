@@ -80,6 +80,7 @@ fn lists_hold_every_variant() {
             Diff,
             Workers,
             Hold,
+            SendIt,
             Config,
             Read,
             Zoom,
@@ -105,6 +106,13 @@ fn lists_hold_every_variant() {
             Restart
         }
     );
+}
+
+#[test]
+fn the_send_it_rows_show_both_forms() {
+    let text = help_text(160);
+    assert!(text.contains("/send-it <ticket>"));
+    assert!(text.contains("/send-it off"));
 }
 
 #[test]
