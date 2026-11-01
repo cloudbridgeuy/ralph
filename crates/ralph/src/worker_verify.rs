@@ -115,6 +115,8 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::Cli;
+    use clap::Parser;
 
     fn passed(version: Option<&str>) -> Outcome<'_> {
         Outcome {
@@ -148,5 +150,13 @@ mod tests {
         });
         assert!(lines[0].starts_with("FAIL: cursor unknown version"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn the_cli_accepts_only_cursor_and_codex_as_verify_agents() {
+        for agent in ["cursor", "codex"] {
+            assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_ok());
+        }
+        assert!(Cli::try_parse_from(["ralph", "worker", "verify", "claude-headless"]).is_err());
     }
 }

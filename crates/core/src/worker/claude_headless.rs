@@ -3,7 +3,7 @@ use super::{
     Action, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus, ThreadSignal,
     TurnEnd, Turns, VersionGate, SERVER_NAME,
 };
-use crate::stream::result_is_error;
+use crate::stream::{interrupt_line, result_is_error};
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -124,6 +124,18 @@ pub fn permission_response(request_id: &str, option_id: &str, input: &Value) -> 
         .to_string()
 }
 
+pub fn deny_line(request_id: &str) -> String {
+    permission_response(request_id, DENY, &Value::Null)
+}
+
+pub fn interrupt_lines(pending: &[String], turn_id: &str) -> Vec<String> {
+    pending
+        .iter()
+        .map(|request_id| deny_line(request_id))
+        .chain([interrupt_line(&format!("interrupt-{turn_id}"))])
+        .collect()
+}
+
 pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<String> {
     match mode {
         PermissionMode::Yolo => Some(permission_response(
@@ -202,7 +214,7 @@ pub fn claude_headless_args(
     mcp_config: &str,
     attachments: &Path,
     mode: PermissionMode,
-    resume: Option<&str>,
+    session: ClaudeSession,
 ) -> Vec<String> {
     let native_mode = match mode {
         PermissionMode::Ask => "default",
@@ -231,10 +243,72 @@ pub fn claude_headless_args(
     if let Some(model) = model {
         args.extend(["--model".to_string(), model.to_string()]);
     }
-    if let Some(session) = resume {
-        args.extend(["--resume".to_string(), session.to_string()]);
-    }
+    let (flag, id) = match session {
+        ClaudeSession::New(id) => ("--session-id", id),
+        ClaudeSession::Resume(id) => ("--resume", id),
+    };
+    args.extend([flag.to_string(), id.to_string()]);
     args
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClaudeSession<'a> {
+    New(&'a str),
+    Resume(&'a str),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartStep {
+    WriteOwner,
+    WriteRecord,
+}
+
+pub fn start_steps(session: &ClaudeSession) -> &'static [StartStep] {
+    match session {
+        ClaudeSession::New(_) => &[StartStep::WriteOwner, StartStep::WriteRecord],
+        ClaudeSession::Resume(_) => &[StartStep::WriteOwner],
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartFault {
+    OwnerWrite,
+    RecordWrite,
+    InitFailed,
+    NotAdopted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Leftover {
+    StopChild,
+    RemoveOwner,
+    RemoveRecord,
+}
+
+pub fn cleanup(fault: StartFault) -> &'static [Leftover] {
+    match fault {
+        StartFault::OwnerWrite => &[Leftover::StopChild],
+        StartFault::RecordWrite => &[Leftover::StopChild, Leftover::RemoveOwner],
+        StartFault::InitFailed | StartFault::NotAdopted => &[
+            Leftover::StopChild,
+            Leftover::RemoveOwner,
+            Leftover::RemoveRecord,
+        ],
+    }
+}
+
+pub fn uuid_v4(mut bytes: [u8; 16]) -> String {
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = bytes.map(|byte| format!("{byte:02x}")).concat();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
 }
 
 fn own_tool_names() -> String {
@@ -549,7 +623,7 @@ mod tests {
             "{}",
             Path::new("/a"),
             PermissionMode::Ask,
-            None,
+            ClaudeSession::New("sid"),
         );
         let joined = args.join(" ");
         assert!(joined
@@ -560,7 +634,13 @@ mod tests {
             "--mcp-config {} --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
         ));
         assert!(!args.contains(&"--resume".into()));
-        let yolo = claude_headless_args(None, "{}", Path::new("/a"), PermissionMode::Yolo, None);
+        let yolo = claude_headless_args(
+            None,
+            "{}",
+            Path::new("/a"),
+            PermissionMode::Yolo,
+            ClaudeSession::New("sid"),
+        );
         assert!(yolo
             .join(" ")
             .contains("--permission-mode auto --permission-prompt-tool stdio"));
@@ -570,9 +650,66 @@ mod tests {
             "{}",
             Path::new("/a"),
             PermissionMode::Ask,
-            Some("abc"),
+            ClaudeSession::Resume("abc"),
         );
         assert!(resumed.join(" ").ends_with("--resume abc"));
+        assert!(!resumed.contains(&"--session-id".into()));
+    }
+
+    #[test]
+    fn a_new_session_passes_its_id_and_never_resume() {
+        let args = claude_headless_args(
+            None,
+            "{}",
+            Path::new("/a"),
+            PermissionMode::Ask,
+            ClaudeSession::New("11111111-2222-4333-8444-555555555555"),
+        );
+        assert!(args
+            .join(" ")
+            .ends_with("--session-id 11111111-2222-4333-8444-555555555555"));
+        assert!(!args.contains(&"--resume".into()));
+    }
+
+    #[test]
+    fn a_new_session_writes_the_owner_then_the_record_and_a_resume_only_the_owner() {
+        assert_eq!(
+            start_steps(&ClaudeSession::New("a")),
+            [StartStep::WriteOwner, StartStep::WriteRecord]
+        );
+        assert_eq!(
+            start_steps(&ClaudeSession::Resume("a")),
+            [StartStep::WriteOwner]
+        );
+    }
+
+    #[test]
+    fn each_start_fault_cleans_exactly_what_it_left_behind() {
+        assert_eq!(cleanup(StartFault::OwnerWrite), [Leftover::StopChild]);
+        assert_eq!(
+            cleanup(StartFault::RecordWrite),
+            [Leftover::StopChild, Leftover::RemoveOwner]
+        );
+        let full = [
+            Leftover::StopChild,
+            Leftover::RemoveOwner,
+            Leftover::RemoveRecord,
+        ];
+        assert_eq!(cleanup(StartFault::InitFailed), full);
+        assert_eq!(cleanup(StartFault::NotAdopted), full);
+    }
+
+    #[test]
+    fn uuid_v4_formats_lowercase_hex_with_version_and_variant() {
+        let id = uuid_v4([
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0xff, 0x77, 0xff, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ]);
+        assert_eq!(id, "00112233-4455-4f77-bf99-aabbccddeeff");
+        let parts = id.split('-').map(str::len).collect::<Vec<_>>();
+        assert_eq!(parts, [8, 4, 4, 4, 12]);
+        assert_eq!(uuid_v4([0; 16]), "00000000-0000-4000-8000-000000000000");
+        assert_eq!(uuid_v4([0xff; 16]), "ffffffff-ffff-4fff-bfff-ffffffffffff");
     }
 
     #[test]
@@ -609,6 +746,38 @@ mod tests {
         assert_eq!(
             report.text,
             "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
+        );
+    }
+
+    #[test]
+    fn interrupt_lines_deny_each_pending_request_before_the_interrupt() {
+        let pending = ["r1".to_string(), "r2".to_string()];
+        let lines = interrupt_lines(&pending, "turn-3");
+        assert_eq!(
+            lines,
+            [
+                permission_response("r1", "deny", &Value::Null),
+                permission_response("r2", "deny", &Value::Null),
+                interrupt_line("interrupt-turn-3"),
+            ]
+        );
+    }
+
+    #[test]
+    fn deny_line_answers_the_request_with_a_deny() {
+        assert_eq!(
+            deny_line("r9"),
+            permission_response("r9", "deny", &Value::Null)
+        );
+        assert!(deny_line("r9").contains(r#""request_id":"r9""#));
+        assert!(deny_line("r9").contains(r#""behavior":"deny""#));
+    }
+
+    #[test]
+    fn interrupt_lines_without_pending_requests_is_only_the_interrupt() {
+        assert_eq!(
+            interrupt_lines(&[], "turn-3"),
+            [interrupt_line("interrupt-turn-3")]
         );
     }
 }

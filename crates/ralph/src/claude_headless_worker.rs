@@ -1,8 +1,8 @@
-use crate::acp_log::{drain_stderr, CappedLog};
+use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
-use crate::codex_worker::pipes::{logged_stdin, pipe_lines};
+use crate::codex_worker::pipes::pipe_lines;
+use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;
-use crate::codex_worker::{report_exit, Stdin};
 use crate::config::{configured_permission_mode, AppConfig};
 use crate::cursor_owner::{
     now_secs, queued_entries, report_start_warning, request_ids, sweep_owner, take_answer,
@@ -15,22 +15,24 @@ use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::claude_leftovers::configured_dir;
-use ralph_core::stream::{interrupt_line, user_line};
+use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
-    claude_headless_args, decode_claude_version, decode_line, gone_path, interrupted_end,
-    permission_response, prompt_failure_report, ready_path, reduce, request_stale, resumed_session,
-    stuck_permission_report, task_prompt, Action, ClaudeLine, ClaudePermission, HandoffFiles,
-    HarnessId, HeadlessState, InterruptOutcome, PermissionAnswer, PermissionMode, SessionRecord,
-    SpawnRequest, ThreadSignal, Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
-    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
-    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
-    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
+    claude_headless_args, cleanup, decode_claude_version, decode_line, deny_line, gone_path,
+    interrupt_lines, interrupted_end, permission_response, prompt_failure_report, ready_path,
+    reduce, request_stale, resumed_session, start_steps, stuck_permission_report, task_prompt,
+    uuid_v4, Action, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId,
+    HeadlessState, InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord,
+    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, VerifiedAgents, WorkerEvent,
+    WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
+    SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -43,6 +45,8 @@ const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
 const LOST_TURN: &str = "the turn in flight was lost when the chat exited; prompt it again";
 
+type ClaudeStdin = Mutex<Option<Box<dyn Write + Send>>>;
+
 struct ClaudeReply {
     request_id: String,
     input: Value,
@@ -51,7 +55,7 @@ struct ClaudeReply {
 struct Shared {
     id: String,
     turns: Mutex<Turns>,
-    stdin: Stdin,
+    stdin: ClaudeStdin,
     events: Events,
     permissions: PermissionQueue<ClaudeReply>,
     mode: PermissionMode,
@@ -59,7 +63,7 @@ struct Shared {
     markers: WorkerMarkers,
     inbox: Inbox,
     results: PathBuf,
-    resumed: Option<String>,
+    expected_session: Option<String>,
     turn_seq: AtomicU64,
     closing: AtomicBool,
     exited: AtomicBool,
@@ -113,7 +117,10 @@ impl Shared {
                     request_id: ask.content.request_id.clone(),
                     input: ask.input,
                 };
-                self.permissions.enqueue(reply, ask.content);
+                if let Some(refused) = self.permissions.enqueue_unless_refusing(reply, ask.content)
+                {
+                    self.send(&deny_line(&refused.request_id)).ok();
+                }
             }
         }
     }
@@ -130,6 +137,16 @@ impl Shared {
         ))
     }
 
+    fn interrupt_sends(&self, turn_id: &str) -> Vec<String> {
+        let pending = self
+            .permissions
+            .drain_and_refuse()
+            .into_iter()
+            .map(|reply| reply.request_id)
+            .collect::<Vec<_>>();
+        interrupt_lines(&pending, turn_id)
+    }
+
     fn perform(&self, actions: Vec<Action>) {
         for action in actions {
             match action {
@@ -140,7 +157,7 @@ impl Shared {
                     match &event {
                         WorkerEvent::TurnStarted => self.heartbeat.set_running(true),
                         WorkerEvent::TurnEnded(_) => {
-                            self.permissions.drain();
+                            self.permissions.accept_again();
                             self.heartbeat.set_running(false);
                         }
                         _ => {}
@@ -158,9 +175,9 @@ impl Shared {
                     self.inbox.post(&report, 0).ok();
                 }
                 Action::Interrupt(turn_id) => {
-                    self.send(&interrupt_line(&format!("interrupt-{turn_id}")))
-                        .ok();
-                    self.permissions.drain();
+                    for line in self.interrupt_sends(&turn_id) {
+                        self.send(&line).ok();
+                    }
                 }
                 Action::InterruptResult { entry, outcome } => {
                     write_interrupt_result(&self.results, &entry, outcome);
@@ -179,8 +196,8 @@ impl Shared {
             self.heartbeat.touch();
             match decode_line(&line) {
                 ClaudeLine::Init(status) => {
-                    let status =
-                        status.and_then(|found| resumed_session(self.resumed.as_deref(), found));
+                    let status = status
+                        .and_then(|found| resumed_session(self.expected_session.as_deref(), found));
                     if let Some(ready) = ready.take() {
                         ready.send(status).ok();
                     } else if let Err(problem) = status {
@@ -212,6 +229,76 @@ impl Shared {
             "claude exited",
         );
     }
+}
+
+fn session_record(
+    session_id: &str,
+    request: &SpawnRequest,
+    store: &Path,
+    mode: PermissionMode,
+) -> SessionRecord {
+    SessionRecord {
+        session_id: session_id.to_string(),
+        cwd: request.worktree.clone(),
+        inbox: request.inbox.clone(),
+        store: Some(store.to_path_buf()),
+        model: request.model.clone(),
+        effort: None,
+        permissions: Some(mode),
+    }
+}
+
+fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Option<&mut Child>) {
+    for leftover in leftovers {
+        match leftover {
+            Leftover::StopChild => {
+                if let Some(child) = child.as_deref_mut() {
+                    stop_child(child);
+                }
+            }
+            Leftover::RemoveOwner => {
+                fs::remove_file(&files.owner).ok();
+            }
+            Leftover::RemoveRecord => {
+                fs::remove_file(&files.session).ok();
+            }
+        }
+    }
+}
+
+fn write_start_files(
+    steps: &[StartStep],
+    files: &HandoffFiles,
+    record: &SessionRecord,
+    group: u32,
+    mut child: Option<&mut Child>,
+) -> Result<(), String> {
+    for step in steps {
+        let (fault, written) = match step {
+            StartStep::WriteOwner => (
+                StartFault::OwnerWrite,
+                write_owner_record(&files.owner, group, "claude"),
+            ),
+            StartStep::WriteRecord => (
+                StartFault::RecordWrite,
+                write_file(&files.session, &record.render())
+                    .map_err(|e| format!("could not write the session record: {e}")),
+            ),
+        };
+        if let Err(message) = written {
+            remove_leftovers(cleanup(fault), files, child.as_deref_mut());
+            return Err(message);
+        }
+    }
+    Ok(())
+}
+
+fn random_bytes() -> Result<[u8; 16], String> {
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(|e| format!("could not read random bytes for the session id: {e}"))?;
+    Ok(bytes)
 }
 
 fn check_installed_version(warning: &Path) -> Result<(), String> {
@@ -260,12 +347,23 @@ impl ClaudeWorker {
             .unwrap_or_else(|| {
                 configured_permission_mode("claude", |config| config.claude.permissions_setting())
             });
+        let new_id;
+        let session = match resume {
+            Some(record) => ClaudeSession::Resume(&record.session_id),
+            None => {
+                new_id = uuid_v4(random_bytes()?);
+                ClaudeSession::New(&new_id)
+            }
+        };
+        let expected_session = match session {
+            ClaudeSession::New(id) | ClaudeSession::Resume(id) => id.to_string(),
+        };
         let args = claude_headless_args(
             request.model.as_deref(),
             &mcp.to_string(),
             &attachments,
             mode,
-            resume.map(|record| record.session_id.as_str()),
+            session,
         );
         let mut command = Command::new(CLAUDE_COMMAND);
         command.args(args).current_dir(&request.worktree);
@@ -291,7 +389,11 @@ impl ClaudeWorker {
         let shared = Arc::new(Shared {
             id: id.to_string(),
             turns: Mutex::new(Turns::default()),
-            stdin: logged_stdin(stdin, &log),
+            stdin: Mutex::new(Some(Box::new(LoggedWrite {
+                inner: stdin,
+                log: Arc::clone(&log),
+                tag: "in",
+            }))),
             permissions: PermissionQueue::new(
                 host_process_token(),
                 id.to_string(),
@@ -304,15 +406,26 @@ impl ClaudeWorker {
             markers,
             inbox: Inbox::new(request.inbox.clone()),
             results: files.interrupt_result.clone(),
-            resumed: resume.map(|record| record.session_id.clone()),
+            expected_session: Some(expected_session.clone()),
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
         });
-        if let Err(message) = write_owner_record(&files.owner, child.id(), "claude") {
-            stop_child(&mut child);
-            return Err(message);
-        }
+        let fresh;
+        let record = match resume {
+            Some(record) => record,
+            None => {
+                fresh = session_record(&expected_session, request, store, mode);
+                &fresh
+            }
+        };
+        write_start_files(
+            start_steps(&session),
+            files,
+            record,
+            child.id(),
+            Some(&mut child),
+        )?;
         let mut worker = Self {
             child,
             shared: Arc::clone(&shared),
@@ -337,7 +450,10 @@ impl ClaudeWorker {
                 })
             }
         };
-        let session = session.inspect_err(|_| worker.terminate())?;
+        let session = session.inspect_err(|_| {
+            worker.terminate();
+            remove_leftovers(cleanup(StartFault::InitFailed), files, None);
+        })?;
         worker.session = session;
         Ok(worker)
     }
@@ -490,20 +606,18 @@ impl ClaudeHeadlessHost {
             && fs::remove_file(&files.spawn).is_ok()
             && write_file(&ready_path(&self.store_dir, id), "").is_ok();
         if claimed {
-            let record = SessionRecord {
-                session_id: worker.session.clone(),
-                cwd: request.worktree.clone(),
-                inbox: request.inbox.clone(),
-                store: Some(self.store_dir.clone()),
-                model: request.model.clone(),
-                effort: None,
-                permissions: Some(worker.shared.mode),
-            };
+            let record = session_record(
+                &worker.session,
+                request,
+                &self.store_dir,
+                worker.shared.mode,
+            );
             write_file(&files.session, &record.render()).ok();
             locked(&self.workers).insert(id.to_string(), worker);
         } else {
             drop(worker);
             fs::remove_file(ready_path(&self.store_dir, id)).ok();
+            remove_leftovers(cleanup(StartFault::NotAdopted), &files, None);
         }
     }
 
@@ -593,180 +707,5 @@ impl HeadlessHost for ClaudeHeadlessHost {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use ralph_core::worker::Report;
-    use tempfile::TempDir;
-
-    const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"ls"},"tool_use_id":"t1"}}"#;
-    const DONE: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#;
-
-    struct Run {
-        shared: Shared,
-        dir: TempDir,
-        events: Vec<WorkerEvent>,
-    }
-
-    impl Run {
-        fn reports(&self) -> Vec<Report> {
-            let Ok(entries) = fs::read_dir(self.dir.path().join("inbox")) else {
-                return Vec::new();
-            };
-            entries
-                .filter_map(Result::ok)
-                .filter_map(|entry| fs::read(entry.path()).ok())
-                .filter_map(|bytes| serde_json::from_slice(&bytes).ok())
-                .collect()
-        }
-
-        fn interrupt_result(&self, entry: &str) -> Option<String> {
-            fs::read_to_string(self.dir.path().join("interrupt-result").join(entry)).ok()
-        }
-
-        fn permission_events(&self) -> Vec<&WorkerEvent> {
-            self.events
-                .iter()
-                .filter(|event| {
-                    matches!(
-                        event,
-                        WorkerEvent::PermissionAsked(_) | WorkerEvent::PermissionSettled
-                    )
-                })
-                .collect()
-        }
-    }
-
-    fn run(mode: PermissionMode, lines: &[&str]) -> Run {
-        run_after(mode, |_| {}, lines)
-    }
-
-    fn run_after(mode: PermissionMode, setup: impl FnOnce(&Shared), lines: &[&str]) -> Run {
-        let dir = TempDir::new().unwrap();
-        let store = dir.path();
-        let events = Events::default();
-        let inbox = || Inbox::new(store.join("inbox"));
-        let shared = Shared {
-            id: "w".into(),
-            turns: Mutex::default(),
-            stdin: Arc::new(Mutex::new(None)),
-            events: Arc::clone(&events),
-            permissions: PermissionQueue::new("p".into(), "w".into(), inbox(), Arc::clone(&events)),
-            mode,
-            heartbeat: Heartbeat::new(store.join("activity"), store.join("gone")),
-            markers: WorkerMarkers::new(store, "w"),
-            inbox: inbox(),
-            closing: AtomicBool::new(false),
-            exited: AtomicBool::new(false),
-            results: store.join("interrupt-result"),
-            resumed: None,
-            turn_seq: AtomicU64::new(0),
-        };
-        setup(&shared);
-        let (tx, rx) = mpsc::channel();
-        for line in lines {
-            tx.send((*line).to_string()).unwrap();
-        }
-        drop(tx);
-        let (ready, _) = mpsc::channel();
-        shared.read(rx, Some(ready));
-        let events = locked(&events).clone();
-        Run {
-            shared,
-            dir,
-            events,
-        }
-    }
-
-    #[test]
-    fn a_permission_line_without_a_request_id_posts_one_failure_and_queues_nothing() {
-        let line = ASK.replace(r#""request_id":"r1","#, "");
-        let run = run(PermissionMode::Ask, &[&line]);
-        assert!(run.permission_events().is_empty());
-        let reports = run.reports();
-        assert_eq!(reports.len(), 1);
-        assert_eq!(reports[0].status, "blocked");
-        assert_eq!(
-            reports[0].text,
-            "claude sent a permission request ralph can't answer (no request_id or no input object); the worker is stuck — close it."
-        );
-    }
-
-    // stdin is None here; core test yolo_answers_allow_once_and_ask_answers_nothing covers the bytes.
-    #[test]
-    fn yolo_never_queues_or_publishes() {
-        let run = run(PermissionMode::Yolo, &[ASK]);
-        assert!(run.permission_events().is_empty());
-        assert!(run.reports().is_empty());
-    }
-
-    #[test]
-    fn a_cancel_settles_by_the_raw_id_after_the_queue_published_the_prefixed_id() {
-        let cancel = r#"{"type":"control_cancel_request","request_id":"r1"}"#;
-        let run = run(PermissionMode::Ask, &[ASK, cancel]);
-        let asked = run.permission_events();
-        assert!(matches!(
-            asked.as_slice(),
-            [WorkerEvent::PermissionAsked(content), WorkerEvent::PermissionSettled]
-                if content.request_id == "p.r1"
-        ));
-        let stale = run
-            .shared
-            .permissions
-            .take_answer("p.r1", "allow_once")
-            .err()
-            .unwrap();
-        assert!(stale.starts_with("stale request"));
-    }
-
-    #[test]
-    fn an_interrupt_pending_when_claude_exits_writes_gone() {
-        let run = run_after(
-            PermissionMode::Ask,
-            |shared| {
-                shared.accept("task".into());
-                shared.interrupt("stop".into(), "e1".into());
-            },
-            &[],
-        );
-        assert_eq!(run.interrupt_result("e1").as_deref(), Some("gone"));
-    }
-
-    #[test]
-    fn a_turn_end_settles_a_permission_claude_never_cancelled() {
-        let run = run_after(
-            PermissionMode::Ask,
-            |shared| shared.accept("task".into()),
-            &[ASK, DONE],
-        );
-        assert!(matches!(
-            run.permission_events().as_slice(),
-            [
-                WorkerEvent::PermissionAsked(_),
-                WorkerEvent::PermissionSettled
-            ]
-        ));
-        let stale = run
-            .shared
-            .permissions
-            .take_answer("p.r1", "allow_once")
-            .err()
-            .unwrap();
-        assert!(stale.starts_with("stale request"));
-    }
-
-    #[test]
-    fn an_interrupt_for_a_worker_without_a_process_writes_gone() {
-        let dir = TempDir::new().unwrap();
-        let host = ClaudeHeadlessHost::new(dir.path().to_path_buf());
-        let files = host.files("w");
-        write_file(&files.interrupt.join("e1"), "stop").unwrap();
-        host.poll();
-        assert!(!files.interrupt.join("e1").exists());
-        assert_eq!(
-            fs::read_to_string(files.interrupt_result.join("e1"))
-                .ok()
-                .as_deref(),
-            Some("gone")
-        );
-    }
-}
+#[path = "claude_headless_worker_tests.rs"]
+mod tests;
