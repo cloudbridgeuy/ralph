@@ -573,6 +573,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                         )
                     );
                 }
+                monitor.set_phase(Phase::Cell);
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
