@@ -30,7 +30,7 @@ pub(super) struct ChatPrompt {
 }
 
 impl ChatPrompt {
-    fn dim(&self, line: &str) -> String {
+    pub(super) fn dim(&self, line: &str) -> String {
         if self.color {
             format!("{DIM}{line}{RESET}\n")
         } else {

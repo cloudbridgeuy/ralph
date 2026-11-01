@@ -90,7 +90,9 @@ use ralph_core::chat_memory::{store_in_use_message, Trigger};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
-use ralph_core::chat_suggestion::{prefill, Prefill, SuggestionRecord};
+use ralph_core::chat_suggestion::{
+    auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
+};
 use ralph_core::chat_thread::{run_id, UsageTail};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
@@ -684,13 +686,40 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let replied = outcome == TurnOutcome::Replied && !asked;
         shown.clear();
         offered = None;
-        if let Some(fill) = prefill(replied, draft, suggestion) {
-            let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
-            editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
-            if let Prefill::Suggestion(text) = fill {
-                offered = Some((text.clone(), turn.process_turns.load(Ordering::SeqCst)));
-                shown.set(text);
+        let turn_number = turn.process_turns.load(Ordering::SeqCst);
+        let suggested = suggestion.clone();
+        let next = turn_end(TurnEnd {
+            auto_hold: chat_config.auto_hold,
+            replied,
+            draft,
+            suggestion,
+            status: &monitor.status(),
+        });
+        match next {
+            Next::Hold(filter) => {
+                print!("{}", prompt.dim(&auto_hold_notice(&filter)));
+                if let Some(suggested) = suggested {
+                    warn_if_err(
+                        store.append_suggestion(&SuggestionRecord::held(
+                            chrono::Utc::now().to_rfc3339(),
+                            &run,
+                            turn_number,
+                            &suggested,
+                        )),
+                        "Failed to record suggestion outcome",
+                    );
+                }
+                pending = Some(Route::Hold(filter));
             }
+            Next::Prefill(fill) => {
+                let (Prefill::Draft(text) | Prefill::Suggestion(text)) = &fill;
+                editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
+                if let Prefill::Suggestion(text) = fill {
+                    offered = Some((text.clone(), turn_number));
+                    shown.set(text);
+                }
+            }
+            Next::Nothing => {}
         }
     }
     Ok(())

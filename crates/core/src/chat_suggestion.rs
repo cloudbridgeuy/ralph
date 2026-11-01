@@ -50,11 +50,7 @@ pub enum Prefill {
     Suggestion(String),
 }
 
-pub fn prefill(
-    replied: bool,
-    draft: Option<String>,
-    suggestion: Option<String>,
-) -> Option<Prefill> {
+fn prefill(replied: bool, draft: Option<String>, suggestion: Option<String>) -> Option<Prefill> {
     match draft {
         Some(draft) => Some(Prefill::Draft(draft)),
         None if replied => suggestion.map(Prefill::Suggestion),
@@ -133,7 +129,18 @@ pub struct SuggestionRecord {
     pub sent: String,
 }
 
+pub fn auto_hold_notice(filter: &HoldFilter) -> String {
+    format!("auto-hold: {} · Ctrl-Q to type", filter.label())
+}
+
 impl SuggestionRecord {
+    pub fn held(ts: String, run: &str, turn: u64, suggestion: &str) -> Self {
+        Self {
+            outcome: Outcome::Held,
+            ..Self::new(ts, run, turn, suggestion, suggestion)
+        }
+    }
+
     pub fn new(ts: String, run: &str, turn: u64, suggestion: &str, sent: &str) -> Self {
         let sent = sent.trim();
         Self {
@@ -471,5 +478,34 @@ mod tests {
     fn the_held_outcome_serializes_as_held() {
         assert_eq!(serde_json::to_value(Outcome::Held).unwrap(), json!("held"));
         assert_eq!(serde_json::to_string(&Outcome::Held).unwrap(), "\"held\"");
+    }
+
+    #[test]
+    fn a_held_record_has_the_held_outcome_and_the_suggestion_as_sent() {
+        let record = SuggestionRecord::held(
+            "2026-01-01T00:00:00+00:00".to_string(),
+            "7-t",
+            7,
+            "/hold GUZ-1",
+        );
+        assert_eq!(
+            serde_json::to_value(&record).unwrap(),
+            json!({
+                "ts": "2026-01-01T00:00:00+00:00",
+                "run": "7-t",
+                "turn": 7,
+                "outcome": "held",
+                "suggestion": "/hold GUZ-1",
+                "sent": "/hold GUZ-1"
+            })
+        );
+    }
+
+    #[test]
+    fn the_notice_names_the_target_and_the_way_out() {
+        assert_eq!(
+            auto_hold_notice(&HoldFilter::Source("GUZ-1".to_string())),
+            "auto-hold: GUZ-1 · Ctrl-Q to type"
+        );
     }
 }
