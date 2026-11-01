@@ -109,6 +109,7 @@ pub enum Outcome {
     Accepted,
     Extended,
     Discarded,
+    Held,
 }
 
 pub fn outcome(suggestion: &str, sent: &str) -> Outcome {
@@ -464,5 +465,11 @@ mod tests {
             status: &status(),
         });
         assert_eq!(next, Next::Nothing);
+    }
+
+    #[test]
+    fn the_held_outcome_serializes_as_held() {
+        assert_eq!(serde_json::to_value(Outcome::Held).unwrap(), json!("held"));
+        assert_eq!(serde_json::to_string(&Outcome::Held).unwrap(), "\"held\"");
     }
 }
