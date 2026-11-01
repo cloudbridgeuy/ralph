@@ -1,5 +1,9 @@
+use crate::chat_status::Status;
 use crate::inbox::{Entry, Position};
+use crate::schedule::watch_id;
 use crate::schedule_worker::source_matches_worker;
+use std::collections::BTreeSet;
+use std::ops::Range;
 
 const CTRL_Q: u8 = 0x11;
 const CTRL_D: u8 = 0x04;
@@ -44,6 +48,32 @@ pub fn first_match(entries: &[Entry], filter: &HoldFilter) -> Option<Position> {
 
 pub fn redraw(bar: &str) -> String {
     format!("\r\x1b[2K{}", bar.trim_end_matches('\n'))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoldCompletion {
+    pub span: Range<usize>,
+    pub values: Vec<String>,
+}
+
+pub fn hold_completions(line: &str, cursor: usize, status: &Status) -> Option<HoldCompletion> {
+    let args = line.get(..cursor)?.trim_start().strip_prefix("/hold")?;
+    let partial = args.trim_start();
+    if partial.len() == args.len() || partial.contains(char::is_whitespace) {
+        return None;
+    }
+    let candidates: BTreeSet<String> = status
+        .workers
+        .iter()
+        .map(|worker| worker.id.clone())
+        .chain(status.watches.iter().map(|watch| watch.id.clone()))
+        .chain(status.schedule.iter().map(|task| watch_id(&task.id)))
+        .filter(|candidate| candidate.starts_with(partial))
+        .collect();
+    Some(HoldCompletion {
+        span: cursor - partial.len()..cursor,
+        values: candidates.into_iter().collect(),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

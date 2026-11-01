@@ -72,6 +72,33 @@ fn emacs_keymap_keeps_chat_bindings() {
     );
 }
 
+fn complete_on_tab() -> Option<ReedlineEvent> {
+    Some(ReedlineEvent::UntilFound(vec![
+        ReedlineEvent::Menu("completion_menu".to_string()),
+        ReedlineEvent::MenuNext,
+    ]))
+}
+
+#[test]
+fn tab_completes_in_emacs_and_vi_insert_only() {
+    let (insert, normal) = vi_keybindings();
+    for keys in [emacs_keybindings(), insert] {
+        assert_eq!(
+            keys.find_binding(KeyModifiers::NONE, KeyCode::Tab),
+            complete_on_tab()
+        );
+        assert_eq!(
+            keys.find_binding(KeyModifiers::SHIFT, KeyCode::BackTab),
+            Some(ReedlineEvent::MenuPrevious)
+        );
+    }
+    assert_eq!(normal.find_binding(KeyModifiers::NONE, KeyCode::Tab), None);
+    assert_eq!(
+        normal.find_binding(KeyModifiers::SHIFT, KeyCode::BackTab),
+        None
+    );
+}
+
 #[test]
 fn vi_insert_keymap_carries_chat_bindings() {
     let (insert, _) = vi_keybindings();
@@ -226,6 +253,7 @@ fn key_label(modifier: KeyModifiers, code: KeyCode) -> String {
     }
     match code {
         KeyCode::Char(c) => label.push(c.to_ascii_uppercase()),
+        KeyCode::BackTab => label.push_str("Tab"),
         other => label.push_str(&format!("{other:?}")),
     }
     label
