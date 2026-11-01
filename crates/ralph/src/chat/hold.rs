@@ -1,5 +1,5 @@
 use crate::chat::monitor::Monitor;
-use crate::chat::prompt::screen_columns;
+use crate::chat::prompt::{screen_columns, terminal_columns};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
 use crate::signal;
@@ -24,10 +24,16 @@ fn matching_item(monitor: &Monitor, filter: &HoldFilter) -> io::Result<Option<Po
     Ok(first_match(ledger.entries(), filter))
 }
 
-fn show(bar: &StatusBar, status: &Status) {
+fn show(bar: &StatusBar, status: &Status, painted: usize) -> usize {
+    let width = screen_columns();
     let mut out = io::stdout();
-    let _ = write!(out, "{}", redraw(&bar.line(status, screen_columns())));
+    let _ = write!(
+        out,
+        "{}",
+        redraw(&bar.line(status, width), painted, terminal_columns())
+    );
     let _ = out.flush();
+    width
 }
 
 struct LineEnd;
@@ -61,11 +67,12 @@ fn wait(filter: &HoldFilter, monitor: &Monitor, bar: &StatusBar) -> io::Result<H
     let interrupt = signal::interrupt_flag();
     interrupt.store(false, Ordering::SeqCst);
     let mut shown: Option<Status> = None;
+    let mut painted = 0;
     loop {
         let mut status = monitor.status();
         status.hold = Some(filter.clone());
-        if shown.as_ref() != Some(&status) {
-            show(bar, &status);
+        if shown.as_ref() != Some(&status) || screen_columns() != painted {
+            painted = show(bar, &status, painted);
             shown = Some(status);
         }
         if signal::is_terminated() {
