@@ -91,6 +91,7 @@ pub enum Route {
     WorkerCosts,
     Hold(HoldFilter),
     Help,
+    Config,
     Ignore,
 }
 
@@ -102,6 +103,7 @@ impl Route {
             | Route::PeekInbox(_)
             | Route::ListInbox
             | Route::Help
+            | Route::Config
             | Route::InboxUsage
             | Route::Watch(WatchCommand::List | WatchCommand::Usage)
             | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
@@ -147,6 +149,7 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
                 Command::Diff => Route::Diff(parse_diff_args(args)),
                 Command::Workers => workers_route(args, line),
                 Command::Hold => hold_route(args, line),
+                Command::Config => Route::Config,
             };
         }
     }

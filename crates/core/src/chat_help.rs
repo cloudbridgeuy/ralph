@@ -18,10 +18,11 @@ pub enum Command {
     Diff,
     Workers,
     Hold,
+    Config,
 }
 
 impl Command {
-    pub const ALL: [Command; 7] = [
+    pub const ALL: [Command; 8] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -29,6 +30,7 @@ impl Command {
         Command::Diff,
         Command::Workers,
         Command::Hold,
+        Command::Config,
     ];
 
     pub fn name(self) -> &'static str {
@@ -40,15 +42,13 @@ impl Command {
             Command::Diff => "/diff",
             Command::Workers => "/workers",
             Command::Hold => "/hold",
+            Command::Config => "/config",
         }
     }
 
-    /// The text after the command word, or `None` when `line` is another
-    /// message (`/difffoo`). `/help` takes no arguments, so `/help me` is a
-    /// message too.
     pub fn args(self, line: &str) -> Option<&str> {
         let args = line.strip_prefix(self.name())?;
-        let takes_args = self != Command::Help;
+        let takes_args = !matches!(self, Command::Help | Command::Config);
         (args.is_empty() || takes_args && args.starts_with(char::is_whitespace)).then_some(args)
     }
 
@@ -136,6 +136,10 @@ impl Command {
                     "wait with no prompt; the model suggests it when the next step is waiting; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
+            Command::Config => &[(
+                "/config",
+                "the config this chat resolved at start: warnings, source files and paths, set RALPH_* and editor or color variables, start flags, and every merged key with its source (default, global, store, env or flag); notes config files changed on disk since start; starts no turn",
+            )],
         }
     }
 }

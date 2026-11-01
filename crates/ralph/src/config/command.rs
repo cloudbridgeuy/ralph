@@ -1,41 +1,11 @@
+use super::view::{env_settings, merged_rows};
 use super::{
     config_path, hard_errors, leaf_sources, missing_config_dir, read_layer, AppConfig, ConfigError,
-    Source,
 };
-use crate::chat::{CELL_OUTPUT_BYTES_ENV, CELL_OUTPUT_LIMIT_ENV, SKILLS_ENV, WRAP_WIDTH_ENV};
-use crate::highlight::{RALPH_NO_BACKGROUND_ENV, RALPH_THEME_ENV};
-use crate::invoke::{ASK_PERMISSION_MODE_ENV, CHAT_PERMISSION_MODE_ENV};
-use ralph_core::worker::WORKTREE_DIR_ENV;
 use std::path::{Path, PathBuf};
-use toml::{Table, Value};
+use toml::Table;
 
 type CommandResult<T> = Result<T, Box<dyn std::error::Error>>;
-
-const ENV_KEYS: [(&str, &str); 9] = [
-    ("ask.permission_mode", ASK_PERMISSION_MODE_ENV),
-    ("chat.permission_mode", CHAT_PERMISSION_MODE_ENV),
-    ("chat.wrap_width", WRAP_WIDTH_ENV),
-    ("chat.cell_output_limit", CELL_OUTPUT_LIMIT_ENV),
-    ("chat.cell_output_bytes", CELL_OUTPUT_BYTES_ENV),
-    ("chat.skills", SKILLS_ENV),
-    ("chat.worktree_dir", WORKTREE_DIR_ENV),
-    ("theme.name", RALPH_THEME_ENV),
-    ("theme.no_background", RALPH_NO_BACKGROUND_ENV),
-];
-
-fn set_env_name(key: &str, is_set: impl Fn(&str) -> bool) -> Option<&'static str> {
-    ENV_KEYS
-        .iter()
-        .find(|(candidate, name)| *candidate == key && is_set(name))
-        .map(|(_, name)| *name)
-}
-
-fn show_row(key: &str, value: &Value, source: Source, env: Option<&str>) -> String {
-    match env {
-        Some(name) => format!("{key} = {value}  [{}; env {name} is set]", source.label()),
-        None => format!("{key} = {value}  [{}]", source.label()),
-    }
-}
 
 fn layer_config(path: &Path) -> Option<AppConfig> {
     read_layer(path)
@@ -155,41 +125,17 @@ pub fn run_show(store: Option<PathBuf>) -> CommandResult<()> {
     if let Some(file) = &store_file {
         println!("store: {}", file.display());
     }
-    for (key, value, source) in leaf_sources(&effective, &global_layer, &store_layer) {
-        let env = set_env_name(&key, |name| {
-            std::env::var_os(name).is_some_and(|v| !v.is_empty())
-        });
-        println!("{}", show_row(&key, &value, source, env));
-    }
+    let rows = leaf_sources(&effective, &global_layer, &store_layer);
+    let env = env_settings(&[], |name| std::env::var(name).ok());
+    merged_rows(&rows, &env)
+        .iter()
+        .for_each(|row| println!("{row}"));
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn env_marker_follows_the_key_and_the_set_check() {
-        assert_eq!(
-            set_env_name("chat.wrap_width", |name| name == WRAP_WIDTH_ENV),
-            Some(WRAP_WIDTH_ENV)
-        );
-        assert_eq!(set_env_name("chat.wrap_width", |_| false), None);
-        assert_eq!(set_env_name("chat.worker_base", |_| true), None);
-    }
-
-    #[test]
-    fn show_row_lists_source_and_env() {
-        let value = Value::Integer(80);
-        assert_eq!(
-            show_row("chat.wrap_width", &value, Source::Store, None),
-            "chat.wrap_width = 80  [store]"
-        );
-        assert_eq!(
-            show_row("chat.wrap_width", &value, Source::Global, Some("X")),
-            "chat.wrap_width = 80  [global; env X is set]"
-        );
-    }
 
     #[test]
     fn prompt_file_errors_name_missing_files_relative_to_the_config() {

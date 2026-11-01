@@ -79,7 +79,8 @@ fn lists_hold_every_variant() {
             Schedule,
             Diff,
             Workers,
-            Hold
+            Hold,
+            Config
         }
     );
     assert_lists_every!(
@@ -128,6 +129,24 @@ fn only_bare_help_routes_to_help() {
         Route::Help
     );
     for line in ["/help x", "/help me fix the build", "/helpfoo"] {
+        assert_eq!(
+            route_input(line, 0, &EmptySubmit::Inbox),
+            Route::Send(line.into())
+        );
+    }
+}
+
+#[test]
+fn only_bare_config_routes_to_config() {
+    assert_eq!(
+        route_input("/config", 0, &EmptySubmit::Inbox),
+        Route::Config
+    );
+    assert_eq!(
+        route_input("  /config  ", 0, &EmptySubmit::Inbox),
+        Route::Config
+    );
+    for line in ["/config x", "/config show me", "/configfoo"] {
         assert_eq!(
             route_input(line, 0, &EmptySubmit::Inbox),
             Route::Send(line.into())

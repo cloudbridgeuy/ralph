@@ -38,6 +38,7 @@ ralph                      # same as ralph chat with defaults
 - `crates/ralph/src/chat/diff.rs`: spawns that argv with the terminal inherited.
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat/mod.rs`: `run` and shared setup.
+- `crates/ralph/src/config/view.rs`: the pure `/config` view (`config_view`, `merged_rows`, `env_settings`) and `load_for_chat`. `crates/ralph/src/chat/config.rs`: `flag_settings`, the chat env allowlist and `/config` printing.
 - `crates/ralph/src/chat/turn.rs`: turn shell and nap spawn.
 - `crates/ralph/src/chat/editor.rs`, `prompt.rs`: reedline input and prompt.
 - `crates/ralph/src/chat/monitor.rs`: status, watch and stdin monitors.
@@ -72,7 +73,7 @@ The system prompt tells the model that the message starts with the compressed ch
 
 Ctrl-Q during a turn, or typing text, pauses the display of the turn output and opens a queue editor. Typed text seeds the editor, so no typing is lost. The turn keeps running and the output is held.
 
-- Enter with text adds the text as a queue entry, except a read-only command (`/help`, `/workers`, `/workers costs`, `/inbox list`, `/inbox peek N`, `/watch list`, a bare `/watch`, `/schedule` and `/schedule list`, and the usage or unclosed-quote replies of `/inbox`, `/watch`, `/schedule` and `/diff`): it runs at once, prints before the held output returns, and is not queued. The turn is not cancelled. Other commands (`/inbox`, `/inbox drop N`, `/hold`, `/watch start`, `/watch stop`, `/schedule cancel`, `/diff` with a target) stay queued. Empty Enter or Ctrl-D adds nothing.
+- Enter with text adds the text as a queue entry, except a read-only command (`/help`, `/config`, `/workers`, `/workers costs`, `/inbox list`, `/inbox peek N`, `/watch list`, a bare `/watch`, `/schedule` and `/schedule list`, and the usage or unclosed-quote replies of `/inbox`, `/watch`, `/schedule` and `/diff`): it runs at once, prints before the held output returns, and is not queued. The turn is not cancelled. Other commands (`/inbox`, `/inbox drop N`, `/hold`, `/watch start`, `/watch stop`, `/schedule cancel`, `/diff` with a target) stay queued. Empty Enter or Ctrl-D adds nothing.
 - Ctrl-Q in the editor backs out: a non-blank draft is added as the last entry, and the queue is held. The turn is not cancelled. At turn end ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. Ctrl-Q during the same turn opens the editor again; the queue stays held.
 - Each of these closes the editor, prints the held output, and resumes live output.
 - Ctrl-C in the editor (a host command, `queue_ctrl_c`) clears a non-empty draft and the turn keeps running; on an empty draft it cancels the turn and holds the queue.
@@ -213,7 +214,7 @@ The model schedules a shell command or a worker with the `schedule` tool (see [M
 
 `/help` is local: it never starts a turn or calls the model. Only the bare command (after trimming) counts: `/help x`, `/help me fix the build` and `/helpfoo` are normal messages. It prints the pure `chat_help::help_text(width)`, word-wrapped to the prompt width (the terminal width, capped by `--wrap-width`); a section whose text column would be under 30 columns puts each text under its label:
 
-- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers` and `/hold`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
+- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold` and `/config`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
 - Cells: the `!` shorthand and `!<runtime>` fences.
 - Keys: at the prompt, in vi mode, during a turn, and in the queue editor (`PROMPT_KEYS`, `VI_KEYS`, `TURN_KEYS`, `QUEUE_KEYS`).
 - Status bar: one row per segment `Kind`, the four modes, each part of the thread cell (`T12/30`, `ctx 62%`, `cache 41m`, `!`, `shift ~9 msg`) and the `↻ tokens`, `↻ turns` and `↻ restart` marks.
@@ -221,6 +222,19 @@ The model schedules a shell command or a worker with the `schedule` tool (see [M
 The chat-mcp tool `help` gives the model the same text: no `topic` returns `help_text` unwrapped, `topic` (`diff` or `/diff`) returns that command's rows from `Command::ALL`, and an unknown topic is a tool error that lists the topics (`chat_help::help_topic`, answered by `chat-mcp` itself). Topic `config` returns the resolved `config.toml` path, the store file path (`<store>/config.toml`, which overrides the global file per key), the location, environment override and precedence text, and the section names; `config <section>` (`chat` or `[chat]`) returns that section of `docs/configuration.md`, embedded with `include_str!` and split by `chat_help::config_sections`. `handle_request` answers it as `Outcome::ConfigHelp`, and `chat/mcp.rs` fills in `config::config_path()` and the store file. Topic `images` returns how a reply shows an image (`IMAGES_HELP`). A command topic whose name matches a config section ends with `Settings: help topic "config <name>"`. `SYSTEM_PROMPT` tells the model to call it for questions about settings and for requests to change how ralph behaves or looks, to propose a code change only when no setting covers the request, to edit the global `config.toml` by default and the store file only for a store-specific setting, to copy the edited file to `config.toml.bak` first, and, after editing, to run `ralph config check --store <store>` and copy `config.toml.bak` back over the edited file if it fails (`config::check` reports unknown keys via `serde_ignored`, theme and chat-setting warnings, and the hard chat-startup errors).
 
 Staleness tests: `chat_help` tests fail when a `Command` does not route or has no row, when `status_segments::segments` builds a segment kind with no legend, or when `status_mode::mode` returns a mode with no legend. `every_chat_binding_has_a_help_entry` in `crates/ralph/src/chat/tests.rs` builds the real emacs, vi and queue keymaps, keeps the bindings that differ from reedline's defaults, and fails when one has no key table entry. Keys handled outside reedline (Esc Esc, Ctrl-C, Ctrl-D, Ctrl-Q during a turn) are listed in the tables by hand. Another test fails when `Command::ALL`, `MODES` or `RESETS` misses a variant, and the thread legend is checked against `thread_variants` of a real cell.
+
+## /config
+
+`/config` is local: it never starts a turn or calls the model, and it runs mid-turn. Only the bare command counts: `/config x` and `/configfoo` are normal messages. It prints `config::config_view` of the `ConfigSnapshot` that `run` builds once at start, so it shows what this chat resolved, not a fresh read:
+
+- Warnings from the start load first: the store fallback (`ignoring store config ...`), the security-key notices, or `Failed to load config` when chat fell back to defaults.
+- `config files changed on disk since start; restart the chat to apply` when loading both files now gives a different merged config than at start (`effective_now`). It compares only `config.toml` values, not the contents of prompt or skill files.
+- Sources, as absolute paths: config dir, global `config.toml` (after `RALPH_CONFIG_DIR`, made absolute against the cwd), store `config.toml` and the store (both canonical, so `/tmp` shows as `/private/tmp` on macOS), `usage.jsonl`, the claude config dir (`[claude] config_dir` or `~/.claude`), `prompt_file`, each `append_prompt_files` entry and each linked skill, resolved as the chat resolved them. A config file that did not exist at start ends in `(missing)`.
+- Environment: each set, non-empty variable from a fixed list: the `RALPH_*` variables of `config show` plus `RALPH_CONFIG_DIR`, `RALPH_CHAT_STORE`, `NO_COLOR`, `VISUAL` and `EDITOR`, with the key it overrides. None of them holds a secret, so values print as they are.
+- Flags: the `ralph chat` flags given at start (`--store`, `--recent-history-tokens`, `--wrap-width`, `--skill`, `--permission-mode`, `--worktree-dir`, `--no-inbox-sound`, `--no-inbox-notification`), with the key each overrides.
+- Merged config: the `config show` rows (`leaf_sources` over the start layers; after a store fallback no row is tagged `store`). A key that a flag or variable overrides shows that value, tagged `flag NAME` or `env NAME`, then the layer and file value (`chat.wrap_width = 90  [flag --wrap-width; global = 80]`). A flag beats a variable. An overridden key with no file value gets its own row.
+
+The chat sets the store config layer to the canonical store path, so its store warnings name that path too.
 
 ## /diff
 

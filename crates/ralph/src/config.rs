@@ -33,6 +33,7 @@ mod permissions;
 mod recent_history_tests;
 #[cfg(test)]
 mod reset_limits_tests;
+mod view;
 mod wire;
 mod workers;
 pub use changes::ChangesSection;
@@ -44,6 +45,10 @@ pub use cursor::CursorSection;
 pub use layers::{leaf_sources, Source};
 pub use opencode::OpencodeSection;
 pub use permissions::configured_permission_mode;
+pub use view::{
+    config_view, effective_now, env_settings, load_for_chat, ConfigSnapshot, FileState, Origin,
+    Setting,
+};
 pub use wire::WireSection;
 pub use workers::{PrProvider, WorkersSection};
 
@@ -51,6 +56,14 @@ pub use workers::{PrProvider, WorkersSection};
 struct Notice {
     key: String,
     message: String,
+}
+
+const STORE_FALLBACK_KEY: &str = "store-fallback:";
+
+impl Notice {
+    fn is_store_fallback(&self) -> bool {
+        self.key.starts_with(STORE_FALLBACK_KEY)
+    }
 }
 
 fn security_notices(store: &Path) -> Vec<Notice> {
@@ -447,7 +460,7 @@ impl AppConfig {
             (Err(store_error), Some(store_path)) => match Self::load_layers(global, None) {
                 Ok(config) => {
                     let notice = Notice {
-                        key: format!("store-fallback:{}", store_path.display()),
+                        key: format!("{STORE_FALLBACK_KEY}{}", store_path.display()),
                         message: format!(
                             "ignoring store config {}: {store_error}; using the global config only",
                             store_path.display()

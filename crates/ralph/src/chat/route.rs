@@ -1,3 +1,4 @@
+use crate::chat::config;
 use crate::chat::diff::{self, DiffContext};
 use crate::chat::inbox::{self, Display};
 use crate::chat::monitor::Monitor;
@@ -6,7 +7,7 @@ use crate::chat::schedule;
 use crate::chat::watch;
 use crate::chat::workers;
 use crate::chat::workers_remote::RemoteStatus;
-use crate::config::ChangesSection;
+use crate::config::{ChangesSection, ConfigSnapshot};
 use crate::schedule_store::ScheduleStore;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
@@ -28,6 +29,7 @@ pub struct LocalRoute<'a> {
     pub store: &'a Path,
     pub monitor: &'a Monitor,
     pub remote: &'a RemoteStatus,
+    pub config: &'a ConfigSnapshot,
 }
 
 pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Result<()> {
@@ -59,6 +61,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::WorkerCosts => workers::costs(ctx.display, ctx.prices),
         Route::Help => print!("{}", help_text(screen_columns())),
+        Route::Config => config::print(ctx.config),
         Route::Send(_) | Route::ReadInbox(_) | Route::Hold(_) | Route::Ignore => {}
     }
     Ok(())

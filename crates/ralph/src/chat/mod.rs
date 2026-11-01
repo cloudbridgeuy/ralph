@@ -1,6 +1,7 @@
 pub(crate) mod cell;
 mod changes;
 mod check;
+mod config;
 #[cfg(test)]
 mod corrupt_tests;
 mod diff;
@@ -59,13 +60,14 @@ use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
 use crate::cli::ChatArgs;
-use crate::config::{AppConfig, PromptFiles};
+use crate::config::{load_for_chat, ConfigSnapshot, FileState, PromptFiles};
 use crate::cursor_owner::{acp_alive_ids, resumable_ids};
 use crate::highlight::{Highlighter, ThemeConfig};
 use crate::input_theme::suggestion_color;
 use crate::invoke::Isolation;
 use crate::markdown::{MarkdownTheme, ThemeRole};
 use crate::opencode_worker::sweep_stale_server_records;
+use crate::paths::{absolute_from, config_path};
 use crate::render::{cap_wrap_width, RenderContext};
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
@@ -89,6 +91,7 @@ use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{prefill, Prefill, SuggestionRecord};
 use ralph_core::chat_thread::{run_id, UsageTail};
+use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
 use ralph_core::program_status::Phase;
@@ -166,23 +169,26 @@ fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
 pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     signal::ignore_sigttou();
+    let flags = config::flag_settings(&args);
     let store_dir = resolve_store(
         args.store,
         std::env::var_os(STORE_ENV).map(PathBuf::from),
         &std::env::current_dir()?,
         dirs::home_dir().as_deref(),
     )?;
-    crate::config::set_store_layer(&store_dir);
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
+    let store_root = canonical_store(store_dir.clone());
+    crate::config::set_store_layer(&store_root);
     let store = Store::new(store_dir.clone());
     let _chat = store
         .claim_chat()?
-        .map_err(|holder| store_in_use_message(&canonical_store(store_dir.clone()), holder))?;
+        .map_err(|holder| store_in_use_message(&store_root, holder))?;
     let exe = std::env::current_exe()?;
-    let config = AppConfig::load().unwrap_or_else(|e| {
-        warn(format!("Failed to load config: {e}"));
-        AppConfig::default()
-    });
+    let cwd = std::env::current_dir()?;
+    let global_config = absolute_from(&config_path(), &cwd);
+    let store_config = store_root.join("config.toml");
+    let loaded = load_for_chat(&global_config, &store_config);
+    let config = loaded.config;
     let permission_mode = config.chat_permission_mode(
         args.permission_mode.as_deref(),
         std::env::var(crate::invoke::CHAT_PERMISSION_MODE_ENV)
@@ -249,9 +255,24 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 Highlighter::new()
             });
     let agent_theme = MarkdownTheme::new(agent.palette(ThemeRole::Agent).0);
-    let (custom_prompt, prompt_warnings) =
-        load_custom_prompt(&chat_config.prompt_files(dirs::home_dir().as_deref()));
+    let prompt_files = chat_config.prompt_files(dirs::home_dir().as_deref());
+    let (custom_prompt, prompt_warnings) = load_custom_prompt(&prompt_files);
     prompt_warnings.into_iter().for_each(warn);
+    let config_snapshot = ConfigSnapshot {
+        warnings: loaded.warnings,
+        global: FileState::of(global_config),
+        store_file: FileState::of(store_config),
+        store_dir: store_root.clone(),
+        usage: absolute_from(&memory::usage_path(), &cwd),
+        claude_dir: dirs::home_dir()
+            .map(|home| claude_dir(config.claude.config_dir.as_deref(), &home)),
+        prompt_files,
+        skills: skills.iter().map(|skill| skill.dir.clone()).collect(),
+        env: config::chat_env(),
+        flags,
+        rows: loaded.rows,
+        effective: loaded.effective,
+    };
     let isolation = Isolation::for_chat(
         &chat_config,
         &std::env::current_dir()?,
@@ -305,7 +326,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
         inbox,
         store: Store::new(store_dir.clone()),
-        store_dir: canonical_store(store_dir.clone()),
+        store_dir: store_root,
         status: Mutex::new(Status::default()),
         seen: Mutex::new(HashMap::new()),
         active: Mutex::new(None),
@@ -460,6 +481,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         store: &store_dir,
         monitor: &monitor,
         remote: &remote,
+        config: &config_snapshot,
     };
     let keys = Keys {
         gate: &turn.gate,
