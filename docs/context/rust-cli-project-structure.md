@@ -32,6 +32,15 @@ serde.workspace = true
 clap.workspace = true
 ```
 
+### Vendored crates outside the workspace
+
+In ralph, `vendor/reedline` is excluded from the workspace. Workspace tooling skips it:
+
+- `cargo fmt`, `cargo clippy`, and the `cargo xtask lint` checks do not cover vendor code.
+- `cargo test --workspace` does not run the vendor tests.
+
+The CI test job runs them in a separate step: `cargo test --locked --manifest-path vendor/reedline/Cargo.toml --features external_printer --target-dir target/vendor-reedline`. The vendor crate has its own `Cargo.lock`. `--locked` fails the job when that lock file is out of date.
+
 ## Two-Crate Architecture (Functional Core - Imperative Shell)
 
 Separate pure logic from I/O operations using two crates:
