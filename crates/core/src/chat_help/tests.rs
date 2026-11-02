@@ -84,6 +84,7 @@ fn lists_hold_every_variant() {
             Nudge,
             SendIt,
             Config,
+            View,
             Read,
             Zoom,
             Recall,

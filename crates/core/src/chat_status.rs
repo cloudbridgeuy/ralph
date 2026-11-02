@@ -5,6 +5,7 @@ use crate::chat_memory::{history_tool, Tool};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_send_it::SendIt;
 use crate::chat_thread::ThreadCell;
+use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
 use crate::schedule::{Task, TaskStatus};
@@ -98,6 +99,7 @@ pub enum Route {
     Nudge(NudgeCommand),
     SendIt(SendIt),
     History(Result<Tool, String>),
+    View(ViewArgs),
     Help,
     Config,
     Ignore,
@@ -124,6 +126,7 @@ impl Route {
             | Route::Hold(_)
             | Route::Nudge(_)
             | Route::SendIt(_)
+            | Route::View(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
             | Route::Diff(DiffArgs::Target(_))
@@ -169,6 +172,7 @@ pub fn route_input(
                 Command::Nudge => Route::Nudge(parse_nudge_args(args)),
                 Command::SendIt => send_it_route(args, line),
                 Command::Config => Route::Config,
+                Command::View => Route::View(parse_view_args(args)),
                 Command::Read | Command::Search => {
                     let (words, cursor) = split_cursor(args);
                     Route::History(history_tool(&command.name()[1..], words, cursor))

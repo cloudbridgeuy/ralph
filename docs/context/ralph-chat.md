@@ -293,7 +293,7 @@ The model schedules a shell command or a worker with the `schedule` tool (see [M
 
 `/help` is local: it never starts a turn or calls the model. Only the bare command (after trimming) counts: `/help x`, `/help me fix the build` and `/helpfoo` are normal messages. It prints `Store: <dir>`, a blank line, then the pure `chat_help::help_text(width)` (through `help_with_store`), word-wrapped to the prompt width (the terminal width, capped by `--wrap-width`); a section whose text column would be under 30 columns puts each text under its label:
 
-- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/config`, `/read`, `/zoom`, `/recall` and `/search`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
+- Commands: one row per form of `/help`, `/inbox`, `/watch`, `/schedule`, `/diff`, `/workers`, `/hold`, `/nudge`, `/send-it`, `/config`, `/view`, `/read`, `/zoom`, `/recall` and `/search`, from `Command::ALL`. `route_input` matches the same table, so a command cannot route without a help row.
 - Cells: the `!` and `!!` shorthands and `!<runtime>` fences.
 - Keys: at the prompt, in vi mode, during a turn, and in the queue editor (`PROMPT_KEYS`, `VI_KEYS`, `TURN_KEYS`, `QUEUE_KEYS`).
 - Status bar: one row per segment `Kind`, the four modes, each part of the thread cell (`T12/30`, `ctx 62%`, `cache 41m`, `!`, `shift ~9 msg`) and the `↻ tokens`, `↻ turns` and `↻ restart` marks.
@@ -314,6 +314,15 @@ Staleness tests: `chat_help` tests fail when a `Command` does not route or has n
 - Merged config: the `config show` rows (`leaf_sources` over the start layers; after a store fallback no row is tagged `store`; after a failed load the chat runs on defaults and no row is tagged `global` or `store`). A store value that hides a global one lists both (`chat.wrap_width = 100  [store; global = 80]`). A key that a flag or variable overrides shows that value, tagged `flag NAME` or `env NAME`, then every layer it hides with its file value (`chat.wrap_width = 90  [flag --wrap-width; store = 100, global = 80]`). A flag beats a variable. `RALPH_THEME` also overrides `theme.assistant.code`. An overridden key with no file value gets its own row.
 
 The chat sets the store config layer to the canonical store path, so its store warnings name that path too.
+
+## /view
+
+`/view <file.md>` is local: it never starts a turn or calls the model, writes no `usage.jsonl` row, and waits in the queue while a turn runs (`runs_mid_turn` is false). The rest of the line is the path (spaces allowed), absolute, `~/` or relative to the working directory. Bare `/view` prints `Usage: /view <file.md>`; `/viewer` is a normal message.
+
+- Refusals (`ralph_core::chat_view::view_refusal`), checked in this order: `/view: no such file: <path>`, `/view: <path> is a directory`, `/view shows .md and .markdown files: <path>` (extension case-insensitive), `/view: <path> is N bytes; the limit is 2097152`. A file that is not UTF-8 prints `/view cannot read <path>: <error>`.
+- Rendering: `chat/view.rs` reads the file and prints it through `render_markdown` with the inbox display (agent `MarkdownTheme` and highlighter), so it looks like a worker report without the header.
+- Images: `rebase_images` rewrites each relative `![alt](path)` to the file's directory (absolute, `~/` and URL targets stay as written; markers in code spans and fenced blocks are untouched), then the normal image path draws it; see [Rendering images](#rendering-images).
+- Mermaid blocks render as text diagrams through the `[mermaid]` child, as in replies.
 
 ## /diff
 

@@ -91,6 +91,8 @@ fn only_read_only_routes_run_mid_turn() {
         "/workers a b",
         "/hold",
         "/hold w1",
+        "/view a.md",
+        "/view",
         "!!ls",
         "hello",
         "",
@@ -826,4 +828,18 @@ fn send_it_never_runs_mid_turn() {
     for arg in [SendIt::Status, SendIt::Off, SendIt::Arm("GUZ-1".into())] {
         assert!(!Route::SendIt(arg).runs_mid_turn());
     }
+}
+
+#[test]
+fn route_input_parses_view_commands() {
+    let route = |line: &str| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    assert_eq!(route("/view"), Route::View(ViewArgs::Usage));
+    assert_eq!(
+        route("/view docs/a b.md"),
+        Route::View(ViewArgs::File("docs/a b.md".to_string()))
+    );
+    assert_eq!(
+        route("/viewer a.md"),
+        Route::Send("/viewer a.md".to_string())
+    );
 }

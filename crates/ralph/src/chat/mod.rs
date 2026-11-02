@@ -35,6 +35,7 @@ mod suggestion;
 mod term_status;
 pub(crate) mod terminal;
 mod turn;
+mod view;
 mod watch;
 mod workers;
 mod workers_remote;

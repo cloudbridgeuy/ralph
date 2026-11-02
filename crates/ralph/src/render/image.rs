@@ -136,7 +136,7 @@ pub fn detect(color: bool) -> Option<ImageSettings> {
     })
 }
 
-fn resolve(path: &str) -> PathBuf {
+pub(crate) fn resolve(path: &str) -> PathBuf {
     match (path.strip_prefix("~/"), std::env::var_os("HOME")) {
         (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
         _ => PathBuf::from(path),

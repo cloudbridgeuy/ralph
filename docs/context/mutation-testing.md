@@ -45,6 +45,7 @@ Examined:
 - `crates/core/src/status_segments/**/*.rs`
 - `crates/core/src/chat_status.rs`
 - `crates/core/src/chat_hold.rs`
+- `crates/core/src/chat_view.rs`
 - `crates/core/src/chat_keepalive.rs`
 - `crates/core/src/chat_memory/usage.rs`
 - `crates/core/src/chat_cell.rs`

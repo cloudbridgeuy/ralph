@@ -6,6 +6,7 @@ use crate::chat::monitor::Monitor;
 use crate::chat::nudge;
 use crate::chat::prompt::screen_columns;
 use crate::chat::schedule;
+use crate::chat::view;
 use crate::chat::watch;
 use crate::chat::workers;
 use crate::chat::workers_remote::RemoteStatus;
@@ -65,6 +66,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::WorkerCosts => workers::costs(ctx.display, ctx.prices),
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),
+        Route::View(args) => view::run(&args, ctx.display),
         Route::History(tool) => {
             let store = Store::new(ctx.store.to_path_buf());
             println!(

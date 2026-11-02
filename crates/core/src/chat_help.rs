@@ -21,6 +21,7 @@ pub enum Command {
     Nudge,
     SendIt,
     Config,
+    View,
     Read,
     Zoom,
     Recall,
@@ -28,7 +29,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 14] = [
+    pub const ALL: [Command; 15] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -39,6 +40,7 @@ impl Command {
         Command::Nudge,
         Command::SendIt,
         Command::Config,
+        Command::View,
         Command::Read,
         Command::Zoom,
         Command::Recall,
@@ -57,6 +59,7 @@ impl Command {
             Command::Nudge => "/nudge",
             Command::SendIt => "/send-it",
             Command::Config => "/config",
+            Command::View => "/view",
             Command::Read => "/read",
             Command::Zoom => "/zoom",
             Command::Recall => "/recall",
@@ -168,6 +171,10 @@ impl Command {
             Command::Config => &[(
                 "/config",
                 "the config this chat resolved at start: warnings, source files and paths, set RALPH_* and editor or color variables, start flags, and every merged key with its source (default, global, store, env or flag); notes config files changed on disk since start; starts no turn",
+            )],
+            Command::View => &[(
+                "/view <file.md>",
+                "print a local markdown file with the chat renderer; relative image paths resolve from the file's directory and draw inline where the terminal shows images; mermaid blocks draw as text diagrams; refuses a missing file, a directory, a file that is not .md or .markdown, and a file over 2 MB; starts no turn",
             )],
             Command::Read => &[(
                 "/read <id> [raw|summary] [--cursor <c>]",
