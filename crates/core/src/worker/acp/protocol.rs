@@ -161,6 +161,10 @@ pub fn acp_mcp_server(
     })
 }
 
+pub fn claude_mcp_config(server: &Value) -> Value {
+    json!({"mcpServers": {SERVER_NAME: {"command": server["command"], "args": server["args"]}}})
+}
+
 pub fn cursor_model_rejection(
     agent_name: &str,
     requested: &str,
@@ -381,6 +385,26 @@ mod tests {
                 "--owner",
                 "/s/cursor/A"
             ])
+        );
+    }
+
+    #[test]
+    fn claude_mcp_config_keys_the_command_and_args_by_server_name() {
+        let server = acp_mcp_server(
+            Path::new("/bin/ralph"),
+            "A",
+            Path::new("/s/inbox"),
+            Path::new("/s/claude/A"),
+            None,
+        );
+        assert_eq!(
+            claude_mcp_config(&server),
+            json!({"mcpServers": {SERVER_NAME: {
+                "command": "/bin/ralph",
+                "args": [
+                    "worker-mcp", "--id", "A", "--inbox", "/s/inbox", "--owner", "/s/claude/A"
+                ]
+            }}})
         );
     }
 }

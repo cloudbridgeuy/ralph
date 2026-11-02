@@ -18,19 +18,19 @@ use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
-    claude_headless_args, cleanup, decode_claude_version, decode_line, deny_line, gone_path,
-    interrupt_lines, interrupted_end, permission_response, prompt_failure_report, ready_path,
-    reduce, request_stale, resumed_session, shutdown_steps, start_steps, stuck_permission_report,
-    task_prompt, turn_end_activity, turn_lost_at_resume, uuid_v4, Action, ActivityState,
-    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
-    InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
-    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
-    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
-    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
-    SERVER_NAME,
+    claude_headless_args, claude_mcp_config, cleanup, decode_claude_version, decode_line,
+    deny_line, gone_path, interrupt_lines, interrupted_end, permission_response,
+    prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
+    start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
+    uuid_v4, Action, ActivityState, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles,
+    HarnessId, HeadlessState, InterruptOutcome, Leftover, PermissionAnswer, PermissionMode,
+    SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns,
+    WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
+    CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR,
+    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR,
+    CLAUDE_HEADLESS_SPAWN_DIR,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -349,7 +349,7 @@ impl ClaudeWorker {
             &files.owner,
             request.snapshots.then_some(request.worktree.as_path()),
         );
-        let mcp = json!({"mcpServers": {SERVER_NAME: {"command": server["command"], "args": server["args"]}}});
+        let mcp = claude_mcp_config(&server);
         let attachments = store.join(ATTACHMENTS_DIR);
         let mode = resume
             .and_then(|record| record.permissions)
