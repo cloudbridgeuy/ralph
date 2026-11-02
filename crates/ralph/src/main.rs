@@ -317,6 +317,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
         &worker_mcp::StopHook {
             reported: &args.reported,
             unreported: &args.unreported,
+            activity: args.activity.as_deref(),
             changes: changes.as_ref(),
             usage: usage.as_ref(),
         },
