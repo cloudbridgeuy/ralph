@@ -6,7 +6,7 @@ use std::time::Duration;
 const APC_START: &str = "\x1b_G";
 const APC_END: &str = "\x1b\\";
 const CHUNK_BYTES: usize = 4096;
-const ASSUMED_CELL_PX: (u32, u32) = (8, 16);
+pub const ASSUMED_CELL_PX: (u32, u32) = (8, 16);
 const PLACEHOLDER: char = '\u{10EEEE}';
 const MAX_PLACEHOLDER_CELLS: u32 = 297;
 const ROW_DIACRITICS: [char; 297] = [

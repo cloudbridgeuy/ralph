@@ -292,6 +292,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .chain(config.theme.warnings())
         .chain(config.changes.warnings())
+        .chain(config.mermaid.style.warnings())
         .chain(edit_mode_warning)
         .collect();
     setting_warnings.iter().for_each(warn);

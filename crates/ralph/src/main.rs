@@ -149,13 +149,18 @@ fn execute_themes() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn execute_mermaid(args: MermaidArgs) -> Result<(), Box<dyn std::error::Error>> {
-    use std::io::Read;
+    use std::io::{Read, Write};
+    if args.picture {
+        let request = serde_json::from_reader(std::io::stdin())?;
+        let mut fonts = resvg::usvg::fontdb::Database::new();
+        fonts.load_system_fonts();
+        let png = render::mermaid_picture::rasterize(&request, fonts)?;
+        std::io::stdout().write_all(&png)?;
+        return Ok(());
+    }
     let mut source = String::new();
     std::io::stdin().read_to_string(&mut source)?;
-    println!(
-        "{}",
-        mermaid_text::render_with_width(&source, Some(args.width))?
-    );
+    println!("{}", mermaid_text::render_with_width(&source, args.width)?);
     Ok(())
 }
 

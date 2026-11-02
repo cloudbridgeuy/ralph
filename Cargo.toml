@@ -122,6 +122,12 @@ tempfile = "3.10"
 
 # Mermaid diagram rendering
 mermaid-text = "0.57"
+bezel = { package = "bezel-mermaid", version = "=0.2.24" }
+resvg = { version = "=0.47.0", default-features = false, features = [
+  "text",
+  "system-fonts",
+  "memmap-fonts",
+] }
 
 # Markdown terminal rendering
 termimad = "0.35.5"

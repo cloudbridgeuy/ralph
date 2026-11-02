@@ -23,6 +23,8 @@ signal-hook = { workspace = true }
 dirs = { workspace = true }
 libc = { workspace = true }
 mermaid-text = { workspace = true }
+bezel = { workspace = true }
+resvg = { workspace = true }
 ralph_core = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }

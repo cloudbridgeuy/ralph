@@ -320,9 +320,11 @@ The chat sets the store config layer to the canonical store path, so its store w
 `/view <file.md>` is local: it never starts a turn or calls the model, writes no `usage.jsonl` row, and waits in the queue while a turn runs (`runs_mid_turn` is false). The rest of the line is the path (spaces allowed), absolute, `~/` or relative to the working directory. Bare `/view` prints `Usage: /view <file.md>`; `/viewer` is a normal message.
 
 - Refusals (`ralph_core::chat_view::view_refusal`), checked in this order: `/view: no such file: <path>`, `/view: <path> is a directory`, `/view shows .md and .markdown files: <path>` (extension case-insensitive), `/view: <path> is N bytes; the limit is 2097152`. A file that is not UTF-8 prints `/view cannot read <path>: <error>`.
-- Rendering: `chat/view.rs` reads the file and prints it through `render_markdown` with the inbox display (agent `MarkdownTheme` and highlighter), so it looks like a worker report without the header.
+- Rendering: `chat/view.rs` reads the file and prints it through `render_markdown_with` with the inbox display (agent `MarkdownTheme` and highlighter), so it looks like a worker report without the header. Code and diff fences go through `render_text_block` with the same `RenderContext`, so they highlight exactly as in replies.
 - Images: `rebase_images` rewrites each relative `![alt](path)` to the file's directory (absolute, `~/` and URL targets stay as written; markers in code spans and fenced blocks are untouched), then the normal image path draws it; see [Rendering images](#rendering-images).
-- Mermaid blocks render as text diagrams through the `[mermaid]` child, as in replies.
+- Mermaid pictures: where the terminal shows images, each mermaid block draws as a PNG with no fence. One `ralph __mermaid --picture` child per block reads a JSON `PictureRequest` (source, resolved `[mermaid.style]`, room) on stdin, lays it out with bezel-mermaid (`max_width` = columns × cell width × font size / cell height), rasterizes the SVG with resvg and writes the PNG to stdout; the parent kills it after `picture_timeout_ms` or above `max_rss_mb`. The picture never grows past text at cell height and shrinks to fit the columns and rows (`ralph_core::mermaid_fit::picture_fit`). The cell size comes from the image probe, else 8×16.
+- Fallback: a render error, a kill, or text below `min_text_ratio` of the cell height draws the block as a text diagram through the `[mermaid]` child, as in replies; so does a terminal with no images. Model replies always use text diagrams.
+- Style: `[mermaid.style]` in [configuration](../configuration.md#mermaidstyle---diagram-pictures); the default palette follows the agent code theme.
 
 ## /diff
 

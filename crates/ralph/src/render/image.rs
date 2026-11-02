@@ -184,12 +184,10 @@ pub fn render_attachments(text: &str, images: ImageSettings, bounds: ImageBounds
         .collect()
 }
 
-fn draw_image(path: &str, images: ImageSettings, bounds: ImageBounds) -> Option<String> {
-    let resolved = resolve(path);
-    let bytes = read_capped(&resolved)?;
-    let image = prepare(&bytes)?;
+pub fn draw_png(bytes: &[u8], images: ImageSettings, bounds: ImageBounds) -> Option<String> {
+    let image = prepare(bytes)?;
     let grid = cell_grid(image.size, images.cell_px, bounds.cols, bounds.rows);
-    let drawn = match images.placement {
+    Some(match images.placement {
         Placement::Direct => {
             let (cols, rows) = grid;
             let newlines = (0..rows).map(|_| '\n').collect::<String>();
@@ -204,7 +202,13 @@ fn draw_image(path: &str, images: ImageSettings, bounds: ImageBounds) -> Option<
                 placeholder_rows(id, cols, rows)
             )
         }
-    };
+    })
+}
+
+fn draw_image(path: &str, images: ImageSettings, bounds: ImageBounds) -> Option<String> {
+    let resolved = resolve(path);
+    let bytes = read_capped(&resolved)?;
+    let drawn = draw_png(&bytes, images, bounds)?;
     let shown = std::fs::canonicalize(&resolved)
         .or_else(|_| std::path::absolute(&resolved))
         .unwrap_or(resolved);

@@ -39,6 +39,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .map(|key| format!("unknown key: {key}"))
         .chain(config.theme.warnings())
         .chain(config.changes.warnings())
+        .chain(config.mermaid.style.warnings())
         .chain(chat.worker_quiet_setting().1)
         .chain(chat.reset_limits_setting().1)
         .chain(chat.send_it_setting().1)
@@ -121,6 +122,15 @@ mod tests {
     fn warning_only_values_are_errors() {
         assert_eq!(errors("[chat]\nedit_mode = \"nano\"\n").len(), 1);
         assert_eq!(errors("[theme.agent]\nbad = \"x\"\n").len(), 1);
+    }
+
+    #[test]
+    fn mermaid_style_values_are_checked_and_its_config_is_free_form() {
+        assert_eq!(
+            errors("[mermaid.style]\nfont_size = 0.0\n"),
+            ["[mermaid.style] font_size = 0 is not above 0; using 16"]
+        );
+        assert!(errors("[mermaid.style.config.flowchart]\nnodeSpacing = 30\n").is_empty());
     }
 
     #[test]

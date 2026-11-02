@@ -344,8 +344,10 @@ pub struct WireSessionsArgs {
 
 #[derive(clap::Args, Debug)]
 pub struct MermaidArgs {
-    #[arg(long)]
-    pub width: usize,
+    #[arg(long, required_unless_present = "picture")]
+    pub width: Option<usize>,
+    #[arg(long, conflicts_with = "width")]
+    pub picture: bool,
 }
 
 #[derive(clap::Args, Debug)]

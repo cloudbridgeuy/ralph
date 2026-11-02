@@ -1,11 +1,14 @@
 use crate::config::{AppConfig, MermaidSection};
 use crate::render::mermaid::{fits_width, mermaid_precheck};
+use crate::render::mermaid_picture::PictureRequest;
 use crate::warn::warn;
+use ralph_core::mermaid_fit::Room;
 use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
+use syntect::highlighting::Theme;
 
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -42,11 +45,17 @@ fn over_rss_limit(child: &Child, max_rss_mb: u64) -> bool {
     rss_bytes(child.id()).is_some_and(|b| b > max_rss_mb.saturating_mul(1024 * 1024))
 }
 
-fn spawn_child(width: usize) -> Option<Child> {
+struct Guarded<'a> {
+    args: &'a [&'a str],
+    input: Vec<u8>,
+    timeout_ms: u64,
+    max_rss_mb: u64,
+}
+
+fn spawn_child(args: &[&str]) -> Option<Child> {
     Command::new(std::env::current_exe().ok()?)
         .arg("__mermaid")
-        .arg("--width")
-        .arg(width.to_string())
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -54,23 +63,23 @@ fn spawn_child(width: usize) -> Option<Child> {
         .ok()
 }
 
-fn run_guarded(source: &str, width: usize, limits: &MermaidSection) -> Option<String> {
-    let mut child = spawn_child(width)?;
+fn run_guarded(job: Guarded<'_>) -> Option<Vec<u8>> {
+    let mut child = spawn_child(job.args)?;
     let mut stdin = child.stdin.take()?;
     let mut stdout = child.stdout.take()?;
-    let input = source.to_string();
+    let input = job.input;
     thread::spawn(move || {
-        let _ = stdin.write_all(input.as_bytes());
+        let _ = stdin.write_all(&input);
     });
     let reader = thread::spawn(move || {
         let mut buf = Vec::new();
         stdout.read_to_end(&mut buf).ok().map(|_| buf)
     });
-    let deadline = Instant::now() + Duration::from_millis(limits.timeout_ms);
+    let deadline = Instant::now() + Duration::from_millis(job.timeout_ms);
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() < deadline && !over_rss_limit(&child, limits.max_rss_mb) => {
+            Ok(None) if Instant::now() < deadline && !over_rss_limit(&child, job.max_rss_mb) => {
                 thread::sleep(POLL_INTERVAL)
             }
             _ => {
@@ -81,10 +90,7 @@ fn run_guarded(source: &str, width: usize, limits: &MermaidSection) -> Option<St
         }
     };
     let output = reader.join().ok()??;
-    if !status?.success() {
-        return None;
-    }
-    String::from_utf8(output).ok()
+    status?.success().then_some(output)
 }
 
 fn limits() -> &'static MermaidSection {
@@ -101,6 +107,29 @@ fn limits() -> &'static MermaidSection {
 pub fn render(source: &str, width: usize) -> Option<String> {
     let limits = limits();
     mermaid_precheck(source, limits).ok()?;
-    let output = run_guarded(source, width, limits)?;
+    let width_arg = width.to_string();
+    let output = run_guarded(Guarded {
+        args: &["--width", &width_arg],
+        input: source.as_bytes().to_vec(),
+        timeout_ms: limits.timeout_ms,
+        max_rss_mb: limits.max_rss_mb,
+    })?;
+    let output = String::from_utf8(output).ok()?;
     fits_width(&output, width).then_some(output.trim_end().to_string())
+}
+
+pub fn picture(source: &str, theme: &Theme, room: Room) -> Option<Vec<u8>> {
+    let limits = limits();
+    let request = PictureRequest {
+        source: source.to_string(),
+        style: limits.style.resolve(theme).0,
+        room,
+    };
+    let png = run_guarded(Guarded {
+        args: &["--picture"],
+        input: serde_json::to_vec(&request).ok()?,
+        timeout_ms: limits.picture_timeout_ms,
+        max_rss_mb: limits.max_rss_mb,
+    })?;
+    (!png.is_empty()).then_some(png)
 }

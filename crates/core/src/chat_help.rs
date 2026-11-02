@@ -174,7 +174,7 @@ impl Command {
             )],
             Command::View => &[(
                 "/view <file.md>",
-                "print a local markdown file with the chat renderer; relative image paths resolve from the file's directory and draw inline where the terminal shows images; mermaid blocks draw as text diagrams; refuses a missing file, a directory, a file that is not .md or .markdown, and a file over 2 MB; starts no turn",
+                "print a local markdown file with the chat renderer; relative image paths resolve from the file's directory and draw inline where the terminal shows images; mermaid blocks draw as pictures where the terminal shows images and the text stays readable, else as text diagrams; refuses a missing file, a directory, a file that is not .md or .markdown, and a file over 2 MB; starts no turn",
             )],
             Command::Read => &[(
                 "/read <id> [raw|summary] [--cursor <c>]",

@@ -447,8 +447,39 @@ mermaid-text can drop a transition label on an edge into a composite state.
 | `max_input_bytes` | `1048576` | Refuse a block with more source bytes |
 | `max_flowchart_edges` | `50` | Refuse a flowchart/graph, stateDiagram, or stateDiagram-v2 with more arrow tokens |
 | `max_class_relations` | `400` | Refuse a classDiagram with more relation tokens (provisional: dense graphs among few classes can exceed the timeout well below 400; the timeout still bounds them) |
+| `picture_timeout_ms` | `3000` | Kill a `/view` picture child after this many milliseconds; the block then draws as text |
 
 Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; sequenceDiagram up to 20 participants, 64 KB, and 2000 statements; erDiagram up to 64 KB and 2000 statements. A config that fails to load prints a warning and uses these defaults.
+
+### `[mermaid.style]` - Diagram pictures
+
+`/view` draws mermaid blocks as pictures (see [ralph chat](context/ralph-chat.md#view)). This table styles them. Every key is optional; the store `config.toml` overrides the global one per key. A bad value warns at chat start and in `ralph config check`, and uses the default.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `palette` | `"auto"` | `auto` takes colors from the agent code theme (background, foreground, scope colors; a theme with no colors uses `dark`), `light` or `dark` are fixed |
+| `background` | `"theme"` | `theme` fills with the palette `bg`, `transparent` fills nothing, or a `#rrggbb` color |
+| `series` | palette | Up to 8 `#rrggbb` colors for chart series and pie slices, in order; missing ones keep the palette |
+| `font_family` | `["Helvetica Neue", "Helvetica", "Arial", "Liberation Sans"]` | Label fonts; the first installed one draws. Layout always uses Arial metrics |
+| `font_family_mono` | `["SF Mono", "Menlo", "DejaVu Sans Mono"]` | Monospace fonts |
+| `font_size` | `16.0` | Layout font size in pixels; above 0 |
+| `padding` | `16.0` | Padding around the diagram in pixels; 0 or more |
+| `curve` | `"rounded"` | Flowchart edges: `rounded`, `linear` or `step` |
+| `auto_direction` | `true` | Let a wide top-down flowchart switch to left-right |
+| `min_text_ratio` | `0.6` | Draw text instead when picture text would be smaller than this share of the cell height; 0 to 1 |
+
+`[mermaid.style.colors]` overrides single palette colors with `#rrggbb`: `bg`, `fg`, `muted`, `line`, `surface`, `surface_alt`, `border`, `accent`, `critical`. An unknown key warns.
+
+`[mermaid.style.config]` passes a bezel-mermaid site config (mermaid config keys, such as `[mermaid.style.config.flowchart] nodeSpacing = 30`). It wins over `curve`; a diagram's own init block or frontmatter wins over both.
+
+```toml
+[mermaid.style]
+palette = "auto"
+curve = "linear"
+
+[mermaid.style.colors]
+accent = "#d08770"
+```
 
 ### `[changes]` - `/diff` pager and turn snapshots
 

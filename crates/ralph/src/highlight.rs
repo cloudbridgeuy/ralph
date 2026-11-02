@@ -273,6 +273,10 @@ impl Default for Highlighter {
 }
 
 impl Highlighter {
+    pub fn theme(&self) -> &Theme {
+        &self.theme
+    }
+
     /// Create a new highlighter with default syntax definitions and themes.
     ///
     /// This loads the bundled syntect defaults which include support for

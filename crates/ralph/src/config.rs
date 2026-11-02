@@ -32,6 +32,7 @@ mod empty_submit;
 #[cfg(test)]
 mod hold_progress_tests;
 mod layers;
+mod mermaid_style;
 mod opencode;
 mod permissions;
 #[cfg(test)]
@@ -50,6 +51,7 @@ pub use codex::{configured_codex, CodexSection};
 pub use command::{run_check, run_show};
 pub use cursor::CursorSection;
 pub use layers::{leaf_sources, Row, Source};
+pub use mermaid_style::MermaidStyle;
 pub use opencode::OpencodeSection;
 pub use permissions::configured_permission_mode;
 pub use view::{
@@ -214,6 +216,10 @@ pub struct MermaidSection {
     pub max_flowchart_edges: usize,
     #[serde(default = "default_mermaid_max_class_relations")]
     pub max_class_relations: usize,
+    #[serde(default = "default_mermaid_picture_timeout_ms")]
+    pub picture_timeout_ms: u64,
+    #[serde(default)]
+    pub style: MermaidStyle,
 }
 
 fn default_mermaid_timeout_ms() -> u64 {
@@ -236,6 +242,10 @@ fn default_mermaid_max_class_relations() -> usize {
     400
 }
 
+fn default_mermaid_picture_timeout_ms() -> u64 {
+    3000
+}
+
 impl Default for MermaidSection {
     fn default() -> Self {
         Self {
@@ -244,6 +254,8 @@ impl Default for MermaidSection {
             max_input_bytes: default_mermaid_max_input_bytes(),
             max_flowchart_edges: default_mermaid_max_flowchart_edges(),
             max_class_relations: default_mermaid_max_class_relations(),
+            picture_timeout_ms: default_mermaid_picture_timeout_ms(),
+            style: MermaidStyle::default(),
         }
     }
 }

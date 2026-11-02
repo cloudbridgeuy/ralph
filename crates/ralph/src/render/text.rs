@@ -86,9 +86,21 @@ fn render_styled_prose(theme: &MarkdownTheme, text: &str) -> String {
 }
 
 pub fn render_markdown(ctx: &RenderContext<'_>, text: &str, markdown: &MarkdownTheme) -> String {
+    render_markdown_with(ctx, text, markdown, |_| None)
+}
+
+pub fn render_markdown_with(
+    ctx: &RenderContext<'_>,
+    text: &str,
+    markdown: &MarkdownTheme,
+    picture: impl Fn(&ParsedChunk) -> Option<String>,
+) -> String {
     parse_chunks(text)
         .iter()
         .map(|chunk| {
+            if let Some(drawn) = picture(chunk) {
+                return drawn;
+            }
             let rendered = render_text_block(ctx, chunk, Some(markdown));
             match chunk.chunk_type {
                 ChunkType::Prose => rendered,
