@@ -13,7 +13,7 @@ fn full() -> HoldProgress {
     }
 }
 
-const FULL_LINE: &str = "GUZ-1162 · 14m · busy · rebase 9/15 · 3 commits · cargo test";
+const FULL_LINE: &str = "GUZ-1162 · held 14m · busy · rebase 9/15 · 3 commits · cargo test";
 
 #[test]
 fn the_full_line_joins_every_segment() {
@@ -36,9 +36,9 @@ fn elapsed_uses_seconds_minutes_and_hours() {
             false,
         )
     };
-    assert_eq!(at(45), "GUZ-1162 · 45s");
-    assert_eq!(at(14 * 60), "GUZ-1162 · 14m");
-    assert_eq!(at(3600 + 5 * 60), "GUZ-1162 · 1h05m");
+    assert_eq!(at(45), "GUZ-1162 · held 45s");
+    assert_eq!(at(14 * 60), "GUZ-1162 · held 14m");
+    assert_eq!(at(3600 + 5 * 60), "GUZ-1162 · held 1h05m");
 }
 
 #[test]
@@ -56,14 +56,23 @@ fn activity_words_map_and_none_is_omitted() {
             false,
         )
     };
-    assert_eq!(with(Some(ActivityState::Running)), "GUZ-1162 · 14m · busy");
+    assert_eq!(
+        with(Some(ActivityState::Running)),
+        "GUZ-1162 · held 14m · busy"
+    );
     assert_eq!(
         with(Some(ActivityState::Background)),
-        "GUZ-1162 · 14m · busy"
+        "GUZ-1162 · held 14m · busy"
     );
-    assert_eq!(with(Some(ActivityState::Idle)), "GUZ-1162 · 14m · idle");
-    assert_eq!(with(Some(ActivityState::Failed)), "GUZ-1162 · 14m · failed");
-    assert_eq!(with(None), "GUZ-1162 · 14m");
+    assert_eq!(
+        with(Some(ActivityState::Idle)),
+        "GUZ-1162 · held 14m · idle"
+    );
+    assert_eq!(
+        with(Some(ActivityState::Failed)),
+        "GUZ-1162 · held 14m · failed"
+    );
+    assert_eq!(with(None), "GUZ-1162 · held 14m");
 }
 
 #[test]
@@ -74,29 +83,35 @@ fn one_commit_is_singular() {
         rebase: None,
         ..full()
     };
-    assert_eq!(line(&one, 80, false), "GUZ-1162 · 14m · busy · 1 commit");
+    assert_eq!(
+        line(&one, 80, false),
+        "GUZ-1162 · held 14m · busy · 1 commit"
+    );
 }
 
 #[test]
 fn narrow_widths_drop_segments_right_to_left() {
-    let no_hint = "GUZ-1162 · 14m · busy · rebase 9/15 · 3 commits";
-    let no_commits = "GUZ-1162 · 14m · busy · rebase 9/15";
+    let no_hint = "GUZ-1162 · held 14m · busy · rebase 9/15 · 3 commits";
+    let no_commits = "GUZ-1162 · held 14m · busy · rebase 9/15";
     let cases = [
-        (60, FULL_LINE),
+        (65, FULL_LINE),
         (
-            59,
-            "GUZ-1162 · 14m · busy · rebase 9/15 · 3 commits · cargo te…",
+            64,
+            "GUZ-1162 · held 14m · busy · rebase 9/15 · 3 commits · cargo te…",
         ),
-        (52, "GUZ-1162 · 14m · busy · rebase 9/15 · 3 commits · c…"),
-        (51, no_hint),
-        (47, no_hint),
-        (46, no_commits),
-        (35, no_commits),
-        (34, "GUZ-1162 · 14m · busy"),
-        (21, "GUZ-1162 · 14m · busy"),
-        (20, "GUZ-1162 · 14m"),
-        (14, "GUZ-1162 · 14m"),
-        (13, "GUZ-1162"),
+        (
+            57,
+            "GUZ-1162 · held 14m · busy · rebase 9/15 · 3 commits · c…",
+        ),
+        (56, no_hint),
+        (52, no_hint),
+        (51, no_commits),
+        (40, no_commits),
+        (39, "GUZ-1162 · held 14m · busy"),
+        (26, "GUZ-1162 · held 14m · busy"),
+        (25, "GUZ-1162 · held 14m"),
+        (19, "GUZ-1162 · held 14m"),
+        (18, "GUZ-1162"),
         (8, "GUZ-1162"),
     ];
     for (width, expected) in cases {
@@ -161,7 +176,7 @@ fn lines_cap_at_three_then_count_the_rest() {
         .collect();
     assert_eq!(
         lines(&many, 80, false),
-        ["W0 · 14m", "W1 · 14m", "W2 · 14m", "+2 more"]
+        ["W0 · held 14m", "W1 · held 14m", "W2 · held 14m", "+2 more"]
     );
     assert_eq!(lines(&many[..3], 80, false).len(), 3);
     assert!(lines(&[], 80, false).is_empty());

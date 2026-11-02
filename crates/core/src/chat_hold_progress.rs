@@ -41,7 +41,7 @@ fn commits_label(count: u32) -> String {
 
 fn fixed_segments(progress: &HoldProgress) -> Vec<String> {
     [
-        Some(elapsed_label(progress.elapsed_secs)),
+        Some(format!("held {}", elapsed_label(progress.elapsed_secs))),
         progress
             .activity
             .map(|state| activity_word(state).to_string()),
