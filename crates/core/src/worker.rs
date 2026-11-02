@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 
 mod acp;
 mod claude_headless;
+mod claude_headless_verify;
 mod codex;
 mod cursor_model;
 mod delivery;
@@ -35,6 +36,7 @@ mod verify;
 mod worktree;
 pub use acp::*;
 pub use claude_headless::*;
+pub use claude_headless_verify::*;
 pub use codex::*;
 pub use cursor_model::{
     cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,

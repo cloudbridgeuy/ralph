@@ -1,10 +1,11 @@
 use crate::cli::VerifyAgent;
 use crate::subprocess::TimedOutput;
 use crate::watches::locked;
-use crate::{acp_worker, codex_worker, verified_agents};
+use crate::{acp_worker, claude_headless_worker, codex_worker, verified_agents};
 use ralph_core::worker::{
     finished_probe, render_check, render_summary, required_failure, spec_passed, verified_entry,
-    CheckResult, VerifiedAgent, VersionProbe, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
+    CheckResult, VerifiedAgent, VersionProbe, CLAUDE_HEADLESS_REQUIRED_CHECKS,
+    CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
 };
 use std::sync::{Arc, Mutex};
 
@@ -94,6 +95,10 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
             codex_worker::verify(live, dir.path(), &checks),
             CODEX_REQUIRED_CHECKS,
         ),
+        VerifyAgent::ClaudeHeadless => (
+            claude_headless_worker::verify(live, dir.path(), &checks),
+            CLAUDE_HEADLESS_REQUIRED_CHECKS,
+        ),
     };
     if let Some(failure) = required_failure(&checks.results(), required) {
         checks.add(failure);
@@ -153,10 +158,12 @@ mod tests {
     }
 
     #[test]
-    fn the_cli_accepts_only_cursor_and_codex_as_verify_agents() {
-        for agent in ["cursor", "codex"] {
+    fn the_cli_accepts_cursor_codex_and_claude_headless_as_verify_agents() {
+        for agent in ["cursor", "codex", "claude-headless"] {
             assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_ok());
         }
-        assert!(Cli::try_parse_from(["ralph", "worker", "verify", "claude-headless"]).is_err());
+        for agent in ["claude", "opencode"] {
+            assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_err());
+        }
     }
 }

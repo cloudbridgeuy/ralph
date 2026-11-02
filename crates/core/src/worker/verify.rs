@@ -227,6 +227,16 @@ impl PermissionSetup {
         }
     }
 
+    pub fn claude_headless() -> Self {
+        let label = "permission-mode default with --permission-prompt-tool stdio";
+        Self {
+            label: label.to_string(),
+            no_request: format!(
+                "claude sent no can_use_tool request although it runs {label} and allows no shell tool"
+            ),
+        }
+    }
+
     pub fn codex() -> Self {
         let label = "a read-only thread with approvalPolicy on-request";
         Self {

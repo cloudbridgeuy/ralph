@@ -1,0 +1,260 @@
+use super::{
+    decode_line, deny_line, interrupted_end, permission_response, turn_stop, CheckResult,
+    ClaudeLine, ThreadSignal, TurnSummary, VersionProbe, ALLOW_ONCE, CLAUDE_COMMAND, CLAUDE_GATE,
+    VERSION_PROBE_LIMIT,
+};
+use crate::stream::interrupt_line;
+use serde_json::Value;
+
+pub const CLAUDE_HEADLESS_REQUIRED_CHECKS: &[&str] = &["version", "spawn", "argv"];
+pub const CLAUDE_ENDED: &str = "end_turn";
+pub const CLAUDE_INTERRUPTED: &str = "cancelled";
+const VERIFY_INTERRUPT_ID: &str = "verify-interrupt";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaudePlan {
+    Plain,
+    Allow,
+    Cancel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeFold {
+    pub summary: TurnSummary,
+    pub session: Option<String>,
+    pub ended: bool,
+}
+
+impl Default for ClaudeFold {
+    fn default() -> Self {
+        Self {
+            summary: TurnSummary {
+                stop: Err("the turn did not finish".to_string()),
+                replies: 0,
+                permissions: Vec::new(),
+                cancel_sent: false,
+            },
+            session: None,
+            ended: false,
+        }
+    }
+}
+
+fn text_blocks(assistant: &Value) -> usize {
+    assistant["message"]["content"]
+        .as_array()
+        .map_or(0, |blocks| {
+            blocks
+                .iter()
+                .filter(|block| block["type"] == "text")
+                .count()
+        })
+}
+
+pub fn fold_claude_line(fold: &mut ClaudeFold, line: &str, plan: ClaudePlan) -> Vec<String> {
+    let value = serde_json::from_str::<Value>(line.trim()).unwrap_or(Value::Null);
+    match (value["type"].as_str(), value["subtype"].as_str()) {
+        (Some("system"), Some("init")) => {
+            fold.session = value["session_id"].as_str().map(str::to_string);
+            Vec::new()
+        }
+        (Some("assistant"), _) => {
+            fold.summary.replies += text_blocks(&value);
+            if plan == ClaudePlan::Cancel && !fold.summary.cancel_sent {
+                fold.summary.cancel_sent = true;
+                return vec![interrupt_line(VERIFY_INTERRUPT_ID)];
+            }
+            Vec::new()
+        }
+        _ => fold_decoded(fold, line, plan),
+    }
+}
+
+fn fold_decoded(fold: &mut ClaudeFold, line: &str, plan: ClaudePlan) -> Vec<String> {
+    match decode_line(line) {
+        ClaudeLine::Permission(ask) => {
+            let reply = match plan {
+                ClaudePlan::Allow => {
+                    permission_response(&ask.content.request_id, ALLOW_ONCE, &ask.input)
+                }
+                _ => deny_line(&ask.content.request_id),
+            };
+            fold.summary.permissions.push(ask.content);
+            vec![reply]
+        }
+        ClaudeLine::Signal(ThreadSignal::TurnEnded(end)) => {
+            fold.ended = true;
+            let end = interrupted_end(end, fold.summary.cancel_sent);
+            fold.summary.stop = turn_stop(&end)
+                .map(|reason| reason.to_string())
+                .map_err(str::to_string);
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+pub fn init_check(session: Option<&str>, expected: &str) -> CheckResult {
+    match session {
+        Some(found) if found == expected => {
+            CheckResult::pass("init", format!("system/init carried session {found}"))
+        }
+        Some(found) => CheckResult::fail(
+            "init",
+            format!("system/init carried session {found}, expected {expected}"),
+        ),
+        None => CheckResult::fail("init", "claude sent no system/init line"),
+    }
+}
+
+pub fn claude_probed_version(probe: &VersionProbe) -> Result<String, String> {
+    let found = match probe {
+        VersionProbe::Exited(output) => super::decode_claude_version(output)
+            .ok_or_else(|| format!("could not read the version from `{CLAUDE_COMMAND} --version`"))?
+            .to_string(),
+        VersionProbe::ExitedWithError(_) => {
+            return Err(format!(
+                "could not run `{CLAUDE_COMMAND} --version`: it exited with an error status"
+            ))
+        }
+        VersionProbe::Unreadable(_) => {
+            return Err(format!(
+                "could not read the version from `{CLAUDE_COMMAND} --version`"
+            ))
+        }
+        VersionProbe::TimedOut => {
+            return Err(format!(
+                "`{CLAUDE_COMMAND} --version` did not answer within {}s",
+                VERSION_PROBE_LIMIT.as_secs()
+            ))
+        }
+        VersionProbe::Failed(error) => {
+            return Err(format!(
+                "could not run `{CLAUDE_COMMAND} --version`: {error}"
+            ))
+        }
+    };
+    super::check_agent_version(&CLAUDE_GATE, &found, &super::VerifiedAgents::default())?;
+    Ok(found)
+}
+
+fn stderr_complaint(stderr: &str) -> Option<&str> {
+    stderr.lines().find(|line| {
+        let lower = line.to_lowercase();
+        lower.contains("unknown option") || lower.contains("error:")
+    })
+}
+
+pub fn argv_check(running: bool, stderr: &str, exit: Result<bool, String>) -> CheckResult {
+    let detail = |text: &str| format!("{text}; stderr: {}", stderr.trim());
+    match (running, stderr_complaint(stderr), exit) {
+        (false, _, _) => CheckResult::fail(
+            "argv",
+            detail("claude exited before the settle window ended"),
+        ),
+        (true, Some(line), _) => {
+            CheckResult::fail("argv", format!("claude complained on stderr: {line}"))
+        }
+        (true, None, Err(message)) => CheckResult::fail("argv", message),
+        (true, None, Ok(false)) => CheckResult::fail(
+            "argv",
+            detail("claude exited with an error status after stdin closed"),
+        ),
+        (true, None, Ok(true)) => CheckResult::pass(
+            "argv",
+            "claude kept running with the worker argv and exited cleanly after stdin closed",
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::worker::{PermissionSetup, Verdict};
+    use serde_json::json;
+
+    fn feed(fold: &mut ClaudeFold, plan: ClaudePlan, lines: &[Value]) -> Vec<String> {
+        lines
+            .iter()
+            .flat_map(|line| fold_claude_line(fold, &line.to_string(), plan))
+            .collect()
+    }
+
+    fn assistant_text() -> Value {
+        json!({"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}})
+    }
+
+    fn result(is_error: bool) -> Value {
+        json!({"type":"result","subtype":"success","is_error":is_error,"result":"ok"})
+    }
+
+    fn can_use_tool() -> Value {
+        json!({"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"date +%Y"}}})
+    }
+
+    #[test]
+    fn stream_json_turn_folds_into_a_turn_summary() {
+        let mut fold = ClaudeFold::default();
+        let init = json!({"type":"system","subtype":"init","session_id":"s1","mcp_servers":[]});
+        let sent = feed(
+            &mut fold,
+            ClaudePlan::Plain,
+            &[init, assistant_text(), result(false)],
+        );
+        assert!(sent.is_empty());
+        assert_eq!(fold.session.as_deref(), Some("s1"));
+        assert!(fold.ended);
+        assert_eq!(fold.summary.replies, 1);
+        assert_eq!(fold.summary.stop, Ok(CLAUDE_ENDED.to_string()));
+        assert!(init_check(fold.session.as_deref(), "s1").verdict == Verdict::Pass);
+        assert!(init_check(fold.session.as_deref(), "s2").verdict == Verdict::Fail);
+    }
+
+    #[test]
+    fn a_cancel_plan_interrupts_once_and_maps_the_failed_result() {
+        let mut fold = ClaudeFold::default();
+        let sent = feed(
+            &mut fold,
+            ClaudePlan::Cancel,
+            &[assistant_text(), assistant_text(), result(true)],
+        );
+        assert_eq!(sent.len(), 1);
+        assert!(sent[0].contains("interrupt"));
+        assert_eq!(fold.summary.stop, Ok(CLAUDE_INTERRUPTED.to_string()));
+    }
+
+    #[test]
+    fn can_use_tool_folds_into_an_allow_once_permission() {
+        let mut fold = ClaudeFold::default();
+        let sent = feed(
+            &mut fold,
+            ClaudePlan::Allow,
+            &[can_use_tool(), assistant_text(), result(false)],
+        );
+        let reply: Value = serde_json::from_str(&sent[0]).unwrap();
+        assert_eq!(reply["response"]["response"]["behavior"], "allow");
+        assert_eq!(reply["response"]["request_id"], "r1");
+        let check = crate::worker::permission_check(
+            &fold.summary,
+            CLAUDE_ENDED,
+            &PermissionSetup::claude_headless(),
+        );
+        assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
+    }
+
+    #[test]
+    fn a_plain_plan_denies_a_permission_request() {
+        let mut fold = ClaudeFold::default();
+        let sent = feed(&mut fold, ClaudePlan::Plain, &[can_use_tool()]);
+        let reply: Value = serde_json::from_str(&sent[0]).unwrap();
+        assert_eq!(reply["response"]["response"]["behavior"], "deny");
+    }
+
+    #[test]
+    fn argv_fails_on_an_early_exit_or_a_stderr_complaint() {
+        assert_eq!(argv_check(false, "", Ok(true)).verdict, Verdict::Fail);
+        let unknown = argv_check(true, "error: unknown option '--x'\n", Ok(true));
+        assert_eq!(unknown.verdict, Verdict::Fail);
+        assert_eq!(argv_check(true, "", Ok(true)).verdict, Verdict::Pass);
+    }
+}

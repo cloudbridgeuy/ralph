@@ -22,12 +22,12 @@ pub const ALLOW_ONCE: &str = "allow_once";
 const DENY: &str = "deny";
 
 pub const CLAUDE_GATE: VersionGate = VersionGate {
-    agent: "claude",
+    agent: "claude-headless",
     package: "Claude Code",
     min: (2, 1),
     probed: "2.1.314",
     protocol: "stream-json",
-    verifiable: false,
+    verifiable: true,
 };
 
 #[derive(Debug, PartialEq)]
@@ -778,16 +778,38 @@ mod tests {
         let old = check_agent_version(&CLAUDE_GATE, "2.0.9", &verified).unwrap_err();
         assert_eq!(
             old,
-            "claude 2.0.9 is too old; needs Claude Code >= 2.1 (probed 2.1.314)"
+            "claude-headless 2.0.9 is too old; needs Claude Code >= 2.1 (probed 2.1.314)"
         );
         let newer = check_agent_version(&CLAUDE_GATE, "2.2.0", &verified)
             .unwrap()
             .unwrap();
         assert_eq!(
             newer,
-            "claude 2.2.0 is newer than the probed 2.1.314; the stream-json protocol may differ."
+            "claude-headless 2.2.0 is newer than the probed 2.1.314; the stream-json protocol may differ; run `ralph worker verify claude-headless` to check this version."
         );
         assert!(check_agent_version(&CLAUDE_GATE, "garbage", &verified).is_err());
+    }
+
+    #[test]
+    fn claude_headless_warning_is_silent_for_a_recorded_version() {
+        let recorded = VerifiedAgents::default().record(crate::worker::verified_entry(
+            "claude-headless",
+            "2.2.0",
+            false,
+            "2026-11-02",
+        ));
+        assert_eq!(
+            check_agent_version(&CLAUDE_GATE, "2.2.0", &recorded),
+            Ok(None)
+        );
+        let unrecorded = check_agent_version(&CLAUDE_GATE, "2.2.1", &recorded)
+            .unwrap()
+            .unwrap();
+        assert!(
+            unrecorded
+                .ends_with("run `ralph worker verify claude-headless` to check this version."),
+            "{unrecorded}"
+        );
     }
 
     #[test]
