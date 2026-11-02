@@ -300,7 +300,7 @@ pub fn worker_closed(tracked: bool, ticket: &str, status: &Status) -> bool {
 }
 
 pub fn blocked_alert(notice: &str, config: &AlertConfig) -> Option<Alert> {
-    config.enabled().then(|| Alert {
+    (config.enabled() && !config.terminal_status).then(|| Alert {
         sound: config.sound,
         notification: config.notification.then(|| notice.to_string()),
     })

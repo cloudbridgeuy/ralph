@@ -384,6 +384,7 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
         sound: true,
         notification: true,
         unknown_focus: UnknownFocus::Alert,
+        terminal_status: false,
     };
     assert_eq!(
         blocked_alert("send-it stopped", &config),
@@ -409,6 +410,17 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
             notification: None
         })
     );
+}
+
+#[test]
+fn a_blocked_alert_is_left_to_the_terminal_when_it_sends_status() {
+    let rex = AlertConfig {
+        sound: true,
+        notification: true,
+        unknown_focus: UnknownFocus::Alert,
+        terminal_status: true,
+    };
+    assert_eq!(blocked_alert("send-it stopped", &rex), None);
 }
 
 #[test]
