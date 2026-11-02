@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use super::usage::{BillingRates, CacheTier, Usage, FIVE_MIN, ONE_HOUR};
+use super::usage::{BillingRates, CacheTier, Usage, FIVE_MIN, ONE_HOUR, THIRTY_MIN};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TierPrice {
@@ -30,7 +30,7 @@ pub struct PriceTable {
     pub entries: Vec<PriceEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PriceOverride {
     pub input: f64,
@@ -40,6 +40,8 @@ pub struct PriceOverride {
     pub cache_write_5m: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_write_1h: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_30m: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<f64>,
 }
@@ -82,6 +84,7 @@ pub fn validate_price_overrides(overrides: &BTreeMap<String, PriceOverride>) -> 
             ("cache_read", price.cache_read),
             ("cache_write_5m", price.cache_write_5m),
             ("cache_write_1h", price.cache_write_1h),
+            ("cache_write_30m", price.cache_write_30m),
             ("output", price.output),
         ] {
             if value.is_some_and(|amount| amount < 0.0) {
@@ -152,6 +155,7 @@ impl PriceOverride {
             cache_writes: [
                 derived_write(self.cache_write_5m, self.input, FIVE_MIN, rates),
                 derived_write(self.cache_write_1h, self.input, ONE_HOUR, rates),
+                derived_write(self.cache_write_30m, self.input, THIRTY_MIN, rates),
             ]
             .into_iter()
             .flatten()
@@ -197,7 +201,7 @@ pub fn usd(usage: &Usage, price: &ModelPrice) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::usage::{CacheWrite, TierRate};
+    use crate::wire::usage::{CacheWrite, TierRate, THIRTY_MIN};
 
     fn price(input: f64) -> ModelPrice {
         ModelPrice {
@@ -281,10 +285,37 @@ mod tests {
                 input,
                 cache_read: None,
                 cache_write_5m: None,
-                cache_write_1h: None,
-                output: None,
+                ..Default::default()
             },
         )])
+    }
+
+    #[test]
+    fn override_prices_an_openai_thirty_minute_write() {
+        use crate::wire::provider::{openai::OpenAi, Provider};
+        let overrides = BTreeMap::from([(
+            "gpt-6-astra".to_string(),
+            PriceOverride {
+                input: 10.0,
+                cache_read: Some(1.0),
+                output: Some(50.0),
+                cache_write_30m: Some(12.5),
+                ..Default::default()
+            },
+        )]);
+        let rates = OpenAi.rates("gpt-6-astra");
+        let price = resolve_price(&table(), &overrides, &rates, "gpt-6-astra", 0).unwrap();
+        let call = usage(
+            1000,
+            4000,
+            vec![CacheWrite {
+                tier: THIRTY_MIN,
+                tokens: 2000,
+            }],
+            100,
+        );
+        let cost = usd(&call, &price).unwrap();
+        assert!((cost - 0.044).abs() < 1e-9, "{cost}");
     }
 
     #[test]
@@ -389,8 +420,7 @@ mod tests {
                 input: 7.0,
                 cache_read: None,
                 cache_write_5m: None,
-                cache_write_1h: None,
-                output: None,
+                ..Default::default()
             },
         );
         assert!(resolve_price(&table(), &over, &rates(), "mystery-1", 1).is_none());

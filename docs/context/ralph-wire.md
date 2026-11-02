@@ -65,7 +65,7 @@ Segment sizes and cumulative offsets are approximate. Raw request bytes are not 
 
 Shipped ids (each confirmed on the models overview and model pages): `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-opus-4-5`, `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5`. Mythos and Sonnet 4.5 are not shipped; price them through an override.
 
-Overrides in `config.toml` replace the table for a model prefix at every prompt size. See [`[wire.prices]`](../configuration.md#wireprices---ralph-wire-ls-price-overrides). Unset override fields are derived from the override `input` times the provider's billing multipliers (the same ones behind `eq`).
+Overrides in `config.toml` replace the table for a model prefix at every prompt size. See [`[wire.prices]`](../configuration.md#wireprices---ralph-wire-ls-price-overrides). Unset override fields are derived from the override `input` times the provider's billing multipliers (the same ones behind `eq`). An override may set `cache_write_5m`, `cache_write_1h`, and `cache_write_30m`; each tier it sets or the provider rates define is priced, so an OpenAI model override prices 30m writes.
 
 Limits:
 

@@ -261,6 +261,7 @@ fn an_override_wins_over_the_table() {
             cache_write_5m: Some(0.0),
             cache_write_1h: Some(0.0),
             output: Some(0.0),
+            ..Default::default()
         },
     )]);
     let usage = jsonl(&[worker("GUZ-1", "s1", "claude-opus-5-5")]);
@@ -309,6 +310,7 @@ fn a_gpt_override_without_a_30m_price_keeps_the_plus() {
             cache_write_5m: None,
             cache_write_1h: None,
             output: Some(0.0),
+            ..Default::default()
         },
     )]);
     let mut row = codex("gpt-6.1-sol");
@@ -328,6 +330,7 @@ fn an_override_wins_over_the_openai_table() {
             cache_write_5m: None,
             cache_write_1h: None,
             output: Some(0.0),
+            ..Default::default()
         },
     )]);
     let usage = jsonl(&[codex("gpt-6.1-sol")]);

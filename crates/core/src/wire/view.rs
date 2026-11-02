@@ -693,6 +693,7 @@ mod tests {
                 cache_write_5m: None,
                 cache_write_1h: None,
                 output: None,
+                ..Default::default()
             },
         )]);
         let mut call = record(1, UsageOutcome::Reported(usage(500_000, 0, 0, 0)), None);
