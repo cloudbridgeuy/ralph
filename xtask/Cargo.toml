@@ -21,4 +21,4 @@ chrono = { workspace = true }
 ralph_core = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-reqwest = { workspace = true }
+ureq = { workspace = true, features = ["rustls"] }

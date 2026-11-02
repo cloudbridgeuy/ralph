@@ -33,7 +33,10 @@ pub enum ReleaseError {
     EmptyNotes,
 
     #[error("Linear request failed: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(#[from] ureq::Error),
+
+    #[error("Linear request aborted: {0}")]
+    Join(#[from] tokio::task::JoinError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

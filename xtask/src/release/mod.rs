@@ -72,21 +72,20 @@ fn warn(message: &str) {
     anstream::eprintln!("{} {message}", p_y("warning:"));
 }
 
-async fn fetch_batch(
-    client: &reqwest::Client,
-    key: &str,
-    ids: &[u32],
-) -> Result<HashMap<u32, notes::Ticket>> {
-    let body = serde_json::json!({ "query": notes::linear_query(ids) });
-    let text = client
-        .post(LINEAR_URL)
+fn post_linear(key: &str, body: &str) -> Result<String> {
+    let text = ureq::post(LINEAR_URL)
         .header("Authorization", key)
-        .json(&body)
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+        .content_type("application/json")
+        .send(body)?
+        .body_mut()
+        .read_to_string()?;
+    Ok(text)
+}
+
+async fn fetch_batch(key: &str, ids: &[u32]) -> Result<HashMap<u32, notes::Ticket>> {
+    let body = serde_json::json!({ "query": notes::linear_query(ids) }).to_string();
+    let key = key.to_string();
+    let text = tokio::task::spawn_blocking(move || post_linear(&key, &body)).await??;
     notes::parse_linear(&text)
 }
 
@@ -98,10 +97,9 @@ async fn fetch_tickets(ids: &[u32]) -> HashMap<u32, notes::Ticket> {
         warn("LINEAR_API_KEY is not set; deriving sections from commit types");
         return HashMap::new();
     };
-    let client = reqwest::Client::new();
     let mut tickets = HashMap::new();
     for batch in ids.chunks(LINEAR_BATCH) {
-        match fetch_batch(&client, &key, batch).await {
+        match fetch_batch(&key, batch).await {
             Ok(found) => tickets.extend(found),
             Err(error) => warn(&format!(
                 "Linear lookup failed ({error}); using commit types"
