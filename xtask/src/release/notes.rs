@@ -207,8 +207,106 @@ pub fn prepend_changelog(existing: Option<&str>, section: &str) -> String {
 
 pub fn summary_prompt(list: &str) -> String {
     format!(
-        "Write a two to three sentence summary of this release for its changelog. Plain prose, no heading, no bullet list, no preamble. Mention only what the list supports.\n\n{list}"
+        "Write a two to three sentence summary of this release for its changelog. Plain prose, no heading, no bullet list, no preamble. Mention only what the list supports. Output only the summary text. Do not add questions, next steps, instructions or offers after it.\n\n{list}"
     )
+}
+
+const CHATTER_PREFIXES: [&str; 3] = ["next:", "note:", "let me know"];
+const CHATTER_PHRASES: [&str; 2] = ["paste this", "changelog entry above"];
+const PREAMBLE_PREFIXES: [&str; 4] = ["here is", "here's", "sure", "summary"];
+const MAX_QUESTION_WORDS: usize = 8;
+const MAX_PREAMBLE_WORDS: usize = 6;
+
+fn is_preamble(line: &str) -> bool {
+    let lower = line.trim().to_lowercase();
+    lower.ends_with(':')
+        && lower.split_whitespace().count() <= MAX_PREAMBLE_WORDS
+        && PREAMBLE_PREFIXES
+            .iter()
+            .any(|prefix| lower.starts_with(prefix))
+}
+
+/// A trailing line the model added after the summary. A short question only
+/// counts when it stands as its own paragraph, so a wrapped summary sentence
+/// that ends in a question mark is kept.
+fn is_chatter(line: &str, own_paragraph: bool) -> bool {
+    let lower = line.trim().to_lowercase();
+    let short_question =
+        lower.ends_with('?') && lower.split_whitespace().count() <= MAX_QUESTION_WORDS;
+    CHATTER_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+        || CHATTER_PHRASES.iter().any(|phrase| lower.contains(phrase))
+        || (own_paragraph && short_question)
+}
+
+fn trim_blank_edges(lines: &mut Vec<&str>) {
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    let leading = lines
+        .iter()
+        .take_while(|line| line.trim().is_empty())
+        .count();
+    lines.drain(..leading);
+}
+
+/// Strip model chatter from a generated summary: code fences, a leading
+/// "here's the summary:" line, and trailing next-step lines or offers.
+/// Trailing lines are only dropped after the first blank line, so the first
+/// paragraph always survives.
+fn clean_summary(raw: &str) -> Option<String> {
+    let mut lines: Vec<&str> = raw
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("```"))
+        .collect();
+    trim_blank_edges(&mut lines);
+    if lines.first().is_some_and(|line| is_preamble(line)) {
+        lines.remove(0);
+        trim_blank_edges(&mut lines);
+    }
+    let first_break = lines
+        .iter()
+        .position(|line| line.trim().is_empty())
+        .unwrap_or(lines.len());
+    while lines.len() > first_break + 1 {
+        let Some((last, before)) = lines.split_last() else {
+            break;
+        };
+        let own_paragraph = before.last().is_none_or(|line| line.trim().is_empty());
+        if !last.trim().is_empty() && !is_chatter(last, own_paragraph) {
+            break;
+        }
+        lines.pop();
+    }
+    let text = lines.join("\n").trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+const SUMMARY_SYSTEM: &str = "You write release-note summaries. Reply with the summary text only.";
+
+/// `claude -p` arguments for the summary. Safe mode skips CLAUDE.md, skills,
+/// plugins, hooks and MCP servers, so user rules cannot add chatter.
+pub fn summary_args(model: &str) -> Vec<&str> {
+    vec![
+        "-p",
+        "--model",
+        model,
+        "--safe-mode",
+        "--tools",
+        "",
+        "--no-session-persistence",
+        "--system-prompt",
+        SUMMARY_SYSTEM,
+    ]
+}
+
+/// The cleaned summary from a `claude -p` reply, or why there is none.
+pub fn summary_from_reply(raw: &str) -> Result<String> {
+    if raw.trim().is_empty() {
+        return Err(ReleaseError::EmptySummary);
+    }
+    clean_summary(raw).ok_or(ReleaseError::ChatterOnlySummary)
 }
 
 #[cfg(test)]
@@ -358,7 +456,120 @@ mod tests {
     }
 
     #[test]
-    fn summary_prompt_embeds_the_list() {
-        assert!(summary_prompt("- A (GUZ-1)").contains("- A (GUZ-1)"));
+    fn summary_prompt_embeds_the_list_and_forbids_trailing_text() {
+        assert_eq!(
+            summary_prompt("- A (GUZ-1)"),
+            "Write a two to three sentence summary of this release for its changelog. Plain prose, no heading, no bullet list, no preamble. Mention only what the list supports. Output only the summary text. Do not add questions, next steps, instructions or offers after it.\n\n- A (GUZ-1)"
+        );
+    }
+
+    #[test]
+    fn clean_summary_drops_a_trailing_next_line() {
+        assert_eq!(
+            clean_summary("Adds X. Fixes Y.\n\nnext: paste this above the v0.3.0 list… Go?\n"),
+            Some("Adds X. Fixes Y.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_drops_trailing_short_questions_and_offers() {
+        assert_eq!(clean_summary("Adds X.\n\nGo?"), Some("Adds X.".to_string()));
+        assert_eq!(
+            clean_summary("Adds X.\n\nWant me to adjust the tone?\nLet me know if so."),
+            Some("Adds X.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_unwraps_code_fences() {
+        assert_eq!(
+            clean_summary("```text\nAdds X.\n```"),
+            Some("Adds X.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_drops_a_leading_preamble() {
+        assert_eq!(
+            clean_summary("Here's the summary:\n\nAdds X."),
+            Some("Adds X.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_long_first_line_that_ends_in_a_colon() {
+        let text = "Summary: this release adds X, Y and Z:\n\n- X";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_keeps_questions_that_belong_to_the_summary() {
+        let opening = "Why wait? This release adds X and Y.";
+        assert_eq!(clean_summary(opening), Some(opening.to_string()));
+        let closing = "This release adds X and Y. Who says changelogs must be boring?";
+        assert_eq!(clean_summary(closing), Some(closing.to_string()));
+        let wrapped = "This release adds X and Y, so is it\nready?";
+        assert_eq!(clean_summary(wrapped), Some(wrapped.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_returns_none_when_nothing_is_left() {
+        assert_eq!(clean_summary("  \n"), None);
+        assert_eq!(clean_summary("```\n```"), None);
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_first_paragraph_that_ends_in_a_short_question() {
+        let text = "Adds X and fixes Y. Ready to upgrade?";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_first_paragraph_with_a_chatter_phrase() {
+        let text = "Fixes a bug where paste this command failed.";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_note_line_inside_the_first_paragraph() {
+        let text = "Adds X.\nNote: requires Y.";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_keeps_clean_text() {
+        assert_eq!(
+            clean_summary("Adds X.\n\nFixes Y."),
+            Some("Adds X.\n\nFixes Y.".to_string())
+        );
+    }
+
+    #[test]
+    fn summary_args_run_claude_without_tools_or_user_context() {
+        assert_eq!(
+            summary_args("m"),
+            vec![
+                "-p",
+                "--model",
+                "m",
+                "--safe-mode",
+                "--tools",
+                "",
+                "--no-session-persistence",
+                "--system-prompt",
+                "You write release-note summaries. Reply with the summary text only.",
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_from_reply_names_why_a_reply_gave_no_summary() {
+        let reason = |raw: &str| summary_from_reply(raw).map_err(|error| error.to_string());
+        assert_eq!(reason("Adds X.\n"), Ok("Adds X.".to_string()));
+        assert_eq!(reason(" \n"), Err("claude returned no text".to_string()));
+        assert_eq!(
+            reason("Here's the summary:\n```\n```"),
+            Err("the reply held only chatter".to_string())
+        );
     }
 }

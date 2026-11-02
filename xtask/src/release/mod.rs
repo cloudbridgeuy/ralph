@@ -109,9 +109,9 @@ async fn fetch_tickets(ids: &[u32]) -> HashMap<u32, notes::Ticket> {
     tickets
 }
 
-async fn generate_summary(prompt: &str) -> Result<Option<String>> {
+async fn generate_summary(prompt: &str) -> Result<String> {
     let mut child = Command::new("claude")
-        .args(["-p", "--model", SUMMARY_MODEL])
+        .args(notes::summary_args(SUMMARY_MODEL))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -123,13 +123,12 @@ async fn generate_summary(prompt: &str) -> Result<Option<String>> {
     if !output.status.success() {
         return Err(ReleaseError::CommandFailed("claude -p".to_string()));
     }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok((!text.is_empty()).then_some(text))
+    notes::summary_from_reply(&String::from_utf8_lossy(&output.stdout))
 }
 
 async fn summary_for(prompt: &str) -> Option<String> {
     match generate_summary(prompt).await {
-        Ok(summary) => summary,
+        Ok(summary) => Some(summary),
         Err(error) => {
             warn(&format!("Summary skipped ({error})"));
             None
