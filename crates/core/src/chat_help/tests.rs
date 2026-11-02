@@ -122,6 +122,19 @@ fn the_hold_row_names_the_auto_hold_setting() {
 }
 
 #[test]
+fn the_hold_row_describes_several_targets_and_the_bare_auto_hold() {
+    let text = help_topic(Some("hold")).unwrap();
+    assert!(has_row(&text, "/hold [<target> ...]"));
+    for phrase in [
+        "typed with several targets it holds only when every target is listed, otherwise it is a normal message",
+        "one unknown target still arms the hold",
+        "exactly /hold, /hold <target> or /hold <t1> <t2>",
+    ] {
+        assert!(text.contains(phrase), "{phrase}");
+    }
+}
+
+#[test]
 fn every_command_routes_locally_and_has_help() {
     let text = help_text(160);
     for command in Command::ALL {

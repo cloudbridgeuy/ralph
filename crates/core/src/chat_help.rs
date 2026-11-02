@@ -147,8 +147,8 @@ impl Command {
             ],
             Command::Hold => &[
                 (
-                    "/hold [<worker-id> | watch:<name> | schedule:<id>]",
-                    "wait with no prompt; the model suggests it when the next step is waiting and no decision waits on the person (after the person approves a plan it suggests /send-it <ticket> instead), and when it suggests exactly /hold <target> for a listed worker, watch or schedule, ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
+                    "/hold [<target> ...]",
+                    "wait with no prompt; the model suggests it when the next step is waiting and no decision waits on the person (after the person approves a plan it suggests /send-it <ticket> instead), a target is a worker id, watch:<name> or schedule:<id>; with no target any report ends the hold, with several the first report from any of them does; typed with several targets it holds only when every target is listed, otherwise it is a normal message; one unknown target still arms the hold; when it suggests exactly /hold, /hold <target> or /hold <t1> <t2> with every target listed (a bare /hold needs one), ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes from workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
             Command::SendIt => &[
@@ -230,7 +230,7 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
     },
     KeyHelp {
         keys: "Tab, Shift-Tab",
-        effect: "after /hold , complete the argument from this chat's worker ids, watch:<name> and schedule:<id>; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
+        effect: "after /hold , complete the word under the cursor from this chat's worker ids, watch:<name> and schedule:<id>; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
     },
     KeyHelp {
         keys: "Up, Down, Ctrl-R",

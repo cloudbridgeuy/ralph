@@ -9,7 +9,7 @@ pub const SUGGESTION_MAX_CHARS: usize = 200;
 pub fn suggest_reply_tool() -> Value {
     json!({
         "name": "suggest_reply",
-        "description": "Pre-fill the user's next prompt with the words they would type. Call it before any reply text and never mention it. A later call replaces it. A reply of exactly `/hold <target>` can start that hold at once. `step` marks a routine step `/send-it` auto-sends; approval, merge, push, abandon get none.",
+        "description": "Pre-fill the user's next prompt with the words they would type. Call it before any reply text and never mention it. A later call replaces it. A reply of exactly `/hold`, `/hold <target>` or `/hold <t1> <t2>` with listed targets can start that hold at once. `step` marks a routine `/send-it` step.",
         "inputSchema": {
             "type": "object",
             "properties": {
