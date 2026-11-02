@@ -1,32 +1,32 @@
-use ralph_core::chat_suggestion::untouched;
+use ralph_core::chat_suggestion::{untouched, Suggestion};
 use reedline::{Color, ExampleHighlighter, Highlighter, StyledText};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 #[derive(Clone, Default)]
-pub(crate) struct SuggestionSlot(Arc<Mutex<Option<String>>>);
+pub(crate) struct SuggestionSlot(Arc<Mutex<Option<Suggestion>>>);
 
 impl SuggestionSlot {
-    fn guard(&self) -> MutexGuard<'_, Option<String>> {
+    fn guard(&self) -> MutexGuard<'_, Option<Suggestion>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub(crate) fn set(&self, text: String) {
-        *self.guard() = Some(text);
+    pub(crate) fn set(&self, suggestion: Suggestion) {
+        *self.guard() = Some(suggestion);
     }
 
     pub(crate) fn clear(&self) {
         *self.guard() = None;
     }
 
-    pub(crate) fn take(&self) -> Option<String> {
+    pub(crate) fn take(&self) -> Option<Suggestion> {
         self.guard().take()
     }
 
     fn latch_untouched(&self, buffer: &str) -> bool {
         let mut slot = self.guard();
         let keep = slot
-            .as_deref()
-            .is_some_and(|shown| untouched(shown, buffer));
+            .as_ref()
+            .is_some_and(|shown| untouched(&shown.text, buffer));
         if !keep {
             *slot = None;
         }
@@ -65,27 +65,47 @@ impl Highlighter for SuggestionHighlighter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::chat_send_it::Step;
+
+    fn plain(text: &str) -> Suggestion {
+        Suggestion {
+            text: text.to_string(),
+            step: None,
+        }
+    }
+
+    #[test]
+    fn the_step_survives_the_slot() {
+        let slot = SuggestionSlot::default();
+        slot.set(Suggestion {
+            text: "run the checks".to_string(),
+            step: Some(Step::Checks),
+        });
+        let taken = slot.take().unwrap();
+        assert_eq!(taken.text, "run the checks");
+        assert_eq!(taken.step, Some(Step::Checks));
+    }
 
     #[test]
     fn a_later_set_replaces_the_earlier_one() {
         let slot = SuggestionSlot::default();
-        slot.set("one".to_string());
-        slot.set("two".to_string());
-        assert_eq!(slot.take(), Some("two".to_string()));
+        slot.set(plain("one"));
+        slot.set(plain("two"));
+        assert_eq!(slot.take(), Some(plain("two")));
     }
 
     #[test]
     fn take_empties_the_slot() {
         let slot = SuggestionSlot::default();
-        slot.set("one".to_string());
-        assert_eq!(slot.take(), Some("one".to_string()));
+        slot.set(plain("one"));
+        assert_eq!(slot.take(), Some(plain("one")));
         assert_eq!(slot.take(), None);
     }
 
     #[test]
     fn clear_drops_a_pending_suggestion() {
         let slot = SuggestionSlot::default();
-        slot.set("one".to_string());
+        slot.set(plain("one"));
         slot.clear();
         assert_eq!(slot.take(), None);
     }
@@ -93,8 +113,8 @@ mod tests {
     #[test]
     fn clones_share_one_slot() {
         let slot = SuggestionSlot::default();
-        slot.clone().set("one".to_string());
-        assert_eq!(slot.take(), Some("one".to_string()));
+        slot.clone().set(plain("one"));
+        assert_eq!(slot.take(), Some(plain("one")));
     }
 
     #[test]
@@ -106,13 +126,13 @@ mod tests {
             panic!("poison");
         })
         .join();
-        slot.set("one".to_string());
-        assert_eq!(slot.take(), Some("one".to_string()));
+        slot.set(plain("one"));
+        assert_eq!(slot.take(), Some(plain("one")));
     }
 
     fn highlighter(text: &str) -> (SuggestionHighlighter, SuggestionSlot) {
         let shown = SuggestionSlot::default();
-        shown.set(text.to_string());
+        shown.set(plain(text));
         (
             SuggestionHighlighter::new(shown.clone(), Color::Cyan),
             shown,
@@ -126,7 +146,7 @@ mod tests {
         assert_eq!(styled.buffer.len(), 1);
         assert_eq!(styled.buffer[0].0, Color::Cyan.normal());
         assert_eq!(styled.buffer[0].1, "yes, go");
-        assert_eq!(shown.take(), Some("yes, go".to_string()));
+        assert_eq!(shown.take(), Some(plain("yes, go")));
     }
 
     #[test]

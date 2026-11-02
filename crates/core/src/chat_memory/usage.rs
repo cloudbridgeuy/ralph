@@ -9,11 +9,13 @@ use serde::Serialize;
 pub enum Trigger {
     User,
     Worker,
+    #[serde(rename = "send_it")]
+    SendIt,
 }
 
 pub fn trigger_entries(trigger: Trigger, texts: &[String]) -> Vec<(super::Role, String)> {
     let role = match trigger {
-        Trigger::User => super::Role::User,
+        Trigger::User | Trigger::SendIt => super::Role::User,
         Trigger::Worker => super::Role::Worker,
     };
     texts.iter().map(|text| (role, text.clone())).collect()
@@ -337,6 +339,19 @@ mod tests {
         )
         .unwrap();
         assert!(main.get("long_prompt").is_none());
+    }
+
+    #[test]
+    fn send_it_turns_log_as_user_entries_and_serialize_snake_case() {
+        let texts = ["a".to_string()];
+        assert_eq!(
+            trigger_entries(Trigger::SendIt, &texts),
+            vec![(crate::chat_memory::Role::User, "a".into())]
+        );
+        assert_eq!(
+            serde_json::to_string(&Trigger::SendIt).unwrap(),
+            "\"send_it\""
+        );
     }
 
     #[test]

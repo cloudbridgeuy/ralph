@@ -44,7 +44,7 @@ pub fn run_stdio_server(
                 id,
                 config_help(
                     &crate::config::config_path(),
-                    Some(&store.dir().join("config.toml")),
+                    Some(store.dir()),
                     section.as_deref(),
                 ),
             ),

@@ -18,6 +18,53 @@ fn positive_setting(value: Option<&toml::Value>, key: &str, default: u64) -> (u6
     }
 }
 
+pub const SEND_IT_MIN_SECONDS: u64 = 3;
+pub const SEND_IT_DEFAULT_MAX_USD: f64 = 5.0;
+pub const SEND_IT_DEFAULT_MAX_TURNS: u32 = 15;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SendItSettings {
+    pub seconds: u64,
+    pub max_turns: u32,
+    pub max_usd: f64,
+}
+
+pub fn clamp_send_it(seconds: u64, max_turns: u32, max_usd: f64) -> (SendItSettings, Vec<String>) {
+    let mut warnings = Vec::new();
+    let seconds = if seconds < SEND_IT_MIN_SECONDS {
+        warnings.push(format!(
+            "[chat] send_it_seconds must be at least {SEND_IT_MIN_SECONDS}; using {SEND_IT_MIN_SECONDS}"
+        ));
+        SEND_IT_MIN_SECONDS
+    } else {
+        seconds
+    };
+    let max_turns = if max_turns == 0 {
+        warnings.push(format!(
+            "[chat] send_it_max_turns must be a positive integer; using {SEND_IT_DEFAULT_MAX_TURNS}"
+        ));
+        SEND_IT_DEFAULT_MAX_TURNS
+    } else {
+        max_turns
+    };
+    let max_usd = if max_usd.is_finite() && max_usd > 0.0 {
+        max_usd
+    } else {
+        warnings.push(format!(
+            "[chat] send_it_max_usd must be a positive number; using {SEND_IT_DEFAULT_MAX_USD}"
+        ));
+        SEND_IT_DEFAULT_MAX_USD
+    };
+    (
+        SendItSettings {
+            seconds,
+            max_turns,
+            max_usd,
+        },
+        warnings,
+    )
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct PromptFiles {
     pub behaviour: Option<PathBuf>,
@@ -55,6 +102,14 @@ impl ChatSection {
         (
             ResetLimits { turns, tokens },
             turns_warning.into_iter().chain(tokens_warning).collect(),
+        )
+    }
+
+    pub fn send_it_setting(&self) -> (SendItSettings, Vec<String>) {
+        clamp_send_it(
+            self.send_it_seconds,
+            self.send_it_max_turns,
+            self.send_it_max_usd,
         )
     }
 
@@ -102,5 +157,72 @@ mod tests {
             chat.prompt_files(None).behaviour,
             Some(PathBuf::from("~/p.md"))
         );
+    }
+
+    #[test]
+    fn send_it_values_in_range_pass_through_without_warnings() {
+        assert_eq!(
+            clamp_send_it(3, 1, 0.01),
+            (
+                SendItSettings {
+                    seconds: 3,
+                    max_turns: 1,
+                    max_usd: 0.01
+                },
+                Vec::new()
+            )
+        );
+        let (settings, warnings) = ChatSection::default().send_it_setting();
+        assert_eq!(
+            settings,
+            SendItSettings {
+                seconds: 10,
+                max_turns: 15,
+                max_usd: 5.0
+            }
+        );
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn send_it_seconds_below_the_floor_clamp_to_three() {
+        for seconds in [0, 1, 2] {
+            let (settings, warnings) = clamp_send_it(seconds, 15, 5.0);
+            assert_eq!(settings.seconds, 3, "{seconds}");
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("send_it_seconds") && warnings[0].contains("3"));
+        }
+    }
+
+    #[test]
+    fn send_it_bad_max_usd_resets_to_five() {
+        for usd in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let (settings, warnings) = clamp_send_it(10, 15, usd);
+            assert_eq!(settings.max_usd, 5.0, "{usd}");
+            assert_eq!(warnings.len(), 1);
+            assert!(warnings[0].contains("send_it_max_usd"));
+        }
+    }
+
+    #[test]
+    fn send_it_zero_max_turns_resets_to_fifteen() {
+        let (settings, warnings) = clamp_send_it(10, 0, 5.0);
+        assert_eq!(settings.max_turns, 15);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("send_it_max_turns"));
+    }
+
+    #[test]
+    fn send_it_each_bad_key_warns_separately() {
+        let (settings, warnings) = clamp_send_it(0, 0, 0.0);
+        assert_eq!(
+            settings,
+            SendItSettings {
+                seconds: 3,
+                max_turns: 15,
+                max_usd: 5.0
+            }
+        );
+        assert_eq!(warnings.len(), 3);
     }
 }

@@ -40,7 +40,7 @@ mod view;
 mod wire;
 mod workers;
 pub use changes::ChangesSection;
-pub use chat_settings::PromptFiles;
+pub use chat_settings::{PromptFiles, SendItSettings};
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
 pub use command::{run_check, run_show};
@@ -303,7 +303,17 @@ pub struct ChatSection {
     #[serde(default = "default_true")]
     pub terminal_status: bool,
     #[serde(default = "default_true")]
+    pub terminal_title: bool,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default = "default_true")]
     pub auto_hold: bool,
+    #[serde(default = "default_send_it_seconds")]
+    pub send_it_seconds: u64,
+    #[serde(default = "default_send_it_max_turns")]
+    pub send_it_max_turns: u32,
+    #[serde(default = "default_send_it_max_usd")]
+    pub send_it_max_usd: f64,
     #[serde(default)]
     pub editor: Option<EditorSetting>,
     #[serde(default)]
@@ -323,6 +333,18 @@ pub enum EditorSetting {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_send_it_seconds() -> u64 {
+    10
+}
+
+fn default_send_it_max_turns() -> u32 {
+    15
+}
+
+fn default_send_it_max_usd() -> f64 {
+    5.0
 }
 
 fn default_mcp_servers() -> Vec<String> {
@@ -357,7 +379,12 @@ impl Default for ChatSection {
             inbox_alert_unknown_focus: UnknownFocus::Alert,
             status_powerline: false,
             terminal_status: true,
+            terminal_title: true,
+            name: None,
             auto_hold: true,
+            send_it_seconds: default_send_it_seconds(),
+            send_it_max_turns: default_send_it_max_turns(),
+            send_it_max_usd: default_send_it_max_usd(),
             editor: None,
             edit_mode: None,
             empty_submit: None,

@@ -18,6 +18,7 @@ pub enum Command {
     Diff,
     Workers,
     Hold,
+    SendIt,
     Config,
     Read,
     Zoom,
@@ -26,7 +27,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 12] = [
+    pub const ALL: [Command; 13] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -34,6 +35,7 @@ impl Command {
         Command::Diff,
         Command::Workers,
         Command::Hold,
+        Command::SendIt,
         Command::Config,
         Command::Read,
         Command::Zoom,
@@ -50,6 +52,7 @@ impl Command {
             Command::Diff => "/diff",
             Command::Workers => "/workers",
             Command::Hold => "/hold",
+            Command::SendIt => "/send-it",
             Command::Config => "/config",
             Command::Read => "/read",
             Command::Zoom => "/zoom",
@@ -145,8 +148,15 @@ impl Command {
             Command::Hold => &[
                 (
                     "/hold [<worker-id> | watch:<name> | schedule:<id>]",
-                    "wait with no prompt; the model suggests it when the next step is waiting, and when it suggests exactly /hold <target> for a listed worker, watch or schedule, ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
+                    "wait with no prompt; the model suggests it when the next step is waiting (after the person approves a plan it suggests /send-it <ticket> instead), and when it suggests exactly /hold <target> for a listed worker, watch or schedule, ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes the argument from this chat's workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
+            ],
+            Command::SendIt => &[
+                (
+                    "/send-it <ticket>",
+                    "auto-send the model's suggested replies for routine steps after a countdown ([chat] send_it_seconds); any key cancels one send; it stops at a turn or cost cap, a repeated reply, or a reply that mentions push, merge, PR, approve or abandon; the model suggests it after the person approves a plan, in place of /hold <ticket>, and again to resume after a stop; only replies it marks as routine steps (fix rounds, free live checks, the four checks, reinstalls, post-push cleanup) send, never approval, merge, push, paid runs or abandon",
+                ),
+                ("/send-it off", "stop auto-sending; /send-it alone shows its state"),
             ],
             Command::Config => &[(
                 "/config",
@@ -284,8 +294,12 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
         effect: "on a non-empty draft clear it, the turn keeps running; on an empty draft cancel the turn and hold the queue",
     },
     KeyHelp {
-        keys: "Ctrl-V, Ctrl-G",
-        effect: "off here: no image paste and no external editor",
+        keys: "Ctrl-G",
+        effect: "edit the queue draft in [chat] editor, $VISUAL, $EDITOR or vi; the turn keeps running",
+    },
+    KeyHelp {
+        keys: "Ctrl-V",
+        effect: "off here: no image paste",
     },
 ];
 
@@ -295,7 +309,7 @@ pub const SEGMENTS: [Kind; 10] = [
     Kind::Hold(Mode::Idle),
     Kind::Queue(Mode::Idle),
     Kind::Mail(Mode::Idle),
-    Kind::Store,
+    Kind::Name,
     Kind::Workers,
     Kind::Watches,
     Kind::Schedule,
@@ -324,7 +338,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
             "only in the queue editor: turn state and queued entries; HELD N after a back-out; short forms running · QN, ▶ QN, done · QN, ✓ QN",
         ),
         Kind::Mail(_) => ("📬 N unread", "worker reports waiting; /inbox sends them"),
-        Kind::Store => ("store", "the chat store path (last two parts)"),
+        Kind::Name => ("name", "the chat session name"),
         Kind::Workers => ("workers", "each worker and its state"),
         Kind::Watches => ("watch <id> <left>", "running watches and their time left"),
         Kind::Schedule => (
@@ -489,6 +503,14 @@ fn keys(table: &[KeyHelp]) -> Vec<(String, String)> {
         .collect()
 }
 
+pub fn help_with_store(width: usize, store: &Path) -> String {
+    format!("{}\n\n{}", store_line(store), help_text(width))
+}
+
+fn store_line(store: &Path) -> String {
+    format!("Store: {}", store.display())
+}
+
 /// The help, wrapped to `width` columns.
 pub fn help_text(width: usize) -> String {
     let mut out = String::new();
@@ -627,21 +649,23 @@ pub fn config_topic(topic: Option<&str>) -> Option<Option<&str>> {
 
 pub fn config_help(
     path: &Path,
-    store_file: Option<&Path>,
+    store_dir: Option<&Path>,
     section: Option<&str>,
 ) -> Result<String, String> {
     let sections = config_sections(CONFIG_DOC);
     let Some(section) = section.map(str::trim).filter(|section| !section.is_empty()) else {
-        let store_line = store_file.map_or(String::new(), |file| {
+        let store_header = store_dir.map_or(String::new(), |dir| format!("{}\n", store_line(dir)));
+        let store_file_line = store_dir.map_or(String::new(), |dir| {
             format!(
                 "\nStore config file: {} (optional; overrides the global file per key)",
-                file.display()
+                dir.join("config.toml").display()
             )
         });
         return Ok(format!(
-            "Config file: {}{}\n\n{}\n\n{}\n\nSections: {}. Ask for one with topic `config <section>`.",
+            "{}Config file: {}{}\n\n{}\n\n{}\n\nSections: {}. Ask for one with topic `config <section>`.",
+            store_header,
             path.display(),
-            store_line,
+            store_file_line,
             doc_block(CONFIG_DOC, "Configuration File Location"),
             doc_block(CONFIG_DOC, "Configuration Precedence"),
             section_list(&sections),

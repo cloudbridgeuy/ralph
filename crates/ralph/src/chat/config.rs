@@ -32,6 +32,9 @@ pub(super) fn flag_settings(args: &ChatArgs) -> Vec<Setting> {
         args.store
             .as_deref()
             .map(|dir| flag("--store", path_value(dir), None)),
+        args.name
+            .clone()
+            .map(|name| flag("--name", Value::String(name), Some("chat.name"))),
         args.recent_history_tokens.map(|tokens| {
             flag(
                 "--recent-history-tokens",
@@ -95,6 +98,7 @@ mod tests {
         ChatArgs {
             command: None,
             store: None,
+            name: None,
             recent_history_tokens: None,
             wrap_width: None,
             skills: Vec::new(),
@@ -123,6 +127,7 @@ mod tests {
         let args = ChatArgs {
             command: None,
             store: Some(PathBuf::from("rel/store")),
+            name: Some("review".into()),
             recent_history_tokens: Some(5000),
             wrap_width: Some(90),
             skills: vec![PathBuf::from("/a"), PathBuf::from("/b")],
@@ -136,6 +141,7 @@ mod tests {
             flag_settings(&args),
             [
                 setting("--store", text("rel/store"), None),
+                setting("--name", text("review"), Some("chat.name")),
                 setting(
                     "--recent-history-tokens",
                     Value::Integer(5000),

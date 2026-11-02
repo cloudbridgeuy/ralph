@@ -523,7 +523,26 @@ mod tests {
                 "Suggested reply set. Now write your reply; do not mention the suggestion."
             );
         }
-        assert_eq!(slot.take(), Some("second".to_string()));
+        assert_eq!(
+            slot.take().map(|taken| taken.text),
+            Some("second".to_string())
+        );
+    }
+
+    #[test]
+    fn suggest_reply_keeps_the_step_in_the_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_path_buf());
+        let slot = SuggestionSlot::default();
+        let call = request(
+            "suggest_reply",
+            json!({"text": "run the checks", "step": "checks"}),
+        );
+        assert!(!respond(&store, &workers(), &slot, &call).is_error);
+        assert_eq!(
+            slot.take().and_then(|taken| taken.step),
+            Some(ralph_core::chat_send_it::Step::Checks)
+        );
     }
 
     #[test]
@@ -531,12 +550,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_path_buf());
         let slot = SuggestionSlot::default();
-        slot.set("kept".to_string());
+        slot.set(ralph_core::chat_suggestion::Suggestion {
+            text: "kept".to_string(),
+            step: None,
+        });
         let call = request("suggest_reply", json!({"text": "a\nb"}));
         let response = respond(&store, &workers(), &slot, &call);
         assert!(response.is_error);
         assert!(response.text.contains("line break"));
-        assert_eq!(slot.take(), Some("kept".to_string()));
+        assert_eq!(
+            slot.take().map(|taken| taken.text),
+            Some("kept".to_string())
+        );
     }
 
     #[test]

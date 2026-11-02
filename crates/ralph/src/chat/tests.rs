@@ -224,7 +224,7 @@ fn empty_env_store_is_ignored_and_missing_home_errors() {
 }
 
 #[test]
-fn queue_keymap_drops_paste_and_open_editor_bindings() {
+fn queue_keymap_drops_paste_and_keeps_open_editor() {
     let mut keys = emacs_keybindings();
     queue_bindings(&mut keys);
     assert_eq!(
@@ -233,11 +233,20 @@ fn queue_keymap_drops_paste_and_open_editor_bindings() {
     );
     assert_eq!(
         keys.find_binding(KeyModifiers::CONTROL, KeyCode::Char('g')),
-        None
+        Some(ReedlineEvent::ExecuteHostCommand(OPEN_EDITOR.to_string()))
     );
     assert!(keys
         .find_binding(KeyModifiers::CONTROL, KeyCode::Char('q'))
         .is_some());
+}
+
+#[test]
+fn queue_help_lists_ctrl_g_as_on() {
+    let row = QUEUE_KEYS
+        .iter()
+        .find(|help| help.keys.split(", ").any(|key| key == "Ctrl-G"))
+        .unwrap();
+    assert!(!row.effect.starts_with("off"), "{}", row.effect);
 }
 
 fn key_label(modifier: KeyModifiers, code: KeyCode) -> String {

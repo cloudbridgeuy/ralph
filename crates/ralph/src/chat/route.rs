@@ -12,7 +12,7 @@ use crate::config::{ChangesSection, ConfigSnapshot};
 use crate::schedule_store::ScheduleStore;
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
-use ralph_core::chat_help::help_text;
+use ralph_core::chat_help::help_with_store;
 use ralph_core::chat_status::Route;
 use ralph_core::diff_command::{DiffArgs, UNCLOSED_DIFF_QUOTE};
 use ralph_core::wire::price::PriceOverride;
@@ -61,7 +61,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::WorkerCosts => workers::costs(ctx.display, ctx.prices),
-        Route::Help => print!("{}", help_text(screen_columns())),
+        Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),
         Route::History(tool) => {
             let store = Store::new(ctx.store.to_path_buf());
@@ -71,7 +71,11 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
                     .unwrap_or_else(|e| e)
             );
         }
-        Route::Send(_) | Route::ReadInbox(_) | Route::Hold(_) | Route::Ignore => {}
+        Route::Send(_)
+        | Route::ReadInbox(_)
+        | Route::Hold(_)
+        | Route::SendIt(_)
+        | Route::Ignore => {}
     }
     Ok(())
 }

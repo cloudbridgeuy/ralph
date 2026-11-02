@@ -730,3 +730,33 @@ fn history_commands_run_mid_turn() {
         );
     }
 }
+
+#[test]
+fn route_input_parses_send_it_commands() {
+    use crate::chat_send_it::SendIt;
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    assert_eq!(route("/send-it"), Route::SendIt(SendIt::Status));
+    assert_eq!(route("  /send-it  "), Route::SendIt(SendIt::Status));
+    assert_eq!(route("/send-it off"), Route::SendIt(SendIt::Off));
+    assert_eq!(
+        route("/send-it GUZ-1162"),
+        Route::SendIt(SendIt::Arm("GUZ-1162".into()))
+    );
+    assert_eq!(
+        route(" /send-it   guz-7 "),
+        Route::SendIt(SendIt::Arm("guz-7".into()))
+    );
+    assert_eq!(
+        route("/send-it GUZ-1 now"),
+        Route::Send("/send-it GUZ-1 now".into())
+    );
+    assert_eq!(route("/send-itx"), Route::Send("/send-itx".into()));
+}
+
+#[test]
+fn send_it_never_runs_mid_turn() {
+    use crate::chat_send_it::SendIt;
+    for arg in [SendIt::Status, SendIt::Off, SendIt::Arm("GUZ-1".into())] {
+        assert!(!Route::SendIt(arg).runs_mid_turn());
+    }
+}

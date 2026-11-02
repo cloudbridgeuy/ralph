@@ -14,11 +14,13 @@ mod keys;
 pub(crate) mod mcp;
 pub(crate) mod memory;
 mod monitor;
+mod name;
 mod prompt;
 mod queue;
 mod route;
 mod schedule;
 mod schedule_worker;
+mod send_it;
 mod skills;
 pub(crate) use skills::SKILLS_ENV;
 mod snapshots;
@@ -47,6 +49,7 @@ use crate::chat::queue::{
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
+use crate::chat::send_it::{Auto, Offer};
 use crate::chat::skills::{
     env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
     write_skill_plugin,
@@ -87,11 +90,12 @@ use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
+use ralph_core::chat_send_it::auto_line;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{
-    auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
+    auto_hold_notice, turn_end, Next, Prefill, Suggestion, SuggestionRecord, TurnEnd,
 };
 use ralph_core::chat_thread::{run_id, UsageTail};
 use ralph_core::claude_leftovers::claude_dir;
@@ -325,6 +329,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),
+        last_cost_usd: Mutex::new(None),
         live: Arc::clone(&live),
         reset_limits,
         recent_history_tokens,
@@ -382,10 +387,20 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         reset_limits,
         thread: Mutex::new(ThreadMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
-        term: Arc::new(TermStatus::new(terminal_status)),
+        term: Arc::new(TermStatus::new(
+            terminal_status,
+            chat_config.terminal_title && std::io::stdout().is_terminal(),
+        )),
         phase: Mutex::new(Phase::Prompt),
         hold: Mutex::new(None),
     });
+    let session_name = name::session_name(
+        args.name.as_deref(),
+        chat_config.name.as_deref(),
+        &cwd,
+        name::resolved_home().as_deref(),
+    );
+    monitor.term.start_title(&session_name);
     let _term_clear = ClearOnDrop(Arc::clone(&monitor.term));
     let roster = {
         let monitor = Arc::clone(&monitor);
@@ -469,11 +484,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("EDITOR").ok().as_deref(),
     );
     let (empty_submit, empty_warning) = chat_config.empty_submit_setting();
+    let (send_it_settings, send_it_warnings) = chat_config.send_it_setting();
     let late_warnings: Vec<String> = config_warning
         .into_iter()
         .chain(editor_warning)
         .chain(quiet_warning)
         .chain(reset_warnings)
+        .chain(send_it_warnings)
         .chain(empty_warning)
         .collect();
     late_warnings.iter().for_each(warn);
@@ -509,12 +526,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
         color,
-        bar: StatusBar::new(
-            &config.theme.status,
-            &monitor.store_dir,
-            &chat_config,
-            color,
-        ),
+        bar: StatusBar::new(&config.theme.status, &session_name, &chat_config, color),
         notice: RefCell::new(None),
         editor: editor_cmd,
         empty_submit,
@@ -549,13 +561,18 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         edit_mode,
         local: &local_route,
         empty_submit: &prompt.empty_submit,
+        store: &store_dir,
+        editor: &prompt.editor,
     };
     let schedule_store = monitor.schedule.clone();
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
     let mut offered: Option<(String, u64)> = None;
+    let mut send_it = send_it::Shell::new(&send_it_settings, color);
+    let mut auto_turn: Option<Auto> = None;
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
+        let typed_at_prompt = pending.is_none();
         let route = match pending.take() {
             Some(route) => Some(route),
             None => {
@@ -602,6 +619,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                         )
                     );
                 }
+                let trigger = if auto_turn.is_some() {
+                    Trigger::SendIt
+                } else {
+                    Trigger::User
+                };
+                send_it.begin_turn();
                 monitor.set_phase(Phase::Cell);
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state) {
                     Ok(prepared) => {
@@ -621,9 +644,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
                         let (result, queued) = snapshots.around(|| {
-                            keys.during(|| {
-                                turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
-                            })
+                            keys.during(|| turn.run(trigger, std::slice::from_ref(&sent), &sent))
                         });
                         queue = queued;
                         result?
@@ -635,6 +656,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Route::ReadInbox(selection) => {
                 monitor.set_phase(Phase::Turn);
                 let reports = monitor.drain(selection)?;
+                send_it.note_drained(&reports);
                 monitor.refresh(true);
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     monitor.set_phase(Phase::Prompt);
@@ -660,6 +682,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 continue;
             }
+            Route::SendIt(command) => {
+                send_it.command(command, typed_at_prompt, &monitor.status());
+                continue;
+            }
             local => {
                 run_local(local, &local_route, || {
                     monitor.refresh(true);
@@ -673,6 +699,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Phase::Prompt
         });
         monitor.refresh(true);
+        let turn_cost = turn.take_cost();
+        if let Some(auto) = auto_turn.take() {
+            send_it.record(&auto, turn_cost);
+        }
         if outcome == TurnOutcome::Exit {
             let lost = unsent(&queue);
             for text in &lost {
@@ -690,7 +720,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         let asked = approve_proposed(&schedule_store, watch_timeout);
-        let suggestion = suggestions.take();
+        let taken = suggestions.take();
+        let step = taken.as_ref().and_then(|taken| taken.step);
+        let suggestion = taken.map(|taken| taken.text);
         let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {
             Decision::Send(text) => {
@@ -723,6 +755,26 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             suggestion,
             status: &monitor.status(),
         });
+        let offer = match &next {
+            Next::Prefill(Prefill::Suggestion(text)) => Some(Offer { text, step }),
+            _ => None,
+        };
+        if let Some(auto) = send_it.at_turn_end(offer.as_ref(), asked, &monitor) {
+            let line = auto_line(&auto.text);
+            warn_if_err(
+                store.append_suggestion(&SuggestionRecord::auto_sent(
+                    chrono::Utc::now().to_rfc3339(),
+                    &run,
+                    turn_number,
+                    &auto.text,
+                )),
+                "Failed to record suggestion outcome",
+            );
+            print!("{}", prompt.echo(&line));
+            pending = Some(Route::Send(line));
+            auto_turn = Some(auto);
+            continue;
+        }
         match next {
             Next::Hold(filter) => {
                 print!("{}", prompt.dim(&auto_hold_notice(&filter)));
@@ -744,7 +796,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
                 if let Prefill::Suggestion(text) = fill {
                     offered = Some((text.clone(), turn_number));
-                    shown.set(text);
+                    shown.set(Suggestion { text, step: None });
                 }
             }
             Next::Nothing => {}
