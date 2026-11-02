@@ -587,7 +587,7 @@ pub fn diff_view(input: &DiffInput) -> DiffView {
     };
     let a_segments = input.provider.segments(a_body);
     let b_segments = input.provider.segments(b_body);
-    let prefix_cache = input.provider.prefix_cache(b_body);
+    let prefix_cache = input.provider.prefix_cache(a_body);
     let shared = shared_prefix(&a_segments, &b_segments);
     let div = divergence(shared, &a_segments, &b_segments);
     let skip = shared + usize::from(div.is_some());
