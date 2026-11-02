@@ -6,7 +6,7 @@ use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{activity_path, sent_path, ActivityMark, HarnessId, Report};
 use ralph_core::worker_check::CHECK_STATUS;
 use ralph_core::worker_stall::{
-    after_send, alert_text, auto_continue_log_path, auto_continued_path, before_send, log_line,
+    after_send, alert_text, auto_continue_log_path, auto_continued_path, gate_send, log_line,
     report_secs, reported_since_go_ahead, stall_action, AutoContinue, ContinueStep, StallAction,
     StallFacts, CONTINUE_TEXT, REASON_API_ERROR,
 };
@@ -102,7 +102,9 @@ impl Monitor {
             return;
         }
         let at = now_secs();
-        self.run_steps(worker, at, before_send());
+        if !self.record_continue(id, at) {
+            return;
+        }
         let sent = self.workers.nudge(id, CONTINUE_TEXT);
         if let Err(e) = &sent {
             crate::warn::warn(format!("auto-continuing worker {id}: {e}"));
@@ -110,18 +112,34 @@ impl Monitor {
         self.run_steps(worker, at, after_send(sent.is_ok()));
     }
 
+    fn record_continue(&self, id: &str, at: u64) -> bool {
+        let written = write_file(
+            &auto_continued_path(&self.store_dir, id),
+            &AutoContinue::new(at, REASON_API_ERROR).render(),
+        );
+        let gate = {
+            let mut unrecorded = locked(&self.unrecorded);
+            let gate = gate_send(written.is_ok(), unrecorded.contains(id));
+            if written.is_ok() {
+                unrecorded.remove(id);
+            } else {
+                unrecorded.insert(id.to_string());
+            }
+            gate
+        };
+        if let (true, Err(e)) = (gate.warn, &written) {
+            crate::warn::warn(format!(
+                "recording the auto-continue of worker {id}, no continue sent: {e}"
+            ));
+        }
+        gate.send
+    }
+
     fn run_steps(&self, worker: &RunningWorker, at: u64, steps: &[ContinueStep]) {
         let id = &worker.id;
         let record_path = auto_continued_path(&self.store_dir, id);
         for step in steps {
             match step {
-                ContinueStep::WriteRecord => warn_if_err(
-                    write_file(
-                        &record_path,
-                        &AutoContinue::new(at, REASON_API_ERROR).render(),
-                    ),
-                    format!("recording the auto-continue of worker {id}"),
-                ),
                 ContinueStep::RemoveRecord => {
                     std::fs::remove_file(&record_path).ok();
                 }

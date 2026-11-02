@@ -85,13 +85,21 @@ pub struct StallFacts {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContinueStep {
-    WriteRecord,
     Log,
     RemoveRecord,
 }
 
-pub fn before_send() -> &'static [ContinueStep] {
-    &[ContinueStep::WriteRecord]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RecordGate {
+    pub send: bool,
+    pub warn: bool,
+}
+
+pub fn gate_send(written: bool, warned_in_streak: bool) -> RecordGate {
+    RecordGate {
+        send: written,
+        warn: !written && !warned_in_streak,
+    }
 }
 
 pub fn after_send(sent: bool) -> &'static [ContinueStep] {
@@ -334,8 +342,34 @@ mod tests {
     }
 
     #[test]
-    fn the_record_is_written_before_the_nudge() {
-        assert_eq!(before_send(), &[ContinueStep::WriteRecord]);
+    fn a_written_record_lets_the_nudge_go_without_a_warning() {
+        for warned in [false, true] {
+            assert_eq!(
+                gate_send(true, warned),
+                RecordGate {
+                    send: true,
+                    warn: false
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_record_write_blocks_the_nudge_and_warns_once_per_streak() {
+        assert_eq!(
+            gate_send(false, false),
+            RecordGate {
+                send: false,
+                warn: true
+            }
+        );
+        assert_eq!(
+            gate_send(false, true),
+            RecordGate {
+                send: false,
+                warn: false
+            }
+        );
     }
 
     #[test]

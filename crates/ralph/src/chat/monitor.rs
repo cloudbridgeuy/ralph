@@ -92,6 +92,7 @@ pub(super) struct Monitor {
     pub(super) known: Mutex<Vec<Report>>,
     pub(super) scheduled_reports: Mutex<Vec<Report>>,
     pub(super) warned: Mutex<HashSet<String>>,
+    pub(super) unrecorded: Mutex<HashSet<String>>,
     pub(super) alert: AlertConfig,
     pub(super) live: Arc<AtomicBool>,
     pub(super) last_ping: Stamp,
