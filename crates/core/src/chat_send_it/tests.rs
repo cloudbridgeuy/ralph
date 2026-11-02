@@ -110,6 +110,10 @@ fn slash_text_is_manual() {
         decide_with(&run, "/hold w1", Some(Step::FixRound)),
         Decision::Manual(ManualReason::SlashCommand)
     );
+    assert_eq!(
+        decide_with(&run, "/hold w1 w2", Some(Step::FixRound)),
+        Decision::Manual(ManualReason::SlashCommand)
+    );
 }
 
 #[test]

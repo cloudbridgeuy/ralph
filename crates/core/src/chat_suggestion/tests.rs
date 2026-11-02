@@ -276,28 +276,69 @@ fn an_unknown_target_prefills() {
     assert_eq!(end("/hold nobody"), fill("/hold nobody"));
 }
 
-#[test]
-fn a_hold_without_a_target_prefills() {
-    assert_eq!(end("/hold"), fill("/hold"));
-    assert_eq!(end("/hold "), fill("/hold "));
+fn set(targets: &[&str]) -> Next {
+    Next::Hold(HoldFilter::Set(
+        targets.iter().map(|target| target.to_string()).collect(),
+    ))
 }
 
 #[test]
-fn two_tokens_or_odd_spacing_prefill() {
-    assert_eq!(end("/hold GUZ-1 watch:ci"), fill("/hold GUZ-1 watch:ci"));
-    assert_eq!(end("/hold  GUZ-1"), fill("/hold  GUZ-1"));
-    assert_eq!(end("/hold GUZ-1 "), fill("/hold GUZ-1 "));
-    assert_eq!(end(" /hold GUZ-1"), fill(" /hold GUZ-1"));
-    assert_eq!(end("/hold\tGUZ-1"), fill("/hold\tGUZ-1"));
-    assert_eq!(end("/holdGUZ-1"), fill("/holdGUZ-1"));
+fn a_bare_hold_holds_for_anyone_when_there_are_targets() {
+    assert_eq!(end("/hold"), Next::Hold(HoldFilter::Any));
+}
+
+#[test]
+fn a_bare_hold_prefills_without_targets() {
+    let next = turn_end(TurnEnd {
+        auto_hold: true,
+        replied: true,
+        draft: None,
+        suggestion: some("/hold"),
+        status: &Status::default(),
+    });
+    assert_eq!(next, fill("/hold"));
+}
+
+#[test]
+fn listed_targets_hold_as_a_set_in_the_order_given() {
+    assert_eq!(end("/hold GUZ-1 watch:ci"), set(&["GUZ-1", "watch:ci"]));
+    assert_eq!(
+        end("/hold schedule:nightly GUZ-9 GUZ-1"),
+        set(&["schedule:nightly", "GUZ-9", "GUZ-1"])
+    );
+}
+
+#[test]
+fn one_unknown_target_prefills() {
+    assert_eq!(end("/hold GUZ-1 nobody"), fill("/hold GUZ-1 nobody"));
+    assert_eq!(end("/hold nobody GUZ-1"), fill("/hold nobody GUZ-1"));
+}
+
+#[test]
+fn non_canonical_spacing_case_or_duplicates_prefill() {
+    for text in [
+        "/hold ",
+        "/hold  GUZ-1",
+        "/hold GUZ-1 ",
+        " /hold GUZ-1",
+        "/hold\tGUZ-1",
+        "/hold GUZ-1  watch:ci",
+        "/hold GUZ-1\twatch:ci",
+        "/hold GUZ-1 GUZ-1",
+        "/hold GUZ-1 watch:ci GUZ-1",
+        "/hold guz-1",
+        "/holdGUZ-1",
+        "/hold\n",
+    ] {
+        assert_eq!(end(text), fill(text), "{text:?}");
+    }
 }
 
 #[test]
 fn auto_hold_off_prefills() {
-    assert_eq!(
-        end_with(false, true, None, "/hold GUZ-1"),
-        fill("/hold GUZ-1")
-    );
+    for text in ["/hold GUZ-1", "/hold", "/hold GUZ-1 watch:ci"] {
+        assert_eq!(end_with(false, true, None, text), fill(text));
+    }
 }
 
 #[test]
@@ -414,6 +455,18 @@ fn the_notice_names_the_target_and_the_way_out() {
     assert_eq!(
         auto_hold_notice(&HoldFilter::Source("GUZ-1".to_string())),
         "auto-hold: GUZ-1 · Ctrl-Q to type"
+    );
+}
+
+#[test]
+fn the_notice_names_a_set_or_anyone() {
+    assert_eq!(
+        auto_hold_notice(&HoldFilter::Set(vec!["a".to_string(), "b".to_string()])),
+        "auto-hold: a, b · Ctrl-Q to type"
+    );
+    assert_eq!(
+        auto_hold_notice(&HoldFilter::Any),
+        "auto-hold: anyone · Ctrl-Q to type"
     );
 }
 

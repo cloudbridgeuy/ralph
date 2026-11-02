@@ -100,9 +100,14 @@ pub enum Next {
 }
 
 fn auto_hold_target(suggestion: &str, status: &Status) -> Option<HoldFilter> {
-    let target = suggestion.strip_prefix("/hold ")?;
-    (!target.contains(char::is_whitespace) && hold_targets(status).contains(target))
-        .then(|| HoldFilter::Source(target.to_string()))
+    let filter = HoldFilter::parse(suggestion.strip_prefix("/hold")?)?;
+    let targets = hold_targets(status);
+    let listed = match &filter {
+        HoldFilter::Any => !targets.is_empty(),
+        HoldFilter::Source(source) => targets.contains(source),
+        HoldFilter::Set(sources) => sources.iter().all(|source| targets.contains(source)),
+    };
+    (listed && filter.render() == suggestion).then_some(filter)
 }
 
 pub fn turn_end(end: TurnEnd) -> Next {
