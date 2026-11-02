@@ -1,4 +1,4 @@
-use ralph_core::bounded_command::{poll_verdict, Poll};
+use ralph_core::bounded_command::{poll_verdict, Poll, Probe};
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -20,11 +20,15 @@ pub(super) fn stdout_within(command: &mut Command, limit: Duration) -> Option<St
     });
     let started = Instant::now();
     let success = loop {
-        let exit = child.try_wait().ok()?.map(|status| status.success());
-        match poll_verdict(exit, started.elapsed(), limit) {
+        let probe = match child.try_wait() {
+            Ok(None) => Probe::Running,
+            Ok(Some(status)) => Probe::Exited(status.success()),
+            Err(_) => Probe::Errored,
+        };
+        match poll_verdict(probe, started.elapsed(), limit) {
             Poll::Wait => thread::sleep(STEP),
             Poll::Done(success) => break success,
-            Poll::Expired => {
+            Poll::Expired | Poll::Kill => {
                 child.kill().ok();
                 child.wait().ok();
                 return None;
