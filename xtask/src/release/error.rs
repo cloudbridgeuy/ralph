@@ -29,6 +29,12 @@ pub enum ReleaseError {
     #[error("Linear response has no data")]
     MissingData,
 
+    #[error("claude returned no text")]
+    EmptySummary,
+
+    #[error("the reply held only chatter")]
+    ChatterOnlySummary,
+
     #[error("Release notes are empty; aborting")]
     EmptyNotes,
 

@@ -253,7 +253,7 @@ fn trim_blank_edges(lines: &mut Vec<&str>) {
 /// "here's the summary:" line, and trailing next-step lines or offers.
 /// Trailing lines are only dropped after the first blank line, so the first
 /// paragraph always survives.
-pub fn clean_summary(raw: &str) -> Option<String> {
+fn clean_summary(raw: &str) -> Option<String> {
     let mut lines: Vec<&str> = raw
         .lines()
         .filter(|line| !line.trim_start().starts_with("```"))
@@ -297,6 +297,14 @@ pub fn summary_args(model: &str) -> Vec<&str> {
         "--system-prompt",
         SUMMARY_SYSTEM,
     ]
+}
+
+/// The cleaned summary from a `claude -p` reply, or why there is none.
+pub fn summary_from_reply(raw: &str) -> Result<String> {
+    if raw.trim().is_empty() {
+        return Err(ReleaseError::EmptySummary);
+    }
+    clean_summary(raw).ok_or(ReleaseError::ChatterOnlySummary)
 }
 
 #[cfg(test)]
@@ -543,6 +551,17 @@ mod tests {
                 "--system-prompt",
                 "You write release-note summaries. Reply with the summary text only.",
             ]
+        );
+    }
+
+    #[test]
+    fn summary_from_reply_names_why_a_reply_gave_no_summary() {
+        let reason = |raw: &str| summary_from_reply(raw).map_err(|error| error.to_string());
+        assert_eq!(reason("Adds X.\n"), Ok("Adds X.".to_string()));
+        assert_eq!(reason(" \n"), Err("claude returned no text".to_string()));
+        assert_eq!(
+            reason("Here's the summary:\n```\n```"),
+            Err("the reply held only chatter".to_string())
         );
     }
 }
