@@ -29,6 +29,12 @@ pub enum ReleaseError {
     #[error("Linear response has no data")]
     MissingData,
 
+    #[error("Release notes are empty; aborting")]
+    EmptyNotes,
+
+    #[error("Linear request failed: {0}")]
+    Http(#[from] reqwest::Error),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
