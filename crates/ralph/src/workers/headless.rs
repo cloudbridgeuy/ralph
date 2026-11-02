@@ -57,12 +57,7 @@ impl Heartbeat {
         self.write(at, None);
     }
 
-    pub(crate) fn set_running(&self, running: bool) {
-        let state = if running {
-            ActivityState::Running
-        } else {
-            ActivityState::Idle
-        };
+    pub(crate) fn set_state(&self, state: ActivityState) {
         self.write(now_secs(), Some(state));
     }
 
@@ -194,5 +189,21 @@ mod tests {
             assert_eq!(host.shutdowns.load(Ordering::SeqCst), 1);
             assert!(!host.poll());
         }
+    }
+
+    #[test]
+    fn a_failed_turn_end_writes_failed_and_is_not_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let activity = dir.path().join("activity").join("A");
+        let heartbeat = Heartbeat::new(activity.clone(), dir.path().join("gone"));
+        heartbeat.set_state(ActivityState::Running);
+        assert!(heartbeat.running());
+        heartbeat.set_state(ActivityState::Failed);
+        assert!(!heartbeat.running());
+        let text = fs::read_to_string(activity).unwrap();
+        assert_eq!(
+            ActivityMark::parse(&text).map(|m| m.state),
+            Some(ActivityState::Failed)
+        );
     }
 }

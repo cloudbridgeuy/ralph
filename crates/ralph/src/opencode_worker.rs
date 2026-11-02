@@ -16,12 +16,13 @@ use ralph_core::worker::{
     opencode_serve_command, opencode_server_log, opencode_server_record_path,
     opencode_session_path, parse_event, reconcile, reconnect_delay, reduce, running_sessions,
     server_record_fate, server_record_pid, server_record_usable, session_activity, session_missing,
-    session_update, spawn_failure, stale_server_group, start_failure, turn_result, ApiData, Effect,
-    HandoffFiles, HeadlessState, HeadlessWorker, OpencodeModelUsage, OpencodeRecord,
-    OpencodeTurnUsage, PermissionAsked, RecordFate, ServerEvent, ServerRecord, ServerRecordFacts,
-    SessionMessage, SessionSnapshot, SessionUpdate, TurnFacts, TurnState, WorkerCommand,
-    WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR, OPENCODE_OWNER_DIR,
-    OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY, SILENCE_TIMEOUT,
+    session_update, spawn_failure, stale_server_group, start_failure, turn_end_activity,
+    turn_result, ActivityState, ApiData, Effect, HandoffFiles, HeadlessState, HeadlessWorker,
+    OpencodeModelUsage, OpencodeRecord, OpencodeTurnUsage, PermissionAsked, RecordFate,
+    ServerEvent, ServerRecord, ServerRecordFacts, SessionMessage, SessionSnapshot, SessionUpdate,
+    TurnFacts, TurnState, WorkerCommand, WorkerEvent, WorkerMarkers, OPENCODE_INTERRUPT_RESULT_DIR,
+    OPENCODE_OWNER_DIR, OPENCODE_PASSWORD_ENV, OPENCODE_SESSION_DIR, RECONNECT_DELAY,
+    SILENCE_TIMEOUT,
 };
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -618,8 +619,8 @@ impl OpencodeHost {
             .map(|session| Arc::clone(&session.heartbeat));
         if let Some(heartbeat) = heartbeat {
             match &update {
-                Some(SessionUpdate::TurnStarted) => heartbeat.set_running(true),
-                Some(SessionUpdate::TurnEnded(_)) => heartbeat.set_running(false),
+                Some(SessionUpdate::TurnStarted) => heartbeat.set_state(ActivityState::Running),
+                Some(SessionUpdate::TurnEnded(end)) => heartbeat.set_state(turn_end_activity(end)),
                 _ => {
                     if let Some(WorkerEvent::Activity { at }) = session_activity(event, now_secs())
                     {

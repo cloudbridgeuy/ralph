@@ -1,4 +1,5 @@
 use super::*;
+use ralph_core::worker::{turn_end_activity, ActivityState};
 
 pub(super) struct Turns {
     pub(super) agent: AcpAgent,
@@ -70,7 +71,7 @@ pub(super) async fn run_turns(
             }
         };
         push_event(&turns.events, WorkerEvent::TurnStarted);
-        turns.heartbeat.set_running(true);
+        turns.heartbeat.set_state(ActivityState::Running);
         turns.reported.store(false, Ordering::SeqCst);
         turns.updated.store(false, Ordering::SeqCst);
         let Some(AcpCall::Prompt(prompt)) = encode(WorkerCommand::Prompt(text.clone())) else {
@@ -97,8 +98,9 @@ pub(super) async fn run_turns(
                 }
             }
         };
-        turns.heartbeat.set_running(false);
         let interrupted = queue.finish();
+        let end = turn_end(&result, interrupted);
+        turns.heartbeat.set_state(turn_end_activity(&end));
         if let Some(changes) = turns
             .changes
             .as_ref()
@@ -120,10 +122,7 @@ pub(super) async fn run_turns(
                 save_record(turns, &path, &record);
             }
         }
-        push_event(
-            &turns.events,
-            WorkerEvent::TurnEnded(turn_end(&result, interrupted)),
-        );
+        push_event(&turns.events, WorkerEvent::TurnEnded(end));
         let stop = reason.as_deref().map_err(|e| e.message.as_str());
         let outcome = turn_outcome(
             stop,
