@@ -7,7 +7,7 @@ use super::{
 use crate::wire::headers::StoredHeaders;
 use crate::wire::price::{matches_prefix, normalize_model, PriceEntry, PriceTable};
 use crate::wire::usage::{
-    BillingRates, CacheTier, CacheWrite, TierRate, Usage, UsageOutcome, THIRTY_MIN,
+    BillingRates, CacheTier, CacheWrite, TierRate, Usage, UsageOutcome, THIRTY_MIN, TWELVE_HOURS,
 };
 
 mod chat;
@@ -38,10 +38,9 @@ const PARAM_KEYS: [&str; 16] = [
 
 const MIN_CACHEABLE_TOKENS: u64 = 1_024;
 
-const TWELVE_HOURS: CacheTier = CacheTier::Ttl { seconds: 43_200 };
-
 const DEFAULT_CACHE_READ: f64 = 0.1;
 const DEFAULT_CACHE_WRITE: f64 = 1.25;
+const DEFAULT_CACHE_WRITE_12H: f64 = 2.5;
 const DEFAULT_OUTPUT: f64 = 5.0;
 
 pub struct OpenAi;
@@ -94,7 +93,7 @@ fn segment(source: SegmentSource, label: String, block: &Value) -> PromptSegment
 struct Counts {
     input_total: u64,
     cached: Option<u64>,
-    written: Option<u64>,
+    writes: Option<Vec<(CacheTier, u64)>>,
     output: u64,
     reasoning: Option<u64>,
     other: Vec<(&'static str, Option<u64>)>,
@@ -102,7 +101,12 @@ struct Counts {
 
 fn build_usage(counts: Counts) -> Usage {
     let cached = counts.cached.unwrap_or(0);
-    let written = counts.written.unwrap_or(0);
+    let written: u64 = counts
+        .writes
+        .iter()
+        .flatten()
+        .map(|(_, tokens)| tokens)
+        .sum();
     Usage {
         input_uncached: counts
             .input_total
@@ -110,12 +114,10 @@ fn build_usage(counts: Counts) -> Usage {
             .saturating_sub(written),
         cache_read: cached,
         cache_writes: counts
-            .written
-            .map(|tokens| CacheWrite {
-                tier: THIRTY_MIN,
-                tokens,
-            })
+            .writes
             .into_iter()
+            .flatten()
+            .map(|(tier, tokens)| CacheWrite { tier, tokens })
             .collect(),
         output: counts.output,
         reasoning: counts.reasoning,
@@ -191,10 +193,16 @@ fn ratios(model: &str) -> BillingRates {
     let Some(entry) = listed(model).filter(|entry| entry.price.input > 0.0) else {
         return BillingRates {
             cache_read: DEFAULT_CACHE_READ,
-            cache_writes: vec![TierRate {
-                tier: THIRTY_MIN,
-                multiplier: DEFAULT_CACHE_WRITE,
-            }],
+            cache_writes: vec![
+                TierRate {
+                    tier: THIRTY_MIN,
+                    multiplier: DEFAULT_CACHE_WRITE,
+                },
+                TierRate {
+                    tier: TWELVE_HOURS,
+                    multiplier: DEFAULT_CACHE_WRITE_12H,
+                },
+            ],
             output: DEFAULT_OUTPUT,
         };
     };

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::wire::provider::{PromptSegment, ResponseUsage, SegmentSource};
 use crate::wire::sse::SseEvent;
-use crate::wire::usage::Usage;
+use crate::wire::usage::{Usage, THIRTY_MIN};
 
 fn is_system(message: &Value) -> bool {
     matches!(text(message, "role", ""), "system" | "developer")
@@ -96,7 +96,7 @@ fn map_usage(raw: &Value) -> Usage {
     build_usage(Counts {
         input_total: count(raw, "prompt_tokens").unwrap_or(0),
         cached: detail(prompt, "cached_tokens"),
-        written: detail(prompt, "cache_write_tokens"),
+        writes: detail(prompt, "cache_write_tokens").map(|tokens| vec![(THIRTY_MIN, tokens)]),
         output: count(raw, "completion_tokens").unwrap_or(0),
         reasoning: detail(completion, "reasoning_tokens"),
         other: vec![

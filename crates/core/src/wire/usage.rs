@@ -22,6 +22,7 @@ impl fmt::Display for CacheTier {
 pub const FIVE_MIN: CacheTier = CacheTier::Ttl { seconds: 300 };
 pub const ONE_HOUR: CacheTier = CacheTier::Ttl { seconds: 3600 };
 pub const THIRTY_MIN: CacheTier = CacheTier::Ttl { seconds: 1_800 };
+pub const TWELVE_HOURS: CacheTier = CacheTier::Ttl { seconds: 43_200 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheWrite {
@@ -76,6 +77,9 @@ impl std::error::Error for UnratedTier {}
 
 pub fn input_equivalent(usage: &Usage, rates: &BillingRates) -> Result<f64, UnratedTier> {
     let writes = usage.cache_writes.iter().try_fold(0.0, |sum, write| {
+        if write.tokens == 0 {
+            return Ok(sum);
+        }
         rates
             .cache_writes
             .iter()
@@ -178,6 +182,20 @@ mod tests {
             input_equivalent(&u, &anthropic()),
             Err(UnratedTier(CacheTier::Unspecified))
         );
+    }
+
+    #[test]
+    fn zero_token_write_without_a_rate_is_free() {
+        let u = usage(
+            10,
+            0,
+            vec![CacheWrite {
+                tier: CacheTier::Unspecified,
+                tokens: 0,
+            }],
+            0,
+        );
+        assert_eq!(input_equivalent(&u, &anthropic()), Ok(10.0));
     }
 
     #[test]

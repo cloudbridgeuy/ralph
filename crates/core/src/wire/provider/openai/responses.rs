@@ -5,7 +5,7 @@ use super::{
 };
 use crate::wire::provider::{PromptSegment, ResponseUsage, SegmentSource};
 use crate::wire::sse::SseEvent;
-use crate::wire::usage::Usage;
+use crate::wire::usage::{CacheTier, Usage, THIRTY_MIN, TWELVE_HOURS};
 
 fn is_system_item(item: &Value) -> bool {
     matches!(text(item, "role", ""), "system" | "developer")
@@ -87,6 +87,17 @@ pub(super) fn segments(body: &Value) -> Vec<PromptSegment> {
         .collect()
 }
 
+fn writes(input: Option<&Value>) -> Option<Vec<(CacheTier, u64)>> {
+    let input = input?;
+    match input.get("cache_write_tokens_details") {
+        Some(split) if split.is_object() => Some(vec![
+            (THIRTY_MIN, count(split, "ttl_30m_tokens").unwrap_or(0)),
+            (TWELVE_HOURS, count(split, "ttl_12h_tokens").unwrap_or(0)),
+        ]),
+        _ => count(input, "cache_write_tokens").map(|tokens| vec![(THIRTY_MIN, tokens)]),
+    }
+}
+
 fn map_usage(raw: &Value) -> Usage {
     let input = raw.get("input_tokens_details");
     let output = raw.get("output_tokens_details");
@@ -94,7 +105,7 @@ fn map_usage(raw: &Value) -> Usage {
     build_usage(Counts {
         input_total: count(raw, "input_tokens").unwrap_or(0),
         cached: detail(input, "cached_tokens"),
-        written: detail(input, "cache_write_tokens"),
+        writes: writes(input),
         output: count(raw, "output_tokens").unwrap_or(0),
         reasoning: detail(output, "reasoning_tokens"),
         other: Vec::new(),

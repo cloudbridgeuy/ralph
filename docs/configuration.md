@@ -463,7 +463,7 @@ Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; s
 
 ### `[wire.prices]` - `ralph wire ls` price overrides
 
-`ralph wire ls` prices calls from a built-in dated table. The same overrides also drive `/workers costs` in `ralph chat`, where `gpt` model keys are allowed and win over the built-in OpenAI rows. A partial `gpt` override fills its missing prices from Anthropic ratios. An override can set `cache_write_30m`. Without it, the 30m price comes from the provider multiplier when the provider has one. Worker costs use Anthropic ratios, which have no 30m multiplier, so a `gpt` override without `cache_write_30m` leaves codex cache writes out and the USD ends in `+`. See [/workers costs](context/ralph-chat.md#workers-costs). A `[wire.prices."<model prefix>"]` table overrides it for that exact model id, or the same id plus an 8-digit date (`-20261021`). Longest prefix wins. Any `[...]` suffix on the recorded model is ignored. An override applies at every prompt size. A negative price fails config load, so `ralph wire ls` fails. A config that fails to parse fails the same way. See [ralph wire](context/ralph-wire.md#prices).
+`ralph wire ls` prices calls from a built-in dated table. The same overrides also drive `/workers costs` in `ralph chat`, where `gpt` model keys are allowed and win over the built-in OpenAI rows. A partial `gpt` override fills its missing prices from Anthropic ratios. An override can set `cache_write_30m` and `cache_write_12h`. Without it, the 30m price comes from the provider multiplier when the provider has one. Worker costs use Anthropic ratios, which have no 30m multiplier, so a `gpt` override without `cache_write_30m` leaves codex cache writes out and the USD ends in `+`. See [/workers costs](context/ralph-chat.md#workers-costs). A `[wire.prices."<model prefix>"]` table overrides it for that exact model id, or the same id plus an 8-digit date (`-20261021`). Longest prefix wins. Any `[...]` suffix on the recorded model is ignored. An override applies at every prompt size. A negative price fails config load, so `ralph wire ls` fails. A config that fails to parse fails the same way. See [ralph wire](context/ralph-wire.md#prices).
 
 ```toml
 [wire.prices."claude-haiku-5-5"]
@@ -478,6 +478,7 @@ output = 0.5
 | `cache_write_5m` | `input` x provider multiplier | USD per million 5-minute cache-write tokens |
 | `cache_write_1h` | `input` x provider multiplier | USD per million 1-hour cache-write tokens |
 | `cache_write_30m` | `input` x provider multiplier, when the provider has a 30-minute tier | USD per million 30-minute cache-write tokens |
+| `cache_write_12h` | `input` x provider multiplier, when the provider has a 12-hour tier | USD per million 12-hour cache-write tokens |
 | `output` | `input` x provider multiplier | USD per million output tokens |
 
 Unknown keys are an error. Speed and geography factors from the recorded usage still apply on top.

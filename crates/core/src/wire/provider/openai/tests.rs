@@ -136,6 +136,95 @@ fn absent_cache_write_tokens_means_no_writes_not_zero() {
     assert_eq!(with.input_uncached, 6);
 }
 
+fn responses_usage(details: Value) -> Usage {
+    let body = json!({"object": "response", "status": "completed", "usage": {
+        "input_tokens": 12000,
+        "output_tokens": 30,
+        "input_tokens_details": details
+    }});
+    let UsageOutcome::Reported(usage) = OpenAi.usage(&ResponseView::Json(body)).outcome else {
+        panic!("not reported");
+    };
+    usage
+}
+
+#[test]
+fn responses_split_cache_writes_by_ttl() {
+    let usage = responses_usage(json!({
+        "cached_tokens": 4000,
+        "cache_write_tokens": 7000,
+        "cache_write_tokens_details": {"ttl_30m_tokens": 3000, "ttl_12h_tokens": 4000}
+    }));
+    assert_eq!(usage.input_uncached, 1000);
+    assert_eq!(usage.cache_read, 4000);
+    assert_eq!(
+        usage.cache_writes,
+        vec![
+            CacheWrite {
+                tier: THIRTY_MIN,
+                tokens: 3000
+            },
+            CacheWrite {
+                tier: TWELVE_HOURS,
+                tokens: 4000
+            }
+        ]
+    );
+}
+
+#[test]
+fn responses_keep_a_zero_ttl_entry_and_fall_back_to_one_30m_write() {
+    let zero = responses_usage(json!({
+        "cached_tokens": 0,
+        "cache_write_tokens": 500,
+        "cache_write_tokens_details": {"ttl_30m_tokens": 500, "ttl_12h_tokens": 0}
+    }));
+    assert_eq!(
+        zero.cache_writes,
+        vec![
+            CacheWrite {
+                tier: THIRTY_MIN,
+                tokens: 500
+            },
+            CacheWrite {
+                tier: TWELVE_HOURS,
+                tokens: 0
+            }
+        ]
+    );
+    let unsplit = responses_usage(json!({"cached_tokens": 0, "cache_write_tokens": 500}));
+    assert_eq!(
+        unsplit.cache_writes,
+        vec![CacheWrite {
+            tier: THIRTY_MIN,
+            tokens: 500
+        }]
+    );
+    assert_eq!(unsplit.input_uncached, 11500);
+}
+
+#[test]
+fn openai_rates_and_prices_include_the_12h_write_tier() {
+    let rates = OpenAi.rates("gpt-6.1-sol");
+    assert!(rates.cache_writes.contains(&TierRate {
+        tier: TWELVE_HOURS,
+        multiplier: 2.5
+    }));
+    assert!(OpenAi.rates("gpt-5.2").cache_writes.contains(&TierRate {
+        tier: TWELVE_HOURS,
+        multiplier: 2.5
+    }));
+    for entry in OpenAi.prices().entries {
+        let twelve = entry
+            .price
+            .cache_writes
+            .iter()
+            .find(|write| write.tier == TWELVE_HOURS)
+            .unwrap();
+        assert_eq!(twelve.usd_per_mtok, entry.price.input * 2.5);
+    }
+}
+
 #[test]
 fn uncached_input_saturates_when_details_exceed_the_prompt() {
     let body = json!({"usage": {
@@ -382,10 +471,16 @@ fn rates_are_ratios_of_the_listed_model_and_ignore_the_date_suffix() {
         assert_eq!(rates.output, 5.0);
         assert_eq!(
             rates.cache_writes,
-            vec![TierRate {
-                tier: THIRTY_MIN,
-                multiplier: 1.25
-            }]
+            vec![
+                TierRate {
+                    tier: THIRTY_MIN,
+                    multiplier: 1.25
+                },
+                TierRate {
+                    tier: TWELVE_HOURS,
+                    multiplier: 2.5
+                }
+            ]
         );
     }
     assert_eq!(OpenAi.rates("gpt-6-astra").cache_read, 0.1);
