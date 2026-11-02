@@ -44,6 +44,7 @@ mod status_theme;
 mod theme_slots;
 mod tool_theme;
 mod ui_theme;
+mod upgrade;
 
 pub mod stream_processor;
 pub mod subprocess;
@@ -92,6 +93,7 @@ fn main() -> ExitCode {
         Commands::Wire(args) => wire::run(args),
         Commands::Config(args) => execute_config(args),
         Commands::Worker(args) => execute_worker(args),
+        Commands::Upgrade(args) => upgrade::run(args),
         Commands::ChatMcp(args) => execute_chat_mcp(args),
         Commands::ChatNap(args) => execute_chat_nap(args),
         Commands::Mermaid(args) => execute_mermaid(args),

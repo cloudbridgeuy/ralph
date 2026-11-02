@@ -216,3 +216,15 @@ fn test_cli_chat_history_takes_a_tool_words_cursor_and_store() {
     assert!(Cli::try_parse_from(["ralph", "chat", "history", "zoom"]).is_err());
     assert!(Cli::try_parse_from(["ralph", "chat", "history", "drop", "1"]).is_err());
 }
+
+#[test]
+fn test_cli_upgrade_takes_check_and_force() {
+    let Some(Commands::Upgrade(upgrade)) =
+        Cli::try_parse_from(["ralph", "upgrade", "--check", "--force"])
+            .unwrap()
+            .command
+    else {
+        panic!("expected upgrade");
+    };
+    assert!(upgrade.check && upgrade.force);
+}

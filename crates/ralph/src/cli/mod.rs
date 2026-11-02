@@ -72,6 +72,14 @@ harness; ralph never sets it."
     )]
     Worker(WorkerArgs),
 
+    #[command(
+        about = "Install the latest ralph release from GitHub.",
+        long_about = "Checks the latest GitHub release, downloads the archive for this platform, \
+verifies its .sha256, and atomically replaces the running binary. Refuses on a dev build (installed \
+from source) unless --force. Running chats and workers keep the old build until they restart."
+    )]
+    Upgrade(UpgradeArgs),
+
     #[command(hide = true)]
     ChatMcp(ChatMcpArgs),
 
@@ -86,6 +94,17 @@ harness; ralph never sets it."
 
     #[command(hide = true)]
     WorkerStopHook(WorkerStopHookArgs),
+}
+
+#[derive(clap::Args, Debug)]
+pub struct UpgradeArgs {
+    #[arg(
+        long,
+        help = "Report the installed and latest versions; download nothing"
+    )]
+    pub check: bool,
+    #[arg(long, help = "Replace a dev build, even with an older release")]
+    pub force: bool,
 }
 
 #[derive(clap::Args, Debug)]
