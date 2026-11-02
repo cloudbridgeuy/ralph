@@ -202,11 +202,11 @@ pub(crate) fn verify(
     config: &Result<AppConfig, String>,
     model: Option<&str>,
 ) -> Option<String> {
+    let budget = Budget::new(live);
     let probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
     ));
-    let budget = Budget::new(live);
     let version = step(
         checks,
         "version",
