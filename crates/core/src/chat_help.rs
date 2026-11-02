@@ -503,6 +503,14 @@ fn keys(table: &[KeyHelp]) -> Vec<(String, String)> {
         .collect()
 }
 
+pub fn help_with_store(width: usize, store: &Path) -> String {
+    format!("{}\n\n{}", store_line(store), help_text(width))
+}
+
+fn store_line(store: &Path) -> String {
+    format!("Store: {}", store.display())
+}
+
 /// The help, wrapped to `width` columns.
 pub fn help_text(width: usize) -> String {
     let mut out = String::new();
@@ -641,21 +649,23 @@ pub fn config_topic(topic: Option<&str>) -> Option<Option<&str>> {
 
 pub fn config_help(
     path: &Path,
-    store_file: Option<&Path>,
+    store_dir: Option<&Path>,
     section: Option<&str>,
 ) -> Result<String, String> {
     let sections = config_sections(CONFIG_DOC);
     let Some(section) = section.map(str::trim).filter(|section| !section.is_empty()) else {
-        let store_line = store_file.map_or(String::new(), |file| {
+        let store_header = store_dir.map_or(String::new(), |dir| format!("{}\n", store_line(dir)));
+        let store_file_line = store_dir.map_or(String::new(), |dir| {
             format!(
                 "\nStore config file: {} (optional; overrides the global file per key)",
-                file.display()
+                dir.join("config.toml").display()
             )
         });
         return Ok(format!(
-            "Config file: {}{}\n\n{}\n\n{}\n\nSections: {}. Ask for one with topic `config <section>`.",
+            "{}Config file: {}{}\n\n{}\n\n{}\n\nSections: {}. Ask for one with topic `config <section>`.",
+            store_header,
             path.display(),
-            store_line,
+            store_file_line,
             doc_block(CONFIG_DOC, "Configuration File Location"),
             doc_block(CONFIG_DOC, "Configuration Precedence"),
             section_list(&sections),

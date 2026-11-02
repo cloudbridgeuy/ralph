@@ -374,9 +374,11 @@ fn config_sections_cover_every_config_field() {
 fn config_help_selects_a_section_or_lists_them() {
     let path = Path::new("/x/ralph/config.toml");
     let overview = config_help(path, None, None).unwrap();
+    assert!(!overview.contains("Store:"));
     assert!(overview.contains("/x/ralph/config.toml"));
     assert!(!overview.contains("Store config file:"));
-    let layered = config_help(path, Some(Path::new("/s/config.toml")), None).unwrap();
+    let layered = config_help(path, Some(Path::new("/s")), None).unwrap();
+    assert!(layered.starts_with("Store: /s\nConfig file: /x/ralph/config.toml"));
     assert!(layered.contains("Store config file: /s/config.toml"));
     assert!(overview.contains("RALPH_CONFIG_DIR"));
     assert!(overview.contains("Configuration Precedence"));
@@ -388,6 +390,13 @@ fn config_help_selects_a_section_or_lists_them() {
     assert!(!chat.contains("`[cursor]`"));
     let error = config_help(path, None, Some("nope")).unwrap_err();
     assert!(error.contains("Unknown config section 'nope'") && error.contains("workers"));
+}
+
+#[test]
+fn help_with_store_names_the_store_above_the_help() {
+    let text = help_with_store(80, Path::new("/home/me/.ralph/chat"));
+    assert!(text.starts_with("Store: /home/me/.ralph/chat\n\n"));
+    assert!(text.ends_with(&help_text(80)));
 }
 
 #[test]

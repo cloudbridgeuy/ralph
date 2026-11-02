@@ -14,6 +14,7 @@ mod keys;
 pub(crate) mod mcp;
 pub(crate) mod memory;
 mod monitor;
+mod name;
 mod prompt;
 mod queue;
 mod route;
@@ -512,11 +513,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         color,
         bar: StatusBar::new(
             &config.theme.status,
-            &monitor
-                .store_dir
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default(),
+            &name::session_name(args.name.as_deref(), chat_config.name.as_deref(), &cwd),
             &chat_config,
             color,
         ),
