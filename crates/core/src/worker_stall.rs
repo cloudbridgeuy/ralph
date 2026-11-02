@@ -1,4 +1,5 @@
 use crate::worker::{ActivityMark, ActivityState};
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -97,6 +98,18 @@ pub fn grace_secs(check_secs: u64) -> u64 {
 
 fn went_unanswered(record: &AutoContinue, facts: &StallFacts) -> bool {
     facts.now >= record.at.saturating_add(grace_secs(facts.check_secs))
+}
+
+pub fn reported_since_go_ahead(sent_at: Option<u64>, report_at: Option<u64>) -> bool {
+    match sent_at {
+        None => true,
+        Some(sent) => report_at.is_some_and(|report| report >= sent),
+    }
+}
+
+pub fn report_secs(at: &str) -> Option<u64> {
+    let parsed = DateTime::parse_from_rfc3339(at).ok()?;
+    u64::try_from(parsed.timestamp()).ok()
 }
 
 pub fn stall_action(facts: &StallFacts) -> StallAction {
@@ -264,6 +277,41 @@ mod tests {
     fn the_grace_is_two_check_intervals() {
         assert_eq!(grace_secs(30), 60);
         assert_eq!(grace_secs(u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn a_report_after_the_go_ahead_counts_as_reported() {
+        assert!(reported_since_go_ahead(None, None));
+        assert!(reported_since_go_ahead(None, Some(10)));
+        assert!(!reported_since_go_ahead(Some(50), None));
+        assert!(!reported_since_go_ahead(Some(50), Some(49)));
+        assert!(reported_since_go_ahead(Some(50), Some(50)));
+        assert!(reported_since_go_ahead(Some(50), Some(51)));
+    }
+
+    #[test]
+    fn a_failure_report_after_the_go_ahead_keeps_an_idle_failed_worker_alone() {
+        let failure_report = StallFacts {
+            reported: reported_since_go_ahead(Some(50), Some(100)),
+            ..facts(mark(99, ActivityState::Failed))
+        };
+        assert_eq!(stall_action(&failure_report), StallAction::None);
+        let old_report = StallFacts {
+            reported: reported_since_go_ahead(Some(50), Some(40)),
+            ..facts(mark(99, ActivityState::Failed))
+        };
+        assert_eq!(stall_action(&old_report), StallAction::Continue);
+    }
+
+    #[test]
+    fn report_secs_reads_rfc3339_and_rejects_garbage() {
+        assert_eq!(report_secs("2026-01-01T00:00:10Z"), Some(1_767_225_610));
+        assert_eq!(
+            report_secs("2026-01-01T01:00:10+01:00"),
+            Some(1_767_225_610)
+        );
+        assert_eq!(report_secs("yesterday"), None);
+        assert_eq!(report_secs("1969-12-31T23:59:59Z"), None);
     }
 
     #[test]
