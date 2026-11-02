@@ -64,8 +64,9 @@ fn tool_schema_names_the_tool_and_requires_text() {
     assert!(description.contains("before any reply text"));
     assert!(description.contains("never mention it"));
     assert!(description.contains(
-        "exactly `/hold`, `/hold <target>` or `/hold <t1> <t2>` with listed targets can start that hold at once"
+        "exactly `/hold [<target> ...]` naming listed targets can start that hold at once"
     ));
+    assert!(description.contains("approval, merge, push, abandon get none"));
 }
 
 fn some(text: &str) -> Option<String> {
