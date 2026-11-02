@@ -187,7 +187,7 @@ fn proxy(args: WireArgs) -> Result<(), Box<dyn Error>> {
         "warning: prompts and responses are recorded in plaintext in {}",
         dir.display()
     );
-    println!("export {}=http://{listen}", provider.base_url_env());
+    println!("{}", provider.base_url_hint(&listen));
     let (records, receiver) = mpsc::channel();
     let writer = thread::spawn(move || store::write_loop(receiver, calls, &mut io::stdout()));
     let proxy = Arc::new(proxy::Proxy::new(

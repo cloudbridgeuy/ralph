@@ -7,14 +7,13 @@ const HOP_BY_HOP: [&str; 6] = [
     "upgrade",
 ];
 
-const STORED_RESPONSE_HEADERS: [&str; 4] = [
-    "request-id",
-    "content-type",
-    "content-encoding",
-    "retry-after",
-];
+const STORED_RESPONSE_HEADERS: [&str; 3] = ["content-type", "content-encoding", "retry-after"];
 
-const STORED_RESPONSE_PREFIX: &str = "anthropic-ratelimit-";
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredHeaders {
+    pub names: &'static [&'static str],
+    pub prefixes: &'static [&'static str],
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
@@ -54,13 +53,20 @@ pub fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&
         .map(|(_, value)| value.as_str())
 }
 
-pub fn stored_response_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
+pub fn stored_response_headers(
+    headers: &[(String, String)],
+    extra: &StoredHeaders,
+) -> Vec<(String, String)> {
     headers
         .iter()
         .filter(|(name, _)| {
             let lower = name.to_ascii_lowercase();
             STORED_RESPONSE_HEADERS.contains(&lower.as_str())
-                || lower.starts_with(STORED_RESPONSE_PREFIX)
+                || extra.names.contains(&lower.as_str())
+                || extra
+                    .prefixes
+                    .iter()
+                    .any(|prefix| lower.starts_with(prefix))
         })
         .cloned()
         .collect()
@@ -69,6 +75,11 @@ pub fn stored_response_headers(headers: &[(String, String)]) -> Vec<(String, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ANTHROPIC: StoredHeaders = StoredHeaders {
+        names: &["request-id"],
+        prefixes: &["anthropic-ratelimit-"],
+    };
 
     fn h(name: &str, value: &str) -> (String, String) {
         (name.to_string(), value.to_string())
@@ -124,7 +135,7 @@ mod tests {
             h("anthropic-workspace-id", "ws"),
             h("set-cookie", "c"),
         ];
-        let names: Vec<_> = stored_response_headers(&input)
+        let names: Vec<_> = stored_response_headers(&input, &ANTHROPIC)
             .into_iter()
             .map(|(n, _)| n)
             .collect();
@@ -148,5 +159,33 @@ mod tests {
             Some("a")
         );
         assert_eq!(header_value(&[], "content-type"), None);
+    }
+
+    #[test]
+    fn provider_names_and_prefixes_extend_the_generic_set() {
+        let extra = StoredHeaders {
+            names: &["x-request-id"],
+            prefixes: &["x-ratelimit-"],
+        };
+        let input = vec![
+            h("X-Request-Id", "r"),
+            h("request-id", "not ours"),
+            h("Content-Type", "t"),
+            h("X-RateLimit-Remaining-Tokens", "9"),
+            h("anthropic-ratelimit-requests-limit", "50"),
+            h("openai-organization", "org"),
+        ];
+        let names: Vec<_> = stored_response_headers(&input, &extra)
+            .into_iter()
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "X-Request-Id",
+                "Content-Type",
+                "X-RateLimit-Remaining-Tokens"
+            ]
+        );
     }
 }

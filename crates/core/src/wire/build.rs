@@ -112,7 +112,10 @@ pub fn build_call(provider: &dyn Provider, inputs: CallInputs) -> CallRecord {
         kind,
         facts,
         request_headers: redact_headers(&inputs.head.headers, provider.secret_headers()),
-        response_headers: stored_response_headers(&inputs.response_headers),
+        response_headers: stored_response_headers(
+            &inputs.response_headers,
+            &provider.stored_response_headers(),
+        ),
         request_body,
         raw_usage: summary.usage.raw,
         usage: summary.usage.outcome,

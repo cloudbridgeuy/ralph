@@ -4,6 +4,7 @@ use super::{
     CallKind, PrefixCache, PromptSegment, Provider, ProviderId, RequestFacts, RequestHead,
     ResponseUsage, ResponseView, SegmentSource,
 };
+use crate::wire::headers::StoredHeaders;
 use crate::wire::price::{
     matches_prefix, normalize_model, ModelPrice, PriceEntry, PriceTable, TierPrice,
 };
@@ -356,8 +357,15 @@ impl Provider for Anthropic {
         "https://api.anthropic.com"
     }
 
-    fn base_url_env(&self) -> &'static str {
-        "ANTHROPIC_BASE_URL"
+    fn base_url_hint(&self, listen: &str) -> String {
+        format!("export ANTHROPIC_BASE_URL=http://{listen}")
+    }
+
+    fn stored_response_headers(&self) -> StoredHeaders {
+        StoredHeaders {
+            names: &["request-id"],
+            prefixes: &["anthropic-ratelimit-"],
+        }
     }
 
     fn secret_headers(&self) -> &'static [&'static str] {

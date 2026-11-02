@@ -12,7 +12,7 @@ Flags are listed in the [CLI reference](../cli-reference.md#ralph-wire).
 
 ## Startup output
 
-Listen URL, session directory, a plaintext warning, and a hint such as `export ANTHROPIC_BASE_URL=http://127.0.0.1:PORT`. Then one live row per finished inference call: sequence, UTC time, model, status, uncached input, cache read, cache writes by tier (`w5m=`, `w1h=`, `w?=`), output, cache hit ratio, input-equivalent cost (`-` when unrated), and `INCOMPLETE: <reason>` when the call did not finish. Non-inference calls are recorded but not shown. Run until Ctrl-C.
+Listen URL, session directory, a plaintext warning, and the provider's base-URL hint, such as `export ANTHROPIC_BASE_URL=http://127.0.0.1:PORT` (a provider may add a path suffix to the URL). Then one live row per finished inference call: sequence, UTC time, model, status, uncached input, cache read, cache writes by tier (`w5m=`, `w1h=`, `w?=`), output, cache hit ratio, input-equivalent cost (`-` when unrated), and `INCOMPLETE: <reason>` when the call did not finish. Non-inference calls are recorded but not shown. Run until Ctrl-C.
 
 ## Storage
 
@@ -21,7 +21,7 @@ Under `--dir` or `<tmp>/ralph-wire`, one folder per run named `<UTC timestamp>-<
 - `session.json`: schema version, ralph version, provider, upstream, listen address, start time.
 - `calls.jsonl`: one `CallRecord` per line, appended by a single writer thread.
 
-Prompts and responses are stored in plaintext. Auth headers (`authorization`, `x-api-key`, cookies) are redacted. Only a response-header allowlist is stored; account identifiers are not.
+Prompts and responses are stored in plaintext. Auth headers (`authorization`, `x-api-key`, cookies) are redacted. Only a response-header allowlist is stored; account identifiers are not. The allowlist is `content-type`, `content-encoding`, `retry-after`, plus the names and prefixes the provider adds (Anthropic: `request-id`, `anthropic-ratelimit-*`).
 
 ## Inspecting recordings
 

@@ -12,8 +12,11 @@ impl Provider for Implicit30m {
     fn default_upstream(&self) -> &'static str {
         Anthropic.default_upstream()
     }
-    fn base_url_env(&self) -> &'static str {
-        Anthropic.base_url_env()
+    fn base_url_hint(&self, listen: &str) -> String {
+        Anthropic.base_url_hint(listen)
+    }
+    fn stored_response_headers(&self) -> crate::wire::headers::StoredHeaders {
+        Anthropic.stored_response_headers()
     }
     fn secret_headers(&self) -> &'static [&'static str] {
         Anthropic.secret_headers()

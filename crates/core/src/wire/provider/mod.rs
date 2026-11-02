@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::headers::StoredHeaders;
 use super::price::PriceTable;
 use super::sse::SseEvent;
 use super::usage::{BillingRates, CacheTier, UsageOutcome};
@@ -79,7 +80,8 @@ pub enum PrefixCache {
 pub trait Provider: Send + Sync {
     fn id(&self) -> ProviderId;
     fn default_upstream(&self) -> &'static str;
-    fn base_url_env(&self) -> &'static str;
+    fn base_url_hint(&self, listen: &str) -> String;
+    fn stored_response_headers(&self) -> StoredHeaders;
     fn secret_headers(&self) -> &'static [&'static str];
     fn cache_relevant_headers(&self) -> &'static [&'static str];
     fn cache_relevant_params(&self) -> &'static [&'static str];

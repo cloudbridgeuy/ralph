@@ -540,6 +540,9 @@ fn zero_token_cache_write_is_omitted() {
 
 #[test]
 fn provider_constants_are_anthropic_specific() {
-    assert_eq!(Anthropic.base_url_env(), "ANTHROPIC_BASE_URL");
+    assert_eq!(
+        Anthropic.base_url_hint("127.0.0.1:9"),
+        "export ANTHROPIC_BASE_URL=http://127.0.0.1:9"
+    );
     assert!(Anthropic.secret_headers().is_empty());
 }
