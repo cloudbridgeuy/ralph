@@ -25,6 +25,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
 | `config` | Check `config.toml` for errors and unknown keys |
 | `worker` | Verify an installed headless agent against ralph's local spec ([details](context/headless-workers.md#verify-an-agent-version)) |
+| `upgrade` | Install the latest GitHub release over the running binary ([details](context/release-process.md#upgrade-an-install)) |
 
 `ralph chat --name <NAME>` sets the chat session name shown in the status bar and the terminal title. It overrides `[chat] name`; without both, the name is the git root or cwd folder name. The name is only a label: chats that share a store still share memory and workers, so use `--store` to separate them ([details](context/ralph-chat.md#session-name)).
 
@@ -158,6 +159,23 @@ ralph worker verify <cursor|codex> [--live]
 Runs the installed headless agent in a fresh temporary directory and prints `PASS`, `FAIL` or `UNKNOWN` per check, then a summary line that says whether `--live` ran. Exit code is 0 when every blocking check passes and 1 otherwise. A full pass records the agent version in `verified-agents.json` in the config directory (honours `RALPH_CONFIG_DIR`), which stops the "differs from the tested" warning for that version.
 
 Without `--live` no prompt is sent and no model is called. `--live` adds one reply, one permission round-trip and one cancel, which use model calls. A failed or unknown cancel is printed but never fails the spec. See [Headless workers](context/headless-workers.md#verify-an-agent-version) for the checks.
+
+---
+
+## ralph upgrade
+
+```bash
+ralph upgrade [--check] [--force]
+```
+
+Installs the latest published GitHub release of ralph over the running binary. It calls the GitHub API without authentication.
+
+| Flag | Effect |
+|------|--------|
+| `--check` | Print the installed and latest versions and what `ralph upgrade` would do; download nothing |
+| `--force` | Replace a dev build (`-dev` in `ralph --version`), even with an older release |
+
+Exit code is 1 when GitHub is unreachable, the directory of the binary is not writable, the checksum does not match, or a dev build is refused. Already on the latest release exits 0. See [Upgrade an install](context/release-process.md#upgrade-an-install) for the steps.
 
 ---
 

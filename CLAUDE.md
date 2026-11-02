@@ -18,6 +18,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 - `ralph ask` - single-shot prompt; nothing is stored ([details](docs/context/ralph-ask.md))
 - `ralph wire` - local proxy that records harness-to-provider traffic; `wire ls`/`wire show`/`wire sessions` inspect it ([details](docs/context/ralph-wire.md))
 - `ralph worker verify <cursor|codex> [--live]` - check an installed headless agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))
+- `ralph upgrade [--check] [--force]` - install the latest GitHub release over the running binary ([details](docs/context/release-process.md#upgrade-an-install))
 - `ralph themes` - list syntax highlighting themes ([CLI reference](docs/cli-reference.md))
 
 ## Unnegotiables
@@ -166,7 +167,7 @@ Detailed documentation is kept in dedicated files. Consult these when working on
 - [ralph ask Command](docs/context/ralph-ask.md) - Single-shot prompts, prompt sources, permission modes
 - [ralph chat Command](docs/context/ralph-chat.md) - Bare `ralph` default, turn loop, compressed memory tree, nap, chat-mcp tools, and storage
 - [ralph wire Command](docs/context/ralph-wire.md) - Recording proxy, storage layout, live rows, `ls`/`sessions`, chat usage
-- [Release Process](docs/context/release-process.md) - `cargo xtask release`, release workflow, version scheme
+- [Release Process](docs/context/release-process.md) - `cargo xtask release`, release workflow, asset contract, `ralph upgrade`, version scheme
 - [Mutation Testing](docs/context/mutation-testing.md) - cargo-mutants setup, pure scope, local runs, survivor ledger, CI status
 
 ## Glossary

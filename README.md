@@ -55,6 +55,8 @@ cargo install --path crates/ralph --root ~/.local --force  # Install to ~/.local
 cargo install --path crates/ralph --root /usr/local --force  # Custom prefix (binary in /usr/local/bin)
 ```
 
+`ralph upgrade` replaces an installed binary with the latest GitHub release ([details](docs/context/release-process.md#upgrade-an-install)). A source install is a dev build, so it needs `ralph upgrade --force`.
+
 ### Requirements
 
 - Rust 1.95.0 or later

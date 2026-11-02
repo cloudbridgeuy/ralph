@@ -37,10 +37,37 @@ All workflows pin Linux runners to `ubuntu-26.04` instead of `ubuntu-latest`, so
 1. Fails unless the tagged commit is on `main` and the tag equals `v` plus the workspace version.
 2. Fails unless `CHANGELOG.md` has a non-empty `## vX.Y.Z` section. That section is the release body.
 3. Builds `ralph` with `--release --locked` for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
-4. Packages `ralph-vX.Y.Z-<target>.tar.gz` with a `.sha256` file.
+4. Packages `ralph-vX.Y.Z-<target>.tar.gz` with a `.sha256` file. See [Asset contract](#asset-contract).
 5. Creates the GitHub Release with `--notes-file` and attaches all assets. The notes file is not an asset.
 
 Linux binaries are built on `ubuntu-26.04` and link glibc dynamically. They need that release's glibc or newer; older distributions may fail to start them.
+
+## Asset contract
+
+`ralph upgrade` depends on the asset layout that the `Package` step of `release.yml` writes. Change both together: the workflow and `crates/core/src/upgrade.rs` (`pick_download`, `verify_checksum`, `extract_binary`, `target_triple`).
+
+- Archive: `ralph-vX.Y.Z-<target>.tar.gz`, where the tag is `v` plus the workspace version.
+- The archive holds one regular file, `ralph`, at its root.
+- Checksum: `ralph-vX.Y.Z-<target>.tar.gz.sha256`, one `shasum -a 256` line: `<64 hex>  <archive name>`.
+- Targets: `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`.
+
+v0.2.0 has only the two macOS targets. Linux assets start with the first release after it.
+
+## Upgrade an install
+
+`ralph upgrade` replaces the running binary with the latest published release:
+
+1. Gets `https://api.github.com/repos/cloudbridgeuy/ralph/releases` without a token. Drafts, prereleases and tags that are not `vX.Y.Z` are ignored. The highest version is the latest.
+2. Compares it with `ralph --version`. If the latest is not newer, it prints that ralph is up to date and exits 0.
+3. Refuses a dev build (`-dev`, installed from source) unless `--force`. With `--force` it installs the latest release even when that is older than the dev build.
+4. Picks the asset for the build's arch and OS. Other platforms get an error.
+5. Resolves the real path of the binary (symlinks followed) and creates a temp file in its directory. If the directory is not writable, it stops with the path before it downloads. For `/usr/local/bin` this usually means `sudo ralph upgrade`.
+6. Downloads the archive and its `.sha256`, checks the digest, extracts `ralph` in memory, sets mode `755`, and renames the temp file over the binary.
+7. Prints the release notes of every skipped release, newest first.
+
+`--check` stops after step 3, prints the result and the notes, and downloads nothing. Without network, the command fails with `cannot reach GitHub` and changes nothing. Running chats and workers keep the old binary until they restart.
+
+The first release with `ralph upgrade` must be installed by hand; v0.2.0 does not have the command.
 
 ## Test run without a release
 
