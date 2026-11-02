@@ -1,16 +1,16 @@
-use ralph_core::chat_suggestion::{untouched, Suggestion};
+use ralph_core::chat_suggestion::untouched;
 use reedline::{Color, ExampleHighlighter, Highlighter, StyledText};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 #[derive(Clone, Default)]
-pub(crate) struct SuggestionSlot(Arc<Mutex<Option<Suggestion>>>);
+pub(crate) struct SuggestionSlot(Arc<Mutex<Option<String>>>);
 
 impl SuggestionSlot {
-    fn guard(&self) -> MutexGuard<'_, Option<Suggestion>> {
+    fn guard(&self) -> MutexGuard<'_, Option<String>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub(crate) fn set(&self, suggestion: Suggestion) {
+    pub(crate) fn set(&self, suggestion: String) {
         *self.guard() = Some(suggestion);
     }
 
@@ -18,15 +18,13 @@ impl SuggestionSlot {
         *self.guard() = None;
     }
 
-    pub(crate) fn take(&self) -> Option<Suggestion> {
+    pub(crate) fn take(&self) -> Option<String> {
         self.guard().take()
     }
 
     fn latch_untouched(&self, buffer: &str) -> bool {
         let mut slot = self.guard();
-        let keep = slot
-            .as_ref()
-            .is_some_and(|shown| untouched(&shown.text, buffer));
+        let keep = slot.as_ref().is_some_and(|shown| untouched(shown, buffer));
         if !keep {
             *slot = None;
         }
@@ -65,25 +63,9 @@ impl Highlighter for SuggestionHighlighter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ralph_core::chat_send_it::Step;
 
-    fn plain(text: &str) -> Suggestion {
-        Suggestion {
-            text: text.to_string(),
-            step: None,
-        }
-    }
-
-    #[test]
-    fn the_step_survives_the_slot() {
-        let slot = SuggestionSlot::default();
-        slot.set(Suggestion {
-            text: "run the checks".to_string(),
-            step: Some(Step::Checks),
-        });
-        let taken = slot.take().unwrap();
-        assert_eq!(taken.text, "run the checks");
-        assert_eq!(taken.step, Some(Step::Checks));
+    fn plain(text: &str) -> String {
+        text.to_string()
     }
 
     #[test]

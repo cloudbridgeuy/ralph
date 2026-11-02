@@ -11,38 +11,24 @@ fn limits() -> Limits {
     }
 }
 
-fn facts(text: &str, step: Option<Step>) -> Facts<'_> {
+fn facts(text: &str) -> Facts<'_> {
     Facts {
         text,
-        step,
         worker_flagged: false,
         schedule_pending: false,
     }
 }
 
-fn decide_with(run: &Run, text: &str, step: Option<Step>) -> Decision {
-    decide(run, &limits(), &facts(text, step))
-}
-
-#[test]
-fn step_names_round_trip() {
-    for step in Step::ALL {
-        assert_eq!(Step::parse(step.as_str()), Some(step));
-    }
-    assert_eq!(Step::parse("nope"), None);
-    assert_eq!(Step::FixRound.as_str(), "fix_round");
-    assert_eq!(Step::DoneCleanup.as_str(), "done_cleanup");
+fn decide_with(run: &Run, text: &str) -> Decision {
+    decide(run, &limits(), &facts(text))
 }
 
 const FIX_ROUND: &str = "go 1172: full fix, blocked_alert follows the Rex gate, failing test first, new commit, four checks, reinstall";
 
 #[test]
-fn a_real_fix_round_counts_down() {
+fn a_real_fix_round_counts_down_with_no_step_tag() {
     let run = Run::new("GUZ-1");
-    assert_eq!(
-        decide_with(&run, FIX_ROUND, Some(Step::FixRound)),
-        Decision::Countdown
-    );
+    assert_eq!(decide_with(&run, FIX_ROUND), Decision::Countdown);
 }
 
 #[test]
@@ -70,7 +56,7 @@ fn real_decision_replies_wait_on_the_person() {
         ("Done", "done"),
     ] {
         assert_eq!(
-            decide_with(&run, text, Some(Step::FixRound)),
+            decide_with(&run, text),
             Decision::Manual(ManualReason::Decision(word)),
             "{text}"
         );
@@ -83,9 +69,7 @@ fn a_reply_with_no_routine_action_waits_on_the_person() {
     assert_eq!(
         decide_with(
             &run,
-            "go 1166 live check steps 1-5 on /tmp/guz1166 only, restore the chmod, stop on first FAIL, keep raw logs",
-            Some(Step::LiveCheck)
-        ),
+            "go 1166 live check steps 1-5 on /tmp/guz1166 only, restore the chmod, stop on first FAIL, keep raw logs"),
         Decision::Manual(ManualReason::NotRoutine)
     );
 }
@@ -139,34 +123,25 @@ fn decision_words_match_in_any_case_and_form() {
 fn slash_text_is_manual() {
     let run = Run::new("GUZ-1");
     assert_eq!(
-        decide_with(&run, "/hold w1", Some(Step::FixRound)),
+        decide_with(&run, "/hold w1"),
         Decision::Manual(ManualReason::SlashCommand)
     );
     assert_eq!(
-        decide_with(&run, "/hold w1 w2", Some(Step::FixRound)),
+        decide_with(&run, "/hold w1 w2"),
         Decision::Manual(ManualReason::SlashCommand)
-    );
-}
-
-#[test]
-fn missing_step_is_manual() {
-    let run = Run::new("GUZ-1");
-    assert_eq!(
-        decide_with(&run, "run the checks", None),
-        Decision::Manual(ManualReason::NoStep)
     );
 }
 
 #[test]
 fn worker_flag_and_schedule_are_manual() {
     let run = Run::new("GUZ-1");
-    let mut flagged = facts(FIX_ROUND, Some(Step::Checks));
+    let mut flagged = facts(FIX_ROUND);
     flagged.worker_flagged = true;
     assert_eq!(
         decide(&run, &limits(), &flagged),
         Decision::Manual(ManualReason::WorkerFlagged)
     );
-    let mut pending = facts(FIX_ROUND, Some(Step::Checks));
+    let mut pending = facts(FIX_ROUND);
     pending.schedule_pending = true;
     assert_eq!(
         decide(&run, &limits(), &pending),
@@ -178,39 +153,36 @@ fn worker_flag_and_schedule_are_manual() {
 fn caps_stop_the_run() {
     let mut run = Run::new("GUZ-1");
     for index in 0..3 {
-        run.record(Step::FixRound, &format!("go {index}"), None);
+        run.record(&format!("go {index}"), None);
     }
     assert_eq!(
-        decide_with(&run, "fix it", Some(Step::FixRound)),
+        decide_with(&run, "fix it"),
         Decision::Stop(StopReason::TurnCap)
     );
     let mut spent = Run::new("GUZ-1");
-    spent.record(Step::FixRound, "go", Some(1.0));
+    spent.record("go", Some(1.0));
     assert_eq!(
-        decide_with(&spent, "fix it", Some(Step::FixRound)),
+        decide_with(&spent, "fix it"),
         Decision::Stop(StopReason::CostCap)
     );
 }
 
 #[test]
-fn repeat_of_same_step_and_text_stops() {
+fn a_repeated_text_stops() {
     let mut run = Run::new("GUZ-1");
-    run.record(Step::FixRound, "  Run  the checks ", None);
+    run.record("  Run  the checks ", None);
     assert_eq!(
-        decide_with(&run, "run the CHECKS", Some(Step::FixRound)),
+        decide_with(&run, "run the CHECKS"),
         Decision::Stop(StopReason::Repeated)
     );
-    assert_eq!(
-        decide_with(&run, "run the checks", Some(Step::Checks)),
-        Decision::Countdown
-    );
+    assert_eq!(decide_with(&run, "run the tests"), Decision::Countdown);
 }
 
 #[test]
 fn clean_fix_round_counts_down() {
     let run = Run::new("GUZ-1");
     assert_eq!(
-        decide_with(&run, "start the next fix round", Some(Step::FixRound)),
+        decide_with(&run, "start the next fix round"),
         Decision::Countdown
     );
 }
@@ -218,19 +190,18 @@ fn clean_fix_round_counts_down() {
 #[test]
 fn record_accumulates_and_ignores_missing_cost() {
     let mut run = Run::new("GUZ-1");
-    run.record(Step::Checks, "Go   ON", Some(0.5));
-    run.record(Step::Reinstall, "again", None);
-    run.record(Step::Reinstall, "more", Some(0.25));
+    run.record("Go   ON", Some(0.5));
+    run.record("again", None);
+    run.record("more", Some(0.25));
     assert_eq!(run.turns, 3);
     assert!((run.spent_usd - 0.75).abs() < 1e-9);
-    assert_eq!(run.sent[0], (Step::Checks, "go on".to_string()));
+    assert_eq!(run.sent[0], "go on".to_string());
 }
 
 #[test]
 fn notices_point_back_to_the_ticket() {
     let run = Run::new("GUZ-9");
     for notice in [
-        ManualReason::NoStep.notice(&run),
         ManualReason::SlashCommand.notice(&run),
         ManualReason::Decision("merge").notice(&run),
         ManualReason::NotRoutine.notice(&run),
@@ -350,7 +321,7 @@ fn limits_for_text() -> Limits {
 #[test]
 fn the_status_text_names_ticket_turns_spend_and_caps() {
     let mut run = Run::new("GUZ-9");
-    run.record(Step::Checks, "run the checks", Some(0.5));
+    run.record("run the checks", Some(0.5));
     let text = status_text(Some(&run), &limits_for_text(), 10);
     assert_eq!(
         text,

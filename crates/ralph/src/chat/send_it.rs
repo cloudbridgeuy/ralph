@@ -7,7 +7,7 @@ use crate::signal;
 use ralph_core::chat_send_it::{
     blocked_alert, blocked_report, cancel_notice, closed_notice, countdown_frame, decide,
     no_terminal_notice, remaining_seconds, status_text, tracks_worker, worker_closed,
-    worker_flagged, Decision, Facts, Limits, Run, SendIt, Step, CLEAR_LINE,
+    worker_flagged, Decision, Facts, Limits, Run, SendIt, CLEAR_LINE,
 };
 use ralph_core::chat_status::Status;
 use ralph_core::worker::Report;
@@ -19,16 +19,6 @@ use std::time::{Duration, Instant};
 struct Armed {
     run: Run,
     tracked: bool,
-}
-
-pub(super) struct Offer<'a> {
-    pub text: &'a str,
-    pub step: Option<Step>,
-}
-
-pub(super) struct Auto {
-    pub step: Step,
-    pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,10 +140,10 @@ impl Shell {
 
     pub(super) fn at_turn_end(
         &mut self,
-        offer: Option<&Offer>,
+        offer: Option<&str>,
         schedule_pending: bool,
         monitor: &Monitor,
-    ) -> Option<Auto> {
+    ) -> Option<String> {
         let armed = self.armed.as_ref()?;
         if worker_closed(armed.tracked, &armed.run.ticket, &monitor.status()) {
             println!("{}", closed_notice(&armed.run));
@@ -163,8 +153,7 @@ impl Shell {
         let offer = offer?;
         let run = armed.run.clone();
         let facts = Facts {
-            text: offer.text,
-            step: offer.step,
+            text: offer,
             worker_flagged: monitor
                 .inbox
                 .peek()
@@ -172,23 +161,15 @@ impl Shell {
             schedule_pending,
         };
         let notice = match decide(&run, &self.limits, &facts) {
-            Decision::Countdown => {
-                let step = offer.step?;
-                match countdown(offer.text, self.seconds, self.color) {
-                    Some(Countdown::Elapsed) => {
-                        return Some(Auto {
-                            step,
-                            text: offer.text.to_string(),
-                        });
-                    }
-                    Some(Countdown::Cancelled) => {
-                        println!("{}", cancel_notice(&run));
-                        self.armed = None;
-                        return None;
-                    }
-                    None => no_terminal_notice(&run),
+            Decision::Countdown => match countdown(offer, self.seconds, self.color) {
+                Some(Countdown::Elapsed) => return Some(offer.to_string()),
+                Some(Countdown::Cancelled) => {
+                    println!("{}", cancel_notice(&run));
+                    self.armed = None;
+                    return None;
                 }
-            }
+                None => no_terminal_notice(&run),
+            },
             Decision::Manual(reason) => reason.notice(&run),
             Decision::Stop(reason) => reason.notice(&run),
         };
@@ -196,9 +177,9 @@ impl Shell {
         None
     }
 
-    pub(super) fn record(&mut self, auto: &Auto, cost_usd: Option<f64>) {
+    pub(super) fn record(&mut self, text: &str, cost_usd: Option<f64>) {
         if let Some(armed) = &mut self.armed {
-            armed.run.record(auto.step, &auto.text, cost_usd);
+            armed.run.record(text, cost_usd);
         }
     }
 }

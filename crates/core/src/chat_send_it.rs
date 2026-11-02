@@ -93,39 +93,6 @@ const ROUTINE_TOKENS: [&str; 11] = [
     "clippy",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Step {
-    FixRound,
-    LiveCheck,
-    Checks,
-    Reinstall,
-    DoneCleanup,
-}
-
-impl Step {
-    pub const ALL: [Step; 5] = [
-        Step::FixRound,
-        Step::LiveCheck,
-        Step::Checks,
-        Step::Reinstall,
-        Step::DoneCleanup,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Step::FixRound => "fix_round",
-            Step::LiveCheck => "live_check",
-            Step::Checks => "checks",
-            Step::Reinstall => "reinstall",
-            Step::DoneCleanup => "done_cleanup",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Step> {
-        Step::ALL.into_iter().find(|step| step.as_str() == value)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendIt {
     Arm(String),
@@ -156,7 +123,7 @@ pub struct Run {
     pub ticket: String,
     pub turns: u32,
     pub spent_usd: f64,
-    pub sent: Vec<(Step, String)>,
+    pub sent: Vec<String>,
 }
 
 fn normalize(text: &str) -> String {
@@ -176,35 +143,30 @@ impl Run {
         }
     }
 
-    pub fn record(&mut self, step: Step, text: &str, cost_usd: Option<f64>) {
+    pub fn record(&mut self, text: &str, cost_usd: Option<f64>) {
         self.turns += 1;
         self.spent_usd += cost_usd.unwrap_or(0.0);
-        self.sent.push((step, normalize(text)));
+        self.sent.push(normalize(text));
     }
 
     fn resume_hint(&self) -> String {
         format!("Resume with /send-it {}", self.ticket)
     }
 
-    fn already_sent(&self, step: Step, text: &str) -> bool {
-        let text = normalize(text);
-        self.sent
-            .iter()
-            .any(|(sent_step, sent_text)| *sent_step == step && *sent_text == text)
+    fn already_sent(&self, text: &str) -> bool {
+        self.sent.contains(&normalize(text))
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Facts<'a> {
     pub text: &'a str,
-    pub step: Option<Step>,
     pub worker_flagged: bool,
     pub schedule_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManualReason {
-    NoStep,
     SlashCommand,
     Decision(&'static str),
     NotRoutine,
@@ -215,7 +177,6 @@ pub enum ManualReason {
 impl ManualReason {
     pub fn notice(self, run: &Run) -> String {
         let why = match self {
-            ManualReason::NoStep => "this reply is not a routine step",
             ManualReason::SlashCommand => "this reply is a slash command",
             ManualReason::Decision(word) => {
                 return format!(
@@ -294,14 +255,11 @@ pub fn decide(run: &Run, limits: &Limits, facts: &Facts) -> Decision {
     if let Some(reason) = reason {
         return Decision::Manual(reason);
     }
-    let Some(step) = facts.step else {
-        return Decision::Manual(ManualReason::NoStep);
-    };
     if run.turns >= limits.max_turns {
         Decision::Stop(StopReason::TurnCap)
     } else if run.spent_usd >= limits.max_usd {
         Decision::Stop(StopReason::CostCap)
-    } else if run.already_sent(step, facts.text) {
+    } else if run.already_sent(facts.text) {
         Decision::Stop(StopReason::Repeated)
     } else {
         Decision::Countdown
