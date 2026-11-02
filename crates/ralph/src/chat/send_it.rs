@@ -5,21 +5,15 @@ use crate::config::SendItSettings;
 use crate::inbox_alert::deliver;
 use crate::signal;
 use ralph_core::chat_send_it::{
-    blocked_alert, blocked_report, cancel_notice, closed_notice, countdown_frame, decide,
-    no_terminal_notice, remaining_seconds, status_text, tracks_worker, worker_closed,
-    worker_flagged, Decision, Facts, Limits, Run, SendIt, CLEAR_LINE,
+    blocked_alert, blocked_report, cancel_notice, countdown_frame, decide, no_terminal_notice,
+    remaining_seconds, status_text, worker_flagged, Decision, Facts, Limits, Run, SendIt,
+    CLEAR_LINE,
 };
-use ralph_core::chat_status::Status;
 use ralph_core::worker::Report;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
-
-struct Armed {
-    run: Run,
-    tracked: bool,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Countdown {
@@ -28,7 +22,7 @@ enum Countdown {
 }
 
 pub(super) struct Shell {
-    armed: Option<Armed>,
+    run: Option<Run>,
     limits: Limits,
     seconds: u64,
     color: bool,
@@ -85,7 +79,7 @@ fn countdown(text: &str, seconds: u64, color: bool) -> Option<Countdown> {
 impl Shell {
     pub(super) fn new(settings: &SendItSettings, color: bool) -> Self {
         Self {
-            armed: None,
+            run: None,
             limits: Limits {
                 max_turns: settings.max_turns,
                 max_usd: settings.max_usd,
@@ -104,29 +98,21 @@ impl Shell {
         self.drained.extend_from_slice(reports);
     }
 
-    pub(super) fn command(&mut self, command: SendIt, typed_at_prompt: bool, status: &Status) {
+    pub(super) fn command(&mut self, command: SendIt, typed_at_prompt: bool) {
         match command {
-            SendIt::Arm(_) if !typed_at_prompt => {
-                println!("/send-it can only be armed from a line typed at the prompt.");
+            SendIt::On if !typed_at_prompt => {
+                println!("/send-it can only be turned on from a line typed at the prompt.");
+                return;
             }
-            SendIt::Arm(ticket) => {
-                self.armed = Some(Armed {
-                    tracked: tracks_worker(&ticket, status),
-                    run: Run::new(&ticket),
-                });
-                self.print_status();
+            SendIt::On => {
+                self.run.get_or_insert_with(Run::default);
             }
-            SendIt::Off => {
-                self.armed = None;
-                self.print_status();
-            }
-            SendIt::Status => self.print_status(),
+            SendIt::Off => self.run = None,
         }
-    }
-
-    fn print_status(&self) {
-        let run = self.armed.as_ref().map(|armed| &armed.run);
-        println!("{}", status_text(run, &self.limits, self.seconds));
+        println!(
+            "{}",
+            status_text(self.run.as_ref(), &self.limits, self.seconds)
+        );
     }
 
     fn alert(notice: &str, monitor: &Monitor) {
@@ -143,14 +129,8 @@ impl Shell {
         schedule_pending: bool,
         monitor: &Monitor,
     ) -> Option<String> {
-        let armed = self.armed.as_ref()?;
-        if worker_closed(armed.tracked, &armed.run.ticket, &monitor.status()) {
-            println!("{}", closed_notice(&armed.run));
-            self.armed = None;
-            return None;
-        }
+        let run = self.run.clone()?;
         let offer = offer?;
-        let run = armed.run.clone();
         let facts = Facts {
             text: offer,
             worker_flagged: monitor
@@ -163,11 +143,11 @@ impl Shell {
             Decision::Countdown => match countdown(offer, self.seconds, self.color) {
                 Some(Countdown::Elapsed) => return Some(offer.to_string()),
                 Some(Countdown::Cancelled) => {
-                    println!("{}", cancel_notice(&run));
-                    self.armed = None;
+                    println!("{}", cancel_notice());
+                    self.run = None;
                     return None;
                 }
-                None => no_terminal_notice(&run),
+                None => no_terminal_notice(),
             },
             Decision::Manual(reason) => {
                 Self::alert(&reason.notice(), monitor);
@@ -175,14 +155,14 @@ impl Shell {
             }
             Decision::Stop(reason) => reason.notice(&run),
         };
-        self.armed = None;
+        self.run = None;
         Self::alert(&notice, monitor);
         None
     }
 
     pub(super) fn record(&mut self, text: &str, cost_usd: Option<f64>) {
-        if let Some(armed) = &mut self.armed {
-            armed.run.record(text, cost_usd);
+        if let Some(run) = &mut self.run {
+            run.record(text, cost_usd);
         }
     }
 }

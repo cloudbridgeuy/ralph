@@ -154,7 +154,7 @@ impl Command {
             Command::Hold => &[
                 (
                     "/hold [<target> ...]",
-                    "wait with no prompt; the model suggests it when the next step is waiting and no decision waits on the person (after the person approves a plan it suggests /send-it <ticket> instead), a target is a worker id, watch:<name> or schedule:<id>; with no target any report ends the hold, with several the first report from any of them does; typed with several targets it holds only when every target is listed, otherwise it is a normal message; one unknown target still arms the hold; when it suggests exactly /hold, /hold <target> or /hold <t1> <t2> with every target listed (a bare /hold needs one), ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes from workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
+                    "wait with no prompt; the model suggests it when the next step is waiting and no decision waits on the person, a target is a worker id, watch:<name> or schedule:<id>; with no target any report ends the hold, with several the first report from any of them does; typed with several targets it holds only when every target is listed, otherwise it is a normal message; one unknown target still arms the hold; when it suggests exactly /hold, /hold <target> or /hold <t1> <t2> with every target listed (a bare /hold needs one), ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes from workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
             Command::Nudge => &[(
@@ -163,10 +163,10 @@ impl Command {
             )],
             Command::SendIt => &[
                 (
-                    "/send-it <ticket>",
-                    "auto-send the model's suggested replies for routine steps after a countdown ([chat] send_it_seconds); any key during the countdown turns it off; it turns off at a turn or cost cap or a repeated reply; a decision reply (merge, push, PR, approve, Done, close, delete, a paid model, ...) or a worker question waits for you and it stays on; the model suggests it after the person approves a plan, in place of /hold <ticket>, and again to resume after a stop; only replies it marks as routine steps (fix rounds, free live checks, the four checks, reinstalls, post-push cleanup) send, never approval, merge, push, paid runs or abandon",
+                    "/send-it",
+                    "turn on auto-send: after a countdown ([chat] send_it_seconds) ralph sends the suggested reply when its own rule finds a routine action (fix, checks, tests, reinstall, rebase, retry, lint, fmt, clippy) and no decision word; a decision reply (merge, push, PR, approve, Done, close, delete, a paid model, ...), a worker question or block, or a pending schedule waits for you and it stays on; any key during the countdown turns it off; it turns off at a turn or cost cap or a repeated reply; only a line typed at the prompt turns it on; again while on shows its state",
                 ),
-                ("/send-it off", "stop auto-sending; /send-it alone shows its state"),
+                ("/send-it off", "turn auto-send off"),
             ],
             Command::Config => &[(
                 "/config",

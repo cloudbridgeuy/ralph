@@ -726,7 +726,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             Route::SendIt(command) => {
-                send_it.command(command, typed_at_prompt, &monitor.status());
+                send_it.command(command, typed_at_prompt);
                 continue;
             }
             local => {

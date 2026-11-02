@@ -1,5 +1,4 @@
 use super::*;
-use crate::chat_status::WorkerState;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
@@ -27,13 +26,13 @@ const FIX_ROUND: &str = "go 1172: full fix, blocked_alert follows the Rex gate, 
 
 #[test]
 fn a_real_fix_round_counts_down_with_no_step_tag() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     assert_eq!(decide_with(&run, FIX_ROUND), Decision::Countdown);
 }
 
 #[test]
 fn real_decision_replies_wait_on_the_person() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     for (text, word) in [
         ("go merge 1172", "merge"),
         (
@@ -65,7 +64,7 @@ fn real_decision_replies_wait_on_the_person() {
 
 #[test]
 fn a_reply_with_no_routine_action_waits_on_the_person() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     assert_eq!(
         decide_with(
             &run,
@@ -121,7 +120,7 @@ fn decision_words_match_in_any_case_and_form() {
 
 #[test]
 fn slash_text_is_manual() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     assert_eq!(
         decide_with(&run, "/hold w1"),
         Decision::Manual(ManualReason::SlashCommand)
@@ -134,7 +133,7 @@ fn slash_text_is_manual() {
 
 #[test]
 fn worker_flag_and_schedule_are_manual() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     let mut flagged = facts(FIX_ROUND);
     flagged.worker_flagged = true;
     assert_eq!(
@@ -151,7 +150,7 @@ fn worker_flag_and_schedule_are_manual() {
 
 #[test]
 fn caps_stop_the_run() {
-    let mut run = Run::new("GUZ-1");
+    let mut run = Run::default();
     for index in 0..3 {
         run.record(&format!("go {index}"), None);
     }
@@ -159,7 +158,7 @@ fn caps_stop_the_run() {
         decide_with(&run, "fix it"),
         Decision::Stop(StopReason::TurnCap)
     );
-    let mut spent = Run::new("GUZ-1");
+    let mut spent = Run::default();
     spent.record("go", Some(1.0));
     assert_eq!(
         decide_with(&spent, "fix it"),
@@ -169,7 +168,7 @@ fn caps_stop_the_run() {
 
 #[test]
 fn a_repeated_text_stops() {
-    let mut run = Run::new("GUZ-1");
+    let mut run = Run::default();
     run.record("  Run  the checks ", None);
     assert_eq!(
         decide_with(&run, "run the CHECKS"),
@@ -180,7 +179,7 @@ fn a_repeated_text_stops() {
 
 #[test]
 fn clean_fix_round_counts_down() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     assert_eq!(
         decide_with(&run, "start the next fix round"),
         Decision::Countdown
@@ -189,7 +188,7 @@ fn clean_fix_round_counts_down() {
 
 #[test]
 fn record_accumulates_and_ignores_missing_cost() {
-    let mut run = Run::new("GUZ-1");
+    let mut run = Run::default();
     run.record("Go   ON", Some(0.5));
     run.record("again", None);
     run.record("more", Some(0.25));
@@ -212,32 +211,30 @@ fn a_manual_reply_waits_and_names_why() {
 }
 
 #[test]
-fn stop_notices_point_back_to_the_ticket() {
-    let run = Run::new("GUZ-9");
+fn stop_notices_say_how_to_turn_it_on_again() {
+    let run = Run::default();
     for notice in [
         StopReason::TurnCap.notice(&run),
         StopReason::CostCap.notice(&run),
         StopReason::Repeated.notice(&run),
     ] {
         assert!(notice.starts_with("send-it off: "), "{notice}");
-        assert!(notice.ends_with("/send-it GUZ-9"), "{notice}");
+        assert!(
+            notice.ends_with("Turn it on again with /send-it."),
+            "{notice}"
+        );
     }
 }
 
 #[test]
-fn send_it_args_parse_to_arm_off_or_status() {
-    assert_eq!(SendIt::parse(""), Some(SendIt::Status));
-    assert_eq!(SendIt::parse("  "), Some(SendIt::Status));
+fn send_it_args_parse_to_on_or_off() {
+    assert_eq!(SendIt::parse(""), Some(SendIt::On));
+    assert_eq!(SendIt::parse("  "), Some(SendIt::On));
     assert_eq!(SendIt::parse(" off "), Some(SendIt::Off));
-    assert_eq!(
-        SendIt::parse("GUZ-1162"),
-        Some(SendIt::Arm("GUZ-1162".to_string()))
-    );
-    assert_eq!(SendIt::parse("GUZ-1 now"), None);
-    assert_eq!(SendIt::parse("off now"), None);
     assert_eq!(SendIt::parse("OFF"), Some(SendIt::Off));
     assert_eq!(SendIt::parse(" Off "), Some(SendIt::Off));
-    assert_eq!(SendIt::parse("OFF now"), None);
+    assert_eq!(SendIt::parse("GUZ-1162"), None);
+    assert_eq!(SendIt::parse("off now"), None);
 }
 
 fn report(status: &str) -> Report {
@@ -328,13 +325,13 @@ fn limits_for_text() -> Limits {
 }
 
 #[test]
-fn the_status_text_names_ticket_turns_spend_and_caps() {
-    let mut run = Run::new("GUZ-9");
+fn the_status_text_names_turns_spend_and_caps() {
+    let mut run = Run::default();
     run.record("run the checks", Some(0.5));
     let text = status_text(Some(&run), &limits_for_text(), 10);
     assert_eq!(
         text,
-        "send-it armed for GUZ-9: 1 of 15 turns, $0.50 of $5.00. Countdown: 10s."
+        "send-it on: 1 of 15 turns, $0.50 of $5.00. Countdown: 10s."
     );
 }
 
@@ -342,57 +339,20 @@ fn the_status_text_names_ticket_turns_spend_and_caps() {
 fn the_status_text_when_off_says_so() {
     assert_eq!(
         status_text(None, &limits_for_text(), 10),
-        "send-it is off. Arm it with /send-it <ticket>."
+        "send-it is off. Turn it on with /send-it."
     );
 }
 
 #[test]
-fn the_cancel_and_terminal_notices_end_with_the_resume_hint() {
-    let run = Run::new("GUZ-9");
+fn the_cancel_and_terminal_notices_say_how_to_turn_it_on_again() {
     assert_eq!(
-        cancel_notice(&run),
-        "send-it cancelled by a key press. Resume with /send-it GUZ-9"
+        cancel_notice(),
+        "send-it cancelled by a key press. Turn it on again with /send-it."
     );
-    assert!(no_terminal_notice(&run).ends_with("Resume with /send-it GUZ-9"));
     assert_eq!(
-        closed_notice(&run),
-        "send-it off: worker GUZ-9 is no longer listed."
+        no_terminal_notice(),
+        "send-it off: the countdown needs a terminal. Turn it on again with /send-it."
     );
-}
-
-fn status_with(workers: &[&str]) -> Status {
-    Status {
-        workers: workers
-            .iter()
-            .map(|id| WorkerState {
-                id: (*id).to_string(),
-                state: "idle".to_string(),
-            })
-            .collect(),
-        ..Status::default()
-    }
-}
-
-#[test]
-fn a_ticket_matching_a_hold_target_is_tracked() {
-    assert!(tracks_worker("GUZ-1", &status_with(&["GUZ-1"])));
-    assert!(!tracks_worker("GUZ-2", &status_with(&["GUZ-1"])));
-}
-
-#[test]
-fn ticket_matching_ignores_case() {
-    assert!(tracks_worker("guz-1", &status_with(&["GUZ-1"])));
-    assert!(tracks_worker("GUZ-1", &status_with(&["guz-1"])));
-    assert!(!tracks_worker("guz-2", &status_with(&["GUZ-1"])));
-    assert!(!worker_closed(true, "guz-1", &status_with(&["GUZ-1"])));
-    assert!(worker_closed(true, "guz-1", &status_with(&[])));
-}
-
-#[test]
-fn a_tracked_ticket_closes_when_it_is_no_longer_listed() {
-    assert!(worker_closed(true, "GUZ-1", &status_with(&[])));
-    assert!(!worker_closed(true, "GUZ-1", &status_with(&["GUZ-1"])));
-    assert!(!worker_closed(false, "GUZ-1", &status_with(&[])));
 }
 
 #[test]

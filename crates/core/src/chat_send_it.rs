@@ -1,5 +1,3 @@
-use crate::chat_hold::hold_targets;
-use crate::chat_status::Status;
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
@@ -11,6 +9,7 @@ pub const CLEAR_LINE: &str = "\r\x1b[2K";
 const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 const AUTO_PREFIX: &str = "[send-it] ";
+const RESUME_HINT: &str = "Turn it on again with /send-it.";
 
 const DECISION_TOKENS: [&str; 64] = [
     "push",
@@ -95,18 +94,16 @@ const ROUTINE_TOKENS: [&str; 11] = [
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendIt {
-    Arm(String),
+    On,
     Off,
-    Status,
 }
 
 impl SendIt {
     pub fn parse(args: &str) -> Option<SendIt> {
         let mut tokens = args.split_whitespace();
         match (tokens.next(), tokens.next()) {
-            (None, _) => Some(SendIt::Status),
+            (None, _) => Some(SendIt::On),
             (Some(word), None) if word.eq_ignore_ascii_case("off") => Some(SendIt::Off),
-            (Some(ticket), None) => Some(SendIt::Arm(ticket.to_string())),
             _ => None,
         }
     }
@@ -118,9 +115,8 @@ pub struct Limits {
     pub max_usd: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Run {
-    pub ticket: String,
     pub turns: u32,
     pub spent_usd: f64,
     pub sent: Vec<String>,
@@ -134,23 +130,10 @@ fn normalize(text: &str) -> String {
 }
 
 impl Run {
-    pub fn new(ticket: &str) -> Self {
-        Self {
-            ticket: ticket.to_string(),
-            turns: 0,
-            spent_usd: 0.0,
-            sent: Vec::new(),
-        }
-    }
-
     pub fn record(&mut self, text: &str, cost_usd: Option<f64>) {
         self.turns += 1;
         self.spent_usd += cost_usd.unwrap_or(0.0);
         self.sent.push(normalize(text));
-    }
-
-    fn resume_hint(&self) -> String {
-        format!("Resume with /send-it {}", self.ticket)
     }
 
     fn already_sent(&self, text: &str) -> bool {
@@ -201,7 +184,7 @@ impl StopReason {
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Repeated => "the same reply came up again".to_string(),
         };
-        format!("send-it off: {why}. {}", run.resume_hint())
+        format!("send-it off: {why}. {RESUME_HINT}")
     }
 }
 
@@ -297,37 +280,20 @@ pub fn auto_line(text: &str) -> String {
 
 pub fn status_text(run: Option<&Run>, limits: &Limits, seconds: u64) -> String {
     match run {
-        None => "send-it is off. Arm it with /send-it <ticket>.".to_string(),
+        None => "send-it is off. Turn it on with /send-it.".to_string(),
         Some(run) => format!(
-            "send-it armed for {}: {} of {} turns, ${:.2} of ${:.2}. Countdown: {seconds}s.",
-            run.ticket, run.turns, limits.max_turns, run.spent_usd, limits.max_usd
+            "send-it on: {} of {} turns, ${:.2} of ${:.2}. Countdown: {seconds}s.",
+            run.turns, limits.max_turns, run.spent_usd, limits.max_usd
         ),
     }
 }
 
-pub fn cancel_notice(run: &Run) -> String {
-    format!("send-it cancelled by a key press. {}", run.resume_hint())
+pub fn cancel_notice() -> String {
+    format!("send-it cancelled by a key press. {RESUME_HINT}")
 }
 
-pub fn no_terminal_notice(run: &Run) -> String {
-    format!(
-        "send-it off: the countdown needs a terminal. {}",
-        run.resume_hint()
-    )
-}
-
-pub fn closed_notice(run: &Run) -> String {
-    format!("send-it off: worker {} is no longer listed.", run.ticket)
-}
-
-pub fn tracks_worker(ticket: &str, status: &Status) -> bool {
-    hold_targets(status)
-        .iter()
-        .any(|target| target.eq_ignore_ascii_case(ticket))
-}
-
-pub fn worker_closed(tracked: bool, ticket: &str, status: &Status) -> bool {
-    tracked && !tracks_worker(ticket, status)
+pub fn no_terminal_notice() -> String {
+    format!("send-it off: the countdown needs a terminal. {RESUME_HINT}")
 }
 
 pub fn blocked_alert(notice: &str, config: &AlertConfig) -> Option<Alert> {
