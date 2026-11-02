@@ -165,19 +165,20 @@ fn error_message(value: &Value) -> Option<String> {
 fn implicit_tier(body: &Value) -> CacheTier {
     match body
         .pointer("/prompt_cache_options/ttl")
-        .and_then(Value::as_str)
+        .filter(|ttl| !ttl.is_null())
     {
-        Some("30m") => THIRTY_MIN,
-        Some("12h") => TWELVE_HOURS,
-        _ if body.get("prompt_cache_retention").is_some() => CacheTier::Unspecified,
-        _ if body
+        Some(Value::String(ttl)) if ttl == "30m" => THIRTY_MIN,
+        Some(Value::String(ttl)) if ttl == "12h" => TWELVE_HOURS,
+        Some(_) => CacheTier::Unspecified,
+        None if body.get("prompt_cache_retention").is_some() => CacheTier::Unspecified,
+        None if body
             .get("model")
             .and_then(Value::as_str)
             .is_some_and(|model| listed(model).is_some()) =>
         {
             THIRTY_MIN
         }
-        _ => CacheTier::Unspecified,
+        None => CacheTier::Unspecified,
     }
 }
 

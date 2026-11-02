@@ -431,6 +431,10 @@ fn implicit_tier_follows_the_ttl_or_retention_and_the_listing() {
         implicit(TWELVE_HOURS)
     );
     assert_eq!(
+        tier(json!({"model": "gpt-6.1-sol", "prompt_cache_options": {"ttl": "1h"}})),
+        implicit(CacheTier::Unspecified)
+    );
+    assert_eq!(
         tier(json!({"model": "gpt-6.1-sol", "prompt_cache_retention": "24h"})),
         implicit(CacheTier::Unspecified)
     );
