@@ -357,8 +357,7 @@ impl Snapshotter {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
             lock => lock?,
         };
-        remove_if_present(&index_path(&self.side, &self.owner))?;
-        remove_if_present(&snapshot_lock_path(&self.side, &self.owner))
+        remove_if_present(&index_path(&self.side, &self.owner))
     }
 }
 
@@ -376,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_index_deletes_the_index_and_its_snapshot_lock() {
+    fn remove_index_deletes_the_index_but_keeps_its_snapshot_lock() {
         let dir = tempfile::tempdir().unwrap();
         let snapshotter = snapshotter_in(dir.path());
         let index = index_path(dir.path(), &snapshotter.owner);
@@ -385,7 +384,7 @@ mod tests {
         fs::write(snapshot_lock_path(dir.path(), &snapshotter.owner), "").unwrap();
         snapshotter.remove_index().unwrap();
         assert!(!index.exists());
-        assert!(!snapshot_lock_path(dir.path(), &snapshotter.owner).exists());
+        assert!(snapshot_lock_path(dir.path(), &snapshotter.owner).exists());
     }
 
     #[test]
