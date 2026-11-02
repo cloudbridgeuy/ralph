@@ -12,8 +12,8 @@ use ralph_core::stream::user_line;
 use ralph_core::worker::{
     argv_check, cancel_check, claude_headless_args, claude_probed_version, claude_verify_spawns,
     fold_claude_line, init_check, permission_check, prompt_check, uuid_v4, ClaudeFold, ClaudePlan,
-    ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, CLAUDE_COMMAND, CLAUDE_ENDED,
-    CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
+    ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, StderrRead, CLAUDE_COMMAND,
+    CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::io::{Read, Write};
 use std::path::Path;
@@ -25,6 +25,7 @@ use std::time::Instant;
 const SETTLE: Duration = Duration::from_secs(2);
 const EXIT_LIMIT: Duration = Duration::from_secs(10);
 const TURN_LIMIT: Duration = Duration::from_secs(120);
+const STDERR_LIMIT: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(50);
 const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
@@ -103,19 +104,44 @@ fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks, budget: Bud
     checks.add(cancel_check(&cancelled.summary, CLAUDE_INTERRUPTED));
 }
 
-fn collect_stderr(mut stderr: ChildStderr) -> Arc<Mutex<Vec<u8>>> {
-    let collected = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&collected);
-    thread::spawn(move || {
-        let mut chunk = [0u8; 4096];
-        while let Ok(read) = stderr.read(&mut chunk) {
-            if read == 0 {
-                break;
+struct StderrReader {
+    collected: Arc<Mutex<Vec<u8>>>,
+    finished: mpsc::Receiver<()>,
+}
+
+impl StderrReader {
+    fn start(mut stderr: ChildStderr) -> Self {
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&collected);
+        let (done, finished) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let _done = done;
+            let mut chunk = [0u8; 4096];
+            while let Ok(read) = stderr.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                locked(&sink).extend_from_slice(&chunk[..read]);
             }
-            locked(&sink).extend_from_slice(&chunk[..read]);
+        });
+        Self {
+            collected,
+            finished,
         }
-    });
-    collected
+    }
+
+    fn read(&self, limit: Duration) -> StderrRead {
+        let finished = !matches!(
+            self.finished.recv_timeout(limit),
+            Err(RecvTimeoutError::Timeout)
+        );
+        let text = String::from_utf8_lossy(&locked(&self.collected)).into_owned();
+        if finished {
+            StderrRead::Finished(text)
+        } else {
+            StderrRead::Unfinished(text)
+        }
+    }
 }
 
 fn wait_exit(child: &mut Child) -> Result<bool, String> {
@@ -237,7 +263,7 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
     else {
         return false;
     };
-    let stderr = collect_stderr(stderr);
+    let stderr = StderrReader::start(stderr);
     let log = CappedLog::new(None, "verify");
     let (lines, _) = pipe_lines(stdout, &log);
     let wire = Wire {
@@ -254,8 +280,7 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
             } else {
                 Ok(true)
             };
-            let complaint = String::from_utf8_lossy(&locked(&stderr)).into_owned();
-            checks.add(argv_check(running, &complaint, exit));
+            checks.add(argv_check(running, &stderr.read(STDERR_LIMIT), exit));
         }
         ClaudeSpawn::Turns => {
             if running {
