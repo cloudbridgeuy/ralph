@@ -26,7 +26,7 @@ use ralph_core::chat_status::{
 use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage, UsageTail};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
-use ralph_core::program_status::{report_for, Phase};
+use ralph_core::program_status::{self, report_for, Phase};
 use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
@@ -115,11 +115,15 @@ impl Monitor {
         *locked(&self.hold) = hold;
     }
 
-    fn report_terminal(&self) {
+    fn terminal_report(&self, unread: usize) -> program_status::Report {
         let mut status = self.status();
+        status.unread = unread;
         status.hold = locked(&self.hold).clone();
-        let phase = *locked(&self.phase);
-        self.term.send(&report_for(phase, &status));
+        report_for(*locked(&self.phase), &status)
+    }
+
+    fn report_terminal(&self) {
+        self.term.send(&self.terminal_report(self.status().unread));
     }
 
     pub(super) fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
@@ -295,7 +299,8 @@ impl Monitor {
         let mut known = locked(&self.known);
         let fresh = fresh_reports(&known, pending);
         if !fresh.is_empty() && self.alert.enabled() {
-            if let Some(alert) = inbox_alert(&fresh, inbox_alert::focus(), &self.alert) {
+            let terminal = self.terminal_report(pending.len()).state;
+            if let Some(alert) = inbox_alert(&fresh, inbox_alert::focus(), terminal, &self.alert) {
                 inbox_alert::deliver(&alert);
             }
         }

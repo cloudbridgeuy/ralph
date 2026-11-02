@@ -1,4 +1,4 @@
-use crate::program_status::tmux_wrap;
+use crate::program_status::{tmux_wrap, Kind, State};
 use crate::worker::Report;
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +27,7 @@ pub struct AlertConfig {
     pub sound: bool,
     pub notification: bool,
     pub unknown_focus: UnknownFocus,
+    pub terminal_status: bool,
 }
 
 impl AlertConfig {
@@ -83,13 +84,19 @@ pub fn tmux_focus(pane: Option<&PaneState>, clients: Option<&str>) -> Focus {
     }
 }
 
-pub fn inbox_alert(fresh: &[&Report], focus: Focus, config: &AlertConfig) -> Option<Alert> {
+pub fn inbox_alert(
+    fresh: &[&Report],
+    focus: Focus,
+    terminal: State,
+    config: &AlertConfig,
+) -> Option<Alert> {
     let alert = match focus {
         Focus::Visible => false,
         Focus::Hidden => true,
         Focus::Unknown => config.unknown_focus == UnknownFocus::Alert,
     };
-    (alert && !fresh.is_empty() && config.enabled()).then(|| Alert {
+    let terminal_owns = config.terminal_status && terminal == State::Blocked(Kind::Question);
+    (alert && !terminal_owns && !fresh.is_empty() && config.enabled()).then(|| Alert {
         sound: config.sound,
         notification: config.notification.then(|| notification_body(fresh)),
     })
@@ -131,6 +138,7 @@ mod tests {
             sound: true,
             notification: true,
             unknown_focus,
+            terminal_status: false,
         }
     }
 
@@ -214,7 +222,12 @@ mod tests {
         let reports = [report("a", "done")];
         let fresh: Vec<&Report> = reports.iter().collect();
         assert_eq!(
-            inbox_alert(&fresh, Focus::Visible, &config(UnknownFocus::Alert)),
+            inbox_alert(
+                &fresh,
+                Focus::Visible,
+                State::Idle,
+                &config(UnknownFocus::Alert)
+            ),
             None
         );
     }
@@ -224,7 +237,12 @@ mod tests {
         let reports = [report("GUZ-422", "done"), report("GUZ-423", "question")];
         let fresh: Vec<&Report> = reports.iter().collect();
         assert_eq!(
-            inbox_alert(&fresh, Focus::Hidden, &config(UnknownFocus::Silent)),
+            inbox_alert(
+                &fresh,
+                Focus::Hidden,
+                State::Idle,
+                &config(UnknownFocus::Silent)
+            ),
             Some(Alert {
                 sound: true,
                 notification: Some("GUZ-422 done, GUZ-423 question".into()),
@@ -236,9 +254,20 @@ mod tests {
     fn unknown_focus_follows_setting() {
         let reports = [report("a", "blocked")];
         let fresh: Vec<&Report> = reports.iter().collect();
-        assert!(inbox_alert(&fresh, Focus::Unknown, &config(UnknownFocus::Alert)).is_some());
+        assert!(inbox_alert(
+            &fresh,
+            Focus::Unknown,
+            State::Idle,
+            &config(UnknownFocus::Alert)
+        )
+        .is_some());
         assert_eq!(
-            inbox_alert(&fresh, Focus::Unknown, &config(UnknownFocus::Silent)),
+            inbox_alert(
+                &fresh,
+                Focus::Unknown,
+                State::Idle,
+                &config(UnknownFocus::Silent)
+            ),
             None
         );
     }
@@ -252,7 +281,7 @@ mod tests {
             ..config(UnknownFocus::Alert)
         };
         assert_eq!(
-            inbox_alert(&fresh, Focus::Hidden, &sound_only),
+            inbox_alert(&fresh, Focus::Hidden, State::Idle, &sound_only),
             Some(Alert {
                 sound: true,
                 notification: None
@@ -263,7 +292,7 @@ mod tests {
             ..config(UnknownFocus::Alert)
         };
         assert_eq!(
-            inbox_alert(&fresh, Focus::Hidden, &notification_only),
+            inbox_alert(&fresh, Focus::Hidden, State::Idle, &notification_only),
             Some(Alert {
                 sound: false,
                 notification: Some("a done".into())
@@ -272,17 +301,66 @@ mod tests {
         let off = AlertConfig {
             sound: false,
             notification: false,
-            unknown_focus: UnknownFocus::Alert,
+            ..config(UnknownFocus::Alert)
         };
-        assert_eq!(inbox_alert(&fresh, Focus::Hidden, &off), None);
+        assert_eq!(inbox_alert(&fresh, Focus::Hidden, State::Idle, &off), None);
     }
 
     #[test]
     fn no_fresh_reports_no_alert() {
         assert_eq!(
-            inbox_alert(&[], Focus::Hidden, &config(UnknownFocus::Alert)),
+            inbox_alert(
+                &[],
+                Focus::Hidden,
+                State::Idle,
+                &config(UnknownFocus::Alert)
+            ),
             None
         );
+    }
+
+    #[test]
+    fn terminal_owns_the_alert_when_it_shows_blocked_question() {
+        let reports = [report("a", "done")];
+        let fresh: Vec<&Report> = reports.iter().collect();
+        let rex = AlertConfig {
+            terminal_status: true,
+            ..config(UnknownFocus::Alert)
+        };
+        assert_eq!(
+            inbox_alert(&fresh, Focus::Hidden, State::Blocked(Kind::Question), &rex),
+            None
+        );
+        assert_eq!(
+            inbox_alert(&fresh, Focus::Unknown, State::Blocked(Kind::Question), &rex),
+            None
+        );
+    }
+
+    #[test]
+    fn terminal_status_keeps_the_alert_when_the_terminal_shows_no_question() {
+        let reports = [report("a", "done")];
+        let fresh: Vec<&Report> = reports.iter().collect();
+        let rex = AlertConfig {
+            terminal_status: true,
+            ..config(UnknownFocus::Alert)
+        };
+        for terminal in [State::Working, State::Idle, State::Done] {
+            assert!(inbox_alert(&fresh, Focus::Hidden, terminal, &rex).is_some());
+        }
+    }
+
+    #[test]
+    fn no_terminal_status_keeps_the_alert_on_blocked_question() {
+        let reports = [report("a", "done")];
+        let fresh: Vec<&Report> = reports.iter().collect();
+        assert!(inbox_alert(
+            &fresh,
+            Focus::Hidden,
+            State::Blocked(Kind::Question),
+            &config(UnknownFocus::Alert)
+        )
+        .is_some());
     }
 
     #[test]

@@ -324,12 +324,12 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `worker_base` | string | unset | Base branch that `close_worker` checks for unmerged commits |
 | `worktree_dir` | string | `.worktrees` | Directory that holds worker worktrees; a leading `~` expands to home, relative paths resolve against the repo root |
 | `permission_mode` | string | `"auto"` | `claude --permission-mode` for chat turns and claude workers |
-| `inbox_alert_sound` | bool | `true` | Play a sound when a worker report arrives and the chat is not focused |
+| `inbox_alert_sound` | bool | `true` | Play a sound when a worker report arrives and the chat is not focused. Skipped, with the notification, when Rex shows the report as a question through `terminal_status` |
 | `inbox_alert_notification` | bool | `false` | Also send a system notification (`<id> <status>`) |
 | `inbox_alert_unknown_focus` | `"alert"` or `"silent"` | `"alert"` | What to do when focus cannot be detected (outside tmux, no attached client, tmux query failed) |
 | `status_powerline` | bool | `false` | Use powerline glyphs (`\ue0b0`, `\ue0b2`) between status line segments; needs a patched font. Off draws plain colour blocks |
 | `auto_hold` | bool | `true` | When a turn ends with a suggested reply of exactly `/hold <target>` for a listed worker, watch, or schedule, enter that hold at once instead of pre-filling the prompt; `false` always pre-fills |
-| `terminal_status` | bool | `true` | Report chat state to the terminal with OSC 7501 (Program Status Protocol): working, blocked, done, idle, cleared on exit. Sent only when stdout is a terminal; `NO_COLOR` does not affect it. See [ralph chat](context/ralph-chat.md#terminal-status) |
+| `terminal_status` | bool | `true` | Report chat state to the terminal with OSC 7501 (Program Status Protocol): working, blocked, done, idle, cleared on exit. Sent only to Rex: stdout is a terminal and `REX_SESSION` is set; `NO_COLOR` does not affect it. See [ralph chat](context/ralph-chat.md#terminal-status) |
 | `editor` | list of strings | unset | Ctrl-G editor argv, draft path appended, e.g. `["nvim", "-c", "normal! Go", "-c", "startinsert"]`; unset uses `$VISUAL`, `$EDITOR`, then `vi`; empty or wrong type warns and falls back |
 | `edit_mode` | `"emacs"` or `"vi"` | `"emacs"` | Key bindings of the chat prompt; another value prints a warning and uses `"emacs"`. See [ralph chat](context/ralph-chat.md) |
 | `empty_submit` | `"inbox"`, `"inbox-first"` or `"phrase"` | `"inbox"` | What Enter on an empty prompt does. `inbox`: open the inbox when reports are unread, else nothing. `inbox-first`: open the inbox when reports are unread, else send `empty_prompt`. `phrase`: always send `empty_prompt`, even with unread reports; use `/inbox` to read them. An unknown value warns and uses `inbox` |

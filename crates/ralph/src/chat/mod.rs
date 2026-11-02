@@ -97,7 +97,7 @@ use ralph_core::chat_thread::{run_id, UsageTail};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
-use ralph_core::program_status::Phase;
+use ralph_core::program_status::{status_enabled, Phase};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
@@ -110,6 +110,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 const STORE_ENV: &str = "RALPH_CHAT_STORE";
+const REX_SESSION_ENV: &str = "REX_SESSION";
 const PROMPT_ROWS: usize = 256;
 pub(crate) const WRAP_WIDTH_ENV: &str = "RALPH_WRAP_WIDTH";
 pub(crate) const CELL_OUTPUT_LIMIT_ENV: &str = "RALPH_CELL_OUTPUT_LIMIT";
@@ -342,6 +343,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let inbox = Arc::new(Inbox::new(store_dir.join(INBOX_DIR)));
     let known = inbox.peek().unwrap_or_default();
     let usage_stamp = memory::usage_stamp(&memory::usage_path()).unwrap_or_default();
+    let terminal_status = status_enabled(
+        chat_config.terminal_status,
+        std::io::stdout().is_terminal(),
+        std::env::var_os(REX_SESSION_ENV).is_some_and(|value| !value.is_empty()),
+    );
     let monitor = Arc::new(Monitor {
         watches: Watches::new(Arc::clone(&inbox), &store_dir, watch_timeout),
         schedule: ScheduleStore::new(store_dir.join(SCHEDULE_DIR)),
@@ -368,6 +374,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
             notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,
             unknown_focus: chat_config.inbox_alert_unknown_focus,
+            terminal_status,
         },
         live,
         last_ping: Arc::clone(&last_ping),
@@ -375,9 +382,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         reset_limits,
         thread: Mutex::new(ThreadMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
-        term: Arc::new(TermStatus::new(
-            chat_config.terminal_status && std::io::stdout().is_terminal(),
-        )),
+        term: Arc::new(TermStatus::new(terminal_status)),
         phase: Mutex::new(Phase::Prompt),
         hold: Mutex::new(None),
     });

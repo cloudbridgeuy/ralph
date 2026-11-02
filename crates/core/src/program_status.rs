@@ -64,6 +64,10 @@ pub enum Phase {
     Prompt,
 }
 
+pub fn status_enabled(config: bool, tty: bool, rex: bool) -> bool {
+    config && tty && rex
+}
+
 fn unread_msg(unread: usize) -> String {
     match unread {
         1 => "1 worker report".to_string(),
@@ -147,6 +151,14 @@ mod tests {
             .unwrap()
             .trim_end_matches('\x07');
         String::from_utf8(STANDARD.decode(encoded).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn status_needs_config_tty_and_rex() {
+        assert!(status_enabled(true, true, true));
+        assert!(!status_enabled(false, true, true));
+        assert!(!status_enabled(true, false, true));
+        assert!(!status_enabled(true, true, false));
     }
 
     #[test]
