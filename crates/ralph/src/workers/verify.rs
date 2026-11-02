@@ -68,12 +68,15 @@ fn prepare(paths: &VerifyPaths) -> io::Result<()> {
     )
 }
 
-fn launch(dir: &Path) -> Result<(Session, VerifyPaths), String> {
+fn launch(
+    dir: &Path,
+    config: &Result<AppConfig, String>,
+    model: Option<&str>,
+) -> Result<(Session, VerifyPaths), String> {
     let dir = fs::canonicalize(dir)
         .map_err(|error| format!("could not resolve {}: {error}", dir.display()))?;
     let paths = VerifyPaths::new(&dir);
     prepare(&paths).map_err(|error| format!("could not prepare the verify folder: {error}"))?;
-    let config = AppConfig::load().map_err(|error| error.to_string());
     let (shell, _) = resolve_claude_shell(
         config
             .as_ref()
@@ -97,7 +100,7 @@ fn launch(dir: &Path) -> Result<(Session, VerifyPaths), String> {
         .args(["new-session", "-d", "-s", &name])
         .arg("-c")
         .arg(&paths.work)
-        .args(paths.command(shell, config_dir.as_deref())))
+        .args(paths.command(shell, config_dir.as_deref(), model)))
     .map_err(|error| format!("could not start the tmux session: {error}"))?;
     Ok((Session(name), paths))
 }
@@ -162,7 +165,13 @@ fn permission_turn(session: &Session, paths: &VerifyPaths) -> CheckResult {
     )
 }
 
-pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> {
+pub(crate) fn verify(
+    live: bool,
+    dir: &Path,
+    checks: &Checks,
+    config: &Result<AppConfig, String>,
+    model: Option<&str>,
+) -> Option<String> {
     let probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -189,7 +198,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     if tmux.is_none() || !flags_ok {
         return Some(version);
     }
-    let launched = launch(dir);
+    let launched = launch(dir, config, model);
     let (session, paths) = match launched {
         Ok(started) => started,
         Err(message) => {

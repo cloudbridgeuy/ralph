@@ -127,17 +127,27 @@ fn wait_exit(child: &mut Child) -> Result<bool, String> {
     }
 }
 
-fn claude_command(dir: &Path, session: &str) -> Command {
-    let args = claude_headless_args(
-        None,
+fn verify_args(model: Option<&str>, dir: &Path, session: &str) -> Vec<String> {
+    claude_headless_args(
+        model,
         EMPTY_MCP,
         dir,
         PermissionMode::Ask,
         ClaudeSession::New(session),
-    );
+    )
+}
+
+fn claude_command(
+    dir: &Path,
+    session: &str,
+    config: &Result<AppConfig, String>,
+    model: Option<&str>,
+) -> Command {
     let mut command = Command::new(CLAUDE_COMMAND);
-    command.args(args).current_dir(dir);
-    let config_dir = AppConfig::load().ok().and_then(|config| {
+    command
+        .args(verify_args(model, dir, session))
+        .current_dir(dir);
+    let config_dir = config.as_ref().ok().and_then(|config| {
         configured_dir(
             config.claude.config_dir.as_deref(),
             dirs::home_dir().as_deref(),
@@ -149,7 +159,13 @@ fn claude_command(dir: &Path, session: &str) -> Command {
     command
 }
 
-pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> {
+pub(crate) fn verify(
+    live: bool,
+    dir: &Path,
+    checks: &Checks,
+    config: &Result<AppConfig, String>,
+    model: Option<&str>,
+) -> Option<String> {
     let probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -161,7 +177,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
         |version| format!("{version} (probed {})", CLAUDE_GATE.probed),
     )?;
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
-        spawn_piped(claude_command(dir, &session))
+        spawn_piped(claude_command(dir, &session, config, model))
             .map(|spawned| (session, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });
@@ -194,4 +210,20 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks) -> Option<String> 
     checks.add(argv_check(running, &complaint, exit));
     stop_child(&mut child);
     Some(version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_args_carry_the_configured_model() {
+        let dir = Path::new("/tmp/verify-dir");
+        let with = verify_args(Some("claude-haiku-5-5"), dir, "s1");
+        let at = with.iter().position(|word| word == "--model").unwrap();
+        assert_eq!(with[at + 1], "claude-haiku-5-5");
+        assert!(verify_args(None, dir, "s1")
+            .iter()
+            .all(|word| word != "--model"));
+    }
 }

@@ -58,7 +58,12 @@ impl VerifyPaths {
         )
     }
 
-    pub fn command(&self, shell: ClaudeShell, config_dir: Option<&Path>) -> Vec<String> {
+    pub fn command(
+        &self,
+        shell: ClaudeShell,
+        config_dir: Option<&Path>,
+        model: Option<&str>,
+    ) -> Vec<String> {
         worker_launch(&ClaudeWorkerArgs {
             store: &self.store,
             mcp_config: &self.mcp_config,
@@ -66,7 +71,7 @@ impl VerifyPaths {
             permission_mode: VERIFY_PERMISSION_MODE,
             attachments: &self.attachments,
             task_dir: &self.task_dir,
-            model: None,
+            model,
             scheduled: false,
             shell,
             config_dir,
@@ -220,7 +225,7 @@ mod tests {
     #[test]
     fn verify_launch_sends_no_task_prompt() {
         let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
-        let command = paths.command(ClaudeShell::default(), None);
+        let command = paths.command(ClaudeShell::default(), None, None);
         assert!(
             command
                 .iter()
@@ -232,5 +237,15 @@ mod tests {
             Some(super::super::WORKER_PROMPT)
         );
         assert!(command.iter().any(|word| word == "--append-system-prompt"));
+    }
+
+    #[test]
+    fn verify_launch_passes_the_configured_model() {
+        let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
+        let with = paths.command(ClaudeShell::default(), None, Some("claude-haiku-5-5"));
+        let at = with.iter().position(|word| word == "--model").unwrap();
+        assert_eq!(with[at + 1], "claude-haiku-5-5");
+        let without = paths.command(ClaudeShell::default(), None, None);
+        assert!(without.iter().all(|word| word != "--model"));
     }
 }
