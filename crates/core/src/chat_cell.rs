@@ -119,6 +119,40 @@ pub fn parse_cells(message: &str) -> Vec<Cell> {
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bang<'a> {
+    Plain,
+    Send(&'a str),
+    Local(&'a str),
+}
+
+pub fn bang(message: &str) -> Bang<'_> {
+    let command = |body: &str| !body.trim().is_empty();
+    match message.strip_prefix('!') {
+        Some(rest) => match rest.strip_prefix('!') {
+            Some(body) if command(body) => Bang::Local(body),
+            Some(_) => Bang::Plain,
+            None if command(rest) => Bang::Send(rest),
+            None => Bang::Plain,
+        },
+        None => Bang::Plain,
+    }
+}
+
+pub fn shell_cell(body: &str) -> String {
+    let body = body.trim_end_matches(['\n', '\r']);
+    let longest = body
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            trimmed.len() - trimmed.trim_start_matches('`').len()
+        })
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    format!("{fence}!shell\n{body}\n{fence}")
+}
+
 pub fn display_message(message: &str) -> String {
     let opening: Vec<usize> = fences(message)
         .iter()
@@ -539,6 +573,54 @@ pub fn shell_stdin(kind: ShellKind, state: &SavedState, code: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn double_bang_is_local_and_single_bang_is_sent() {
+        assert_eq!(bang("!!ls -la"), Bang::Local("ls -la"));
+        assert_eq!(bang("!ls -la"), Bang::Send("ls -la"));
+        assert_eq!(bang("!!!x"), Bang::Local("!x"));
+        assert_eq!(bang("!!cd /tmp\npwd\n"), Bang::Local("cd /tmp\npwd\n"));
+    }
+
+    #[test]
+    fn bangs_without_a_command_stay_plain_text() {
+        for message in ["!", "!  \n ", "!!", "!!  \n ", "hello"] {
+            assert_eq!(bang(message), Bang::Plain, "{message:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_bang_at_the_very_start_counts() {
+        for message in [" !echo", " !!echo", "hello !echo", "```!zsh\nls\n```"] {
+            assert_eq!(bang(message), Bang::Plain, "{message:?}");
+        }
+    }
+
+    #[test]
+    fn shell_cell_wraps_the_body_in_a_shell_fence() {
+        assert_eq!(
+            shell_cell("echo something"),
+            "```!shell\necho something\n```"
+        );
+        assert_eq!(
+            parse_cells(&shell_cell("echo something")),
+            parse_cells("```!shell\necho something\n```")
+        );
+    }
+
+    #[test]
+    fn shell_cell_keeps_every_line_and_drops_trailing_newlines() {
+        let cell = shell_cell("cd /tmp\npwd\n");
+        assert_eq!(cell, "```!shell\ncd /tmp\npwd\n```");
+        assert_eq!(parse_cells(&cell)[0].code, "cd /tmp\npwd");
+    }
+
+    #[test]
+    fn shell_cell_with_backtick_fences_gets_a_longer_fence() {
+        let cell = shell_cell("cat <<EOF\n```\nEOF");
+        assert_eq!(cell, "````!shell\ncat <<EOF\n```\nEOF\n````");
+        assert_eq!(parse_cells(&cell)[0].code, "cat <<EOF\n```\nEOF");
+    }
 
     const NONE: CellLimits = CellLimits {
         lines: None,

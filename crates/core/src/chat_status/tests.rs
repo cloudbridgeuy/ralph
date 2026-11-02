@@ -91,6 +91,7 @@ fn only_read_only_routes_run_mid_turn() {
         "/workers a b",
         "/hold",
         "/hold w1",
+        "!!ls",
         "hello",
         "",
     ] {
@@ -301,6 +302,17 @@ fn empty_route_decides_from_mode_and_unread() {
     assert_eq!(empty_route(2, &EmptySubmit::InboxFirst(phrase())), read());
     assert_eq!(empty_route(0, &EmptySubmit::Phrase(phrase())), send());
     assert_eq!(empty_route(2, &EmptySubmit::Phrase(phrase())), send());
+}
+
+#[test]
+fn route_input_runs_double_bang_locally() {
+    let route = |line: &str| route_input(line, 3, &EmptySubmit::Inbox, &BTreeSet::new());
+    assert_eq!(route("!!ls"), Route::Shell("!!ls".into()));
+    assert_eq!(route(" !!ls \n"), Route::Shell("!!ls".into()));
+    assert_eq!(route("!!!x"), Route::Shell("!!!x".into()));
+    assert_eq!(route("!ls"), Route::Send("!ls".into()));
+    assert_eq!(route("!!"), Route::Send("!!".into()));
+    assert_eq!(route("!!   "), Route::Send("!!".into()));
 }
 
 #[test]
