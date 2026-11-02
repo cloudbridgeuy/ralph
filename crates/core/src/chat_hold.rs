@@ -101,22 +101,32 @@ pub struct HoldCompletion {
 }
 
 pub fn hold_completions(line: &str, cursor: usize, status: &Status) -> Option<HoldCompletion> {
-    let args = line.get(..cursor)?.trim_start().strip_prefix(HOLD)?;
-    if !args.starts_with(char::is_whitespace) {
-        return None;
-    }
+    let args = command_args(line, cursor, HOLD)?;
+    Some(word_completion(args, cursor, hold_targets(status)))
+}
+
+pub(crate) fn command_args<'a>(line: &'a str, cursor: usize, command: &str) -> Option<&'a str> {
+    let args = line.get(..cursor)?.trim_start().strip_prefix(command)?;
+    args.starts_with(char::is_whitespace).then_some(args)
+}
+
+pub(crate) fn word_completion(
+    args: &str,
+    cursor: usize,
+    targets: BTreeSet<String>,
+) -> HoldCompletion {
     let partial = args.rsplit(char::is_whitespace).next().unwrap_or_default();
     let typed: BTreeSet<&str> = args[..args.len() - partial.len()]
         .split_whitespace()
         .collect();
-    let candidates: BTreeSet<String> = hold_targets(status)
+    let candidates: BTreeSet<String> = targets
         .into_iter()
         .filter(|candidate| candidate.starts_with(partial) && !typed.contains(candidate.as_str()))
         .collect();
-    Some(HoldCompletion {
+    HoldCompletion {
         span: cursor - partial.len()..cursor,
         values: candidates.into_iter().collect(),
-    })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

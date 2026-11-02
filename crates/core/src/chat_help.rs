@@ -18,6 +18,7 @@ pub enum Command {
     Diff,
     Workers,
     Hold,
+    Nudge,
     SendIt,
     Config,
     Read,
@@ -27,7 +28,7 @@ pub enum Command {
 }
 
 impl Command {
-    pub const ALL: [Command; 13] = [
+    pub const ALL: [Command; 14] = [
         Command::Help,
         Command::Inbox,
         Command::Watch,
@@ -35,6 +36,7 @@ impl Command {
         Command::Diff,
         Command::Workers,
         Command::Hold,
+        Command::Nudge,
         Command::SendIt,
         Command::Config,
         Command::Read,
@@ -52,6 +54,7 @@ impl Command {
             Command::Diff => "/diff",
             Command::Workers => "/workers",
             Command::Hold => "/hold",
+            Command::Nudge => "/nudge",
             Command::SendIt => "/send-it",
             Command::Config => "/config",
             Command::Read => "/read",
@@ -151,6 +154,10 @@ impl Command {
                     "wait with no prompt; the model suggests it when the next step is waiting and no decision waits on the person (after the person approves a plan it suggests /send-it <ticket> instead), a target is a worker id, watch:<name> or schedule:<id>; with no target any report ends the hold, with several the first report from any of them does; typed with several targets it holds only when every target is listed, otherwise it is a normal message; one unknown target still arms the hold; when it suggests exactly /hold, /hold <target> or /hold <t1> <t2> with every target listed (a bare /hold needs one), ralph enters it at once unless chat.auto_hold is false; the first matching inbox report starts a turn, once; a watch needs the watch: prefix (/hold ci does not match watch:ci); a scheduled task reports as schedule:<id> and its worker as sched-<id>, and schedule:<id> matches both; Tab completes from workers, watches and pending and running schedules; Ctrl-Q or Ctrl-D leaves",
                 ),
             ],
+            Command::Nudge => &[(
+                "/nudge <id> [text]",
+                "send a worker a request for one line of progress with no model turn, then print what the worker did with it (busy, reported, taken, not started, no reaction after Ns); [text] replaces the default request; refused while the worker waits on a permission request; while a turn runs it waits in the queue; Tab completes worker ids",
+            )],
             Command::SendIt => &[
                 (
                     "/send-it <ticket>",

@@ -1,6 +1,7 @@
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
 use crate::chat_memory::{history_tool, Tool};
+use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_send_it::SendIt;
 use crate::chat_thread::ThreadCell;
 use crate::diff_command::{parse_diff_args, DiffArgs};
@@ -92,6 +93,7 @@ pub enum Route {
     Workers(Option<String>),
     WorkerCosts,
     Hold(HoldFilter),
+    Nudge(NudgeCommand),
     SendIt(SendIt),
     History(Result<Tool, String>),
     Help,
@@ -110,6 +112,7 @@ impl Route {
             | Route::Config
             | Route::History(_)
             | Route::InboxUsage
+            | Route::Nudge(NudgeCommand::Usage)
             | Route::Watch(WatchCommand::List | WatchCommand::Usage)
             | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
             | Route::Diff(DiffArgs::Usage(_) | DiffArgs::UnclosedQuote) => true,
@@ -117,6 +120,7 @@ impl Route {
             | Route::ReadInbox(_)
             | Route::DropInbox(_)
             | Route::Hold(_)
+            | Route::Nudge(NudgeCommand::Send { .. })
             | Route::SendIt(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
@@ -160,6 +164,7 @@ pub fn route_input(
                 Command::Diff => Route::Diff(parse_diff_args(args)),
                 Command::Workers => workers_route(args, line),
                 Command::Hold => hold_route(args, line, hold_targets),
+                Command::Nudge => Route::Nudge(parse_nudge_args(args)),
                 Command::SendIt => send_it_route(args, line),
                 Command::Config => Route::Config,
                 Command::Read | Command::Search => {

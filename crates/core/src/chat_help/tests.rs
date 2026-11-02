@@ -81,6 +81,7 @@ fn lists_hold_every_variant() {
             Diff,
             Workers,
             Hold,
+            Nudge,
             SendIt,
             Config,
             Read,
