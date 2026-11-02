@@ -358,7 +358,7 @@ pub fn resumed_session(expected: Option<&str>, found: String) -> Result<String, 
 pub fn turn_lost_at_resume(activity: Option<&str>) -> bool {
     activity
         .and_then(ActivityMark::parse)
-        .is_some_and(|mark| mark.running)
+        .is_some_and(|mark| mark.busy())
 }
 
 pub fn decode_claude_version(output: &str) -> Option<&str> {

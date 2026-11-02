@@ -5,7 +5,7 @@ use crate::codex_worker::CodexHost;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::opencode_worker::OpencodeHost;
 use crate::watches::Watches;
-use ralph_core::worker::{render_gone, ActivityMark, Scope};
+use ralph_core::worker::{render_gone, ActivityMark, ActivityState, Scope};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -35,7 +35,7 @@ impl Heartbeat {
             gone,
             last: Mutex::new(ActivityMark {
                 at: 0,
-                running: false,
+                state: ActivityState::Idle,
             }),
         })
     }
@@ -45,7 +45,7 @@ impl Heartbeat {
         fs::remove_file(&self.gone).ok();
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = ActivityMark {
             at: 0,
-            running: false,
+            state: ActivityState::Idle,
         };
     }
 
@@ -58,25 +58,30 @@ impl Heartbeat {
     }
 
     pub(crate) fn set_running(&self, running: bool) {
-        self.write(now_secs(), Some(running));
+        let state = if running {
+            ActivityState::Running
+        } else {
+            ActivityState::Idle
+        };
+        self.write(now_secs(), Some(state));
     }
 
     pub(crate) fn running(&self) -> bool {
         self.last
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .running
+            .busy()
     }
 
     pub(crate) fn gone(&self, scope: &Scope, reason: &str) {
         write_file(&self.gone, &render_gone(scope, reason)).ok();
     }
 
-    fn write(&self, at: u64, running: Option<bool>) {
+    fn write(&self, at: u64, state: Option<ActivityState>) {
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         let next = ActivityMark {
             at,
-            running: running.unwrap_or(last.running),
+            state: state.unwrap_or(last.state),
         };
         if next != *last {
             write_file(&self.activity, &next.render()).ok();

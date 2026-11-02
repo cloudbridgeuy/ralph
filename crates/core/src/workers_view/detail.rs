@@ -56,7 +56,7 @@ pub fn detail_view(detail: &WorkerDetail, now: DateTime<Utc>, width: usize) -> S
         let at = DateTime::from_timestamp(i64::try_from(mark.at).unwrap_or(i64::MAX), 0)
             .map(|at| at.to_rfc3339())
             .unwrap_or_default();
-        let state = if mark.running { "running" } else { "idle" };
+        let state = mark.state.label();
         lines.push(("heartbeat", cell_text(format!("{state} {}", age(&at, now)))));
     }
     let mut out = match url_line {
@@ -110,7 +110,7 @@ mod tests {
     use super::super::tests::{line, now, row};
     use super::super::{ActivityMark, Pr, PrState, Remote, Review, TicketRemote, WorkerDetail};
     use super::*;
-    use crate::worker::{StatusLine, Ticket, Tracker};
+    use crate::worker::{ActivityState, StatusLine, Ticket, Tracker};
     use unicode_width::UnicodeWidthStr;
 
     #[test]
@@ -134,7 +134,7 @@ mod tests {
             history: vec![],
             heartbeat: Some(ActivityMark {
                 at: 1_767_229_200 - 30,
-                running: true,
+                state: ActivityState::Running,
             }),
             reports,
         };

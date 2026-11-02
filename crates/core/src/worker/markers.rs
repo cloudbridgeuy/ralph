@@ -56,28 +56,59 @@ pub fn parse_gone(text: &str) -> (Scope, String) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityState {
+    Running,
+    Background,
+    Idle,
+    Failed,
+}
+
+impl ActivityState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Background => "background",
+            Self::Idle => "idle",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse(label: &str) -> Option<Self> {
+        match label {
+            "running" => Some(Self::Running),
+            "background" => Some(Self::Background),
+            "idle" => Some(Self::Idle),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    pub fn busy(self) -> bool {
+        matches!(self, Self::Running | Self::Background)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivityMark {
     pub at: u64,
-    pub running: bool,
+    pub state: ActivityState,
 }
 
 impl ActivityMark {
     pub fn render(&self) -> String {
-        let flag = if self.running { "running" } else { "idle" };
-        format!("{} {flag}", self.at)
+        format!("{} {}", self.at, self.state.label())
     }
 
     pub fn parse(text: &str) -> Option<Self> {
         let (at, flag) = text.trim().split_once(' ')?;
-        let running = match flag {
-            "running" => true,
-            "idle" => false,
-            _ => return None,
-        };
         Some(Self {
             at: at.parse().ok()?,
-            running,
+            state: ActivityState::parse(flag)?,
         })
+    }
+
+    pub fn busy(&self) -> bool {
+        self.state.busy()
     }
 }
 
@@ -182,12 +213,37 @@ mod tests {
 
     #[test]
     fn activity_mark_round_trips_and_rejects_garbage() {
-        for running in [true, false] {
-            let mark = ActivityMark { at: 42, running };
+        for state in [
+            ActivityState::Running,
+            ActivityState::Background,
+            ActivityState::Idle,
+            ActivityState::Failed,
+        ] {
+            let mark = ActivityMark { at: 42, state };
             assert_eq!(ActivityMark::parse(&mark.render()), Some(mark));
         }
         assert_eq!(ActivityMark::parse("42 paused"), None);
         assert_eq!(ActivityMark::parse("x running"), None);
         assert_eq!(ActivityMark::parse(""), None);
+    }
+
+    #[test]
+    fn activity_mark_parses_background_and_failed() {
+        assert_eq!(
+            ActivityMark::parse("123 background").map(|mark| mark.state),
+            Some(ActivityState::Background)
+        );
+        assert_eq!(
+            ActivityMark::parse("123 failed").map(|mark| mark.state),
+            Some(ActivityState::Failed)
+        );
+    }
+
+    #[test]
+    fn busy_is_running_or_background_only() {
+        assert!(ActivityState::Running.busy());
+        assert!(ActivityState::Background.busy());
+        assert!(!ActivityState::Idle.busy());
+        assert!(!ActivityState::Failed.busy());
     }
 }

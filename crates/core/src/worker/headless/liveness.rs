@@ -133,7 +133,7 @@ pub fn marker_state(
     let mark = activity.and_then(ActivityMark::parse);
     let phase = match mark {
         _ if blocked => Phase::Blocked,
-        Some(ActivityMark { running: true, .. }) => Phase::Running,
+        Some(mark) if mark.busy() => Phase::Running,
         Some(_) => Phase::Idle,
         None => Phase::Starting,
     };
