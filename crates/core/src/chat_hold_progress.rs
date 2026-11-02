@@ -140,10 +140,6 @@ pub fn held_ids(filter: &HoldFilter, running: &[String]) -> Vec<String> {
         .collect()
 }
 
-pub fn due(last_secs: Option<u64>, now_secs: u64, every_secs: u64) -> bool {
-    last_secs.is_none_or(|last| now_secs >= last.saturating_add(every_secs))
-}
-
 pub fn lines(progress: &[HoldProgress], width: usize, color: bool) -> Vec<String> {
     let mut shown: Vec<String> = progress
         .iter()

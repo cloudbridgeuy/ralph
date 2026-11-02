@@ -40,7 +40,12 @@ pub(super) fn run(filter: &HoldFilter, monitor: &Monitor, bar: &StatusBar) -> He
     monitor.set_hold(Some(filter.clone()));
     let outcome = {
         let _line = LineEnd;
-        let mut panel = HoldPanel::new(monitor.hold_progress, filter, bar.colored());
+        let mut panel = HoldPanel::new(
+            monitor.hold_progress,
+            filter,
+            bar.colored(),
+            &monitor.store_dir,
+        );
         let outcome = wait(filter, monitor, bar, &mut panel);
         panel.clear();
         outcome
@@ -67,7 +72,7 @@ fn wait(
     loop {
         let mut status = monitor.status();
         status.hold = Some(filter.clone());
-        panel.tick(monitor);
+        panel.tick();
         let width = screen_columns();
         if shown.as_ref() != Some(&status) || width != panel.painted || panel.stale(width) {
             panel.paint(&bar.line(&status, width), width);

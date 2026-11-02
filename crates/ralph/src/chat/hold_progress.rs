@@ -1,11 +1,11 @@
-use crate::chat::monitor::Monitor;
+use crate::chat::bounded::stdout_within;
 use crate::chat::prompt::terminal_columns;
 use crate::config::AppConfig;
-use crate::snapshot::{base_with, stdout_of, ORIGIN_HEAD_ARGS};
-use crate::workers::{capture_pane, running_workers};
+use crate::snapshot::{base_with, ORIGIN_HEAD_ARGS};
+use crate::workers::running_workers;
 use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_hold_progress::{
-    due, held_ids, last_hint, lines, rebase_progress, redraw, HoldProgress,
+    held_ids, last_hint, lines, rebase_progress, redraw, HoldProgress,
 };
 use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{
@@ -13,17 +13,19 @@ use ralph_core::worker::{
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::process::Command;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::thread;
+use std::time::{Duration, Instant};
 
-const GATHER_EVERY_SECS: u64 = 30;
+const GATHER_EVERY: Duration = Duration::from_secs(30);
+const COMMAND_LIMIT: Duration = Duration::from_secs(3);
 
 pub(super) struct HoldPanel {
-    enabled: bool,
-    filter: HoldFilter,
     color: bool,
     started: Instant,
-    gathered_at: Option<u64>,
+    gathered: Option<Receiver<Vec<HoldProgress>>>,
+    _stop: Sender<()>,
     facts: Vec<HoldProgress>,
     shown: Vec<String>,
     bar: String,
@@ -31,13 +33,19 @@ pub(super) struct HoldPanel {
 }
 
 impl HoldPanel {
-    pub(super) fn new(enabled: bool, filter: &HoldFilter, color: bool) -> Self {
+    pub(super) fn new(enabled: bool, filter: &HoldFilter, color: bool, store_dir: &Path) -> Self {
+        let (stop, stopped) = mpsc::channel();
+        let gathered = enabled.then(|| {
+            let (sender, receiver) = mpsc::channel();
+            let (store_dir, filter) = (store_dir.to_path_buf(), filter.clone());
+            thread::spawn(move || gather_loop(&store_dir, &filter, &sender, &stopped));
+            receiver
+        });
         Self {
-            enabled,
-            filter: filter.clone(),
             color,
             started: Instant::now(),
-            gathered_at: None,
+            gathered,
+            _stop: stop,
             facts: Vec::new(),
             shown: Vec::new(),
             bar: String::new(),
@@ -45,11 +53,11 @@ impl HoldPanel {
         }
     }
 
-    pub(super) fn tick(&mut self, monitor: &Monitor) {
-        let now = self.started.elapsed().as_secs();
-        if self.enabled && due(self.gathered_at, now, GATHER_EVERY_SECS) {
-            self.facts = gather(monitor, &self.filter);
-            self.gathered_at = Some(now);
+    pub(super) fn tick(&mut self) {
+        if let Some(gathered) = &self.gathered {
+            if let Some(latest) = gathered.try_iter().last() {
+                self.facts = latest;
+            }
         }
     }
 
@@ -107,16 +115,45 @@ fn git_out(dir: Option<&Path>, args: &[&str]) -> Option<String> {
     if let Some(dir) = dir {
         command.arg("-C").arg(dir);
     }
-    stdout_of(command.args(args).stdin(Stdio::null())).ok()
+    stdout_within(command.args(args), COMMAND_LIMIT)
 }
 
-fn gather(monitor: &Monitor, filter: &HoldFilter) -> Vec<HoldProgress> {
-    let running = running_workers(&monitor.store_dir);
+fn pane_of(session: &str) -> Option<String> {
+    let mut command = Command::new("tmux");
+    command.args(["capture-pane", "-p", "-t", &format!("={session}:")]);
+    stdout_within(&mut command, COMMAND_LIMIT)
+}
+
+fn gather_loop(
+    store_dir: &Path,
+    filter: &HoldFilter,
+    sender: &Sender<Vec<HoldProgress>>,
+    stopped: &Receiver<()>,
+) {
+    let config = AppConfig::load().map_err(|e| e.to_string());
+    loop {
+        if sender.send(gather(store_dir, filter, &config)).is_err() {
+            return;
+        }
+        if !matches!(
+            stopped.recv_timeout(GATHER_EVERY),
+            Err(RecvTimeoutError::Timeout)
+        ) {
+            return;
+        }
+    }
+}
+
+fn gather(
+    store_dir: &Path,
+    filter: &HoldFilter,
+    config: &Result<AppConfig, String>,
+) -> Vec<HoldProgress> {
+    let running = running_workers(store_dir);
     let ids: Vec<String> = running.iter().map(|worker| worker.id.clone()).collect();
     let held = held_ids(filter, &ids);
     let porcelain = git_out(None, &["worktree", "list", "--porcelain"]);
-    let config = AppConfig::load().map_err(|e| e.to_string());
-    let base = base_with(&config, git_out(None, &ORIGIN_HEAD_ARGS).as_deref());
+    let base = base_with(config, git_out(None, &ORIGIN_HEAD_ARGS).as_deref());
     running
         .iter()
         .filter(|worker| held.contains(&worker.id))
@@ -124,13 +161,13 @@ fn gather(monitor: &Monitor, filter: &HoldFilter) -> Vec<HoldProgress> {
             let tree = porcelain
                 .as_deref()
                 .and_then(|listing| worktree_for_branch(listing, &branch_name(&worker.id)));
-            progress_of(monitor, worker, tree.as_deref(), &base)
+            progress_of(store_dir, worker, tree.as_deref(), &base)
         })
         .collect()
 }
 
 fn progress_of(
-    monitor: &Monitor,
+    store_dir: &Path,
     worker: &RunningWorker,
     tree: Option<&Path>,
     base: &str,
@@ -138,14 +175,14 @@ fn progress_of(
     HoldProgress {
         id: worker.id.clone(),
         elapsed_secs: 0,
-        activity: std::fs::read_to_string(activity_path(&monitor.store_dir, &worker.id))
+        activity: std::fs::read_to_string(activity_path(store_dir, &worker.id))
             .ok()
             .and_then(|text| ActivityMark::parse(&text))
             .map(|mark| mark.state),
         rebase: tree.and_then(rebase_of),
         commits: tree.and_then(|tree| commits_since(tree, base)),
         hint: (worker.kind == HarnessId::Claude)
-            .then(|| capture_pane(&worker.session))
+            .then(|| pane_of(&worker.session))
             .flatten()
             .and_then(|pane| last_hint(&pane)),
     }

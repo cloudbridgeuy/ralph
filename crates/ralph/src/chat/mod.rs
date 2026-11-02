@@ -1,3 +1,4 @@
+mod bounded;
 pub(crate) mod cell;
 mod changes;
 mod check;

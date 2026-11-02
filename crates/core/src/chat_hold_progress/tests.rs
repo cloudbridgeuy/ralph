@@ -148,14 +148,6 @@ fn the_hint_is_the_last_non_blank_line_trimmed() {
 }
 
 #[test]
-fn gathering_is_due_at_once_then_every_interval() {
-    assert!(due(None, 5, 30));
-    assert!(!due(Some(10), 39, 30));
-    assert!(due(Some(10), 40, 30));
-    assert!(!due(Some(10), 5, 30));
-}
-
-#[test]
 fn lines_cap_at_three_then_count_the_rest() {
     let many: Vec<HoldProgress> = (0..5)
         .map(|n| HoldProgress {
