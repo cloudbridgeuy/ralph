@@ -77,7 +77,10 @@ pub struct ResponseUsage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefixCache {
     Explicit,
-    Implicit { tier: CacheTier },
+    Implicit {
+        tier: CacheTier,
+        min_tokens: Option<u64>,
+    },
 }
 
 pub trait Provider: Send + Sync {

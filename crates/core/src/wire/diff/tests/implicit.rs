@@ -5,6 +5,7 @@ const IMPLICIT_30M: CacheTier = CacheTier::Ttl { seconds: 1_800 };
 
 struct ImplicitProvider {
     tier: CacheTier,
+    min_tokens: Option<u64>,
 }
 
 impl Provider for ImplicitProvider {
@@ -39,7 +40,10 @@ impl Provider for ImplicitProvider {
         Anthropic.segments(body)
     }
     fn prefix_cache(&self, _body: &Value) -> PrefixCache {
-        PrefixCache::Implicit { tier: self.tier }
+        PrefixCache::Implicit {
+            tier: self.tier,
+            min_tokens: self.min_tokens,
+        }
     }
     fn usage(&self, response: &ResponseView) -> ResponseUsage {
         Anthropic.usage(response)
@@ -55,18 +59,23 @@ impl Provider for ImplicitProvider {
     }
 }
 
-fn implicit_view_with(a: &CallRecord, b: &CallRecord, tier: CacheTier) -> DiffView {
+fn implicit_view_with(
+    a: &CallRecord,
+    b: &CallRecord,
+    tier: CacheTier,
+    min_tokens: Option<u64>,
+) -> DiffView {
     diff_view(&DiffInput {
         a: Some(a),
         b,
         session: &[a.clone(), b.clone()],
-        provider: &ImplicitProvider { tier },
+        provider: &ImplicitProvider { tier, min_tokens },
         base_picked: false,
     })
 }
 
 fn implicit_view(a: &CallRecord, b: &CallRecord) -> DiffView {
-    implicit_view_with(a, b, IMPLICIT_30M)
+    implicit_view_with(a, b, IMPLICIT_30M, None)
 }
 
 fn unmarked_pair(b_usage: UsageOutcome, b_start: i64) -> (CallRecord, CallRecord) {
@@ -128,10 +137,38 @@ fn implicit_gap_within_its_tier_is_unexplained() {
 fn implicit_unspecified_tier_never_expires_by_ttl() {
     let (a, b) = unmarked_pair(written(0, 100), 7_200);
     assert!(matches!(
-        implicit_view_with(&a, &b, CacheTier::Unspecified)
+        implicit_view_with(&a, &b, CacheTier::Unspecified, None)
             .explanation
             .verdict,
         Verdict::Unexplained { .. }
+    ));
+}
+
+#[test]
+fn implicit_short_shared_prefix_is_too_short_to_cache() {
+    let (a, b) = unmarked_pair(written(0, 100), 400);
+    let view = implicit_view_with(&a, &b, IMPLICIT_30M, Some(1_024));
+    let servable = view.explanation.servable_tokens.unwrap();
+    assert!(servable < 1_024);
+    assert_eq!(
+        view.explanation.verdict,
+        Verdict::PrefixTooShort {
+            servable_tokens: servable,
+            min_tokens: 1_024
+        }
+    );
+    assert!(verdict_text(&view).starts_with("prefix too short to cache"));
+    let json = serde_json::to_value(&view).unwrap();
+    assert_eq!(json["explanation"]["verdict"]["kind"], "prefix_too_short");
+}
+
+#[test]
+fn implicit_prefix_at_or_above_the_minimum_keeps_the_other_verdicts() {
+    let (a, b) = unmarked_pair(written(0, 100), 2_000);
+    let view = implicit_view_with(&a, &b, IMPLICIT_30M, Some(10));
+    assert!(matches!(
+        view.explanation.verdict,
+        Verdict::TtlExpired { .. }
     ));
 }
 
@@ -207,7 +244,10 @@ fn servable_breakpoint_explicit_takes_the_last_marked_one() {
 
 #[test]
 fn servable_breakpoint_implicit_spans_the_shared_prefix() {
-    let implicit = PrefixCache::Implicit { tier: IMPLICIT_30M };
+    let implicit = PrefixCache::Implicit {
+        tier: IMPLICIT_30M,
+        min_tokens: None,
+    };
     let segments = [seg(Some(FIVE_MIN)), seg(None), seg(None)];
     assert_eq!(
         servable_breakpoint(&segments, 3, implicit),

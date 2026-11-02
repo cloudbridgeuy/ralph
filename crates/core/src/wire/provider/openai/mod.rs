@@ -36,6 +36,8 @@ const PARAM_KEYS: [&str; 16] = [
     "include",
 ];
 
+const MIN_CACHEABLE_TOKENS: u64 = 1_024;
+
 const TWELVE_HOURS: CacheTier = CacheTier::Ttl { seconds: 43_200 };
 
 const DEFAULT_CACHE_READ: f64 = 0.1;
@@ -292,6 +294,11 @@ impl Provider for OpenAi {
         }
         PrefixCache::Implicit {
             tier: implicit_tier(body),
+            min_tokens: body
+                .get("model")
+                .and_then(Value::as_str)
+                .and_then(listed)
+                .map(|_| MIN_CACHEABLE_TOKENS),
         }
     }
 

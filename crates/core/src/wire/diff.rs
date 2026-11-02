@@ -64,6 +64,10 @@ pub enum Verdict {
     ParamChanged {
         names: Vec<String>,
     },
+    PrefixTooShort {
+        servable_tokens: u64,
+        min_tokens: u64,
+    },
     TtlExpired {
         gap_secs: i64,
         ttl_secs: u64,
@@ -385,30 +389,24 @@ fn servable_breakpoint(
         .find_map(|(index, segment)| segment.breakpoint.map(|tier| Breakpoint { index, tier }));
     match prefix_cache {
         PrefixCache::Explicit => marked,
-        PrefixCache::Implicit { tier } => shared.checked_sub(1).map(|index| Breakpoint {
+        PrefixCache::Implicit { tier, .. } => shared.checked_sub(1).map(|index| Breakpoint {
             index,
             tier: marked.map_or(tier, |breakpoint| breakpoint.tier),
         }),
     }
 }
 
-fn mismatch_verdict(
-    input: &Pair,
-    facts: &[FactDiff],
-    headers: &[HeaderDiff],
-    breakpoint: &Breakpoint,
-    b_segments: &[PromptSegment],
-) -> Verdict {
+fn changed_verdict(input: &Pair, facts: &[FactDiff], headers: &[HeaderDiff]) -> Option<Verdict> {
     if input.a.facts.model != input.b.facts.model {
-        return Verdict::ModelChanged {
+        return Some(Verdict::ModelChanged {
             a: input.a.facts.model.clone(),
             b: input.b.facts.model.clone(),
-        };
+        });
     }
     if !headers.is_empty() {
-        return Verdict::HeaderChanged {
+        return Some(Verdict::HeaderChanged {
             names: headers.iter().map(|h| h.name.clone()).collect(),
-        };
+        });
     }
     let relevant: Vec<String> = facts
         .iter()
@@ -420,9 +418,23 @@ fn mismatch_verdict(
         })
         .map(|fact| fact.name.clone())
         .collect();
-    if !relevant.is_empty() {
-        return Verdict::ParamChanged { names: relevant };
+    (!relevant.is_empty()).then_some(Verdict::ParamChanged { names: relevant })
+}
+
+fn too_short_verdict(prefix_cache: PrefixCache, servable_tokens: u64) -> Option<Verdict> {
+    match prefix_cache {
+        PrefixCache::Implicit {
+            min_tokens: Some(min_tokens),
+            ..
+        } if servable_tokens < min_tokens => Some(Verdict::PrefixTooShort {
+            servable_tokens,
+            min_tokens,
+        }),
+        _ => None,
     }
+}
+
+fn lapse_verdict(input: &Pair, breakpoint: &Breakpoint, b_segments: &[PromptSegment]) -> Verdict {
     if let CacheTier::Ttl { seconds } = breakpoint.tier {
         let touch = last_touch(input, breakpoint.index, b_segments);
         let gap = (input.b.started_at - touch.ended_at).num_seconds();
@@ -489,7 +501,9 @@ fn explain(
     let verdict = if usage.cache_read as f64 >= servable as f64 * CACHE_AGREE_RATIO {
         served
     } else {
-        mismatch_verdict(input, &base.facts, &base.headers, &breakpoint, b_segments)
+        changed_verdict(input, &base.facts, &base.headers)
+            .or_else(|| too_short_verdict(prefix_cache, servable))
+            .unwrap_or_else(|| lapse_verdict(input, &breakpoint, b_segments))
     };
     Explanation {
         servable_bytes,
@@ -611,6 +625,10 @@ fn verdict_text(view: &DiffView) -> String {
         Verdict::ParamChanged { names } => {
             format!("cache-relevant param changed: {}", names.join(", "))
         }
+        Verdict::PrefixTooShort {
+            servable_tokens,
+            min_tokens,
+        } => format!("prefix too short to cache: ~{servable_tokens} tokens, minimum {min_tokens}"),
         Verdict::TtlExpired {
             gap_secs,
             ttl_secs,
