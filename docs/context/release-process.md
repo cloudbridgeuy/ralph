@@ -36,7 +36,7 @@ All workflows pin Linux runners to `ubuntu-26.04` instead of `ubuntu-latest`, so
 
 1. Fails unless the tagged commit is on `main` and the tag equals `v` plus the workspace version.
 2. Fails unless `CHANGELOG.md` has a non-empty `## vX.Y.Z` section. That section is the release body.
-3. Builds `ralph` with `--release --locked` for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
+3. Builds `ralph` with `--release --locked` for `aarch64-apple-darwin`, `x86_64-apple-darwin`, `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`. No musl targets are published.
 4. Packages `ralph-vX.Y.Z-<target>.tar.gz` with a `.sha256` file. See [Asset contract](#asset-contract).
 5. Creates the GitHub Release with `--notes-file` and attaches all assets. The notes file is not an asset.
 
@@ -60,7 +60,7 @@ v0.2.0 has only the two macOS targets. Linux assets start with the first release
 1. Gets `https://api.github.com/repos/cloudbridgeuy/ralph/releases` without a token. Drafts, prereleases and tags that are not `vX.Y.Z` are ignored. The highest version is the latest.
 2. Compares it with `ralph --version`. If the latest is not newer, it prints that ralph is up to date and exits 0.
 3. Refuses a dev build (`-dev`, installed from source) unless `--force`. With `--force` it installs the latest release even when that is older than the dev build.
-4. Picks the asset for the build's arch and OS. Other platforms get an error.
+4. Picks the asset for the build's arch, OS and libc. musl builds and other platforms get an error: no musl asset is published.
 5. Resolves the real path of the binary (symlinks followed) and creates a temp file in its directory. If the directory is not writable, it stops with the path before it downloads. For `/usr/local/bin` this usually means `sudo ralph upgrade`.
 6. Downloads the archive and its `.sha256`, checks the digest, extracts `ralph` in memory, sets mode `755`, and renames the temp file over the binary.
 7. Prints the release notes of every skipped release, newest first.

@@ -106,13 +106,16 @@ pub fn skipped_notes(installed: Installed, releases: &[Release]) -> String {
         .join("\n\n")
 }
 
-pub fn target_triple(arch: &str, os: &str) -> Option<&'static str> {
-    match (arch, os) {
-        ("aarch64", "macos") => Some("aarch64-apple-darwin"),
-        ("x86_64", "macos") => Some("x86_64-apple-darwin"),
-        ("aarch64", "linux") => Some("aarch64-unknown-linux-gnu"),
-        ("x86_64", "linux") => Some("x86_64-unknown-linux-gnu"),
-        _ => None,
+pub fn target_triple(arch: &str, os: &str, env: &str) -> Result<&'static str, String> {
+    match (arch, os, env) {
+        (arch @ ("aarch64" | "x86_64"), "linux", "musl") => Err(format!(
+            "no musl release is published for {arch}-unknown-linux-musl; build ralph from source"
+        )),
+        ("aarch64", "macos", _) => Ok("aarch64-apple-darwin"),
+        ("x86_64", "macos", _) => Ok("x86_64-apple-darwin"),
+        ("aarch64", "linux", _) => Ok("aarch64-unknown-linux-gnu"),
+        ("x86_64", "linux", _) => Ok("x86_64-unknown-linux-gnu"),
+        _ => Err(format!("no ralph release is built for {arch} {os}")),
     }
 }
 
