@@ -155,8 +155,8 @@ impl Command {
                 ),
             ],
             Command::Nudge => &[(
-                "/nudge <id> [text]",
-                "send a worker a request for one line of progress with no model turn, then print what the worker did with it (busy, reported, taken, not started, no reaction after Ns); [text] replaces the default request; refused while the worker waits on a permission request; while a turn runs it waits in the queue; Tab completes worker ids",
+                "/nudge [<id> [text]]",
+                "send a worker a request for one line of progress with no model turn, then print what the worker did with it (busy, reported, taken, not started, no reaction after Ns); [text] replaces the default request; with no id it nudges the only running worker, or lists the running ids when there are several; refused while the worker waits on a permission request; while a turn runs it waits in the queue; Tab completes worker ids",
             )],
             Command::SendIt => &[
                 (

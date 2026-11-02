@@ -112,7 +112,6 @@ impl Route {
             | Route::Config
             | Route::History(_)
             | Route::InboxUsage
-            | Route::Nudge(NudgeCommand::Usage)
             | Route::Watch(WatchCommand::List | WatchCommand::Usage)
             | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
             | Route::Diff(DiffArgs::Usage(_) | DiffArgs::UnclosedQuote) => true,
@@ -120,7 +119,7 @@ impl Route {
             | Route::ReadInbox(_)
             | Route::DropInbox(_)
             | Route::Hold(_)
-            | Route::Nudge(NudgeCommand::Send { .. })
+            | Route::Nudge(_)
             | Route::SendIt(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
