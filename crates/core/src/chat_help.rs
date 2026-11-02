@@ -174,7 +174,7 @@ impl Command {
             )],
             Command::View => &[(
                 "/view <file.md>",
-                "print a local markdown file with the chat renderer; relative image paths resolve from the file's directory and draw inline where the terminal shows images; mermaid blocks draw as pictures where the terminal shows images and the text stays readable, else as text diagrams; refuses a missing file, a directory, a file that is not .md or .markdown, and a file over 2 MB; starts no turn",
+                "print a local markdown file with the chat renderer; relative image paths resolve from the file's directory and draw inline where the terminal shows images; mermaid blocks draw as pictures where the terminal shows images and the text stays readable, else as text diagrams; refuses a missing file, a directory, a file that is not .md or .markdown, and a file over 2 MB; Tab completes the path from directories and .md or .markdown files; starts no turn",
             )],
             Command::Read => &[(
                 "/read <id> [raw|summary] [--cursor <c>]",
@@ -248,7 +248,7 @@ pub const PROMPT_KEYS: &[KeyHelp] = &[
     },
     KeyHelp {
         keys: "Tab, Shift-Tab",
-        effect: "after /hold , complete the word under the cursor from this chat's worker ids, watch:<name> and schedule:<id>; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
+        effect: "after /hold , complete the word under the cursor from this chat's worker ids, watch:<name> and schedule:<id>; after /view , complete the path from directories and .md or .markdown files; Tab opens the menu and moves on, Shift-Tab moves back, Enter takes the pick",
     },
     KeyHelp {
         keys: "Up, Down, Ctrl-R",

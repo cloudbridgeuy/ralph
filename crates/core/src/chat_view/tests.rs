@@ -72,3 +72,70 @@ fn text_without_images_is_unchanged() {
     let text = "# Title\n\nplain *text*\n";
     assert_eq!(rebase_images(text, Path::new("/docs")), text);
 }
+
+fn entry(name: &str, is_dir: bool) -> DirEntry {
+    DirEntry {
+        name: name.to_string(),
+        is_dir,
+    }
+}
+
+#[test]
+fn path_query_splits_the_typed_path_at_the_last_slash() {
+    let line = "/view docs/my no";
+    assert_eq!(
+        view_path_query(line, line.len()),
+        Some(PathQuery {
+            span: 6..16,
+            dir: "docs/".to_string(),
+            prefix: "my no".to_string(),
+        })
+    );
+    assert_eq!(
+        view_path_query("/view ", 6),
+        Some(PathQuery {
+            span: 6..6,
+            dir: String::new(),
+            prefix: String::new(),
+        })
+    );
+    assert_eq!(
+        view_path_query("  /view ~/a", 11).map(|query| query.dir),
+        Some("~/".to_string())
+    );
+    assert_eq!(view_path_query("/view", 5), None);
+    assert_eq!(view_path_query("/viewer a", 9), None);
+    assert_eq!(view_path_query("/hold a", 7), None);
+}
+
+#[test]
+fn path_completion_offers_dirs_and_markdown_files_that_match() {
+    let query = view_path_query("/view docs/R", 12).unwrap();
+    let entries = [
+        entry("README.md", false),
+        entry("Rules.MARKDOWN", false),
+        entry("Run.rs", false),
+        entry("Recipes", true),
+        entry("notes.md", false),
+        entry(".Rhidden.md", false),
+    ];
+    let completion = view_path_completion(&query, &entries);
+    assert_eq!(completion.span, 6..12);
+    assert_eq!(
+        completion.values,
+        ["docs/README.md", "docs/Recipes/", "docs/Rules.MARKDOWN"]
+    );
+}
+
+#[test]
+fn hidden_entries_show_only_for_a_dot_prefix() {
+    let entries = [
+        entry(".notes.md", false),
+        entry(".git", true),
+        entry("a.md", false),
+    ];
+    let all = view_path_completion(&view_path_query("/view ", 6).unwrap(), &entries);
+    assert_eq!(all.values, ["a.md"]);
+    let dotted = view_path_completion(&view_path_query("/view .", 7).unwrap(), &entries);
+    assert_eq!(dotted.values, [".git/", ".notes.md"]);
+}

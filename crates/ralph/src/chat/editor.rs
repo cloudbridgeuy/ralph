@@ -2,12 +2,14 @@ use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
 use crate::chat::suggestion::SuggestionHighlighter;
 use crate::clipboard::PASTE_IMAGE;
+use crate::render::image::resolve;
 use crate::signal::default_sigttou_in;
 use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
 use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
-use ralph_core::chat_hold::hold_completions;
+use ralph_core::chat_hold::{hold_completions, HoldCompletion};
 use ralph_core::chat_memory::Role;
 use ralph_core::chat_nudge::nudge_completions;
+use ralph_core::chat_view::{view_path_completion, view_path_query, DirEntry};
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     default_vi_visual_keybindings, ColumnarMenu, Completer, CompletionResult, EditCommand,
@@ -35,6 +37,7 @@ impl Completer for HoldCompleter {
         let status = self.0.status();
         let suggestions: Vec<Suggestion> = hold_completions(line, pos, &status)
             .or_else(|| nudge_completions(line, pos, &status))
+            .or_else(|| view_completions(line, pos))
             .map(|completion| {
                 let span = Span::new(completion.span.start, completion.span.end);
                 completion
@@ -50,6 +53,23 @@ impl Completer for HoldCompleter {
             .unwrap_or_default();
         CompletionResult::fresh(suggestions)
     }
+}
+
+fn view_completions(line: &str, pos: usize) -> Option<HoldCompletion> {
+    let query = view_path_query(line, pos)?;
+    let dir = match query.dir.as_str() {
+        "" => Path::new(".").to_path_buf(),
+        typed => resolve(typed),
+    };
+    let entries: Vec<DirEntry> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| DirEntry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            is_dir: std::fs::metadata(entry.path()).is_ok_and(|meta| meta.is_dir()),
+        })
+        .collect();
+    Some(view_path_completion(&query, &entries))
 }
 
 pub(super) struct ChatEditMode {
