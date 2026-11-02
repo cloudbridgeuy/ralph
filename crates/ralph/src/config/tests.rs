@@ -175,6 +175,33 @@ fn chat_terminal_status_defaults_on_and_can_be_disabled() {
 }
 
 #[test]
+fn chat_name_and_terminal_title_parse_with_defaults() {
+    let defaults = AppConfig::new().chat;
+    assert_eq!(defaults.name, None);
+    assert!(defaults.terminal_title);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(&path, "[chat]\nname = \"review\"\nterminal_title = false\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert_eq!(config.chat.name.as_deref(), Some("review"));
+    assert!(!config.chat.terminal_title);
+    fs::write(&path, "[chat]\nedit_mode = \"vi\"\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert_eq!(config.chat.name, None);
+    assert!(config.chat.terminal_title);
+}
+
+#[test]
+fn chat_name_and_terminal_title_are_not_reported_unknown() {
+    let (_, unknown) = AppConfig::parse_reporting_unknown(
+        "[chat]\nname = \"x\"\nterminal_title = true\nbogus = 1\n",
+        "c.toml",
+    )
+    .unwrap();
+    assert_eq!(unknown, ["chat.bogus"]);
+}
+
+#[test]
 fn chat_auto_hold_defaults_on_and_can_be_disabled() {
     assert!(AppConfig::new().chat.auto_hold);
     let temp_dir = TempDir::new().unwrap();

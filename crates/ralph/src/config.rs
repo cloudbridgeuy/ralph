@@ -303,6 +303,10 @@ pub struct ChatSection {
     #[serde(default = "default_true")]
     pub terminal_status: bool,
     #[serde(default = "default_true")]
+    pub terminal_title: bool,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default = "default_true")]
     pub auto_hold: bool,
     #[serde(default = "default_send_it_seconds")]
     pub send_it_seconds: u64,
@@ -375,6 +379,8 @@ impl Default for ChatSection {
             inbox_alert_unknown_focus: UnknownFocus::Alert,
             status_powerline: false,
             terminal_status: true,
+            terminal_title: true,
+            name: None,
             auto_hold: true,
             send_it_seconds: default_send_it_seconds(),
             send_it_max_turns: default_send_it_max_turns(),

@@ -57,6 +57,21 @@ fn test_cli_chat_takes_a_wrap_width() {
 }
 
 #[test]
+fn test_cli_chat_takes_a_name_before_or_after_the_subcommand() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "--name", "review"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected chat");
+    };
+    assert_eq!(chat.name.as_deref(), Some("review"));
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat"]).unwrap().command else {
+        panic!("expected chat");
+    };
+    assert_eq!(chat.name, None);
+}
+
+#[test]
 fn test_cli_chat_takes_a_worktree_dir_and_chat_mcp_a_socket() {
     let Some(Commands::Chat(chat)) =
         Cli::try_parse_from(["ralph", "chat", "--worktree-dir", "~/wt"])
