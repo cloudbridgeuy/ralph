@@ -101,14 +101,17 @@ pub struct HoldCompletion {
 }
 
 pub fn hold_completions(line: &str, cursor: usize, status: &Status) -> Option<HoldCompletion> {
-    let args = line.get(..cursor)?.trim_start().strip_prefix("/hold")?;
-    let partial = args.trim_start();
-    if partial.len() == args.len() || partial.contains(char::is_whitespace) {
+    let args = line.get(..cursor)?.trim_start().strip_prefix(HOLD)?;
+    if !args.starts_with(char::is_whitespace) {
         return None;
     }
+    let partial = args.rsplit(char::is_whitespace).next().unwrap_or_default();
+    let typed: BTreeSet<&str> = args[..args.len() - partial.len()]
+        .split_whitespace()
+        .collect();
     let candidates: BTreeSet<String> = hold_targets(status)
         .into_iter()
-        .filter(|candidate| candidate.starts_with(partial))
+        .filter(|candidate| candidate.starts_with(partial) && !typed.contains(candidate.as_str()))
         .collect();
     Some(HoldCompletion {
         span: cursor - partial.len()..cursor,

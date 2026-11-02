@@ -285,13 +285,37 @@ fn completion_only_applies_to_the_hold_argument() {
         "",
         "/hold",
         "/holdw",
-        "/hold w1 w",
         "/workers ",
         "hello /hold ",
         "/inbox ",
     ] {
         assert_eq!(complete(line, &status), None, "{line:?}");
     }
+}
+
+#[test]
+fn completion_continues_with_the_word_under_the_cursor() {
+    let status = status(&["w1", "w2"], &["watch:ci"], &["nightly"]);
+    let completion = complete("/hold w1 w", &status).unwrap();
+    assert_eq!(completion.span, 9..10);
+    assert_eq!(completion.values, ["w2", "watch:ci"]);
+    let completion = complete("/hold w1  watch:c", &status).unwrap();
+    assert_eq!(completion.span, 10..17);
+    assert_eq!(completion.values, ["watch:ci"]);
+}
+
+#[test]
+fn completion_skips_targets_already_typed() {
+    let status = status(&["w1", "w2"], &["watch:ci"], &[]);
+    assert_eq!(values("/hold w1 ", &status), ["w2", "watch:ci"]);
+    assert_eq!(values("/hold w2 w1 ", &status), ["watch:ci"]);
+    assert_eq!(values("/hold w1 w1", &status), Vec::<String>::new());
+}
+
+#[test]
+fn completion_after_the_last_space_spans_nothing() {
+    let completion = complete("/hold w1 ", &status(&["w1", "w2"], &[], &[])).unwrap();
+    assert_eq!(completion.span, 9..9);
 }
 
 #[test]
