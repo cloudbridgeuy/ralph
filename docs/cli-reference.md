@@ -95,12 +95,12 @@ RALPH_THEME="Monokai Extended" ralph ask 'your prompt'
 Run a local recording proxy, or inspect recorded sessions with `ls`, `show`, `diff`, and `sessions`. Details: [ralph wire](context/ralph-wire.md).
 
 ```bash
-ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--responses]
+ralph wire [--provider anthropic|openai] [--port N] [--upstream URL] [--dir PATH] [--responses]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--provider` | `anthropic` | Provider to proxy |
+| `--provider` | `anthropic` | Provider to proxy: `anthropic` or `openai` |
 | `--port` | `0` | Port on 127.0.0.1; `0` picks a free port |
 | `--upstream` | provider default | Upstream base URL |
 | `--dir` | `<tmp>/ralph-wire` | Directory holding session folders |

@@ -189,6 +189,7 @@ variable is set is marked. Command-line flags do not apply to this command, so t
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireProvider {
     Anthropic,
+    Openai,
 }
 
 #[derive(clap::Args, Debug, Clone)]
@@ -201,7 +202,7 @@ pub struct WireArgs {
         long,
         value_enum,
         default_value = "anthropic",
-        help = "Provider to proxy"
+        help = "Provider to proxy (anthropic or openai)"
     )]
     pub provider: WireProvider,
 

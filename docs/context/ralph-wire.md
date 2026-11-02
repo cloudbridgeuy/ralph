@@ -3,7 +3,7 @@
 `ralph wire` is a local HTTP proxy between a harness and a provider. It forwards every request unchanged and records one line per call. It sets no environment variables and starts no harness.
 
 ```bash
-ralph wire [--provider anthropic] [--port N] [--upstream URL] [--dir PATH] [--responses]
+ralph wire [--provider anthropic|openai] [--port N] [--upstream URL] [--dir PATH] [--responses]
 ralph wire ls [--session ID] [--dir PATH] [--all] [--json]
 ralph wire sessions [--dir PATH] [--json]
 ```
@@ -13,6 +13,16 @@ Flags are listed in the [CLI reference](../cli-reference.md#ralph-wire).
 ## Startup output
 
 Listen URL, session directory, a plaintext warning, and the provider's base-URL hint, such as `export ANTHROPIC_BASE_URL=http://127.0.0.1:PORT` (a provider may add a path suffix to the URL). Then one live row per finished inference call: sequence, UTC time, model, status, uncached input, cache read, cache writes by tier (`w5m=`, `w1h=`, `w?=`), output, cache hit ratio, input-equivalent cost (`-` when unrated), and `INCOMPLETE: <reason>` when the call did not finish. Non-inference calls are recorded but not shown. Run until Ctrl-C.
+
+## OpenAI provider
+
+`--provider openai` proxies `https://api.openai.com` and prints `export OPENAI_BASE_URL=http://127.0.0.1:PORT/v1`. Only `POST /v1/chat/completions` is an inference call; every other path is `other`. Stored response headers add `x-request-id`, `openai-processing-ms`, `openai-version`, and `x-ratelimit-*`. Cache-relevant headers are `openai-organization` and `openai-project`; cache-relevant parameters are `prompt_cache_key`, `prompt_cache_options`, `prompt_cache_retention`, `response_format`, `reasoning_effort`, and `tool_choice`.
+
+Segments are `tools[i] NAME`, the leading run of `system` and `developer` messages (`system[i]`, `system[i].j TYPE` for array content), then the rest (`msg[i] ROLE/text`, `msg[i].j ROLE/TYPE`, `msg[i] assistant/tool_calls`). A content part with `prompt_cache_breakpoint` is a 30m breakpoint (a `ttl` other than `30m` is `?`); the marker is not part of the compared content.
+
+Caching is implicit: OpenAI picks one breakpoint, so `wire diff` treats the whole shared prefix as servable with a 30m TTL, unless `prompt_cache_options.mode` is `explicit` (only marked breakpoints count, as for Anthropic).
+
+Usage comes from `usage` in a JSON body, or the last non-null `usage` in an SSE stream; `data: [DONE]` is ignored. Streams carry usage only when the client set `stream_options.include_usage`; wire never edits requests, so a stream without it is `usage_missing`. `prompt_tokens` includes cached and written tokens: uncached input is `prompt_tokens` minus `cached_tokens` minus `cache_write_tokens`. Writes are always the 30m tier, and a missing `cache_write_tokens` means no writes (not zero). `reasoning_tokens` is reasoning; audio and prediction counts above zero go to `other`. Billing multipliers are the listed model's cache and output prices over its input price (Standard tier only), or 0.1, 1.25 and 5.0 for an unlisted model.
 
 ## Storage
 

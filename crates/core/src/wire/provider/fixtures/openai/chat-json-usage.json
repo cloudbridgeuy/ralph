@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-1",
+  "object": "chat.completion",
+  "created": 1790000000,
+  "model": "gpt-6.1-sol-2026-09-01",
+  "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "It is 4C."}}],
+  "usage": {
+    "prompt_tokens": 1000,
+    "completion_tokens": 80,
+    "total_tokens": 1080,
+    "prompt_tokens_details": {"cached_tokens": 400, "cache_write_tokens": 100, "audio_tokens": 0},
+    "completion_tokens_details": {"reasoning_tokens": 30, "accepted_prediction_tokens": 5, "rejected_prediction_tokens": 0, "audio_tokens": 0}
+  }
+}

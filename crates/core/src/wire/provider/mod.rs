@@ -12,12 +12,14 @@ pub mod openai;
 #[serde(rename_all = "lowercase")]
 pub enum ProviderId {
     Anthropic,
+    OpenAi,
 }
 
 impl ProviderId {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Anthropic => "anthropic",
+            Self::OpenAi => "openai",
         }
     }
 }
@@ -99,6 +101,7 @@ pub trait Provider: Send + Sync {
 pub fn provider(id: ProviderId) -> Box<dyn Provider> {
     match id {
         ProviderId::Anthropic => Box::new(anthropic::Anthropic),
+        ProviderId::OpenAi => Box::new(openai::OpenAi),
     }
 }
 

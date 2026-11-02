@@ -30,6 +30,7 @@ impl From<WireProvider> for ProviderId {
     fn from(value: WireProvider) -> Self {
         match value {
             WireProvider::Anthropic => ProviderId::Anthropic,
+            WireProvider::Openai => ProviderId::OpenAi,
         }
     }
 }

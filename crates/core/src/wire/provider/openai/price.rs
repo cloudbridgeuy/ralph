@@ -5,6 +5,8 @@ use crate::wire::usage::THIRTY_MIN;
 // https://developers.openai.com/api/docs/pricing, checked 2026-10-28.
 // Codex sends no cache TTL, so its writes are assumed to be 30m writes.
 
+pub(crate) const AS_OF: &str = "2026-10-28";
+
 fn entry(model: &str, [input, cache_read, output, write_30m]: [f64; 4]) -> PriceEntry {
     PriceEntry {
         model: model.to_string(),
