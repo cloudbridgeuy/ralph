@@ -10,7 +10,7 @@ use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::verified_agents;
-use crate::warn::warn;
+use crate::warn::{notice, warn};
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
 use crate::worker_mcp::Inbox;

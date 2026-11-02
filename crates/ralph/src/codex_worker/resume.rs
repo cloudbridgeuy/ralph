@@ -83,7 +83,7 @@ impl Resumed<'_> {
         let adopted = !closed.load(Ordering::SeqCst) && write_file(&ready, "").is_ok();
         if adopted {
             fs::remove_file(&self.files.error).ok();
-            warn(format!("{} session {} resumed", self.agent, self.id));
+            notice(format!("{} session {} resumed", self.agent, self.id));
         } else {
             fs::remove_file(ready).ok();
         }
