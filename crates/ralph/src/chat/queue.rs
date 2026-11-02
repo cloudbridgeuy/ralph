@@ -91,16 +91,16 @@ pub(super) fn draft_with_typed(draft: Option<String>, typed: &str) -> Option<Str
     }
 }
 
-fn is_local(entry: &str) -> bool {
-    matches!(bang(entry.trim()), Bang::Local(_))
+fn is_cell(entry: &str) -> bool {
+    matches!(bang(entry.trim()), Bang::Send(_) | Bang::Local(_))
 }
 
 pub(super) fn next_batch(mut entries: Vec<String>) -> Option<(String, Vec<String>)> {
     let size = match entries.first() {
-        Some(first) if is_local(first) => 1,
+        Some(first) if is_cell(first) => 1,
         _ => entries
             .iter()
-            .position(|entry| is_local(entry))
+            .position(|entry| is_cell(entry))
             .unwrap_or(entries.len()),
     };
     let rest = entries.split_off(size);
@@ -269,25 +269,36 @@ mod tests {
         );
     }
 
+    fn batches(items: &[&str]) -> Vec<String> {
+        let mut left = entries(items);
+        let mut out = Vec::new();
+        while let Some((text, rest)) = next_batch(left) {
+            out.push(text);
+            left = rest;
+        }
+        out
+    }
+
     #[test]
     fn double_bang_entry_runs_on_its_own_between_its_neighbours() {
-        let batches = |items: &[&str]| {
-            let mut left = entries(items);
-            let mut out = Vec::new();
-            while let Some((text, rest)) = next_batch(left) {
-                out.push(text);
-                left = rest;
-            }
-            out
-        };
         assert_eq!(
             batches(&["a", "b", "!!ls", "c", " !!pwd", "!!x"]),
             entries(&["a\n\nb", "!!ls", "c", " !!pwd", "!!x"])
         );
         assert_eq!(batches(&["!!ls", "a"]), entries(&["!!ls", "a"]));
         assert_eq!(batches(&["!!", "a"]), entries(&["!!\n\na"]));
-        assert_eq!(batches(&["!ls", "a"]), entries(&["!ls\n\na"]));
+        assert_eq!(batches(&["!ls", "a"]), entries(&["!ls", "a"]));
         assert!(batches(&[]).is_empty());
+    }
+
+    #[test]
+    fn single_bang_entry_runs_on_its_own_between_its_neighbours() {
+        assert_eq!(
+            batches(&["a", "!ls", "b", "c", " !pwd"]),
+            entries(&["a", "!ls", "b\n\nc", " !pwd"])
+        );
+        assert_eq!(batches(&["a", "!ls"]), entries(&["a", "!ls"]));
+        assert_eq!(batches(&["!", "a"]), entries(&["!\n\na"]));
     }
 
     #[test]
