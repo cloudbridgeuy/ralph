@@ -125,14 +125,14 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: ralph-*
           path: dist
           merge-multiple: true
 
       - name: Download release notes
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
           path: notes
