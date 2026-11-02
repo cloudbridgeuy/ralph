@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 
 mod acp;
 mod claude_headless;
+mod claude_headless_verify;
+mod claude_verify;
 mod codex;
 mod cursor_model;
 mod delivery;
@@ -18,6 +20,7 @@ mod kind;
 mod markers;
 mod mcp;
 mod opencode_http;
+mod opencode_verify;
 mod ownership;
 mod permissions;
 mod process_tree;
@@ -35,6 +38,8 @@ mod verify;
 mod worktree;
 pub use acp::*;
 pub use claude_headless::*;
+pub use claude_headless_verify::*;
+pub use claude_verify::*;
 pub use codex::*;
 pub use cursor_model::{
     cursor_default_crash, cursor_default_snapshot, repair_cursor_default, resolve_cursor_model,
@@ -50,6 +55,7 @@ pub use kind::*;
 pub use markers::*;
 pub use mcp::*;
 pub use opencode_http::*;
+pub use opencode_verify::*;
 pub use ownership::*;
 pub use permissions::*;
 pub use process_tree::*;
@@ -372,7 +378,7 @@ pub struct ClaudeWorkerArgs<'a> {
     pub config_dir: Option<&'a Path>,
 }
 
-pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
+pub fn worker_launch(args: &ClaudeWorkerArgs) -> Vec<String> {
     let permission_mode = if args.scheduled {
         SCHEDULED_PERMISSION_MODE
     } else {
@@ -413,6 +419,11 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
     if let Some(model) = args.model {
         command.extend(["--model".to_string(), model.to_string()]);
     }
+    command
+}
+
+pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
+    let mut command = worker_launch(args);
     command.push(task_pointer(args.task_dir));
     command
 }

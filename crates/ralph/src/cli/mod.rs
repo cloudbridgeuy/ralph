@@ -67,8 +67,8 @@ harness; ralph never sets it."
     Config(ConfigArgs),
 
     #[command(
-        about = "Check a headless worker agent against ralph's local spec.",
-        long_about = "Subcommands exercise the installed headless agent without starting a chat."
+        about = "Check a worker agent against ralph's local spec.",
+        long_about = "Subcommands exercise the installed worker agent (cursor, codex, claude-headless, opencode or the tmux claude worker) without starting a chat."
     )]
     Worker(WorkerArgs),
 
@@ -117,6 +117,9 @@ pub struct WorkerArgs {
 pub enum VerifyAgent {
     Cursor,
     Codex,
+    ClaudeHeadless,
+    Opencode,
+    Claude,
 }
 
 impl VerifyAgent {
@@ -124,6 +127,9 @@ impl VerifyAgent {
         match self {
             Self::Cursor => "cursor",
             Self::Codex => "codex",
+            Self::ClaudeHeadless => "claude-headless",
+            Self::Opencode => "opencode",
+            Self::Claude => "claude",
         }
     }
 }
@@ -133,7 +139,7 @@ pub enum WorkerCommand {
     #[command(
         about = "Run the local spec against the installed agent and record a passing version.",
         long_about = "Runs the agent in a fresh temporary directory and prints PASS or FAIL per \
-check. Exits non-zero when any blocking check fails. The free spec checks the version, handshake, \
+check. Exits non-zero when any blocking check fails. The free spec checks the version, handshake (or spawn), \
 login and session setup without sending a prompt. --live adds one prompt, one permission \
 round-trip and one cancel, which use model calls; a failed or unknown cancel never fails the \
 spec. A full pass records the version in verified-agents.json, which silences the version \

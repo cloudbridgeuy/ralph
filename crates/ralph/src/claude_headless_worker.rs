@@ -24,8 +24,8 @@ use ralph_core::worker::{
     task_prompt, turn_end_activity, turn_lost_at_resume, uuid_v4, Action, ActivityState,
     ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
     InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
-    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, VerifiedAgents, WorkerEvent,
-    WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
     CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
     CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
     SERVER_NAME,
@@ -41,6 +41,10 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+mod verify;
+
+pub(crate) use verify::verify;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(20);
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(500);
@@ -311,7 +315,9 @@ fn check_installed_version(warning: &Path) -> Result<(), String> {
         .map_err(|e| format!("could not run `{CLAUDE_COMMAND} --version`: {e}"))?;
     let text = String::from_utf8_lossy(&output.stdout);
     let found = decode_claude_version(&text).unwrap_or_default();
-    if let Some(message) = check_agent_version(&CLAUDE_GATE, found, &VerifiedAgents::default())? {
+    if let Some(message) =
+        check_agent_version(&CLAUDE_GATE, found, &crate::verified_agents::load())?
+    {
         report_start_warning(message, Some(warning));
     }
     Ok(())

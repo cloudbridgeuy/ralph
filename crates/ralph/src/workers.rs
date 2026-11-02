@@ -35,7 +35,9 @@ mod guard;
 pub(crate) mod headless;
 mod reply;
 mod spawn;
+mod verify;
 pub(crate) use spawn::SpawnArgs;
+pub(crate) use verify::verify;
 
 #[derive(Clone)]
 pub struct Workers {
@@ -157,25 +159,7 @@ impl Workers {
                 )))
             }
         };
-        let target = format!("={session}:");
-        let mut load = Command::new("tmux")
-            .args(["load-buffer", "-b", &session, "-"])
-            .stdin(Stdio::piped())
-            .spawn()?;
-        if let Some(mut stdin) = load.stdin.take() {
-            stdin.write_all(text.as_bytes())?;
-        }
-        check(load.wait_with_output()?)?;
-        run(Command::new("tmux").args([
-            "paste-buffer",
-            "-p",
-            "-d",
-            "-b",
-            &session,
-            "-t",
-            &target,
-        ]))?;
-        run(Command::new("tmux").args(["send-keys", "-t", &target, "Enter"]))?;
+        send_to_pane(&session, text)?;
         Ok(Sent {
             line: format!("Sent to worker {id}."),
             watch: Some(Watch::Pane(session)),
@@ -799,6 +783,21 @@ pub fn capture_pane(session: &str) -> Option<String> {
         run(Command::new("tmux").args(["capture-pane", "-p", "-t", &format!("={session}:")]))
             .ok()?;
     Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn send_to_pane(session: &str, text: &str) -> io::Result<()> {
+    let target = format!("={session}:");
+    let mut load = Command::new("tmux")
+        .args(["load-buffer", "-b", session, "-"])
+        .stdin(Stdio::piped())
+        .spawn()?;
+    if let Some(mut stdin) = load.stdin.take() {
+        stdin.write_all(text.as_bytes())?;
+    }
+    check(load.wait_with_output()?)?;
+    run(Command::new("tmux").args(["paste-buffer", "-p", "-d", "-b", session, "-t", &target]))?;
+    run(Command::new("tmux").args(["send-keys", "-t", &target, "Enter"]))?;
+    Ok(())
 }
 
 fn run(command: &mut Command) -> io::Result<Output> {

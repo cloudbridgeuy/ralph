@@ -41,9 +41,11 @@ use std::time::{Duration, Instant};
 
 mod requests;
 mod session;
+mod verify;
 
 pub(crate) use requests::entry_ids;
 use session::OpencodeSession;
+pub(crate) use verify::verify;
 
 const HEALTH_PATH: &str = "/api/info";
 const ACTIVE_PATH: &str = "/api/session/active";
