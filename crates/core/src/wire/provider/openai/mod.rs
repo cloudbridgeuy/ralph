@@ -336,7 +336,7 @@ impl Provider for OpenAi {
 
     fn price_factor(&self, _raw_usage: &Value, facts: &RequestFacts, _model: &str) -> Option<f64> {
         match facts.params.get("service_tier") {
-            None => Some(1.0),
+            None | Some(Value::Null) => Some(1.0),
             Some(Value::String(tier)) if matches!(tier.as_str(), "default" | "auto") => Some(1.0),
             Some(_) => None,
         }

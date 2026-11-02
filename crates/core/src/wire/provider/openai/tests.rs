@@ -541,6 +541,7 @@ fn price_factor_prices_only_standard_service_tiers() {
     assert_eq!(factor(None), Some(1.0));
     assert_eq!(factor(Some(json!("default"))), Some(1.0));
     assert_eq!(factor(Some(json!("auto"))), Some(1.0));
+    assert_eq!(factor(Some(Value::Null)), Some(1.0));
     assert_eq!(factor(Some(json!("priority"))), None);
     assert_eq!(factor(Some(json!("flex"))), None);
     assert_eq!(factor(Some(json!("scale"))), None);
