@@ -1,7 +1,7 @@
 use super::{
     claude_worker_settings, decode_claude_version, task_dir_path, worker_launch, ActivityMark,
     ActivityState, CheckResult, ClaudeShell, ClaudeWorkerArgs, UsageSink, VersionProbe,
-    WorkerMarkers, ATTACHMENTS_DIR, VERSION_PROBE_LIMIT,
+    WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -18,6 +18,7 @@ pub const CLAUDE_VERIFY_FLAGS: [&str; 5] = [
 pub const CLAUDE_VERIFY_MCP: &str = r#"{"mcpServers":{}}"#;
 const VERIFY_ID: &str = "verify";
 const VERIFY_PERMISSION_MODE: &str = "default";
+pub const CLAUDE_VERIFY_PERMISSION_PROMPT: &str = CLAUDE_PERMISSION_PROMPT;
 
 pub struct VerifyPaths {
     pub store: PathBuf,
@@ -64,7 +65,7 @@ impl VerifyPaths {
         config_dir: Option<&Path>,
         model: Option<&str>,
     ) -> Vec<String> {
-        worker_launch(&ClaudeWorkerArgs {
+        let mut command = worker_launch(&ClaudeWorkerArgs {
             store: &self.store,
             mcp_config: &self.mcp_config,
             settings: &self.settings,
@@ -75,7 +76,16 @@ impl VerifyPaths {
             scheduled: false,
             shell,
             config_dir,
-        })
+        });
+        let at = command
+            .iter()
+            .position(|word| word == "--append-system-prompt")
+            .unwrap_or(command.len());
+        command.splice(
+            at..at,
+            ["--setting-sources", "project,local"].map(str::to_string),
+        );
+        command
     }
 }
 
@@ -247,5 +257,44 @@ mod tests {
         assert_eq!(with[at + 1], "claude-haiku-5-5");
         let without = paths.command(ClaudeShell::default(), None, None);
         assert!(without.iter().all(|word| word != "--model"));
+    }
+
+    #[test]
+    fn verify_launch_isolates_user_settings() {
+        let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
+        let command = paths.command(ClaudeShell::default(), None, None);
+        let at = command
+            .iter()
+            .position(|word| word == "--setting-sources")
+            .unwrap();
+        assert_eq!(command[at + 1], "project,local");
+    }
+
+    #[test]
+    fn verify_permission_prompt_writes_a_file() {
+        assert_eq!(
+            CLAUDE_VERIFY_PERMISSION_PROMPT,
+            "Run the shell command `touch verify-permission.txt` and reply with ok."
+        );
+    }
+
+    #[test]
+    fn worker_launch_does_not_restrict_setting_sources() {
+        let paths = VerifyPaths::new(Path::new("/tmp/verify-dir"));
+        let args = ClaudeWorkerArgs {
+            store: &paths.store,
+            mcp_config: &paths.mcp_config,
+            settings: &paths.settings,
+            permission_mode: "default",
+            attachments: &paths.attachments,
+            task_dir: &paths.task_dir,
+            model: None,
+            scheduled: false,
+            shell: ClaudeShell::default(),
+            config_dir: None,
+        };
+        for command in [worker_launch(&args), super::super::worker_command(&args)] {
+            assert!(command.iter().all(|word| word != "--setting-sources"));
+        }
     }
 }

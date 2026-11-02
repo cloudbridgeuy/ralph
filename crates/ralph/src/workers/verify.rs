@@ -7,7 +7,7 @@ use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::worker::{
     claude_permission_check, claude_prompt_check, flags_check, probe_text, resolve_claude_shell,
     startup_check, stop_seen, tmux_claude_version, CheckResult, Verdict, VerifyPaths,
-    CLAUDE_COMMAND, CLAUDE_VERIFY_MCP, VERSION_PROBE_LIMIT,
+    CLAUDE_COMMAND, CLAUDE_VERIFY_MCP, CLAUDE_VERIFY_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::fs;
 use std::io;
@@ -20,7 +20,6 @@ const TURN_LIMIT: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(250);
 const INPUT_SETTLE: Duration = Duration::from_secs(1);
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
-const PERMISSION_PROMPT: &str = "Run the shell command `date +%Y` and reply with its output.";
 
 struct Session(String);
 
@@ -142,7 +141,7 @@ fn prompt_turn(session: &Session, paths: &VerifyPaths) -> CheckResult {
 }
 
 fn permission_turn(session: &Session, paths: &VerifyPaths) -> CheckResult {
-    if let Err(error) = submit(session, paths, PERMISSION_PROMPT) {
+    if let Err(error) = submit(session, paths, CLAUDE_VERIFY_PERMISSION_PROMPT) {
         return CheckResult::fail("permission", format!("could not send the prompt: {error}"));
     }
     let blocked = wait_until(TURN_LIMIT, || {
