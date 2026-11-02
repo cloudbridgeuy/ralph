@@ -207,7 +207,7 @@ pub fn prepend_changelog(existing: Option<&str>, section: &str) -> String {
 
 pub fn summary_prompt(list: &str) -> String {
     format!(
-        "Write a two to three sentence summary of this release for its changelog. Plain prose, no heading, no bullet list, no preamble. Mention only what the list supports.\n\n{list}"
+        "Write a two to three sentence summary of this release for its changelog. Plain prose, no heading, no bullet list, no preamble. Mention only what the list supports. Output only the summary text. Do not add questions, next steps, instructions or offers after it.\n\n{list}"
     )
 }
 
@@ -420,8 +420,11 @@ mod tests {
     }
 
     #[test]
-    fn summary_prompt_embeds_the_list() {
-        assert!(summary_prompt("- A (GUZ-1)").contains("- A (GUZ-1)"));
+    fn summary_prompt_embeds_the_list_and_forbids_trailing_text() {
+        assert_eq!(
+            summary_prompt("- A (GUZ-1)"),
+            "Write a two to three sentence summary of this release for its changelog. Plain prose, no heading, no bullet list, no preamble. Mention only what the list supports. Output only the summary text. Do not add questions, next steps, instructions or offers after it.\n\n- A (GUZ-1)"
+        );
     }
 
     #[test]
