@@ -261,10 +261,11 @@ fn seg(breakpoint: Option<CacheTier>) -> PromptSegment {
 
 const EXPLICIT: PrefixCache = PrefixCache::Explicit { lookback: 20 };
 
-fn both(segments: &[PromptSegment]) -> Prompts<'_> {
+fn both(segments: &[PromptSegment], prefix_cache: PrefixCache) -> Prompts<'_> {
     Prompts {
         a: segments,
         b: segments,
+        prefix_cache,
     }
 }
 
@@ -272,13 +273,13 @@ fn both(segments: &[PromptSegment]) -> Prompts<'_> {
 fn servable_breakpoint_explicit_takes_the_last_marked_one() {
     let segments = [seg(Some(FIVE_MIN)), seg(None), seg(None)];
     assert_eq!(
-        servable_breakpoint(&both(&segments), 3, EXPLICIT),
+        servable_breakpoint(&both(&segments, EXPLICIT), 3),
         Some(Breakpoint {
             index: 0,
             tier: FIVE_MIN
         })
     );
-    assert_eq!(servable_breakpoint(&both(&[seg(None)]), 1, EXPLICIT), None);
+    assert_eq!(servable_breakpoint(&both(&[seg(None)], EXPLICIT), 1), None);
 }
 
 #[test]
@@ -289,20 +290,20 @@ fn servable_breakpoint_implicit_spans_the_shared_prefix() {
     };
     let segments = [seg(Some(FIVE_MIN)), seg(None), seg(None)];
     assert_eq!(
-        servable_breakpoint(&both(&segments), 3, implicit),
+        servable_breakpoint(&both(&segments, implicit), 3),
         Some(Breakpoint {
             index: 2,
             tier: FIVE_MIN
         })
     );
     assert_eq!(
-        servable_breakpoint(&both(&[seg(None), seg(None)]), 2, implicit),
+        servable_breakpoint(&both(&[seg(None), seg(None)], implicit), 2),
         Some(Breakpoint {
             index: 1,
             tier: IMPLICIT_30M
         })
     );
-    assert_eq!(servable_breakpoint(&both(&[seg(None)]), 0, implicit), None);
+    assert_eq!(servable_breakpoint(&both(&[seg(None)], implicit), 0), None);
 }
 
 #[test]

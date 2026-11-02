@@ -390,11 +390,7 @@ fn reaches(segments: &[PromptSegment], index: usize, lookback: usize) -> bool {
         .any(|segment| segment.breakpoint.is_some())
 }
 
-fn servable_breakpoint(
-    prompts: &Prompts,
-    shared: usize,
-    prefix_cache: PrefixCache,
-) -> Option<Breakpoint> {
+fn servable_breakpoint(prompts: &Prompts, shared: usize) -> Option<Breakpoint> {
     let marked = |index: usize, segment: &PromptSegment| {
         segment.breakpoint.map(|tier| Breakpoint { index, tier })
     };
@@ -403,7 +399,7 @@ fn servable_breakpoint(
         .enumerate()
         .rev()
         .filter_map(|(index, segment)| marked(index, segment));
-    match prefix_cache {
+    match prompts.prefix_cache {
         PrefixCache::Explicit { lookback } => {
             written.find(|b| reaches(prompts.b, b.index, lookback))
         }
@@ -477,6 +473,7 @@ fn lapse_verdict(
 struct Prompts<'a> {
     a: &'a [PromptSegment],
     b: &'a [PromptSegment],
+    prefix_cache: PrefixCache,
 }
 
 fn explain(
@@ -489,11 +486,8 @@ fn explain(
     let b_segments = prompts.b;
     let usage = counted_usage(input.b);
     let cache_read = usage.map(|u| u.cache_read);
-    let prefix_cache = match &input.b.request_body {
-        RequestBody::Json(body) => input.provider.prefix_cache(body),
-        RequestBody::Base64(_) => PrefixCache::Explicit { lookback: 1 },
-    };
-    let Some(breakpoint) = servable_breakpoint(prompts, shared, prefix_cache) else {
+    let prefix_cache = prompts.prefix_cache;
+    let Some(breakpoint) = servable_breakpoint(prompts, shared) else {
         return Explanation {
             servable_bytes: 0,
             servable_tokens: None,
@@ -586,12 +580,14 @@ pub fn diff_view(input: &DiffInput) -> DiffView {
         headers,
         ..empty_view(input, Verdict::NoSegments, cache_read)
     };
-    let (Some(a_segments), Some(b_segments)) = (
-        segments_of(a, input.provider),
-        segments_of(input.b, input.provider),
-    ) else {
+    let (RequestBody::Json(a_body), RequestBody::Json(b_body)) =
+        (&a.request_body, &input.b.request_body)
+    else {
         return base;
     };
+    let a_segments = input.provider.segments(a_body);
+    let b_segments = input.provider.segments(b_body);
+    let prefix_cache = input.provider.prefix_cache(b_body);
     let shared = shared_prefix(&a_segments, &b_segments);
     let div = divergence(shared, &a_segments, &b_segments);
     let skip = shared + usize::from(div.is_some());
@@ -609,6 +605,7 @@ pub fn diff_view(input: &DiffInput) -> DiffView {
         &Prompts {
             a: &a_segments,
             b: &b_segments,
+            prefix_cache,
         },
         shared,
         served,
