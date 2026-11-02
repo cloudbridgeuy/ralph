@@ -57,7 +57,7 @@ fn test_cli_chat_takes_a_wrap_width() {
 }
 
 #[test]
-fn test_cli_chat_takes_a_name_before_or_after_the_subcommand() {
+fn test_cli_chat_takes_a_name() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "--name", "review"])
         .unwrap()
         .command
