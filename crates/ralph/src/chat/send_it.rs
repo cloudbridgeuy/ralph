@@ -1,7 +1,7 @@
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::screen_columns;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
-use crate::config::ChatSection;
+use crate::config::SendItSettings;
 use crate::inbox_alert::deliver;
 use crate::signal;
 use ralph_core::chat_send_it::{
@@ -93,14 +93,14 @@ fn countdown(text: &str, seconds: u64, color: bool) -> Option<Countdown> {
 }
 
 impl Shell {
-    pub(super) fn new(config: &ChatSection, color: bool) -> Self {
+    pub(super) fn new(settings: &SendItSettings, color: bool) -> Self {
         Self {
             armed: None,
             limits: Limits {
-                max_turns: config.send_it_max_turns,
-                max_usd: config.send_it_max_usd,
+                max_turns: settings.max_turns,
+                max_usd: settings.max_usd,
             },
-            seconds: config.send_it_seconds,
+            seconds: settings.seconds,
             color,
             drained: Vec::new(),
         }

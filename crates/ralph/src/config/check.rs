@@ -41,6 +41,7 @@ pub fn check(content: &str, path: &str) -> Result<CheckReport, ConfigError> {
         .chain(config.changes.warnings())
         .chain(chat.worker_quiet_setting().1)
         .chain(chat.reset_limits_setting().1)
+        .chain(chat.send_it_setting().1)
         .chain(chat.empty_submit_setting().1)
         .chain(chat.editor_setting().1)
         .chain(resolve_edit_mode(chat.edit_mode.as_deref()).1)

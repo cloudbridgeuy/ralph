@@ -40,7 +40,7 @@ mod view;
 mod wire;
 mod workers;
 pub use changes::ChangesSection;
-pub use chat_settings::PromptFiles;
+pub use chat_settings::{PromptFiles, SendItSettings};
 pub use claude::ClaudeSection;
 pub use codex::{configured_codex, CodexSection};
 pub use command::{run_check, run_show};

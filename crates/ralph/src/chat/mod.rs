@@ -468,11 +468,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("EDITOR").ok().as_deref(),
     );
     let (empty_submit, empty_warning) = chat_config.empty_submit_setting();
+    let (send_it_settings, send_it_warnings) = chat_config.send_it_setting();
     let late_warnings: Vec<String> = config_warning
         .into_iter()
         .chain(editor_warning)
         .chain(quiet_warning)
         .chain(reset_warnings)
+        .chain(send_it_warnings)
         .chain(empty_warning)
         .collect();
     late_warnings.iter().for_each(warn);
@@ -553,7 +555,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
     let mut offered: Option<(String, u64)> = None;
-    let mut send_it = send_it::Shell::new(&chat_config, color);
+    let mut send_it = send_it::Shell::new(&send_it_settings, color);
     let mut auto_turn: Option<Auto> = None;
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
