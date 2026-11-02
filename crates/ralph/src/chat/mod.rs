@@ -387,7 +387,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         phase: Mutex::new(Phase::Prompt),
         hold: Mutex::new(None),
     });
-    let session_name = name::session_name(args.name.as_deref(), chat_config.name.as_deref(), &cwd);
+    let session_name = name::session_name(
+        args.name.as_deref(),
+        chat_config.name.as_deref(),
+        &cwd,
+        name::resolved_home().as_deref(),
+    );
     monitor.term.start_title(&session_name);
     let _term_clear = ClearOnDrop(Arc::clone(&monitor.term));
     let roster = {

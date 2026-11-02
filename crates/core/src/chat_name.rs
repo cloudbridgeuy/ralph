@@ -18,6 +18,13 @@ pub fn sanitise_name(raw: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+pub fn git_root_candidates<'a>(cwd: &'a Path, home: Option<&Path>) -> Vec<&'a Path> {
+    match home.filter(|home| cwd.starts_with(home)) {
+        Some(home) => cwd.ancestors().take_while(|dir| *dir != home).collect(),
+        None => cwd.ancestors().collect(),
+    }
+}
+
 fn basename(path: &Path) -> Option<String> {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -141,5 +148,40 @@ mod tests {
             ..sources(cwd)
         });
         assert_eq!(resolved, "ab");
+    }
+
+    fn paths<'a>(list: &'a [&'a str]) -> Vec<&'a Path> {
+        list.iter().map(Path::new).collect()
+    }
+
+    #[test]
+    fn candidates_under_home_exclude_home_and_above() {
+        let got = git_root_candidates(Path::new("/h/u/work/x"), Some(Path::new("/h/u")));
+        assert_eq!(got, paths(&["/h/u/work/x", "/h/u/work"]));
+    }
+
+    #[test]
+    fn candidates_under_home_keep_a_repo_inside_home() {
+        let got = git_root_candidates(Path::new("/h/u/repo/src"), Some(Path::new("/h/u")));
+        assert!(got.contains(&Path::new("/h/u/repo")));
+        assert!(!got.contains(&Path::new("/h/u")));
+    }
+
+    #[test]
+    fn candidates_at_home_are_empty() {
+        let got = git_root_candidates(Path::new("/h/u"), Some(Path::new("/h/u")));
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn candidates_outside_home_are_all_ancestors() {
+        let got = git_root_candidates(Path::new("/tmp/x"), Some(Path::new("/h/u")));
+        assert_eq!(got, paths(&["/tmp/x", "/tmp", "/"]));
+    }
+
+    #[test]
+    fn candidates_without_home_are_all_ancestors() {
+        let got = git_root_candidates(Path::new("/tmp/x"), None);
+        assert_eq!(got, paths(&["/tmp/x", "/tmp", "/"]));
     }
 }
