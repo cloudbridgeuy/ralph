@@ -170,7 +170,11 @@ fn tiered_usage(line: &UsageLine) -> Usage {
 
 pub fn builtin_prices(provider: &dyn Provider) -> PriceTable {
     let mut table = provider.prices();
-    table.entries.extend(openai_price::entries());
+    let missing: Vec<_> = openai_price::entries()
+        .into_iter()
+        .filter(|entry| !table.entries.iter().any(|have| have.model == entry.model))
+        .collect();
+    table.entries.extend(missing);
     table
 }
 

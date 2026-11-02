@@ -439,3 +439,16 @@ fn a_relaunch_without_cost_marks_only_its_own_model_and_the_total() {
     assert!(lines[4].starts_with("| total |"));
     assert!(lines[4].ends_with("| 0.20+ |"));
 }
+
+#[test]
+fn builtin_prices_list_each_openai_model_once() {
+    let rows = |id| {
+        builtin_prices(provider(id).as_ref())
+            .entries
+            .iter()
+            .filter(|entry| entry.model == "gpt-6-astra")
+            .count()
+    };
+    assert_eq!(rows(ProviderId::OpenAi), 1);
+    assert_eq!(rows(ProviderId::Anthropic), 1);
+}
