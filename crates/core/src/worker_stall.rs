@@ -78,6 +78,8 @@ pub struct StallFacts {
     pub activity: Option<ActivityMark>,
     pub reported: bool,
     pub record: Option<AutoContinue>,
+    pub now: u64,
+    pub check_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,6 +87,16 @@ pub enum StallAction {
     None,
     Continue,
     Alert,
+}
+
+const GRACE_CHECKS: u64 = 2;
+
+pub fn grace_secs(check_secs: u64) -> u64 {
+    check_secs.saturating_mul(GRACE_CHECKS)
+}
+
+fn went_unanswered(record: &AutoContinue, facts: &StallFacts) -> bool {
+    facts.now >= record.at.saturating_add(grace_secs(facts.check_secs))
 }
 
 pub fn stall_action(facts: &StallFacts) -> StallAction {
@@ -97,7 +109,11 @@ pub fn stall_action(facts: &StallFacts) -> StallAction {
     match &facts.record {
         None if mark.state == ActivityState::Failed => StallAction::Continue,
         None => StallAction::None,
-        Some(record) if !record.alerted && mark.at > record.at => StallAction::Alert,
+        Some(record)
+            if !record.alerted && (mark.at > record.at || went_unanswered(record, facts)) =>
+        {
+            StallAction::Alert
+        }
         Some(_) => StallAction::None,
     }
 }
@@ -115,6 +131,8 @@ mod tests {
             activity,
             reported: false,
             record: None,
+            now: 100,
+            check_secs: 30,
         }
     }
 
@@ -193,6 +211,59 @@ mod tests {
                 assert_eq!(stall_action(&before), StallAction::None, "{state:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_continue_nobody_picked_up_alerts_after_the_grace() {
+        let silent = |now| StallFacts {
+            record: continued(90),
+            now,
+            ..facts(mark(80, ActivityState::Failed))
+        };
+        assert_eq!(stall_action(&silent(149)), StallAction::None);
+        assert_eq!(stall_action(&silent(150)), StallAction::Alert);
+        assert_eq!(stall_action(&silent(1000)), StallAction::Alert);
+    }
+
+    #[test]
+    fn a_failure_in_the_same_second_as_the_continue_alerts_after_the_grace() {
+        let same = |now| StallFacts {
+            record: continued(90),
+            now,
+            ..facts(mark(90, ActivityState::Failed))
+        };
+        assert_eq!(stall_action(&same(100)), StallAction::None);
+        assert_eq!(stall_action(&same(150)), StallAction::Alert);
+    }
+
+    #[test]
+    fn a_silent_continue_stays_quiet_once_alerted_or_reported_or_busy() {
+        let base = StallFacts {
+            record: continued(90),
+            now: 1000,
+            ..facts(mark(80, ActivityState::Failed))
+        };
+        let alerted = StallFacts {
+            record: continued(90).map(AutoContinue::alerted),
+            ..base.clone()
+        };
+        let reported = StallFacts {
+            reported: true,
+            ..base.clone()
+        };
+        let busy = StallFacts {
+            activity: mark(95, ActivityState::Running),
+            ..base
+        };
+        for facts in [alerted, reported, busy] {
+            assert_eq!(stall_action(&facts), StallAction::None);
+        }
+    }
+
+    #[test]
+    fn the_grace_is_two_check_intervals() {
+        assert_eq!(grace_secs(30), 60);
+        assert_eq!(grace_secs(u64::MAX), u64::MAX);
     }
 
     #[test]

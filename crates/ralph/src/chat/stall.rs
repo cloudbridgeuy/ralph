@@ -24,11 +24,13 @@ fn read_record(store: &Path, id: &str) -> Option<AutoContinue> {
         .and_then(|text| AutoContinue::parse(&text))
 }
 
-fn facts(store: &Path, id: &str) -> StallFacts {
+fn facts(store: &Path, id: &str, check_secs: u64) -> StallFacts {
     StallFacts {
         activity: read_mark(store, id),
         reported: !sent_path(store, id).exists(),
         record: read_record(store, id),
+        now: now_secs(),
+        check_secs,
     }
 }
 
@@ -44,9 +46,13 @@ impl Monitor {
         }
     }
 
+    fn check_secs(&self) -> u64 {
+        self.worker_check_secs.unwrap_or_default()
+    }
+
     fn stall_step(&self, worker: &RunningWorker) {
         let id = &worker.id;
-        let found = facts(&self.store_dir, id);
+        let found = facts(&self.store_dir, id, self.check_secs());
         if found.reported && found.record.is_some() {
             std::fs::remove_file(auto_continued_path(&self.store_dir, id)).ok();
             return;
@@ -60,7 +66,7 @@ impl Monitor {
 
     fn auto_continue_worker(&self, worker: &RunningWorker) {
         let id = &worker.id;
-        if stall_action(&facts(&self.store_dir, id)) != StallAction::Continue {
+        if stall_action(&facts(&self.store_dir, id, self.check_secs())) != StallAction::Continue {
             return;
         }
         let at = now_secs();
@@ -119,7 +125,7 @@ mod tests {
         write_file(&sent_path(store, "A"), "").unwrap();
         let record = AutoContinue::new(90, REASON_API_ERROR);
         write_file(&auto_continued_path(store, "A"), &record.render()).unwrap();
-        let found = facts(store, "A");
+        let found = facts(store, "A", 30);
         assert_eq!(
             found.activity,
             Some(ActivityMark {
@@ -135,7 +141,7 @@ mod tests {
     #[test]
     fn facts_for_a_worker_that_reported_have_no_sent_marker() {
         let dir = tempfile::tempdir().unwrap();
-        let found = facts(dir.path(), "A");
+        let found = facts(dir.path(), "A", 30);
         assert_eq!(found.activity, None);
         assert!(found.reported);
         assert_eq!(found.record, None);
