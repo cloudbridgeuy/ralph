@@ -147,7 +147,7 @@ pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<Strin
     }
 }
 
-fn init_status(init: &Value) -> Result<String, String> {
+pub(super) fn init_status(init: &Value) -> Result<String, String> {
     let session = init["session_id"]
         .as_str()
         .filter(|id| !id.is_empty())

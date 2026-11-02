@@ -1,7 +1,8 @@
+use super::claude_headless::init_status;
 use super::{
     decode_line, deny_line, interrupted_end, permission_response, turn_stop, CheckResult,
-    ClaudeLine, ThreadSignal, TurnSummary, VersionProbe, ALLOW_ONCE, CLAUDE_COMMAND, CLAUDE_GATE,
-    VERSION_PROBE_LIMIT,
+    ClaudeLine, ThreadSignal, TurnSummary, Verdict, VersionProbe, ALLOW_ONCE, CLAUDE_COMMAND,
+    CLAUDE_GATE, VERSION_PROBE_LIMIT,
 };
 use crate::stream::interrupt_line;
 use serde_json::Value;
@@ -39,6 +40,7 @@ pub struct ClaudeFold {
     pub summary: TurnSummary,
     pub session: Option<String>,
     pub ended: bool,
+    pub mcp: Option<Result<(), String>>,
 }
 
 impl Default for ClaudeFold {
@@ -52,6 +54,7 @@ impl Default for ClaudeFold {
             },
             session: None,
             ended: false,
+            mcp: None,
         }
     }
 }
@@ -72,6 +75,7 @@ pub fn fold_claude_line(fold: &mut ClaudeFold, line: &str, plan: ClaudePlan) -> 
     match (value["type"].as_str(), value["subtype"].as_str()) {
         (Some("system"), Some("init")) => {
             fold.session = value["session_id"].as_str().map(str::to_string);
+            fold.mcp = Some(mcp_status(&value));
             Vec::new()
         }
         (Some("assistant"), _) => {
@@ -107,6 +111,29 @@ fn fold_decoded(fold: &mut ClaudeFold, line: &str, plan: ClaudePlan) -> Vec<Stri
             Vec::new()
         }
         _ => Vec::new(),
+    }
+}
+
+fn mcp_status(init: &Value) -> Result<(), String> {
+    init_status(init)?;
+    if init["mcp_servers"].as_array().is_none() {
+        return Err("system/init listed no MCP servers".to_string());
+    }
+    Ok(())
+}
+
+fn unknown(name: &'static str, detail: &str) -> CheckResult {
+    CheckResult {
+        verdict: Verdict::Unknown,
+        ..CheckResult::pass(name, detail)
+    }
+}
+
+pub fn mcp_check(fold: &ClaudeFold) -> CheckResult {
+    match &fold.mcp {
+        Some(Ok(())) => CheckResult::pass("mcp", "ralph-worker connected"),
+        Some(Err(reason)) => CheckResult::fail("mcp", reason.as_str()),
+        None => unknown("mcp", "claude sent no system/init line"),
     }
 }
 
@@ -203,7 +230,7 @@ pub fn argv_check(running: bool, read: &StderrRead, exit: Result<bool, String>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::{PermissionSetup, Verdict};
+    use crate::worker::PermissionSetup;
     use serde_json::json;
 
     fn feed(fold: &mut ClaudeFold, plan: ClaudePlan, lines: &[Value]) -> Vec<String> {
@@ -241,6 +268,61 @@ mod tests {
         assert_eq!(fold.summary.stop, Ok(CLAUDE_ENDED.to_string()));
         assert!(init_check(fold.session.as_deref(), "s1").verdict == Verdict::Pass);
         assert!(init_check(fold.session.as_deref(), "s2").verdict == Verdict::Fail);
+    }
+
+    fn mcp_check_after(lines: &[Value]) -> CheckResult {
+        let mut fold = ClaudeFold::default();
+        feed(&mut fold, ClaudePlan::Plain, lines);
+        mcp_check(&fold)
+    }
+
+    fn init_with(servers: Value) -> Value {
+        json!({"type":"system","subtype":"init","session_id":"s1","mcp_servers":servers})
+    }
+
+    #[test]
+    fn mcp_passes_when_ralph_worker_is_connected() {
+        let check = mcp_check_after(&[init_with(
+            json!([{"name":"ralph-worker","status":"connected"}]),
+        )]);
+        assert_eq!(check, CheckResult::pass("mcp", "ralph-worker connected"));
+    }
+
+    #[test]
+    fn mcp_fails_when_ralph_worker_failed_to_connect() {
+        let check = mcp_check_after(&[init_with(
+            json!([{"name":"ralph-worker","status":"failed"}]),
+        )]);
+        assert_eq!(
+            check,
+            CheckResult::fail("mcp", "the ralph-worker MCP server is failed")
+        );
+    }
+
+    #[test]
+    fn mcp_fails_when_ralph_worker_is_not_listed() {
+        let check = mcp_check_after(&[init_with(json!([{"name":"other","status":"connected"}]))]);
+        assert_eq!(
+            check,
+            CheckResult::fail("mcp", "the ralph-worker MCP server is not listed")
+        );
+    }
+
+    #[test]
+    fn mcp_fails_when_init_has_no_server_array() {
+        let init = json!({"type":"system","subtype":"init","session_id":"s1"});
+        assert_eq!(
+            mcp_check_after(&[init]),
+            CheckResult::fail("mcp", "system/init listed no MCP servers")
+        );
+    }
+
+    #[test]
+    fn mcp_is_unknown_without_an_init_line() {
+        let check = mcp_check_after(&[assistant_text()]);
+        assert_eq!(check.verdict, Verdict::Unknown);
+        assert_eq!(check.detail, "claude sent no system/init line");
+        assert_eq!(check.name, "mcp");
     }
 
     #[test]
