@@ -1,8 +1,8 @@
 use crate::chat::inbox::Display;
-use crate::markdown::MarkdownTheme;
 use crate::mermaid_guard;
 use crate::render::image::{draw_png, resolve, ImageBounds};
 use crate::render::{render_markdown_with, RenderContext};
+use crate::ui_theme::UiColors;
 use ralph_core::chat_view::{rebase_images, view_refusal, FileKind, ViewArgs, MAX_VIEW_BYTES};
 use ralph_core::chunk::{ChunkType, ParsedChunk};
 use ralph_core::kitty::ASSUMED_CELL_PX;
@@ -16,19 +16,18 @@ pub fn run(args: &ViewArgs, display: &Display) {
         return;
     };
     match load(&resolve(typed)) {
-        Ok((text, dir)) => print!(
-            "{}",
-            render(&display.ctx, &rebase_images(&text, &dir), display.theme)
-        ),
+        Ok((text, dir)) => print!("{}", render(display, &rebase_images(&text, &dir))),
         Err(message) => println!("{message}"),
     }
 }
 
-fn render(ctx: &RenderContext<'_>, text: &str, theme: &MarkdownTheme) -> String {
-    render_markdown_with(ctx, text, theme, |chunk| picture(ctx, chunk))
+fn render(display: &Display, text: &str) -> String {
+    render_markdown_with(&display.ctx, text, display.theme, |chunk| {
+        picture(&display.ctx, chunk, &display.ui)
+    })
 }
 
-fn picture(ctx: &RenderContext<'_>, chunk: &ParsedChunk) -> Option<String> {
+fn picture(ctx: &RenderContext<'_>, chunk: &ParsedChunk, ui: &UiColors) -> Option<String> {
     let ChunkType::Code {
         language: Some(language),
     } = &chunk.chunk_type
@@ -44,7 +43,7 @@ fn picture(ctx: &RenderContext<'_>, chunk: &ParsedChunk) -> Option<String> {
         cols: bounds.cols,
         rows: bounds.rows,
     };
-    let png = mermaid_guard::picture(&chunk.content, ctx.highlighter.theme(), room)?;
+    let png = mermaid_guard::picture(&chunk.content, ctx.highlighter.theme(), ui, room)?;
     draw_png(&png, images, bounds)
 }
 
@@ -76,16 +75,23 @@ fn load(path: &Path) -> Result<(String, PathBuf), String> {
 mod tests {
     use super::*;
     use crate::highlight::{Highlighter, ThemeConfig};
+    use crate::markdown::MarkdownTheme;
     use crate::render::render_markdown;
 
     #[test]
     fn code_fences_highlight_like_chat_replies() {
         let highlighter = Highlighter::with_config(ThemeConfig::default()).unwrap();
         let theme = MarkdownTheme::default();
-        let ctx = RenderContext::terminal(&highlighter);
+        let display = Display {
+            ctx: RenderContext::terminal(&highlighter),
+            theme: &theme,
+            color: true,
+            ui: UiColors::default(),
+        };
+        let ctx = &display.ctx;
         let text = "# Notes\n\n```rust\nfn main() {}\n```\n\n```sh\necho hi\n```\n\n```diff\n-old\n+new\n```\n";
-        let walked = render(&ctx, text, &theme);
-        assert_eq!(walked, render_markdown(&ctx, text, &theme));
+        let walked = render(&display, text);
+        assert_eq!(walked, render_markdown(ctx, text, &theme));
         let rust = walked.split("```sh").next().unwrap();
         assert!(rust.contains("\x1b[38;"), "{rust:?}");
         assert!(!rust.contains("fn main() {}"), "{rust:?}");

@@ -662,6 +662,7 @@ mod tests {
             ctx,
             theme: &theme,
             color: false,
+            ui: crate::ui_theme::UiColors::default(),
         };
         shown(&table_markdown(rows, false), &display)
     }

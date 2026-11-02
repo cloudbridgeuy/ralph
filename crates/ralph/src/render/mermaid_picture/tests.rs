@@ -13,7 +13,10 @@ const ROOM: Room = Room {
 fn style() -> PictureStyle {
     let themes = ThemeSet::load_defaults();
     MermaidStyle::default()
-        .resolve(&themes.themes["base16-ocean.dark"])
+        .resolve(
+            &themes.themes["base16-ocean.dark"],
+            &crate::ui_theme::UiColors::default(),
+        )
         .0
 }
 
@@ -67,7 +70,7 @@ fn a_small_flowchart_rasterizes_to_a_png_inside_the_room() {
     let corner = pixmap.pixel(0, 0).unwrap();
     assert_eq!(
         [corner.red(), corner.green(), corner.blue(), corner.alpha()],
-        [0x2b, 0x30, 0x3b, 255]
+        [0x1e, 0x21, 0x27, 255]
     );
 }
 
