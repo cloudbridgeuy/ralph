@@ -162,6 +162,7 @@ impl Monitor {
             reported_since_nudge: reported,
             pane,
             activity,
+            auto_continue: self.auto_continue,
         }
     }
 

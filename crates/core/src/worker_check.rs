@@ -19,6 +19,7 @@ pub struct WorkerObservation {
     pub reported_since_nudge: bool,
     pub pane: Option<String>,
     pub activity: Option<ActivityState>,
+    pub auto_continue: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +126,10 @@ pub fn pane_busy(pane: &str) -> bool {
     footer.contains("esc to interrupt") || counts_running_agents(&footer)
 }
 
+fn stall_owned(obs: &WorkerObservation) -> bool {
+    obs.auto_continue && obs.activity == Some(ActivityState::Failed)
+}
+
 fn is_busy(obs: &WorkerObservation) -> bool {
     obs.activity.is_some_and(ActivityState::busy) || obs.pane.as_deref().is_some_and(pane_busy)
 }
@@ -142,7 +147,12 @@ pub fn classify(obs: &WorkerObservation) -> WorkerState {
         WorkerState::Waiting
     } else if obs.reported_since_nudge {
         WorkerState::Reported
-    } else if obs.ready && !obs.unreported && !is_busy(obs) && obs.pane.is_some() {
+    } else if obs.ready
+        && !obs.unreported
+        && !is_busy(obs)
+        && !stall_owned(obs)
+        && obs.pane.is_some()
+    {
         WorkerState::Unknown
     } else {
         WorkerState::Working
@@ -217,6 +227,9 @@ pub fn plan(
 }
 
 #[cfg(test)]
+mod failed_turn;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -232,6 +245,7 @@ mod tests {
             reported_since_nudge: false,
             pane: None,
             activity: None,
+            auto_continue: false,
         }
     }
 
