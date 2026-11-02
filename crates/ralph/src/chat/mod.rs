@@ -382,10 +382,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
         term: Arc::new(TermStatus::new(
             chat_config.terminal_status && std::io::stdout().is_terminal(),
+            chat_config.terminal_title && std::io::stdout().is_terminal(),
         )),
         phase: Mutex::new(Phase::Prompt),
         hold: Mutex::new(None),
     });
+    let session_name = name::session_name(args.name.as_deref(), chat_config.name.as_deref(), &cwd);
+    monitor.term.start_title(&session_name);
     let _term_clear = ClearOnDrop(Arc::clone(&monitor.term));
     let roster = {
         let monitor = Arc::clone(&monitor);
@@ -511,12 +514,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let prompt = ChatPrompt {
         monitor: Arc::clone(&monitor),
         color,
-        bar: StatusBar::new(
-            &config.theme.status,
-            &name::session_name(args.name.as_deref(), chat_config.name.as_deref(), &cwd),
-            &chat_config,
-            color,
-        ),
+        bar: StatusBar::new(&config.theme.status, &session_name, &chat_config, color),
         notice: RefCell::new(None),
         editor: editor_cmd,
         empty_submit,

@@ -53,6 +53,7 @@ pub mod status_mode;
 pub mod status_queue;
 pub mod status_segments;
 pub mod stream;
+pub mod term_title;
 pub mod watch;
 pub mod watch_command;
 pub mod watch_request;
