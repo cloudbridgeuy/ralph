@@ -253,6 +253,22 @@ pub fn config_view(snapshot: &ConfigSnapshot, changed_on_disk: bool) -> String {
     format!("{}\n", lines.join("\n"))
 }
 
+struct StartLayers {
+    global: Table,
+    store: Table,
+    loaded: bool,
+    fell_back: bool,
+}
+
+fn chat_rows(effective: &Table, layers: StartLayers) -> Vec<Row> {
+    let (global, store) = match (layers.loaded, layers.fell_back) {
+        (false, _) => (Table::new(), Table::new()),
+        (true, true) => (layers.global, Table::new()),
+        (true, false) => (layers.global, layers.store),
+    };
+    leaf_sources(effective, &global, &store)
+}
+
 pub fn load_for_chat(global: &Path, store: &Path) -> ChatLoad {
     let (result, notices) = AppConfig::load_from(global, Some(store));
     notices
@@ -270,12 +286,13 @@ pub fn load_for_chat(global: &Path, store: &Path) -> ChatLoad {
         }
     };
     let table = Table::try_from(&config).unwrap_or_default();
-    let global_layer = read_layer(global).unwrap_or_default();
-    let store_layer = match fell_back {
-        true => Table::new(),
-        false => read_layer(store).unwrap_or_default(),
+    let layers = StartLayers {
+        global: read_layer(global).unwrap_or_default(),
+        store: read_layer(store).unwrap_or_default(),
+        loaded,
+        fell_back,
     };
-    let rows = leaf_sources(&table, &global_layer, &store_layer);
+    let rows = chat_rows(&table, layers);
     ChatLoad {
         config,
         warnings,
@@ -317,6 +334,62 @@ mod tests {
             source,
             shadowed_global: None,
         }
+    }
+
+    fn default_table() -> Table {
+        Table::try_from(AppConfig::default()).unwrap()
+    }
+
+    fn sound_layer(value: bool) -> Table {
+        let mut chat = Table::new();
+        chat.insert("inbox_alert_sound".into(), Value::Boolean(value));
+        let mut table = Table::new();
+        table.insert("chat".into(), Value::Table(chat));
+        table
+    }
+
+    fn sound_row(rows: &[Row]) -> &Row {
+        rows.iter()
+            .find(|row| row.key == "chat.inbox_alert_sound")
+            .unwrap()
+    }
+
+    #[test]
+    fn failed_load_tags_no_row_global() {
+        let layers = StartLayers {
+            global: sound_layer(false),
+            store: Table::new(),
+            loaded: false,
+            fell_back: false,
+        };
+        let rows = chat_rows(&default_table(), layers);
+        assert_eq!(sound_row(&rows).source, Source::Default);
+        assert_eq!(sound_row(&rows).shadowed_global, None);
+    }
+
+    #[test]
+    fn failed_load_tags_no_row_store() {
+        let layers = StartLayers {
+            global: Table::new(),
+            store: sound_layer(false),
+            loaded: false,
+            fell_back: false,
+        };
+        let rows = chat_rows(&default_table(), layers);
+        assert!(rows.iter().all(|row| row.source != Source::Store));
+    }
+
+    #[test]
+    fn store_fallback_tags_no_row_store() {
+        let layers = StartLayers {
+            global: sound_layer(false),
+            store: sound_layer(true),
+            loaded: true,
+            fell_back: true,
+        };
+        let rows = chat_rows(&default_table(), layers);
+        assert!(rows.iter().all(|row| row.source != Source::Store));
+        assert_eq!(sound_row(&rows).source, Source::Global);
     }
 
     fn file(path: &str) -> FileState {
