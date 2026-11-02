@@ -320,6 +320,7 @@ fn last_touch<'a>(
     input: &Pair<'a>,
     through: usize,
     b_segments: &[PromptSegment],
+    prefix_cache: PrefixCache,
 ) -> &'a CallRecord {
     input
         .session
@@ -332,7 +333,11 @@ fn last_touch<'a>(
                     && segments[..=through]
                         .iter()
                         .zip(&b_segments[..=through])
-                        .all(|(left, right)| left.text == right.text)
+                        .all(|(left, right)| left.content == right.content)
+                    && match prefix_cache {
+                        PrefixCache::Explicit { lookback } => reaches(&segments, through, lookback),
+                        PrefixCache::Implicit { .. } => true,
+                    }
             })
         })
         .max_by_key(|call| call.seq)
@@ -447,9 +452,14 @@ fn too_short_verdict(prefix_cache: PrefixCache, servable_tokens: u64) -> Option<
     }
 }
 
-fn lapse_verdict(input: &Pair, breakpoint: &Breakpoint, b_segments: &[PromptSegment]) -> Verdict {
+fn lapse_verdict(
+    input: &Pair,
+    breakpoint: &Breakpoint,
+    b_segments: &[PromptSegment],
+    prefix_cache: PrefixCache,
+) -> Verdict {
     if let CacheTier::Ttl { seconds } = breakpoint.tier {
-        let touch = last_touch(input, breakpoint.index, b_segments);
+        let touch = last_touch(input, breakpoint.index, b_segments, prefix_cache);
         let gap = (input.b.started_at - touch.ended_at).num_seconds();
         if gap > seconds as i64 {
             return Verdict::TtlExpired {
@@ -522,7 +532,7 @@ fn explain(
     } else {
         changed_verdict(input, &base.facts, &base.headers)
             .or_else(|| too_short_verdict(prefix_cache, servable))
-            .unwrap_or_else(|| lapse_verdict(input, &breakpoint, b_segments))
+            .unwrap_or_else(|| lapse_verdict(input, &breakpoint, b_segments, prefix_cache))
     };
     Explanation {
         servable_bytes,

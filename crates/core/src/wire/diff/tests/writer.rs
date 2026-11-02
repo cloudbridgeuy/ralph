@@ -77,3 +77,64 @@ fn writer_lookback_reaches_past_the_divergence() {
     assert_eq!(explanation.servable_tokens, Some(50));
     assert_eq!(explanation.method, Some(TokenMethod::Anchor { seq: 1 }));
 }
+
+fn moved_breakpoint_b() -> CallRecord {
+    call(
+        3,
+        400,
+        410,
+        vec![
+            blk("h", Some("5m")),
+            blk("q1", None),
+            blk("q2", None),
+            blk("q3", Some("5m")),
+        ],
+        written(0, 100),
+    )
+}
+
+fn writer_layout_a() -> CallRecord {
+    call(
+        1,
+        0,
+        10,
+        vec![blk("h", Some("5m")), blk("q1", Some("5m"))],
+        written(0, 100),
+    )
+}
+
+#[test]
+fn writer_refresh_counts_a_call_with_the_writer_layout() {
+    let a = writer_layout_a();
+    let c = call(
+        2,
+        200,
+        350,
+        vec![blk("h", Some("5m")), blk("q1", Some("5m"))],
+        usage(0, 100),
+    );
+    let b = moved_breakpoint_b();
+    let verdict = view_of(&a, &b, &[a.clone(), c, b.clone()])
+        .explanation
+        .verdict;
+    assert!(
+        matches!(verdict, Verdict::Unexplained { .. }),
+        "{verdict:?}"
+    );
+}
+
+#[test]
+fn writer_refresh_requires_reaching_the_entry() {
+    let a = writer_layout_a();
+    let mut far = vec![blk("h", Some("5m")), blk("q1", None)];
+    far.extend((0..20).map(|i| blk(&format!("f{i}"), (i == 19).then_some("5m"))));
+    let c = call(2, 200, 350, far, usage(0, 100));
+    let b = moved_breakpoint_b();
+    let verdict = view_of(&a, &b, &[a.clone(), c, b.clone()])
+        .explanation
+        .verdict;
+    assert!(
+        matches!(verdict, Verdict::TtlExpired { since_seq: 1, .. }),
+        "{verdict:?}"
+    );
+}
