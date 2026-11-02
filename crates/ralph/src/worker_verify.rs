@@ -43,6 +43,14 @@ impl Budget {
         }
     }
 
+    pub(crate) fn expired(&self, name: &'static str) -> Option<CheckResult> {
+        limit_failure(
+            name,
+            self.limit.saturating_sub(self.started.elapsed()),
+            self.limit,
+        )
+    }
+
     pub(crate) fn allows(&self, checks: &Checks, name: &'static str) -> bool {
         let remaining = self.limit.saturating_sub(self.started.elapsed());
         match limit_failure(name, remaining, self.limit) {

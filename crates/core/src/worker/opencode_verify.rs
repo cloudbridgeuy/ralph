@@ -16,6 +16,18 @@ pub const OPENCODE_REQUIRED_CHECKS: &[&str] = &[
     "interrupt/idle",
     "session/delete",
 ];
+pub fn delete_result(
+    limit: Option<CheckResult>,
+    deleted: Result<(), String>,
+    id: &str,
+) -> CheckResult {
+    match (limit, deleted) {
+        (Some(failure), _) => failure,
+        (None, Ok(())) => CheckResult::pass("session/delete", format!("session {id} deleted")),
+        (None, Err(message)) => CheckResult::fail("session/delete", message),
+    }
+}
+
 pub const OPENCODE_ENDED: &str = "end_turn";
 pub const OPENCODE_INTERRUPTED: &str = "cancelled";
 
@@ -204,7 +216,8 @@ pub fn interrupt_idle_check(body: &str) -> CheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::{permission_check, prompt_check, PermissionSetup, Verdict};
+    use crate::worker::{limit_failure, permission_check, prompt_check, PermissionSetup, Verdict};
+    use std::time::Duration;
 
     const SESSION: &str = "ses_ralphverify";
 
@@ -343,5 +356,25 @@ mod tests {
         assert_eq!(ask["permissions"], verify_session_permissions());
         assert_ne!(plain["permissions"], ask["permissions"]);
         assert_eq!(ask["id"], SESSION);
+    }
+
+    #[test]
+    fn delete_result_is_a_limit_failure_after_the_deadline_but_the_delete_still_runs() {
+        let limit = limit_failure("session/delete", Duration::ZERO, Duration::from_secs(60));
+        let result = delete_result(limit, Ok(()), SESSION);
+        assert_eq!(result.name, "session/delete");
+        assert!(result.verdict == Verdict::Fail, "{result:?}");
+    }
+
+    #[test]
+    fn delete_result_passes_within_the_budget() {
+        let result = delete_result(None, Ok(()), SESSION);
+        assert!(result.verdict == Verdict::Pass, "{result:?}");
+    }
+
+    #[test]
+    fn delete_result_fails_when_the_delete_fails_within_the_budget() {
+        let result = delete_result(None, Err("boom".to_string()), SESSION);
+        assert!(result.verdict == Verdict::Fail, "{result:?}");
     }
 }

@@ -6,7 +6,7 @@ use crate::subprocess::timed_output;
 use crate::transport::http::HttpSse;
 use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::worker::{
-    cancel_check, fold_opencode_event, interrupt_idle_check, messages_check,
+    cancel_check, delete_result, fold_opencode_event, interrupt_idle_check, messages_check,
     opencode_probed_version, opencode_serve_command, opencode_server_log, opencode_session_id,
     permission_check, permission_reply_body, permission_reply_path, prompt_check, reply_count,
     session_check, spawn_failure, start_failure, verify_session_body, CheckResult, OpencodeAction,
@@ -271,15 +271,11 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
     if let Some(feed) = feed.as_ref().filter(|_| live) {
         live_checks(api, feed, scope, &id, checks);
     }
-    if !budget.allows(checks, "session/delete") {
-        return;
-    }
-    step(
-        checks,
-        "session/delete",
-        api.delete(&session_path(&id)),
-        |_| format!("session {id} deleted"),
-    );
+    checks.add(delete_result(
+        budget.expired("session/delete"),
+        api.delete(&session_path(&id)).map(drop),
+        &id,
+    ));
 }
 
 pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Option<String> {
