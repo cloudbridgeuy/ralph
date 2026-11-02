@@ -197,6 +197,9 @@ pub(crate) fn verify(
     if tmux.is_none() || !flags_ok {
         return Some(version);
     }
+    if !live {
+        return Some(version);
+    }
     let launched = launch(dir, config, model);
     let (session, paths) = match launched {
         Ok(started) => started,
@@ -209,7 +212,7 @@ pub(crate) fn verify(
         await_startup(&session.0, &paths.markers.ready).map_err(|error| error.to_string());
     let ready = matches!(started, Ok(true));
     checks.add(startup_check(started));
-    if live && ready {
+    if ready {
         thread::sleep(INPUT_SETTLE);
         let prompt = prompt_turn(&session, &paths);
         let replied = prompt.verdict == Verdict::Pass;

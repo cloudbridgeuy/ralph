@@ -6,9 +6,9 @@ use crate::{
     acp_worker, claude_headless_worker, codex_worker, opencode_worker, verified_agents, workers,
 };
 use ralph_core::worker::{
-    finished_probe, render_check, render_summary, required_failure, resolve_claude_model,
-    resolve_opencode_model, spec_passed, verified_entry, CheckResult, Verdict, VerifiedAgent,
-    VersionProbe, CLAUDE_HEADLESS_REQUIRED_CHECKS, CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS,
+    claude_required_checks, finished_probe, render_check, render_summary, required_failure,
+    resolve_claude_model, resolve_opencode_model, spec_passed, verified_entry, CheckResult,
+    Verdict, VerifiedAgent, VersionProbe, CLAUDE_HEADLESS_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS,
     CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
 };
 use std::sync::{Arc, Mutex};
@@ -161,7 +161,7 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
         ),
         VerifyAgent::Claude => (
             workers::verify(live, dir.path(), &checks, &config, model.as_deref()),
-            CLAUDE_REQUIRED_CHECKS,
+            claude_required_checks(live),
         ),
     };
     if let Some(failure) = required_failure(&checks.results(), required) {

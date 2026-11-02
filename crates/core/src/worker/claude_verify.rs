@@ -7,7 +7,16 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CLAUDE_REQUIRED_CHECKS: &[&str] = &["version", "tmux", "flags", "session start"];
+const CLAUDE_REQUIRED_CHECKS: &[&str] = &["version", "tmux", "flags"];
+const CLAUDE_LIVE_REQUIRED_CHECKS: &[&str] = &["version", "tmux", "flags", "session start"];
+
+pub fn claude_required_checks(live: bool) -> &'static [&'static str] {
+    if live {
+        CLAUDE_LIVE_REQUIRED_CHECKS
+    } else {
+        CLAUDE_REQUIRED_CHECKS
+    }
+}
 pub const CLAUDE_VERIFY_FLAGS: [&str; 5] = [
     "--permission-mode",
     "--mcp-config",
@@ -199,6 +208,22 @@ mod tests {
     use super::*;
 
     const HELP: &str = "Options:\n  --add-dir <dirs>\n  --append-system-prompt <prompt>\n  --mcp-config <configs>\n  --permission-mode <mode>\n  --settings <file-or-json>\n  --model <model>\n";
+
+    #[test]
+    fn the_free_claude_checks_start_no_interactive_claude() {
+        assert_eq!(
+            claude_required_checks(false),
+            &["version", "tmux", "flags"][..]
+        );
+    }
+
+    #[test]
+    fn the_live_claude_checks_add_the_session_start() {
+        assert_eq!(
+            claude_required_checks(true),
+            &["version", "tmux", "flags", "session start"][..]
+        );
+    }
 
     #[test]
     fn help_text_lists_every_flag_the_worker_passes() {
