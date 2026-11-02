@@ -237,6 +237,14 @@ impl PermissionSetup {
         }
     }
 
+    pub fn opencode() -> Self {
+        let label = "a session whose permission rules ask before shell commands";
+        Self {
+            label: label.to_string(),
+            no_request: format!("opencode sent no permission.asked event although it runs {label}"),
+        }
+    }
+
     pub fn codex() -> Self {
         let label = "a read-only thread with approvalPolicy on-request";
         Self {

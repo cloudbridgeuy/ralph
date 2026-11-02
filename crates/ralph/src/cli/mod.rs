@@ -118,6 +118,7 @@ pub enum VerifyAgent {
     Cursor,
     Codex,
     ClaudeHeadless,
+    Opencode,
 }
 
 impl VerifyAgent {
@@ -126,6 +127,7 @@ impl VerifyAgent {
             Self::Cursor => "cursor",
             Self::Codex => "codex",
             Self::ClaudeHeadless => "claude-headless",
+            Self::Opencode => "opencode",
         }
     }
 }

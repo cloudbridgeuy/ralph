@@ -153,7 +153,7 @@ Parse failures and invalid `[workers]` or `[wire.prices]` values also fail the c
 ## ralph worker
 
 ```bash
-ralph worker verify <cursor|codex|claude-headless> [--live]
+ralph worker verify <cursor|codex|claude-headless|opencode> [--live]
 ```
 
 Runs the installed headless agent in a fresh temporary directory and prints `PASS`, `FAIL` or `UNKNOWN` per check, then a summary line that says whether `--live` ran. Exit code is 0 when every blocking check passes and 1 otherwise. A full pass records the agent version in `verified-agents.json` in the config directory (honours `RALPH_CONFIG_DIR`), which stops the "differs from the tested" warning for that version.
