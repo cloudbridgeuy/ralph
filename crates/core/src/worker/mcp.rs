@@ -22,7 +22,7 @@ pub fn command_definitions() -> [Value; 5] {
                     "task": {"type": "string", "description": "What the worker should do, in the person's terms. Keep [Image #N: <path>] references verbatim."},
                     "harness": {"type": "string", "enum": HarnessId::ALL.map(HarnessId::as_str), "description": harness_description()},
                     "ticket": {"type": "string", "description": "Tracker ticket key such as GUZ-918: letters, digits and dashes. Defaults to the worker id when the id is <KEY>-<digits> for a team key in the [tickets] ralph config."},
-                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default codex's own default. claude-headless: as claude."}
+                    "model": {"type": "string", "description": "claude: any model name or alias; default [claude] model in the ralph config, else claude's own default. opencode: provider/model; default [opencode] model in the ralph config, else openai/gpt-6.1-sol. cursor: any model name or alias; default [cursor] model in the ralph config, else cursor's own default. Cursor's ACP fixes the variant for each model. codex: any model name or alias; default [codex] model in the ralph config, else codex's own default. claude-headless: as claude."}
                 },
                 "required": ["id", "task"]
             }
@@ -283,6 +283,18 @@ fn harness(args: &Value) -> Result<ParsedSpawn, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_worker_model_description_names_the_codex_config_model() {
+        let definitions = command_definitions();
+        let description = definitions[0]["inputSchema"]["properties"]["model"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            description.contains("codex: any model name or alias; default [codex] model in the ralph config, else codex's own default"),
+            "{description}"
+        );
+    }
 
     #[test]
     fn parse_command_reads_spawn_and_reply() {
