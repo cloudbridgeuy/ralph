@@ -141,7 +141,7 @@ pub enum WorkerCommand {
         long_about = "Runs the agent in a fresh temporary directory and prints PASS or FAIL per \
 check. Exits non-zero when any blocking check fails. The free spec checks the version, handshake (or spawn), \
 login and session setup without sending a prompt. --live adds one prompt, one permission \
-round-trip and one cancel, which use model calls; a failed or unknown cancel never fails the \
+round-trip and one cancel, which use model calls, and for the tmux claude worker the interactive session start; a failed or unknown cancel never fails the \
 spec. A full pass records the version in verified-agents.json, which silences the version \
 warning for that version."
     )]

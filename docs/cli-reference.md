@@ -160,7 +160,7 @@ ralph worker verify <cursor|codex|claude-headless|opencode|claude> [--live]
 
 Runs the installed worker agent in a fresh temporary directory and prints `PASS`, `FAIL` or `UNKNOWN` per check, then a summary line that says whether `--live` ran. For `claude-headless`, `claude` and `opencode` the summary also names the model, chosen from `[claude] model` or `[opencode] model` as `ralph worker spawn` does (claude's default model, or the opencode default, when unset). Exit code is 0 when every blocking check passes and 1 otherwise. A full pass records the agent version in `verified-agents.json` in the config directory (honours `RALPH_CONFIG_DIR`), which stops the "differs from the tested" warning for that version.
 
-Without `--live` no prompt is sent and no model is called. `--live` adds one reply, one permission round-trip and one cancel, which use model calls. A failed or unknown cancel is printed but never fails the spec. See [Headless workers](context/headless-workers.md#verify-an-agent-version) for the checks.
+Without `--live` no prompt is sent and no model is called. `--live` adds one reply, one permission round-trip and one cancel, which use model calls. For `claude` it also adds the interactive session start, because starting claude makes a model call. A failed or unknown cancel is printed but never fails the spec. See [Headless workers](context/headless-workers.md#verify-an-agent-version) for the checks.
 
 ---
 

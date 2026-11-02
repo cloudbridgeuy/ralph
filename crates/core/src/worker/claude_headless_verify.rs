@@ -161,8 +161,25 @@ fn stderr_complaint(stderr: &str) -> Option<&str> {
     })
 }
 
-pub fn argv_check(running: bool, stderr: &str, exit: Result<bool, String>) -> CheckResult {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StderrRead {
+    Finished(String),
+    Unfinished(String),
+}
+
+pub fn argv_check(running: bool, read: &StderrRead, exit: Result<bool, String>) -> CheckResult {
+    let (StderrRead::Finished(stderr) | StderrRead::Unfinished(stderr)) = read;
     let detail = |text: &str| format!("{text}; stderr: {}", stderr.trim());
+    if running
+        && exit.is_ok()
+        && matches!(read, StderrRead::Unfinished(_))
+        && !stderr.trim().is_empty()
+    {
+        return CheckResult::fail(
+            "argv",
+            detail("the stderr read did not finish and already holds text"),
+        );
+    }
     match (running, stderr_complaint(stderr), exit) {
         (false, _, _) => CheckResult::fail(
             "argv",
@@ -268,10 +285,38 @@ mod tests {
 
     #[test]
     fn argv_fails_on_an_early_exit_or_a_stderr_complaint() {
-        assert_eq!(argv_check(false, "", Ok(true)).verdict, Verdict::Fail);
-        let unknown = argv_check(true, "error: unknown option '--x'\n", Ok(true));
+        let finished = |text: &str| StderrRead::Finished(text.to_string());
+        assert_eq!(
+            argv_check(false, &finished(""), Ok(true)).verdict,
+            Verdict::Fail
+        );
+        let unknown = argv_check(true, &finished("error: unknown option '--x'\n"), Ok(true));
         assert_eq!(unknown.verdict, Verdict::Fail);
-        assert_eq!(argv_check(true, "", Ok(true)).verdict, Verdict::Pass);
+        assert_eq!(
+            argv_check(true, &finished(""), Ok(true)).verdict,
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn an_unfinished_empty_stderr_read_with_a_clean_exit_passes_argv() {
+        let check = argv_check(true, &StderrRead::Unfinished(String::new()), Ok(true));
+        assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
+    }
+
+    #[test]
+    fn an_unfinished_stderr_read_with_text_does_not_pass_the_argv_check() {
+        let check = argv_check(true, &StderrRead::Unfinished("warming up".into()), Ok(true));
+        assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
+        assert!(check.detail.contains("warming up"), "{}", check.detail);
+    }
+
+    #[test]
+    fn a_missing_exit_is_reported_even_when_the_stderr_read_is_unfinished() {
+        let read = StderrRead::Unfinished("warming up".into());
+        let check = argv_check(true, &read, Err("claude did not exit within 10s".into()));
+        assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
+        assert!(check.detail.contains("did not exit"), "{}", check.detail);
     }
 
     #[test]

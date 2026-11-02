@@ -4,9 +4,9 @@ use super::{
 };
 use crate::subprocess::timed_output;
 use crate::transport::http::HttpSse;
-use crate::worker_verify::{step, version_probe, Checks};
+use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::worker::{
-    cancel_check, fold_opencode_event, interrupt_idle_check, messages_check,
+    cancel_check, delete_result, fold_opencode_event, interrupt_idle_check, messages_check,
     opencode_probed_version, opencode_serve_command, opencode_server_log, opencode_session_id,
     permission_check, permission_reply_body, permission_reply_path, prompt_check, reply_count,
     session_check, spawn_failure, start_failure, verify_session_body, CheckResult, OpencodeAction,
@@ -23,6 +23,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const TURN_LIMIT: Duration = Duration::from_secs(120);
+const EVENTS_LIMIT: Duration = Duration::from_secs(10);
 const MAIN_SESSION: &str = "verify";
 const ASK_SESSION: &str = "verifyask";
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
@@ -77,6 +78,7 @@ fn interrupt(api: &HttpSse, id: &str) -> Result<String, String> {
 struct Scope<'a> {
     dir: &'a Path,
     model: &'a str,
+    budget: Budget,
 }
 
 fn session_json(scope: Scope, id: &str, ask: bool) -> Result<String, String> {
@@ -90,8 +92,9 @@ fn create_session(api: &HttpSse, scope: Scope, id: &str, ask: bool) -> Result<St
 
 fn read_session(api: &HttpSse, id: &str) -> Result<String, String> {
     let session = api.get(&session_path(id))?;
-    if !session.contains(id) {
-        return Err(format!("the session answer did not name {id}: {session}"));
+    let named = session_check("session/read", &session, id);
+    if named.verdict != Verdict::Pass {
+        return Err(named.detail);
     }
     api.get(&messages_path(id))
 }
@@ -171,9 +174,15 @@ fn run_turn(
 }
 
 fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, checks: &Checks) {
+    if !scope.budget.allows(checks, "prompt/reply") {
+        return;
+    }
     let plain = run_turn(api, feed, id, REPLY_PROMPT, OpencodePlan::Plain);
     checks.add(prompt_check(&plain.summary, OPENCODE_ENDED));
     if plain.summary.stop.is_err() {
+        return;
+    }
+    if !scope.budget.allows(checks, "permission") {
         return;
     }
     let ask_id = opencode_session_id(ASK_SESSION);
@@ -189,19 +198,51 @@ fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, che
         }
         Err(message) => checks.add(CheckResult::fail("permission", message)),
     }
+    if !scope.budget.allows(checks, "cancel") {
+        return;
+    }
     let cancelled = run_turn(api, feed, id, CANCEL_PROMPT, OpencodePlan::Cancel);
     checks.add(cancel_check(&cancelled.summary, OPENCODE_INTERRUPTED));
 }
 
-fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
-    let feed = step(checks, "events", api.events(EVENTS_PATH), |_| {
-        format!("{EVENTS_PATH} connected")
-    })
-    .map(|reader| {
-        let (sender, feed) = mpsc::channel();
-        thread::spawn(move || read_lines(reader, &sender));
-        feed
+fn open_events(api: &HttpSse, path: &str, limit: Duration) -> Result<Receiver<Feed>, String> {
+    let (sender, feed) = mpsc::channel();
+    let (opened, answer) = mpsc::channel();
+    let api = api.clone();
+    let owned = path.to_string();
+    thread::spawn(move || match api.events(&owned) {
+        Ok(reader) => {
+            opened.send(Ok(())).ok();
+            read_lines(reader, &sender);
+        }
+        Err(message) => {
+            opened.send(Err(message)).ok();
+        }
     });
+    match answer.recv_timeout(limit) {
+        Ok(Ok(())) => Ok(feed),
+        Ok(Err(message)) => Err(message),
+        Err(RecvTimeoutError::Timeout) => Err(format!("{path} did not answer within {limit:?}")),
+        Err(RecvTimeoutError::Disconnected) => {
+            Err(format!("the {path} request ended without an answer"))
+        }
+    }
+}
+
+fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
+    let budget = scope.budget;
+    if !budget.allows(checks, "events") {
+        return;
+    }
+    let feed = step(
+        checks,
+        "events",
+        open_events(api, EVENTS_PATH, EVENTS_LIMIT),
+        |_| format!("{EVENTS_PATH} connected"),
+    );
+    if !budget.allows(checks, "session/create") {
+        return;
+    }
     let id = opencode_session_id(MAIN_SESSION);
     let created = judged(
         checks,
@@ -209,7 +250,7 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
         create_session(api, scope, &id, false),
         |body| session_check("session/create", body, &id),
     );
-    if !created {
+    if !created || !budget.allows(checks, "session/read") {
         return;
     }
     judged(
@@ -218,6 +259,9 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
         read_session(api, &id),
         messages_check,
     );
+    if !budget.allows(checks, "interrupt/idle") {
+        return;
+    }
     judged(
         checks,
         "interrupt/idle",
@@ -227,15 +271,15 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
     if let Some(feed) = feed.as_ref().filter(|_| live) {
         live_checks(api, feed, scope, &id, checks);
     }
-    step(
-        checks,
-        "session/delete",
-        api.delete(&session_path(&id)),
-        |_| format!("session {id} deleted"),
-    );
+    checks.add(delete_result(
+        budget.expired("session/delete"),
+        api.delete(&session_path(&id)).map(drop),
+        &id,
+    ));
 }
 
 pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Option<String> {
+    let budget = Budget::new(live);
     let probe = version_probe(timed_output(
         Command::new(OPENCODE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -246,6 +290,9 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Op
         opencode_probed_version(&probe),
         |version| version.clone(),
     )?;
+    if !budget.allows(checks, "spawn") {
+        return Some(version);
+    }
     let Some(mut server) = step(checks, "spawn", launch(dir), |server| {
         format!(
             "`opencode serve` answered {} ({})",
@@ -255,7 +302,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Op
     }) else {
         return Some(version);
     };
-    run_checks(&server.api, Scope { dir, model }, live, checks);
+    run_checks(&server.api, Scope { dir, model, budget }, live, checks);
     server.snapshot();
     server.stop();
     Some(version)
@@ -270,8 +317,33 @@ mod tests {
         let scope = Scope {
             dir: Path::new("/tmp/verify-dir"),
             model: "anthropic/claude-haiku-5-5",
+            budget: Budget::new(false),
         };
         let body = session_json(scope, "verify", false).unwrap();
         assert!(body.contains("claude-haiku-5-5"), "{body}");
+    }
+
+    #[test]
+    fn a_server_that_never_answers_the_events_request_fails_by_the_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, held) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let accepted = listener.accept();
+            held.recv().ok();
+            drop(accepted);
+        });
+        let (done, outcome) = mpsc::channel();
+        thread::spawn(move || {
+            let api = HttpSse::new(port, "secret");
+            let started = Instant::now();
+            let result = open_events(&api, EVENTS_PATH, Duration::from_millis(300));
+            done.send((result.err(), started.elapsed())).ok();
+        });
+        let verdict = outcome.recv_timeout(Duration::from_secs(3));
+        release.send(()).ok();
+        let (error, elapsed) = verdict.expect("open_events did not return by its deadline");
+        assert!(error.is_some());
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
     }
 }

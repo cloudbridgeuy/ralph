@@ -16,6 +16,18 @@ pub const OPENCODE_REQUIRED_CHECKS: &[&str] = &[
     "interrupt/idle",
     "session/delete",
 ];
+pub fn delete_result(
+    limit: Option<CheckResult>,
+    deleted: Result<(), String>,
+    id: &str,
+) -> CheckResult {
+    match (limit, deleted) {
+        (Some(failure), _) => failure,
+        (None, Ok(())) => CheckResult::pass("session/delete", format!("session {id} deleted")),
+        (None, Err(message)) => CheckResult::fail("session/delete", message),
+    }
+}
+
 pub const OPENCODE_ENDED: &str = "end_turn";
 pub const OPENCODE_INTERRUPTED: &str = "cancelled";
 
@@ -151,8 +163,14 @@ pub fn reply_count(messages_body: &str) -> usize {
         .map_or(0, |result| usize::from(!result.text.is_empty()))
 }
 
+fn session_reply_id(body: &str) -> Option<String> {
+    let reply: Value = serde_json::from_str(body).ok()?;
+    let id = reply.get("id").or_else(|| reply.get("data")?.get("id"))?;
+    id.as_str().map(str::to_string)
+}
+
 pub fn session_check(name: &'static str, body: &str, id: &str) -> CheckResult {
-    if body.contains(id) {
+    if session_reply_id(body).as_deref() == Some(id) {
         CheckResult::pass(name, format!("the server answered with session {id}"))
     } else {
         CheckResult::fail(
@@ -198,7 +216,8 @@ pub fn interrupt_idle_check(body: &str) -> CheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::{permission_check, prompt_check, PermissionSetup, Verdict};
+    use crate::worker::{limit_failure, permission_check, prompt_check, PermissionSetup, Verdict};
+    use std::time::Duration;
 
     const SESSION: &str = "ses_ralphverify";
 
@@ -226,6 +245,37 @@ mod tests {
             .iter()
             .flat_map(|line| fold_opencode_event(fold, SESSION, line, plan))
             .collect()
+    }
+
+    #[test]
+    fn an_html_body_that_mentions_the_id_does_not_pass_the_session_check() {
+        let body = format!("<html><body>not found: {SESSION}</body></html>");
+        let check = session_check("session/create", &body, SESSION);
+        assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
+    }
+
+    #[test]
+    fn the_session_check_reads_the_id_field_at_top_level_or_under_data() {
+        for body in [
+            json!({"id": SESSION}),
+            json!({"data": {"id": SESSION, "title": "x"}}),
+        ] {
+            let check = session_check("session/create", &body.to_string(), SESSION);
+            assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
+        }
+    }
+
+    #[test]
+    fn the_session_check_fails_on_another_id_or_a_mention_inside_a_field() {
+        for body in [
+            json!({"id": "ses_other"}),
+            json!({"data": {"id": "ses_other"}}),
+            json!({"title": SESSION}),
+            json!({"data": {"id": 7}}),
+        ] {
+            let check = session_check("session/create", &body.to_string(), SESSION);
+            assert_eq!(check.verdict, Verdict::Fail, "{body}");
+        }
     }
 
     #[test]
@@ -306,5 +356,25 @@ mod tests {
         assert_eq!(ask["permissions"], verify_session_permissions());
         assert_ne!(plain["permissions"], ask["permissions"]);
         assert_eq!(ask["id"], SESSION);
+    }
+
+    #[test]
+    fn delete_result_is_a_limit_failure_after_the_deadline_but_the_delete_still_runs() {
+        let limit = limit_failure("session/delete", Duration::ZERO, Duration::from_secs(60));
+        let result = delete_result(limit, Ok(()), SESSION);
+        assert_eq!(result.name, "session/delete");
+        assert!(result.verdict == Verdict::Fail, "{result:?}");
+    }
+
+    #[test]
+    fn delete_result_passes_within_the_budget() {
+        let result = delete_result(None, Ok(()), SESSION);
+        assert!(result.verdict == Verdict::Pass, "{result:?}");
+    }
+
+    #[test]
+    fn delete_result_fails_when_the_delete_fails_within_the_budget() {
+        let result = delete_result(None, Err("boom".to_string()), SESSION);
+        assert!(result.verdict == Verdict::Fail, "{result:?}");
     }
 }

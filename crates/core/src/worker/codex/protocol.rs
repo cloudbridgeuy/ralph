@@ -189,6 +189,13 @@ pub fn check_agent_version(
     }
 }
 
+pub fn version_detail(version: &str, warning: Option<&str>) -> String {
+    match warning {
+        Some(warning) => format!("{version} (probed {PROBED_VERSION}); {warning}"),
+        None => format!("{version} (probed {PROBED_VERSION})"),
+    }
+}
+
 pub fn check_login(account: &Value) -> Result<(), String> {
     let logged_out = account["account"].is_null() && account["requiresOpenaiAuth"] == json!(true);
     if logged_out {
@@ -339,6 +346,19 @@ mod tests {
         assert!(params["config"].get("mcp_servers").is_none());
         assert_eq!(params["config"]["projects"]["/w"]["trust_level"], "trusted");
         assert_eq!(thread_archive_params("t"), json!({"threadId": "t"}));
+    }
+
+    #[test]
+    fn the_version_detail_names_a_newer_version_as_newer_than_probed() {
+        let warning = check_version("0.165.0", &VerifiedAgents::default()).unwrap();
+        let detail = version_detail("0.165.0", warning.as_deref());
+        assert!(detail.contains("0.165.0"), "{detail}");
+        assert!(detail.contains("newer than the probed 0.164.0"), "{detail}");
+    }
+
+    #[test]
+    fn the_version_detail_of_a_probed_version_has_no_warning() {
+        assert_eq!(version_detail("0.164.0", None), "0.164.0 (probed 0.164.0)");
     }
 
     #[test]

@@ -6,12 +6,14 @@ use crate::{
     acp_worker, claude_headless_worker, codex_worker, opencode_worker, verified_agents, workers,
 };
 use ralph_core::worker::{
-    finished_probe, render_check, render_summary, required_failure, resolve_claude_model,
-    resolve_opencode_model, spec_passed, verified_entry, CheckResult, Verdict, VerifiedAgent,
-    VersionProbe, CLAUDE_HEADLESS_REQUIRED_CHECKS, CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS,
-    CURSOR_REQUIRED_CHECKS, DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
+    claude_required_checks, finished_probe, limit_failure, render_check, render_summary,
+    required_failure, resolve_claude_model, resolve_opencode_model, spec_passed, verified_entry,
+    verify_limit, CheckResult, Verdict, VerifiedAgent, VersionProbe,
+    CLAUDE_HEADLESS_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
+    DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
 };
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Default)]
 pub(crate) struct Checks(Arc<Mutex<Vec<CheckResult>>>);
@@ -24,6 +26,40 @@ impl Checks {
 
     pub(crate) fn results(&self) -> Vec<CheckResult> {
         locked(&self.0).clone()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Budget {
+    started: Instant,
+    limit: Duration,
+}
+
+impl Budget {
+    pub(crate) fn new(live: bool) -> Self {
+        Self {
+            started: Instant::now(),
+            limit: verify_limit(live),
+        }
+    }
+
+    pub(crate) fn expired(&self, name: &'static str) -> Option<CheckResult> {
+        limit_failure(
+            name,
+            self.limit.saturating_sub(self.started.elapsed()),
+            self.limit,
+        )
+    }
+
+    pub(crate) fn allows(&self, checks: &Checks, name: &'static str) -> bool {
+        let remaining = self.limit.saturating_sub(self.started.elapsed());
+        match limit_failure(name, remaining, self.limit) {
+            Some(failure) => {
+                checks.add(failure);
+                false
+            }
+            None => true,
+        }
     }
 }
 
@@ -161,7 +197,7 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
         ),
         VerifyAgent::Claude => (
             workers::verify(live, dir.path(), &checks, &config, model.as_deref()),
-            CLAUDE_REQUIRED_CHECKS,
+            claude_required_checks(live),
         ),
     };
     if let Some(failure) = required_failure(&checks.results(), required) {
@@ -197,6 +233,21 @@ mod tests {
             live: false,
             passed: version.is_some(),
         }
+    }
+
+    #[test]
+    fn an_exhausted_budget_records_a_failed_check() {
+        let checks = Checks::default();
+        let budget = Budget {
+            started: Instant::now(),
+            limit: Duration::ZERO,
+        };
+        assert!(!budget.allows(&checks, "events"));
+        let results = checks.results();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].verdict, Verdict::Fail);
+        assert!(Budget::new(false).allows(&checks, "events"));
+        assert_eq!(checks.results().len(), 1);
     }
 
     #[test]

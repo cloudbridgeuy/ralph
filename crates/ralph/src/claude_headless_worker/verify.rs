@@ -6,14 +6,14 @@ use crate::config::AppConfig;
 use crate::subprocess::timed_output;
 use crate::transport::stdio::{spawn_piped, stop_child};
 use crate::watches::locked;
-use crate::worker_verify::{step, version_probe, Checks};
+use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     argv_check, cancel_check, claude_headless_args, claude_probed_version, claude_verify_spawns,
     fold_claude_line, init_check, permission_check, prompt_check, uuid_v4, ClaudeFold, ClaudePlan,
-    ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, CLAUDE_COMMAND, CLAUDE_ENDED,
-    CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
+    ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, StderrRead, CLAUDE_COMMAND,
+    CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::io::{Read, Write};
 use std::path::Path;
@@ -25,6 +25,7 @@ use std::time::Instant;
 const SETTLE: Duration = Duration::from_secs(2);
 const EXIT_LIMIT: Duration = Duration::from_secs(10);
 const TURN_LIMIT: Duration = Duration::from_secs(120);
+const STDERR_LIMIT: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(50);
 const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
@@ -77,11 +78,17 @@ fn run_turn(wire: &Wire, text: &str, plan: ClaudePlan) -> ClaudeFold {
     fold
 }
 
-fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks) {
+fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks, budget: Budget) {
+    if !budget.allows(checks, "prompt/reply") {
+        return;
+    }
     let plain = run_turn(wire, REPLY_PROMPT, ClaudePlan::Plain);
     checks.add(init_check(plain.session.as_deref(), expected_session));
     checks.add(prompt_check(&plain.summary, CLAUDE_ENDED));
     if plain.summary.stop.is_err() {
+        return;
+    }
+    if !budget.allows(checks, "permission") {
         return;
     }
     let allowed = run_turn(wire, CLAUDE_PERMISSION_PROMPT, ClaudePlan::Allow);
@@ -90,23 +97,51 @@ fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks) {
         CLAUDE_ENDED,
         &PermissionSetup::claude_headless(),
     ));
+    if !budget.allows(checks, "cancel") {
+        return;
+    }
     let cancelled = run_turn(wire, CANCEL_PROMPT, ClaudePlan::Cancel);
     checks.add(cancel_check(&cancelled.summary, CLAUDE_INTERRUPTED));
 }
 
-fn collect_stderr(mut stderr: ChildStderr) -> Arc<Mutex<Vec<u8>>> {
-    let collected = Arc::new(Mutex::new(Vec::new()));
-    let sink = Arc::clone(&collected);
-    thread::spawn(move || {
-        let mut chunk = [0u8; 4096];
-        while let Ok(read) = stderr.read(&mut chunk) {
-            if read == 0 {
-                break;
+struct StderrReader {
+    collected: Arc<Mutex<Vec<u8>>>,
+    finished: mpsc::Receiver<()>,
+}
+
+impl StderrReader {
+    fn start(mut stderr: ChildStderr) -> Self {
+        let collected = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&collected);
+        let (done, finished) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let _done = done;
+            let mut chunk = [0u8; 4096];
+            while let Ok(read) = stderr.read(&mut chunk) {
+                if read == 0 {
+                    break;
+                }
+                locked(&sink).extend_from_slice(&chunk[..read]);
             }
-            locked(&sink).extend_from_slice(&chunk[..read]);
+        });
+        Self {
+            collected,
+            finished,
         }
-    });
-    collected
+    }
+
+    fn read(&self, limit: Duration) -> StderrRead {
+        let finished = !matches!(
+            self.finished.recv_timeout(limit),
+            Err(RecvTimeoutError::Timeout)
+        );
+        let text = String::from_utf8_lossy(&locked(&self.collected)).into_owned();
+        if finished {
+            StderrRead::Finished(text)
+        } else {
+            StderrRead::Unfinished(text)
+        }
+    }
 }
 
 fn wait_exit(child: &mut Child) -> Result<bool, String> {
@@ -167,6 +202,7 @@ pub(crate) fn verify(
     config: &Result<AppConfig, String>,
     model: Option<&str>,
 ) -> Option<String> {
+    let budget = Budget::new(live);
     let probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -177,36 +213,57 @@ pub(crate) fn verify(
         claude_probed_version(&probe),
         |version| format!("{version} (probed {})", CLAUDE_GATE.probed),
     )?;
+    let scope = SpawnScope {
+        dir,
+        config,
+        model,
+        budget,
+    };
     for spawn in claude_verify_spawns(live) {
-        if !run_spawn(*spawn, dir, checks, config, model) {
+        if !budget.allows(checks, spawn_name(*spawn)) {
+            break;
+        }
+        if !run_spawn(*spawn, &scope, checks) {
             break;
         }
     }
     Some(version)
 }
 
-fn run_spawn(
-    kind: ClaudeSpawn,
-    dir: &Path,
-    checks: &Checks,
-    config: &Result<AppConfig, String>,
-    model: Option<&str>,
-) -> bool {
+fn spawn_name(kind: ClaudeSpawn) -> &'static str {
+    match kind {
+        ClaudeSpawn::Argv => "spawn",
+        ClaudeSpawn::Turns => "live spawn",
+    }
+}
+
+struct SpawnScope<'a> {
+    dir: &'a Path,
+    config: &'a Result<AppConfig, String>,
+    model: Option<&'a str>,
+    budget: Budget,
+}
+
+fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
+    let SpawnScope {
+        dir,
+        config,
+        model,
+        budget,
+    } = *scope;
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
         spawn_piped(claude_command(dir, &session, config, model))
             .map(|spawned| (session, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });
-    let name = match kind {
-        ClaudeSpawn::Argv => "spawn",
-        ClaudeSpawn::Turns => "live spawn",
-    };
-    let Some((session, (mut child, stdin, stdout, stderr))) = step(checks, name, spawned, |_| {
-        format!("`{CLAUDE_COMMAND}` started with the worker argv")
-    }) else {
+    let Some((session, (mut child, stdin, stdout, stderr))) =
+        step(checks, spawn_name(kind), spawned, |_| {
+            format!("`{CLAUDE_COMMAND}` started with the worker argv")
+        })
+    else {
         return false;
     };
-    let stderr = collect_stderr(stderr);
+    let stderr = StderrReader::start(stderr);
     let log = CappedLog::new(None, "verify");
     let (lines, _) = pipe_lines(stdout, &log);
     let wire = Wire {
@@ -223,12 +280,11 @@ fn run_spawn(
             } else {
                 Ok(true)
             };
-            let complaint = String::from_utf8_lossy(&locked(&stderr)).into_owned();
-            checks.add(argv_check(running, &complaint, exit));
+            checks.add(argv_check(running, &stderr.read(STDERR_LIMIT), exit));
         }
         ClaudeSpawn::Turns => {
             if running {
-                live_checks(&wire, &session, checks);
+                live_checks(&wire, &session, checks, budget);
             }
             locked(&wire.stdin).take();
         }
