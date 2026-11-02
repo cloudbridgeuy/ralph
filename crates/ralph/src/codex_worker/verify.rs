@@ -2,7 +2,7 @@ use super::*;
 use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
     cancel_check, permission_check, prompt_check, thread_archive_params,
-    verify_thread_start_params, PermissionSetup, TurnSummary, VerifiedAgents, PROBED_VERSION,
+    verify_thread_start_params, version_detail, PermissionSetup, TurnSummary, VerifiedAgents,
     THREAD_ARCHIVE, TURN_COMPLETED,
 };
 
@@ -142,11 +142,8 @@ fn identify(wire: &mut Wire, checks: &Checks, deadline: Instant) -> Option<Strin
         .as_deref()
         .ok_or_else(|| "could not read the codex version from its initialize reply".to_string())
         .and_then(|version| check_version(version, &VerifiedAgents::default()));
-    step(checks, "version", checked, |_| {
-        format!(
-            "{} (probed {PROBED_VERSION})",
-            version.as_deref().unwrap_or_default()
-        )
+    step(checks, "version", checked, |warning| {
+        version_detail(version.as_deref().unwrap_or_default(), warning.as_deref())
     })?;
     version
 }
