@@ -19,6 +19,7 @@ pub struct WorkerObservation {
     pub reported_since_nudge: bool,
     pub pane: Option<String>,
     pub activity: Option<ActivityState>,
+    pub activity_age_secs: u64,
     pub auto_continue: bool,
 }
 
@@ -130,8 +131,22 @@ fn stall_owned(obs: &WorkerObservation) -> bool {
     obs.auto_continue && obs.activity == Some(ActivityState::Failed)
 }
 
+pub const RUNNING_STALE_SECS: u64 = 600;
+pub const BACKGROUND_STALE_SECS: u64 = 3600;
+
+pub fn busy_mark_stale(state: ActivityState, age_secs: u64) -> bool {
+    match state {
+        ActivityState::Running => age_secs > RUNNING_STALE_SECS,
+        ActivityState::Background => age_secs > BACKGROUND_STALE_SECS,
+        ActivityState::Idle | ActivityState::Failed => false,
+    }
+}
+
 fn is_busy(obs: &WorkerObservation) -> bool {
-    obs.activity.is_some_and(ActivityState::busy) || obs.pane.as_deref().is_some_and(pane_busy)
+    let mark_holds = obs.activity.is_some_and(|state| {
+        state.busy() && !(obs.pane.is_some() && busy_mark_stale(state, obs.activity_age_secs))
+    });
+    mark_holds || obs.pane.as_deref().is_some_and(pane_busy)
 }
 
 pub fn classify(obs: &WorkerObservation) -> WorkerState {
@@ -230,6 +245,9 @@ pub fn plan(
 mod failed_turn;
 
 #[cfg(test)]
+mod stale_busy;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -245,6 +263,7 @@ mod tests {
             reported_since_nudge: false,
             pane: None,
             activity: None,
+            activity_age_secs: 0,
             auto_continue: false,
         }
     }

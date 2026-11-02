@@ -12,6 +12,7 @@ fn failed_idle(auto_continue: bool) -> WorkerObservation {
         reported_since_nudge: false,
         pane: Some("idle".to_string()),
         activity: Some(ActivityState::Failed),
+        activity_age_secs: 0,
         auto_continue,
     }
 }

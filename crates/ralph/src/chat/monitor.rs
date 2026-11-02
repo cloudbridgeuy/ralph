@@ -150,8 +150,7 @@ impl Monitor {
             .flatten();
         let activity = std::fs::read_to_string(activity_path(&self.store_dir, id))
             .ok()
-            .and_then(|text| ActivityMark::parse(&text))
-            .map(|mark| mark.state);
+            .and_then(|text| ActivityMark::parse(&text));
         WorkerObservation {
             id: id.clone(),
             session: worker.session.clone(),
@@ -162,7 +161,8 @@ impl Monitor {
             unreported,
             reported_since_nudge: reported,
             pane,
-            activity,
+            activity: activity.map(|mark| mark.state),
+            activity_age_secs: activity.map_or(0, |mark| now_secs().saturating_sub(mark.at)),
             auto_continue: self.auto_continue,
         }
     }
