@@ -181,7 +181,7 @@ fn release(version: &str) -> Result<(), Box<dyn std::error::Error>> {
 ```bash
 cargo install --path crates/ralph --root ~/.local --force
 cargo install --path crates/ralph --root /usr/local --force
-cargo xtask release --version 1.0.0
+cargo xtask release 1.0.0
 ```
 
 ## Prelude Module Pattern
