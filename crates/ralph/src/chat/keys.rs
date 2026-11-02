@@ -1,4 +1,6 @@
-use crate::chat::editor::{build_queue_editor, BACK_OUT, QUEUE_CTRL_C};
+use crate::chat::editor::{
+    build_queue_editor, edit_queue_draft, BACK_OUT, OPEN_EDITOR, QUEUE_CTRL_C,
+};
 use crate::chat::monitor::Monitor;
 use crate::chat::prompt::{retry_interrupted, QueuePrompt};
 use crate::chat::queue::{on_exit, Action, EditorExit, Queue};
@@ -13,6 +15,7 @@ use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
 use reedline::{EditCommand, Reedline, Signal};
 use std::io::IsTerminal;
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::thread;
@@ -31,6 +34,8 @@ pub(super) struct Keys<'a> {
     pub(super) edit_mode: EditModeConfig,
     pub(super) local: &'a LocalRoute<'a>,
     pub(super) empty_submit: &'a EmptySubmit,
+    pub(super) store: &'a Path,
+    pub(super) editor: &'a [String],
 }
 
 /// The turn's end, as the queue editor sees it: `done` feeds the status bar,
@@ -56,6 +61,7 @@ impl Drop for Finished<'_> {
 pub(super) enum Step {
     Exit(EditorExit),
     ClearDraft,
+    OpenEditor,
     Continue,
 }
 
@@ -63,6 +69,7 @@ pub(super) fn exit_for(signal: Signal, buffer: &str) -> Step {
     match signal {
         Signal::Success(line) => Step::Exit(EditorExit::Submitted(line)),
         Signal::CtrlD => Step::Exit(EditorExit::Closed),
+        Signal::HostCommand(command) if command == OPEN_EDITOR => Step::OpenEditor,
         Signal::HostCommand(command) if command == BACK_OUT => {
             Step::Exit(EditorExit::BackOut(buffer.to_string()))
         }
@@ -107,20 +114,24 @@ fn wait_settled(gate: &OutputGate) {
     }
 }
 
-fn read_exit(editor: &mut Reedline, prompt: &QueuePrompt) -> EditorExit {
-    loop {
-        match retry_interrupted(|| editor.read_line(prompt)) {
-            Ok(signal) => match exit_for(signal, editor.current_buffer_contents()) {
-                Step::Exit(exit) => return exit,
-                Step::ClearDraft => editor.run_edit_commands(&[EditCommand::Clear]),
-                Step::Continue => {}
-            },
-            Err(_) => return EditorExit::Closed,
+impl Keys<'_> {
+    fn read_exit(&self, editor: &mut Reedline, prompt: &QueuePrompt) -> EditorExit {
+        loop {
+            match retry_interrupted(|| editor.read_line(prompt)) {
+                Ok(signal) => match exit_for(signal, editor.current_buffer_contents()) {
+                    Step::Exit(exit) => return exit,
+                    Step::ClearDraft => editor.run_edit_commands(&[EditCommand::Clear]),
+                    Step::OpenEditor => warn_if_err(
+                        edit_queue_draft(editor, self.store, self.editor),
+                        "Editor failed",
+                    ),
+                    Step::Continue => {}
+                },
+                Err(_) => return EditorExit::Closed,
+            }
         }
     }
-}
 
-impl Keys<'_> {
     pub(super) fn during<R>(&self, run: impl FnOnce() -> R) -> (R, Queue) {
         let Some(_mode) = std::io::stdin()
             .is_terminal()
@@ -190,7 +201,7 @@ impl Keys<'_> {
             held: queue.held,
             done: &watch.done,
         };
-        let exit = read_exit(&mut editor, &prompt);
+        let exit = self.read_exit(&mut editor, &prompt);
         locked(&watch.repaint).take();
         let exit = match exit {
             EditorExit::Submitted(text) => match self.instant_route(&text) {
@@ -254,6 +265,14 @@ mod tests {
         assert_eq!(
             exit_for(Signal::HostCommand(BACK_OUT.into()), "draft"),
             Step::Exit(EditorExit::BackOut("draft".into()))
+        );
+    }
+
+    #[test]
+    fn queue_ctrl_g_opens_the_editor() {
+        assert_eq!(
+            exit_for(Signal::HostCommand(OPEN_EDITOR.into()), "draft"),
+            Step::OpenEditor
         );
     }
 

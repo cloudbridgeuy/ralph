@@ -294,8 +294,12 @@ pub const QUEUE_KEYS: &[KeyHelp] = &[
         effect: "on a non-empty draft clear it, the turn keeps running; on an empty draft cancel the turn and hold the queue",
     },
     KeyHelp {
-        keys: "Ctrl-V, Ctrl-G",
-        effect: "off here: no image paste and no external editor",
+        keys: "Ctrl-G",
+        effect: "edit the queue draft in [chat] editor, $VISUAL, $EDITOR or vi; the turn keeps running",
+    },
+    KeyHelp {
+        keys: "Ctrl-V",
+        effect: "off here: no image paste",
     },
 ];
 
