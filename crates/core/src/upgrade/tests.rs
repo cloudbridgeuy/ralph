@@ -150,24 +150,52 @@ fn notes_cover_every_skipped_release_newest_first() {
 
 #[test]
 fn maps_supported_platforms_to_targets() {
+    for env in ["", "gnu"] {
+        assert_eq!(
+            target_triple("aarch64", "macos", env),
+            Ok("aarch64-apple-darwin")
+        );
+        assert_eq!(
+            target_triple("x86_64", "macos", env),
+            Ok("x86_64-apple-darwin")
+        );
+        assert_eq!(
+            target_triple("x86_64", "linux", env),
+            Ok("x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(
+            target_triple("aarch64", "linux", env),
+            Ok("aarch64-unknown-linux-gnu")
+        );
+    }
+}
+
+#[test]
+fn rejects_unsupported_platforms() {
     assert_eq!(
-        target_triple("aarch64", "macos"),
-        Some("aarch64-apple-darwin")
+        target_triple("x86_64", "windows", ""),
+        Err("no ralph release is built for x86_64 windows".to_string())
     );
     assert_eq!(
-        target_triple("x86_64", "macos"),
-        Some("x86_64-apple-darwin")
+        target_triple("riscv64", "linux", "gnu"),
+        Err("no ralph release is built for riscv64 linux".to_string())
     );
     assert_eq!(
-        target_triple("x86_64", "linux"),
-        Some("x86_64-unknown-linux-gnu")
+        target_triple("riscv64", "linux", "musl"),
+        Err("no ralph release is built for riscv64 linux".to_string())
     );
-    assert_eq!(
-        target_triple("aarch64", "linux"),
-        Some("aarch64-unknown-linux-gnu")
-    );
-    assert_eq!(target_triple("x86_64", "windows"), None);
-    assert_eq!(target_triple("riscv64", "linux"), None);
+}
+
+#[test]
+fn refuses_musl_linux_targets() {
+    for arch in ["x86_64", "aarch64"] {
+        assert_eq!(
+            target_triple(arch, "linux", "musl"),
+            Err(format!(
+                "no musl release is published for {arch}-unknown-linux-musl; build ralph from source"
+            ))
+        );
+    }
 }
 
 #[test]

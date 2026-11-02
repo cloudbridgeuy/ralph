@@ -12,6 +12,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 use ureq::Agent;
 
+const TARGET_ENV: &str = if cfg!(target_env = "musl") {
+    "musl"
+} else {
+    ""
+};
 const RELEASES_URL: &str = "https://api.github.com/repos/cloudbridgeuy/ralph/releases?per_page=100";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
@@ -92,8 +97,7 @@ fn print_notes(notes: &str, decision: Decision) {
 }
 
 fn install(agent: &Agent, release: &Release) -> Result<PathBuf, Box<dyn Error>> {
-    let triple = target_triple(ARCH, OS)
-        .ok_or_else(|| format!("no ralph release is built for {ARCH} {OS}"))?;
+    let triple = target_triple(ARCH, OS, TARGET_ENV)?;
     let download = pick_download(release, triple)?;
     let exe = std::env::current_exe()?.canonicalize()?;
     let dir = exe
