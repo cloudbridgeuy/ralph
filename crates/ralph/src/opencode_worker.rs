@@ -73,6 +73,9 @@ impl Server {
         let child = match Command::new(program)
             .args(args)
             .env(OPENCODE_PASSWORD_ENV, &password)
+            .envs([ralph_core::worker::inbox_env(
+                &fs::canonicalize(store).map_err(|e| e.to_string())?,
+            )])
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|e| e.to_string())?)
             .stderr(log)

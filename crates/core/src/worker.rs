@@ -68,6 +68,11 @@ pub use worktree::*;
 
 pub const SERVER_NAME: &str = "ralph-worker";
 pub const INBOX_DIR: &str = "inbox";
+
+pub fn inbox_env(canonical_store: &Path) -> (&'static str, PathBuf) {
+    ("RALPH_INBOX", canonical_store.join(INBOX_DIR))
+}
+
 pub const WORKERS_DIR: &str = "workers";
 pub const WORKTREE_DIR: &str = ".worktrees";
 pub const WORKTREE_DIR_ENV: &str = "RALPH_WORKTREE_DIR";
@@ -355,6 +360,7 @@ pub fn resolve_claude_shell(
 }
 
 pub struct ClaudeWorkerArgs<'a> {
+    pub store: &'a Path,
     pub mcp_config: &'a Path,
     pub settings: &'a Path,
     pub permission_mode: &'a str,
@@ -379,11 +385,10 @@ pub fn worker_command(args: &ClaudeWorkerArgs) -> Vec<String> {
     ]
     .map(str::to_string)
     .to_vec();
+    let (key, inbox) = inbox_env(args.store);
+    command.extend(["env".to_string(), format!("{key}={}", inbox.display())]);
     if let Some(dir) = args.config_dir {
-        command.extend([
-            "env".to_string(),
-            format!("CLAUDE_CONFIG_DIR={}", dir.to_string_lossy()),
-        ]);
+        command.push(format!("CLAUDE_CONFIG_DIR={}", dir.to_string_lossy()));
     }
     command.extend(
         [
@@ -581,6 +586,7 @@ mod tests {
 
     fn claude_args(model: Option<&str>) -> ClaudeWorkerArgs<'_> {
         ClaudeWorkerArgs {
+            store: Path::new("/s"),
             mcp_config: Path::new("/s/workers/A.json"),
             settings: Path::new("/s/workers/A.settings.json"),
             permission_mode: "auto",
@@ -663,11 +669,41 @@ mod tests {
     }
 
     #[test]
+    fn inbox_env_targets_the_chat_store_not_a_worker() {
+        assert_eq!(
+            inbox_env(Path::new("/canonical/chat store")),
+            ("RALPH_INBOX", PathBuf::from("/canonical/chat store/inbox"))
+        );
+    }
+
+    #[test]
+    fn worker_command_sets_inbox_after_the_login_shell() {
+        let args = worker_command(&claude_args(None));
+        assert_eq!(&args[3..6], ["env", "RALPH_INBOX=/s/inbox", "claude"]);
+    }
+
+    #[test]
+    fn worker_inbox_assignment_is_one_argument_for_both_login_shells() {
+        for shell in [ClaudeShell::Zsh, ClaudeShell::Bash] {
+            let args = worker_command(&ClaudeWorkerArgs {
+                store: Path::new("/chat's store"),
+                shell,
+                ..claude_args(None)
+            });
+            assert_eq!(&args[..2], [shell.program(), "-lic"]);
+            assert_eq!(
+                &args[3..6],
+                ["env", "RALPH_INBOX=/chat's store/inbox", "claude"]
+            );
+        }
+    }
+
+    #[test]
     fn worker_command_runs_claude_through_zsh_and_ends_with_the_task() {
         let args = worker_command(&claude_args(None));
         assert_eq!(args[..2], ["zsh", "-lic"]);
         assert_eq!(
-            args[3..12],
+            args[5..14],
             [
                 "claude",
                 "--permission-mode",
@@ -695,6 +731,8 @@ mod tests {
                 "zsh".to_string(),
                 "-lic".to_string(),
                 r#"exec "$0" "$@""#.to_string(),
+                "env".to_string(),
+                "RALPH_INBOX=/s/inbox".to_string(),
                 "claude".to_string(),
                 "--permission-mode".to_string(),
                 "auto".to_string(),

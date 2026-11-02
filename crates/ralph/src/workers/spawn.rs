@@ -270,6 +270,7 @@ impl Workers {
                 let settings = self.write_settings(id, &markers, *site)?;
                 let task_dir = self.write_task(id, task)?;
                 worker_command(&ClaudeWorkerArgs {
+                    store: &fs::canonicalize(&self.store_dir)?,
                     mcp_config: &self.write_config(id, *site)?,
                     settings: &settings,
                     permission_mode: &self.permission_mode,

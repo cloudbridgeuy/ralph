@@ -218,7 +218,13 @@ impl AcpWorker {
             report_start_warning(warning, warning_file);
         }
         let mut command = Command::new(agent.command);
-        command.arg("acp").current_dir(&request.worktree);
+        let store = request.inbox.parent().ok_or("worker inbox has no store")?;
+        command
+            .arg("acp")
+            .current_dir(&request.worktree)
+            .envs([ralph_core::worker::inbox_env(
+                &fs::canonicalize(store).map_err(|e| e.to_string())?,
+            )]);
         let (child, stdin, stdout, stderr) = spawn_piped(command)
             .map_err(|e| format!("could not start `{} acp`: {e}", agent.command))?;
         let log = CappedLog::new(request.inbox.parent(), id);

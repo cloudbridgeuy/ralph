@@ -369,7 +369,12 @@ impl ClaudeWorker {
             session,
         );
         let mut command = Command::new(CLAUDE_COMMAND);
-        command.args(args).current_dir(&request.worktree);
+        command
+            .args(args)
+            .current_dir(&request.worktree)
+            .envs([ralph_core::worker::inbox_env(
+                &fs::canonicalize(store).map_err(|e| e.to_string())?,
+            )]);
         let config_dir = AppConfig::load().ok().and_then(|config| {
             configured_dir(
                 config.claude.config_dir.as_deref(),
