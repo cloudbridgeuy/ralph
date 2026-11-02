@@ -151,8 +151,14 @@ pub fn reply_count(messages_body: &str) -> usize {
         .map_or(0, |result| usize::from(!result.text.is_empty()))
 }
 
+fn session_reply_id(body: &str) -> Option<String> {
+    let reply: Value = serde_json::from_str(body).ok()?;
+    let id = reply.get("id").or_else(|| reply.get("data")?.get("id"))?;
+    id.as_str().map(str::to_string)
+}
+
 pub fn session_check(name: &'static str, body: &str, id: &str) -> CheckResult {
-    if body.contains(id) {
+    if session_reply_id(body).as_deref() == Some(id) {
         CheckResult::pass(name, format!("the server answered with session {id}"))
     } else {
         CheckResult::fail(
@@ -226,6 +232,37 @@ mod tests {
             .iter()
             .flat_map(|line| fold_opencode_event(fold, SESSION, line, plan))
             .collect()
+    }
+
+    #[test]
+    fn an_html_body_that_mentions_the_id_does_not_pass_the_session_check() {
+        let body = format!("<html><body>not found: {SESSION}</body></html>");
+        let check = session_check("session/create", &body, SESSION);
+        assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
+    }
+
+    #[test]
+    fn the_session_check_reads_the_id_field_at_top_level_or_under_data() {
+        for body in [
+            json!({"id": SESSION}),
+            json!({"data": {"id": SESSION, "title": "x"}}),
+        ] {
+            let check = session_check("session/create", &body.to_string(), SESSION);
+            assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
+        }
+    }
+
+    #[test]
+    fn the_session_check_fails_on_another_id_or_a_mention_inside_a_field() {
+        for body in [
+            json!({"id": "ses_other"}),
+            json!({"data": {"id": "ses_other"}}),
+            json!({"title": SESSION}),
+            json!({"data": {"id": 7}}),
+        ] {
+            let check = session_check("session/create", &body.to_string(), SESSION);
+            assert_eq!(check.verdict, Verdict::Fail, "{body}");
+        }
     }
 
     #[test]

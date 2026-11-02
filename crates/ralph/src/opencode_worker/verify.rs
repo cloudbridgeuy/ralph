@@ -91,8 +91,9 @@ fn create_session(api: &HttpSse, scope: Scope, id: &str, ask: bool) -> Result<St
 
 fn read_session(api: &HttpSse, id: &str) -> Result<String, String> {
     let session = api.get(&session_path(id))?;
-    if !session.contains(id) {
-        return Err(format!("the session answer did not name {id}: {session}"));
+    let named = session_check("session/read", &session, id);
+    if named.verdict != Verdict::Pass {
+        return Err(named.detail);
     }
     api.get(&messages_path(id))
 }
