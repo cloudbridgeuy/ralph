@@ -140,10 +140,10 @@ mode_inbox_fg = "black"   # INBOX block text
 mode_inbox_bg = "yellow"  # INBOX block background
 mode_work_fg = "white"    # WORK block text
 mode_work_bg = "blue"     # WORK block background
-store_fg = "reset"        # store path text
+store_fg = "reset"        # session name text
 workers_fg = "reset"      # workers text
 watches_fg = "reset"      # watches and scheduled-task text
-base_bg = "#303030"       # bar background: filler, store, workers, watches
+base_bg = "#303030"       # bar background: filler, name, workers, watches
 ```
 
 The default `base_bg` is ANSI color 236, written `#303030` above. `reset` is the terminal's own text color. Powerline glyphs take their colors from the neighbouring blocks, so they have no keys.
@@ -333,6 +333,8 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `send_it_max_turns` | integer | `15` | Turn cap for one `/send-it` run; the run stops when it reaches the cap. `0` becomes `15` with a warning |
 | `send_it_max_usd` | float | `5.0` | Cost cap in USD for one `/send-it` run, summed from the cost of each auto-sent turn; the run stops when it reaches the cap. A value that is not finite or is `0` or less becomes `5.0` with a warning |
 | `terminal_status` | bool | `true` | Report chat state to the terminal with OSC 7501 (Program Status Protocol): working, blocked, done, idle, cleared on exit. Sent only when stdout is a terminal; `NO_COLOR` does not affect it. See [ralph chat](context/ralph-chat.md#terminal-status) |
+| `name` | string | unset | Session name shown in the status bar and the terminal title; `--name` overrides it. Unset uses the git root folder name, then the cwd folder name, then `ralph`. At most 32 characters, control characters removed. A label only: it does not separate stores. See [ralph chat](context/ralph-chat.md#session-name) |
+| `terminal_title` | bool | `true` | Set the terminal title to `ralph · <name>` while the chat runs and restore the old title on exit. Sent only when stdout is a terminal; `NO_COLOR` does not affect it. tmux needs `set-titles on`. See [ralph chat](context/ralph-chat.md#terminal-title) |
 | `editor` | list of strings | unset | Ctrl-G editor argv, draft path appended, e.g. `["nvim", "-c", "normal! Go", "-c", "startinsert"]`; unset uses `$VISUAL`, `$EDITOR`, then `vi`; empty or wrong type warns and falls back |
 | `edit_mode` | `"emacs"` or `"vi"` | `"emacs"` | Key bindings of the chat prompt; another value prints a warning and uses `"emacs"`. See [ralph chat](context/ralph-chat.md) |
 | `empty_submit` | `"inbox"`, `"inbox-first"` or `"phrase"` | `"inbox"` | What Enter on an empty prompt does. `inbox`: open the inbox when reports are unread, else nothing. `inbox-first`: open the inbox when reports are unread, else send `empty_prompt`. `phrase`: always send `empty_prompt`, even with unread reports; use `/inbox` to read them. An unknown value warns and uses `inbox` |
