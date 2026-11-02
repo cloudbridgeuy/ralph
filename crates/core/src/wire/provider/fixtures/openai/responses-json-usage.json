@@ -1,0 +1,17 @@
+{
+  "id": "resp_1",
+  "object": "response",
+  "created_at": 1790000000,
+  "status": "completed",
+  "model": "gpt-6.1-sol-2026-09-01",
+  "error": null,
+  "incomplete_details": null,
+  "output": [{"type": "message", "id": "msg_1", "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "It is 4C.", "annotations": []}]}],
+  "usage": {
+    "input_tokens": 1000,
+    "input_tokens_details": {"cached_tokens": 400, "cache_write_tokens": 100},
+    "output_tokens": 80,
+    "output_tokens_details": {"reasoning_tokens": 30},
+    "total_tokens": 1080
+  }
+}

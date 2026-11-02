@@ -6,15 +6,18 @@ use super::{
 };
 use crate::wire::headers::StoredHeaders;
 use crate::wire::price::{matches_prefix, normalize_model, PriceTable};
-use crate::wire::usage::{BillingRates, CacheTier, CacheWrite, TierRate, Usage, THIRTY_MIN};
+use crate::wire::usage::{
+    BillingRates, CacheTier, CacheWrite, TierRate, Usage, UsageOutcome, THIRTY_MIN,
+};
 
 mod chat;
 pub(crate) mod price;
+mod responses;
 
 #[cfg(test)]
 mod tests;
 
-const PARAM_KEYS: [&str; 9] = [
+const PARAM_KEYS: [&str; 16] = [
     "tool_choice",
     "reasoning_effort",
     "response_format",
@@ -24,7 +27,16 @@ const PARAM_KEYS: [&str; 9] = [
     "stream_options",
     "max_completion_tokens",
     "service_tier",
+    "reasoning",
+    "text",
+    "previous_response_id",
+    "store",
+    "truncation",
+    "max_output_tokens",
+    "include",
 ];
+
+const TWELVE_HOURS: CacheTier = CacheTier::Ttl { seconds: 43_200 };
 
 const DEFAULT_CACHE_READ: f64 = 0.1;
 const DEFAULT_CACHE_WRITE: f64 = 1.25;
@@ -53,6 +65,7 @@ fn breakpoint(block: &Value) -> Option<CacheTier> {
         Some(marker) => Some(match marker.get("ttl") {
             None => THIRTY_MIN,
             Some(Value::String(ttl)) if ttl == "30m" => THIRTY_MIN,
+            Some(Value::String(ttl)) if ttl == "12h" => TWELVE_HOURS,
             Some(_) => CacheTier::Unspecified,
         }),
     }
@@ -109,6 +122,28 @@ fn build_usage(counts: Counts) -> Usage {
             .into_iter()
             .filter_map(|(name, tokens)| Some((name.to_string(), tokens.filter(|n| *n > 0)?)))
             .collect(),
+    }
+}
+
+fn usage_object(value: &Value) -> Option<Value> {
+    value
+        .get("usage")
+        .filter(|usage| usage.is_object())
+        .cloned()
+}
+
+fn reported(
+    raw: Option<Value>,
+    error: Option<String>,
+    map: impl Fn(&Value) -> Usage,
+) -> ResponseUsage {
+    let outcome = raw.as_ref().map_or(UsageOutcome::Missing, |raw| {
+        UsageOutcome::Reported(map(raw))
+    });
+    ResponseUsage {
+        raw,
+        outcome,
+        error,
     }
 }
 
@@ -192,12 +227,16 @@ impl Provider for OpenAi {
             "response_format",
             "reasoning_effort",
             "tool_choice",
+            "text",
+            "reasoning",
+            "previous_response_id",
         ]
     }
 
     fn classify(&self, call: &RequestHead) -> CallKind {
         let path = call.path.split('?').next().unwrap_or_default();
-        if call.method.eq_ignore_ascii_case("POST") && path == "/v1/chat/completions" {
+        let inference = matches!(path, "/v1/chat/completions" | "/v1/responses");
+        if call.method.eq_ignore_ascii_case("POST") && inference {
             CallKind::Inference
         } else {
             CallKind::Other
@@ -215,7 +254,11 @@ impl Provider for OpenAi {
     }
 
     fn segments(&self, body: &Value) -> Vec<PromptSegment> {
-        chat::segments(body)
+        if body.get("input").is_some() || body.get("instructions").is_some() {
+            responses::segments(body)
+        } else {
+            chat::segments(body)
+        }
     }
 
     fn prefix_cache(&self, body: &Value) -> PrefixCache {
@@ -229,7 +272,16 @@ impl Provider for OpenAi {
     }
 
     fn usage(&self, response: &ResponseView) -> ResponseUsage {
-        chat::usage(response)
+        match response {
+            ResponseView::Json(value) if responses::is_response(value) => {
+                responses::json_usage(value)
+            }
+            ResponseView::Json(value) => chat::json_usage(value),
+            ResponseView::Events(events) if responses::is_stream(events) => {
+                responses::event_usage(events)
+            }
+            ResponseView::Events(events) => chat::event_usage(events),
+        }
     }
 
     fn rates(&self, model: &str) -> BillingRates {

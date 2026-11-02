@@ -1,0 +1,15 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_2","object":"response","created_at":1790000000,"model":"gpt-6.1-sol-2026-09-01","status":"in_progress","usage":null}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"response":{"id":"resp_2","object":"response","created_at":1790000000,"model":"gpt-6.1-sol-2026-09-01","status":"in_progress","usage":null}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":2,"item_id":"msg_2","output_index":0,"content_index":0,"delta":"It is"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_2","output_index":0,"content_index":0,"delta":" 4C."}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":4,"response":{"id":"resp_2","object":"response","created_at":1790000000,"model":"gpt-6.1-sol-2026-09-01","status":"completed","error":null,"incomplete_details":null,"usage":{"input_tokens":2006,"input_tokens_details":{"cached_tokens":1536,"cache_write_tokens":256},"output_tokens":12,"output_tokens_details":{"reasoning_tokens":4},"total_tokens":2018}}}
+

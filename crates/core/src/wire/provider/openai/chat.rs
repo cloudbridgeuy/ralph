@@ -1,12 +1,22 @@
 use serde_json::{json, Value};
 
-use super::{build_usage, count, error_message, items, segment, text, Counts};
-use crate::wire::provider::{PromptSegment, ResponseUsage, ResponseView, SegmentSource};
+use super::{
+    build_usage, count, error_message, items, reported, segment, text, usage_object, Counts,
+};
+use crate::wire::provider::{PromptSegment, ResponseUsage, SegmentSource};
 use crate::wire::sse::SseEvent;
-use crate::wire::usage::{Usage, UsageOutcome};
+use crate::wire::usage::Usage;
 
 fn is_system(message: &Value) -> bool {
     matches!(text(message, "role", ""), "system" | "developer")
+}
+
+fn with_tool_call_id(message: &Value, block: &Value) -> Value {
+    let mut tagged = block.clone();
+    if let (Some(object), Some(id)) = (tagged.as_object_mut(), message.get("tool_call_id")) {
+        object.insert("tool_call_id".to_string(), id.clone());
+    }
+    tagged
 }
 
 fn function_name(tool: &Value) -> &str {
@@ -18,6 +28,7 @@ fn function_name(tool: &Value) -> &str {
 fn message_segments(source: SegmentSource, index: usize, message: &Value) -> Vec<PromptSegment> {
     let role = text(message, "role", "?");
     let system = source == SegmentSource::System;
+    let tagged = |block: &Value| with_tool_call_id(message, block);
     let mut segments = match message.get("content") {
         Some(content @ Value::String(_)) => {
             let label = if system {
@@ -28,7 +39,7 @@ fn message_segments(source: SegmentSource, index: usize, message: &Value) -> Vec
             vec![segment(
                 source,
                 label,
-                &json!({"type": "text", "text": content}),
+                &tagged(&json!({"type": "text", "text": content})),
             )]
         }
         Some(Value::Array(parts)) => parts
@@ -41,7 +52,7 @@ fn message_segments(source: SegmentSource, index: usize, message: &Value) -> Vec
                 } else {
                     format!("msg[{index}].{j} {role}/{kind}")
                 };
-                segment(source, label, part)
+                segment(source, label, &tagged(part))
             })
             .collect(),
         _ => Vec::new(),
@@ -106,25 +117,7 @@ fn map_usage(raw: &Value) -> Usage {
     })
 }
 
-fn reported(raw: Option<Value>, error: Option<String>) -> ResponseUsage {
-    let outcome = raw.as_ref().map_or(UsageOutcome::Missing, |raw| {
-        UsageOutcome::Reported(map_usage(raw))
-    });
-    ResponseUsage {
-        raw,
-        outcome,
-        error,
-    }
-}
-
-fn usage_object(value: &Value) -> Option<Value> {
-    value
-        .get("usage")
-        .filter(|usage| usage.is_object())
-        .cloned()
-}
-
-fn event_usage(events: &[SseEvent]) -> ResponseUsage {
+pub(super) fn event_usage(events: &[SseEvent]) -> ResponseUsage {
     let mut raw = None;
     let mut error = None;
     for data in events
@@ -138,12 +131,9 @@ fn event_usage(events: &[SseEvent]) -> ResponseUsage {
             raw = Some(usage);
         }
     }
-    reported(raw, error)
+    reported(raw, error, map_usage)
 }
 
-pub(super) fn usage(response: &ResponseView) -> ResponseUsage {
-    match response {
-        ResponseView::Json(value) => reported(usage_object(value), error_message(value)),
-        ResponseView::Events(events) => event_usage(events),
-    }
+pub(super) fn json_usage(value: &Value) -> ResponseUsage {
+    reported(usage_object(value), error_message(value), map_usage)
 }

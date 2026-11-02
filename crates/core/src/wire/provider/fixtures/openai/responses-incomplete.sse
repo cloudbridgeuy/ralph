@@ -1,0 +1,6 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_2","object":"response","created_at":1790000000,"model":"gpt-6.1-sol-2026-09-01","status":"in_progress","usage":null}}
+
+event: response.incomplete
+data: {"type":"response.incomplete","sequence_number":1,"response":{"id":"resp_2","object":"response","created_at":1790000000,"model":"gpt-6.1-sol-2026-09-01","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":300,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":512,"output_tokens_details":{"reasoning_tokens":500},"total_tokens":812}}}
+

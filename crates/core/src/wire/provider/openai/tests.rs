@@ -4,7 +4,11 @@
 // CreateChatCompletionResponse with CompletionUsage; chat-usage.sse and
 // chat-no-usage.sse follow CreateChatCompletionStreamResponse (usage only in the
 // last chunk when ChatCompletionStreamOptions.include_usage is set);
-// chat-error.json follows the error envelope.
+// chat-error.json follows the error envelope. responses-request.json follows
+// CreateResponse; responses-json-usage.json follows Response with ResponseUsage;
+// the responses-*.sse files follow the response.created, response.in_progress,
+// response.output_text.delta, response.completed, response.incomplete and
+// response.failed stream events.
 use super::*;
 use crate::wire::provider::{assert_provider_contract, provider, ContractCase};
 use crate::wire::response::view;
@@ -17,6 +21,12 @@ const JSON_USAGE: &[u8] = include_bytes!("../fixtures/openai/chat-json-usage.jso
 const USAGE_SSE: &[u8] = include_bytes!("../fixtures/openai/chat-usage.sse");
 const NO_USAGE_SSE: &[u8] = include_bytes!("../fixtures/openai/chat-no-usage.sse");
 const ERROR_JSON: &[u8] = include_bytes!("../fixtures/openai/chat-error.json");
+const RESP_REQUEST: &str = include_str!("../fixtures/openai/responses-request.json");
+const RESP_JSON: &[u8] = include_bytes!("../fixtures/openai/responses-json-usage.json");
+const RESP_COMPLETED: &[u8] = include_bytes!("../fixtures/openai/responses-completed.sse");
+const RESP_INCOMPLETE: &[u8] = include_bytes!("../fixtures/openai/responses-incomplete.sse");
+const RESP_FAILED: &[u8] = include_bytes!("../fixtures/openai/responses-failed.sse");
+const RESP_CUT: &[u8] = include_bytes!("../fixtures/openai/responses-cut.sse");
 const SSE: Option<&str> = Some("text/event-stream");
 const JSON: Option<&str> = Some("application/json");
 
@@ -250,7 +260,7 @@ fn breakpoint_ttl_variants() {
     );
     assert_eq!(
         breakpoint(&part(json!({"mode": "explicit", "ttl": "12h"}))),
-        Some(CacheTier::Unspecified)
+        Some(TWELVE_HOURS)
     );
     assert_eq!(breakpoint(&part(Value::Null)), None);
 }
@@ -377,4 +387,280 @@ fn ids_serialize_lowercase() {
         "\"openai\""
     );
     assert_eq!(ProviderId::OpenAi.as_str(), "openai");
+}
+
+fn resp_request() -> Value {
+    serde_json::from_str(RESP_REQUEST).unwrap()
+}
+
+fn resp_json_usage() -> Usage {
+    Usage {
+        input_uncached: 500,
+        cache_read: 400,
+        cache_writes: vec![CacheWrite {
+            tier: THIRTY_MIN,
+            tokens: 100,
+        }],
+        output: 80,
+        reasoning: Some(30),
+        other: vec![],
+    }
+}
+
+fn resp_sse_usage() -> Usage {
+    Usage {
+        input_uncached: 214,
+        cache_read: 1536,
+        cache_writes: vec![CacheWrite {
+            tier: THIRTY_MIN,
+            tokens: 256,
+        }],
+        output: 12,
+        reasoning: Some(4),
+        other: vec![],
+    }
+}
+
+fn resp_usage(body: &[u8]) -> ResponseUsage {
+    OpenAi.usage(&view(SSE, None, body).unwrap())
+}
+
+#[test]
+fn responses_contract() {
+    let cases = [
+        ContractCase {
+            name: "json usage",
+            view: view(JSON, None, RESP_JSON).unwrap(),
+            expected: UsageOutcome::Reported(resp_json_usage()),
+        },
+        ContractCase {
+            name: "completed sse",
+            view: view(SSE, None, RESP_COMPLETED).unwrap(),
+            expected: UsageOutcome::Reported(resp_sse_usage()),
+        },
+        ContractCase {
+            name: "failed sse",
+            view: view(SSE, None, RESP_FAILED).unwrap(),
+            expected: UsageOutcome::Missing,
+        },
+        ContractCase {
+            name: "cut sse",
+            view: view(SSE, None, RESP_CUT).unwrap(),
+            expected: UsageOutcome::Missing,
+        },
+    ];
+    assert_provider_contract(&OpenAi, &cases, &resp_request());
+}
+
+#[test]
+fn responses_json_usage_uses_the_subset_convention() {
+    let result = OpenAi.usage(&view(JSON, None, RESP_JSON).unwrap());
+    assert_eq!(result.error, None);
+    assert_eq!(
+        result.raw.as_ref().and_then(|raw| raw.get("total_tokens")),
+        Some(&json!(1080))
+    );
+    assert_eq!(result.outcome, UsageOutcome::Reported(resp_json_usage()));
+}
+
+#[test]
+fn responses_json_statuses() {
+    let incomplete = json!({"object": "response", "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "usage": {"input_tokens": 3, "output_tokens": 4}});
+    let result = OpenAi.usage(&ResponseView::Json(incomplete));
+    assert_eq!(
+        result.error.as_deref(),
+        Some("incomplete: max_output_tokens")
+    );
+    assert!(matches!(result.outcome, UsageOutcome::Reported(_)));
+    let failed = json!({"object": "response", "status": "failed",
+        "error": {"code": "server_error", "message": "boom"}, "usage": null});
+    let result = OpenAi.usage(&ResponseView::Json(failed));
+    assert_eq!(result.error.as_deref(), Some("boom"));
+    assert_eq!(result.outcome, UsageOutcome::Missing);
+    let bare = json!({"object": "response", "status": "incomplete"});
+    assert_eq!(
+        OpenAi.usage(&ResponseView::Json(bare)).error.as_deref(),
+        Some("incomplete: unknown")
+    );
+    let no_usage = json!({"object": "response", "status": "completed"});
+    let result = OpenAi.usage(&ResponseView::Json(no_usage));
+    assert_eq!(
+        (result.outcome, result.error),
+        (UsageOutcome::Missing, None)
+    );
+}
+
+#[test]
+fn responses_stream_terminal_events() {
+    let completed = resp_usage(RESP_COMPLETED);
+    assert_eq!(completed.outcome, UsageOutcome::Reported(resp_sse_usage()));
+    assert_eq!(completed.error, None);
+    let incomplete = resp_usage(RESP_INCOMPLETE);
+    assert_eq!(
+        incomplete.error.as_deref(),
+        Some("incomplete: max_output_tokens")
+    );
+    let UsageOutcome::Reported(usage) = incomplete.outcome else {
+        panic!("not reported");
+    };
+    assert_eq!(
+        (usage.input_uncached, usage.output, usage.reasoning),
+        (300, 512, Some(500))
+    );
+    let failed = resp_usage(RESP_FAILED);
+    assert_eq!(failed.outcome, UsageOutcome::Missing);
+    assert_eq!(failed.error.as_deref(), Some("The model failed to respond"));
+    let cut = resp_usage(RESP_CUT);
+    assert_eq!(
+        (cut.outcome, cut.raw, cut.error),
+        (UsageOutcome::Missing, None, None)
+    );
+}
+
+#[test]
+fn responses_error_event_is_recorded() {
+    let body =
+        b"event: error\ndata: {\"type\":\"error\",\"code\":\"x\",\"message\":\"overloaded\"}\n\n";
+    let result = resp_usage(body);
+    assert_eq!(result.outcome, UsageOutcome::Missing);
+    assert_eq!(result.error.as_deref(), Some("overloaded"));
+    let bare = resp_usage(b"data: {\"type\":\"error\"}\n\n");
+    assert_eq!(bare.error.as_deref(), Some("{\"type\":\"error\"}"));
+}
+
+#[test]
+fn responses_awkward_splits_give_identical_usage() {
+    let expected = resp_usage(RESP_COMPLETED);
+    assert_eq!(expected.outcome, UsageOutcome::Reported(resp_sse_usage()));
+    for at in 0..=RESP_COMPLETED.len() {
+        let mut decoder = SseDecoder::default();
+        let mut events = decoder.push(&RESP_COMPLETED[..at]);
+        events.extend(decoder.push(&RESP_COMPLETED[at..]));
+        assert_eq!(
+            OpenAi.usage(&ResponseView::Events(events)),
+            expected,
+            "split at {at}"
+        );
+    }
+}
+
+#[test]
+fn responses_segments_follow_order_with_labels() {
+    let segments = OpenAi.segments(&resp_request());
+    let labels: Vec<&str> = segments.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        [
+            "tools[0] get_weather",
+            "tools[1] web_search",
+            "instructions",
+            "input[0] developer/text",
+            "input[1].0 user/input_text",
+            "input[1].1 user/input_text",
+            "input[2] reasoning",
+            "input[3] function_call",
+            "input[4] function_call_output",
+            "input[5] user/text",
+        ]
+    );
+    let sources: Vec<SegmentSource> = segments.iter().map(|s| s.source).collect();
+    assert!(sources.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(sources[3], SegmentSource::System);
+    assert_eq!(sources[4], SegmentSource::Messages);
+}
+
+#[test]
+fn responses_breakpoint_is_marked_and_stripped() {
+    let segments = OpenAi.segments(&resp_request());
+    assert_eq!(segments[4].breakpoint, Some(TWELVE_HOURS));
+    assert!(segments[4].text.contains("prompt_cache_breakpoint"));
+    assert!(!segments[4].content.contains("prompt_cache_breakpoint"));
+    assert!(segments
+        .iter()
+        .enumerate()
+        .all(|(i, s)| (i == 4) == s.breakpoint.is_some()));
+    assert!(segments[7].content.contains("get_weather"));
+}
+
+#[test]
+fn string_input_is_one_user_segment() {
+    let segments = OpenAi.segments(&json!({"input": "hi", "instructions": "be brief"}));
+    let labels: Vec<&str> = segments.iter().map(|s| s.label.as_str()).collect();
+    assert_eq!(labels, ["instructions", "input user/text"]);
+    assert_eq!(segments[1].source, SegmentSource::Messages);
+}
+
+#[test]
+fn breakpoint_ttl_12h_is_its_own_tier_and_unknown_stays_unspecified() {
+    let part = |ttl: &str| json!({"prompt_cache_breakpoint": {"mode": "explicit", "ttl": ttl}});
+    assert_eq!(
+        breakpoint(&part("12h")),
+        Some(CacheTier::Ttl { seconds: 43_200 })
+    );
+    assert_eq!(breakpoint(&part("1d")), Some(CacheTier::Unspecified));
+    assert_eq!(breakpoint(&part("30m")), Some(THIRTY_MIN));
+}
+
+#[test]
+fn chat_tool_message_content_carries_the_tool_call_id() {
+    let body = |id: &str| {
+        json!({"messages": [
+            {"role": "user", "content": "go"},
+            {"role": "tool", "tool_call_id": id, "content": "same"},
+            {"role": "tool", "tool_call_id": id, "content": [{"type": "text", "text": "same"}]},
+        ]})
+    };
+    let a = OpenAi.segments(&body("call_1"));
+    let b = OpenAi.segments(&body("call_2"));
+    assert_eq!(a[0].content, b[0].content);
+    assert_ne!(a[1].content, b[1].content);
+    assert_ne!(a[2].content, b[2].content);
+    assert!(a[1].content.contains("call_1"));
+}
+
+#[test]
+fn classify_accepts_the_responses_path() {
+    assert_eq!(
+        OpenAi.classify(&head("POST", "/v1/responses")),
+        CallKind::Inference
+    );
+    assert_eq!(
+        OpenAi.classify(&head("POST", "/v1/responses?x=1")),
+        CallKind::Inference
+    );
+    assert_eq!(
+        OpenAi.classify(&head("GET", "/v1/responses")),
+        CallKind::Other
+    );
+    assert_eq!(
+        OpenAi.classify(&head("POST", "/v1/responses/resp_1/cancel")),
+        CallKind::Other
+    );
+}
+
+#[test]
+fn responses_facts_include_the_responses_params() {
+    let facts = OpenAi.request_facts(&resp_request());
+    let keys: Vec<&str> = facts.params.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        [
+            "tool_choice",
+            "prompt_cache_key",
+            "reasoning",
+            "text",
+            "store",
+            "max_output_tokens",
+            "include"
+        ]
+    );
+    let chained = json!({"previous_response_id": "resp_0", "truncation": "auto"});
+    let facts = OpenAi.request_facts(&chained);
+    assert!(facts.params.contains_key("previous_response_id"));
+    assert!(facts.params.contains_key("truncation"));
+    assert!(OpenAi
+        .cache_relevant_params()
+        .contains(&"previous_response_id"));
 }

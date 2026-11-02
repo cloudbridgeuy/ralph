@@ -1,0 +1,6 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_2","object":"response","created_at":1790000000,"model":"gpt-6.1-sol-2026-09-01","status":"in_progress","usage":null}}
+
+event: response.failed
+data: {"type":"response.failed","sequence_number":1,"response":{"id":"resp_2","object":"response","created_at":1790000000,"model":"gpt-6.1-sol-2026-09-01","status":"failed","error":{"code":"server_error","message":"The model failed to respond"},"usage":null}}
+

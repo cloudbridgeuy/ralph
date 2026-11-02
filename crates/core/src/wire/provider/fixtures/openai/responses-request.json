@@ -1,0 +1,27 @@
+{
+  "model": "gpt-6.1-sol",
+  "stream": true,
+  "store": false,
+  "reasoning": {"effort": "low"},
+  "text": {"format": {"type": "text"}},
+  "tool_choice": "auto",
+  "prompt_cache_key": "session-2",
+  "max_output_tokens": 512,
+  "include": ["reasoning.encrypted_content"],
+  "instructions": "You are terse.",
+  "tools": [
+    {"type": "function", "name": "get_weather", "description": "Weather by city", "strict": true, "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}},
+    {"type": "web_search"}
+  ],
+  "input": [
+    {"type": "message", "role": "developer", "content": "Prefer metric units."},
+    {"type": "message", "role": "user", "content": [
+      {"type": "input_text", "text": "Weather in Oslo?", "prompt_cache_breakpoint": {"mode": "explicit", "ttl": "12h"}},
+      {"type": "input_text", "text": "Also the time."}
+    ]},
+    {"type": "reasoning", "id": "rs_1", "summary": []},
+    {"type": "function_call", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\":\"Oslo\"}"},
+    {"type": "function_call_output", "call_id": "call_1", "output": "4C and cloudy"},
+    {"role": "user", "content": "Thanks."}
+  ]
+}
