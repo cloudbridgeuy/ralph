@@ -293,12 +293,45 @@ fn classify_accepts_only_post_to_chat_completions() {
 fn prefix_cache_is_implicit_unless_explicit_mode() {
     let implicit = PrefixCache::Implicit { tier: THIRTY_MIN };
     assert_eq!(OpenAi.prefix_cache(&request()), implicit);
-    let mode = |m: &str| json!({"prompt_cache_options": {"mode": m, "ttl": "30m"}});
+    let mode = |m: &str| json!({"model": "gpt-6.1-sol", "prompt_cache_options": {"mode": m, "ttl": "30m"}});
     assert_eq!(OpenAi.prefix_cache(&mode("implicit")), implicit);
     assert_eq!(
         OpenAi.prefix_cache(&mode("explicit")),
         PrefixCache::Explicit
     );
+}
+
+#[test]
+fn implicit_tier_follows_the_ttl_or_retention_and_the_listing() {
+    let tier = |body: Value| OpenAi.prefix_cache(&body);
+    let implicit = |tier| PrefixCache::Implicit { tier };
+    let listed = json!({"model": "gpt-6.1-sol"});
+    assert_eq!(tier(listed.clone()), implicit(THIRTY_MIN));
+    assert_eq!(
+        tier(json!({"model": "gpt-6.1-sol-2026-09-01"})),
+        implicit(THIRTY_MIN)
+    );
+    assert_eq!(
+        tier(json!({"model": "gpt-6.1-sol", "prompt_cache_options": {"ttl": "30m"}})),
+        implicit(THIRTY_MIN)
+    );
+    assert_eq!(
+        tier(json!({"model": "gpt-6.1-sol", "prompt_cache_options": {"ttl": "12h"}})),
+        implicit(TWELVE_HOURS)
+    );
+    assert_eq!(
+        tier(json!({"model": "gpt-6.1-sol", "prompt_cache_retention": "24h"})),
+        implicit(CacheTier::Unspecified)
+    );
+    assert_eq!(
+        tier(json!({"model": "gpt-6.1-sol", "prompt_cache_retention": "in_memory"})),
+        implicit(CacheTier::Unspecified)
+    );
+    assert_eq!(
+        tier(json!({"model": "gpt-5.2"})),
+        implicit(CacheTier::Unspecified)
+    );
+    assert_eq!(tier(json!({})), implicit(CacheTier::Unspecified));
 }
 
 #[test]

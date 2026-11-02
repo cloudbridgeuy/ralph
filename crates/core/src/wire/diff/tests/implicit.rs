@@ -3,9 +3,11 @@ use crate::wire::provider::SegmentSource;
 
 const IMPLICIT_30M: CacheTier = CacheTier::Ttl { seconds: 1_800 };
 
-struct Implicit30m;
+struct ImplicitProvider {
+    tier: CacheTier,
+}
 
-impl Provider for Implicit30m {
+impl Provider for ImplicitProvider {
     fn id(&self) -> ProviderId {
         Anthropic.id()
     }
@@ -37,7 +39,7 @@ impl Provider for Implicit30m {
         Anthropic.segments(body)
     }
     fn prefix_cache(&self, _body: &Value) -> PrefixCache {
-        PrefixCache::Implicit { tier: IMPLICIT_30M }
+        PrefixCache::Implicit { tier: self.tier }
     }
     fn usage(&self, response: &ResponseView) -> ResponseUsage {
         Anthropic.usage(response)
@@ -53,14 +55,18 @@ impl Provider for Implicit30m {
     }
 }
 
-fn implicit_view(a: &CallRecord, b: &CallRecord) -> DiffView {
+fn implicit_view_with(a: &CallRecord, b: &CallRecord, tier: CacheTier) -> DiffView {
     diff_view(&DiffInput {
         a: Some(a),
         b,
         session: &[a.clone(), b.clone()],
-        provider: &Implicit30m,
+        provider: &ImplicitProvider { tier },
         base_picked: false,
     })
+}
+
+fn implicit_view(a: &CallRecord, b: &CallRecord) -> DiffView {
+    implicit_view_with(a, b, IMPLICIT_30M)
 }
 
 fn unmarked_pair(b_usage: UsageOutcome, b_start: i64) -> (CallRecord, CallRecord) {
@@ -114,6 +120,17 @@ fn implicit_gap_within_its_tier_is_unexplained() {
     let (a, b) = unmarked_pair(written(0, 100), 400);
     assert!(matches!(
         implicit_view(&a, &b).explanation.verdict,
+        Verdict::Unexplained { .. }
+    ));
+}
+
+#[test]
+fn implicit_unspecified_tier_never_expires_by_ttl() {
+    let (a, b) = unmarked_pair(written(0, 100), 7_200);
+    assert!(matches!(
+        implicit_view_with(&a, &b, CacheTier::Unspecified)
+            .explanation
+            .verdict,
         Verdict::Unexplained { .. }
     ));
 }

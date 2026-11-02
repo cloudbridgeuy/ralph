@@ -5,7 +5,7 @@ use super::{
     ResponseUsage, ResponseView, SegmentSource,
 };
 use crate::wire::headers::StoredHeaders;
-use crate::wire::price::{matches_prefix, normalize_model, PriceTable};
+use crate::wire::price::{matches_prefix, normalize_model, PriceEntry, PriceTable};
 use crate::wire::usage::{
     BillingRates, CacheTier, CacheWrite, TierRate, Usage, UsageOutcome, THIRTY_MIN,
 };
@@ -158,14 +158,35 @@ fn error_message(value: &Value) -> Option<String> {
     )
 }
 
-fn ratios(model: &str) -> BillingRates {
+fn implicit_tier(body: &Value) -> CacheTier {
+    match body
+        .pointer("/prompt_cache_options/ttl")
+        .and_then(Value::as_str)
+    {
+        Some("30m") => THIRTY_MIN,
+        Some("12h") => TWELVE_HOURS,
+        _ if body.get("prompt_cache_retention").is_some() => CacheTier::Unspecified,
+        _ if body
+            .get("model")
+            .and_then(Value::as_str)
+            .is_some_and(|model| listed(model).is_some()) =>
+        {
+            THIRTY_MIN
+        }
+        _ => CacheTier::Unspecified,
+    }
+}
+
+fn listed(model: &str) -> Option<PriceEntry> {
     let model = normalize_model(model);
-    let entries = price::entries();
-    let listed = entries
-        .iter()
+    price::entries()
+        .into_iter()
         .filter(|entry| matches_prefix(model, &entry.model))
-        .max_by_key(|entry| entry.model.len());
-    let Some(entry) = listed.filter(|entry| entry.price.input > 0.0) else {
+        .max_by_key(|entry| entry.model.len())
+}
+
+fn ratios(model: &str) -> BillingRates {
+    let Some(entry) = listed(model).filter(|entry| entry.price.input > 0.0) else {
         return BillingRates {
             cache_read: DEFAULT_CACHE_READ,
             cache_writes: vec![TierRate {
@@ -262,12 +283,15 @@ impl Provider for OpenAi {
     }
 
     fn prefix_cache(&self, body: &Value) -> PrefixCache {
-        match body
+        if body
             .pointer("/prompt_cache_options/mode")
             .and_then(Value::as_str)
+            == Some("explicit")
         {
-            Some("explicit") => PrefixCache::Explicit,
-            _ => PrefixCache::Implicit { tier: THIRTY_MIN },
+            return PrefixCache::Explicit;
+        }
+        PrefixCache::Implicit {
+            tier: implicit_tier(body),
         }
     }
 
