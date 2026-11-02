@@ -456,6 +456,9 @@ pub struct WorkerStopHookArgs {
     #[arg(long, value_name = "PATH")]
     pub unreported: std::path::PathBuf,
 
+    #[arg(long, value_name = "PATH")]
+    pub activity: Option<std::path::PathBuf>,
+
     #[arg(long, value_name = "WORKER", requires = "usage_seen")]
     pub worker: Option<String>,
 

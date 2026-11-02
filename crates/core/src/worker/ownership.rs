@@ -1,6 +1,7 @@
 use super::{
     branch_name, marker_paths, spawn_record_path, status_path, usage_seen_path, HarnessId,
 };
+use crate::worker_stall::auto_continued_path;
 use std::path::{Component, Path, PathBuf};
 
 pub const FALLBACK_BASE_BRANCH: &str = "main";
@@ -167,6 +168,7 @@ pub fn close_clear_paths(store: &Path, id: &str) -> Vec<PathBuf> {
     let mut paths = marker_paths(store, id).to_vec();
     paths.push(status_path(store, id));
     paths.push(usage_seen_path(store, id));
+    paths.push(auto_continued_path(store, id));
     paths.push(spawn_record_path(store, id));
     paths
 }
@@ -453,7 +455,8 @@ mod tests {
     #[test]
     fn close_clears_every_marker_the_status_file_and_the_spawn_record() {
         let paths = close_clear_paths(Path::new("/s"), "A");
-        assert_eq!(paths.len(), marker_paths(Path::new("/s"), "A").len() + 3);
+        assert_eq!(paths.len(), marker_paths(Path::new("/s"), "A").len() + 4);
+        assert!(paths.contains(&PathBuf::from("/s/auto-continued/A")));
         assert!(marker_paths(Path::new("/s"), "A")
             .iter()
             .all(|marker| paths.contains(marker)));

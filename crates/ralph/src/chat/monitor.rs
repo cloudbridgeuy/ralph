@@ -31,7 +31,7 @@ use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
     marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
-    vanished_claude, waiting_path, HarnessId, Report, Scope, HANDOFF_POLL, READY_DIR,
+    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -85,11 +85,14 @@ pub(super) struct Monitor {
     pub(super) recent_history_tokens: usize,
     pub(super) worker_check_secs: Option<u64>,
     pub(super) worker_quiet_secs: u64,
+    pub(super) auto_continue: bool,
+    pub(super) hold_progress: bool,
     pub(super) workers: Workers,
     pub(super) check: Mutex<CheckState>,
     pub(super) known: Mutex<Vec<Report>>,
     pub(super) scheduled_reports: Mutex<Vec<Report>>,
     pub(super) warned: Mutex<HashSet<String>>,
+    pub(super) unrecorded: Mutex<HashSet<String>>,
     pub(super) alert: AlertConfig,
     pub(super) live: Arc<AtomicBool>,
     pub(super) last_ping: Stamp,
@@ -146,13 +149,9 @@ impl Monitor {
             && !(blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
             .flatten();
-        let pane_changed = match &pane {
-            Some(pane) => state.panes.insert(id.clone(), pane.clone()).as_ref() != Some(pane),
-            None => {
-                state.panes.remove(id);
-                true
-            }
-        };
+        let activity = std::fs::read_to_string(activity_path(&self.store_dir, id))
+            .ok()
+            .and_then(|text| ActivityMark::parse(&text));
         WorkerObservation {
             id: id.clone(),
             session: worker.session.clone(),
@@ -163,7 +162,9 @@ impl Monitor {
             unreported,
             reported_since_nudge: reported,
             pane,
-            pane_changed,
+            activity: activity.map(|mark| mark.state),
+            activity_age_secs: activity.map_or(0, |mark| now_secs().saturating_sub(mark.at)),
+            auto_continue: self.auto_continue,
         }
     }
 
@@ -218,9 +219,6 @@ impl Monitor {
                 .map(|worker| self.observe(&mut state, worker))
                 .collect();
             state
-                .panes
-                .retain(|id, _| running.iter().any(|worker| &worker.id == id));
-            state
                 .nudges
                 .retain(|id, _| running.iter().any(|worker| &worker.id == id));
             let alive: HashSet<String> = running
@@ -267,6 +265,9 @@ impl Monitor {
                     );
                 }
             }
+        }
+        if self.auto_continue {
+            self.stall_tick(&running);
         }
     }
 

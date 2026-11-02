@@ -1,3 +1,4 @@
+mod bounded;
 pub(crate) mod cell;
 mod changes;
 mod check;
@@ -7,6 +8,7 @@ mod corrupt_tests;
 mod diff;
 mod editor;
 mod hold;
+mod hold_progress;
 mod inbox;
 mod index_files;
 mod keepalive;
@@ -22,6 +24,7 @@ mod schedule;
 mod schedule_worker;
 mod send_it;
 mod skills;
+mod stall;
 pub(crate) use skills::SKILLS_ENV;
 mod snapshots;
 pub(crate) mod socket;
@@ -367,6 +370,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         recent_history_tokens,
         worker_check_secs,
         worker_quiet_secs,
+        auto_continue: chat_config.auto_continue,
+        hold_progress: chat_config.hold_progress,
         workers: Workers::new(
             store_dir.clone(),
             exe.clone(),
@@ -377,6 +382,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         known: Mutex::new(known),
         scheduled_reports: Mutex::new(Vec::new()),
         warned: Mutex::new(HashSet::new()),
+        unrecorded: Mutex::new(HashSet::new()),
         alert: AlertConfig {
             sound: chat_config.inbox_alert_sound && !args.no_inbox_sound,
             notification: chat_config.inbox_alert_notification && !args.no_inbox_notification,

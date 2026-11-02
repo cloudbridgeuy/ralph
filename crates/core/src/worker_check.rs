@@ -1,5 +1,5 @@
 use crate::chat_memory::{Entry, Role};
-use crate::worker::{startup_state, HarnessId, Report, ReportStatus, Startup};
+use crate::worker::{startup_state, ActivityState, HarnessId, Report, ReportStatus, Startup};
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -18,7 +18,9 @@ pub struct WorkerObservation {
     pub unreported: bool,
     pub reported_since_nudge: bool,
     pub pane: Option<String>,
-    pub pane_changed: bool,
+    pub activity: Option<ActivityState>,
+    pub activity_age_secs: u64,
+    pub auto_continue: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +127,28 @@ pub fn pane_busy(pane: &str) -> bool {
     footer.contains("esc to interrupt") || counts_running_agents(&footer)
 }
 
+fn stall_owned(obs: &WorkerObservation) -> bool {
+    obs.auto_continue && obs.activity == Some(ActivityState::Failed)
+}
+
+pub const RUNNING_STALE_SECS: u64 = 600;
+pub const BACKGROUND_STALE_SECS: u64 = 3600;
+
+pub fn busy_mark_stale(state: ActivityState, age_secs: u64) -> bool {
+    match state {
+        ActivityState::Running => age_secs > RUNNING_STALE_SECS,
+        ActivityState::Background => age_secs > BACKGROUND_STALE_SECS,
+        ActivityState::Idle | ActivityState::Failed => false,
+    }
+}
+
+fn is_busy(obs: &WorkerObservation) -> bool {
+    let mark_holds = obs.activity.is_some_and(|state| {
+        state.busy() && !(obs.pane.is_some() && busy_mark_stale(state, obs.activity_age_secs))
+    });
+    mark_holds || obs.pane.as_deref().is_some_and(pane_busy)
+}
+
 pub fn classify(obs: &WorkerObservation) -> WorkerState {
     if obs.blocked {
         return WorkerState::BlockedPermission;
@@ -138,9 +162,11 @@ pub fn classify(obs: &WorkerObservation) -> WorkerState {
         WorkerState::Waiting
     } else if obs.reported_since_nudge {
         WorkerState::Reported
-    } else if !obs.pane_changed
+    } else if obs.ready
         && !obs.unreported
-        && obs.pane.as_deref().is_some_and(|pane| !pane_busy(pane))
+        && !is_busy(obs)
+        && !stall_owned(obs)
+        && obs.pane.is_some()
     {
         WorkerState::Unknown
     } else {
@@ -171,7 +197,7 @@ fn inbox_text(state: WorkerState, obs: &WorkerObservation) -> Option<String> {
             "Worker {id} is waiting at the folder-trust dialog. To answer: tmux attach -t {session}"
         )),
         WorkerState::Unknown => Some(format!(
-            "ralph can't tell what worker {id} is waiting on: its pane has not changed and it has not reported. To look: tmux attach -t {session}"
+            "ralph can't tell what worker {id} is waiting on: it is idle and has not reported. To look: tmux attach -t {session}"
         )),
         WorkerState::Working | WorkerState::Reported => None,
     }
@@ -216,6 +242,12 @@ pub fn plan(
 }
 
 #[cfg(test)]
+mod failed_turn;
+
+#[cfg(test)]
+mod stale_busy;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -230,7 +262,9 @@ mod tests {
             unreported: false,
             reported_since_nudge: false,
             pane: None,
-            pane_changed: true,
+            activity: None,
+            activity_age_secs: 0,
+            auto_continue: false,
         }
     }
 
@@ -258,10 +292,9 @@ mod tests {
     const IDLE_FOOTER: &str = "  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents";
     const TRANSCRIPT_MARKERS: &str = "esc to interrupt\n  ← 3 agents\n⏺ Done.\n✻ Crunched for 1m";
 
-    fn unchanged(pane: &str) -> WorkerObservation {
+    fn observed(pane: &str) -> WorkerObservation {
         WorkerObservation {
             pane: Some(pane.to_string()),
-            pane_changed: false,
             ..obs()
         }
     }
@@ -303,25 +336,36 @@ mod tests {
     }
 
     #[test]
-    fn classify_unchanged_busy_panes_are_working() {
+    fn classify_busy_panes_are_working() {
         for pane in [
             SPINNER_PANE.to_string(),
             pane_with_footer("⏺ ok", ONE_AGENT_FOOTER),
             pane_with_footer("⏺ ok", TWO_AGENTS_FOOTER),
         ] {
-            assert_eq!(classify(&unchanged(&pane)), WorkerState::Working);
+            assert_eq!(classify(&observed(&pane)), WorkerState::Working);
         }
     }
 
     #[test]
-    fn classify_unchanged_idle_pane_is_unknown() {
-        assert_eq!(classify(&unchanged(IDLE_DONE_PANE)), WorkerState::Unknown);
+    fn classify_busy_activity_with_a_static_pane_is_working() {
+        for activity in [ActivityState::Running, ActivityState::Background] {
+            let observation = WorkerObservation {
+                activity: Some(activity),
+                ..observed(IDLE_DONE_PANE)
+            };
+            assert_eq!(classify(&observation), WorkerState::Working, "{activity:?}");
+        }
     }
 
     #[test]
-    fn idle_unchanged_pane_posts_once_and_busy_pane_never_posts() {
-        let idle = unchanged(IDLE_DONE_PANE);
-        let busy = unchanged(SPINNER_PANE);
+    fn classify_idle_pane_is_unknown() {
+        assert_eq!(classify(&observed(IDLE_DONE_PANE)), WorkerState::Unknown);
+    }
+
+    #[test]
+    fn idle_pane_posts_once_and_busy_pane_never_posts() {
+        let idle = observed(IDLE_DONE_PANE);
+        let busy = observed(SPINNER_PANE);
         let mut memory = CheckMemory::default();
         let mut idle_posts = 0;
         for _ in 0..3 {
@@ -402,39 +446,42 @@ mod tests {
         let o = WorkerObservation {
             reported_since_nudge: true,
             pane: Some("x".to_string()),
-            pane_changed: false,
             ..obs()
         };
         assert_eq!(classify(&o), WorkerState::Reported);
     }
 
     #[test]
-    fn classify_unknown_needs_pane_and_no_change() {
-        let unchanged = WorkerObservation {
+    fn classify_unknown_needs_a_ready_idle_pane() {
+        let idle = WorkerObservation {
             pane: Some("x".to_string()),
-            pane_changed: false,
             ..obs()
         };
-        assert_eq!(classify(&unchanged), WorkerState::Unknown);
+        assert_eq!(classify(&idle), WorkerState::Unknown);
+        for activity in [ActivityState::Idle, ActivityState::Failed] {
+            let marked = WorkerObservation {
+                activity: Some(activity),
+                ..idle.clone()
+            };
+            assert_eq!(classify(&marked), WorkerState::Unknown, "{activity:?}");
+        }
         let no_pane = WorkerObservation {
             pane: None,
-            pane_changed: false,
             ..obs()
         };
         assert_eq!(classify(&no_pane), WorkerState::Working);
-        let changed = WorkerObservation {
-            pane_changed: true,
-            ..unchanged
+        let starting = WorkerObservation {
+            ready: false,
+            ..idle
         };
-        assert_eq!(classify(&changed), WorkerState::Working);
+        assert_eq!(classify(&starting), WorkerState::Working);
     }
 
     #[test]
-    fn classify_unchanged_pane_is_working_while_waiting_is_pending() {
+    fn classify_pane_is_working_while_waiting_is_pending() {
         let o = WorkerObservation {
             unreported: true,
             pane: Some("x".to_string()),
-            pane_changed: false,
             ..obs()
         };
         assert_eq!(classify(&o), WorkerState::Working);
@@ -446,7 +493,6 @@ mod tests {
     fn unknown_posts_once_until_the_wait_ends() {
         let unknown = WorkerObservation {
             pane: Some("x".to_string()),
-            pane_changed: false,
             ..obs()
         };
         let reported = WorkerObservation {
@@ -592,7 +638,6 @@ mod tests {
         };
         let unknown = WorkerObservation {
             pane: Some("x".to_string()),
-            pane_changed: false,
             ..obs()
         };
         for o in [blocked, trust, unknown] {
@@ -650,7 +695,6 @@ mod tests {
             },
             WorkerObservation {
                 pane: Some("x".to_string()),
-                pane_changed: false,
                 ..obs()
             },
         ];
@@ -762,7 +806,6 @@ mod tests {
         let observation = WorkerObservation {
             reported_since_nudge: reported_since_nudge(reports.get("w1"), None),
             pane: Some("idle".to_string()),
-            pane_changed: false,
             ..obs()
         };
         assert_eq!(classify(&observation), WorkerState::Reported);

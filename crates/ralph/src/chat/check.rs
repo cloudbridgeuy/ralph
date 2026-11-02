@@ -6,7 +6,6 @@ use std::collections::{HashMap, HashSet};
 #[derive(Default)]
 pub struct CheckState {
     pub memory: CheckMemory,
-    pub panes: HashMap<String, String>,
     pub nudges: HashMap<String, Option<String>>,
     pub reports: HashMap<String, String>,
     pub heartbeats: HashMap<String, HeadlessState>,

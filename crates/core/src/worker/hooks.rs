@@ -1,4 +1,4 @@
-use super::{usage_seen_path, WorkerMarkers, REPORT_REMINDER};
+use super::{usage_seen_path, ActivityState, WorkerMarkers, REPORT_REMINDER};
 use crate::snapshot::WorkerSite;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -21,6 +21,8 @@ fn stop_hook_command(
         shell_quote(&markers.reported.to_string_lossy()),
         "--unreported".to_string(),
         shell_quote(&markers.unreported.to_string_lossy()),
+        "--activity".to_string(),
+        shell_quote(&markers.activity.to_string_lossy()),
         "--worker".to_string(),
         shell_quote(usage.worker),
         "--usage".to_string(),
@@ -47,6 +49,16 @@ fn touch_command(path: &Path) -> String {
     format!("touch {}", shell_quote(&path.to_string_lossy()))
 }
 
+fn activity_command(path: &Path, state: ActivityState) -> String {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    format!(
+        "mkdir -p {} && printf '%s {}\\n' \"$(date +%s)\" > {}",
+        shell_quote(&dir.to_string_lossy()),
+        state.label(),
+        shell_quote(&path.to_string_lossy())
+    )
+}
+
 fn command_hook(command: String) -> Value {
     json!({"type": "command", "command": command})
 }
@@ -65,9 +77,10 @@ pub fn claude_worker_settings(
         touch_command(&markers.waiting)
     );
     let clear = format!(
-        "rm -f {} {}",
+        "rm -f {} {}; {}",
         quote(&markers.blocked),
-        quote(&markers.waiting)
+        quote(&markers.waiting),
+        activity_command(&markers.activity, ActivityState::Running)
     );
     json!({
         "hooks": {
@@ -80,6 +93,9 @@ pub fn claude_worker_settings(
                     command_hook(stop_hook_command(exe, markers, site, usage)),
                     command_hook(clear_blocked)
                 ]
+            }],
+            "StopFailure": [{
+                "hooks": [command_hook(activity_command(&markers.activity, ActivityState::Failed))]
             }],
             "PermissionRequest": [{
                 "hooks": [command_hook(touch_command(&markers.blocked))]
@@ -144,6 +160,13 @@ pub fn stop_decision(payload: &str, reported: bool) -> StopDecision {
     }
 }
 
+pub fn stop_activity_state(decision: &StopDecision) -> ActivityState {
+    match decision {
+        StopDecision::AllowBackground => ActivityState::Background,
+        _ => ActivityState::Idle,
+    }
+}
+
 pub fn stop_block_output() -> Value {
     json!({"decision": "block", "reason": REPORT_REMINDER})
 }
@@ -199,7 +222,7 @@ mod tests {
             claude_worker_settings(Path::new("/bin/ral'ph"), &markers, Some(&site()), &sink());
         assert_eq!(
             hook_command(&settings, "Stop"),
-            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A' --unreported '/s/it'\''s/unreported/A' --worker 'A' --usage '/u/usage.jsonl' --usage-seen '/s/workers/A.usage-seen' '--store' '/s' '--id' 'A' '--worktree' '/w'"
+            r"'/bin/ral'\''ph' worker-stop-hook --reported '/s/it'\''s/reported/A' --unreported '/s/it'\''s/unreported/A' --activity '/s/it'\''s/activity/A' --worker 'A' --usage '/u/usage.jsonl' --usage-seen '/s/workers/A.usage-seen' '--store' '/s' '--id' 'A' '--worktree' '/w'"
         );
     }
 
@@ -208,7 +231,7 @@ mod tests {
         let settings = claude_worker_settings(Path::new("/bin/ralph"), &markers(), None, &sink());
         assert_eq!(
             hook_command(&settings, "Stop"),
-            "'/bin/ralph' worker-stop-hook --reported '/s/reported/A' --unreported '/s/unreported/A' --worker 'A' --usage '/u/usage.jsonl' --usage-seen '/s/workers/A.usage-seen'"
+            "'/bin/ralph' worker-stop-hook --reported '/s/reported/A' --unreported '/s/unreported/A' --activity '/s/activity/A' --worker 'A' --usage '/u/usage.jsonl' --usage-seen '/s/workers/A.usage-seen'"
         );
     }
 
@@ -247,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_activity_hooks_clear_blocked_and_waiting_for_every_event() {
+    fn claude_activity_hooks_clear_blocked_and_waiting_and_write_running() {
         let settings =
             claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()), &sink());
         for event in ["UserPromptSubmit", "PostToolUse"] {
@@ -257,9 +280,44 @@ mod tests {
             );
             assert_eq!(
                 hook_command(&settings, event),
-                "rm -f '/s/blocked/A' '/s/waiting/A'",
+                "rm -f '/s/blocked/A' '/s/waiting/A'; mkdir -p '/s/activity' && printf '%s running\\n' \"$(date +%s)\" > '/s/activity/A'",
                 "{event}"
             );
+        }
+    }
+
+    #[test]
+    fn background_clears_on_the_next_user_prompt_submit() {
+        let settings =
+            claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()), &sink());
+        let command = hook_command(&settings, "UserPromptSubmit");
+        assert!(command.ends_with("> '/s/activity/A'"), "{command}");
+        assert!(command.contains(" running\\n"), "{command}");
+    }
+
+    #[test]
+    fn claude_stop_failure_hook_writes_failed() {
+        let settings =
+            claude_worker_settings(Path::new("/bin/ralph"), &markers(), Some(&site()), &sink());
+        assert_eq!(
+            settings["hooks"]["StopFailure"][0]["hooks"][0]["command"],
+            "mkdir -p '/s/activity' && printf '%s failed\\n' \"$(date +%s)\" > '/s/activity/A'"
+        );
+    }
+
+    #[test]
+    fn stop_activity_state_is_background_only_for_allow_background() {
+        assert_eq!(
+            stop_activity_state(&StopDecision::AllowBackground),
+            ActivityState::Background
+        );
+        for decision in [
+            StopDecision::GiveUp,
+            StopDecision::ConsumeMarker,
+            StopDecision::Block,
+            StopDecision::FailOpen("x".into()),
+        ] {
+            assert_eq!(stop_activity_state(&decision), ActivityState::Idle);
         }
     }
 

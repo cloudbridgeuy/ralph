@@ -2,8 +2,9 @@ use ralph_core::inbox::{drop_log_line, Entry, Ledger, Position, Selection};
 use ralph_core::mcp::tool_result;
 use ralph_core::worker::{
     accept_report, append_status, decode_statuses, encode_statuses, handle_request,
-    inbox_file_name, reported_path, sent_path, status_path, stop_block_output, stop_decision,
-    unreported_path, Outcome, Report, StatusLine, StopDecision,
+    inbox_file_name, reported_path, sent_path, status_path, stop_activity_state, stop_block_output,
+    stop_decision, unreported_path, ActivityMark, ActivityState, Outcome, Report, StatusLine,
+    StopDecision,
 };
 use serde_json::Value;
 use std::fs;
@@ -11,6 +12,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
+use crate::cursor_owner::{now_secs, write_file};
 use crate::worker_changes::WorkerChanges;
 use crate::worker_usage::{record_or_warn, UsageTarget};
 
@@ -262,6 +264,17 @@ pub fn run_stdio_server(
     Ok(())
 }
 
+fn write_activity(path: Option<&Path>, state: ActivityState) {
+    let Some(path) = path else { return };
+    let mark = ActivityMark {
+        at: now_secs(),
+        state,
+    };
+    if let Err(e) = write_file(path, &mark.render()) {
+        crate::warn::warn(format!("could not write the activity marker: {e}"));
+    }
+}
+
 fn remove_if_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
@@ -272,6 +285,7 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
 pub struct StopHook<'a> {
     pub reported: &'a Path,
     pub unreported: &'a Path,
+    pub activity: Option<&'a Path>,
     pub changes: Option<&'a WorkerChanges>,
     pub usage: Option<&'a UsageTarget>,
 }
@@ -286,6 +300,7 @@ pub fn run_stop_hook(
         crate::warn::warn(format!(
             "letting the worker stop: unreadable Stop hook input: {e}"
         ));
+        write_activity(hook.activity, ActivityState::Idle);
         return Ok(());
     }
     let turn_id = hook.changes.and_then(WorkerChanges::snapshot_turn_or_warn);
@@ -295,9 +310,12 @@ pub fn run_stop_hook(
     let StopHook {
         reported,
         unreported,
+        activity,
         ..
     } = *hook;
-    match stop_decision(&payload, reported.exists()) {
+    let decision = stop_decision(&payload, reported.exists());
+    write_activity(activity, stop_activity_state(&decision));
+    match decision {
         StopDecision::AllowBackground => {}
         StopDecision::GiveUp => {
             if let Some(dir) = unreported.parent() {
@@ -327,6 +345,7 @@ mod tests {
         let hook = StopHook {
             reported,
             unreported: &unreported,
+            activity: None,
             changes: None,
             usage: None,
         };
@@ -337,6 +356,34 @@ mod tests {
     fn touch(path: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "").unwrap();
+    }
+
+    fn activity_after(payload: &str, reported_exists: bool) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let reported = dir.path().join("reported");
+        if reported_exists {
+            touch(&reported);
+        }
+        let unreported = dir.path().join("unreported");
+        let activity = dir.path().join("activity").join("A");
+        let hook = StopHook {
+            reported: &reported,
+            unreported: &unreported,
+            activity: Some(&activity),
+            changes: None,
+            usage: None,
+        };
+        run_stop_hook(&hook, payload.as_bytes(), Vec::new()).unwrap();
+        fs::read_to_string(activity).unwrap()
+    }
+
+    #[test]
+    fn stop_hook_writes_background_while_tasks_run_and_idle_otherwise() {
+        let busy = r#"{"stop_hook_active":false,"background_tasks":[{"id":"x"}]}"#;
+        assert!(activity_after(busy, false).ends_with(" background"));
+        let plain = r#"{"stop_hook_active":false}"#;
+        assert!(activity_after(plain, true).ends_with(" idle"));
+        assert!(activity_after("not json", false).ends_with(" idle"));
     }
 
     #[test]

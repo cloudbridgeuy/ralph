@@ -5,7 +5,7 @@ use crate::codex_worker::CodexHost;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::opencode_worker::OpencodeHost;
 use crate::watches::Watches;
-use ralph_core::worker::{render_gone, ActivityMark, Scope};
+use ralph_core::worker::{render_gone, ActivityMark, ActivityState, Scope};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -35,7 +35,7 @@ impl Heartbeat {
             gone,
             last: Mutex::new(ActivityMark {
                 at: 0,
-                running: false,
+                state: ActivityState::Idle,
             }),
         })
     }
@@ -45,7 +45,7 @@ impl Heartbeat {
         fs::remove_file(&self.gone).ok();
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = ActivityMark {
             at: 0,
-            running: false,
+            state: ActivityState::Idle,
         };
     }
 
@@ -57,26 +57,26 @@ impl Heartbeat {
         self.write(at, None);
     }
 
-    pub(crate) fn set_running(&self, running: bool) {
-        self.write(now_secs(), Some(running));
+    pub(crate) fn set_state(&self, state: ActivityState) {
+        self.write(now_secs(), Some(state));
     }
 
     pub(crate) fn running(&self) -> bool {
         self.last
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .running
+            .busy()
     }
 
     pub(crate) fn gone(&self, scope: &Scope, reason: &str) {
         write_file(&self.gone, &render_gone(scope, reason)).ok();
     }
 
-    fn write(&self, at: u64, running: Option<bool>) {
+    fn write(&self, at: u64, state: Option<ActivityState>) {
         let mut last = self.last.lock().unwrap_or_else(PoisonError::into_inner);
         let next = ActivityMark {
             at,
-            running: running.unwrap_or(last.running),
+            state: state.unwrap_or(last.state),
         };
         if next != *last {
             write_file(&self.activity, &next.render()).ok();
@@ -189,5 +189,21 @@ mod tests {
             assert_eq!(host.shutdowns.load(Ordering::SeqCst), 1);
             assert!(!host.poll());
         }
+    }
+
+    #[test]
+    fn a_failed_turn_end_writes_failed_and_is_not_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let activity = dir.path().join("activity").join("A");
+        let heartbeat = Heartbeat::new(activity.clone(), dir.path().join("gone"));
+        heartbeat.set_state(ActivityState::Running);
+        assert!(heartbeat.running());
+        heartbeat.set_state(ActivityState::Failed);
+        assert!(!heartbeat.running());
+        let text = fs::read_to_string(activity).unwrap();
+        assert_eq!(
+            ActivityMark::parse(&text).map(|m| m.state),
+            Some(ActivityState::Failed)
+        );
     }
 }

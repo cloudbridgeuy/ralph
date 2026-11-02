@@ -133,7 +133,7 @@ impl Workers {
             running: fs::read_to_string(activity_path(&self.store_dir, id))
                 .ok()
                 .and_then(|text| ActivityMark::parse(&text))
-                .is_some_and(|mark| mark.running),
+                .is_some_and(|mark| mark.busy()),
             sent: sent_path(&self.store_dir, id).exists(),
         }
     }

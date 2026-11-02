@@ -21,13 +21,14 @@ use ralph_core::worker::{
     claude_headless_args, cleanup, decode_claude_version, decode_line, deny_line, gone_path,
     interrupt_lines, interrupted_end, permission_response, prompt_failure_report, ready_path,
     reduce, request_stale, resumed_session, shutdown_steps, start_steps, stuck_permission_report,
-    task_prompt, turn_lost_at_resume, uuid_v4, Action, ClaudeLine, ClaudePermission, ClaudeSession,
-    HandoffFiles, HarnessId, HeadlessState, InterruptOutcome, Leftover, PermissionAnswer,
-    PermissionMode, SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal,
-    Turns, VerifiedAgents, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND,
-    CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
-    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
-    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR, SERVER_NAME,
+    task_prompt, turn_end_activity, turn_lost_at_resume, uuid_v4, Action, ActivityState,
+    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
+    InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
+    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, VerifiedAgents, WorkerEvent,
+    WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
+    SERVER_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -155,10 +156,12 @@ impl Shared {
                 }
                 Action::Emit(event) => {
                     match &event {
-                        WorkerEvent::TurnStarted => self.heartbeat.set_running(true),
-                        WorkerEvent::TurnEnded(_) => {
+                        WorkerEvent::TurnStarted => {
+                            self.heartbeat.set_state(ActivityState::Running)
+                        }
+                        WorkerEvent::TurnEnded(end) => {
                             self.permissions.accept_again();
-                            self.heartbeat.set_running(false);
+                            self.heartbeat.set_state(turn_end_activity(end));
                         }
                         _ => {}
                     }

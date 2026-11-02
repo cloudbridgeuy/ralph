@@ -6,9 +6,9 @@ use crate::workers::headless::Heartbeat;
 use ralph_core::snapshot::WorkerSite;
 use ralph_core::worker::{
     create_session_body, interrupt_result_text, keeps_interrupt_request, opencode_session_id,
-    request_stale, task_prompt, HandoffFiles, HeadlessState, HeadlessWorker, OpencodeRecord,
-    OpencodeSpawn, OpencodeTurnUsage, PermissionAnswer, TurnState, WorkerCommand, WorkerEvent,
-    WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR,
+    request_stale, task_prompt, ActivityState, HandoffFiles, HeadlessState, HeadlessWorker,
+    OpencodeRecord, OpencodeSpawn, OpencodeTurnUsage, PermissionAnswer, TurnState, WorkerCommand,
+    WorkerEvent, WorkerMarkers, OPENCODE_ANSWER_DIR, OPENCODE_CLOSE_DIR, OPENCODE_INTERRUPT_DIR,
     OPENCODE_PREFLIGHT_DIR, OPENCODE_PROMPT_DIR, OPENCODE_SPAWN_DIR,
 };
 use std::fs;
@@ -134,7 +134,7 @@ impl OpencodeHost {
         let markers = WorkerMarkers::new(&self.store_dir, id);
         let heartbeat = Heartbeat::new(markers.activity.clone(), markers.gone.clone());
         heartbeat.clear();
-        heartbeat.set_running(true);
+        heartbeat.set_state(ActivityState::Running);
         let text = task_prompt(&request.task);
         let mut turn = TurnState::default();
         turn.prompted(&text);
@@ -195,7 +195,7 @@ impl OpencodeHost {
                 }
                 if let Some(session) = self.sessions().get_mut(&session_id) {
                     session.turn.prompted(&text);
-                    session.heartbeat.set_running(true);
+                    session.heartbeat.set_state(ActivityState::Running);
                 }
                 self.send(&session_id, &target, &text);
             }

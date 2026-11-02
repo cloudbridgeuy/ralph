@@ -23,15 +23,15 @@ use ralph_core::worker::{
     model_list_params, next_cursor, prompt_failure_report, ready_path, record_selection, reduce,
     reject_server_request, request_stale, resolve_selection, resolved_request_id, response_body,
     resume_decision_for, session_saved, task_prompt, thread_resume_params, thread_start_params,
-    turn_interrupt_params, turn_start_params, turn_stop, yolo_option, Action, ApprovalKind,
-    BlockedContent, Capabilities, CodexCloseStep, HandoffFiles, HarnessId, HeadlessState,
-    HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict, PermissionAnswer, PermissionMode,
-    Resume, ResumeFacts, Rpc, Scope, Selection, SessionRecord, SpawnRequest, ThreadInfo,
-    ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent, WorkerMarkers, ACCOUNT_READ,
-    CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_CLOSE_TURN_WAIT, CODEX_COMMAND, CODEX_INTERRUPT_DIR,
-    CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SESSION_DIR, CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED,
-    MODEL_LIST, MODEL_LIST_MAX_PAGES, SERVER_NAME, THREAD_RESUME, THREAD_START, TURN_INTERRUPT,
-    TURN_START,
+    turn_end_activity, turn_interrupt_params, turn_start_params, turn_stop, yolo_option, Action,
+    ActivityState, ApprovalKind, BlockedContent, Capabilities, CodexCloseStep, HandoffFiles,
+    HarnessId, HeadlessState, HeadlessWorker, Inbound, Incoming, McpStartup, McpVerdict,
+    PermissionAnswer, PermissionMode, Resume, ResumeFacts, Rpc, Scope, Selection, SessionRecord,
+    SpawnRequest, ThreadInfo, ThreadSignal, TurnEnd, Turns, WorkerCommand, WorkerEvent,
+    WorkerMarkers, ACCOUNT_READ, CODEX_ANSWER_DIR, CODEX_CLOSE_DIR, CODEX_CLOSE_TURN_WAIT,
+    CODEX_COMMAND, CODEX_INTERRUPT_DIR, CODEX_OWNER_DIR, CODEX_PROMPT_DIR, CODEX_SESSION_DIR,
+    CODEX_SPAWN_DIR, INITIALIZE, INITIALIZED, MODEL_LIST, MODEL_LIST_MAX_PAGES, SERVER_NAME,
+    THREAD_RESUME, THREAD_START, TURN_INTERRUPT, TURN_START,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -322,10 +322,10 @@ impl Pump {
                         WorkerEvent::TurnStarted => {
                             self.snapshot_turn = None;
                             self.usage.start_turn();
-                            self.wire.heartbeat.set_running(true);
+                            self.wire.heartbeat.set_state(ActivityState::Running);
                         }
                         WorkerEvent::TurnEnded(end) => {
-                            self.wire.heartbeat.set_running(false);
+                            self.wire.heartbeat.set_state(turn_end_activity(end));
                             self.usage.flush(self.snapshot_turn.take());
                             if session_saved(turn_stop(end), true) {
                                 self.save_record();

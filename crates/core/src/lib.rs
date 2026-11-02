@@ -10,6 +10,7 @@
 
 pub mod ansi;
 pub mod attachment;
+pub mod bounded_command;
 pub mod changes;
 pub mod chat;
 pub mod chat_cell;
@@ -18,6 +19,7 @@ pub mod chat_draft;
 pub mod chat_edit_mode;
 pub mod chat_help;
 pub mod chat_hold;
+pub mod chat_hold_progress;
 pub mod chat_input;
 pub mod chat_keepalive;
 pub mod chat_memory;
@@ -64,4 +66,5 @@ pub mod wire;
 pub mod worker;
 pub mod worker_check;
 pub mod worker_costs;
+pub mod worker_stall;
 pub mod workers_view;
