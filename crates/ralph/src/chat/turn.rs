@@ -17,6 +17,7 @@ use crate::subprocess::{
 use crate::ui_theme::UiColors;
 use crate::warn::warning_line;
 use crate::watches::locked;
+use crate::workers::usage_store;
 use ralph_core::chat::{
     build_agents_args, build_attachments_args, build_nap_args, hit_blocking_limit, reset_reason,
     turn_prompt, turn_system_prompt, CustomPrompt, ReplyImages, ResetLimits, VIEW_LINES,
@@ -305,7 +306,7 @@ impl Turn<'_> {
             record.request_at = result.request_at.map(|at| at.to_rfc3339());
             record.reset = launch.as_ref().and_then(|spawned| spawned.reset);
             record.run = Some(self.run.to_string());
-            record.store = Some(self.store_dir.to_string_lossy().into_owned());
+            record.store = Some(usage_store(self.store_dir));
             self.warn_if_err(
                 append_usage(&usage_path(), &record),
                 "Failed to record chat usage",
