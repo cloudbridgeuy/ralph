@@ -620,7 +620,7 @@ fn started_text(id: &str, worktree: &Path, via: &WorktreeVia, warnings: &[Option
         .fold(started, |text, warning| format!("{text} {warning}"))
 }
 
-fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
+pub(super) fn await_startup(session: &str, ready: &Path) -> io::Result<bool> {
     let target = format!("={session}:");
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     let mut previous: Option<String> = None;

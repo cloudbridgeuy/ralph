@@ -1,11 +1,14 @@
 use crate::cli::VerifyAgent;
 use crate::subprocess::TimedOutput;
 use crate::watches::locked;
-use crate::{acp_worker, claude_headless_worker, codex_worker, opencode_worker, verified_agents};
+use crate::{
+    acp_worker, claude_headless_worker, codex_worker, opencode_worker, verified_agents, workers,
+};
 use ralph_core::worker::{
     finished_probe, render_check, render_summary, required_failure, spec_passed, verified_entry,
     CheckResult, VerifiedAgent, VersionProbe, CLAUDE_HEADLESS_REQUIRED_CHECKS,
-    CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS, OPENCODE_REQUIRED_CHECKS,
+    CLAUDE_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
+    OPENCODE_REQUIRED_CHECKS,
 };
 use std::sync::{Arc, Mutex};
 
@@ -103,6 +106,10 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
             opencode_worker::verify(live, dir.path(), &checks),
             OPENCODE_REQUIRED_CHECKS,
         ),
+        VerifyAgent::Claude => (
+            workers::verify(live, dir.path(), &checks),
+            CLAUDE_REQUIRED_CHECKS,
+        ),
     };
     if let Some(failure) = required_failure(&checks.results(), required) {
         checks.add(failure);
@@ -162,10 +169,10 @@ mod tests {
     }
 
     #[test]
-    fn the_cli_accepts_opencode_as_a_verify_agent() {
-        for agent in ["cursor", "codex", "claude-headless", "opencode"] {
+    fn the_cli_accepts_claude_as_a_verify_agent() {
+        for agent in ["cursor", "codex", "claude-headless", "opencode", "claude"] {
             assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_ok());
         }
-        assert!(Cli::try_parse_from(["ralph", "worker", "verify", "claude"]).is_err());
+        assert!(Cli::try_parse_from(["ralph", "worker", "verify", "tmux"]).is_err());
     }
 }
