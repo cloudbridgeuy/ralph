@@ -202,6 +202,19 @@ fn chat_name_and_terminal_title_are_not_reported_unknown() {
 }
 
 #[test]
+fn chat_auto_continue_defaults_on_and_can_be_disabled() {
+    assert!(AppConfig::new().chat.auto_continue);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("config.toml");
+    fs::write(&path, "[chat]\nauto_continue = false\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(!config.chat.auto_continue);
+    fs::write(&path, "[chat]\nedit_mode = \"vi\"\n").unwrap();
+    let config = AppConfig::load_layers(&path, None).unwrap();
+    assert!(config.chat.auto_continue);
+}
+
+#[test]
 fn chat_auto_hold_defaults_on_and_can_be_disabled() {
     assert!(AppConfig::new().chat.auto_hold);
     let temp_dir = TempDir::new().unwrap();

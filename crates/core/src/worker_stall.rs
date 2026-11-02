@@ -65,6 +65,14 @@ pub fn log_line(at: u64, worker: &str, harness: &str, reason: &str) -> String {
     .unwrap_or_default()
 }
 
+pub fn alert_text(id: &str, tmux_session: Option<&str>) -> String {
+    let base = format!("Worker {id} is still idle with no report after one auto-continue.");
+    match tmux_session {
+        Some(session) => format!("{base} To look: tmux attach -t {session}"),
+        None => base,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StallFacts {
     pub activity: Option<ActivityMark>,
@@ -232,6 +240,18 @@ mod tests {
         assert_eq!(
             auto_continue_log_path(Path::new("/s")),
             PathBuf::from("/s/auto-continue.jsonl")
+        );
+    }
+
+    #[test]
+    fn the_alert_text_points_at_tmux_only_for_tmux_workers() {
+        assert_eq!(
+            alert_text("GUZ-1", Some("ralph-x-GUZ-1")),
+            "Worker GUZ-1 is still idle with no report after one auto-continue. To look: tmux attach -t ralph-x-GUZ-1"
+        );
+        assert_eq!(
+            alert_text("GUZ-1", None),
+            "Worker GUZ-1 is still idle with no report after one auto-continue."
         );
     }
 

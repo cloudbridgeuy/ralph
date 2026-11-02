@@ -654,3 +654,15 @@ A codex worker appends the same kind of rows with `harness` `codex` and `session
 - Mid-turn message injection.
 - Logging tool calls and results into memory.
 - Subagent reports.
+
+## Auto-continue
+
+A turn that ends on an API error leaves the worker idle with `activity/<id>` set to `failed`: the claude `StopFailure` hook writes it, and the headless harnesses write it when a turn ends in error (see Heartbeat above). With `[chat] auto_continue` on (the default), the worker check tick runs the pure `worker_stall::stall_action` over each running worker:
+
+- busy (`running` or `background`) or no activity marker: nothing.
+- a report since the last go-ahead (no `sent/<id>` marker): nothing, and the record `<store>/auto-continued/<id>` is deleted.
+- idle with `failed`, no record: `Continue`. The shell checks again that the decision still holds, sends `CONTINUE_TEXT` ("Your last turn ended on an API error. Continue: start with git status, then follow the same rules as the last go-ahead.") through `Workers::nudge`, writes the record `{at, reason, alerted}` and appends `{at, worker, harness, reason}` to `<store>/auto-continue.jsonl`. A failed send writes no record.
+- a record exists, not alerted, and the activity mark is newer than the record (the worker acted since the continue) and is idle or failed again: `Alert`. The shell posts one `check` item, `Worker <id> is still idle with no report after one auto-continue.` plus `To look: tmux attach -t <session>` for tmux workers only, and sets `alerted`.
+- an alerted record: nothing until a report deletes it or the worker closes (close deletes it).
+
+Both files live in the store, so the state survives a chat restart. One continue per go-ahead: a new report resets it. The `You stopped without calling report` nudge for a worker that stopped without reporting is separate and unchanged. Limit: the failed worker's pane check may still post the `can't tell what worker is waiting on` item for a tmux worker that is idle with `failed`, because the continue and that check run on the same tick.

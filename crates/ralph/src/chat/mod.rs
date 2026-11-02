@@ -22,6 +22,7 @@ mod schedule;
 mod schedule_worker;
 mod send_it;
 mod skills;
+mod stall;
 pub(crate) use skills::SKILLS_ENV;
 mod snapshots;
 pub(crate) mod socket;
@@ -367,6 +368,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         recent_history_tokens,
         worker_check_secs,
         worker_quiet_secs,
+        auto_continue: chat_config.auto_continue,
         workers: Workers::new(
             store_dir.clone(),
             exe.clone(),

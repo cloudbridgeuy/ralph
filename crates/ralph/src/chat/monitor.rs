@@ -85,6 +85,7 @@ pub(super) struct Monitor {
     pub(super) recent_history_tokens: usize,
     pub(super) worker_check_secs: Option<u64>,
     pub(super) worker_quiet_secs: u64,
+    pub(super) auto_continue: bool,
     pub(super) workers: Workers,
     pub(super) check: Mutex<CheckState>,
     pub(super) known: Mutex<Vec<Report>>,
@@ -261,6 +262,9 @@ impl Monitor {
                     );
                 }
             }
+        }
+        if self.auto_continue {
+            self.stall_tick(&running);
         }
     }
 

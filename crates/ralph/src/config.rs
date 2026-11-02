@@ -308,6 +308,8 @@ pub struct ChatSection {
     pub name: Option<String>,
     #[serde(default = "default_true")]
     pub auto_hold: bool,
+    #[serde(default = "default_true")]
+    pub auto_continue: bool,
     #[serde(default = "default_send_it_seconds")]
     pub send_it_seconds: u64,
     #[serde(default = "default_send_it_max_turns")]
@@ -382,6 +384,7 @@ impl Default for ChatSection {
             terminal_title: true,
             name: None,
             auto_hold: true,
+            auto_continue: true,
             send_it_seconds: default_send_it_seconds(),
             send_it_max_turns: default_send_it_max_turns(),
             send_it_max_usd: default_send_it_max_usd(),
