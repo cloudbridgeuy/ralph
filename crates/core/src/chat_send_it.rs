@@ -224,9 +224,10 @@ pub fn decide(run: &Run, limits: &Limits, facts: &Facts) -> Decision {
     }
 }
 
-pub fn worker_flagged(reports: &[Report]) -> bool {
-    reports
+pub fn worker_flagged(unread: &[Report], drained: &[Report]) -> bool {
+    unread
         .iter()
+        .chain(drained)
         .any(|report| FLAGGED_STATUSES.contains(&report.status.as_str()))
 }
 

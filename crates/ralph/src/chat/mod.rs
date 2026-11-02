@@ -609,6 +609,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     Trigger::User
                 };
+                send_it.begin_turn();
                 monitor.set_phase(Phase::Cell);
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state) {
                     Ok(prepared) => {
@@ -640,6 +641,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Route::ReadInbox(selection) => {
                 monitor.set_phase(Phase::Turn);
                 let reports = monitor.drain(selection)?;
+                send_it.note_drained(&reports);
                 monitor.refresh(true);
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     monitor.set_phase(Phase::Prompt);

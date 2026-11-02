@@ -10,6 +10,7 @@ use ralph_core::chat_send_it::{
     worker_flagged, Decision, Facts, Limits, Run, SendIt, Step, CLEAR_LINE,
 };
 use ralph_core::chat_status::Status;
+use ralph_core::worker::Report;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -40,6 +41,7 @@ pub(super) struct Shell {
     limits: Limits,
     seconds: u64,
     color: bool,
+    drained: Vec<Report>,
 }
 
 fn countdown(text: &str, seconds: u64, color: bool) -> Option<Countdown> {
@@ -96,7 +98,16 @@ impl Shell {
             },
             seconds: config.send_it_seconds,
             color,
+            drained: Vec::new(),
         }
+    }
+
+    pub(super) fn begin_turn(&mut self) {
+        self.drained.clear();
+    }
+
+    pub(super) fn note_drained(&mut self, reports: &[Report]) {
+        self.drained.extend_from_slice(reports);
     }
 
     pub(super) fn command(&mut self, command: SendIt, typed_at_prompt: bool, status: &Status) {
@@ -153,7 +164,7 @@ impl Shell {
             worker_flagged: monitor
                 .inbox
                 .peek()
-                .map_or(true, |reports| worker_flagged(&reports)),
+                .map_or(true, |reports| worker_flagged(&reports, &self.drained)),
             schedule_pending,
         };
         let notice = match decide(&run, &self.limits, &facts) {

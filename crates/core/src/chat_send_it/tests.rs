@@ -209,10 +209,18 @@ fn report(status: &str) -> Report {
 
 #[test]
 fn only_question_and_blocked_reports_flag_a_worker() {
-    assert!(worker_flagged(&[report("done"), report("question")]));
-    assert!(worker_flagged(&[report("blocked")]));
-    assert!(!worker_flagged(&[report("done"), report("progress")]));
-    assert!(!worker_flagged(&[]));
+    assert!(worker_flagged(&[report("done"), report("question")], &[]));
+    assert!(worker_flagged(&[report("blocked")], &[]));
+    assert!(!worker_flagged(&[report("done"), report("progress")], &[]));
+    assert!(!worker_flagged(&[], &[]));
+}
+
+#[test]
+fn reports_drained_during_the_turn_also_flag_a_worker() {
+    assert!(worker_flagged(&[], &[report("question")]));
+    assert!(worker_flagged(&[], &[report("done"), report("blocked")]));
+    assert!(worker_flagged(&[report("question")], &[report("done")]));
+    assert!(!worker_flagged(&[report("done")], &[report("progress")]));
 }
 
 #[test]
