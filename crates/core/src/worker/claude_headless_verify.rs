@@ -10,6 +10,22 @@ pub const CLAUDE_HEADLESS_REQUIRED_CHECKS: &[&str] = &["version", "spawn", "argv
 pub const CLAUDE_ENDED: &str = "end_turn";
 pub const CLAUDE_INTERRUPTED: &str = "cancelled";
 const VERIFY_INTERRUPT_ID: &str = "verify-interrupt";
+pub const CLAUDE_PERMISSION_PROMPT: &str =
+    "Run the shell command `touch verify-permission.txt` and reply with ok.";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaudeSpawn {
+    Argv,
+    Turns,
+}
+
+pub fn claude_verify_spawns(live: bool) -> &'static [ClaudeSpawn] {
+    if live {
+        &[ClaudeSpawn::Argv, ClaudeSpawn::Turns]
+    } else {
+        &[ClaudeSpawn::Argv]
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClaudePlan {
@@ -256,5 +272,20 @@ mod tests {
         let unknown = argv_check(true, "error: unknown option '--x'\n", Ok(true));
         assert_eq!(unknown.verdict, Verdict::Fail);
         assert_eq!(argv_check(true, "", Ok(true)).verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn the_permission_prompt_writes_a_file() {
+        assert!(CLAUDE_PERMISSION_PROMPT.contains("touch verify-permission.txt"));
+        assert!(!CLAUDE_PERMISSION_PROMPT.contains("date"));
+    }
+
+    #[test]
+    fn the_argv_check_runs_in_its_own_spawn_before_live_turns() {
+        assert_eq!(claude_verify_spawns(false), &[ClaudeSpawn::Argv]);
+        assert_eq!(
+            claude_verify_spawns(true),
+            &[ClaudeSpawn::Argv, ClaudeSpawn::Turns]
+        );
     }
 }

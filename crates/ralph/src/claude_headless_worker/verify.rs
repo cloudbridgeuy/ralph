@@ -10,10 +10,10 @@ use crate::worker_verify::{step, version_probe, Checks};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
-    argv_check, cancel_check, claude_headless_args, claude_probed_version, fold_claude_line,
-    init_check, permission_check, prompt_check, uuid_v4, ClaudeFold, ClaudePlan, ClaudeSession,
-    PermissionMode, PermissionSetup, CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED,
-    VERSION_PROBE_LIMIT,
+    argv_check, cancel_check, claude_headless_args, claude_probed_version, claude_verify_spawns,
+    fold_claude_line, init_check, permission_check, prompt_check, uuid_v4, ClaudeFold, ClaudePlan,
+    ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, CLAUDE_COMMAND, CLAUDE_ENDED,
+    CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::io::{Read, Write};
 use std::path::Path;
@@ -28,7 +28,6 @@ const TURN_LIMIT: Duration = Duration::from_secs(120);
 const POLL: Duration = Duration::from_millis(50);
 const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
-const PERMISSION_PROMPT: &str = "Run the shell command `date +%Y` and reply with its output.";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
 
 struct Wire {
@@ -85,7 +84,7 @@ fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks) {
     if plain.summary.stop.is_err() {
         return;
     }
-    let allowed = run_turn(wire, PERMISSION_PROMPT, ClaudePlan::Allow);
+    let allowed = run_turn(wire, CLAUDE_PERMISSION_PROMPT, ClaudePlan::Allow);
     checks.add(permission_check(
         &allowed.summary,
         CLAUDE_ENDED,
@@ -128,13 +127,15 @@ fn wait_exit(child: &mut Child) -> Result<bool, String> {
 }
 
 fn verify_args(model: Option<&str>, dir: &Path, session: &str) -> Vec<String> {
-    claude_headless_args(
+    let mut args = claude_headless_args(
         model,
         EMPTY_MCP,
         dir,
         PermissionMode::Ask,
         ClaudeSession::New(session),
-    )
+    );
+    args.extend(["--setting-sources".to_string(), "project,local".to_string()]);
+    args
 }
 
 fn claude_command(
@@ -176,17 +177,34 @@ pub(crate) fn verify(
         claude_probed_version(&probe),
         |version| format!("{version} (probed {})", CLAUDE_GATE.probed),
     )?;
+    for spawn in claude_verify_spawns(live) {
+        if !run_spawn(*spawn, dir, checks, config, model) {
+            break;
+        }
+    }
+    Some(version)
+}
+
+fn run_spawn(
+    kind: ClaudeSpawn,
+    dir: &Path,
+    checks: &Checks,
+    config: &Result<AppConfig, String>,
+    model: Option<&str>,
+) -> bool {
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
         spawn_piped(claude_command(dir, &session, config, model))
             .map(|spawned| (session, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });
-    let Some((session, (mut child, stdin, stdout, stderr))) =
-        step(checks, "spawn", spawned, |_| {
-            format!("`{CLAUDE_COMMAND}` started with the worker argv")
-        })
-    else {
-        return Some(version);
+    let name = match kind {
+        ClaudeSpawn::Argv => "spawn",
+        ClaudeSpawn::Turns => "live spawn",
+    };
+    let Some((session, (mut child, stdin, stdout, stderr))) = step(checks, name, spawned, |_| {
+        format!("`{CLAUDE_COMMAND}` started with the worker argv")
+    }) else {
+        return false;
     };
     let stderr = collect_stderr(stderr);
     let log = CappedLog::new(None, "verify");
@@ -197,19 +215,26 @@ pub(crate) fn verify(
     };
     thread::sleep(SETTLE);
     let running = matches!(child.try_wait(), Ok(None));
-    if running && live {
-        live_checks(&wire, &session, checks);
+    match kind {
+        ClaudeSpawn::Argv => {
+            locked(&wire.stdin).take();
+            let exit = if running {
+                wait_exit(&mut child)
+            } else {
+                Ok(true)
+            };
+            let complaint = String::from_utf8_lossy(&locked(&stderr)).into_owned();
+            checks.add(argv_check(running, &complaint, exit));
+        }
+        ClaudeSpawn::Turns => {
+            if running {
+                live_checks(&wire, &session, checks);
+            }
+            locked(&wire.stdin).take();
+        }
     }
-    locked(&wire.stdin).take();
-    let exit = if running {
-        wait_exit(&mut child)
-    } else {
-        Ok(true)
-    };
-    let complaint = String::from_utf8_lossy(&locked(&stderr)).into_owned();
-    checks.add(argv_check(running, &complaint, exit));
     stop_child(&mut child);
-    Some(version)
+    true
 }
 
 #[cfg(test)]
@@ -225,5 +250,27 @@ mod tests {
         assert!(verify_args(None, dir, "s1")
             .iter()
             .all(|word| word != "--model"));
+    }
+
+    #[test]
+    fn verify_args_isolate_user_settings() {
+        let args = verify_args(None, Path::new("/tmp/verify-dir"), "s1");
+        let at = args
+            .iter()
+            .position(|word| word == "--setting-sources")
+            .unwrap();
+        assert_eq!(args[at + 1], "project,local");
+    }
+
+    #[test]
+    fn worker_args_do_not_restrict_setting_sources() {
+        let args = claude_headless_args(
+            None,
+            EMPTY_MCP,
+            Path::new("/tmp/verify-dir"),
+            PermissionMode::Ask,
+            ClaudeSession::New("s1"),
+        );
+        assert!(args.iter().all(|word| word != "--setting-sources"));
     }
 }
