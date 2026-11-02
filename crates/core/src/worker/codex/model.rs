@@ -24,6 +24,12 @@ pub fn resolve_selection(
     }
 }
 
+pub fn codex_config_warning(config: Result<(), &str>) -> Option<String> {
+    config.err().map(|e| {
+        format!("could not read config: {e}; codex model and effort use codex's own defaults")
+    })
+}
+
 fn entry_names(entry: &Value) -> impl Iterator<Item = &str> {
     [entry["id"].as_str(), entry["model"].as_str()]
         .into_iter()
@@ -72,6 +78,22 @@ pub fn check_effort(selection: &Selection, list: &Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_config_warning_names_the_error_and_the_defaults() {
+        assert_eq!(
+            codex_config_warning(Err("bad toml")),
+            Some(
+                "could not read config: bad toml; codex model and effort use codex's own defaults"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn codex_config_warning_is_none_for_a_loaded_config() {
+        assert_eq!(codex_config_warning(Ok(())), None);
+    }
 
     fn list() -> Value {
         json!({"data": [

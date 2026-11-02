@@ -14,17 +14,17 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
-    fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, opencode_config,
-    project_slug, resolve_claude_model, resolve_claude_shell, resolve_cursor_model,
-    resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report, session_name,
-    spawn_handoff, spawn_record_path, startup_state, task_dir_path, task_file_path, trust_key,
-    with_start_warning, worker_command, worker_mcp_args, worker_mcp_config, worktree_add_args,
-    wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn,
-    Owner, Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys,
-    UsageSink, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CLAUDE_COMMAND,
-    CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION,
-    INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
+    branch_name, claude_worker_settings, close_clear_paths, codex_config_warning,
+    encode_spawn_record, exclude_lines, fetch_env, fetch_origin_args, fetch_ssh_command,
+    fetch_timeout_text, opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
+    resolve_cursor_model, resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report,
+    session_name, spawn_handoff, spawn_record_path, startup_state, task_dir_path, task_file_path,
+    trust_key, with_start_warning, worker_command, worker_mcp_args, worker_mcp_config,
+    worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles,
+    HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup,
+    Ticket, TicketKeys, UsageSink, WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR,
+    CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS,
+    HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
 };
 use std::fs;
 use std::io;
@@ -135,7 +135,10 @@ impl Workers {
                     .map(|config| config.cursor.model.as_deref())
                     .map_err(String::as_str),
             ),
-            HarnessId::Codex => (model.map(str::to_string), None),
+            HarnessId::Codex => (
+                model.map(str::to_string),
+                codex_config_warning(config.as_ref().map(|_| ()).map_err(String::as_str)),
+            ),
         };
         let ticket = resolve_ticket(
             id,
