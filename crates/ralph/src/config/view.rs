@@ -20,6 +20,8 @@ pub(super) const ENV_KEYS: [(&str, &str); 9] = [
     ("theme.no_background", RALPH_NO_BACKGROUND_ENV),
 ];
 
+const EXTRA_OVERRIDES: [(&str, &str); 1] = [("theme.assistant.code", RALPH_THEME_ENV)];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
     Env(&'static str),
@@ -119,7 +121,14 @@ pub fn env_settings(
 }
 
 pub fn merged_rows(rows: &[Row], overrides: &[Setting]) -> Vec<String> {
-    let winner = |key: &str| overrides.iter().find(|setting| setting.key == Some(key));
+    let winner = |key: &str| {
+        overrides.iter().find(|setting| {
+            setting.key == Some(key)
+                || EXTRA_OVERRIDES
+                    .iter()
+                    .any(|(extra, name)| *extra == key && setting.origin == Origin::Env(name))
+        })
+    };
     let layered = rows.iter().map(|row| {
         let Row { key, value, .. } = row;
         let source = row.source.label();
@@ -510,6 +519,26 @@ mod tests {
         let lines = lines(&view);
         assert!(lines.contains(&"  --wrap-width 90 (overrides chat.wrap_width)"));
         assert!(lines.contains(&"  chat.wrap_width = 90  [flag --wrap-width; global = 80]"));
+    }
+
+    #[test]
+    fn the_theme_env_also_overrides_the_assistant_code_theme() {
+        let rows = [
+            row(
+                "theme.assistant.code",
+                Value::String("X".into()),
+                Source::Global,
+            ),
+            row("theme.name", Value::String("Z".into()), Source::Global),
+        ];
+        let overrides = [env(RALPH_THEME_ENV, "Y", Some("theme.name"))];
+        let lines = merged_rows(&rows, &overrides);
+        assert!(lines.contains(&format!(
+            "theme.assistant.code = \"Y\"  [env {RALPH_THEME_ENV}; global = \"X\"]"
+        )));
+        assert!(lines.contains(&format!(
+            "theme.name = \"Y\"  [env {RALPH_THEME_ENV}; global = \"Z\"]"
+        )));
     }
 
     #[test]
