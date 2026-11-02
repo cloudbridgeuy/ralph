@@ -111,7 +111,7 @@ async fn fetch_tickets(ids: &[u32]) -> HashMap<u32, notes::Ticket> {
 
 async fn generate_summary(prompt: &str) -> Result<Option<String>> {
     let mut child = Command::new("claude")
-        .args(["-p", "--model", SUMMARY_MODEL])
+        .args(notes::summary_args(SUMMARY_MODEL))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

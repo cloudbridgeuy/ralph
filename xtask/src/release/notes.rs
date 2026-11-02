@@ -273,6 +273,24 @@ pub fn clean_summary(raw: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+const SUMMARY_SYSTEM: &str = "You write release-note summaries. Reply with the summary text only.";
+
+/// `claude -p` arguments for the summary. Safe mode skips CLAUDE.md, skills,
+/// plugins, hooks and MCP servers, so user rules cannot add chatter.
+pub fn summary_args(model: &str) -> Vec<&str> {
+    vec![
+        "-p",
+        "--model",
+        model,
+        "--safe-mode",
+        "--tools",
+        "",
+        "--no-session-persistence",
+        "--system-prompt",
+        SUMMARY_SYSTEM,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +499,24 @@ mod tests {
         assert_eq!(
             clean_summary("Adds X.\n\nFixes Y."),
             Some("Adds X.\n\nFixes Y.".to_string())
+        );
+    }
+
+    #[test]
+    fn summary_args_run_claude_without_tools_or_user_context() {
+        assert_eq!(
+            summary_args("m"),
+            vec![
+                "-p",
+                "--model",
+                "m",
+                "--safe-mode",
+                "--tools",
+                "",
+                "--no-session-persistence",
+                "--system-prompt",
+                "You write release-note summaries. Reply with the summary text only.",
+            ]
         );
     }
 }
