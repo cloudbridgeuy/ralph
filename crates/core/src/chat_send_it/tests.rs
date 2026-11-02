@@ -218,6 +218,9 @@ fn send_it_args_parse_to_arm_off_or_status() {
     );
     assert_eq!(SendIt::parse("GUZ-1 now"), None);
     assert_eq!(SendIt::parse("off now"), None);
+    assert_eq!(SendIt::parse("OFF"), Some(SendIt::Off));
+    assert_eq!(SendIt::parse(" Off "), Some(SendIt::Off));
+    assert_eq!(SendIt::parse("OFF now"), None);
 }
 
 fn report(status: &str) -> Report {
@@ -357,6 +360,15 @@ fn status_with(workers: &[&str]) -> Status {
 fn a_ticket_matching_a_hold_target_is_tracked() {
     assert!(tracks_worker("GUZ-1", &status_with(&["GUZ-1"])));
     assert!(!tracks_worker("GUZ-2", &status_with(&["GUZ-1"])));
+}
+
+#[test]
+fn ticket_matching_ignores_case() {
+    assert!(tracks_worker("guz-1", &status_with(&["GUZ-1"])));
+    assert!(tracks_worker("GUZ-1", &status_with(&["guz-1"])));
+    assert!(!tracks_worker("guz-2", &status_with(&["GUZ-1"])));
+    assert!(!worker_closed(true, "guz-1", &status_with(&["GUZ-1"])));
+    assert!(worker_closed(true, "guz-1", &status_with(&[])));
 }
 
 #[test]

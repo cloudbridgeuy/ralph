@@ -80,7 +80,7 @@ impl SendIt {
         let mut tokens = args.split_whitespace();
         match (tokens.next(), tokens.next()) {
             (None, _) => Some(SendIt::Status),
-            (Some("off"), None) => Some(SendIt::Off),
+            (Some(word), None) if word.eq_ignore_ascii_case("off") => Some(SendIt::Off),
             (Some(ticket), None) => Some(SendIt::Arm(ticket.to_string())),
             _ => None,
         }
@@ -290,7 +290,9 @@ pub fn closed_notice(run: &Run) -> String {
 }
 
 pub fn tracks_worker(ticket: &str, status: &Status) -> bool {
-    hold_targets(status).contains(ticket)
+    hold_targets(status)
+        .iter()
+        .any(|target| target.eq_ignore_ascii_case(ticket))
 }
 
 pub fn worker_closed(tracked: bool, ticket: &str, status: &Status) -> bool {
