@@ -330,7 +330,7 @@ pub struct ChatArgs {
     #[arg(long, value_name = "DIR", global = true)]
     pub store: Option<std::path::PathBuf>,
 
-    #[arg(long, value_name = "NAME", global = true)]
+    #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
 
     #[arg(long, value_name = "TOKENS")]

@@ -72,6 +72,24 @@ fn test_cli_chat_takes_a_name_before_or_after_the_subcommand() {
 }
 
 #[test]
+fn test_cli_chat_history_rejects_a_name() {
+    let err = Cli::try_parse_from(["ralph", "chat", "history", "zoom", "4-7", "--name", "x"])
+        .unwrap_err();
+    assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+}
+
+#[test]
+fn test_cli_chat_name_flag_still_parses_for_a_bare_chat() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "--name", "x"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected chat");
+    };
+    assert_eq!(chat.name.as_deref(), Some("x"));
+}
+
+#[test]
 fn test_cli_chat_takes_a_worktree_dir_and_chat_mcp_a_socket() {
     let Some(Commands::Chat(chat)) =
         Cli::try_parse_from(["ralph", "chat", "--worktree-dir", "~/wt"])
