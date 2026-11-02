@@ -28,7 +28,7 @@ fn defaults_follow_the_code_theme() {
     assert_ne!(resolved.colors.surface, resolved.colors.bg);
     assert_eq!(
         resolved.font_family,
-        ["Helvetica Neue", "Helvetica", "Arial", "Liberation Sans"]
+        ["Arial", "Liberation Sans", "Helvetica Neue", "Helvetica"]
     );
     assert_eq!(
         resolved.font_family_mono,

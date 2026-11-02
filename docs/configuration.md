@@ -460,7 +460,7 @@ Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; s
 | `palette` | `"auto"` | `auto` takes colors from the agent code theme (background, foreground, scope colors; a theme with no colors uses `dark`), `light` or `dark` are fixed |
 | `background` | `"theme"` | `theme` fills with the palette `bg`, `transparent` fills nothing, or a `#rrggbb` color |
 | `series` | palette | Up to 8 `#rrggbb` colors for chart series and pie slices, in order; missing ones keep the palette |
-| `font_family` | `["Helvetica Neue", "Helvetica", "Arial", "Liberation Sans"]` | Label fonts; the first installed one draws. Layout always uses Arial metrics |
+| `font_family` | `["Arial", "Liberation Sans", "Helvetica Neue", "Helvetica"]` | Label fonts; the first installed one draws. Layout always uses Arial metrics, so Arial-metric fonts come first |
 | `font_family_mono` | `["SF Mono", "Menlo", "DejaVu Sans Mono"]` | Monospace fonts |
 | `font_size` | `16.0` | Layout font size in pixels; above 0 |
 | `padding` | `16.0` | Padding around the diagram in pixels; 0 or more |

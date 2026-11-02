@@ -38,7 +38,7 @@ fn options_carry_the_style_and_the_room() {
     assert_eq!(colors.series, picked.colors.series);
     assert_eq!(
         built.font_family.as_deref(),
-        Some("'Helvetica Neue', Helvetica, Arial, 'Liberation Sans'")
+        Some("Arial, 'Liberation Sans', 'Helvetica Neue', Helvetica")
     );
     assert_eq!(
         built.font_family_mono.as_deref(),

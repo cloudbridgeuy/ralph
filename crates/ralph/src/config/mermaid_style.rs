@@ -34,7 +34,7 @@ pub struct MermaidStyle {
     pub config: Table,
 }
 
-const FONT_FAMILY: [&str; 4] = ["Helvetica Neue", "Helvetica", "Arial", "Liberation Sans"];
+const FONT_FAMILY: [&str; 4] = ["Arial", "Liberation Sans", "Helvetica Neue", "Helvetica"];
 const FONT_FAMILY_MONO: [&str; 3] = ["SF Mono", "Menlo", "DejaVu Sans Mono"];
 const FONT_SIZE: f64 = 16.0;
 const PADDING: f64 = 16.0;
