@@ -88,12 +88,11 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         )
     });
     let hold = status.hold.as_ref().map(|filter| {
-        let label = filter.label();
         Segment::new(
             Side::Left,
             Kind::Hold(current),
             QUEUE_PRIORITY,
-            vec![format!("from {label}"), label.to_string()],
+            filter.bar_variants(),
         )
     });
     let mail = (unread > 0).then(|| {
@@ -229,6 +228,16 @@ mod tests {
             ..status
         };
         assert!(line(&any, 200).starts_with(" HOLD  from anyone "));
+    }
+
+    #[test]
+    fn hold_cell_of_a_set_shrinks_to_its_member_count() {
+        let status = Status {
+            hold: Some(HoldFilter::Set(vec!["a".into(), "b".into(), "c".into()])),
+            ..status()
+        };
+        assert!(line(&status, 200).starts_with(" HOLD  from a, b, c  📬 2 unread"));
+        assert_eq!(placed_texts(&status, 20), ["HOLD", "from 3", "📬 2"]);
     }
 
     #[test]

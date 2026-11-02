@@ -62,6 +62,13 @@ fn label_joins_a_set() {
 }
 
 #[test]
+fn bar_variants_shrink_to_the_label_or_the_member_count() {
+    assert_eq!(HoldFilter::Any.bar_variants(), ["from anyone", "anyone"]);
+    assert_eq!(source("a").bar_variants(), ["from a", "a"]);
+    assert_eq!(set(&["a", "b"]).bar_variants(), ["from a, b", "from 2"]);
+}
+
+#[test]
 fn a_set_matches_any_member() {
     assert!(set(&["a", "b"]).matches(&entry("b")));
     assert!(!set(&["a", "b"]).matches(&entry("c")));

@@ -40,6 +40,16 @@ impl HoldFilter {
         }
     }
 
+    pub fn bar_variants(&self) -> Vec<String> {
+        let label = self.label();
+        match self {
+            HoldFilter::Set(sources) => {
+                vec![format!("from {label}"), format!("from {}", sources.len())]
+            }
+            _ => vec![format!("from {label}"), label.to_string()],
+        }
+    }
+
     pub fn render(&self) -> String {
         match self {
             HoldFilter::Any => HOLD.to_string(),
