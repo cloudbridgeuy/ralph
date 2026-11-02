@@ -6,6 +6,7 @@ use super::sse::SseEvent;
 use super::usage::{BillingRates, CacheTier, UsageOutcome};
 
 pub mod anthropic;
+pub mod openai;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

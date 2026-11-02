@@ -1,10 +1,9 @@
 use crate::wire::price::{ModelPrice, PriceEntry, TierPrice};
-use crate::wire::usage::CacheTier;
+use crate::wire::usage::THIRTY_MIN;
 
 // OpenAI Standard-tier prices (USD per million tokens) from
 // https://developers.openai.com/api/docs/pricing, checked 2026-10-28.
 // Codex sends no cache TTL, so its writes are assumed to be 30m writes.
-pub(super) const THIRTY_MIN: CacheTier = CacheTier::Ttl { seconds: 1_800 };
 
 fn entry(model: &str, [input, cache_read, output, write_30m]: [f64; 4]) -> PriceEntry {
     PriceEntry {
@@ -22,7 +21,7 @@ fn entry(model: &str, [input, cache_read, output, write_30m]: [f64; 4]) -> Price
     }
 }
 
-pub(super) fn entries() -> Vec<PriceEntry> {
+pub(crate) fn entries() -> Vec<PriceEntry> {
     vec![
         entry("gpt-6-astra", [10.0, 1.0, 50.0, 12.5]),
         entry("gpt-6.1-sol", [2.0, 0.1, 10.0, 2.5]),

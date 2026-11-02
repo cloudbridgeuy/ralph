@@ -21,6 +21,7 @@ impl fmt::Display for CacheTier {
 
 pub const FIVE_MIN: CacheTier = CacheTier::Ttl { seconds: 300 };
 pub const ONE_HOUR: CacheTier = CacheTier::Ttl { seconds: 3600 };
+pub const THIRTY_MIN: CacheTier = CacheTier::Ttl { seconds: 1_800 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CacheWrite {

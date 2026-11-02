@@ -48,7 +48,7 @@ pub fn normalize_model(model: &str) -> &str {
     model.split('[').next().unwrap_or(model)
 }
 
-/// A listed id matches exactly, or with one `-YYYYMMDD` suffix.
+/// A listed id matches exactly, or with one `-YYYYMMDD` or `-YYYY-MM-DD` suffix.
 /// `claude-opus-5-6` does not match `claude-opus-5`.
 pub fn matches_prefix(model: &str, prefix: &str) -> bool {
     model == prefix || model.strip_prefix(prefix).is_some_and(is_date_suffix)
@@ -58,7 +58,20 @@ fn is_date_suffix(rest: &str) -> bool {
     let Some(digits) = rest.strip_prefix('-') else {
         return false;
     };
-    digits.len() == 8 && digits.bytes().all(|byte| byte.is_ascii_digit())
+    all_digits(digits, 8) || dashed_date(digits)
+}
+
+fn all_digits(text: &str, len: usize) -> bool {
+    text.len() == len && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn dashed_date(text: &str) -> bool {
+    let mut parts = text.split('-');
+    matches!(
+        (parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some(year), Some(month), Some(day), None)
+            if all_digits(year, 4) && all_digits(month, 2) && all_digits(day, 2)
+    )
 }
 
 /// Rejects a negative override price. Zero is allowed.
@@ -400,5 +413,15 @@ mod tests {
         assert!(validate_price_overrides(&over)
             .unwrap_err()
             .contains("input"));
+    }
+
+    #[test]
+    fn dashed_date_snapshot_matches_its_listed_id() {
+        assert!(matches_prefix("gpt-6.1-sol-2026-09-01", "gpt-6.1-sol"));
+        assert!(matches_prefix("claude-opus-5-20260901", "claude-opus-5"));
+        assert!(!matches_prefix("gpt-6.1-sol-2026-9-01", "gpt-6.1-sol"));
+        assert!(!matches_prefix("gpt-6.1-sol-2026-09-0x", "gpt-6.1-sol"));
+        assert!(!matches_prefix("gpt-6.1-sol-2026-09", "gpt-6.1-sol"));
+        assert!(!matches_prefix("gpt-6.1-sol-mini", "gpt-6.1-sol"));
     }
 }

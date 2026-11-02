@@ -6,9 +6,9 @@ use crate::wire::view::Pricing;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-mod openai_price;
+use crate::wire::provider::openai::price as openai_price;
 
-use openai_price::THIRTY_MIN;
+use crate::wire::usage::THIRTY_MIN;
 
 pub const NO_USAGE: &str = "No usage recorded.";
 const UNKNOWN: &str = "unknown";
