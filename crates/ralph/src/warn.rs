@@ -1,6 +1,6 @@
 use crate::ansi::{fg, BOLD, CLEAR_EOL, CR, RESET};
 use crate::frame::frame;
-use crate::ui_theme::DEFAULT_WARNING_COLOR;
+use crate::ui_theme::{DEFAULT_NOTICE_COLOR, DEFAULT_WARNING_COLOR};
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::io::{self, IsTerminal, Write};
@@ -9,6 +9,7 @@ use std::sync::{Mutex, OnceLock};
 use termimad::crossterm::style::Color;
 
 const SYMBOL: &str = "\u{26a0}";
+const CHECK: &str = "\u{2713}";
 const FRAME_WIDTH: usize = 6;
 const DEFAULT_TERMINAL_WIDTH: usize = 80;
 
@@ -50,15 +51,41 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     lines
 }
 
+struct Style {
+    symbol: &'static str,
+    plain: &'static str,
+    color: &'static OnceLock<Color>,
+    default: Color,
+}
+
 static WARNING_COLOR: OnceLock<Color> = OnceLock::new();
+static NOTICE_COLOR: OnceLock<Color> = OnceLock::new();
+
+const WARNING: Style = Style {
+    symbol: SYMBOL,
+    plain: "Warning:",
+    color: &WARNING_COLOR,
+    default: DEFAULT_WARNING_COLOR,
+};
+
+const NOTICE: Style = Style {
+    symbol: CHECK,
+    plain: CHECK,
+    color: &NOTICE_COLOR,
+    default: DEFAULT_NOTICE_COLOR,
+};
 
 pub fn set_warning_color(color: Color) {
     let _ = WARNING_COLOR.set(color);
 }
 
-fn format_warning(message: &str, terminal_width: usize, color: Option<Color>) -> String {
+pub fn set_notice_color(color: Color) {
+    let _ = NOTICE_COLOR.set(color);
+}
+
+fn format_box(style: &Style, message: &str, terminal_width: usize, color: Option<Color>) -> String {
     let Some(color) = color else {
-        return format!("Warning: {message}");
+        return format!("{} {message}", style.plain);
     };
     let accent = fg(Some(color));
     let body_width = terminal_width.saturating_sub(FRAME_WIDTH).max(1);
@@ -67,7 +94,7 @@ fn format_warning(message: &str, terminal_width: usize, color: Option<Color>) ->
         .enumerate()
         .map(|(i, line)| {
             let marker = if i == 0 {
-                format!("{BOLD}{accent}{SYMBOL}{RESET}")
+                format!("{BOLD}{accent}{}{RESET}", style.symbol)
             } else {
                 " ".to_string()
             };
@@ -77,22 +104,20 @@ fn format_warning(message: &str, terminal_width: usize, color: Option<Color>) ->
     frame(&rows, &accent)
 }
 
-fn warning_text(message: impl Display) -> (String, bool) {
+fn boxed_text(style: &Style, message: impl Display) -> (String, bool) {
     let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let width = crossterm::terminal::size()
         .map(|(w, _)| usize::from(w))
         .unwrap_or(DEFAULT_TERMINAL_WIDTH);
-    let accent = color.then(|| {
-        WARNING_COLOR
-            .get()
-            .copied()
-            .unwrap_or(DEFAULT_WARNING_COLOR)
-    });
-    (format_warning(&message.to_string(), width, accent), color)
+    let accent = color.then(|| style.color.get().copied().unwrap_or(style.default));
+    (
+        format_box(style, &message.to_string(), width, accent),
+        color,
+    )
 }
 
 pub fn warning_line(message: impl Display) -> String {
-    let (text, color) = warning_text(message);
+    let (text, color) = boxed_text(&WARNING, message);
     line_of(&text, color)
 }
 
@@ -135,10 +160,18 @@ fn deliver(
     out.write_all(line_of(&rows[sent..].join("\n"), clear).as_bytes())
 }
 
-pub fn warn(message: impl Display) {
-    let (text, color) = warning_text(message);
+fn print_boxed(style: &Style, message: impl Display) {
+    let (text, color) = boxed_text(style, message);
     let sink = PROMPT.lock().ok().and_then(|prompt| prompt.clone());
     deliver(&text, color, sink.as_ref(), &mut io::stderr()).ok();
+}
+
+pub fn warn(message: impl Display) {
+    print_boxed(&WARNING, message);
+}
+
+pub fn notice(message: impl Display) {
+    print_boxed(&NOTICE, message);
 }
 
 static SEEN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
@@ -166,8 +199,9 @@ pub fn warn_if_err<T, E: Display>(result: Result<T, E>, context: impl Display) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ansi::YELLOW;
+    use crate::ansi::{GREEN, YELLOW};
     use crate::frame::strip_ansi;
+    use crate::ui_theme::UiColors;
     use reedline::ExternalPrinter;
     use std::io;
     use termimad::crossterm::style::Color;
@@ -186,7 +220,8 @@ mod tests {
 
     #[test]
     fn prompt_rows_split_the_box_into_bare_rows() {
-        let rows = prompt_rows(&format_warning(
+        let rows = prompt_rows(&format_box(
+            &WARNING,
             "codex session GUZ-881 resumed",
             80,
             Some(Color::DarkYellow),
@@ -227,12 +262,15 @@ mod tests {
 
     #[test]
     fn plain_format_when_not_color() {
-        assert_eq!(format_warning("disk full", 80, None), "Warning: disk full");
+        assert_eq!(
+            format_box(&WARNING, "disk full", 80, None),
+            "Warning: disk full"
+        );
     }
 
     #[test]
     fn colored_single_line_is_boxed() {
-        let out = format_warning("disk full", 80, Some(Color::DarkYellow));
+        let out = format_box(&WARNING, "disk full", 80, Some(Color::DarkYellow));
         assert!(out.contains(YELLOW));
         assert_eq!(
             strip_ansi(&out),
@@ -242,7 +280,8 @@ mod tests {
 
     #[test]
     fn colored_wrap_keeps_borders_aligned_within_width() {
-        let out = strip_ansi(&format_warning(
+        let out = strip_ansi(&format_box(
+            &WARNING,
             "one two three four five six",
             16,
             Some(Color::DarkYellow),
@@ -254,7 +293,8 @@ mod tests {
 
     #[test]
     fn colored_keeps_newlines_and_splits_long_words() {
-        let out = strip_ansi(&format_warning(
+        let out = strip_ansi(&format_box(
+            &WARNING,
             "ab\nabcdefghij",
             11,
             Some(Color::DarkYellow),
@@ -272,7 +312,7 @@ mod tests {
 
     #[test]
     fn warning_color_reaches_the_symbol_and_the_border() {
-        let out = format_warning("x", 80, Some(Color::Rgb { r: 1, g: 2, b: 3 }));
+        let out = format_box(&WARNING, "x", 80, Some(Color::Rgb { r: 1, g: 2, b: 3 }));
         assert!(out.starts_with("\x1b[38;2;1;2;3m\u{256d}"));
         assert!(out.contains("\x1b[1m\x1b[38;2;1;2;3m\u{26a0}"));
         assert!(!out.contains(YELLOW));
@@ -280,14 +320,38 @@ mod tests {
 
     #[test]
     fn default_warning_color_keeps_todays_bytes() {
-        let out = format_warning("x", 80, Some(DEFAULT_WARNING_COLOR));
+        let out = format_box(&WARNING, "x", 80, Some(DEFAULT_WARNING_COLOR));
         assert!(out.contains(&format!("{BOLD}{YELLOW}{SYMBOL}{RESET}")));
         assert!(out.starts_with(&format!("{YELLOW}\u{256d}")));
     }
 
     #[test]
     fn no_color_means_no_escape_byte() {
-        assert!(!format_warning("x", 80, None).contains('\x1b'));
+        assert!(!format_box(&WARNING, "x", 80, None).contains('\x1b'));
+    }
+
+    #[test]
+    fn notice_box_has_a_green_check_and_border() {
+        let out = format_box(
+            &NOTICE,
+            "codex session GUZ-881 resumed",
+            80,
+            Some(Color::DarkGreen),
+        );
+        assert!(out.starts_with(&format!("{GREEN}\u{256d}")));
+        assert!(out.contains(&format!("{BOLD}{GREEN}\u{2713}{RESET}")));
+        assert!(!out.contains(YELLOW));
+        assert!(!out.contains(SYMBOL));
+    }
+
+    #[test]
+    fn plain_notice_keeps_the_check_without_color() {
+        assert_eq!(format_box(&NOTICE, "x", 80, None), "\u{2713} x");
+    }
+
+    #[test]
+    fn notice_color_defaults_to_ask_ok() {
+        assert_eq!(NOTICE.default, UiColors::default().ask_ok);
     }
 
     #[test]

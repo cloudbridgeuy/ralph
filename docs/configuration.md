@@ -207,14 +207,14 @@ match_text = "yellow"
 
 #### UI colors: `[theme.ui]`
 
-ralph paints the spinner, the `ralph ask` prompt and summary, warnings, and the rule between chat turns with this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. Bold, dim, and underline stay hard-coded and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Warnings printed before the config loads use the default `warning` color. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
+ralph paints the spinner, the `ralph ask` prompt and summary, warnings, success notices, and the rule between chat turns with this table. Every key is optional and takes the same color values as the role themes. Keys that are missing keep the defaults below, so an empty or missing table paints the same bytes as before. Bold, dim, and underline stay hard-coded and have no keys. `ralph chat` warns at start for an unknown key or a bad color and keeps the default for it. Warnings printed before the config loads use the default `warning` color. Plain output stays plain when stdout is not a TTY or `NO_COLOR` is set.
 
 | Key | Default | Paints |
 |-----|---------|--------|
 | `spinner` | `dark_cyan` | Spinner frame |
 | `ask_header` | `dark_magenta` | `▶ Prompt` header and rules of `ralph ask` |
 | `ask_path` | `dark_cyan` | Attached file paths in the `ralph ask` prompt |
-| `ask_ok` | `dark_green` | `✓ Ask Complete` line |
+| `ask_ok` | `dark_green` | `✓ Ask Complete` line, and the `✓` symbol and box border of `ralph chat` success notices such as `codex session <id> resumed` |
 | `ask_error` | `dark_red` | `✗ Ask Failed` line |
 | `warning` | `dark_yellow` | Warning symbol and box border |
 | `rule` | ANSI `238` | Rule printed between chat turns |

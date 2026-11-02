@@ -22,6 +22,7 @@ pub(crate) const DEFAULTS: [(&str, Color); 7] = [
 ];
 
 pub const DEFAULT_WARNING_COLOR: Color = WARNING_DEFAULT;
+pub const DEFAULT_NOTICE_COLOR: Color = ASK_OK_DEFAULT;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiColors {
