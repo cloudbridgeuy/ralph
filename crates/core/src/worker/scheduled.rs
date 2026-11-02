@@ -81,6 +81,7 @@ mod tests {
 
     fn claude_args() -> ClaudeWorkerArgs<'static> {
         ClaudeWorkerArgs {
+            store: Path::new("/s"),
             mcp_config: Path::new("/s/workers/A.json"),
             settings: Path::new("/s/workers/A.settings.json"),
             permission_mode: "auto",
@@ -101,6 +102,8 @@ mod tests {
                 "zsh",
                 "-lic",
                 r#"exec "$0" "$@""#,
+                "env",
+                "RALPH_INBOX=/s/inbox",
                 "claude",
                 "--permission-mode",
                 "auto",
@@ -126,12 +129,13 @@ mod tests {
             ..claude_args()
         });
         assert_eq!(
-            args[..6],
+            args[..7],
             [
                 "zsh",
                 "-lic",
                 r#"exec "$0" "$@""#,
                 "env",
+                "RALPH_INBOX=/s/inbox",
                 "CLAUDE_CONFIG_DIR=/c/alt dir",
                 "claude"
             ]

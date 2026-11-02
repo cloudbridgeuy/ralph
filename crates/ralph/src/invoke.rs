@@ -8,6 +8,8 @@ use crate::subprocess::{
 };
 use ralph_core::claude_leftovers::{claude_dir, configured_dir};
 use ralph_core::sanitize::strip_controls;
+use ralph_core::worker::inbox_env;
+use std::io;
 use std::path::{Path, PathBuf};
 
 pub const CHAT_DEFAULT_PERMISSION_MODE: &str = "auto";
@@ -143,6 +145,14 @@ pub fn build_chat_command(
     )
 }
 
+pub fn with_chat_inbox(command: String, store: &Path) -> io::Result<String> {
+    let (key, inbox) = inbox_env(&std::fs::canonicalize(store)?);
+    Ok(format!(
+        "{key}={} {command}",
+        shell_quote(&inbox.to_string_lossy())
+    ))
+}
+
 pub fn build_command(
     permission_mode: &str,
     config_dir: Option<&Path>,
@@ -176,6 +186,29 @@ pub fn invoke(config: InvocationConfig) -> Result<StreamingSubprocessResult, Sub
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chat_inbox_command_uses_the_canonical_store_and_quotes_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("chat's store");
+        std::fs::create_dir(&store).unwrap();
+        let alias = dir.path().join("alias");
+        std::os::unix::fs::symlink(&store, &alias).unwrap();
+        let canonical = std::fs::canonicalize(&store).unwrap().join("inbox");
+        assert_eq!(
+            with_chat_inbox("claude -p".to_string(), &alias).unwrap(),
+            format!(
+                "RALPH_INBOX={} claude -p",
+                shell_quote(&canonical.to_string_lossy())
+            )
+        );
+    }
+
+    #[test]
+    fn chat_inbox_command_rejects_a_missing_store() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(with_chat_inbox("claude -p".to_string(), &dir.path().join("missing")).is_err());
+    }
 
     #[test]
     fn build_command_is_plain_ask() {

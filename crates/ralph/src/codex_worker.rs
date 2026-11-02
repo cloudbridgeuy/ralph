@@ -488,9 +488,13 @@ impl CodexWorker {
             warning,
         } = slot;
         let mut command = Command::new(CODEX_COMMAND);
+        let store = request.inbox.parent().ok_or("worker inbox has no store")?;
         command
             .args(["app-server", "--listen", "stdio://"])
-            .current_dir(&request.worktree);
+            .current_dir(&request.worktree)
+            .envs([ralph_core::worker::inbox_env(
+                &fs::canonicalize(store).map_err(|e| e.to_string())?,
+            )]);
         let (child, stdin, stdout, stderr) = spawn_piped(command)
             .map_err(|e| format!("could not start `{CODEX_COMMAND} app-server`: {e}"))?;
         let log = CappedLog::new(request.inbox.parent(), id);

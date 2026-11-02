@@ -4,7 +4,7 @@ use crate::chat::memory::{append_usage, usage_path, Store};
 use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::highlight::ThemeConfig;
-use crate::invoke::{build_chat_command, Isolation};
+use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::private_file::write_private;
 use crate::signal;
 use crate::spinner::{Spinner, SpinnerContext, SpinnerSessionInfo};
@@ -54,7 +54,13 @@ pub(super) fn shown_output(blocks: &[OutputBlock]) -> bool {
 }
 
 pub(super) fn spawn_nap(store: &Path, run: &str) -> io::Result<()> {
-    spawn_detached(Command::new(std::env::current_exe()?).args(build_nap_args(store, run)))
+    spawn_detached(
+        Command::new(std::env::current_exe()?)
+            .args(build_nap_args(store, run))
+            .envs([ralph_core::worker::inbox_env(&std::fs::canonicalize(
+                store,
+            )?)]),
+    )
 }
 
 pub(super) fn chat_session_info() -> SpinnerSessionInfo {
@@ -423,13 +429,16 @@ impl Turn<'_> {
         ]
         .concat();
         let config = SpinnerSubprocessConfig {
-            command: build_chat_command(
-                self.system_prompt_file,
-                &args,
-                self.permission_mode,
-                dirs::home_dir().as_deref(),
-                self.isolation,
-            ),
+            command: with_chat_inbox(
+                build_chat_command(
+                    self.system_prompt_file,
+                    &args,
+                    self.permission_mode,
+                    dirs::home_dir().as_deref(),
+                    self.isolation,
+                ),
+                self.store_dir,
+            )?,
             timeout_secs: None,
             theme_config: self.theme_config.clone(),
             session_elapsed_ms: 0,
