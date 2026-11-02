@@ -13,6 +13,8 @@ use crate::wire::usage::{
     BillingRates, CacheTier, CacheWrite, TierRate, Usage, UsageOutcome, FIVE_MIN, ONE_HOUR,
 };
 
+const LOOKBACK_BLOCKS: usize = 20;
+
 const PARAM_KEYS: [&str; 6] = [
     "thinking",
     "tool_choice",
@@ -421,7 +423,9 @@ impl Provider for Anthropic {
     }
 
     fn prefix_cache(&self, _body: &Value) -> PrefixCache {
-        PrefixCache::Explicit
+        PrefixCache::Explicit {
+            lookback: LOOKBACK_BLOCKS,
+        }
     }
 
     fn rates(&self, model: &str) -> BillingRates {

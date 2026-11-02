@@ -377,21 +377,34 @@ struct Breakpoint {
     tier: CacheTier,
 }
 
+fn reaches(segments: &[PromptSegment], index: usize, lookback: usize) -> bool {
+    segments
+        .iter()
+        .skip(index)
+        .take(lookback)
+        .any(|segment| segment.breakpoint.is_some())
+}
+
 fn servable_breakpoint(
-    segments: &[PromptSegment],
+    prompts: &Prompts,
     shared: usize,
     prefix_cache: PrefixCache,
 ) -> Option<Breakpoint> {
-    let marked = segments[..shared]
+    let marked = |index: usize, segment: &PromptSegment| {
+        segment.breakpoint.map(|tier| Breakpoint { index, tier })
+    };
+    let mut written = prompts.a[..shared]
         .iter()
         .enumerate()
         .rev()
-        .find_map(|(index, segment)| segment.breakpoint.map(|tier| Breakpoint { index, tier }));
+        .filter_map(|(index, segment)| marked(index, segment));
     match prefix_cache {
-        PrefixCache::Explicit => marked,
+        PrefixCache::Explicit { lookback } => {
+            written.find(|b| reaches(prompts.b, b.index, lookback))
+        }
         PrefixCache::Implicit { tier, .. } => shared.checked_sub(1).map(|index| Breakpoint {
             index,
-            tier: marked.map_or(tier, |breakpoint| breakpoint.tier),
+            tier: written.next().map_or(tier, |breakpoint| breakpoint.tier),
         }),
     }
 }
@@ -468,9 +481,9 @@ fn explain(
     let cache_read = usage.map(|u| u.cache_read);
     let prefix_cache = match &input.b.request_body {
         RequestBody::Json(body) => input.provider.prefix_cache(body),
-        RequestBody::Base64(_) => PrefixCache::Explicit,
+        RequestBody::Base64(_) => PrefixCache::Explicit { lookback: 1 },
     };
-    let Some(breakpoint) = servable_breakpoint(prompts.a, shared, prefix_cache) else {
+    let Some(breakpoint) = servable_breakpoint(prompts, shared, prefix_cache) else {
         return Explanation {
             servable_bytes: 0,
             servable_tokens: None,
@@ -618,7 +631,7 @@ fn verdict_text(view: &DiffView) -> String {
         Verdict::NoBase => {
             "cold write: no earlier call in this session shares a prompt prefix".to_string()
         }
-        Verdict::NoSharedBreakpoint => "no cache breakpoint in the shared prefix".to_string(),
+        Verdict::NoSharedBreakpoint => "no breakpoint in the shared prefix that B reaches".to_string(),
         Verdict::UsageMissing => "call b has no usage; cannot compare".to_string(),
         Verdict::PrefixChanged { label } => {
             format!("cache served the shared prefix; prompts diverge at {label}")

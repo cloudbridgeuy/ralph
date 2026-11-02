@@ -76,7 +76,9 @@ pub struct ResponseUsage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrefixCache {
-    Explicit,
+    Explicit {
+        lookback: usize,
+    },
     Implicit {
         tier: CacheTier,
         min_tokens: Option<u64>,
@@ -156,7 +158,7 @@ pub(crate) fn assert_provider_contract(
             .all(|pair| pair[0].source <= pair[1].source),
         "segments not in tools, system, messages order"
     );
-    if provider.prefix_cache(request) == PrefixCache::Explicit {
+    if matches!(provider.prefix_cache(request), PrefixCache::Explicit { .. }) {
         assert!(
             segments.iter().any(|segment| segment.breakpoint.is_some()),
             "no cache breakpoint detected"

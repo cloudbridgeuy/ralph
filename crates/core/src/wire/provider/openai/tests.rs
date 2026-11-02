@@ -401,7 +401,9 @@ fn prefix_cache_is_implicit_unless_explicit_mode() {
     assert_eq!(OpenAi.prefix_cache(&mode("implicit")), implicit);
     assert_eq!(
         OpenAi.prefix_cache(&mode("explicit")),
-        PrefixCache::Explicit
+        PrefixCache::Explicit {
+            lookback: EXPLICIT_LOOKBACK_BLOCKS
+        }
     );
 }
 

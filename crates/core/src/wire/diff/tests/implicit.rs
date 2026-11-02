@@ -259,20 +259,26 @@ fn seg(breakpoint: Option<CacheTier>) -> PromptSegment {
     }
 }
 
+const EXPLICIT: PrefixCache = PrefixCache::Explicit { lookback: 20 };
+
+fn both(segments: &[PromptSegment]) -> Prompts<'_> {
+    Prompts {
+        a: segments,
+        b: segments,
+    }
+}
+
 #[test]
 fn servable_breakpoint_explicit_takes_the_last_marked_one() {
     let segments = [seg(Some(FIVE_MIN)), seg(None), seg(None)];
     assert_eq!(
-        servable_breakpoint(&segments, 3, PrefixCache::Explicit),
+        servable_breakpoint(&both(&segments), 3, EXPLICIT),
         Some(Breakpoint {
             index: 0,
             tier: FIVE_MIN
         })
     );
-    assert_eq!(
-        servable_breakpoint(&[seg(None)], 1, PrefixCache::Explicit),
-        None
-    );
+    assert_eq!(servable_breakpoint(&both(&[seg(None)]), 1, EXPLICIT), None);
 }
 
 #[test]
@@ -283,18 +289,34 @@ fn servable_breakpoint_implicit_spans_the_shared_prefix() {
     };
     let segments = [seg(Some(FIVE_MIN)), seg(None), seg(None)];
     assert_eq!(
-        servable_breakpoint(&segments, 3, implicit),
+        servable_breakpoint(&both(&segments), 3, implicit),
         Some(Breakpoint {
             index: 2,
             tier: FIVE_MIN
         })
     );
     assert_eq!(
-        servable_breakpoint(&[seg(None), seg(None)], 2, implicit),
+        servable_breakpoint(&both(&[seg(None), seg(None)]), 2, implicit),
         Some(Breakpoint {
             index: 1,
             tier: IMPLICIT_30M
         })
     );
-    assert_eq!(servable_breakpoint(&[seg(None)], 0, implicit), None);
+    assert_eq!(servable_breakpoint(&both(&[seg(None)]), 0, implicit), None);
+}
+
+#[test]
+fn reaches_counts_a_breakpoint_within_the_lookback() {
+    let segments = [seg(None), seg(None), seg(Some(FIVE_MIN)), seg(None)];
+    assert!(reaches(&segments, 0, 3));
+    assert!(!reaches(&segments, 0, 2));
+    assert!(reaches(&segments, 2, 1));
+    assert!(!reaches(&segments, 3, 5));
+}
+
+#[test]
+fn reaches_counts_a_breakpoint_past_the_end_of_the_shared_prefix() {
+    let segments = [seg(None), seg(None), seg(None), seg(Some(FIVE_MIN))];
+    assert!(reaches(&segments, 1, 3));
+    assert!(!reaches(&segments, 0, 3));
 }

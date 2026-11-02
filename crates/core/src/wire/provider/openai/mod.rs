@@ -36,6 +36,7 @@ const PARAM_KEYS: [&str; 16] = [
     "include",
 ];
 
+const EXPLICIT_LOOKBACK_BLOCKS: usize = 1;
 const MIN_CACHEABLE_TOKENS: u64 = 1_024;
 
 const DEFAULT_CACHE_READ: f64 = 0.1;
@@ -299,7 +300,9 @@ impl Provider for OpenAi {
             .and_then(Value::as_str)
             == Some("explicit")
         {
-            return PrefixCache::Explicit;
+            return PrefixCache::Explicit {
+                lookback: EXPLICIT_LOOKBACK_BLOCKS,
+            };
         }
         PrefixCache::Implicit {
             tier: implicit_tier(body),
