@@ -49,7 +49,7 @@ use crate::chat::monitor::{
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
-    decide, draft_with_queue, draft_with_typed, exit_notice, unsent, Decision, Queue,
+    decide, draft_with_queue, draft_with_typed, exit_notice, next_batch, unsent, Decision, Queue,
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
@@ -110,7 +110,7 @@ use ralph_core::program_status::{status_enabled, Phase};
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::snapshot::snapshots_enabled;
 use ralph_core::worker::{ATTACHMENTS_DIR, INBOX_DIR};
-use reedline::{EditCommand, ExternalPrinter, HistoryItem};
+use reedline::{EditCommand, ExternalPrinter, HistoryItem, Reedline};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, IsTerminal};
@@ -579,6 +579,16 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut offered: Option<(String, u64)> = None;
     let mut send_it = send_it::Shell::new(&send_it_settings, color);
     let mut auto_turn: Option<Auto> = None;
+    let mut carried: Vec<String> = Vec::new();
+    let show_cells = |shown: &str| {
+        let ctx = RenderContext::new(&agent_highlighter, color)
+            .with_diff(diff_colors)
+            .with_tools(tool_colors);
+        print!(
+            "{}",
+            crate::render::image::render_cell_display(&ctx, shown, &agent_theme)
+        );
+    };
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
         let typed_at_prompt = pending.is_none();
@@ -617,6 +627,34 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let mut queue = Queue::default();
         let (outcome, draft) = match route {
             Route::Ignore => continue,
+            Route::Shell(line) => {
+                monitor.set_phase(Phase::Cell);
+                let ran = cell::run_local(&line, &mut shell_state, color);
+                monitor.set_phase(Phase::Prompt);
+                monitor.refresh(true);
+                match ran {
+                    Ok(shown) => {
+                        show_cells(&shown);
+                        if let Some((text, rest)) = next_batch(std::mem::take(&mut carried)) {
+                            carried = rest;
+                            pending = Some(route_queued(text, &mut editor, &prompt));
+                        }
+                    }
+                    Err(TurnOutcome::Exit) => {
+                        let lost = std::mem::take(&mut carried);
+                        save_unsent(&mut editor, &lost);
+                        editor.sync_history()?;
+                        break;
+                    }
+                    Err(_) => {
+                        let draft = draft_with_queue(Some(line), &std::mem::take(&mut carried));
+                        editor.run_edit_commands(&[EditCommand::InsertString(
+                            draft.unwrap_or_default(),
+                        )]);
+                    }
+                }
+                continue;
+            }
             Route::Send(message) => {
                 if let Some(images) = crate::render::image::enabled() {
                     print!(
@@ -638,17 +676,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
-                            let ctx = RenderContext::new(&agent_highlighter, color)
-                                .with_diff(diff_colors)
-                                .with_tools(tool_colors);
-                            print!(
-                                "{}",
-                                crate::render::image::render_cell_display(
-                                    &ctx,
-                                    shown,
-                                    &agent_theme
-                                )
-                            );
+                            show_cells(shown);
                         }
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
@@ -702,6 +730,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+        queue.entries.splice(0..0, std::mem::take(&mut carried));
         monitor.set_phase(if outcome == TurnOutcome::Replied {
             Phase::Replied
         } else {
@@ -713,18 +742,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             send_it.record(&auto, turn_cost);
         }
         if outcome == TurnOutcome::Exit {
-            let lost = unsent(&queue);
-            for text in &lost {
-                warn_if_err(
-                    editor
-                        .history_mut()
-                        .save(HistoryItem::from_command_line(text.clone())),
-                    "Failed to save chat history",
-                );
-            }
-            if let Some(notice) = exit_notice(lost.len()) {
-                eprintln!("{notice}");
-            }
+            save_unsent(&mut editor, &unsent(&queue));
             editor.sync_history()?;
             break;
         }
@@ -734,21 +752,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         let suggestion = taken.map(|taken| taken.text);
         let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {
-            Decision::Send(text) => {
-                print!("{}", prompt.echo(&text));
-                warn_if_err(
-                    editor
-                        .history_mut()
-                        .save(HistoryItem::from_command_line(text.clone())),
-                    "Failed to save chat history",
-                );
-                let status = monitor.status();
-                pending = Some(route_input(
-                    &text,
-                    status.unread,
-                    &prompt.empty_submit,
-                    &hold_targets(&status),
-                ));
+            Decision::Send { text, rest } => {
+                carried = rest;
+                pending = Some(route_queued(text, &mut editor, &prompt));
                 (draft, None)
             }
             Decision::Keep(entries) => (draft_with_queue(draft, &entries), suggestion),
@@ -814,6 +820,37 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+fn route_queued(text: String, editor: &mut Reedline, prompt: &ChatPrompt) -> Route {
+    print!("{}", prompt.echo(&text));
+    warn_if_err(
+        editor
+            .history_mut()
+            .save(HistoryItem::from_command_line(text.clone())),
+        "Failed to save chat history",
+    );
+    let status = prompt.monitor.status();
+    route_input(
+        &text,
+        status.unread,
+        &prompt.empty_submit,
+        &hold_targets(&status),
+    )
+}
+
+fn save_unsent(editor: &mut Reedline, lost: &[String]) {
+    for text in lost {
+        warn_if_err(
+            editor
+                .history_mut()
+                .save(HistoryItem::from_command_line(text.clone())),
+            "Failed to save chat history",
+        );
+    }
+    if let Some(notice) = exit_notice(lost.len()) {
+        eprintln!("{notice}");
+    }
 }
 
 #[cfg(test)]

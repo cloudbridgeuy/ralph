@@ -3,8 +3,8 @@ use crate::signal;
 use crate::subprocess::kill_process_group;
 use crate::warn::warn;
 use ralph_core::chat_cell::{
-    build_message, diff_snapshots, display_results, parse_cells, parse_snapshots, shell_stdin,
-    strip_shell_preamble, Cell, CellLimits, CellRun, SavedState, ShellKind,
+    bang, build_message, diff_snapshots, display_results, parse_cells, parse_snapshots, shell_cell,
+    shell_stdin, strip_shell_preamble, Bang, Cell, CellLimits, CellRun, SavedState, ShellKind,
 };
 use ralph_core::chat_cell_stream::{ends_at_line_start, PreambleGate, Sanitizer};
 use std::borrow::Cow;
@@ -342,24 +342,11 @@ fn announce(index: usize, runtime: &str, color: bool) {
     println!("{dim}▸ cell {index} · {runtime}{reset}");
 }
 
-fn expand_bang_shell(message: &str) -> Cow<'_, str> {
-    let Some(body) = message.strip_prefix('!') else {
-        return Cow::Borrowed(message);
-    };
-    if body.trim().is_empty() {
-        return Cow::Borrowed(message);
+fn expand(message: &str) -> Cow<'_, str> {
+    match bang(message) {
+        Bang::Send(body) | Bang::Local(body) => Cow::Owned(shell_cell(body)),
+        Bang::Plain => Cow::Borrowed(message),
     }
-    let body = body.trim_end_matches(['\n', '\r']);
-    let longest = body
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim_start();
-            trimmed.len() - trimmed.trim_start_matches('`').len()
-        })
-        .max()
-        .unwrap_or(0);
-    let fence = "`".repeat((longest + 1).max(3));
-    Cow::Owned(format!("{fence}!shell\n{body}\n{fence}"))
 }
 
 pub fn prepare(
@@ -368,7 +355,7 @@ pub fn prepare(
     state: &mut ShellState,
     color: bool,
 ) -> Result<Prepared, TurnOutcome> {
-    let message = &*expand_bang_shell(message);
+    let message = &*expand(message);
     let cells = parse_cells(message);
     if cells.is_empty() {
         return Ok(Prepared {
@@ -376,14 +363,36 @@ pub fn prepare(
             shown: None,
         });
     }
-    let targets = resolve_runtimes(&cells).map_err(|missing| {
+    let runs = run_cells(&cells, state, color)?;
+    Ok(Prepared {
+        sent: build_message(message, &runs, limits),
+        shown: Some(display_results(message, &runs)),
+    })
+}
+
+pub fn run_local(
+    message: &str,
+    state: &mut ShellState,
+    color: bool,
+) -> Result<String, TurnOutcome> {
+    let message = &*expand(message);
+    let runs = run_cells(&parse_cells(message), state, color)?;
+    Ok(display_results(message, &runs))
+}
+
+fn run_cells(
+    cells: &[Cell],
+    state: &mut ShellState,
+    color: bool,
+) -> Result<Vec<CellRun>, TurnOutcome> {
+    let targets = resolve_runtimes(cells).map_err(|missing| {
         missing
             .iter()
             .for_each(|runtime| warn(format!("runtime `{runtime}` not found")));
         TurnOutcome::Unanswered
     })?;
     let mut runs = Vec::new();
-    for (index, (target, cell)) in targets.iter().zip(&cells).enumerate() {
+    for (index, (target, cell)) in targets.iter().zip(cells).enumerate() {
         announce(index + 1, &cell.runtime, color);
         let launch = launch_for(target, cell, state);
         match run_cell(&launch, cell, color) {
@@ -410,10 +419,7 @@ pub fn prepare(
             }
         }
     }
-    Ok(Prepared {
-        sent: build_message(message, &runs, limits),
-        shown: Some(display_results(message, &runs)),
-    })
+    Ok(runs)
 }
 
 #[cfg(test)]
@@ -430,44 +436,5 @@ mod tests {
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(find_on_path("tool", &path), Some(tool));
         assert_eq!(find_on_path("too", &path), None);
-    }
-
-    #[test]
-    fn leading_bang_becomes_a_shell_cell() {
-        assert_eq!(
-            expand_bang_shell("!echo something"),
-            "```!shell\necho something\n```"
-        );
-        assert_eq!(
-            parse_cells(&expand_bang_shell("!echo something")),
-            parse_cells("```!shell\necho something\n```")
-        );
-    }
-
-    #[test]
-    fn every_line_after_the_bang_is_the_body() {
-        let expanded = expand_bang_shell("!cd /tmp\npwd\n");
-        assert_eq!(expanded, "```!shell\ncd /tmp\npwd\n```");
-        assert_eq!(parse_cells(&expanded)[0].code, "cd /tmp\npwd");
-    }
-
-    #[test]
-    fn body_with_backtick_fences_gets_a_longer_fence() {
-        let expanded = expand_bang_shell("!cat <<EOF\n```\nEOF");
-        assert_eq!(expanded, "````!shell\ncat <<EOF\n```\nEOF\n````");
-        assert_eq!(parse_cells(&expanded)[0].code, "cat <<EOF\n```\nEOF");
-    }
-
-    #[test]
-    fn bang_without_a_command_stays_plain_text() {
-        assert_eq!(expand_bang_shell("!"), "!");
-        assert_eq!(expand_bang_shell("!  \n "), "!  \n ");
-    }
-
-    #[test]
-    fn only_a_bang_at_the_very_start_counts() {
-        assert_eq!(expand_bang_shell(" !echo"), " !echo");
-        assert_eq!(expand_bang_shell("hello !echo"), "hello !echo");
-        assert_eq!(expand_bang_shell("```!zsh\nls\n```"), "```!zsh\nls\n```");
     }
 }

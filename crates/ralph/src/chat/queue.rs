@@ -1,4 +1,5 @@
 use crate::chat::turn::TurnOutcome;
+use ralph_core::chat_cell::{bang, Bang};
 
 const JOIN: &str = "\n\n";
 
@@ -25,7 +26,7 @@ pub(super) enum Action {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Decision {
-    Send(String),
+    Send { text: String, rest: Vec<String> },
     Keep(Vec<String>),
 }
 
@@ -90,10 +91,29 @@ pub(super) fn draft_with_typed(draft: Option<String>, typed: &str) -> Option<Str
     }
 }
 
+fn is_local(entry: &str) -> bool {
+    matches!(bang(entry.trim()), Bang::Local(_))
+}
+
+pub(super) fn next_batch(mut entries: Vec<String>) -> Option<(String, Vec<String>)> {
+    let size = match entries.first() {
+        Some(first) if is_local(first) => 1,
+        _ => entries
+            .iter()
+            .position(|entry| is_local(entry))
+            .unwrap_or(entries.len()),
+    };
+    let rest = entries.split_off(size);
+    merged(&entries).map(|text| (text, rest))
+}
+
 pub(super) fn decide(outcome: TurnOutcome, queue: Queue) -> Decision {
-    match merged(&queue.entries) {
-        Some(text) if outcome == TurnOutcome::Replied && !queue.held => Decision::Send(text),
-        _ => Decision::Keep(queue.entries),
+    if outcome != TurnOutcome::Replied || queue.held {
+        return Decision::Keep(queue.entries);
+    }
+    match next_batch(queue.entries) {
+        Some((text, rest)) => Decision::Send { text, rest },
+        None => Decision::Keep(Vec::new()),
     }
 }
 
@@ -242,7 +262,42 @@ mod tests {
     fn replied_turn_sends_merged_entries() {
         assert_eq!(
             decide(TurnOutcome::Replied, queue(&["a", "b"])),
-            Decision::Send("a\n\nb".to_string())
+            Decision::Send {
+                text: "a\n\nb".to_string(),
+                rest: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn double_bang_entry_runs_on_its_own_between_its_neighbours() {
+        let batches = |items: &[&str]| {
+            let mut left = entries(items);
+            let mut out = Vec::new();
+            while let Some((text, rest)) = next_batch(left) {
+                out.push(text);
+                left = rest;
+            }
+            out
+        };
+        assert_eq!(
+            batches(&["a", "b", "!!ls", "c", " !!pwd", "!!x"]),
+            entries(&["a\n\nb", "!!ls", "c", " !!pwd", "!!x"])
+        );
+        assert_eq!(batches(&["!!ls", "a"]), entries(&["!!ls", "a"]));
+        assert_eq!(batches(&["!!", "a"]), entries(&["!!\n\na"]));
+        assert_eq!(batches(&["!ls", "a"]), entries(&["!ls\n\na"]));
+        assert!(batches(&[]).is_empty());
+    }
+
+    #[test]
+    fn replied_turn_sends_the_first_batch_and_keeps_the_rest_in_order() {
+        assert_eq!(
+            decide(TurnOutcome::Replied, queue(&["a", "!!ls", "b"])),
+            Decision::Send {
+                text: "a".to_string(),
+                rest: entries(&["!!ls", "b"])
+            }
         );
     }
 

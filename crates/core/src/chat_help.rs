@@ -195,6 +195,10 @@ const CELLS: &[(&str, &str)] = &[
         "run the rest of the message as one !shell cell, then send it with its output",
     ),
     (
+        "!!<command>",
+        "run it as one !shell cell; the output stays local, no turn starts",
+    ),
+    (
         "```!<runtime> fence",
         "run the block (for example ```!zsh) as a cell before the message goes out",
     ),

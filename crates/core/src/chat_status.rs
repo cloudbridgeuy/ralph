@@ -1,3 +1,4 @@
+use crate::chat_cell::{bang, Bang};
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
 use crate::chat_memory::{history_tool, Tool};
@@ -82,6 +83,7 @@ pub struct Status {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Send(String),
+    Shell(String),
     ReadInbox(Selection),
     ListInbox,
     PeekInbox(Position),
@@ -116,6 +118,7 @@ impl Route {
             | Route::Schedule(ScheduleCommand::List | ScheduleCommand::Usage)
             | Route::Diff(DiffArgs::Usage(_) | DiffArgs::UnclosedQuote) => true,
             Route::Send(_)
+            | Route::Shell(_)
             | Route::ReadInbox(_)
             | Route::DropInbox(_)
             | Route::Hold(_)
@@ -178,6 +181,7 @@ pub fn route_input(
     }
     match line {
         "" => empty_route(unread, empty),
+        message if matches!(bang(message), Bang::Local(_)) => Route::Shell(message.to_string()),
         message => Route::Send(message.to_string()),
     }
 }
