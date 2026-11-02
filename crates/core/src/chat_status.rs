@@ -14,7 +14,7 @@ use crate::worker::{
     opencode_session_id, same_store, tagged_sessions, HarnessId, Report, ReportStatus,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 const DEFAULT_STATE: &str = "running";
@@ -143,7 +143,12 @@ pub fn empty_route(unread: usize, empty: &EmptySubmit) -> Route {
     }
 }
 
-pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
+pub fn route_input(
+    line: &str,
+    unread: usize,
+    empty: &EmptySubmit,
+    hold_targets: &BTreeSet<String>,
+) -> Route {
     let line = line.trim();
     for command in Command::ALL {
         if let Some(args) = command.args(line) {
@@ -154,7 +159,7 @@ pub fn route_input(line: &str, unread: usize, empty: &EmptySubmit) -> Route {
                 Command::Schedule => Route::Schedule(parse_schedule_args(args)),
                 Command::Diff => Route::Diff(parse_diff_args(args)),
                 Command::Workers => workers_route(args, line),
-                Command::Hold => hold_route(args, line),
+                Command::Hold => hold_route(args, line, hold_targets),
                 Command::SendIt => send_it_route(args, line),
                 Command::Config => Route::Config,
                 Command::Read | Command::Search => {
@@ -205,8 +210,12 @@ fn scheduled_worker_id(id: &str) -> String {
     }
 }
 
-fn hold_route(args: &str, line: &str) -> Route {
-    HoldFilter::parse(args).map_or_else(|| Route::Send(line.to_string()), Route::Hold)
+fn hold_route(args: &str, line: &str, targets: &BTreeSet<String>) -> Route {
+    let filter = HoldFilter::parse(args).filter(|filter| match filter {
+        HoldFilter::Set(sources) => sources.iter().all(|source| targets.contains(source)),
+        _ => true,
+    });
+    filter.map_or_else(|| Route::Send(line.to_string()), Route::Hold)
 }
 
 fn send_it_route(args: &str, line: &str) -> Route {

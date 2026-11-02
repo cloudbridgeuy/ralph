@@ -30,9 +30,53 @@ fn parse_one_token_is_a_source() {
     assert_eq!(HoldFilter::parse("watch:ci"), Some(source("watch:ci")));
 }
 
+fn set(names: &[&str]) -> HoldFilter {
+    HoldFilter::Set(names.iter().map(|name| name.to_string()).collect())
+}
+
 #[test]
-fn parse_rejects_extra_tokens() {
-    assert_eq!(HoldFilter::parse("a b"), None);
+fn parse_several_tokens_is_a_set_in_typed_order() {
+    assert_eq!(HoldFilter::parse("b a"), Some(set(&["b", "a"])));
+    assert_eq!(
+        HoldFilter::parse("  a \t b  c "),
+        Some(set(&["a", "b", "c"]))
+    );
+}
+
+#[test]
+fn parse_drops_duplicates_and_collapses_to_a_source() {
+    assert_eq!(HoldFilter::parse("a b a"), Some(set(&["a", "b"])));
+    assert_eq!(HoldFilter::parse("a a"), Some(source("a")));
+}
+
+#[test]
+fn render_is_the_canonical_command() {
+    assert_eq!(HoldFilter::Any.render(), "/hold");
+    assert_eq!(source("a").render(), "/hold a");
+    assert_eq!(set(&["a", "b"]).render(), "/hold a b");
+}
+
+#[test]
+fn label_joins_a_set() {
+    assert_eq!(set(&["a", "b"]).label(), "a, b");
+}
+
+#[test]
+fn a_set_matches_any_member() {
+    assert!(set(&["a", "b"]).matches(&entry("b")));
+    assert!(!set(&["a", "b"]).matches(&entry("c")));
+}
+
+#[test]
+fn a_schedule_member_of_a_set_matches_its_worker() {
+    assert!(set(&["a", "schedule:x"]).matches(&entry("sched-x")));
+}
+
+#[test]
+fn first_match_hits_any_member_of_a_set() {
+    let entries = [entry("c"), entry("b"), entry("a")];
+    let found = first_match(&entries, &set(&["a", "b"])).unwrap();
+    assert_eq!(found.to_string(), "2");
 }
 
 #[test]

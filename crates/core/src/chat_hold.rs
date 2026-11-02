@@ -2,9 +2,11 @@ use crate::chat_status::Status;
 use crate::inbox::{Entry, Position};
 use crate::schedule::watch_id;
 use crate::schedule_worker::source_matches_worker;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::ops::Range;
 
+const HOLD: &str = "/hold";
 const CTRL_Q: u8 = 0x11;
 const CTRL_D: u8 = 0x04;
 
@@ -12,22 +14,37 @@ const CTRL_D: u8 = 0x04;
 pub enum HoldFilter {
     Any,
     Source(String),
+    Set(Vec<String>),
 }
 
 impl HoldFilter {
     pub fn parse(args: &str) -> Option<Self> {
-        let mut tokens = args.split_whitespace();
-        match (tokens.next(), tokens.next()) {
-            (None, _) => Some(HoldFilter::Any),
-            (Some(source), None) => Some(HoldFilter::Source(source.to_string())),
-            _ => None,
+        let mut sources: Vec<String> = Vec::new();
+        for token in args.split_whitespace() {
+            if !sources.iter().any(|source| source == token) {
+                sources.push(token.to_string());
+            }
+        }
+        match sources.len() {
+            0 => Some(HoldFilter::Any),
+            1 => sources.pop().map(HoldFilter::Source),
+            _ => Some(HoldFilter::Set(sources)),
         }
     }
 
-    pub fn label(&self) -> &str {
+    pub fn label(&self) -> Cow<'_, str> {
         match self {
-            HoldFilter::Any => "anyone",
-            HoldFilter::Source(source) => source,
+            HoldFilter::Any => Cow::Borrowed("anyone"),
+            HoldFilter::Source(source) => Cow::Borrowed(source),
+            HoldFilter::Set(sources) => Cow::Owned(sources.join(", ")),
+        }
+    }
+
+    pub fn render(&self) -> String {
+        match self {
+            HoldFilter::Any => HOLD.to_string(),
+            HoldFilter::Source(source) => format!("{HOLD} {source}"),
+            HoldFilter::Set(sources) => format!("{HOLD} {}", sources.join(" ")),
         }
     }
 
@@ -35,6 +52,9 @@ impl HoldFilter {
         match self {
             HoldFilter::Any => true,
             HoldFilter::Source(source) => source_matches_worker(source, &entry.report.worker),
+            HoldFilter::Set(sources) => sources
+                .iter()
+                .any(|source| source_matches_worker(source, &entry.report.worker)),
         }
     }
 }

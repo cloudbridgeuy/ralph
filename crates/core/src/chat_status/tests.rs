@@ -63,7 +63,8 @@ fn watch_states_are_equal_one_second_apart_at_twelve_minutes() {
 
 #[test]
 fn only_read_only_routes_run_mid_turn() {
-    let runs = |line: &str| route_input(line, 0, &EmptySubmit::Inbox).runs_mid_turn();
+    let runs =
+        |line: &str| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()).runs_mid_turn();
     for line in [
         "/inbox peek 1",
         "/inbox peek x",
@@ -100,27 +101,28 @@ fn only_read_only_routes_run_mid_turn() {
 #[test]
 fn route_input_parses_watch_commands() {
     assert_eq!(
-        route_input("/watch list", 0, &EmptySubmit::Inbox),
+        route_input("/watch list", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Watch(WatchCommand::List)
     );
     assert_eq!(
-        route_input("/watch", 3, &EmptySubmit::Inbox),
+        route_input("/watch", 3, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Watch(WatchCommand::Usage)
     );
     assert_eq!(
-        route_input(" /watch stop w1 ", 0, &EmptySubmit::Inbox),
+        route_input(" /watch stop w1 ", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Watch(WatchCommand::Stop("watch:w1".into()))
     );
     assert!(matches!(
         route_input(
             "/watch start --persistent sleep 5 -- done",
             0,
-            &EmptySubmit::Inbox
+            &EmptySubmit::Inbox,
+            &BTreeSet::new()
         ),
         Route::Watch(WatchCommand::Start(_))
     ));
     assert_eq!(
-        route_input("/watchfoo", 0, &EmptySubmit::Inbox),
+        route_input("/watchfoo", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Send("/watchfoo".into())
     );
 }
@@ -134,39 +136,47 @@ fn route_input_parses_diff_commands() {
         }))
     };
     assert_eq!(
-        route_input("/diff -U1 -- a", 0, &EmptySubmit::Inbox),
+        route_input("/diff -U1 -- a", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         last(1, &["-U1", "--", "a"])
     );
     assert_eq!(
-        route_input(" /diff -- \"a b\" ", 3, &EmptySubmit::Inbox),
+        route_input(
+            " /diff -- \"a b\" ",
+            3,
+            &EmptySubmit::Inbox,
+            &BTreeSet::new()
+        ),
         last(1, &["--", "a b"])
     );
-    assert_eq!(route_input("/diff", 0, &EmptySubmit::Inbox), last(1, &[]));
     assert_eq!(
-        route_input("/diff last 2", 0, &EmptySubmit::Inbox),
+        route_input("/diff", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
+        last(1, &[])
+    );
+    assert_eq!(
+        route_input("/diff last 2", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         last(2, &[])
     );
     assert_eq!(
-        route_input("/diff now -U1", 0, &EmptySubmit::Inbox),
+        route_input("/diff now -U1", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Diff(DiffArgs::Target(DiffTarget::Now(vec!["-U1".into()])))
     );
     assert_eq!(
-        route_input("/diff last 0", 0, &EmptySubmit::Inbox),
+        route_input("/diff last 0", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Diff(DiffArgs::Usage(WINDOW_USAGE))
     );
     assert_eq!(
-        route_input("/diff 'a", 0, &EmptySubmit::Inbox),
+        route_input("/diff 'a", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Diff(DiffArgs::UnclosedQuote)
     );
     assert_eq!(
-        route_input("/difffoo", 0, &EmptySubmit::Inbox),
+        route_input("/difffoo", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Send("/difffoo".into())
     );
 }
 
 #[test]
 fn route_input_parses_workers_commands() {
-    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     assert_eq!(route("/workers"), Route::Workers(None));
     assert_eq!(route("  /workers  "), Route::Workers(None));
     assert_eq!(
@@ -187,7 +197,7 @@ fn route_input_parses_workers_commands() {
 
 #[test]
 fn a_schedule_tag_routes_to_its_scheduled_worker() {
-    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     assert_eq!(
         route("/workers schedule:nightly"),
         Route::Workers(Some("sched-nightly".into()))
@@ -202,7 +212,7 @@ fn a_schedule_tag_routes_to_its_scheduled_worker() {
 fn only_bare_or_one_token_workers_route_locally() {
     for line in ["/workers a b", "/workers a b c", "/workersfoo"] {
         assert_eq!(
-            route_input(line, 0, &EmptySubmit::Inbox),
+            route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()),
             Route::Send(line.into())
         );
     }
@@ -210,7 +220,7 @@ fn only_bare_or_one_token_workers_route_locally() {
 
 #[test]
 fn route_input_parses_hold_commands() {
-    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     assert_eq!(route("/hold"), Route::Hold(HoldFilter::Any));
     assert_eq!(route("  /hold  "), Route::Hold(HoldFilter::Any));
     assert_eq!(
@@ -224,13 +234,38 @@ fn route_input_parses_hold_commands() {
 }
 
 #[test]
-fn only_bare_or_one_token_hold_routes_locally() {
-    for line in ["/hold a b", "/holdfoo"] {
-        assert_eq!(
-            route_input(line, 0, &EmptySubmit::Inbox),
-            Route::Send(line.into())
-        );
+fn several_hold_tokens_route_locally_only_when_every_one_is_listed() {
+    let targets: BTreeSet<String> = ["a", "b", "watch:ci"].map(String::from).into();
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &targets);
+    assert_eq!(
+        route("/hold a b"),
+        Route::Hold(HoldFilter::Set(vec!["a".into(), "b".into()]))
+    );
+    assert_eq!(
+        route("/hold  watch:ci   a "),
+        Route::Hold(HoldFilter::Set(vec!["watch:ci".into(), "a".into()]))
+    );
+    assert_eq!(
+        route("/hold a a"),
+        Route::Hold(HoldFilter::Source("a".into()))
+    );
+    for line in [
+        "/hold a x",
+        "/hold x a",
+        "/hold on, check the CI first",
+        "/holdfoo",
+        "/holdfoo a b",
+    ] {
+        assert_eq!(route(line), Route::Send(line.into()));
     }
+}
+
+#[test]
+fn a_single_unknown_hold_token_still_arms_a_source() {
+    assert_eq!(
+        route_input("/hold ghost", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
+        Route::Hold(HoldFilter::Source("ghost".into()))
+    );
 }
 
 #[test]
@@ -260,10 +295,16 @@ fn empty_route_decides_from_mode_and_unread() {
 #[test]
 fn route_input_sends_phrase_only_on_empty_line() {
     let phrase = EmptySubmit::Phrase("go".into());
-    assert_eq!(route_input("  ", 3, &phrase), Route::Send("go".into()));
-    assert_eq!(route_input("hi", 3, &phrase), Route::Send("hi".into()));
     assert_eq!(
-        route_input("/inbox", 3, &phrase),
+        route_input("  ", 3, &phrase, &BTreeSet::new()),
+        Route::Send("go".into())
+    );
+    assert_eq!(
+        route_input("hi", 3, &phrase, &BTreeSet::new()),
+        Route::Send("hi".into())
+    );
+    assert_eq!(
+        route_input("/inbox", 3, &phrase, &BTreeSet::new()),
         Route::ReadInbox(Selection::All)
     );
 }
@@ -271,36 +312,39 @@ fn route_input_sends_phrase_only_on_empty_line() {
 #[test]
 fn route_input_decides_from_line_and_unread() {
     assert_eq!(
-        route_input(" /inbox ", 0, &EmptySubmit::Inbox),
+        route_input(" /inbox ", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::ReadInbox(Selection::All)
     );
     assert_eq!(
-        route_input("  ", 3, &EmptySubmit::Inbox),
+        route_input("  ", 3, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::ReadInbox(Selection::All)
     );
     assert_eq!(
-        route_input("/inbox next", 0, &EmptySubmit::Inbox),
+        route_input("/inbox next", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::ReadInbox(Selection::Next)
     );
     assert_eq!(
-        route_input("/inbox 2", 0, &EmptySubmit::Inbox),
+        route_input("/inbox 2", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::ReadInbox(Selection::At("2".parse().unwrap()))
     );
-    assert_eq!(route_input("", 0, &EmptySubmit::Inbox), Route::Ignore);
     assert_eq!(
-        route_input(" hi ", 3, &EmptySubmit::Inbox),
+        route_input("", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
+        Route::Ignore
+    );
+    assert_eq!(
+        route_input(" hi ", 3, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Send("hi".into())
     );
     assert_eq!(
-        route_input("/inbox list", 0, &EmptySubmit::Inbox),
+        route_input("/inbox list", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::ListInbox
     );
     assert_eq!(
-        route_input("/inbox peek 3", 0, &EmptySubmit::Inbox),
+        route_input("/inbox peek 3", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::PeekInbox("3".parse().unwrap())
     );
     assert_eq!(
-        route_input("/inbox drop 3", 0, &EmptySubmit::Inbox),
+        route_input("/inbox drop 3", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::DropInbox("3".parse().unwrap())
     );
     for usage in [
@@ -318,12 +362,12 @@ fn route_input_decides_from_line_and_unread() {
         "/inbox next 1",
     ] {
         assert_eq!(
-            route_input(usage, 3, &EmptySubmit::Inbox),
+            route_input(usage, 3, &EmptySubmit::Inbox, &BTreeSet::new()),
             Route::InboxUsage
         );
     }
     assert_eq!(
-        route_input("/inboxfoo", 0, &EmptySubmit::Inbox),
+        route_input("/inboxfoo", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Send("/inboxfoo".into())
     );
 }
@@ -666,7 +710,7 @@ fn schedule_states_mark_tasks_due_on_a_later_local_day() {
 #[test]
 fn schedule_routes_locally_and_only_list_runs_mid_turn() {
     use crate::schedule_command::ScheduleCommand;
-    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     assert_eq!(route("/schedule"), Route::Schedule(ScheduleCommand::List));
     assert!(route("/schedule list").runs_mid_turn());
     assert!(route("/schedule x").runs_mid_turn());
@@ -678,7 +722,7 @@ fn schedule_routes_locally_and_only_list_runs_mid_turn() {
 fn history_commands_route_to_the_model_tools() {
     use crate::chat_memory::parse_tool_call;
     use serde_json::json;
-    let route = |line: &str| route_input(line, 0, &EmptySubmit::Inbox);
+    let route = |line: &str| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     let tool = |name: &str, args: serde_json::Value| Route::History(parse_tool_call(name, &args));
     assert_eq!(route("/read 4-7"), tool("read", json!({"id": "4-7"})));
     assert_eq!(
@@ -716,7 +760,7 @@ fn bad_history_arguments_route_to_an_error_not_a_message() {
         "/search",
         "/search --cursor 1",
     ] {
-        let route = route_input(line, 0, &EmptySubmit::Inbox);
+        let route = route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
         assert!(matches!(route, Route::History(Err(_))), "{line}: {route:?}");
     }
 }
@@ -725,7 +769,7 @@ fn bad_history_arguments_route_to_an_error_not_a_message() {
 fn history_commands_run_mid_turn() {
     for line in ["/read 1", "/zoom 1", "/recall x", "/search x", "/read"] {
         assert!(
-            route_input(line, 0, &EmptySubmit::Inbox).runs_mid_turn(),
+            route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()).runs_mid_turn(),
             "{line}"
         );
     }
@@ -734,7 +778,7 @@ fn history_commands_run_mid_turn() {
 #[test]
 fn route_input_parses_send_it_commands() {
     use crate::chat_send_it::SendIt;
-    let route = |line| route_input(line, 0, &EmptySubmit::Inbox);
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     assert_eq!(route("/send-it"), Route::SendIt(SendIt::Status));
     assert_eq!(route("  /send-it  "), Route::SendIt(SendIt::Status));
     assert_eq!(route("/send-it off"), Route::SendIt(SendIt::Off));

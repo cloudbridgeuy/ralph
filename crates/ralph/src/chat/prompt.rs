@@ -5,6 +5,7 @@ use crate::chat::statusbar::StatusBar;
 use crate::clipboard::{paste_image, PASTE_IMAGE};
 use crate::render::wrap_width;
 use ralph_core::chat_edit_mode::{prompt_indicator, PromptMode};
+use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{footer, route_input, EmptySubmit, Route};
 use ralph_core::status_queue::QueueCell;
 use ralph_core::worker::ATTACHMENTS_DIR;
@@ -174,8 +175,13 @@ pub(super) fn next_route(
         match retry_interrupted(|| editor.read_line(prompt))? {
             Signal::Success(line) => {
                 prompt.notice.take();
-                let route =
-                    route_input(&line, prompt.monitor.status().unread, &prompt.empty_submit);
+                let status = prompt.monitor.status();
+                let route = route_input(
+                    &line,
+                    status.unread,
+                    &prompt.empty_submit,
+                    &hold_targets(&status),
+                );
                 return Ok(Some(Submitted { line, route }));
             }
             Signal::HostCommand(command) if command == PASTE_IMAGE => {

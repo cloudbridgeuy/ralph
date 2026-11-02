@@ -88,6 +88,7 @@ use ralph_core::chat::{
 use ralph_core::chat_cell::resolve_cell_limits;
 use ralph_core::chat_draft::editor_argv;
 use ralph_core::chat_edit_mode::resolve_edit_mode;
+use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
 use ralph_core::chat_send_it::auto_line;
@@ -734,10 +735,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                         .save(HistoryItem::from_command_line(text.clone())),
                     "Failed to save chat history",
                 );
+                let status = monitor.status();
                 pending = Some(route_input(
                     &text,
-                    monitor.status().unread,
+                    status.unread,
                     &prompt.empty_submit,
+                    &hold_targets(&status),
                 ));
                 (draft, None)
             }

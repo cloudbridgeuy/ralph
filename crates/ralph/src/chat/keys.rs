@@ -11,6 +11,7 @@ use crate::subprocess::OutputGate;
 use crate::warn::warn_if_err;
 use crate::watches::locked;
 use ralph_core::chat_edit_mode::EditMode as EditModeConfig;
+use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_status::{route_input, EmptySubmit, Route};
 use ralph_core::chat_typed::{incomplete, queue_ctrl_c, typed, QueueCtrlC, Typed};
 use reedline::{EditCommand, Reedline, Signal};
@@ -177,10 +178,12 @@ impl Keys<'_> {
     }
 
     fn instant_route(&self, text: &str) -> Option<Route> {
+        let status = self.monitor.status();
         Some(route_input(
             text,
-            self.monitor.status().unread,
+            status.unread,
             self.empty_submit,
+            &hold_targets(&status),
         ))
         .filter(Route::runs_mid_turn)
     }

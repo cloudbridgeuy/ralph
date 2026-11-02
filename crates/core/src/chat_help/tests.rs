@@ -7,6 +7,7 @@ use crate::chat_thread::SessionCost;
 use crate::status_mode::mode;
 use crate::status_queue::QueueCell;
 use crate::status_segments::{segments, Context};
+use std::collections::BTreeSet;
 use std::mem::discriminant;
 
 /// The exhaustive match stops compiling when `$ty` gains a variant not
@@ -124,7 +125,7 @@ fn the_hold_row_names_the_auto_hold_setting() {
 fn every_command_routes_locally_and_has_help() {
     let text = help_text(160);
     for command in Command::ALL {
-        let route = route_input(command.name(), 0, &EmptySubmit::Inbox);
+        let route = route_input(command.name(), 0, &EmptySubmit::Inbox, &BTreeSet::new());
         assert!(
             !matches!(route, Route::Send(_)),
             "{} is not routed",
@@ -140,14 +141,17 @@ fn every_command_routes_locally_and_has_help() {
 
 #[test]
 fn only_bare_help_routes_to_help() {
-    assert_eq!(route_input("/help", 0, &EmptySubmit::Inbox), Route::Help);
     assert_eq!(
-        route_input("  /help  ", 0, &EmptySubmit::Inbox),
+        route_input("/help", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
+        Route::Help
+    );
+    assert_eq!(
+        route_input("  /help  ", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Help
     );
     for line in ["/help x", "/help me fix the build", "/helpfoo"] {
         assert_eq!(
-            route_input(line, 0, &EmptySubmit::Inbox),
+            route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()),
             Route::Send(line.into())
         );
     }
@@ -156,16 +160,16 @@ fn only_bare_help_routes_to_help() {
 #[test]
 fn only_bare_config_routes_to_config() {
     assert_eq!(
-        route_input("/config", 0, &EmptySubmit::Inbox),
+        route_input("/config", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Config
     );
     assert_eq!(
-        route_input("  /config  ", 0, &EmptySubmit::Inbox),
+        route_input("  /config  ", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
         Route::Config
     );
     for line in ["/config x", "/config show me", "/configfoo"] {
         assert_eq!(
-            route_input(line, 0, &EmptySubmit::Inbox),
+            route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new()),
             Route::Send(line.into())
         );
     }
