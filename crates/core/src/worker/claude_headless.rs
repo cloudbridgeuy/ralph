@@ -166,7 +166,7 @@ pub(super) fn init_status(init: &Value) -> Result<String, String> {
     }
 }
 
-fn calls_report(assistant: &Value) -> bool {
+pub(super) fn calls_report(assistant: &Value) -> bool {
     let report = format!("mcp__{SERVER_NAME}__{REPORT_TOOL}");
     assistant["message"]["content"]
         .as_array()

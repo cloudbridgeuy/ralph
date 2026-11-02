@@ -1,8 +1,9 @@
-use super::claude_headless::init_status;
+use super::acp::REPORT_TOOL;
+use super::claude_headless::{calls_report, init_status};
 use super::{
     decode_line, deny_line, interrupted_end, permission_response, turn_stop, CheckResult,
-    ClaudeLine, ThreadSignal, TurnSummary, Verdict, VersionProbe, ALLOW_ONCE, CLAUDE_COMMAND,
-    CLAUDE_GATE, VERSION_PROBE_LIMIT,
+    ClaudeLine, Report, ThreadSignal, TurnSummary, Verdict, VersionProbe, ALLOW_ONCE,
+    CLAUDE_COMMAND, CLAUDE_GATE, SERVER_NAME, VERSION_PROBE_LIMIT,
 };
 use crate::stream::interrupt_line;
 use serde_json::Value;
@@ -41,6 +42,7 @@ pub struct ClaudeFold {
     pub session: Option<String>,
     pub ended: bool,
     pub mcp: Option<Result<(), String>>,
+    pub reported: bool,
 }
 
 impl Default for ClaudeFold {
@@ -55,6 +57,7 @@ impl Default for ClaudeFold {
             session: None,
             ended: false,
             mcp: None,
+            reported: false,
         }
     }
 }
@@ -79,6 +82,7 @@ pub fn fold_claude_line(fold: &mut ClaudeFold, line: &str, plan: ClaudePlan) -> 
             Vec::new()
         }
         (Some("assistant"), _) => {
+            fold.reported |= calls_report(&value);
             fold.summary.replies += text_blocks(&value);
             if plan == ClaudePlan::Cancel && !fold.summary.cancel_sent {
                 fold.summary.cancel_sent = true;
@@ -134,6 +138,24 @@ pub fn mcp_check(fold: &ClaudeFold) -> CheckResult {
         Some(Ok(())) => CheckResult::pass("mcp", "ralph-worker connected"),
         Some(Err(reason)) => CheckResult::fail("mcp", reason.as_str()),
         None => unknown("mcp", "claude sent no system/init line"),
+    }
+}
+
+pub fn report_check(fold: &ClaudeFold, inbox: &[Report]) -> CheckResult {
+    let tool = format!("mcp__{SERVER_NAME}__{REPORT_TOOL}");
+    if !matches!(fold.mcp, Some(Ok(()))) {
+        return unknown("report", "skipped: ralph-worker not connected");
+    }
+    if fold.summary.permissions.iter().any(|ask| ask.tool == tool) {
+        return CheckResult::fail("report", "claude asked permission for the report tool");
+    }
+    if !fold.reported {
+        return CheckResult::fail("report", format!("the turn did not call {tool}"));
+    }
+    match inbox {
+        [] => CheckResult::fail("report", "the report call wrote no inbox file"),
+        [only] => CheckResult::pass("report", format!("inbox got a {} report", only.status)),
+        many => CheckResult::fail("report", format!("{} reports, expected 1", many.len())),
     }
 }
 
@@ -323,6 +345,84 @@ mod tests {
         assert_eq!(check.verdict, Verdict::Unknown);
         assert_eq!(check.detail, "claude sent no system/init line");
         assert_eq!(check.name, "mcp");
+    }
+
+    fn report_tool_use() -> Value {
+        json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__ralph-worker__report","input":{}}]}})
+    }
+
+    fn report_permission() -> Value {
+        json!({"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"mcp__ralph-worker__report","input":{"status":"done"}}})
+    }
+
+    fn connected() -> Value {
+        init_with(json!([{"name":"ralph-worker","status":"connected"}]))
+    }
+
+    fn inbox_report() -> Report {
+        Report {
+            worker: "w".to_string(),
+            at: "t".to_string(),
+            status: "done".to_string(),
+            text: "verify".to_string(),
+        }
+    }
+
+    fn report_check_after(lines: &[Value], inbox: &[Report]) -> CheckResult {
+        let mut fold = ClaudeFold::default();
+        feed(&mut fold, ClaudePlan::Plain, lines);
+        report_check(&fold, inbox)
+    }
+
+    #[test]
+    fn report_is_skipped_when_ralph_worker_is_not_connected() {
+        let check = report_check_after(&[report_tool_use()], &[inbox_report()]);
+        assert_eq!(check.verdict, Verdict::Unknown);
+        assert_eq!(check.detail, "skipped: ralph-worker not connected");
+        assert_eq!(check.name, "report");
+    }
+
+    #[test]
+    fn report_fails_when_claude_asked_permission_for_the_tool() {
+        let check = report_check_after(&[connected(), report_permission()], &[]);
+        assert_eq!(
+            check,
+            CheckResult::fail("report", "claude asked permission for the report tool")
+        );
+    }
+
+    #[test]
+    fn report_fails_when_the_turn_never_called_the_tool() {
+        let check = report_check_after(&[connected(), assistant_text()], &[]);
+        assert_eq!(
+            check,
+            CheckResult::fail("report", "the turn did not call mcp__ralph-worker__report")
+        );
+    }
+
+    #[test]
+    fn report_fails_when_the_call_wrote_no_inbox_file() {
+        let check = report_check_after(&[connected(), report_tool_use()], &[]);
+        assert_eq!(
+            check,
+            CheckResult::fail("report", "the report call wrote no inbox file")
+        );
+    }
+
+    #[test]
+    fn report_fails_on_more_than_one_inbox_report() {
+        let inbox = [inbox_report(), inbox_report()];
+        let check = report_check_after(&[connected(), report_tool_use()], &inbox);
+        assert_eq!(check, CheckResult::fail("report", "2 reports, expected 1"));
+    }
+
+    #[test]
+    fn report_passes_on_exactly_one_inbox_report() {
+        let check = report_check_after(&[connected(), report_tool_use()], &[inbox_report()]);
+        assert_eq!(
+            check,
+            CheckResult::pass("report", "inbox got a done report")
+        );
     }
 
     #[test]
