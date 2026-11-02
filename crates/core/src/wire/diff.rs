@@ -451,20 +451,26 @@ fn lapse_verdict(input: &Pair, breakpoint: &Breakpoint, b_segments: &[PromptSegm
     }
 }
 
+struct Prompts<'a> {
+    a: &'a [PromptSegment],
+    b: &'a [PromptSegment],
+}
+
 fn explain(
     input: &Pair,
     base: &DiffView,
-    b_segments: &[PromptSegment],
+    prompts: &Prompts,
     shared: usize,
     served: Verdict,
 ) -> Explanation {
+    let b_segments = prompts.b;
     let usage = counted_usage(input.b);
     let cache_read = usage.map(|u| u.cache_read);
     let prefix_cache = match &input.b.request_body {
         RequestBody::Json(body) => input.provider.prefix_cache(body),
         RequestBody::Base64(_) => PrefixCache::Explicit,
     };
-    let Some(breakpoint) = servable_breakpoint(b_segments, shared, prefix_cache) else {
+    let Some(breakpoint) = servable_breakpoint(prompts.a, shared, prefix_cache) else {
         return Explanation {
             servable_bytes: 0,
             servable_tokens: None,
@@ -574,7 +580,16 @@ pub fn diff_view(input: &DiffInput) -> DiffView {
             relation: relation(a_segments.len(), b_segments.len(), shared),
         },
     };
-    let explanation = explain(&pair, &base, &b_segments, shared, served);
+    let explanation = explain(
+        &pair,
+        &base,
+        &Prompts {
+            a: &a_segments,
+            b: &b_segments,
+        },
+        shared,
+        served,
+    );
     DiffView {
         shared_segments: shared,
         removed: labels_after(&a_segments, skip),
