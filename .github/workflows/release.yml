@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version whose CHANGELOG.md section to extract (for example v0.3.0); leave empty to skip"
+        required: false
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +27,7 @@ jobs:
           fetch-depth: 0
 
       - name: Check tag is on main
+        if: github.event_name == 'push'
         run: |
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
@@ -29,12 +36,39 @@ jobs:
           fi
 
       - name: Check tag matches workspace version
+        if: github.event_name == 'push'
         run: |
           version=$(awk '/^\[/ { in_pkg = ($0 == "[workspace.package]") } in_pkg && /^version[[:space:]]*=/ { split($0, a, "\""); print a[2]; exit }' Cargo.toml)
           if [ -z "$version" ] || [ "$GITHUB_REF_NAME" != "v$version" ]; then
             echo "Tag $GITHUB_REF_NAME does not match workspace version v$version" >&2
             exit 1
           fi
+
+      - name: Extract release notes from CHANGELOG.md
+        if: github.event_name == 'push' || inputs.version != ''
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+        run: |
+          mkdir -p notes
+          awk -v heading="## $RELEASE_TAG" '
+            /^## / {
+              if (in_section) exit
+              if ($0 == heading || index($0, heading " ") == 1) { in_section = 1; next }
+            }
+            in_section { print }
+          ' CHANGELOG.md > notes/release-notes.md
+          if ! grep -q '[^[:space:]]' notes/release-notes.md; then
+            echo "CHANGELOG.md has no notes under '## $RELEASE_TAG'" >&2
+            exit 1
+          fi
+
+      - name: Upload release notes
+        if: github.event_name == 'push' || inputs.version != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: notes/release-notes.md
+          if-no-files-found: error
 
   build:
     name: Build ${{ matrix.target }}
@@ -67,7 +101,12 @@ jobs:
 
       - name: Package
         run: |
-          name="ralph-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            ref="$GITHUB_REF_NAME"
+          else
+            ref="dev-${GITHUB_SHA::7}"
+          fi
+          name="ralph-${ref}-${{ matrix.target }}"
           mkdir -p dist
           tar -czf "dist/${name}.tar.gz" -C "target/${{ matrix.target }}/release" ralph
           (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
@@ -82,13 +121,21 @@ jobs:
   release:
     name: Publish release
     needs: build
+    if: github.event_name == 'push'
     runs-on: ubuntu-26.04
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v5
         with:
+          pattern: ralph-*
           path: dist
           merge-multiple: true
+
+      - name: Download release notes
+        uses: actions/download-artifact@v5
+        with:
+          name: release-notes
+          path: notes
 
       - name: Create GitHub release
         env:
@@ -97,5 +144,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+            --notes-file notes/release-notes.md \
             --verify-tag
