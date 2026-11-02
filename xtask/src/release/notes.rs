@@ -215,10 +215,12 @@ const CHATTER_PREFIXES: [&str; 3] = ["next:", "note:", "let me know"];
 const CHATTER_PHRASES: [&str; 2] = ["paste this", "changelog entry above"];
 const PREAMBLE_PREFIXES: [&str; 4] = ["here is", "here's", "sure", "summary"];
 const MAX_QUESTION_WORDS: usize = 8;
+const MAX_PREAMBLE_WORDS: usize = 6;
 
 fn is_preamble(line: &str) -> bool {
     let lower = line.trim().to_lowercase();
     lower.ends_with(':')
+        && lower.split_whitespace().count() <= MAX_PREAMBLE_WORDS
         && PREAMBLE_PREFIXES
             .iter()
             .any(|prefix| lower.starts_with(prefix))
@@ -492,6 +494,12 @@ mod tests {
             clean_summary("Here's the summary:\n\nAdds X."),
             Some("Adds X.".to_string())
         );
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_long_first_line_that_ends_in_a_colon() {
+        let text = "Summary: this release adds X, Y and Z:\n\n- X";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
     }
 
     #[test]
