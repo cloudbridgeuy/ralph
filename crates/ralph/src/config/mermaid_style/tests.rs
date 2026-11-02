@@ -56,6 +56,20 @@ fn defaults_follow_ralphs_ui_palette() {
 }
 
 #[test]
+fn ui_shapes_are_tinted_with_the_accent() {
+    let (resolved, _) = MermaidStyle::default().resolve(&ocean(), &ui());
+    let colors = &resolved.colors;
+    assert_eq!(colors.surface, mix(colors.accent, 0.14, colors.bg));
+    assert_eq!(colors.surface_alt, mix(colors.accent, 0.24, colors.bg));
+    assert_eq!(colors.border, mix(colors.accent, 0.55, colors.bg));
+    let (code, _) = code().resolve(&ocean(), &ui());
+    assert_eq!(
+        code.colors.surface,
+        mix(code.colors.fg, 0.10, code.colors.bg)
+    );
+}
+
+#[test]
 fn ui_colors_set_by_the_person_carry_into_the_picture() {
     let custom = UiColors {
         spinner: Term::Rgb { r: 1, g: 2, b: 3 },
@@ -110,7 +124,7 @@ fn the_code_palette_follows_the_code_theme() {
         ["SF Mono", "Menlo", "DejaVu Sans Mono"]
     );
     assert_eq!(resolved.font_size, 16.0);
-    assert_eq!(resolved.padding, 16.0);
+    assert_eq!(resolved.padding, 24.0);
     assert!(resolved.auto_direction);
     assert_eq!(resolved.min_text_ratio, 0.6);
     assert!(resolved.config.is_empty());
@@ -176,7 +190,7 @@ fn bad_values_warn_and_keep_the_default() {
             "[mermaid.style] background = \"blue\" is not theme, transparent or #rrggbb; using theme",
             "[mermaid.style] font_family is empty; using the default",
             "[mermaid.style] font_size = 0 is not above 0; using 16",
-            "[mermaid.style] padding = -1 is below 0; using 16",
+            "[mermaid.style] padding = -1 is below 0; using 24",
             "[mermaid.style] min_text_ratio = 1.5 is not between 0 and 1; using 0.6",
             "[mermaid.style] curve = \"wiggly\" is not rounded, linear or step; using rounded",
         ]

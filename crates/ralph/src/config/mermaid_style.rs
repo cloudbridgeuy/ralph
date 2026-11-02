@@ -39,7 +39,7 @@ pub struct MermaidStyle {
 const FONT_FAMILY: [&str; 4] = ["Arial", "Liberation Sans", "Helvetica Neue", "Helvetica"];
 const FONT_FAMILY_MONO: [&str; 3] = ["SF Mono", "Menlo", "DejaVu Sans Mono"];
 const FONT_SIZE: f64 = 16.0;
-const PADDING: f64 = 16.0;
+const PADDING: f64 = 24.0;
 const MIN_TEXT_RATIO: f64 = 0.6;
 
 const LIGHT: PictureColors = PictureColors {
@@ -224,7 +224,7 @@ fn terminal_rgb(color: TermColor) -> Rgba {
 }
 
 fn ui_colors(ui: &UiColors) -> PictureColors {
-    let (bg, fg) = (UI_BG, UI_FG);
+    let (bg, fg, accent) = (UI_BG, UI_FG, terminal_rgb(ui.spinner));
     let own = [
         ui.spinner,
         ui.ask_header,
@@ -255,10 +255,10 @@ fn ui_colors(ui: &UiColors) -> PictureColors {
         fg,
         muted: mix(fg, 0.55, bg),
         line: mix(fg, 0.70, bg),
-        surface: mix(fg, 0.10, bg),
-        surface_alt: mix(fg, 0.18, bg),
-        border: terminal_rgb(ui.rule),
-        accent: terminal_rgb(ui.spinner),
+        surface: mix(accent, 0.14, bg),
+        surface_alt: mix(accent, 0.24, bg),
+        border: mix(accent, 0.55, bg),
+        accent,
         critical: terminal_rgb(ui.ask_error),
         series,
     }

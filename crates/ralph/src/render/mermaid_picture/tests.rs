@@ -48,7 +48,7 @@ fn options_carry_the_style_and_the_room() {
         Some("'SF Mono', Menlo, 'DejaVu Sans Mono'")
     );
     assert_eq!(built.font_size, 16.0);
-    assert_eq!(built.padding, Some(16.0));
+    assert_eq!(built.padding, Some(24.0));
     assert_eq!(built.max_width, Some(640.0));
     assert_eq!(built.responsive, Some(false));
     assert!(built.auto_direction);
