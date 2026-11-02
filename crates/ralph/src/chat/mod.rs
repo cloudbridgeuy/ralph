@@ -83,7 +83,7 @@ use crate::warn::{print_above_prompt, warn, warn_if_err};
 use crate::watches::Watches;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::ExitCleanup;
-use crate::workers::{canonical_store, running_workers, Workers};
+use crate::workers::{canonical_store, running_workers, usage_store, Workers};
 use keepalive::{KeepaliveWatch, Stamp};
 use ralph_core::chat::{
     prompt_text, resolve_recent_history_tokens, resolve_watch_timeout, resolve_worker_check_secs,
@@ -464,7 +464,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             keeps: Mutex::default(),
             identity: Arc::clone(&turn.identity),
             run: run.clone(),
-            store: store_dir.to_string_lossy().into_owned(),
+            store: usage_store(&store_dir),
         }
         .spawn();
     }

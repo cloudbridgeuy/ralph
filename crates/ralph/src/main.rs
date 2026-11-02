@@ -329,7 +329,7 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
     config::set_store_layer(&args.store);
-    let store_path = args.store.to_string_lossy().into_owned();
+    let store_path = workers::usage_store(&args.store);
     let store = chat::memory::Store::new(args.store);
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     let config_dir = config::AppConfig::load()

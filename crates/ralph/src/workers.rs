@@ -616,6 +616,12 @@ pub fn canonical_store(path: PathBuf) -> PathBuf {
         .unwrap_or(path)
 }
 
+pub fn usage_store(store: &Path) -> String {
+    canonical_store(store.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub fn opencode_active() -> Option<HashSet<String>> {
     running_opencode_sessions()
 }
@@ -839,6 +845,36 @@ mod tests {
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
         assert_eq!(canonical_store(link), canonical_store(real));
+    }
+
+    #[test]
+    fn usage_store_resolves_a_symlinked_store_to_the_worker_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let real = root.join("real");
+        fs::create_dir(&real).unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert_eq!(usage_store(&link), usage_store(&real));
+        assert_eq!(usage_store(&link), canonical_store(real).to_string_lossy());
+    }
+
+    #[test]
+    fn usage_store_collapses_parent_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        assert_eq!(
+            usage_store(&root.join("a/b/../b")),
+            usage_store(&root.join("a/b"))
+        );
+    }
+
+    #[test]
+    fn usage_store_of_a_missing_dir_is_absolute() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        assert!(Path::new(&usage_store(&missing)).is_absolute());
     }
 
     pub(super) fn workers_in(dir: &Path) -> Workers {
