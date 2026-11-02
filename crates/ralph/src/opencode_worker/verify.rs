@@ -4,7 +4,7 @@ use super::{
 };
 use crate::subprocess::timed_output;
 use crate::transport::http::HttpSse;
-use crate::worker_verify::{step, version_probe, Checks};
+use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::worker::{
     cancel_check, fold_opencode_event, interrupt_idle_check, messages_check,
     opencode_probed_version, opencode_serve_command, opencode_server_log, opencode_session_id,
@@ -78,6 +78,7 @@ fn interrupt(api: &HttpSse, id: &str) -> Result<String, String> {
 struct Scope<'a> {
     dir: &'a Path,
     model: &'a str,
+    budget: Budget,
 }
 
 fn session_json(scope: Scope, id: &str, ask: bool) -> Result<String, String> {
@@ -173,9 +174,15 @@ fn run_turn(
 }
 
 fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, checks: &Checks) {
+    if !scope.budget.allows(checks, "prompt/reply") {
+        return;
+    }
     let plain = run_turn(api, feed, id, REPLY_PROMPT, OpencodePlan::Plain);
     checks.add(prompt_check(&plain.summary, OPENCODE_ENDED));
     if plain.summary.stop.is_err() {
+        return;
+    }
+    if !scope.budget.allows(checks, "permission") {
         return;
     }
     let ask_id = opencode_session_id(ASK_SESSION);
@@ -190,6 +197,9 @@ fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, che
             api.delete(&session_path(&ask_id)).ok();
         }
         Err(message) => checks.add(CheckResult::fail("permission", message)),
+    }
+    if !scope.budget.allows(checks, "cancel") {
+        return;
     }
     let cancelled = run_turn(api, feed, id, CANCEL_PROMPT, OpencodePlan::Cancel);
     checks.add(cancel_check(&cancelled.summary, OPENCODE_INTERRUPTED));
@@ -220,12 +230,19 @@ fn open_events(api: &HttpSse, path: &str, limit: Duration) -> Result<Receiver<Fe
 }
 
 fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
+    let budget = scope.budget;
+    if !budget.allows(checks, "events") {
+        return;
+    }
     let feed = step(
         checks,
         "events",
         open_events(api, EVENTS_PATH, EVENTS_LIMIT),
         |_| format!("{EVENTS_PATH} connected"),
     );
+    if !budget.allows(checks, "session/create") {
+        return;
+    }
     let id = opencode_session_id(MAIN_SESSION);
     let created = judged(
         checks,
@@ -233,7 +250,7 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
         create_session(api, scope, &id, false),
         |body| session_check("session/create", body, &id),
     );
-    if !created {
+    if !created || !budget.allows(checks, "session/read") {
         return;
     }
     judged(
@@ -242,6 +259,9 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
         read_session(api, &id),
         messages_check,
     );
+    if !budget.allows(checks, "interrupt/idle") {
+        return;
+    }
     judged(
         checks,
         "interrupt/idle",
@@ -250,6 +270,9 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
     );
     if let Some(feed) = feed.as_ref().filter(|_| live) {
         live_checks(api, feed, scope, &id, checks);
+    }
+    if !budget.allows(checks, "session/delete") {
+        return;
     }
     step(
         checks,
@@ -260,6 +283,7 @@ fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
 }
 
 pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Option<String> {
+    let budget = Budget::new(live);
     let probe = version_probe(timed_output(
         Command::new(OPENCODE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -270,6 +294,9 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Op
         opencode_probed_version(&probe),
         |version| version.clone(),
     )?;
+    if !budget.allows(checks, "spawn") {
+        return Some(version);
+    }
     let Some(mut server) = step(checks, "spawn", launch(dir), |server| {
         format!(
             "`opencode serve` answered {} ({})",
@@ -279,7 +306,7 @@ pub(crate) fn verify(live: bool, dir: &Path, checks: &Checks, model: &str) -> Op
     }) else {
         return Some(version);
     };
-    run_checks(&server.api, Scope { dir, model }, live, checks);
+    run_checks(&server.api, Scope { dir, model, budget }, live, checks);
     server.snapshot();
     server.stop();
     Some(version)
@@ -294,6 +321,7 @@ mod tests {
         let scope = Scope {
             dir: Path::new("/tmp/verify-dir"),
             model: "anthropic/claude-haiku-5-5",
+            budget: Budget::new(false),
         };
         let body = session_json(scope, "verify", false).unwrap();
         assert!(body.contains("claude-haiku-5-5"), "{body}");

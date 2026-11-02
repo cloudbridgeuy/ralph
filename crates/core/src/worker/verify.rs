@@ -2,6 +2,7 @@ use crate::cursor_leftovers::{cursor_slug, socket_project_dir};
 use crate::worker::BlockedContent;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub const VERIFIED_AGENTS_FILE: &str = "verified-agents.json";
 pub const CURSOR_HOOKS_FILE: &str = ".cursor/hooks.json";
@@ -106,6 +107,33 @@ impl CheckResult {
 
 pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
 pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
+
+pub const FREE_VERIFY_LIMIT: Duration = Duration::from_secs(90);
+pub const LIVE_VERIFY_LIMIT: Duration = Duration::from_secs(420);
+
+pub fn verify_limit(live: bool) -> Duration {
+    if live {
+        LIVE_VERIFY_LIMIT
+    } else {
+        FREE_VERIFY_LIMIT
+    }
+}
+
+pub fn limit_failure(
+    name: &'static str,
+    remaining: Duration,
+    limit: Duration,
+) -> Option<CheckResult> {
+    remaining.is_zero().then(|| {
+        CheckResult::fail(
+            name,
+            format!(
+                "the {}s verify limit passed before the {name} check ran",
+                limit.as_secs()
+            ),
+        )
+    })
+}
 
 pub fn missing_checks<'a>(results: &[CheckResult], required: &[&'a str]) -> Vec<&'a str> {
     required
@@ -393,6 +421,32 @@ mod tests {
             render_summary("cursor", "unknown version", true, false),
             "FAIL: cursor unknown version (free and live checks)"
         );
+    }
+
+    #[test]
+    fn an_expired_deadline_fails_the_named_check() {
+        assert_eq!(
+            limit_failure("events", Duration::ZERO, FREE_VERIFY_LIMIT),
+            Some(CheckResult::fail(
+                "events",
+                "the 90s verify limit passed before the events check ran"
+            ))
+        );
+    }
+
+    #[test]
+    fn time_left_lets_the_check_run() {
+        assert_eq!(
+            limit_failure("spawn", Duration::from_millis(1), LIVE_VERIFY_LIMIT),
+            None
+        );
+    }
+
+    #[test]
+    fn the_live_limit_is_named_in_the_failure() {
+        let failure = limit_failure("session/read", Duration::ZERO, verify_limit(true)).unwrap();
+        assert!(failure.detail.contains("420s"), "{}", failure.detail);
+        assert_eq!(verify_limit(false), Duration::from_secs(90));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::config::AppConfig;
 use crate::subprocess::timed_output;
 use crate::transport::stdio::{spawn_piped, stop_child};
 use crate::watches::locked;
-use crate::worker_verify::{step, version_probe, Checks};
+use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
@@ -77,11 +77,17 @@ fn run_turn(wire: &Wire, text: &str, plan: ClaudePlan) -> ClaudeFold {
     fold
 }
 
-fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks) {
+fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks, budget: Budget) {
+    if !budget.allows(checks, "prompt/reply") {
+        return;
+    }
     let plain = run_turn(wire, REPLY_PROMPT, ClaudePlan::Plain);
     checks.add(init_check(plain.session.as_deref(), expected_session));
     checks.add(prompt_check(&plain.summary, CLAUDE_ENDED));
     if plain.summary.stop.is_err() {
+        return;
+    }
+    if !budget.allows(checks, "permission") {
         return;
     }
     let allowed = run_turn(wire, CLAUDE_PERMISSION_PROMPT, ClaudePlan::Allow);
@@ -90,6 +96,9 @@ fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks) {
         CLAUDE_ENDED,
         &PermissionSetup::claude_headless(),
     ));
+    if !budget.allows(checks, "cancel") {
+        return;
+    }
     let cancelled = run_turn(wire, CANCEL_PROMPT, ClaudePlan::Cancel);
     checks.add(cancel_check(&cancelled.summary, CLAUDE_INTERRUPTED));
 }
@@ -171,39 +180,61 @@ pub(crate) fn verify(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
     ));
+    let budget = Budget::new(live);
     let version = step(
         checks,
         "version",
         claude_probed_version(&probe),
         |version| format!("{version} (probed {})", CLAUDE_GATE.probed),
     )?;
+    let scope = SpawnScope {
+        dir,
+        config,
+        model,
+        budget,
+    };
     for spawn in claude_verify_spawns(live) {
-        if !run_spawn(*spawn, dir, checks, config, model) {
+        if !budget.allows(checks, spawn_name(*spawn)) {
+            break;
+        }
+        if !run_spawn(*spawn, &scope, checks) {
             break;
         }
     }
     Some(version)
 }
 
-fn run_spawn(
-    kind: ClaudeSpawn,
-    dir: &Path,
-    checks: &Checks,
-    config: &Result<AppConfig, String>,
-    model: Option<&str>,
-) -> bool {
+fn spawn_name(kind: ClaudeSpawn) -> &'static str {
+    match kind {
+        ClaudeSpawn::Argv => "spawn",
+        ClaudeSpawn::Turns => "live spawn",
+    }
+}
+
+struct SpawnScope<'a> {
+    dir: &'a Path,
+    config: &'a Result<AppConfig, String>,
+    model: Option<&'a str>,
+    budget: Budget,
+}
+
+fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
+    let SpawnScope {
+        dir,
+        config,
+        model,
+        budget,
+    } = *scope;
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
         spawn_piped(claude_command(dir, &session, config, model))
             .map(|spawned| (session, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });
-    let name = match kind {
-        ClaudeSpawn::Argv => "spawn",
-        ClaudeSpawn::Turns => "live spawn",
-    };
-    let Some((session, (mut child, stdin, stdout, stderr))) = step(checks, name, spawned, |_| {
-        format!("`{CLAUDE_COMMAND}` started with the worker argv")
-    }) else {
+    let Some((session, (mut child, stdin, stdout, stderr))) =
+        step(checks, spawn_name(kind), spawned, |_| {
+            format!("`{CLAUDE_COMMAND}` started with the worker argv")
+        })
+    else {
         return false;
     };
     let stderr = collect_stderr(stderr);
@@ -228,7 +259,7 @@ fn run_spawn(
         }
         ClaudeSpawn::Turns => {
             if running {
-                live_checks(&wire, &session, checks);
+                live_checks(&wire, &session, checks, budget);
             }
             locked(&wire.stdin).take();
         }

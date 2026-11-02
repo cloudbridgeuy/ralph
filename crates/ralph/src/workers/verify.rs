@@ -2,7 +2,7 @@ use super::spawn::await_startup;
 use super::{run, send_to_pane};
 use crate::config::AppConfig;
 use crate::subprocess::timed_output;
-use crate::worker_verify::{step, version_probe, Checks};
+use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::worker::{
     claude_permission_check, claude_prompt_check, flags_check, probe_text, resolve_claude_shell,
@@ -171,6 +171,7 @@ pub(crate) fn verify(
     config: &Result<AppConfig, String>,
     model: Option<&str>,
 ) -> Option<String> {
+    let budget = Budget::new(live);
     let probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--version"),
         VERSION_PROBE_LIMIT,
@@ -178,6 +179,9 @@ pub(crate) fn verify(
     let version = step(checks, "version", tmux_claude_version(&probe), |version| {
         version.clone()
     })?;
+    if !budget.allows(checks, "tmux") {
+        return Some(version);
+    }
     let tmux_probe = version_probe(timed_output(
         Command::new("tmux").arg("-V"),
         VERSION_PROBE_LIMIT,
@@ -185,6 +189,9 @@ pub(crate) fn verify(
     let tmux = step(checks, "tmux", probe_text("tmux -V", &tmux_probe), |text| {
         text.trim().to_string()
     });
+    if !budget.allows(checks, "flags") {
+        return Some(version);
+    }
     let help_probe = version_probe(timed_output(
         Command::new(CLAUDE_COMMAND).arg("--help"),
         VERSION_PROBE_LIMIT,
@@ -197,7 +204,7 @@ pub(crate) fn verify(
     if tmux.is_none() || !flags_ok {
         return Some(version);
     }
-    if !live {
+    if !live || !budget.allows(checks, "session start") {
         return Some(version);
     }
     let launched = launch(dir, config, model);
@@ -214,10 +221,13 @@ pub(crate) fn verify(
     checks.add(startup_check(started));
     if ready {
         thread::sleep(INPUT_SETTLE);
+        if !budget.allows(checks, "prompt/reply") {
+            return Some(version);
+        }
         let prompt = prompt_turn(&session, &paths);
         let replied = prompt.verdict == Verdict::Pass;
         checks.add(prompt);
-        if replied {
+        if replied && budget.allows(checks, "permission") {
             checks.add(permission_turn(&session, &paths));
         }
     }
