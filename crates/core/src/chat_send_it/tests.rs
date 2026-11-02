@@ -386,10 +386,10 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
         unknown_focus: UnknownFocus::Alert,
     };
     assert_eq!(
-        blocked_alert("send-it paused", &config),
+        blocked_alert("send-it stopped", &config),
         Some(Alert {
             sound: true,
-            notification: Some("send-it paused".to_string()),
+            notification: Some("send-it stopped".to_string()),
         })
     );
     let quiet = AlertConfig {
@@ -397,7 +397,7 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
         notification: false,
         ..config
     };
-    assert_eq!(blocked_alert("send-it paused", &quiet), None);
+    assert_eq!(blocked_alert("send-it stopped", &quiet), None);
     let sound_only = AlertConfig {
         notification: false,
         ..config
@@ -414,10 +414,10 @@ fn a_blocked_alert_carries_the_notice_and_follows_the_config() {
 #[test]
 fn the_blocked_frame_report_is_a_question_with_the_notice() {
     assert_eq!(
-        blocked_report("send-it paused"),
+        blocked_report("send-it stopped"),
         ProgramReport {
             state: State::Blocked(Kind::Question),
-            msg: Some("send-it paused".to_string()),
+            msg: Some("send-it stopped".to_string()),
         }
     );
 }

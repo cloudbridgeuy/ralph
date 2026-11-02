@@ -162,7 +162,7 @@ impl ManualReason {
             ManualReason::WorkerFlagged => "a worker needs attention",
             ManualReason::SchedulePending => "a scheduled task is pending",
         };
-        format!("send-it paused: {why}. {}", run.resume_hint())
+        format!("send-it stopped: {why}. {}", run.resume_hint())
     }
 }
 
@@ -280,7 +280,7 @@ pub fn cancel_notice(run: &Run) -> String {
 
 pub fn no_terminal_notice(run: &Run) -> String {
     format!(
-        "send-it paused: the countdown needs a terminal. {}",
+        "send-it stopped: the countdown needs a terminal. {}",
         run.resume_hint()
     )
 }
