@@ -12,7 +12,7 @@ const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 const AUTO_PREFIX: &str = "[send-it] ";
 
-const VETO_TOKENS: [&str; 20] = [
+const DECISION_TOKENS: [&str; 64] = [
     "push",
     "pushed",
     "pushes",
@@ -33,6 +33,64 @@ const VETO_TOKENS: [&str; 20] = [
     "approving",
     "approval",
     "lgtm",
+    "done",
+    "mark",
+    "marked",
+    "file",
+    "filed",
+    "cancel",
+    "cancelled",
+    "label",
+    "labels",
+    "comment",
+    "comments",
+    "close",
+    "closed",
+    "closes",
+    "release",
+    "tag",
+    "tags",
+    "reset",
+    "force",
+    "drop",
+    "dropping",
+    "delete",
+    "deleted",
+    "kill",
+    "killed",
+    "plan",
+    "planned",
+    "proposed",
+    "option",
+    "pick",
+    "ticket",
+    "tickets",
+    "linear",
+    "haiku",
+    "sonnet",
+    "opus",
+    "paid",
+    "i",
+    "my",
+    "deploy",
+    "publish",
+    "rm",
+    "revert",
+    "squash",
+];
+
+const ROUTINE_TOKENS: [&str; 11] = [
+    "fix",
+    "fixes",
+    "checks",
+    "test",
+    "tests",
+    "reinstall",
+    "rebase",
+    "retry",
+    "lint",
+    "fmt",
+    "clippy",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,7 +206,8 @@ pub struct Facts<'a> {
 pub enum ManualReason {
     NoStep,
     SlashCommand,
-    VetoWord,
+    Decision(&'static str),
+    NotRoutine,
     WorkerFlagged,
     SchedulePending,
 }
@@ -158,7 +217,13 @@ impl ManualReason {
         let why = match self {
             ManualReason::NoStep => "this reply is not a routine step",
             ManualReason::SlashCommand => "this reply is a slash command",
-            ManualReason::VetoWord => "this reply mentions push, merge, PR, approve or abandon",
+            ManualReason::Decision(word) => {
+                return format!(
+                    "send-it stopped: this reply is a decision ({word}). {}",
+                    run.resume_hint()
+                );
+            }
+            ManualReason::NotRoutine => "this reply names no routine action",
             ManualReason::WorkerFlagged => "a worker needs attention",
             ManualReason::SchedulePending => "a scheduled task is pending",
         };
@@ -191,30 +256,43 @@ pub enum Decision {
     Stop(StopReason),
 }
 
-pub fn vetoed_text(text: &str) -> bool {
+pub fn text_reason(text: &str) -> Option<ManualReason> {
     let lowered = text.to_lowercase();
     let tokens: Vec<&str> = lowered
         .split(|c: char| !c.is_alphanumeric())
         .filter(|token| !token.is_empty())
         .collect();
-    tokens.iter().any(|token| VETO_TOKENS.contains(token))
-        || tokens
-            .windows(2)
-            .any(|pair| pair[0] == "pull" && matches!(pair[1], "request" | "requests"))
+    if let Some(word) = tokens
+        .iter()
+        .find_map(|token| DECISION_TOKENS.iter().find(|word| *word == token))
+    {
+        return Some(ManualReason::Decision(word));
+    }
+    if tokens
+        .windows(2)
+        .any(|pair| pair[0] == "pull" && matches!(pair[1], "request" | "requests"))
+    {
+        return Some(ManualReason::Decision("pull request"));
+    }
+    (!tokens.iter().any(|token| ROUTINE_TOKENS.contains(token))).then_some(ManualReason::NotRoutine)
 }
 
 pub fn decide(run: &Run, limits: &Limits, facts: &Facts) -> Decision {
     if facts.text.starts_with('/') {
         return Decision::Manual(ManualReason::SlashCommand);
     }
-    if vetoed_text(facts.text) {
-        return Decision::Manual(ManualReason::VetoWord);
+    let reason = text_reason(facts.text);
+    if let Some(word @ ManualReason::Decision(_)) = reason {
+        return Decision::Manual(word);
     }
     if facts.worker_flagged {
         return Decision::Manual(ManualReason::WorkerFlagged);
     }
     if facts.schedule_pending {
         return Decision::Manual(ManualReason::SchedulePending);
+    }
+    if let Some(reason) = reason {
+        return Decision::Manual(reason);
     }
     let Some(step) = facts.step else {
         return Decision::Manual(ManualReason::NoStep);

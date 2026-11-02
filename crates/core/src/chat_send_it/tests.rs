@@ -34,73 +34,105 @@ fn step_names_round_trip() {
     assert_eq!(Step::DoneCleanup.as_str(), "done_cleanup");
 }
 
-#[test]
-fn vetoes_push_and_merge_words() {
-    for text in [
-        "pushed",
-        "PRs",
-        "PR",
-        "force-push it",
-        "open a pull request",
-        "Abandon GUZ-1",
-        "merge it",
-        "pull requests are ready",
-    ] {
-        assert!(vetoed_text(text), "{text}");
-    }
-}
+const FIX_ROUND: &str = "go 1172: full fix, blocked_alert follows the Rex gate, failing test first, new commit, four checks, reinstall";
 
 #[test]
-fn vetoes_approval_words() {
-    for text in [
-        "approve",
-        "Approved",
-        "approves it",
-        "approving now",
-        "needs approval",
-        "LGTM",
-        "ok, lgtm!",
-    ] {
-        assert!(vetoed_text(text), "{text}");
-    }
-}
-
-#[test]
-fn approval_lookalikes_are_not_vetoed() {
-    for text in ["approvals", "disapprove", "approx", "lgtmx"] {
-        assert!(!vetoed_text(text), "{text}");
-    }
-}
-
-#[test]
-fn allows_lookalike_words() {
-    for text in [
-        "pushover",
-        "emerge",
-        "prefix the line",
-        "submerge",
-        "pull the logs",
-    ] {
-        assert!(!vetoed_text(text), "{text}");
-    }
-}
-
-#[test]
-fn veto_beats_a_routine_step() {
+fn a_real_fix_round_counts_down() {
     let run = Run::new("GUZ-1");
     assert_eq!(
-        decide_with(
-            &run,
-            "go fast-forward main to abc and push",
-            Some(Step::FixRound)
-        ),
-        Decision::Manual(ManualReason::VetoWord)
+        decide_with(&run, FIX_ROUND, Some(Step::FixRound)),
+        Decision::Countdown
     );
 }
 
 #[test]
-fn fast_forward_alone_is_not_vetoed() {
-    assert!(!vetoed_text("fast-forward main"));
+fn real_decision_replies_wait_on_the_person() {
+    let run = Run::new("GUZ-1");
+    for (text, word) in [
+        ("go merge 1172", "merge"),
+        (
+            "go: reset local main to origin/main dropping our 27b9664, keep worker/GUZ-1176, run the checks, reinstall, rerun the case B repro",
+            "reset",
+        ),
+        (
+            "go: mark 1175 Done after CI, close the worker, delete /tmp/guz1175",
+            "mark",
+        ),
+        ("go: close the 1202 worker", "close"),
+        ("I quit the A4 test chat; delete the rest", "i"),
+        (
+            "go 792 live check 1-6 in tmux on /tmp/guz792, Haiku for the test chat (stop if first call isn't Haiku), ≤6 turns, Ctrl-C via send-keys, stop on first FAIL, keep raw logs",
+            "haiku",
+        ),
+        ("go 1191 plan-first", "plan"),
+        ("open a pull request", "pull request"),
+        ("ok, LGTM!", "lgtm"),
+        ("Done", "done"),
+    ] {
+        assert_eq!(
+            decide_with(&run, text, Some(Step::FixRound)),
+            Decision::Manual(ManualReason::Decision(word)),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_reply_with_no_routine_action_waits_on_the_person() {
+    let run = Run::new("GUZ-1");
+    assert_eq!(
+        decide_with(
+            &run,
+            "go 1166 live check steps 1-5 on /tmp/guz1166 only, restore the chmod, stop on first FAIL, keep raw logs",
+            Some(Step::LiveCheck)
+        ),
+        Decision::Manual(ManualReason::NotRoutine)
+    );
+}
+
+#[test]
+fn routine_words_count_as_whole_tokens_only() {
+    for text in [
+        "run the checks",
+        "fix the typo",
+        "rebase on main",
+        "retry the tests",
+        "cargo fmt and clippy",
+        "lint it",
+        "reinstall",
+    ] {
+        assert_eq!(text_reason(text), None, "{text}");
+    }
+    for text in [
+        "prefix the line",
+        "checksum it",
+        "contest",
+        "pushover",
+        "emerge",
+    ] {
+        assert_eq!(text_reason(text), Some(ManualReason::NotRoutine), "{text}");
+    }
+}
+
+#[test]
+fn decision_words_match_in_any_case_and_form() {
+    for (text, word) in [
+        ("fix it and PUSHED", "pushed"),
+        ("fix, then PRs", "prs"),
+        ("fix it, approving now", "approving"),
+        ("fix it, needs approval", "approval"),
+        ("fix it then force-push", "force"),
+        ("fix it, then delete /tmp/guz1175", "delete"),
+        ("fix it, pull requests are ready", "pull request"),
+    ] {
+        assert_eq!(
+            text_reason(text),
+            Some(ManualReason::Decision(word)),
+            "{text}"
+        );
+    }
+    assert_eq!(text_reason("fix the approvals list"), None);
+    assert_eq!(text_reason("fix it and pull the logs"), None);
 }
 
 #[test]
@@ -120,7 +152,7 @@ fn slash_text_is_manual() {
 fn missing_step_is_manual() {
     let run = Run::new("GUZ-1");
     assert_eq!(
-        decide_with(&run, "go on", None),
+        decide_with(&run, "run the checks", None),
         Decision::Manual(ManualReason::NoStep)
     );
 }
@@ -128,13 +160,13 @@ fn missing_step_is_manual() {
 #[test]
 fn worker_flag_and_schedule_are_manual() {
     let run = Run::new("GUZ-1");
-    let mut flagged = facts("go on", Some(Step::Checks));
+    let mut flagged = facts(FIX_ROUND, Some(Step::Checks));
     flagged.worker_flagged = true;
     assert_eq!(
         decide(&run, &limits(), &flagged),
         Decision::Manual(ManualReason::WorkerFlagged)
     );
-    let mut pending = facts("go on", Some(Step::Checks));
+    let mut pending = facts(FIX_ROUND, Some(Step::Checks));
     pending.schedule_pending = true;
     assert_eq!(
         decide(&run, &limits(), &pending),
@@ -149,13 +181,13 @@ fn caps_stop_the_run() {
         run.record(Step::FixRound, &format!("go {index}"), None);
     }
     assert_eq!(
-        decide_with(&run, "go on", Some(Step::FixRound)),
+        decide_with(&run, "fix it", Some(Step::FixRound)),
         Decision::Stop(StopReason::TurnCap)
     );
     let mut spent = Run::new("GUZ-1");
     spent.record(Step::FixRound, "go", Some(1.0));
     assert_eq!(
-        decide_with(&spent, "go on", Some(Step::FixRound)),
+        decide_with(&spent, "fix it", Some(Step::FixRound)),
         Decision::Stop(StopReason::CostCap)
     );
 }
@@ -200,7 +232,8 @@ fn notices_point_back_to_the_ticket() {
     for notice in [
         ManualReason::NoStep.notice(&run),
         ManualReason::SlashCommand.notice(&run),
-        ManualReason::VetoWord.notice(&run),
+        ManualReason::Decision("merge").notice(&run),
+        ManualReason::NotRoutine.notice(&run),
         ManualReason::WorkerFlagged.notice(&run),
         ManualReason::SchedulePending.notice(&run),
         StopReason::TurnCap.notice(&run),
