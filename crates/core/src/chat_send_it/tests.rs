@@ -51,6 +51,28 @@ fn vetoes_push_and_merge_words() {
 }
 
 #[test]
+fn vetoes_approval_words() {
+    for text in [
+        "approve",
+        "Approved",
+        "approves it",
+        "approving now",
+        "needs approval",
+        "LGTM",
+        "ok, lgtm!",
+    ] {
+        assert!(vetoed_text(text), "{text}");
+    }
+}
+
+#[test]
+fn approval_lookalikes_are_not_vetoed() {
+    for text in ["approvals", "disapprove", "approx", "lgtmx"] {
+        assert!(!vetoed_text(text), "{text}");
+    }
+}
+
+#[test]
 fn allows_lookalike_words() {
     for text in [
         "pushover",

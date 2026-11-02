@@ -154,7 +154,7 @@ impl Command {
             Command::SendIt => &[
                 (
                     "/send-it <ticket>",
-                    "auto-send the model's suggested replies for routine steps after a countdown ([chat] send_it_seconds); any key cancels one send; it stops at a turn or cost cap, a repeated reply, or a reply that mentions push, merge, PR or abandon; the model suggests it after the person approves a plan, in place of /hold <ticket>, and again to resume after a stop; only replies it marks as routine steps (fix rounds, free live checks, the four checks, reinstalls, post-push cleanup) send, never approval, merge, push, paid runs or abandon",
+                    "auto-send the model's suggested replies for routine steps after a countdown ([chat] send_it_seconds); any key cancels one send; it stops at a turn or cost cap, a repeated reply, or a reply that mentions push, merge, PR, approve or abandon; the model suggests it after the person approves a plan, in place of /hold <ticket>, and again to resume after a stop; only replies it marks as routine steps (fix rounds, free live checks, the four checks, reinstalls, post-push cleanup) send, never approval, merge, push, paid runs or abandon",
                 ),
                 ("/send-it off", "stop auto-sending; /send-it alone shows its state"),
             ],

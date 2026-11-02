@@ -12,7 +12,7 @@ const DIM: &str = "\x1b[2m";
 const RESET: &str = "\x1b[0m";
 const AUTO_PREFIX: &str = "[send-it] ";
 
-const VETO_TOKENS: [&str; 14] = [
+const VETO_TOKENS: [&str; 20] = [
     "push",
     "pushed",
     "pushes",
@@ -27,6 +27,12 @@ const VETO_TOKENS: [&str; 14] = [
     "abandoned",
     "abandons",
     "abandoning",
+    "approve",
+    "approved",
+    "approves",
+    "approving",
+    "approval",
+    "lgtm",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +158,7 @@ impl ManualReason {
         let why = match self {
             ManualReason::NoStep => "this reply is not a routine step",
             ManualReason::SlashCommand => "this reply is a slash command",
-            ManualReason::VetoWord => "this reply mentions push, merge, PR or abandon",
+            ManualReason::VetoWord => "this reply mentions push, merge, PR, approve or abandon",
             ManualReason::WorkerFlagged => "a worker needs attention",
             ManualReason::SchedulePending => "a scheduled task is pending",
         };
