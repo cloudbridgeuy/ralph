@@ -5,7 +5,7 @@
 ## CLI
 
 ```bash
-ralph chat [--skill <PATH>]... [--permission-mode <MODE>] [--worktree-dir <DIR>] [--no-inbox-sound] [--no-inbox-notification]
+ralph chat [--skill <PATH>]... [--permission-mode <MODE>] [--worktree-dir <DIR>] [--no-inbox-sound] [--no-inbox-notification] [--skip-summary]
 ralph                      # same as ralph chat with defaults
 ralph chat history <read|zoom|recall|search> <words>... [--cursor <C>] [--store <DIR>]
 ```
@@ -17,6 +17,7 @@ ralph chat history <read|zoom|recall|search> <words>... [--cursor <C>] [--store 
 - `--worktree-dir <DIR>` sets where spawned workers get their worktrees. Precedence: flag, `RALPH_WORKTREE_DIR`, `[chat] worktree_dir`, then `.worktrees`. A leading `~` expands to home; a relative path resolves against the repo root of each spawn, not the chat's cwd. The chat process resolves the rest on each spawn and close.
 - `--wrap-width <N>` caps the wrap width of rendered replies, worker reports and the prompt area (status line, draft, footer). Precedence: flag, `RALPH_WRAP_WIDTH`, `[chat] wrap_width`; `0` or unset = terminal width. The smaller of the cap and the terminal width wins, read at each render. A value that is not a whole number stops chat start with an error. See [configuration](../configuration.md).
 - `--no-inbox-sound` and `--no-inbox-notification` turn off the inbox alert parts (see Inbox alerts).
+- `--skip-summary` skips the [startup recap](#startup-recap) for this run.
 - `--store <DIR>` sets the store path. Precedence: `--store`, then `RALPH_CHAT_STORE`, then `~/.ralph/chat`; an empty `RALPH_CHAT_STORE` counts as unset, and a missing home directory is an error when neither is set. A relative path resolves against the cwd at startup. The directory is created at startup. Parallel chat instances need separate stores (the session name is only a label and does not separate them); otherwise they share the log, `history.txt`, `editor.md`, and `inbox/`.
 - `--name <NAME>` sets the session name shown in the status bar and the terminal title. Precedence: flag, `[chat] name`, git root folder name, cwd folder name, then `ralph`. See [Session name](#session-name).
 - Hidden subcommands: `ralph chat-mcp --store <DIR> --socket <PATH>` and `ralph chat-nap --store <DIR> [--timeout 600]` (`NAP_TIMEOUT_SECS`). Both are spawned by ralph itself.
@@ -40,6 +41,7 @@ ralph chat history <read|zoom|recall|search> <words>... [--cursor <C>] [--store 
 - `crates/core/src/schedule_worker.rs`: scheduled worker tick plan (cap, deadline, report and restart decisions), chat report texts. `crates/core/src/worker/scheduled.rs` and `worker/guard.rs`: the scheduled prompt, base and no-push guard plan.
 - `crates/core/src/diff_command.rs`: `/diff` argv (`git`, `delta`, `hunk`) and shell-word splitting.
 - `crates/ralph/src/chat/diff.rs`: spawns that argv with the terminal inherited.
+- `crates/core/src/chat_recap.rs`: the pure startup recap (`recap`, `next_step`). `crates/ralph/src/chat/recap.rs`: reads the log and the unpushed count and prints it.
 - `crates/core/src/chat_skills.rs`: `resolve_skills`, `plan_links`, `expand_slash_command`, `plugin_manifest`, `build_plugin_args`.
 - `crates/ralph/src/chat/mod.rs`: `run` and shared setup.
 - `crates/ralph/src/config/view.rs`: the pure `/config` view (`config_view`, `merged_rows`, `env_settings`) and `load_for_chat`. `crates/ralph/src/chat/config.rs`: `flag_settings`, the chat env allowlist and `/config` printing.
@@ -89,6 +91,22 @@ Ctrl-Q during a turn, or typing text, pauses the display of the turn output and 
 - Only the merged text goes to `history.txt`.
 - After a cancel, a failed turn, an editor Ctrl-C, or a back-out, ralph sends nothing and puts the entries, joined with a blank line, in the next prompt. A restored cancelled message comes first, then a blank line, then the entries. On exit (SIGTERM or SIGHUP) the entries and any typed text are saved to the chat history, and one line `N queued message(s) not sent; saved to history.` goes to stderr.
 - Text typed during a turn opens the queue editor seeded with it (`chat_typed::typed`): all printable text of the read, before and after a Ctrl-Q, with Tab and inner line breaks kept. Control bytes, arrows and other escape sequences, Alt keys, bracketed-paste markers (the paste content stays) and invalid UTF-8 are dropped; a read with no text and no Ctrl-Q is ignored. A read that ends inside a UTF-8 character or an escape sequence waits up to two 10 ms polls for the rest. Ctrl-C and Ctrl-Z still signal (the terminal keeps ISIG). Bytes left in stdin when the turn ends are read, not flushed; their text is never sent but joins the next prompt draft, after the draft and the queue entries. If the input closes, ralph stops reading keys during the turn. Ctrl-Q at the idle prompt does nothing.
+
+## Startup recap
+
+Before the first prompt, after the leftover-workers hint, chat prints a short recap of where the log ended. It makes no model call and costs nothing. The pure `chat_recap::recap` builds it from the log and live facts; the log has no session marker, so "previous session" is the end of the log.
+
+```text
+last session · 2h ago
+  you: <first non-empty line of the last user message>
+  next: <Next step line of the last assistant reply>
+  live: 2 workers · 3 unpushed
+```
+
+- `next` is the last line of the last assistant reply that starts with `Next step:` or `Next:` (any case; leading `*`, `_`, `-`, `>`, `#` are ignored). The suggested reply itself is not used: it lives only in memory and is not saved.
+- `live` comes only from live reads at start, never from summaries: the running workers of this store, and `git rev-list --count @{u}..HEAD` in the cwd. The git read is limited to 2 seconds with the bounded command helper; a timeout, no upstream or no repo counts as 0. A zero count is left out, and so is the whole line when both are 0.
+- Each line is cut with `…` to the wrap width (`--wrap-width`, `RALPH_WRAP_WIDTH` or `[chat] wrap_width`, capped by the terminal width). Corrupt log lines are skipped. The text has no color.
+- Nothing prints when the log is empty, has no assistant reply, `[chat] resume_summary = false`, or `--skip-summary` is given.
 
 ## Suggested reply
 
@@ -292,7 +310,7 @@ Staleness tests: `chat_help` tests fail when a `Command` does not route or has n
 - `config files changed on disk since start; restart the chat to apply` when loading both files now gives a different merged config than at start (`effective_now`). It compares only `config.toml` values, not the contents of prompt or skill files.
 - Sources, as absolute paths: config dir, global `config.toml` (after `RALPH_CONFIG_DIR`, made absolute against the cwd), store `config.toml` and the store (both canonical, so `/tmp` shows as `/private/tmp` on macOS), `usage.jsonl`, the claude config dir (`[claude] config_dir` or `~/.claude`), `prompt_file`, each `append_prompt_files` entry and each resolved skill dir (`--skill`, `RALPH_CHAT_SKILLS` or `[chat] skills`, before the `SKILL.md` check), resolved as the chat resolved them. Each `/config` checks these files again: a config file, `usage.jsonl`, prompt file or skill dir that does not exist now ends in `(missing)`.
 - Environment: each set, non-empty variable from a fixed list: the `RALPH_*` variables of `config show` plus `RALPH_CONFIG_DIR`, `RALPH_CHAT_STORE`, `NO_COLOR`, `VISUAL` and `EDITOR`, with the key it overrides. None of them holds a secret, so values print as they are.
-- Flags: the `ralph chat` flags given at start (`--store`, `--recent-history-tokens`, `--wrap-width`, `--skill`, `--permission-mode`, `--worktree-dir`, `--no-inbox-sound`, `--no-inbox-notification`), with the key each overrides.
+- Flags: the `ralph chat` flags given at start (`--store`, `--recent-history-tokens`, `--wrap-width`, `--skill`, `--permission-mode`, `--worktree-dir`, `--no-inbox-sound`, `--no-inbox-notification`, `--skip-summary`), with the key each overrides.
 - Merged config: the `config show` rows (`leaf_sources` over the start layers; after a store fallback no row is tagged `store`; after a failed load the chat runs on defaults and no row is tagged `global` or `store`). A store value that hides a global one lists both (`chat.wrap_width = 100  [store; global = 80]`). A key that a flag or variable overrides shows that value, tagged `flag NAME` or `env NAME`, then every layer it hides with its file value (`chat.wrap_width = 90  [flag --wrap-width; store = 100, global = 80]`). A flag beats a variable. `RALPH_THEME` also overrides `theme.assistant.code`. An overridden key with no file value gets its own row.
 
 The chat sets the store config layer to the canonical store path, so its store warnings name that path too.

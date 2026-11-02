@@ -29,6 +29,8 @@ The command is optional: bare `ralph` runs `ralph chat`.
 
 `ralph chat --name <NAME>` sets the chat session name shown in the status bar and the terminal title. It overrides `[chat] name`; without both, the name is the git root or cwd folder name. The name is only a label: chats that share a store still share memory and workers, so use `--store` to separate them ([details](context/ralph-chat.md#session-name)).
 
+`ralph chat --skip-summary` skips the startup recap of the previous session for one run; `[chat] resume_summary = false` turns it off for good ([details](context/ralph-chat.md#startup-recap)).
+
 ---
 
 ## ralph themes

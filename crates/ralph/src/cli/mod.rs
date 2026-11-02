@@ -379,6 +379,9 @@ pub struct ChatArgs {
 
     #[arg(long)]
     pub no_inbox_notification: bool,
+
+    #[arg(long, help = "Skip the recap of the previous session at start")]
+    pub skip_summary: bool,
 }
 
 #[derive(Subcommand, Debug)]

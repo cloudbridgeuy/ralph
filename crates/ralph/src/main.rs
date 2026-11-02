@@ -86,6 +86,7 @@ fn main() -> ExitCode {
         worktree_dir: None,
         no_inbox_sound: false,
         no_inbox_notification: false,
+        skip_summary: false,
     })) {
         Commands::Themes => execute_themes(),
         Commands::Ask(args) => execute_ask(args),

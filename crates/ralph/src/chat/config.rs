@@ -73,6 +73,13 @@ pub(super) fn flag_settings(args: &ChatArgs) -> Vec<Setting> {
                 Some("chat.inbox_alert_notification"),
             )
         }),
+        args.skip_summary.then(|| {
+            flag(
+                "--skip-summary",
+                Value::Boolean(false),
+                Some("chat.resume_summary"),
+            )
+        }),
     ]
     .into_iter()
     .flatten()
@@ -106,6 +113,7 @@ mod tests {
             worktree_dir: None,
             no_inbox_sound: false,
             no_inbox_notification: false,
+            skip_summary: false,
         }
     }
 
@@ -135,6 +143,7 @@ mod tests {
             worktree_dir: Some(".wt".into()),
             no_inbox_sound: true,
             no_inbox_notification: true,
+            skip_summary: true,
         };
         let text = |s: &str| Value::String(s.into());
         assert_eq!(
@@ -168,6 +177,11 @@ mod tests {
                     "--no-inbox-notification",
                     Value::Boolean(false),
                     Some("chat.inbox_alert_notification")
+                ),
+                setting(
+                    "--skip-summary",
+                    Value::Boolean(false),
+                    Some("chat.resume_summary")
                 ),
             ]
         );

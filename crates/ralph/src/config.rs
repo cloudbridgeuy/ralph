@@ -38,6 +38,8 @@ mod permissions;
 mod recent_history_tests;
 #[cfg(test)]
 mod reset_limits_tests;
+#[cfg(test)]
+mod resume_summary_tests;
 mod view;
 mod wire;
 mod workers;
@@ -314,6 +316,8 @@ pub struct ChatSection {
     pub auto_continue: bool,
     #[serde(default = "default_true")]
     pub hold_progress: bool,
+    #[serde(default = "default_true")]
+    pub resume_summary: bool,
     #[serde(default = "default_send_it_seconds")]
     pub send_it_seconds: u64,
     #[serde(default = "default_send_it_max_turns")]
@@ -390,6 +394,7 @@ impl Default for ChatSection {
             auto_hold: true,
             auto_continue: true,
             hold_progress: true,
+            resume_summary: true,
             send_it_seconds: default_send_it_seconds(),
             send_it_max_turns: default_send_it_max_turns(),
             send_it_max_usd: default_send_it_max_usd(),

@@ -20,6 +20,7 @@ mod name;
 mod nudge;
 mod prompt;
 mod queue;
+mod recap;
 mod route;
 mod schedule;
 mod schedule_worker;
@@ -442,13 +443,17 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         &schedule_worker::alive_worker_ids(&monitor.store_dir),
     );
     monitor.refresh(true);
+    let running = running_workers(&monitor.store_dir);
     if let Some(hint) = orphan_hint(
         &ready_ids(&monitor.store_dir),
-        &running_workers(&monitor.store_dir),
+        &running,
         &acp_alive_ids(&monitor.store_dir),
         &resumable_ids(&monitor.store_dir),
     ) {
         println!("{hint}");
+    }
+    if chat_config.resume_summary && !args.skip_summary {
+        recap::print_recap(&store, running.len());
     }
     let at_prompt = Arc::new(AtomicBool::new(false));
     let idle = Arc::new(AtomicBool::new(false));
