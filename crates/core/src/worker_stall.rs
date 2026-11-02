@@ -84,6 +84,25 @@ pub struct StallFacts {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContinueStep {
+    WriteRecord,
+    Log,
+    RemoveRecord,
+}
+
+pub fn before_send() -> &'static [ContinueStep] {
+    &[ContinueStep::WriteRecord]
+}
+
+pub fn after_send(sent: bool) -> &'static [ContinueStep] {
+    if sent {
+        &[ContinueStep::Log]
+    } else {
+        &[ContinueStep::RemoveRecord]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StallAction {
     None,
     Continue,
@@ -312,6 +331,17 @@ mod tests {
         );
         assert_eq!(report_secs("yesterday"), None);
         assert_eq!(report_secs("1969-12-31T23:59:59Z"), None);
+    }
+
+    #[test]
+    fn the_record_is_written_before_the_nudge() {
+        assert_eq!(before_send(), &[ContinueStep::WriteRecord]);
+    }
+
+    #[test]
+    fn a_sent_nudge_is_logged_and_a_failed_one_removes_the_record() {
+        assert_eq!(after_send(true), &[ContinueStep::Log]);
+        assert_eq!(after_send(false), &[ContinueStep::RemoveRecord]);
     }
 
     #[test]

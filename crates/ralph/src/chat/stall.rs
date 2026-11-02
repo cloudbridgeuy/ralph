@@ -6,9 +6,9 @@ use ralph_core::chat_status::RunningWorker;
 use ralph_core::worker::{activity_path, sent_path, ActivityMark, HarnessId, Report};
 use ralph_core::worker_check::CHECK_STATUS;
 use ralph_core::worker_stall::{
-    alert_text, auto_continue_log_path, auto_continued_path, log_line, report_secs,
-    reported_since_go_ahead, stall_action, AutoContinue, StallAction, StallFacts, CONTINUE_TEXT,
-    REASON_API_ERROR,
+    after_send, alert_text, auto_continue_log_path, auto_continued_path, before_send, log_line,
+    report_secs, reported_since_go_ahead, stall_action, AutoContinue, ContinueStep, StallAction,
+    StallFacts, CONTINUE_TEXT, REASON_API_ERROR,
 };
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -102,21 +102,38 @@ impl Monitor {
             return;
         }
         let at = now_secs();
+        self.run_steps(worker, at, before_send());
         let sent = self.workers.nudge(id, CONTINUE_TEXT);
-        if let Err(e) = sent {
+        if let Err(e) = &sent {
             crate::warn::warn(format!("auto-continuing worker {id}: {e}"));
-            return;
         }
-        let record = AutoContinue::new(at, REASON_API_ERROR);
-        warn_if_err(
-            write_file(&auto_continued_path(&self.store_dir, id), &record.render()),
-            format!("recording the auto-continue of worker {id}"),
-        );
-        let line = log_line(at, id, worker.kind.as_str(), REASON_API_ERROR);
-        warn_if_err(
-            append_line(&auto_continue_log_path(&self.store_dir), &line),
-            format!("logging the auto-continue of worker {id}"),
-        );
+        self.run_steps(worker, at, after_send(sent.is_ok()));
+    }
+
+    fn run_steps(&self, worker: &RunningWorker, at: u64, steps: &[ContinueStep]) {
+        let id = &worker.id;
+        let record_path = auto_continued_path(&self.store_dir, id);
+        for step in steps {
+            match step {
+                ContinueStep::WriteRecord => warn_if_err(
+                    write_file(
+                        &record_path,
+                        &AutoContinue::new(at, REASON_API_ERROR).render(),
+                    ),
+                    format!("recording the auto-continue of worker {id}"),
+                ),
+                ContinueStep::RemoveRecord => {
+                    std::fs::remove_file(&record_path).ok();
+                }
+                ContinueStep::Log => warn_if_err(
+                    append_line(
+                        &auto_continue_log_path(&self.store_dir),
+                        &log_line(at, id, worker.kind.as_str(), REASON_API_ERROR),
+                    ),
+                    format!("logging the auto-continue of worker {id}"),
+                ),
+            }
+        }
     }
 
     fn alert_stalled(&self, worker: &RunningWorker, record: Option<AutoContinue>) {
