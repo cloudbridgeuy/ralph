@@ -544,6 +544,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         edit_mode,
         local: &local_route,
         empty_submit: &prompt.empty_submit,
+        store: &store_dir,
+        editor: &prompt.editor,
     };
     let schedule_store = monitor.schedule.clone();
     approve_proposed(&schedule_store, watch_timeout);

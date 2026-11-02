@@ -161,7 +161,6 @@ pub(super) fn edit_mode(mode: EditModeConfig) -> ChatEditMode {
 
 pub(super) fn queue_bindings(keybindings: &mut Keybindings) {
     keybindings.remove_binding(KeyModifiers::CONTROL, KeyCode::Char('v'));
-    keybindings.remove_binding(KeyModifiers::CONTROL, KeyCode::Char('g'));
     keybindings.add_binding(
         KeyModifiers::CONTROL,
         KeyCode::Char('q'),
@@ -227,20 +226,36 @@ pub(super) fn edit_draft(
     store_dir: &Path,
     argv: &[String],
 ) -> io::Result<()> {
-    let (program, args) = argv
-        .split_first()
-        .ok_or_else(|| io::Error::other("editor command is empty"))?;
     let (entries, _) = Store::new(store_dir.to_path_buf()).load()?;
     let reply = entries
         .iter()
         .rev()
         .find(|entry| entry.role == Role::Assistant)
         .map_or("", |entry| entry.text.as_str());
+    let prefill = editor_prefill(reply, editor.current_buffer_contents());
+    edit_text(editor, store_dir, argv, &prefill)
+}
+
+pub(super) fn edit_queue_draft(
+    editor: &mut Reedline,
+    store_dir: &Path,
+    argv: &[String],
+) -> io::Result<()> {
+    let draft = editor.current_buffer_contents().to_string();
+    edit_text(editor, store_dir, argv, &draft)
+}
+
+fn edit_text(
+    editor: &mut Reedline,
+    store_dir: &Path,
+    argv: &[String],
+    prefill: &str,
+) -> io::Result<()> {
+    let (program, args) = argv
+        .split_first()
+        .ok_or_else(|| io::Error::other("editor command is empty"))?;
     let path = store_dir.join(EDITOR_FILE);
-    std::fs::write(
-        &path,
-        editor_prefill(reply, editor.current_buffer_contents()),
-    )?;
+    std::fs::write(&path, prefill)?;
     let mut command = Command::new(program);
     command.args(args).arg(&path);
     default_sigttou_in(&mut command);
