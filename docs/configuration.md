@@ -319,8 +319,8 @@ Precedence: `ask --permission-mode`, then `RALPH_ASK_PERMISSION_MODE`, then this
 | `reset_tokens` | integer | `140000` | Context tokens of the last assistant message at which chat drops the process and respawns from the store; must be above 0, else a warning and `140000` |
 | `watch_timeout_secs` | integer | `3600` | Seconds before a watch is killed and reports that it timed out; applies to every watch without its own `timeout_secs`; `0` is an error |
 | `wrap_width` | integer | unset | Column cap for chat replies and the prompt area; `0` or unset wraps at the terminal width |
-| `cell_output_limit` | integer | `200` | Lines of cell output sent to Claude: first half and last half kept; `0` sends all |
-| `cell_output_bytes` | integer | `65536` | Bytes of cell output sent to Claude: head and tail kept; `0` sends all |
+| `cell_output_limit` | integer | `200` | Lines of cell output sent to Claude, per stream (stdout, stderr): first half and last half kept; `0` sends all |
+| `cell_output_bytes` | integer | `65536` | Bytes of cell output sent to Claude, per stream (stdout, stderr): head and tail kept; `0` sends all |
 | `worker_base` | string | unset | Base branch that `close_worker` checks for unmerged commits |
 | `worktree_dir` | string | `.worktrees` | Directory that holds worker worktrees; a leading `~` expands to home, relative paths resolve against the repo root |
 | `permission_mode` | string | `"auto"` | `claude --permission-mode` for chat turns and claude workers |

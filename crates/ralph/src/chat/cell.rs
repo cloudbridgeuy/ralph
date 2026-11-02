@@ -6,9 +6,10 @@ use ralph_core::chat_cell::{
     build_message, diff_snapshots, display_results, parse_cells, parse_snapshots, shell_stdin,
     strip_shell_preamble, Cell, CellLimits, CellRun, SavedState, ShellKind,
 };
+use ralph_core::chat_cell_stream::{ends_at_line_start, PreambleGate, Sanitizer};
 use std::borrow::Cow;
 use std::ffi::OsString;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -54,6 +55,57 @@ struct Launch<'a> {
 struct Finished {
     run: CellRun,
     snapshot: Vec<u8>,
+}
+
+struct Screen {
+    at_line_start: Mutex<bool>,
+}
+
+impl Screen {
+    fn new() -> Self {
+        Self {
+            at_line_start: Mutex::new(true),
+        }
+    }
+
+    fn write(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let mut at_line_start = self
+            .at_line_start
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut out = io::stdout().lock();
+        let _ = out.write_all(text.as_bytes()).and_then(|()| out.flush());
+        *at_line_start = ends_at_line_start(text, *at_line_start);
+    }
+
+    fn end_line(&self) {
+        let at_line_start = *self
+            .at_line_start
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if !at_line_start {
+            self.write("\n");
+        }
+    }
+}
+
+struct Echo {
+    gate: PreambleGate,
+    clean: Sanitizer,
+    screen: Arc<Screen>,
+}
+
+impl Echo {
+    fn show(&mut self, chunk: &[u8]) {
+        self.screen.write(&self.clean.feed(self.gate.feed(chunk)));
+    }
+
+    fn finish(mut self) {
+        self.screen.write(&self.clean.finish());
+    }
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -104,22 +156,26 @@ fn resolve_runtimes(cells: &[Cell]) -> Result<Vec<Target>, Vec<&str>> {
     }
 }
 
-fn capture(mut source: impl Read, captured: Arc<Mutex<Vec<u8>>>) {
+fn read_all(mut source: impl Read, mut echo: Option<Echo>) -> Vec<u8> {
+    let mut captured = Vec::new();
     let mut chunk = [0u8; 4096];
     while let Ok(read @ 1..) = source.read(&mut chunk) {
-        captured
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend_from_slice(&chunk[..read]);
+        if let Some(echo) = echo.as_mut() {
+            echo.show(&chunk[..read]);
+        }
+        captured.extend_from_slice(&chunk[..read]);
     }
+    if let Some(echo) = echo {
+        echo.finish();
+    }
+    captured
 }
 
-fn spawn_capture(
-    pipe: impl Read + Send + 'static,
-    captured: &Arc<Mutex<Vec<u8>>>,
-) -> thread::JoinHandle<()> {
-    let captured = Arc::clone(captured);
-    thread::spawn(move || capture(pipe, captured))
+fn spawn_read(
+    source: impl Read + Send + 'static,
+    echo: Option<Echo>,
+) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || read_all(source, echo))
 }
 
 pub(crate) fn detach_from_terminal(command: &mut Command) {
@@ -151,15 +207,16 @@ fn route_to_snapshot_fd(command: &mut Command, write_fd: i32) {
     }
 }
 
-fn run_cell(launch: &Launch, cell: &Cell) -> io::Result<Option<Finished>> {
+fn run_cell(launch: &Launch, cell: &Cell, color: bool) -> io::Result<Option<Finished>> {
     signal::interrupt_flag().store(false, Ordering::SeqCst);
     let mut command = Command::new(launch.program);
-    let (output_reader, output_writer) = io::pipe()?;
+    let (stdout_reader, stdout_writer) = io::pipe()?;
+    let (stderr_reader, stderr_writer) = io::pipe()?;
     command
         .args(launch.args)
         .stdin(Stdio::piped())
-        .stdout(output_writer.try_clone()?)
-        .stderr(output_writer);
+        .stdout(stdout_writer)
+        .stderr(stderr_writer);
     detach_from_terminal(&mut command);
     signal::default_sigttou_in(&mut command);
     let snapshot_pipe = if launch.snapshot {
@@ -175,8 +232,6 @@ fn run_cell(launch: &Launch, cell: &Cell) -> io::Result<Option<Finished>> {
         drop(writer);
         reader
     });
-    let captured = Arc::new(Mutex::new(Vec::new()));
-    let snapshot = Arc::new(Mutex::new(Vec::new()));
     let stdin = child.stdin.take();
     let input = launch.stdin.clone();
     let writer = thread::spawn(move || {
@@ -184,10 +239,15 @@ fn run_cell(launch: &Launch, cell: &Cell) -> io::Result<Option<Finished>> {
             let _ = stdin.write_all(input.as_bytes());
         }
     });
-    let readers = [
-        Some(spawn_capture(output_reader, &captured)),
-        snapshot_reader.map(|reader| spawn_capture(reader, &snapshot)),
-    ];
+    let screen = Arc::new(Screen::new());
+    let echo = || Echo {
+        gate: PreambleGate::new(launch.snapshot),
+        clean: Sanitizer::new(color),
+        screen: Arc::clone(&screen),
+    };
+    let stdout = spawn_read(stdout_reader, Some(echo()));
+    let stderr = spawn_read(stderr_reader, Some(echo()));
+    let snapshot = snapshot_reader.map(|reader| spawn_read(reader, None));
     let status = loop {
         if signal::is_interrupted() {
             kill_process_group(&mut child);
@@ -199,21 +259,23 @@ fn run_cell(launch: &Launch, cell: &Cell) -> io::Result<Option<Finished>> {
         }
     };
     let _ = writer.join();
-    readers.into_iter().flatten().for_each(|reader| {
-        let _ = reader.join();
-    });
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+    let snapshot = snapshot
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
+    screen.end_line();
     signal::interrupt_flag().store(false, Ordering::SeqCst);
-    let output = captured.lock().unwrap_or_else(PoisonError::into_inner);
-    let snapshot = snapshot.lock().unwrap_or_else(PoisonError::into_inner);
     Ok(status.map(|status| Finished {
         run: CellRun {
             cell: cell.clone(),
             exit: status
                 .code()
                 .or_else(|| status.signal().map(|sig| 128 + sig)),
-            output: shown_output(&output, launch.snapshot),
+            stdout: shown_output(&stdout, launch.snapshot),
+            stderr: shown_output(&stderr, launch.snapshot),
         },
-        snapshot: snapshot.clone(),
+        snapshot,
     }))
 }
 
@@ -275,8 +337,7 @@ fn absorb_snapshot(state: &mut ShellState, snapshot: &[u8]) {
     };
 }
 
-fn announce(index: usize, runtime: &str) {
-    let color = io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+fn announce(index: usize, runtime: &str, color: bool) {
     let (dim, reset) = if color { (DIM, RESET) } else { ("", "") };
     println!("{dim}▸ cell {index} · {runtime}{reset}");
 }
@@ -305,6 +366,7 @@ pub fn prepare(
     message: &str,
     limits: CellLimits,
     state: &mut ShellState,
+    color: bool,
 ) -> Result<Prepared, TurnOutcome> {
     let message = &*expand_bang_shell(message);
     let cells = parse_cells(message);
@@ -322,9 +384,9 @@ pub fn prepare(
     })?;
     let mut runs = Vec::new();
     for (index, (target, cell)) in targets.iter().zip(&cells).enumerate() {
-        announce(index + 1, &cell.runtime);
+        announce(index + 1, &cell.runtime, color);
         let launch = launch_for(target, cell, state);
-        match run_cell(&launch, cell) {
+        match run_cell(&launch, cell, color) {
             Ok(Some(finished)) => {
                 if launch.snapshot {
                     absorb_snapshot(state, &finished.snapshot);

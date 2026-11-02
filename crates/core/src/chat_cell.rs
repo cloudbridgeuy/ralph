@@ -14,7 +14,8 @@ pub struct Cell {
 pub struct CellRun {
     pub cell: Cell,
     pub exit: Option<i32>,
-    pub output: String,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,9 +156,6 @@ pub fn display_results(message: &str, runs: &[CellRun]) -> String {
             .position(|&close| close == line)
             .and_then(|at| runs.get(at))
         {
-            if !run.output.is_empty() {
-                out.push(fenced("result", &run.output));
-            }
             out.extend(exit_line(run.exit));
         }
     }
@@ -235,6 +233,21 @@ fn fenced(info: &str, body: &str) -> String {
     format!("{fence}{info}\n{}\n{fence}", body.trim_end_matches('\n'))
 }
 
+fn stream_blocks(run: &CellRun, limits: CellLimits) -> String {
+    let blocks: Vec<String> = [("stdout", &run.stdout), ("stderr", &run.stderr)]
+        .into_iter()
+        .filter_map(|(name, output)| {
+            let output = strip_kitty_apc(output);
+            (!output.is_empty()).then(|| fenced(name, &trim_output(&output, limits)))
+        })
+        .collect();
+    if blocks.is_empty() {
+        "(no output)".to_string()
+    } else {
+        blocks.join("\n")
+    }
+}
+
 pub fn build_message(message: &str, runs: &[CellRun], limits: CellLimits) -> String {
     let results: Vec<String> = runs
         .iter()
@@ -244,11 +257,11 @@ pub fn build_message(message: &str, runs: &[CellRun], limits: CellLimits) -> Str
                 .exit
                 .map_or_else(|| "killed by signal".to_string(), |code| code.to_string());
             format!(
-                "[cell {} · {} · exit {exit}]\n{}\noutput:\n{}",
+                "[cell {} · {} · exit {exit}]\n{}\n{}",
                 index + 1,
                 run.cell.runtime,
                 fenced(&run.cell.runtime, &run.cell.code),
-                fenced("", &trim_output(&strip_kitty_apc(&run.output), limits))
+                stream_blocks(run, limits)
             )
         })
         .collect();
@@ -457,7 +470,7 @@ const ZSH_TAIL: &str = r#"zshexit_functions+=(__ralph_dump)
 print -rn -- $'\036'
 if [[ $__ralph_v == on ]]; then setopt verbose; fi
 if [[ $__ralph_x == on ]]; then setopt xtrace; fi
-:"#;
+print -rn -- $'\036' >&2"#;
 
 const BASH_HEAD: &str = r#"unset HISTFILE
 PS1= PS2= PROMPT_COMMAND=
@@ -495,9 +508,10 @@ __ralph_dump"#;
 const BASH_TAIL: &str = r#"trap __ralph_dump EXIT
 case $__ralph_flags in *x*) set -x;; esac
 case $__ralph_flags in *v*) set -v;; esac
-printf '\036'"#;
+printf '\036'
+printf '\036' >&2"#;
 
-const OUTPUT_START: char = '\u{1e}';
+pub(crate) const OUTPUT_START: char = '\u{1e}';
 
 pub fn strip_shell_preamble(output: &str) -> &str {
     output
@@ -629,34 +643,63 @@ mod tests {
         assert!(resolve_cell_limits(Some("many"), None, None, None).is_err());
     }
 
-    #[test]
-    fn message_carries_code_exit_and_output() {
-        let run = CellRun {
+    fn split_run(stdout: &str, stderr: &str) -> CellRun {
+        CellRun {
             cell: Cell {
                 runtime: "zsh".into(),
                 code: "echo hi".into(),
             },
             exit: Some(3),
-            output: "hi\n".into(),
-        };
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        }
+    }
+
+    #[test]
+    fn message_carries_code_exit_and_both_streams() {
         assert_eq!(
-            build_message("go\n```!zsh\necho hi\n```", &[run], NONE),
-            "go\n```zsh\necho hi\n```\n\n[cell 1 · zsh · exit 3]\n```zsh\necho hi\n```\noutput:\n```\nhi\n```"
+            build_message("go\n```!zsh\necho hi\n```", &[split_run("hi\n", "oops\n")], NONE),
+            "go\n```zsh\necho hi\n```\n\n[cell 1 · zsh · exit 3]\n```zsh\necho hi\n```\n```stdout\nhi\n```\n```stderr\noops\n```"
         );
     }
 
     #[test]
-    fn message_drops_image_sequences_before_trimming() {
-        let run = CellRun {
-            cell: Cell {
-                runtime: "zsh".into(),
-                code: "icat".into(),
-            },
-            exit: Some(0),
-            output: "a\x1b_Gm=0;QQ==\x1b\\b\x1b_Gm=1;cut".into(),
+    fn message_omits_an_empty_stream_and_marks_no_output() {
+        let message = "```!zsh\necho hi\n```";
+        let only_err = build_message(message, &[split_run("", "oops")], NONE);
+        assert!(
+            only_err.ends_with("```zsh\necho hi\n```\n```stderr\noops\n```"),
+            "{only_err}"
+        );
+        let silent = build_message(message, &[split_run("", "")], NONE);
+        assert!(
+            silent.ends_with("```zsh\necho hi\n```\n(no output)"),
+            "{silent}"
+        );
+    }
+
+    #[test]
+    fn caps_apply_to_each_stream() {
+        let limits = CellLimits {
+            lines: Some(2),
+            bytes: None,
         };
-        let message = build_message("```!zsh\nicat\n```", &[run], NONE);
-        assert!(message.ends_with("output:\n```\nab\n```"), "{message}");
+        let message = build_message(
+            "```!zsh\necho hi\n```",
+            &[split_run(&numbered(4), &numbered(4))],
+            limits,
+        );
+        assert!(message.ends_with("```stdout\n1\n… 2 lines trimmed …\n4\n```\n```stderr\n1\n… 2 lines trimmed …\n4\n```"), "{message}");
+    }
+
+    #[test]
+    fn message_drops_image_sequences_before_trimming() {
+        let image = split_run(
+            "a\x1b_Gm=0;QQ==\x1b\\b\x1b_Gm=1;cut",
+            "\x1b_Gm=0;QQ==\x1b\\",
+        );
+        let message = build_message("```!zsh\nicat\n```", &[image], NONE);
+        assert!(message.ends_with("```\n```stdout\nab\n```"), "{message}");
     }
 
     fn records(text: &str) -> Vec<u8> {
@@ -683,7 +726,8 @@ mod tests {
                 code: code.into(),
             },
             exit: Some(exit),
-            output: output.into(),
+            stdout: output.into(),
+            stderr: String::new(),
         }
     }
 
@@ -783,7 +827,12 @@ mod tests {
     #[test]
     fn shell_stdin_ends_with_the_code() {
         let stdin = shell_stdin(ShellKind::Bash, &SavedState::default(), "echo hi");
-        assert!(stdin.ends_with("\nprintf '\\036'\necho hi\n"));
+        assert!(stdin.ends_with("\nprintf '\\036'\nprintf '\\036' >&2\necho hi\n"));
+        let zsh = shell_stdin(ShellKind::Zsh, &SavedState::default(), "echo hi");
+        assert!(
+            zsh.ends_with("print -rn -- $'\\036' >&2\necho hi\n"),
+            "{zsh}"
+        );
     }
 
     #[test]
@@ -798,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn results_follow_each_cell_untrimmed_with_exit_line() {
+    fn results_show_each_cell_with_its_exit_line_and_no_output() {
         let runs = [
             run("a", 0, "1\n2\n"),
             run("b", 3, "```x\n"),
@@ -807,7 +856,7 @@ mod tests {
         let message = "go\n```!zsh\na\n```\nmid\n```!zsh\nb\n```\n```!zsh\nc\n```\n";
         assert_eq!(
             display_results(message, &runs),
-            "go\n```zsh\na\n```\n```result\n1\n2\n```\nmid\n```zsh\nb\n```\n````result\n```x\n````\nexit 3\n```zsh\nc\n```\nexit 1\n"
+            "go\n```zsh\na\n```\nmid\n```zsh\nb\n```\nexit 3\n```zsh\nc\n```\nexit 1\n"
         );
     }
 

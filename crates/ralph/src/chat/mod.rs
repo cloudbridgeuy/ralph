@@ -628,7 +628,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 };
                 send_it.begin_turn();
                 monitor.set_phase(Phase::Cell);
-                let outcome = match cell::prepare(&message, cell_limits, &mut shell_state) {
+                let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
                         if let Some(shown) = &prepared.shown {
                             let ctx = RenderContext::new(&agent_highlighter, color)
