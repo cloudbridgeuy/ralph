@@ -23,6 +23,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const TURN_LIMIT: Duration = Duration::from_secs(120);
+const EVENTS_LIMIT: Duration = Duration::from_secs(10);
 const MAIN_SESSION: &str = "verify";
 const ASK_SESSION: &str = "verifyask";
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
@@ -193,15 +194,37 @@ fn live_checks(api: &HttpSse, feed: &Receiver<Feed>, scope: Scope, id: &str, che
     checks.add(cancel_check(&cancelled.summary, OPENCODE_INTERRUPTED));
 }
 
-fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
-    let feed = step(checks, "events", api.events(EVENTS_PATH), |_| {
-        format!("{EVENTS_PATH} connected")
-    })
-    .map(|reader| {
-        let (sender, feed) = mpsc::channel();
-        thread::spawn(move || read_lines(reader, &sender));
-        feed
+fn open_events(api: &HttpSse, path: &str, limit: Duration) -> Result<Receiver<Feed>, String> {
+    let (sender, feed) = mpsc::channel();
+    let (opened, answer) = mpsc::channel();
+    let api = api.clone();
+    let owned = path.to_string();
+    thread::spawn(move || match api.events(&owned) {
+        Ok(reader) => {
+            opened.send(Ok(())).ok();
+            read_lines(reader, &sender);
+        }
+        Err(message) => {
+            opened.send(Err(message)).ok();
+        }
     });
+    match answer.recv_timeout(limit) {
+        Ok(Ok(())) => Ok(feed),
+        Ok(Err(message)) => Err(message),
+        Err(RecvTimeoutError::Timeout) => Err(format!("{path} did not answer within {limit:?}")),
+        Err(RecvTimeoutError::Disconnected) => {
+            Err(format!("the {path} request ended without an answer"))
+        }
+    }
+}
+
+fn run_checks(api: &HttpSse, scope: Scope, live: bool, checks: &Checks) {
+    let feed = step(
+        checks,
+        "events",
+        open_events(api, EVENTS_PATH, EVENTS_LIMIT),
+        |_| format!("{EVENTS_PATH} connected"),
+    );
     let id = opencode_session_id(MAIN_SESSION);
     let created = judged(
         checks,
@@ -273,5 +296,29 @@ mod tests {
         };
         let body = session_json(scope, "verify", false).unwrap();
         assert!(body.contains("claude-haiku-5-5"), "{body}");
+    }
+
+    #[test]
+    fn a_server_that_never_answers_the_events_request_fails_by_the_deadline() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (release, held) = mpsc::channel::<()>();
+        thread::spawn(move || {
+            let accepted = listener.accept();
+            held.recv().ok();
+            drop(accepted);
+        });
+        let (done, outcome) = mpsc::channel();
+        thread::spawn(move || {
+            let api = HttpSse::new(port, "secret");
+            let started = Instant::now();
+            let result = open_events(&api, EVENTS_PATH, Duration::from_millis(300));
+            done.send((result.err(), started.elapsed())).ok();
+        });
+        let verdict = outcome.recv_timeout(Duration::from_secs(3));
+        release.send(()).ok();
+        let (error, elapsed) = verdict.expect("open_events did not return by its deadline");
+        assert!(error.is_some());
+        assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
     }
 }
