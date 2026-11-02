@@ -108,7 +108,7 @@ impl Capabilities {
                 Partial("outcome unknown if claude ignores the interrupt for 30 s")
             }
             (HarnessId::ClaudeHeadless, Resume) => {
-                Partial("turn in flight lost; same cwd required")
+                Partial("turn in flight reported, not re-sent; same cwd required")
             }
         }
     }
@@ -389,7 +389,7 @@ mod tests {
                 Feature::Interrupt => Support::Partial(
                     "outcome unknown if claude ignores the interrupt for 30 s",
                 ),
-                Feature::Resume => Support::Partial("turn in flight lost; same cwd required"),
+                Feature::Resume => Support::Partial("turn in flight reported, not re-sent; same cwd required"),
             };
             assert_eq!(caps.support(feature), expected, "{feature:?}");
         }
