@@ -5,14 +5,15 @@ use super::record::CallRecord;
 use super::usage::{CacheWrite, Usage, UsageOutcome};
 
 fn writes_label(writes: &[CacheWrite]) -> String {
-    if writes.is_empty() {
+    let shown: Vec<String> = writes
+        .iter()
+        .filter(|write| write.tokens > 0)
+        .map(|write| format!("w{}={}", write.tier, write.tokens))
+        .collect();
+    if shown.is_empty() {
         return "w=0".to_string();
     }
-    writes
-        .iter()
-        .map(|write| format!("w{}={}", write.tier, write.tokens))
-        .collect::<Vec<_>>()
-        .join(" ")
+    shown.join(" ")
 }
 
 pub(super) fn hit_fraction(usage: &Usage) -> Option<f64> {
@@ -145,7 +146,7 @@ mod tests {
         let row = live_row(&record(UsageOutcome::Reported(usage(writes)))).unwrap();
         assert_eq!(
             row,
-            "#3 16:24:29 m 200 in=100 cr=600 w5m=200 w1h=100 w?=0 out=20 hit=60% eq=1234"
+            "#3 16:24:29 m 200 in=100 cr=600 w5m=200 w1h=100 out=20 hit=60% eq=1234"
         );
     }
 
@@ -160,6 +161,23 @@ mod tests {
             live_row(&r).unwrap(),
             "#3 16:24:29 m - usage=missing eq=- INCOMPLETE: client disconnected"
         );
+    }
+
+    #[test]
+    fn zero_token_writes_stay_out_of_the_label() {
+        let thirty = CacheTier::Ttl { seconds: 1_800 };
+        let twelve = CacheTier::Ttl { seconds: 43_200 };
+        let write = |tier, tokens| CacheWrite { tier, tokens };
+        let mixed = usage_columns(&UsageOutcome::Reported(usage(vec![
+            write(thirty, 500),
+            write(twelve, 0),
+        ])));
+        assert_eq!(mixed, "in=100 cr=600 w30m=500 out=20 hit=50%");
+        let zeros = usage_columns(&UsageOutcome::Reported(usage(vec![
+            write(thirty, 0),
+            write(twelve, 0),
+        ])));
+        assert_eq!(zeros, "in=100 cr=600 w=0 out=20 hit=86%");
     }
 
     #[test]
