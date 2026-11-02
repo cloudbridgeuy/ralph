@@ -31,7 +31,7 @@ use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
     marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
-    vanished_claude, waiting_path, HarnessId, Report, Scope, HANDOFF_POLL, READY_DIR,
+    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, HANDOFF_POLL, READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -146,13 +146,10 @@ impl Monitor {
             && !(blocked || waiting || (ready && reported)))
             .then(|| capture_pane(&worker.session))
             .flatten();
-        let pane_changed = match &pane {
-            Some(pane) => state.panes.insert(id.clone(), pane.clone()).as_ref() != Some(pane),
-            None => {
-                state.panes.remove(id);
-                true
-            }
-        };
+        let activity = std::fs::read_to_string(activity_path(&self.store_dir, id))
+            .ok()
+            .and_then(|text| ActivityMark::parse(&text))
+            .map(|mark| mark.state);
         WorkerObservation {
             id: id.clone(),
             session: worker.session.clone(),
@@ -163,7 +160,7 @@ impl Monitor {
             unreported,
             reported_since_nudge: reported,
             pane,
-            pane_changed,
+            activity,
         }
     }
 
@@ -217,9 +214,6 @@ impl Monitor {
                 .iter()
                 .map(|worker| self.observe(&mut state, worker))
                 .collect();
-            state
-                .panes
-                .retain(|id, _| running.iter().any(|worker| &worker.id == id));
             state
                 .nudges
                 .retain(|id, _| running.iter().any(|worker| &worker.id == id));
