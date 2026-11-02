@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub const KEEP_TURNS: usize = 20;
+pub const SNAPSHOT_LOCK_WAIT: Duration = Duration::from_secs(5);
+pub const SNAPSHOT_LOCK_POLL: Duration = Duration::from_millis(100);
 pub const CHAT_OWNER: &str = "chat";
 pub const CHAT_REF_PREFIX: &str = "refs/ralph/chat/";
 const WORKER_REF_ROOT: &str = "refs/ralph/workers/";
@@ -99,6 +102,24 @@ pub fn side_dir(store: &Path, slug: &str) -> PathBuf {
 
 pub fn index_path(side: &Path, owner: &str) -> PathBuf {
     side.join("index").join(owner)
+}
+
+fn index_sibling(side: &Path, owner: &str, suffix: &str) -> PathBuf {
+    let mut path = index_path(side, owner).into_os_string();
+    path.push(suffix);
+    PathBuf::from(path)
+}
+
+pub fn index_lock_path(side: &Path, owner: &str) -> PathBuf {
+    index_sibling(side, owner, ".lock")
+}
+
+pub fn snapshot_lock_path(side: &Path, owner: &str) -> PathBuf {
+    index_sibling(side, owner, ".ralph-lock")
+}
+
+pub fn snapshot_lock_expired(waited: Duration) -> bool {
+    waited >= SNAPSHOT_LOCK_WAIT
 }
 
 pub fn chat_ref(turn: u64, edge: Edge) -> String {
@@ -482,6 +503,33 @@ mod tests {
             index_path(Path::new("/s.git"), &worker_owner("A")),
             Path::new("/s.git/index/workers/A")
         );
+    }
+
+    #[test]
+    fn index_locks_sit_next_to_the_owner_index() {
+        let owner = worker_owner("vit-27989-port");
+        assert_eq!(
+            index_lock_path(Path::new("/s.git"), &owner),
+            Path::new("/s.git/index/workers/vit-27989-port.lock")
+        );
+        assert_eq!(
+            snapshot_lock_path(Path::new("/s.git"), &owner),
+            Path::new("/s.git/index/workers/vit-27989-port.ralph-lock")
+        );
+        assert_eq!(
+            snapshot_lock_path(Path::new("/s.git"), CHAT_OWNER),
+            Path::new("/s.git/index/chat.ralph-lock")
+        );
+    }
+
+    #[test]
+    fn snapshot_lock_wait_is_bounded() {
+        assert!(!snapshot_lock_expired(Duration::ZERO));
+        assert!(!snapshot_lock_expired(
+            SNAPSHOT_LOCK_WAIT - SNAPSHOT_LOCK_POLL
+        ));
+        assert!(snapshot_lock_expired(SNAPSHOT_LOCK_WAIT));
+        assert!(snapshot_lock_expired(SNAPSHOT_LOCK_WAIT * 2));
     }
 
     #[test]

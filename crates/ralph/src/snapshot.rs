@@ -5,9 +5,10 @@ use ralph_core::changes::{
 };
 use ralph_core::snapshot::{
     commit_tree_args, delete_payload, delete_refs_args, gc_args, identity_env, index_env,
-    index_path, index_steps, init_args, list_prefix_args, next_turn, parse_snapshot_base,
-    parse_turns, refs_to_prune, side_dir, snapshot_message, update_ref_args, IndexStep,
-    SnapshotBase, CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS,
+    index_lock_path, index_path, index_steps, init_args, list_prefix_args, next_turn,
+    parse_snapshot_base, parse_turns, refs_to_prune, side_dir, snapshot_lock_expired,
+    snapshot_lock_path, snapshot_message, update_ref_args, IndexStep, SnapshotBase,
+    CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS, SNAPSHOT_LOCK_POLL,
 };
 use ralph_core::worker::{base_branch, project_slug};
 use std::ffi::OsString;
@@ -15,6 +16,8 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Instant;
 
 pub struct Snapshotter {
     repo: PathBuf,
@@ -102,6 +105,13 @@ fn rev_parse(cwd: &Path, flag: &str) -> Option<PathBuf> {
     Some(PathBuf::from(output))
 }
 
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 fn repo_of(cwd: &Path) -> Option<PathBuf> {
     rev_parse(cwd, "--show-toplevel")
 }
@@ -180,8 +190,34 @@ impl Snapshotter {
         }
     }
 
+    fn lock_index(&self) -> io::Result<fs::File> {
+        let path = snapshot_lock_path(&self.side, &self.owner);
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)?;
+        let started = Instant::now();
+        loop {
+            match file.try_lock() {
+                Ok(()) => return Ok(file),
+                Err(fs::TryLockError::WouldBlock) => {}
+                Err(fs::TryLockError::Error(error)) => return Err(error),
+            }
+            if snapshot_lock_expired(started.elapsed()) {
+                return Err(io::Error::other(format!(
+                    "skipped: snapshot lock {} is still held",
+                    path.display()
+                )));
+            }
+            thread::sleep(SNAPSHOT_LOCK_POLL);
+        }
+    }
+
     pub fn write_tree(&self) -> io::Result<String> {
         self.ensure_side()?;
+        let _lock = self.lock_index()?;
+        remove_if_present(&index_lock_path(&self.side, &self.owner))?;
         let has_head = self
             .repo_command(&HEAD_CHECK_ARGS)
             .stdout(Stdio::null())
@@ -317,9 +353,46 @@ impl Snapshotter {
     }
 
     pub fn remove_index(&self) -> io::Result<()> {
-        match fs::remove_file(index_path(&self.side, &self.owner)) {
-            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
+        let _lock = match self.lock_index() {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+            lock => lock?,
+        };
+        remove_if_present(&index_path(&self.side, &self.owner))?;
+        remove_if_present(&snapshot_lock_path(&self.side, &self.owner))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ralph_core::snapshot::{snapshot_lock_path, worker_owner};
+
+    fn snapshotter_in(side: &Path) -> Snapshotter {
+        Snapshotter {
+            repo: side.to_path_buf(),
+            side: side.to_path_buf(),
+            owner: worker_owner("A"),
         }
+    }
+
+    #[test]
+    fn remove_index_deletes_the_index_and_its_snapshot_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshotter = snapshotter_in(dir.path());
+        let index = index_path(dir.path(), &snapshotter.owner);
+        fs::create_dir_all(index.parent().unwrap()).unwrap();
+        fs::write(&index, "").unwrap();
+        fs::write(snapshot_lock_path(dir.path(), &snapshotter.owner), "").unwrap();
+        snapshotter.remove_index().unwrap();
+        assert!(!index.exists());
+        assert!(!snapshot_lock_path(dir.path(), &snapshotter.owner).exists());
+    }
+
+    #[test]
+    fn remove_index_without_a_side_dir_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(snapshotter_in(&dir.path().join("missing"))
+            .remove_index()
+            .is_ok());
     }
 }
