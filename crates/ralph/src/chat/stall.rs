@@ -94,6 +94,9 @@ impl Monitor {
         match stall_action(&found) {
             StallAction::None => {}
             StallAction::Continue => self.auto_continue_worker(worker),
+            StallAction::ResetRecord => {
+                std::fs::remove_file(auto_continued_path(&self.store_dir, id)).ok();
+            }
             StallAction::Alert => self.alert_stalled(worker, found.record),
         }
     }
@@ -142,6 +145,13 @@ impl Monitor {
         let record_path = auto_continued_path(&self.store_dir, id);
         for step in steps {
             match step {
+                ContinueStep::StampRecord => warn_if_err(
+                    write_file(
+                        &record_path,
+                        &AutoContinue::new(now_secs(), REASON_API_ERROR).render(),
+                    ),
+                    format!("stamping the auto-continue record of worker {id}"),
+                ),
                 ContinueStep::RemoveRecord => {
                     std::fs::remove_file(&record_path).ok();
                 }
@@ -213,6 +223,12 @@ mod tests {
         let store = dir.path();
         write_file(&activity_path(store, "A"), "100 failed").unwrap();
         write_file(&sent_path(store, "A"), "").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(sent_path(store, "A"))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(50))
+            .unwrap();
         let record = AutoContinue::new(90, REASON_API_ERROR);
         write_file(&auto_continued_path(store, "A"), &record.render()).unwrap();
         let found = facts(&input(store, None));
@@ -224,7 +240,7 @@ mod tests {
             })
         );
         assert!(!found.reported);
-        assert!(found.sent_at.is_some());
+        assert_eq!(found.sent_at, Some(50));
         assert_eq!(found.record, Some(record));
         assert_eq!(stall_action(&found), StallAction::Alert);
     }

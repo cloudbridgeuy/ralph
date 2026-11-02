@@ -86,6 +86,7 @@ pub struct StallFacts {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContinueStep {
+    StampRecord,
     Log,
     RemoveRecord,
 }
@@ -105,7 +106,7 @@ pub fn gate_send(written: bool, warned_in_streak: bool) -> RecordGate {
 
 pub fn after_send(sent: bool) -> &'static [ContinueStep] {
     if sent {
-        &[ContinueStep::Log]
+        &[ContinueStep::StampRecord, ContinueStep::Log]
     } else {
         &[ContinueStep::RemoveRecord]
     }
@@ -116,6 +117,7 @@ pub enum StallAction {
     None,
     Continue,
     Alert,
+    ResetRecord,
 }
 
 const GRACE_CHECKS: u64 = 2;
@@ -144,7 +146,18 @@ fn failed_after_go_ahead(mark: &ActivityMark, facts: &StallFacts) -> bool {
     facts.sent_at.is_none_or(|sent| mark.at >= sent)
 }
 
+fn go_ahead_since(record: &AutoContinue, facts: &StallFacts) -> bool {
+    facts.sent_at.is_some_and(|sent| sent > record.at)
+}
+
 pub fn stall_action(facts: &StallFacts) -> StallAction {
+    if facts
+        .record
+        .as_ref()
+        .is_some_and(|record| go_ahead_since(record, facts))
+    {
+        return StallAction::ResetRecord;
+    }
     let Some(mark) = facts.activity else {
         return StallAction::None;
     };
@@ -246,6 +259,51 @@ mod tests {
                 ..facts(mark(100, ActivityState::Failed))
             };
             assert_eq!(stall_action(&fresh), StallAction::Continue, "{sent_at:?}");
+        }
+    }
+
+    #[test]
+    fn a_go_ahead_newer_than_the_record_resets_it_whatever_the_worker_does() {
+        for state in [
+            ActivityState::Idle,
+            ActivityState::Failed,
+            ActivityState::Running,
+        ] {
+            for record in [continued(90), continued(90).map(AutoContinue::alerted)] {
+                let later = StallFacts {
+                    record,
+                    sent_at: Some(91),
+                    ..facts(mark(100, state))
+                };
+                assert_eq!(stall_action(&later), StallAction::ResetRecord, "{state:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_failure_after_a_reset_gets_its_one_continue_again() {
+        let reset = StallFacts {
+            record: continued(90),
+            sent_at: Some(95),
+            ..facts(mark(100, ActivityState::Failed))
+        };
+        assert_eq!(stall_action(&reset), StallAction::ResetRecord);
+        let cleared = StallFacts {
+            record: None,
+            ..reset
+        };
+        assert_eq!(stall_action(&cleared), StallAction::Continue);
+    }
+
+    #[test]
+    fn the_continue_ralph_sent_does_not_reset_its_own_record() {
+        for sent_at in [Some(90), Some(80), None] {
+            let own = StallFacts {
+                record: continued(90),
+                sent_at,
+                ..facts(mark(100, ActivityState::Failed))
+            };
+            assert_eq!(stall_action(&own), StallAction::Alert, "{sent_at:?}");
         }
     }
 
@@ -402,7 +460,10 @@ mod tests {
 
     #[test]
     fn a_sent_nudge_is_logged_and_a_failed_one_removes_the_record() {
-        assert_eq!(after_send(true), &[ContinueStep::Log]);
+        assert_eq!(
+            after_send(true),
+            &[ContinueStep::StampRecord, ContinueStep::Log]
+        );
         assert_eq!(after_send(false), &[ContinueStep::RemoveRecord]);
     }
 
