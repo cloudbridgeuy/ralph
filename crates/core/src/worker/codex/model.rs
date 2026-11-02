@@ -1,3 +1,4 @@
+use super::super::is_token_model;
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -19,7 +20,11 @@ pub fn resolve_selection(
     config_effort: Option<&str>,
 ) -> Selection {
     Selection {
-        model: present(selected_model).or_else(|| present(config_model)),
+        model: present(selected_model).or_else(|| {
+            config_model
+                .filter(|model| is_token_model(model))
+                .map(str::to_string)
+        }),
         effort: present(config_effort),
     }
 }
@@ -28,6 +33,25 @@ pub fn codex_config_warning(config: Result<(), &str>) -> Option<String> {
     config.err().map(|e| {
         format!("could not read config: {e}; codex model and effort use codex's own defaults")
     })
+}
+
+pub fn codex_config_model_warning(model: Option<&str>) -> Option<String> {
+    model.filter(|model| !is_token_model(model)).map(|model| {
+        format!(
+            "[codex] model '{model}' must be non-empty with no whitespace; using codex's default model."
+        )
+    })
+}
+
+pub fn resolve_codex_warning(
+    spawn: Option<&str>,
+    config: Result<Option<&str>, &str>,
+) -> Option<String> {
+    match config {
+        Err(error) => codex_config_warning(Err(error)),
+        Ok(model) if spawn.is_none() => codex_config_model_warning(model),
+        Ok(_) => None,
+    }
 }
 
 fn entry_names(entry: &Value) -> impl Iterator<Item = &str> {
@@ -93,6 +117,52 @@ mod tests {
     #[test]
     fn codex_config_warning_is_none_for_a_loaded_config() {
         assert_eq!(codex_config_warning(Ok(())), None);
+    }
+
+    #[test]
+    fn codex_config_model_warning_flags_blank_and_spaced_values() {
+        let warning = |model: &str| {
+            Some(format!(
+                "[codex] model '{model}' must be non-empty with no whitespace; using codex's default model."
+            ))
+        };
+        assert_eq!(codex_config_model_warning(None), None);
+        assert_eq!(codex_config_model_warning(Some("gpt-x")), None);
+        assert_eq!(codex_config_model_warning(Some("")), warning(""));
+        assert_eq!(codex_config_model_warning(Some("  ")), warning("  "));
+        assert_eq!(codex_config_model_warning(Some("a b")), warning("a b"));
+        assert_eq!(
+            codex_config_model_warning(Some(" gpt-x ")),
+            warning(" gpt-x ")
+        );
+    }
+
+    #[test]
+    fn resolve_selection_drops_non_token_config_models_but_keeps_spawn_models() {
+        assert_eq!(resolve_selection(None, Some("a b"), None).model, None);
+        assert_eq!(resolve_selection(None, Some("  "), None).model, None);
+        assert_eq!(resolve_selection(None, Some(" gpt-x "), None).model, None);
+        assert_eq!(
+            resolve_selection(None, Some("gpt-x"), None).model,
+            Some("gpt-x".to_string())
+        );
+        assert_eq!(
+            resolve_selection(Some("a b"), Some("gpt-x"), None).model,
+            Some("a b".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_codex_warning_prefers_load_error_then_skips_when_spawn_model_given() {
+        let load = codex_config_warning(Err("bad"));
+        assert_eq!(resolve_codex_warning(Some("m"), Err("bad")), load);
+        assert_eq!(resolve_codex_warning(None, Err("bad")), load);
+        assert_eq!(resolve_codex_warning(Some("m"), Ok(Some("a b"))), None);
+        assert_eq!(resolve_codex_warning(None, Ok(None)), None);
+        assert_eq!(
+            resolve_codex_warning(None, Ok(Some("a b"))),
+            codex_config_model_warning(Some("a b"))
+        );
     }
 
     fn list() -> Value {

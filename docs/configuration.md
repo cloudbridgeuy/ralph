@@ -360,7 +360,7 @@ A `model` passed to `spawn_worker` wins over this key. A value that is empty or 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `permissions` | `"ask"` or `"yolo"` | `"ask"` | `"yolo"` answers `accept` at once to Codex command, file-change and MCP tool-call approvals when `accept` is offered; `"ask"` waits for the person. Session or persistent grants, amendments and permission-grant requests are never auto-answered. Read when a worker starts; a wrong value warns and uses `"ask"` |
-| `model` | string | unset (Codex's own default) | Model for Codex workers that `spawn_worker` starts without a `model`. A `model` passed to `spawn_worker` wins. Checked against `model/list` at spawn; an unknown model fails the spawn. A config that fails to load adds a warning to the spawn result and codex uses its own defaults |
+| `model` | string | unset (Codex's own default) | Model for Codex workers that `spawn_worker` starts without a `model`. A `model` passed to `spawn_worker` wins. Checked against `model/list` at spawn; an unknown model fails the spawn. A blank value or a value with whitespace warns in the spawn result and uses Codex's default. A config that fails to load adds a warning to the spawn result and codex uses its own defaults |
 | `effort` | string | unset (Codex's own setting) | Reasoning effort for Codex workers. Checked against the effective model's `supportedReasoningEfforts` at spawn; an unsupported value fails the spawn and lists the supported ones. There is no `spawn_worker` effort parameter. Read when a worker starts |
 
 Codex setup and limits:
@@ -397,7 +397,7 @@ A bash login shell reads `~/.bash_profile` (or `~/.profile`), not `~/.bashrc`. S
 |-------|------|---------|-------------|
 | `model` | string | `"openai/gpt-6.1-sol"` | `provider/model` for opencode workers that `spawn_worker` starts without a `model` |
 
-A `model` passed to `spawn_worker` wins over this key. A value that is not `provider/model` warns in the spawn result and uses the built-in default. A config that fails to load uses the built-in default. The key is read at each spawn.
+A `model` passed to `spawn_worker` wins over this key. A value that is not `provider/model` warns in the spawn result and uses the built-in default. A config that fails to load warns in the spawn result and uses the built-in default. The key is read at each spawn.
 
 ### `[tickets]` - Ticket Keys
 
