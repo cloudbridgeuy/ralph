@@ -1,9 +1,11 @@
 use super::*;
 use crate::config::AppConfig;
+use crate::ui_theme::UiColors;
 use serde_json::json;
 use std::fs;
 use syntect::highlighting::ThemeSet;
 use tempfile::TempDir;
+use termimad::crossterm::style::Color as Term;
 
 fn theme(name: &str) -> Theme {
     ThemeSet::load_defaults().themes[name].clone()
@@ -17,9 +19,96 @@ fn style(toml: &str) -> MermaidStyle {
     toml::from_str(toml).unwrap()
 }
 
+fn ui() -> UiColors {
+    UiColors::default()
+}
+
+fn code() -> MermaidStyle {
+    style("palette = \"code\"")
+}
+
 #[test]
-fn defaults_follow_the_code_theme() {
-    let (resolved, warnings) = MermaidStyle::default().resolve(&ocean());
+fn defaults_follow_ralphs_ui_palette() {
+    let (resolved, warnings) = MermaidStyle::default().resolve(&ocean(), &ui());
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let colors = &resolved.colors;
+    assert_eq!(colors.bg, [0x1e, 0x21, 0x27, 255]);
+    assert_eq!(colors.fg, [0xab, 0xb2, 0xbf, 255]);
+    assert_eq!(resolved.background, Some(colors.bg));
+    assert_eq!(colors.accent, [0x56, 0xb6, 0xc2, 255]);
+    assert_eq!(colors.critical, [0xe0, 0x6c, 0x75, 255]);
+    assert_eq!(
+        colors.series[..6],
+        [
+            [0x56, 0xb6, 0xc2, 255],
+            [0xc6, 0x78, 0xdd, 255],
+            [0x98, 0xc3, 0x79, 255],
+            [0xe5, 0xc0, 0x7b, 255],
+            [0x61, 0xaf, 0xef, 255],
+            [0xe0, 0x6c, 0x75, 255],
+        ]
+    );
+    let mut distinct = colors.series.to_vec();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(distinct.len(), 8);
+    assert!(!colors.series.contains(&colors.fg));
+}
+
+#[test]
+fn ui_shapes_are_tinted_with_the_accent() {
+    let (resolved, _) = MermaidStyle::default().resolve(&ocean(), &ui());
+    let colors = &resolved.colors;
+    assert_eq!(colors.surface, mix(colors.accent, 0.14, colors.bg));
+    assert_eq!(colors.surface_alt, mix(colors.accent, 0.24, colors.bg));
+    assert_eq!(colors.border, mix(colors.accent, 0.55, colors.bg));
+    let (code, _) = code().resolve(&ocean(), &ui());
+    assert_eq!(
+        code.colors.surface,
+        mix(code.colors.fg, 0.10, code.colors.bg)
+    );
+}
+
+#[test]
+fn ui_colors_set_by_the_person_carry_into_the_picture() {
+    let custom = UiColors {
+        spinner: Term::Rgb { r: 1, g: 2, b: 3 },
+        ask_error: Term::AnsiValue(196),
+        ..UiColors::default()
+    };
+    let (resolved, _) = MermaidStyle::default().resolve(&ocean(), &custom);
+    assert_eq!(resolved.colors.accent, [1, 2, 3, 255]);
+    assert_eq!(resolved.colors.series[0], [1, 2, 3, 255]);
+    assert_eq!(resolved.colors.critical, [255, 0, 0, 255]);
+}
+
+#[test]
+fn terminal_colors_become_rgb() {
+    assert_eq!(terminal_rgb(Term::AnsiValue(238)), [0x44, 0x44, 0x44, 255]);
+    assert_eq!(terminal_rgb(Term::AnsiValue(16)), [0, 0, 0, 255]);
+    assert_eq!(terminal_rgb(Term::AnsiValue(110)), [0x87, 0xaf, 0xd7, 255]);
+    assert_eq!(
+        terminal_rgb(Term::AnsiValue(6)),
+        terminal_rgb(Term::DarkCyan)
+    );
+    assert_eq!(terminal_rgb(Term::AnsiValue(14)), terminal_rgb(Term::Cyan));
+    assert_eq!(terminal_rgb(Term::DarkCyan), [0x56, 0xb6, 0xc2, 255]);
+    assert_eq!(terminal_rgb(Term::Reset), [0xab, 0xb2, 0xbf, 255]);
+}
+
+#[test]
+fn auto_is_no_longer_a_palette() {
+    let (resolved, warnings) = style("palette = \"auto\"").resolve(&ocean(), &ui());
+    assert_eq!(
+        warnings,
+        ["[mermaid.style] palette = \"auto\" is not ui, code, light or dark; using ui"]
+    );
+    assert_eq!(resolved, MermaidStyle::default().resolve(&ocean(), &ui()).0);
+}
+
+#[test]
+fn the_code_palette_follows_the_code_theme() {
+    let (resolved, warnings) = code().resolve(&ocean(), &ui());
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(resolved.colors.bg, [0x2b, 0x30, 0x3b, 255]);
     assert_eq!(resolved.colors.fg, [0xc0, 0xc5, 0xce, 255]);
@@ -35,7 +124,7 @@ fn defaults_follow_the_code_theme() {
         ["SF Mono", "Menlo", "DejaVu Sans Mono"]
     );
     assert_eq!(resolved.font_size, 16.0);
-    assert_eq!(resolved.padding, 16.0);
+    assert_eq!(resolved.padding, 24.0);
     assert!(resolved.auto_direction);
     assert_eq!(resolved.min_text_ratio, 0.6);
     assert!(resolved.config.is_empty());
@@ -43,7 +132,7 @@ fn defaults_follow_the_code_theme() {
 
 #[test]
 fn a_light_code_theme_gives_a_light_picture() {
-    let (resolved, _) = MermaidStyle::default().resolve(&theme("InspiredGitHub"));
+    let (resolved, _) = code().resolve(&theme("InspiredGitHub"), &ui());
     assert_eq!(resolved.colors.bg, [0xff, 0xff, 0xff, 255]);
     let [r, g, b, _] = resolved.colors.fg;
     assert!(u16::from(r) + u16::from(g) + u16::from(b) < 300);
@@ -51,15 +140,15 @@ fn a_light_code_theme_gives_a_light_picture() {
 
 #[test]
 fn a_theme_without_colors_uses_the_dark_palette() {
-    let (auto, _) = MermaidStyle::default().resolve(&Theme::default());
-    let (dark, _) = style("palette = \"dark\"").resolve(&theme("InspiredGitHub"));
+    let (auto, _) = code().resolve(&Theme::default(), &ui());
+    let (dark, _) = style("palette = \"dark\"").resolve(&theme("InspiredGitHub"), &ui());
     assert_eq!(auto.colors, dark.colors);
     assert_eq!(dark.colors.bg, [0x2b, 0x30, 0x3b, 255]);
 }
 
 #[test]
 fn the_light_palette_ignores_the_theme() {
-    let (light, _) = style("palette = \"light\"").resolve(&ocean());
+    let (light, _) = style("palette = \"light\"").resolve(&ocean(), &ui());
     assert_eq!(light.colors.bg, [0xff, 0xff, 0xff, 255]);
     assert_eq!(light.colors.fg, [0x1f, 0x1f, 0x1f, 255]);
     assert_eq!(light.colors.accent, [0x5b, 0x7b, 0xd5, 255]);
@@ -70,9 +159,9 @@ fn each_color_key_overrides_the_palette() {
     let custom = style(
         "series = [\"#000001\", \"#000002\"]\n[colors]\naccent = \"#ff0000\"\nsurface_alt = \"#010203\"\n",
     );
-    let (resolved, warnings) = custom.resolve(&ocean());
+    let (resolved, warnings) = custom.resolve(&ocean(), &ui());
     assert!(warnings.is_empty(), "{warnings:?}");
-    let (base, _) = MermaidStyle::default().resolve(&ocean());
+    let (base, _) = MermaidStyle::default().resolve(&ocean(), &ui());
     assert_eq!(resolved.colors.accent, [255, 0, 0, 255]);
     assert_eq!(resolved.colors.surface_alt, [1, 2, 3, 255]);
     assert_eq!(resolved.colors.series[0], [0, 0, 1, 255]);
@@ -88,20 +177,20 @@ fn bad_values_warn_and_keep_the_default() {
          padding = -1.0\nmin_text_ratio = 1.5\nfont_family = []\nseries = [\"red\"]\n\
          [colors]\naccent = \"#12\"\nglow = \"#ffffff\"\n",
     );
-    let (resolved, warnings) = bad.resolve(&ocean());
-    let (base, _) = MermaidStyle::default().resolve(&ocean());
+    let (resolved, warnings) = bad.resolve(&ocean(), &ui());
+    let (base, _) = MermaidStyle::default().resolve(&ocean(), &ui());
     assert_eq!(resolved, base);
     assert_eq!(
         warnings,
         [
-            "[mermaid.style] palette = \"neon\" is not auto, light or dark; using auto",
+            "[mermaid.style] palette = \"neon\" is not ui, code, light or dark; using ui",
             "[mermaid.style.colors] accent = \"#12\" is not a #rrggbb color; using the default",
             "[mermaid.style.colors] unknown key \"glow\"; ignored",
             "[mermaid.style] series = \"red\" is not a #rrggbb color; using the default",
             "[mermaid.style] background = \"blue\" is not theme, transparent or #rrggbb; using theme",
             "[mermaid.style] font_family is empty; using the default",
             "[mermaid.style] font_size = 0 is not above 0; using 16",
-            "[mermaid.style] padding = -1 is below 0; using 16",
+            "[mermaid.style] padding = -1 is below 0; using 24",
             "[mermaid.style] min_text_ratio = 1.5 is not between 0 and 1; using 0.6",
             "[mermaid.style] curve = \"wiggly\" is not rounded, linear or step; using rounded",
         ]
@@ -111,25 +200,25 @@ fn bad_values_warn_and_keep_the_default() {
 
 #[test]
 fn background_can_be_transparent_or_a_color() {
-    let (clear, _) = style("background = \"transparent\"").resolve(&ocean());
+    let (clear, _) = style("background = \"transparent\"").resolve(&ocean(), &ui());
     assert_eq!(clear.background, None);
-    let (black, _) = style("background = \"#000000\"").resolve(&ocean());
+    let (black, _) = style("background = \"#000000\"").resolve(&ocean(), &ui());
     assert_eq!(black.background, Some([0, 0, 0, 255]));
 }
 
 #[test]
 fn curve_and_config_pass_through_to_the_site_config() {
-    let (linear, _) = style("curve = \"linear\"").resolve(&ocean());
+    let (linear, _) = style("curve = \"linear\"").resolve(&ocean(), &ui());
     assert_eq!(
         Value::Object(linear.config),
         json!({"flowchart": {"curve": "linear"}})
     );
-    let (rounded, _) = style("curve = \"rounded\"").resolve(&ocean());
+    let (rounded, _) = style("curve = \"rounded\"").resolve(&ocean(), &ui());
     assert!(rounded.config.is_empty());
     let mixed = style(
         "curve = \"step\"\n[config.flowchart]\nnodeSpacing = 30\n[config.sequence]\nmirrorActors = false\n",
     );
-    let (resolved, _) = mixed.resolve(&ocean());
+    let (resolved, _) = mixed.resolve(&ocean(), &ui());
     assert_eq!(
         Value::Object(resolved.config),
         json!({
@@ -137,8 +226,8 @@ fn curve_and_config_pass_through_to_the_site_config() {
             "sequence": {"mirrorActors": false}
         })
     );
-    let (user_curve, _) =
-        style("curve = \"step\"\n[config.flowchart]\ncurve = \"linear\"\n").resolve(&ocean());
+    let (user_curve, _) = style("curve = \"step\"\n[config.flowchart]\ncurve = \"linear\"\n")
+        .resolve(&ocean(), &ui());
     assert_eq!(
         Value::Object(user_curve.config),
         json!({"flowchart": {"curve": "linear"}})
@@ -162,7 +251,7 @@ fn the_store_file_overrides_the_global_style_per_key() {
     .unwrap();
     let config = AppConfig::load_layers(&global, Some(&store)).unwrap();
     assert_eq!(config.mermaid.picture_timeout_ms, 3000);
-    let (resolved, _) = config.mermaid.style.resolve(&ocean());
+    let (resolved, _) = config.mermaid.style.resolve(&ocean(), &ui());
     assert_eq!(resolved.font_size, 18.0);
     assert_eq!(resolved.padding, 8.0);
     assert_eq!(resolved.colors.accent, [0x33, 0x33, 0x33, 255]);

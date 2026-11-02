@@ -2,6 +2,7 @@ use crate::chat::prompt::screen_columns;
 use crate::frame::worker_header;
 use crate::markdown::MarkdownTheme;
 use crate::render::{render_markdown, RenderContext};
+use crate::ui_theme::UiColors;
 use crate::worker_mcp::Inbox;
 use ralph_core::chat_status::INBOX_USAGE;
 use ralph_core::inbox::{self, Position, Selection, UnreadTurn};
@@ -12,6 +13,7 @@ pub struct Display<'a> {
     pub ctx: RenderContext<'a>,
     pub theme: &'a MarkdownTheme,
     pub color: bool,
+    pub ui: UiColors,
 }
 
 pub fn read(selection: Selection, reports: &[Report], display: &Display) -> Option<UnreadTurn> {

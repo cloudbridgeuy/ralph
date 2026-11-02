@@ -553,6 +553,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             .with_tools(tool_colors),
         theme: &agent_theme,
         color,
+        ui: *theme_config.ui(),
     };
     let remote = RemoteStatus::new();
     let mut shell_state = cell::ShellState::default();

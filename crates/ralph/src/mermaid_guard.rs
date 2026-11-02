@@ -1,6 +1,7 @@
 use crate::config::{AppConfig, MermaidSection};
 use crate::render::mermaid::{fits_width, mermaid_precheck};
 use crate::render::mermaid_picture::PictureRequest;
+use crate::ui_theme::UiColors;
 use crate::warn::warn;
 use ralph_core::mermaid_fit::Room;
 use std::io::{Read, Write};
@@ -118,11 +119,11 @@ pub fn render(source: &str, width: usize) -> Option<String> {
     fits_width(&output, width).then_some(output.trim_end().to_string())
 }
 
-pub fn picture(source: &str, theme: &Theme, room: Room) -> Option<Vec<u8>> {
+pub fn picture(source: &str, theme: &Theme, ui: &UiColors, room: Room) -> Option<Vec<u8>> {
     let limits = limits();
     let request = PictureRequest {
         source: source.to_string(),
-        style: limits.style.resolve(theme).0,
+        style: limits.style.resolve(theme, ui).0,
         room,
     };
     let png = run_guarded(Guarded {

@@ -230,6 +230,8 @@ warning = "dark_yellow"
 rule = "238"
 ```
 
+`/view` mermaid pictures take their colors from this table too; see [`[mermaid.style]`](#mermaidstyle---diagram-pictures) `palette`.
+
 Code theme precedence for the assistant: `--theme` > `RALPH_THEME` > `[theme.assistant] code` > `[theme] name` > default.
 
 The old `[theme] agent = "<theme>"` string still works as `[theme.agent] code = "<theme>"`; `ralph chat` prints a deprecation warning for it.
@@ -457,13 +459,13 @@ Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; s
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `palette` | `"auto"` | `auto` takes colors from the agent code theme (background, foreground, scope colors; a theme with no colors uses `dark`), `light` or `dark` are fixed |
+| `palette` | `"ui"` | `ui` takes colors from `[theme.ui]` on a fixed dark ground (`#1e2127`, text `#abb2bf`), with node fills and borders tinted by `spinner`; `code` takes them from the agent code theme (background, foreground, scope colors; a theme with no colors uses `dark`); `light` and `dark` are fixed. Any other value warns and uses `ui` |
 | `background` | `"theme"` | `theme` fills with the palette `bg`, `transparent` fills nothing, or a `#rrggbb` color |
 | `series` | palette | Up to 8 `#rrggbb` colors for chart series and pie slices, in order; missing ones keep the palette |
 | `font_family` | `["Arial", "Liberation Sans", "Helvetica Neue", "Helvetica"]` | Label fonts; the first installed one draws. Layout always uses Arial metrics, so Arial-metric fonts come first |
 | `font_family_mono` | `["SF Mono", "Menlo", "DejaVu Sans Mono"]` | Monospace fonts |
 | `font_size` | `16.0` | Layout font size in pixels; above 0 |
-| `padding` | `16.0` | Padding around the diagram in pixels; 0 or more |
+| `padding` | `24.0` | Padding around the diagram in pixels; 0 or more |
 | `curve` | `"rounded"` | Flowchart edges: `rounded`, `linear` or `step` |
 | `auto_direction` | `true` | Let a wide top-down flowchart switch to left-right |
 | `min_text_ratio` | `0.6` | Draw text instead when picture text would be smaller than this share of the cell height; 0 to 1 |
@@ -474,7 +476,7 @@ Fixed limits: flowchart, stateDiagram, and stateDiagram-v2 source up to 16 KB; s
 
 ```toml
 [mermaid.style]
-palette = "auto"
+palette = "code"
 curve = "linear"
 
 [mermaid.style.colors]

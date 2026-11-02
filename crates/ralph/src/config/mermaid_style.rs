@@ -1,9 +1,11 @@
 use crate::render::mermaid_picture::{PictureColors, PictureStyle, Rgba};
+use crate::ui_theme::UiColors;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use syntect::highlighting::{Color, Highlighter, Theme};
 use syntect::parsing::Scope;
+use termimad::crossterm::style::Color as TermColor;
 use toml::Table;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -37,7 +39,7 @@ pub struct MermaidStyle {
 const FONT_FAMILY: [&str; 4] = ["Arial", "Liberation Sans", "Helvetica Neue", "Helvetica"];
 const FONT_FAMILY_MONO: [&str; 3] = ["SF Mono", "Menlo", "DejaVu Sans Mono"];
 const FONT_SIZE: f64 = 16.0;
-const PADDING: f64 = 16.0;
+const PADDING: f64 = 24.0;
 const MIN_TEXT_RATIO: f64 = 0.6;
 
 const LIGHT: PictureColors = PictureColors {
@@ -83,6 +85,28 @@ const DARK: PictureColors = PictureColors {
         rgb(0xab7967),
     ],
 };
+
+const UI_BG: Rgba = rgb(0x1e2127);
+const UI_FG: Rgba = rgb(0xabb2bf);
+
+const ANSI: [Rgba; 16] = [
+    rgb(0x282c34),
+    rgb(0xe06c75),
+    rgb(0x98c379),
+    rgb(0xe5c07b),
+    rgb(0x61afef),
+    rgb(0xc678dd),
+    rgb(0x56b6c2),
+    rgb(0xabb2bf),
+    rgb(0x5c6370),
+    rgb(0xff7b86),
+    rgb(0xb5e890),
+    rgb(0xf0d197),
+    rgb(0x8cc6f7),
+    rgb(0xdda0ef),
+    rgb(0x7fd0db),
+    rgb(0xffffff),
+];
 
 const SERIES_SCOPES: [&str; 8] = [
     "entity.name.function",
@@ -165,6 +189,81 @@ fn theme_colors(theme: &Theme) -> PictureColors {
     }
 }
 
+fn terminal_rgb(color: TermColor) -> Rgba {
+    let index = match color {
+        TermColor::Rgb { r, g, b } => return [r, g, b, 255],
+        TermColor::AnsiValue(n @ 16..=231) => {
+            let level = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
+            let n = n - 16;
+            return [level(n / 36), level(n / 6 % 6), level(n % 6), 255];
+        }
+        TermColor::AnsiValue(n @ 232..=255) => {
+            let grey = 8 + 10 * (n - 232);
+            return [grey, grey, grey, 255];
+        }
+        TermColor::AnsiValue(n) => usize::from(n),
+        TermColor::Reset => return UI_FG,
+        TermColor::Black => 0,
+        TermColor::DarkRed => 1,
+        TermColor::DarkGreen => 2,
+        TermColor::DarkYellow => 3,
+        TermColor::DarkBlue => 4,
+        TermColor::DarkMagenta => 5,
+        TermColor::DarkCyan => 6,
+        TermColor::Grey => 7,
+        TermColor::DarkGrey => 8,
+        TermColor::Red => 9,
+        TermColor::Green => 10,
+        TermColor::Yellow => 11,
+        TermColor::Blue => 12,
+        TermColor::Magenta => 13,
+        TermColor::Cyan => 14,
+        TermColor::White => 15,
+    };
+    ANSI[index]
+}
+
+fn ui_colors(ui: &UiColors) -> PictureColors {
+    let (bg, fg, accent) = (UI_BG, UI_FG, terminal_rgb(ui.spinner));
+    let own = [
+        ui.spinner,
+        ui.ask_header,
+        ui.ask_path,
+        ui.ask_ok,
+        ui.warning,
+        TermColor::DarkBlue,
+        ui.ask_error,
+    ]
+    .map(terminal_rgb);
+    let mut picked: Vec<Rgba> = Vec::new();
+    for color in own
+        .into_iter()
+        .chain(own.map(|color| mix(color, 0.5, fg)))
+        .chain(DARK.series)
+    {
+        if !picked.contains(&color) && picked.len() < 8 {
+            picked.push(color);
+        }
+    }
+    let mut series = DARK.series;
+    series
+        .iter_mut()
+        .zip(picked)
+        .for_each(|(slot, color)| *slot = color);
+    PictureColors {
+        bg,
+        fg,
+        muted: mix(fg, 0.55, bg),
+        line: mix(fg, 0.70, bg),
+        surface: mix(accent, 0.14, bg),
+        surface_alt: mix(accent, 0.24, bg),
+        border: mix(accent, 0.55, bg),
+        accent,
+        critical: terminal_rgb(ui.ask_error),
+        series,
+    }
+}
+
 fn color_slot<'a>(colors: &'a mut PictureColors, key: &str) -> Option<&'a mut Rgba> {
     Some(match key {
         "bg" => &mut colors.bg,
@@ -185,9 +284,9 @@ fn names(list: &[&str]) -> Vec<String> {
 }
 
 impl MermaidStyle {
-    pub fn resolve(&self, theme: &Theme) -> (PictureStyle, Vec<String>) {
+    pub fn resolve(&self, theme: &Theme, ui: &UiColors) -> (PictureStyle, Vec<String>) {
         let mut warnings = Vec::new();
-        let colors = self.colors(theme, &mut warnings);
+        let colors = self.colors(theme, ui, &mut warnings);
         let background = match self.background.as_deref() {
             None | Some("theme") => Some(colors.bg),
             Some("transparent") => None,
@@ -245,19 +344,20 @@ impl MermaidStyle {
     }
 
     pub fn warnings(&self) -> Vec<String> {
-        self.resolve(&Theme::default()).1
+        self.resolve(&Theme::default(), &UiColors::default()).1
     }
 
-    fn colors(&self, theme: &Theme, warnings: &mut Vec<String>) -> PictureColors {
+    fn colors(&self, theme: &Theme, ui: &UiColors, warnings: &mut Vec<String>) -> PictureColors {
         let mut colors = match self.palette.as_deref() {
-            None | Some("auto") => theme_colors(theme),
+            None | Some("ui") => ui_colors(ui),
+            Some("code") => theme_colors(theme),
             Some("light") => LIGHT,
             Some("dark") => DARK,
             Some(other) => {
                 warnings.push(format!(
-                    "[mermaid.style] palette = \"{other}\" is not auto, light or dark; using auto"
+                    "[mermaid.style] palette = \"{other}\" is not ui, code, light or dark; using ui"
                 ));
-                theme_colors(theme)
+                ui_colors(ui)
             }
         };
         for (key, value) in &self.colors {
