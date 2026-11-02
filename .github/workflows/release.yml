@@ -64,7 +64,7 @@ jobs:
 
       - name: Upload release notes
         if: github.event_name == 'push' || inputs.version != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: notes/release-notes.md
@@ -112,7 +112,7 @@ jobs:
           (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ralph-${{ matrix.target }}
           path: dist/*
@@ -125,14 +125,14 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: ralph-*
           path: dist
           merge-multiple: true
 
       - name: Download release notes
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: release-notes
           path: notes
