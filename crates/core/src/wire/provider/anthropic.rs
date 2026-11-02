@@ -448,7 +448,7 @@ impl Provider for Anthropic {
         }
     }
 
-    fn price_factor(&self, raw_usage: &Value, model: &str) -> Option<f64> {
+    fn price_factor(&self, raw_usage: &Value, _facts: &RequestFacts, model: &str) -> Option<f64> {
         let model = normalize_model(model);
         Some(speed_factor(raw_usage, model)? * geo_factor(raw_usage, model)?)
     }

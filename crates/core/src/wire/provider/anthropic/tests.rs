@@ -481,7 +481,11 @@ fn price_table_agrees_with_billing_multipliers() {
 
 #[test]
 fn price_factor_covers_speed_and_geo() {
-    let factor = |raw: Value, model: &str| Anthropic.price_factor(&raw, model);
+    let facts = RequestFacts {
+        model: None,
+        params: Map::new(),
+    };
+    let factor = |raw: Value, model: &str| Anthropic.price_factor(&raw, &facts, model);
     assert_eq!(factor(json!({}), "claude-haiku-5-5"), Some(1.0));
     assert_eq!(
         factor(

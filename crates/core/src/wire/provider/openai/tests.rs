@@ -14,7 +14,7 @@ use crate::wire::provider::{assert_provider_contract, provider, ContractCase};
 use crate::wire::response::view;
 use crate::wire::sse::SseDecoder;
 use crate::wire::usage::{input_equivalent, UsageOutcome, FIVE_MIN};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 
 const REQUEST: &str = include_str!("../fixtures/openai/chat-request.json");
 const JSON_USAGE: &[u8] = include_bytes!("../fixtures/openai/chat-json-usage.json");
@@ -364,7 +364,33 @@ fn prices_and_factor_follow_the_moved_table() {
     let table = OpenAi.prices();
     assert_eq!(table.as_of, "2026-10-28");
     assert_eq!(table.entries.len(), 4);
-    assert_eq!(OpenAi.price_factor(&json!({}), "gpt-6.1-sol"), Some(1.0));
+    let facts = tier_facts(None);
+    assert_eq!(
+        OpenAi.price_factor(&json!({}), &facts, "gpt-6.1-sol"),
+        Some(1.0)
+    );
+}
+
+fn tier_facts(tier: Option<Value>) -> RequestFacts {
+    RequestFacts {
+        model: Some("gpt-6.1-sol".to_string()),
+        params: tier
+            .map(|value| Map::from_iter([("service_tier".to_string(), value)]))
+            .unwrap_or_default(),
+    }
+}
+
+#[test]
+fn price_factor_prices_only_standard_service_tiers() {
+    let factor =
+        |tier: Option<Value>| OpenAi.price_factor(&json!({}), &tier_facts(tier), "gpt-6.1-sol");
+    assert_eq!(factor(None), Some(1.0));
+    assert_eq!(factor(Some(json!("default"))), Some(1.0));
+    assert_eq!(factor(Some(json!("auto"))), Some(1.0));
+    assert_eq!(factor(Some(json!("priority"))), None);
+    assert_eq!(factor(Some(json!("flex"))), None);
+    assert_eq!(factor(Some(json!("scale"))), None);
+    assert_eq!(factor(Some(json!(3))), None);
 }
 
 #[test]

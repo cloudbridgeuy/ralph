@@ -72,6 +72,7 @@ Limits:
 - The table is standard speed and global geography. Usage `speed` and `inference_geo` then adjust the price: `fast` is 2x on Claude Opus 5.5, Opus 5, and Opus 4.8 (the fast-mode page says caching multipliers stack on fast pricing); `fast` on any other model is unpriced. `inference_geo: "not_available"` is priced like `global`. `inference_geo: "us"` is 1.1x on all categories for Claude 4.6 and later; on Opus 4.5 and Haiku 4.5 it is unpriced. Any other `speed` or `inference_geo` value is unpriced. Factors also apply on top of an override.
 - Batch calls are never priced: only `POST /v1/messages` is an inference call, so `/v1/messages/batches` traffic is `other` and excluded from totals.
 - Discounts, credits, taxes, and Priority Tier commitments are not modeled. Server-tool charges (`server_tool_use`) are not priced.
+- OpenAI pricing reads the request `service_tier`, because the usage object does not carry it. An absent value, `default`, or `auto` is priced at Standard rates. Any other value (`priority`, `flex`, `scale`, or an unknown one) is unpriced and shows no USD. `auto` can resolve to another tier on the server, so an `auto` call can read low or high; wire cannot see the tier that served it.
 - A listed id also matches one snapshot suffix, `-YYYYMMDD` or `-YYYY-MM-DD` (`gpt-6.1-sol-2026-09-01` prices as `gpt-6.1-sol`).
 - Prices are a snapshot. A model the table does not list needs an override.
 

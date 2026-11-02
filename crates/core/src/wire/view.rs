@@ -89,7 +89,7 @@ fn call_usd(record: &CallRecord, pricing: &Pricing, table: &PriceTable) -> Optio
     };
     let factor = pricing
         .provider
-        .price_factor(record.raw_usage.as_ref()?, model)?;
+        .price_factor(record.raw_usage.as_ref()?, &record.facts, model)?;
     let price = resolve_price(
         table,
         pricing.overrides,

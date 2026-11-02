@@ -48,8 +48,8 @@ impl Provider for Implicit30m {
     fn prices(&self) -> PriceTable {
         Anthropic.prices()
     }
-    fn price_factor(&self, raw_usage: &Value, model: &str) -> Option<f64> {
-        Anthropic.price_factor(raw_usage, model)
+    fn price_factor(&self, raw_usage: &Value, facts: &RequestFacts, model: &str) -> Option<f64> {
+        Anthropic.price_factor(raw_usage, facts, model)
     }
 }
 
