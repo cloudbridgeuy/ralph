@@ -99,9 +99,8 @@ pub fn fold_opencode_event(
 pub fn opencode_version(output: &str) -> Option<&str> {
     output
         .split_whitespace()
-        .next()
         .map(|word| word.strip_prefix('v').unwrap_or(word))
-        .filter(|word| word.starts_with(|first: char| first.is_ascii_digit()))
+        .find(|word| word.starts_with(|first: char| first.is_ascii_digit()))
 }
 
 pub fn opencode_probed_version(probe: &VersionProbe) -> Result<String, String> {
@@ -227,6 +226,12 @@ mod tests {
             .iter()
             .flat_map(|line| fold_opencode_event(fold, SESSION, line, plan))
             .collect()
+    }
+
+    #[test]
+    fn opencode_version_reads_the_real_version_output() {
+        assert_eq!(opencode_version("opencode v2.2.5\n"), Some("2.2.5"));
+        assert_eq!(opencode_version("2.2.5"), Some("2.2.5"));
     }
 
     #[test]
