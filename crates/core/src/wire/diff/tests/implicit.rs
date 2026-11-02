@@ -173,6 +173,39 @@ fn implicit_prefix_at_or_above_the_minimum_keeps_the_other_verdicts() {
 }
 
 #[test]
+fn implicit_param_change_wins_over_a_too_short_prefix() {
+    let (a, mut b) = unmarked_pair(written(0, 100), 400);
+    b.facts
+        .params
+        .insert("tool_choice".into(), json!("required"));
+    let verdict = implicit_view_with(&a, &b, IMPLICIT_30M, Some(1_024))
+        .explanation
+        .verdict;
+    assert_eq!(
+        verdict,
+        Verdict::ParamChanged {
+            names: vec!["tool_choice".into()]
+        }
+    );
+}
+
+#[test]
+fn implicit_model_change_wins_over_a_too_short_prefix() {
+    let (a, mut b) = unmarked_pair(written(0, 100), 400);
+    b.facts.model = Some("other".into());
+    let verdict = implicit_view_with(&a, &b, IMPLICIT_30M, Some(1_024))
+        .explanation
+        .verdict;
+    assert_eq!(
+        verdict,
+        Verdict::ModelChanged {
+            a: Some("m".into()),
+            b: Some("other".into())
+        }
+    );
+}
+
+#[test]
 fn implicit_prefers_the_marked_breakpoint_tier() {
     let (a, mut b) = pair("a", "b", written(0, 100));
     b.started_at = t(400);
