@@ -170,7 +170,11 @@ pub enum StderrRead {
 pub fn argv_check(running: bool, read: &StderrRead, exit: Result<bool, String>) -> CheckResult {
     let (StderrRead::Finished(stderr) | StderrRead::Unfinished(stderr)) = read;
     let detail = |text: &str| format!("{text}; stderr: {}", stderr.trim());
-    if running && matches!(read, StderrRead::Unfinished(_)) && !stderr.trim().is_empty() {
+    if running
+        && exit.is_ok()
+        && matches!(read, StderrRead::Unfinished(_))
+        && !stderr.trim().is_empty()
+    {
         return CheckResult::fail(
             "argv",
             detail("the stderr read did not finish and already holds text"),
@@ -305,6 +309,14 @@ mod tests {
         let check = argv_check(true, &StderrRead::Unfinished("warming up".into()), Ok(true));
         assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
         assert!(check.detail.contains("warming up"), "{}", check.detail);
+    }
+
+    #[test]
+    fn a_missing_exit_is_reported_even_when_the_stderr_read_is_unfinished() {
+        let read = StderrRead::Unfinished("warming up".into());
+        let check = argv_check(true, &read, Err("claude did not exit within 10s".into()));
+        assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
+        assert!(check.detail.contains("did not exit"), "{}", check.detail);
     }
 
     #[test]
