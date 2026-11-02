@@ -51,10 +51,12 @@ fn facts(input: &FactsInput) -> StallFacts {
         last_report,
         check_secs,
     } = *input;
+    let sent_at = sent_secs(store, id);
     StallFacts {
         activity: read_mark(store, id),
-        reported: reported_since_go_ahead(sent_secs(store, id), last_report.and_then(report_secs)),
+        reported: reported_since_go_ahead(sent_at, last_report.and_then(report_secs)),
         record: read_record(store, id),
+        sent_at,
         now: now_secs(),
         check_secs,
     }
@@ -222,6 +224,7 @@ mod tests {
             })
         );
         assert!(!found.reported);
+        assert!(found.sent_at.is_some());
         assert_eq!(found.record, Some(record));
         assert_eq!(stall_action(&found), StallAction::Alert);
     }

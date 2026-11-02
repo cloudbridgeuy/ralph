@@ -79,6 +79,7 @@ pub struct StallFacts {
     pub activity: Option<ActivityMark>,
     pub reported: bool,
     pub record: Option<AutoContinue>,
+    pub sent_at: Option<u64>,
     pub now: u64,
     pub check_secs: u64,
 }
@@ -139,6 +140,10 @@ pub fn report_secs(at: &str) -> Option<u64> {
     u64::try_from(parsed.timestamp()).ok()
 }
 
+fn failed_after_go_ahead(mark: &ActivityMark, facts: &StallFacts) -> bool {
+    facts.sent_at.is_none_or(|sent| mark.at >= sent)
+}
+
 pub fn stall_action(facts: &StallFacts) -> StallAction {
     let Some(mark) = facts.activity else {
         return StallAction::None;
@@ -147,7 +152,9 @@ pub fn stall_action(facts: &StallFacts) -> StallAction {
         return StallAction::None;
     }
     match &facts.record {
-        None if mark.state == ActivityState::Failed => StallAction::Continue,
+        None if mark.state == ActivityState::Failed && failed_after_go_ahead(&mark, facts) => {
+            StallAction::Continue
+        }
         None => StallAction::None,
         Some(record)
             if !record.alerted && (mark.at > record.at || went_unanswered(record, facts)) =>
@@ -171,6 +178,7 @@ mod tests {
             activity,
             reported: false,
             record: None,
+            sent_at: None,
             now: 100,
             check_secs: 30,
         }
@@ -219,6 +227,26 @@ mod tests {
             stall_action(&facts(mark(100, ActivityState::Failed))),
             StallAction::Continue
         );
+    }
+
+    #[test]
+    fn a_failure_older_than_the_go_ahead_gets_no_continue() {
+        let stale = StallFacts {
+            sent_at: Some(101),
+            ..facts(mark(100, ActivityState::Failed))
+        };
+        assert_eq!(stall_action(&stale), StallAction::None);
+    }
+
+    #[test]
+    fn a_failure_at_or_after_the_go_ahead_gets_a_continue() {
+        for sent_at in [None, Some(100), Some(50)] {
+            let fresh = StallFacts {
+                sent_at,
+                ..facts(mark(100, ActivityState::Failed))
+            };
+            assert_eq!(stall_action(&fresh), StallAction::Continue, "{sent_at:?}");
+        }
     }
 
     #[test]
