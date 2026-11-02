@@ -17,6 +17,7 @@ pub(crate) mod mcp;
 pub(crate) mod memory;
 mod monitor;
 mod name;
+mod nudge;
 mod prompt;
 mod queue;
 mod route;

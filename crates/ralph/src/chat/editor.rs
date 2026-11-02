@@ -7,6 +7,7 @@ use ralph_core::chat_draft::{draft_below_separator, editor_prefill};
 use ralph_core::chat_edit_mode::{esc_clears_draft, EditMode as EditModeConfig};
 use ralph_core::chat_hold::hold_completions;
 use ralph_core::chat_memory::Role;
+use ralph_core::chat_nudge::nudge_completions;
 use reedline::{
     default_emacs_keybindings, default_vi_insert_keybindings, default_vi_normal_keybindings,
     default_vi_visual_keybindings, ColumnarMenu, Completer, CompletionResult, EditCommand,
@@ -31,7 +32,9 @@ struct HoldCompleter(Arc<Monitor>);
 
 impl Completer for HoldCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> CompletionResult {
-        let suggestions: Vec<Suggestion> = hold_completions(line, pos, &self.0.status())
+        let status = self.0.status();
+        let suggestions: Vec<Suggestion> = hold_completions(line, pos, &status)
+            .or_else(|| nudge_completions(line, pos, &status))
             .map(|completion| {
                 let span = Span::new(completion.span.start, completion.span.end);
                 completion

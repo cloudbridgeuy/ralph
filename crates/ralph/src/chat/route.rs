@@ -3,6 +3,7 @@ use crate::chat::diff::{self, DiffContext};
 use crate::chat::inbox::{self, Display};
 use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
+use crate::chat::nudge;
 use crate::chat::prompt::screen_columns;
 use crate::chat::schedule;
 use crate::chat::watch;
@@ -60,6 +61,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Diff(DiffArgs::Usage(usage)) => println!("{usage}"),
         Route::Diff(DiffArgs::UnclosedQuote) => println!("{UNCLOSED_DIFF_QUOTE}"),
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
+        Route::Nudge(command) => nudge::run(command, ctx.monitor),
         Route::WorkerCosts => workers::costs(ctx.display, ctx.prices),
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),
