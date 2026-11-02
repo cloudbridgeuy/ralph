@@ -24,6 +24,7 @@ regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tar = { workspace = true }
 unicode-width = "0.2"
 zune-core = { workspace = true }
 zune-jpeg = { workspace = true }
