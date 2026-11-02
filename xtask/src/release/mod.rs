@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use tokio::process::Command;
 
 mod error;
+mod notes;
 mod plan;
 
 #[derive(Debug, clap::Parser)]

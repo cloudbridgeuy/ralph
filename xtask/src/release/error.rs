@@ -23,6 +23,12 @@ pub enum ReleaseError {
     #[error("Command failed: {0}")]
     CommandFailed(String),
 
+    #[error("Invalid Linear response: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("Linear response has no data")]
+    MissingData,
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
