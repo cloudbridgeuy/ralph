@@ -1,7 +1,7 @@
 use super::permissions::permission_setting;
 use super::AppConfig;
 use crate::warn::warn;
-use ralph_core::worker::PermissionMode;
+use ralph_core::worker::{codex_config_warning, PermissionMode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -24,9 +24,9 @@ pub fn configured_codex() -> CodexSection {
     AppConfig::load()
         .map(|config| config.codex)
         .unwrap_or_else(|e| {
-            warn(format!(
-                "could not read config: {e}; codex model and effort use codex's own defaults"
-            ));
+            if let Some(text) = codex_config_warning(Err(&e.to_string())) {
+                warn(text);
+            }
             CodexSection::default()
         })
 }
