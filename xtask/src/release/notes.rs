@@ -211,6 +211,68 @@ pub fn summary_prompt(list: &str) -> String {
     )
 }
 
+const CHATTER_PREFIXES: [&str; 3] = ["next:", "note:", "let me know"];
+const CHATTER_PHRASES: [&str; 2] = ["paste this", "changelog entry above"];
+const PREAMBLE_PREFIXES: [&str; 4] = ["here is", "here's", "sure", "summary"];
+const MAX_QUESTION_WORDS: usize = 8;
+
+fn is_preamble(line: &str) -> bool {
+    let lower = line.trim().to_lowercase();
+    lower.ends_with(':')
+        && PREAMBLE_PREFIXES
+            .iter()
+            .any(|prefix| lower.starts_with(prefix))
+}
+
+/// A trailing line the model added after the summary. A short question only
+/// counts when it stands as its own paragraph, so a wrapped summary sentence
+/// that ends in a question mark is kept.
+fn is_chatter(line: &str, own_paragraph: bool) -> bool {
+    let lower = line.trim().to_lowercase();
+    let short_question =
+        lower.ends_with('?') && lower.split_whitespace().count() <= MAX_QUESTION_WORDS;
+    CHATTER_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+        || CHATTER_PHRASES.iter().any(|phrase| lower.contains(phrase))
+        || (own_paragraph && short_question)
+}
+
+fn trim_blank_edges(lines: &mut Vec<&str>) {
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    let leading = lines
+        .iter()
+        .take_while(|line| line.trim().is_empty())
+        .count();
+    lines.drain(..leading);
+}
+
+/// Strip model chatter from a generated summary: code fences, a leading
+/// "here's the summary:" line, and trailing next-step lines or offers.
+pub fn clean_summary(raw: &str) -> Option<String> {
+    let mut lines: Vec<&str> = raw
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("```"))
+        .collect();
+    trim_blank_edges(&mut lines);
+    if lines.first().is_some_and(|line| is_preamble(line)) {
+        lines.remove(0);
+        trim_blank_edges(&mut lines);
+    }
+    while let Some((last, before)) = lines.split_last() {
+        let own_paragraph = before.last().is_none_or(|line| line.trim().is_empty());
+        if last.trim().is_empty() || is_chatter(last, own_paragraph) {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    let text = lines.join("\n").trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,5 +422,62 @@ mod tests {
     #[test]
     fn summary_prompt_embeds_the_list() {
         assert!(summary_prompt("- A (GUZ-1)").contains("- A (GUZ-1)"));
+    }
+
+    #[test]
+    fn clean_summary_drops_a_trailing_next_line() {
+        assert_eq!(
+            clean_summary("Adds X. Fixes Y.\n\nnext: paste this above the v0.3.0 list… Go?\n"),
+            Some("Adds X. Fixes Y.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_drops_trailing_short_questions_and_offers() {
+        assert_eq!(clean_summary("Adds X.\n\nGo?"), Some("Adds X.".to_string()));
+        assert_eq!(
+            clean_summary("Adds X.\n\nWant me to adjust the tone?\nLet me know if so."),
+            Some("Adds X.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_unwraps_code_fences() {
+        assert_eq!(
+            clean_summary("```text\nAdds X.\n```"),
+            Some("Adds X.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_drops_a_leading_preamble() {
+        assert_eq!(
+            clean_summary("Here's the summary:\n\nAdds X."),
+            Some("Adds X.".to_string())
+        );
+    }
+
+    #[test]
+    fn clean_summary_keeps_questions_that_belong_to_the_summary() {
+        let opening = "Why wait? This release adds X and Y.";
+        assert_eq!(clean_summary(opening), Some(opening.to_string()));
+        let closing = "This release adds X and Y. Who says changelogs must be boring?";
+        assert_eq!(clean_summary(closing), Some(closing.to_string()));
+        let wrapped = "This release adds X and Y, so is it\nready?";
+        assert_eq!(clean_summary(wrapped), Some(wrapped.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_returns_none_for_chatter_only() {
+        assert_eq!(clean_summary("Go?"), None);
+        assert_eq!(clean_summary("  \n"), None);
+    }
+
+    #[test]
+    fn clean_summary_keeps_clean_text() {
+        assert_eq!(
+            clean_summary("Adds X.\n\nFixes Y."),
+            Some("Adds X.\n\nFixes Y.".to_string())
+        );
     }
 }

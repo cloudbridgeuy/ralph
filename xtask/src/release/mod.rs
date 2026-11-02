@@ -123,8 +123,9 @@ async fn generate_summary(prompt: &str) -> Result<Option<String>> {
     if !output.status.success() {
         return Err(ReleaseError::CommandFailed("claude -p".to_string()));
     }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok((!text.is_empty()).then_some(text))
+    Ok(notes::clean_summary(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 async fn summary_for(prompt: &str) -> Option<String> {
