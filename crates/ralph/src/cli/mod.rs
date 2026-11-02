@@ -67,8 +67,8 @@ harness; ralph never sets it."
     Config(ConfigArgs),
 
     #[command(
-        about = "Check a headless worker agent against ralph's local spec.",
-        long_about = "Subcommands exercise the installed headless agent without starting a chat."
+        about = "Check a worker agent against ralph's local spec.",
+        long_about = "Subcommands exercise the installed worker agent (cursor, codex, claude-headless, opencode or the tmux claude worker) without starting a chat."
     )]
     Worker(WorkerArgs),
 
