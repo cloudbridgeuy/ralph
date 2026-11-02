@@ -1,4 +1,3 @@
-use crate::chat_memory::Trigger;
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
 use serde::{Deserialize, Serialize};
@@ -30,6 +29,7 @@ mod task_files;
 mod ticket;
 mod tools;
 mod transcript_usage;
+mod turn_gate;
 mod verify;
 mod worktree;
 pub use acp::*;
@@ -60,6 +60,7 @@ pub use task_files::*;
 pub use ticket::*;
 pub use tools::*;
 pub use transcript_usage::*;
+pub use turn_gate::*;
 pub use verify::*;
 pub use worktree::*;
 
@@ -193,34 +194,6 @@ pub enum Command {
     },
     Watch(WatchRequest),
     Schedule(ScheduleRequest),
-}
-
-/// Workers are directed only in a turn the person started; a worker-triggered turn may only reply.
-pub fn command_allowed(command: &Command, pending: Option<Trigger>) -> Result<(), String> {
-    match (command, pending) {
-        (_, Some(Trigger::User)) | (Command::Reply { .. }, Some(Trigger::Worker)) => Ok(()),
-        _ => Err(
-            "Only the person can direct workers. Relay this to them and wait for their answer."
-                .to_string(),
-        ),
-    }
-}
-
-pub const PENDING_TURN_FILE: &str = "turn";
-
-pub fn pending_turn_marker(trigger: Trigger) -> &'static str {
-    match trigger {
-        Trigger::User | Trigger::SendIt => "user",
-        Trigger::Worker => "worker",
-    }
-}
-
-pub fn parse_pending_turn(marker: &str) -> Option<Trigger> {
-    match marker.trim() {
-        "user" => Some(Trigger::User),
-        "worker" => Some(Trigger::Worker),
-        _ => None,
-    }
 }
 
 pub fn branch_name(id: &str) -> String {
@@ -602,68 +575,6 @@ mod tests {
             status: status.into(),
             text: text.into(),
         }
-    }
-
-    #[test]
-    fn close_allowed_only_in_a_user_turn() {
-        let close = Command::Close {
-            id: "A".into(),
-            abandon: false,
-            force: false,
-        };
-        assert!(command_allowed(&close, Some(Trigger::User)).is_ok());
-        assert!(command_allowed(&close, Some(Trigger::Worker)).is_err());
-        assert!(command_allowed(&close, None).is_err());
-    }
-
-    #[test]
-    fn spawn_allowed_only_in_a_user_turn() {
-        let spawn = Command::Spawn {
-            id: "A".into(),
-            task: "t".into(),
-            harness: HarnessId::Claude,
-            model: None,
-            ticket: None,
-        };
-        assert!(command_allowed(&spawn, Some(Trigger::User)).is_ok());
-        assert!(command_allowed(&spawn, Some(Trigger::Worker)).is_err());
-        assert!(command_allowed(&spawn, None).is_err());
-    }
-
-    #[test]
-    fn watch_allowed_only_in_a_user_turn() {
-        let args = json!({"id": "ci", "command": "c", "follow_up": "f"});
-        let Some(Ok(watch)) = parse_command("watch", &args) else {
-            panic!("expected a watch command")
-        };
-        assert!(command_allowed(&watch, Some(Trigger::User)).is_ok());
-        assert!(command_allowed(&watch, Some(Trigger::Worker)).is_err());
-        assert!(command_allowed(&watch, None).is_err());
-    }
-
-    #[test]
-    fn reply_allowed_in_a_user_or_worker_turn() {
-        let reply = Command::Reply {
-            id: "A".into(),
-            text: "t".into(),
-            interrupt: false,
-            request: None,
-        };
-        assert!(command_allowed(&reply, Some(Trigger::User)).is_ok());
-        assert!(command_allowed(&reply, Some(Trigger::Worker)).is_ok());
-        assert!(command_allowed(&reply, None).is_err());
-    }
-
-    #[test]
-    fn pending_turn_marker_round_trips() {
-        for trigger in [Trigger::User, Trigger::Worker] {
-            assert_eq!(
-                parse_pending_turn(pending_turn_marker(trigger)),
-                Some(trigger)
-            );
-        }
-        assert_eq!(parse_pending_turn("junk"), None);
-        assert_eq!(parse_pending_turn(""), None);
     }
 
     fn claude_args(model: Option<&str>) -> ClaudeWorkerArgs<'_> {
