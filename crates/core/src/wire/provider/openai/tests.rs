@@ -192,6 +192,18 @@ fn responses_keep_a_zero_ttl_entry_and_fall_back_to_one_30m_write() {
             }
         ]
     );
+    let empty = responses_usage(json!({
+        "cached_tokens": 0,
+        "cache_write_tokens": 500,
+        "cache_write_tokens_details": {}
+    }));
+    assert_eq!(
+        empty.cache_writes,
+        vec![CacheWrite {
+            tier: THIRTY_MIN,
+            tokens: 500
+        }]
+    );
     let unsplit = responses_usage(json!({"cached_tokens": 0, "cache_write_tokens": 500}));
     assert_eq!(
         unsplit.cache_writes,

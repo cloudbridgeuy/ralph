@@ -89,12 +89,20 @@ pub(super) fn segments(body: &Value) -> Vec<PromptSegment> {
 
 fn writes(input: Option<&Value>) -> Option<Vec<(CacheTier, u64)>> {
     let input = input?;
-    match input.get("cache_write_tokens_details") {
-        Some(split) if split.is_object() => Some(vec![
-            (THIRTY_MIN, count(split, "ttl_30m_tokens").unwrap_or(0)),
-            (TWELVE_HOURS, count(split, "ttl_12h_tokens").unwrap_or(0)),
-        ]),
-        _ => count(input, "cache_write_tokens").map(|tokens| vec![(THIRTY_MIN, tokens)]),
+    let total = count(input, "cache_write_tokens");
+    let split = input
+        .get("cache_write_tokens_details")
+        .filter(|split| split.is_object())
+        .map(|split| {
+            (
+                count(split, "ttl_30m_tokens").unwrap_or(0),
+                count(split, "ttl_12h_tokens").unwrap_or(0),
+            )
+        })
+        .filter(|(short, long)| total.is_none_or(|total| short + long == total));
+    match split {
+        Some((short, long)) => Some(vec![(THIRTY_MIN, short), (TWELVE_HOURS, long)]),
+        None => total.map(|tokens| vec![(THIRTY_MIN, tokens)]),
     }
 }
 
