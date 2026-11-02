@@ -129,8 +129,7 @@ impl Shell {
         println!("{}", status_text(run, &self.limits, self.seconds));
     }
 
-    fn halt(&mut self, notice: &str, monitor: &Monitor) {
-        self.armed = None;
+    fn alert(notice: &str, monitor: &Monitor) {
         println!("{notice}");
         if let Some(alert) = blocked_alert(notice, &monitor.alert) {
             deliver(&alert);
@@ -170,10 +169,14 @@ impl Shell {
                 }
                 None => no_terminal_notice(&run),
             },
-            Decision::Manual(reason) => reason.notice(&run),
+            Decision::Manual(reason) => {
+                Self::alert(&reason.notice(), monitor);
+                return None;
+            }
             Decision::Stop(reason) => reason.notice(&run),
         };
-        self.halt(&notice, monitor);
+        self.armed = None;
+        Self::alert(&notice, monitor);
         None
     }
 

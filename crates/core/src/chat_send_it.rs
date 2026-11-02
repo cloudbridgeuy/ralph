@@ -175,20 +175,15 @@ pub enum ManualReason {
 }
 
 impl ManualReason {
-    pub fn notice(self, run: &Run) -> String {
+    pub fn notice(self) -> String {
         let why = match self {
-            ManualReason::SlashCommand => "this reply is a slash command",
-            ManualReason::Decision(word) => {
-                return format!(
-                    "send-it stopped: this reply is a decision ({word}). {}",
-                    run.resume_hint()
-                );
-            }
-            ManualReason::NotRoutine => "this reply names no routine action",
-            ManualReason::WorkerFlagged => "a worker needs attention",
-            ManualReason::SchedulePending => "a scheduled task is pending",
+            ManualReason::SlashCommand => "a slash command".to_string(),
+            ManualReason::Decision(word) => format!("a decision ({word})"),
+            ManualReason::NotRoutine => "no routine action".to_string(),
+            ManualReason::WorkerFlagged => "a worker question or block".to_string(),
+            ManualReason::SchedulePending => "a pending schedule".to_string(),
         };
-        format!("send-it stopped: {why}. {}", run.resume_hint())
+        format!("send-it waits on you: {why}.")
     }
 }
 
@@ -206,7 +201,7 @@ impl StopReason {
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Repeated => "the same reply came up again".to_string(),
         };
-        format!("send-it stopped: {why}. {}", run.resume_hint())
+        format!("send-it off: {why}. {}", run.resume_hint())
     }
 }
 
@@ -316,7 +311,7 @@ pub fn cancel_notice(run: &Run) -> String {
 
 pub fn no_terminal_notice(run: &Run) -> String {
     format!(
-        "send-it stopped: the countdown needs a terminal. {}",
+        "send-it off: the countdown needs a terminal. {}",
         run.resume_hint()
     )
 }

@@ -199,18 +199,27 @@ fn record_accumulates_and_ignores_missing_cost() {
 }
 
 #[test]
-fn notices_point_back_to_the_ticket() {
+fn a_manual_reply_waits_and_names_why() {
+    for (reason, why) in [
+        (ManualReason::SlashCommand, "a slash command"),
+        (ManualReason::Decision("merge"), "a decision (merge)"),
+        (ManualReason::NotRoutine, "no routine action"),
+        (ManualReason::WorkerFlagged, "a worker question or block"),
+        (ManualReason::SchedulePending, "a pending schedule"),
+    ] {
+        assert_eq!(reason.notice(), format!("send-it waits on you: {why}."));
+    }
+}
+
+#[test]
+fn stop_notices_point_back_to_the_ticket() {
     let run = Run::new("GUZ-9");
     for notice in [
-        ManualReason::SlashCommand.notice(&run),
-        ManualReason::Decision("merge").notice(&run),
-        ManualReason::NotRoutine.notice(&run),
-        ManualReason::WorkerFlagged.notice(&run),
-        ManualReason::SchedulePending.notice(&run),
         StopReason::TurnCap.notice(&run),
         StopReason::CostCap.notice(&run),
         StopReason::Repeated.notice(&run),
     ] {
+        assert!(notice.starts_with("send-it off: "), "{notice}");
         assert!(notice.ends_with("/send-it GUZ-9"), "{notice}");
     }
 }
