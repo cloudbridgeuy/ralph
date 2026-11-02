@@ -309,7 +309,7 @@ pub const SEGMENTS: [Kind; 10] = [
     Kind::Hold(Mode::Idle),
     Kind::Queue(Mode::Idle),
     Kind::Mail(Mode::Idle),
-    Kind::Store,
+    Kind::Name,
     Kind::Workers,
     Kind::Watches,
     Kind::Schedule,
@@ -338,7 +338,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
             "only in the queue editor: turn state and queued entries; HELD N after a back-out; short forms running · QN, ▶ QN, done · QN, ✓ QN",
         ),
         Kind::Mail(_) => ("📬 N unread", "worker reports waiting; /inbox sends them"),
-        Kind::Store => ("store", "the chat store path (last two parts)"),
+        Kind::Name => ("name", "the chat session name"),
         Kind::Workers => ("workers", "each worker and its state"),
         Kind::Watches => ("watch <id> <left>", "running watches and their time left"),
         Kind::Schedule => (

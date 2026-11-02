@@ -2,8 +2,7 @@ use crate::ansi::{bg, fg, BOLD, RESET};
 use crate::config::ChatSection;
 use crate::status_theme::{StatusColors, StatusTheme};
 use ralph_core::chat_status::Status;
-use ralph_core::status_segments::{bar, store_label, Context, Separator, Span};
-use std::path::Path;
+use ralph_core::status_segments::{bar, Context, Separator, Span};
 
 pub struct StatusBar {
     colors: StatusColors,
@@ -40,11 +39,11 @@ fn render_spans(colors: &StatusColors, spans: &[Span], color: bool) -> String {
 }
 
 impl StatusBar {
-    pub fn new(theme: &StatusTheme, store: &Path, chat: &ChatSection, color: bool) -> Self {
+    pub fn new(theme: &StatusTheme, name: &str, chat: &ChatSection, color: bool) -> Self {
         Self {
             colors: theme.resolve().0,
             context: Context {
-                store: store_label(&store.to_string_lossy()),
+                name: name.to_string(),
             },
             separator: separator_for(color, chat.status_powerline),
             color,
@@ -75,12 +74,7 @@ mod tests {
             status_powerline: powerline,
             ..ChatSection::default()
         };
-        StatusBar::new(
-            &StatusTheme::default(),
-            Path::new("/home/me/.ralph/chat"),
-            &chat,
-            color,
-        )
+        StatusBar::new(&StatusTheme::default(), "ralph-chat", &chat, color)
     }
 
     #[test]
@@ -111,7 +105,7 @@ mod tests {
             colors: [("mode_inbox_bg".to_string(), "red".to_string())].into(),
         };
         let chat = ChatSection::default();
-        let bar = StatusBar::new(&theme, Path::new("/s"), &chat, true);
+        let bar = StatusBar::new(&theme, "s", &chat, true);
         assert!(bar.line(&status(), 40).starts_with("\x1b[101m"));
     }
 
@@ -120,7 +114,7 @@ mod tests {
         let shown = status_bar(false, false).line(&status(), 80);
         assert!(!shown.contains('\x1b'));
         assert!(!shown.ends_with(' '));
-        assert!(shown.starts_with(" INBOX │ 📬 1 unread │ .ralph/chat"));
+        assert!(shown.starts_with(" INBOX │ ralph-chat │ 📬 1 unread"));
     }
 
     #[test]

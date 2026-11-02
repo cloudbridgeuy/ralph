@@ -3,33 +3,14 @@ use crate::chat_status::ScheduleState;
 use crate::chat_thread::{cost_variants, thread_variants};
 
 pub(super) const MODE_PRIORITY: u8 = 0;
-const QUEUE_PRIORITY: u8 = 1;
-const MAIL_PRIORITY: u8 = 2;
-const THREAD_PRIORITY: u8 = 3;
-const COST_PRIORITY: u8 = 4;
-const WORKERS_PRIORITY: u8 = 5;
-const WATCHES_PRIORITY: u8 = 6;
-const SCHEDULE_PRIORITY: u8 = 7;
-const STORE_PRIORITY: u8 = 8;
-
-pub fn store_label(path: &str) -> String {
-    let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
-    parts[parts.len().saturating_sub(2)..].join("/")
-}
-
-fn last_component(label: &str) -> String {
-    label.rsplit('/').next().unwrap_or(label).to_string()
-}
-
-fn dedup(variants: Vec<String>) -> Vec<String> {
-    let mut seen: Vec<String> = Vec::new();
-    for variant in variants {
-        if !seen.contains(&variant) {
-            seen.push(variant);
-        }
-    }
-    seen
-}
+const NAME_PRIORITY: u8 = 1;
+const QUEUE_PRIORITY: u8 = 2;
+const MAIL_PRIORITY: u8 = 3;
+const THREAD_PRIORITY: u8 = 4;
+const COST_PRIORITY: u8 = 5;
+const WORKERS_PRIORITY: u8 = 6;
+const WATCHES_PRIORITY: u8 = 7;
+const SCHEDULE_PRIORITY: u8 = 8;
 
 fn workers_variants(status: &Status) -> Vec<String> {
     let count = status.workers.len();
@@ -123,12 +104,12 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             vec![format!("📬 {unread} unread"), format!("📬 {unread}")],
         )
     });
-    let store = (!context.store.is_empty()).then(|| {
+    let name = (!context.name.is_empty()).then(|| {
         Segment::new(
             Side::Left,
-            Kind::Store,
-            STORE_PRIORITY,
-            dedup(vec![context.store.clone(), last_component(&context.store)]),
+            Kind::Name,
+            NAME_PRIORITY,
+            vec![context.name.clone()],
         )
     });
     let workers = (!status.workers.is_empty()).then(|| {
@@ -177,10 +158,10 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         });
     [
         Some(mode),
+        name,
         queue,
         hold,
         mail,
-        store,
         workers,
         watches,
         schedule,
@@ -202,11 +183,16 @@ mod tests {
 
     #[test]
     fn full_width_shows_every_segment_in_long_form() {
-        let all = line(&with_thread(), 200);
+        let all = text(&bar(
+            &with_thread(),
+            &named_context(),
+            200,
+            Separator::Block,
+        ));
         for part in [
             "INBOX",
             "📬 2 unread",
-            ".ralph/chat",
+            "ralph-chat",
             "workers GUZ-416 running, GUZ-417 question",
             "T12/30 · ctx 62% · cache 41m · shift ~9 msg",
             "$4.12 (+0.31)",
@@ -349,11 +335,11 @@ mod tests {
     }
 
     #[test]
-    fn schedule_cell_sits_between_watches_and_store_in_priority() {
-        let all = segments(&with_schedule(1), &context());
+    fn schedule_cell_sits_after_watches_and_priorities_are_distinct() {
+        let all = segments(&with_schedule(1), &named_context());
         let priority = |kind| all.iter().find(|s| s.kind == kind).unwrap().priority;
         assert!(priority(Kind::Watches) < priority(Kind::Schedule));
-        assert!(priority(Kind::Schedule) < priority(Kind::Store));
+        assert!(priority(Kind::Name) < priority(Kind::Mail(Mode::Inbox)));
         let mut priorities: Vec<u8> = all.iter().map(|s| s.priority).collect();
         priorities.sort_unstable();
         priorities.dedup();
@@ -380,28 +366,35 @@ mod tests {
     }
 
     #[test]
-    fn store_label_keeps_the_last_two_components() {
-        assert_eq!(store_label("/home/me/.ralph/chat"), ".ralph/chat");
-        assert_eq!(store_label("chat"), "chat");
-        assert_eq!(store_label("/chat/"), "chat");
-        assert_eq!(store_label(""), "");
-    }
-
-    #[test]
-    fn empty_store_label_has_no_store_segment() {
+    fn empty_name_has_no_name_segment() {
         let all = segments(&status(), &Context::default());
-        assert!(all.iter().all(|s| s.priority != STORE_PRIORITY));
+        assert!(all.iter().all(|s| s.kind != Kind::Name));
     }
 
     #[test]
-    fn single_component_store_has_one_variant() {
+    fn name_has_one_variant_and_the_second_priority() {
         let all = segments(
             &status(),
             &Context {
-                store: "chat".into(),
+                name: "chat".into(),
             },
         );
-        let store = all.iter().find(|s| s.priority == STORE_PRIORITY).unwrap();
-        assert_eq!(store.variants, ["chat"]);
+        let name = all.iter().find(|s| s.kind == Kind::Name).unwrap();
+        assert_eq!(name.variants, ["chat"]);
+        assert_eq!(name.priority, 1);
+    }
+
+    #[test]
+    fn name_sits_right_after_the_mode_segment() {
+        let status = with_thread();
+        let all = segments(&status, &named_context());
+        assert_eq!(all[0].kind, Kind::Mode(Mode::Inbox));
+        assert_eq!(all[1].kind, Kind::Name);
+        assert_eq!(all[1].side, Side::Left);
+        let shown = text(&bar(&status, &named_context(), 200, Separator::Block));
+        assert!(
+            shown.starts_with(" INBOX  ralph-chat  📬 2 unread"),
+            "{shown}"
+        );
     }
 }

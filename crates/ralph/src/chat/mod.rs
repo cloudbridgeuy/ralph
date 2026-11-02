@@ -512,7 +512,11 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         color,
         bar: StatusBar::new(
             &config.theme.status,
-            &monitor.store_dir,
+            &monitor
+                .store_dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             &chat_config,
             color,
         ),

@@ -254,9 +254,10 @@ mod tests {
     #[test]
     fn layout_goes_compact_at_forty_columns_on_one_row() {
         let status = with_thread();
-        let shown = line(&status, 40);
+        let shown = text(&bar(&status, &named_context(), 40, Separator::Block));
         assert_eq!(shown.width(), 40);
         assert!(shown.contains("📬 2") && !shown.contains("unread"));
+        assert!(shown.contains("ralph-chat"));
         assert!(shown.contains(" 41m ") && shown.contains("$4.12"));
         assert!(!shown.contains("cache") && !shown.contains("(+"));
         assert!(!shown.contains("workers"));
@@ -277,7 +278,7 @@ mod tests {
     }
 
     fn kinds_at(status: &Status, width: usize) -> Vec<Kind> {
-        let all = segments(status, &context());
+        let all = segments(status, &named_context());
         layout(&all, width, Separator::Block)
             .iter()
             .map(|p| all[p.segment].kind)
@@ -297,7 +298,6 @@ mod tests {
         assert_eq!(
             dropped,
             [
-                Kind::Store,
                 Kind::Schedule,
                 Kind::Watches,
                 Kind::Workers,
@@ -305,6 +305,7 @@ mod tests {
                 Kind::Thread(Mode::Inbox),
                 Kind::Mail(Mode::Inbox),
                 Kind::Queue(Mode::Inbox),
+                Kind::Name,
             ]
         );
         assert_eq!(present, [Kind::Mode(Mode::Inbox)]);
@@ -379,8 +380,8 @@ mod tests {
 
     #[test]
     fn bar_separator_puts_a_rule_between_segments() {
-        let shown = text(&bar(&status(), &context(), 200, Separator::Bar));
-        assert!(shown.starts_with(" INBOX │ 📬 2 unread │ "));
+        let shown = text(&bar(&status(), &named_context(), 200, Separator::Bar));
+        assert!(shown.starts_with(" INBOX │ ralph-chat │ 📬 2 unread"));
     }
 
     #[test]
@@ -408,7 +409,7 @@ mod tests {
     #[test]
     fn middle_blocks_keep_the_base_background_and_their_own_text() {
         assert_eq!(
-            [Kind::Store, Kind::Workers, Kind::Watches, Kind::Schedule].map(|k| (k.bg(), k.fg())),
+            [Kind::Name, Kind::Workers, Kind::Watches, Kind::Schedule].map(|k| (k.bg(), k.fg())),
             [
                 (Shade::BaseBg, Shade::StoreFg),
                 (Shade::BaseBg, Shade::WorkersFg),
@@ -437,13 +438,13 @@ mod tests {
         assert!(Kind::Mode(Mode::Idle).bold());
         assert!(Kind::Cost(Mode::Idle).bold());
         assert!(!Kind::Thread(Mode::Idle).bold());
-        assert!(!Kind::Store.bold());
+        assert!(!Kind::Name.bold());
     }
 
     #[test]
     fn powerline_glue_to_the_fill_depends_on_the_segment_background() {
         let coloured = Edge::Seg(Kind::Mode(Mode::Work));
-        let plain = Edge::Seg(Kind::Store);
+        let plain = Edge::Seg(Kind::Name);
         assert!(glue(Separator::Powerline, Side::Left, coloured, Edge::Fill).is_some());
         assert!(glue(Separator::Powerline, Side::Left, plain, Edge::Fill).is_none());
         assert!(glue(Separator::Powerline, Side::Left, Edge::Fill, plain).is_none());

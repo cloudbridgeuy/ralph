@@ -77,8 +77,12 @@ pub(super) fn with_schedule(count: usize) -> Status {
 }
 
 pub(super) fn context() -> Context {
+    Context::default()
+}
+
+pub(super) fn named_context() -> Context {
     Context {
-        store: ".ralph/chat".into(),
+        name: "ralph-chat".into(),
     }
 }
 
