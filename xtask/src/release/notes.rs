@@ -251,6 +251,8 @@ fn trim_blank_edges(lines: &mut Vec<&str>) {
 
 /// Strip model chatter from a generated summary: code fences, a leading
 /// "here's the summary:" line, and trailing next-step lines or offers.
+/// Trailing lines are only dropped after the first blank line, so the first
+/// paragraph always survives.
 pub fn clean_summary(raw: &str) -> Option<String> {
     let mut lines: Vec<&str> = raw
         .lines()
@@ -261,13 +263,19 @@ pub fn clean_summary(raw: &str) -> Option<String> {
         lines.remove(0);
         trim_blank_edges(&mut lines);
     }
-    while let Some((last, before)) = lines.split_last() {
+    let first_break = lines
+        .iter()
+        .position(|line| line.trim().is_empty())
+        .unwrap_or(lines.len());
+    while lines.len() > first_break + 1 {
+        let Some((last, before)) = lines.split_last() else {
+            break;
+        };
         let own_paragraph = before.last().is_none_or(|line| line.trim().is_empty());
-        if last.trim().is_empty() || is_chatter(last, own_paragraph) {
-            lines.pop();
-        } else {
+        if !last.trim().is_empty() && !is_chatter(last, own_paragraph) {
             break;
         }
+        lines.pop();
     }
     let text = lines.join("\n").trim().to_string();
     (!text.is_empty()).then_some(text)
@@ -489,9 +497,27 @@ mod tests {
     }
 
     #[test]
-    fn clean_summary_returns_none_for_chatter_only() {
-        assert_eq!(clean_summary("Go?"), None);
+    fn clean_summary_returns_none_when_nothing_is_left() {
         assert_eq!(clean_summary("  \n"), None);
+        assert_eq!(clean_summary("```\n```"), None);
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_first_paragraph_that_ends_in_a_short_question() {
+        let text = "Adds X and fixes Y. Ready to upgrade?";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_first_paragraph_with_a_chatter_phrase() {
+        let text = "Fixes a bug where paste this command failed.";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
+    }
+
+    #[test]
+    fn clean_summary_keeps_a_note_line_inside_the_first_paragraph() {
+        let text = "Adds X.\nNote: requires Y.";
+        assert_eq!(clean_summary(text), Some(text.to_string()));
     }
 
     #[test]
