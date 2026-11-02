@@ -1,5 +1,6 @@
 use super::*;
 use crate::ansi::{DIM, RESET};
+use crate::chat_hold::redraw as hold_redraw;
 
 fn full() -> HoldProgress {
     HoldProgress {
@@ -179,16 +180,37 @@ fn lines_cap_at_three_then_count_the_rest() {
 }
 
 #[test]
-fn redraw_moves_up_over_the_old_lines_and_bar_rows() {
+fn redraw_climbs_over_the_old_lines_then_the_bar_rows() {
     let shown = lines_of(&["a", "b"]);
     assert_eq!(redraw(&shown, 0, "BAR\n", 10, 80), "\r\x1b[Ja\nb\nBAR");
     assert_eq!(
         redraw(&shown, 2, "BAR\n", 100, 80),
-        "\r\x1b[3A\x1b[Ja\nb\nBAR"
+        "\x1b[2A\r\x1b[1A\x1b[Ja\nb\nBAR"
     );
-    assert_eq!(redraw(&[], 2, "BAR", 10, 80), "\r\x1b[2A\x1b[JBAR");
+    assert_eq!(redraw(&[], 2, "BAR", 10, 80), "\x1b[2A\r\x1b[JBAR");
+    assert_eq!(redraw(&[], 0, "BAR", 10, 80), hold_redraw("BAR", 10, 80));
 }
 
 fn lines_of(items: &[&str]) -> Vec<String> {
     items.iter().map(|item| (*item).to_string()).collect()
+}
+
+#[test]
+fn held_ids_follow_the_hold_filter() {
+    let running: Vec<String> = ["A", "B", "sched-t1"].map(String::from).to_vec();
+    let ids = |filter: HoldFilter| held_ids(&filter, &running);
+    assert_eq!(ids(HoldFilter::Any), ["A", "B", "sched-t1"]);
+    assert_eq!(ids(HoldFilter::Source("B".to_string())), ["B"]);
+    assert_eq!(
+        ids(HoldFilter::Set(vec!["B".to_string(), "A".to_string()])),
+        ["A", "B"]
+    );
+    assert_eq!(
+        ids(HoldFilter::Source("watch:ci".to_string())),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        ids(HoldFilter::Source("schedule:t1".to_string())),
+        ["sched-t1"]
+    );
 }

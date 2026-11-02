@@ -29,6 +29,8 @@ mod codex;
 mod command;
 mod cursor;
 mod empty_submit;
+#[cfg(test)]
+mod hold_progress_tests;
 mod layers;
 mod opencode;
 mod permissions;
@@ -310,6 +312,8 @@ pub struct ChatSection {
     pub auto_hold: bool,
     #[serde(default = "default_true")]
     pub auto_continue: bool,
+    #[serde(default = "default_true")]
+    pub hold_progress: bool,
     #[serde(default = "default_send_it_seconds")]
     pub send_it_seconds: u64,
     #[serde(default = "default_send_it_max_turns")]
@@ -385,6 +389,7 @@ impl Default for ChatSection {
             name: None,
             auto_hold: true,
             auto_continue: true,
+            hold_progress: true,
             send_it_seconds: default_send_it_seconds(),
             send_it_max_turns: default_send_it_max_turns(),
             send_it_max_usd: default_send_it_max_usd(),

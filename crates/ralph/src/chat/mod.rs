@@ -7,6 +7,7 @@ mod corrupt_tests;
 mod diff;
 mod editor;
 mod hold;
+mod hold_progress;
 mod inbox;
 mod index_files;
 mod keepalive;
@@ -369,6 +370,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         worker_check_secs,
         worker_quiet_secs,
         auto_continue: chat_config.auto_continue,
+        hold_progress: chat_config.hold_progress,
         workers: Workers::new(
             store_dir.clone(),
             exe.clone(),

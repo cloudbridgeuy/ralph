@@ -50,6 +50,10 @@ impl StatusBar {
         }
     }
 
+    pub fn colored(&self) -> bool {
+        self.color
+    }
+
     pub fn line(&self, status: &Status, width: usize) -> String {
         let spans = bar(status, &self.context, width, self.separator);
         format!("{}\n", render_spans(&self.colors, &spans, self.color))

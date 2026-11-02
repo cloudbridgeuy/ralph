@@ -1,10 +1,11 @@
+use crate::chat::hold_progress::HoldPanel;
 use crate::chat::monitor::Monitor;
-use crate::chat::prompt::{screen_columns, terminal_columns};
+use crate::chat::prompt::screen_columns;
 use crate::chat::statusbar::StatusBar;
 use crate::chat::terminal::{poll_input, read_input, Input, PartialMode, POLL_MS};
 use crate::signal;
 use crate::warn::warn;
-use ralph_core::chat_hold::{first_match, hold_key, redraw, HoldFilter};
+use ralph_core::chat_hold::{first_match, hold_key, HoldFilter};
 use ralph_core::chat_status::Status;
 use ralph_core::inbox::Position;
 use std::io::{self, IsTerminal, Write};
@@ -24,18 +25,6 @@ fn matching_item(monitor: &Monitor, filter: &HoldFilter) -> io::Result<Option<Po
     Ok(first_match(ledger.entries(), filter))
 }
 
-fn show(bar: &StatusBar, status: &Status, painted: usize) -> usize {
-    let width = screen_columns();
-    let mut out = io::stdout();
-    let _ = write!(
-        out,
-        "{}",
-        redraw(&bar.line(status, width), painted, terminal_columns())
-    );
-    let _ = out.flush();
-    width
-}
-
 struct LineEnd;
 
 impl Drop for LineEnd {
@@ -51,7 +40,10 @@ pub(super) fn run(filter: &HoldFilter, monitor: &Monitor, bar: &StatusBar) -> He
     monitor.set_hold(Some(filter.clone()));
     let outcome = {
         let _line = LineEnd;
-        wait(filter, monitor, bar)
+        let mut panel = HoldPanel::new(monitor.hold_progress, filter, bar.colored());
+        let outcome = wait(filter, monitor, bar, &mut panel);
+        panel.clear();
+        outcome
     };
     monitor.set_hold(None);
     match outcome {
@@ -63,16 +55,22 @@ pub(super) fn run(filter: &HoldFilter, monitor: &Monitor, bar: &StatusBar) -> He
     }
 }
 
-fn wait(filter: &HoldFilter, monitor: &Monitor, bar: &StatusBar) -> io::Result<Held> {
+fn wait(
+    filter: &HoldFilter,
+    monitor: &Monitor,
+    bar: &StatusBar,
+    panel: &mut HoldPanel,
+) -> io::Result<Held> {
     let interrupt = signal::interrupt_flag();
     interrupt.store(false, Ordering::SeqCst);
     let mut shown: Option<Status> = None;
-    let mut painted = 0;
     loop {
         let mut status = monitor.status();
         status.hold = Some(filter.clone());
-        if shown.as_ref() != Some(&status) || screen_columns() != painted {
-            painted = show(bar, &status, painted);
+        panel.tick(monitor);
+        let width = screen_columns();
+        if shown.as_ref() != Some(&status) || width != panel.painted || panel.stale(width) {
+            panel.paint(&bar.line(&status, width), width);
             shown = Some(status);
         }
         if signal::is_terminated() {

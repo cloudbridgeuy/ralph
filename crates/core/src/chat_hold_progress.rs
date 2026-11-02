@@ -1,4 +1,6 @@
 use crate::ansi::{DIM, RESET};
+use crate::chat_hold::{redraw as hold_redraw, HoldFilter};
+use crate::schedule_worker::source_matches_worker;
 use crate::worker::ActivityState;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -121,6 +123,23 @@ pub fn last_hint(pane: &str) -> Option<String> {
         .find(|line| !line.is_empty())
 }
 
+pub fn held_ids(filter: &HoldFilter, running: &[String]) -> Vec<String> {
+    let sources: &[String] = match filter {
+        HoldFilter::Any => return running.to_vec(),
+        HoldFilter::Source(source) => std::slice::from_ref(source),
+        HoldFilter::Set(sources) => sources,
+    };
+    running
+        .iter()
+        .filter(|id| {
+            sources
+                .iter()
+                .any(|source| source_matches_worker(source, id))
+        })
+        .cloned()
+        .collect()
+}
+
 pub fn due(last_secs: Option<u64>, now_secs: u64, every_secs: u64) -> bool {
     last_secs.is_none_or(|last| now_secs >= last.saturating_add(every_secs))
 }
@@ -148,13 +167,15 @@ pub fn redraw(
     painted: usize,
     columns: usize,
 ) -> String {
-    let rows_up = painted.div_ceil(columns.max(1)).saturating_sub(1) + previous_lines;
-    let up = match rows_up {
+    let climb = match previous_lines {
         0 => String::new(),
         rows => format!("\x1b[{rows}A"),
     };
     let above: String = lines.iter().map(|line| format!("{line}\n")).collect();
-    format!("\r{up}\x1b[J{above}{}", bar.trim_end_matches('\n'))
+    format!(
+        "{climb}{}",
+        hold_redraw(&format!("{above}{bar}"), painted, columns)
+    )
 }
 
 #[cfg(test)]
