@@ -13,7 +13,8 @@ use ralph_core::chat_status::Status;
 use ralph_core::worker::Report;
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::Ordering;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
 struct Armed {
     run: Run,
@@ -78,8 +79,11 @@ fn countdown(text: &str, seconds: u64, color: bool) -> Option<Countdown> {
             Input::Idle => {}
             Input::Closed => break Countdown::Cancelled,
             Input::Ready => {
-                read_input();
-                break Countdown::Cancelled;
+                if read_input().is_empty() {
+                    thread::sleep(Duration::from_millis(POLL_MS as u64));
+                } else {
+                    break Countdown::Cancelled;
+                }
             }
         }
     };
