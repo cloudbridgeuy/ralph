@@ -70,6 +70,12 @@ pub struct ResponseUsage {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefixCache {
+    Explicit,
+    Implicit { tier: CacheTier },
+}
+
 pub trait Provider: Send + Sync {
     fn id(&self) -> ProviderId;
     fn default_upstream(&self) -> &'static str;
@@ -80,6 +86,7 @@ pub trait Provider: Send + Sync {
     fn classify(&self, call: &RequestHead) -> CallKind;
     fn request_facts(&self, body: &serde_json::Value) -> RequestFacts;
     fn segments(&self, body: &serde_json::Value) -> Vec<PromptSegment>;
+    fn prefix_cache(&self, body: &serde_json::Value) -> PrefixCache;
     fn usage(&self, response: &ResponseView) -> ResponseUsage;
     fn rates(&self, model: &str) -> BillingRates;
     fn prices(&self) -> PriceTable;
@@ -135,10 +142,12 @@ pub(crate) fn assert_provider_contract(
             .all(|pair| pair[0].source <= pair[1].source),
         "segments not in tools, system, messages order"
     );
-    assert!(
-        segments.iter().any(|segment| segment.breakpoint.is_some()),
-        "no cache breakpoint detected"
-    );
+    if provider.prefix_cache(request) == PrefixCache::Explicit {
+        assert!(
+            segments.iter().any(|segment| segment.breakpoint.is_some()),
+            "no cache breakpoint detected"
+        );
+    }
 }
 
 #[cfg(test)]

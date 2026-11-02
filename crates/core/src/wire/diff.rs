@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::provider::{CallKind, PromptSegment, Provider};
+use super::provider::{CallKind, PrefixCache, PromptSegment, Provider};
 use super::read::ReadError;
 use super::record::{CallRecord, RequestBody};
 use super::usage::{CacheTier, Usage, UsageOutcome};
@@ -367,9 +367,29 @@ fn anchor_tokens<'a>(
         .max_by_key(|(call, _)| call.seq)
 }
 
+#[derive(Debug, PartialEq, Eq)]
 struct Breakpoint {
     index: usize,
     tier: CacheTier,
+}
+
+fn servable_breakpoint(
+    segments: &[PromptSegment],
+    shared: usize,
+    prefix_cache: PrefixCache,
+) -> Option<Breakpoint> {
+    let marked = segments[..shared]
+        .iter()
+        .enumerate()
+        .rev()
+        .find_map(|(index, segment)| segment.breakpoint.map(|tier| Breakpoint { index, tier }));
+    match prefix_cache {
+        PrefixCache::Explicit => marked,
+        PrefixCache::Implicit { tier } => shared.checked_sub(1).map(|index| Breakpoint {
+            index,
+            tier: marked.map_or(tier, |breakpoint| breakpoint.tier),
+        }),
+    }
 }
 
 fn mismatch_verdict(
@@ -428,12 +448,11 @@ fn explain(
 ) -> Explanation {
     let usage = counted_usage(input.b);
     let cache_read = usage.map(|u| u.cache_read);
-    let Some(breakpoint) = b_segments[..shared]
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(index, segment)| segment.breakpoint.map(|tier| Breakpoint { index, tier }))
-    else {
+    let prefix_cache = match &input.b.request_body {
+        RequestBody::Json(body) => input.provider.prefix_cache(body),
+        RequestBody::Base64(_) => PrefixCache::Explicit,
+    };
+    let Some(breakpoint) = servable_breakpoint(b_segments, shared, prefix_cache) else {
         return Explanation {
             servable_bytes: 0,
             servable_tokens: None,

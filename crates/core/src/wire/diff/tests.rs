@@ -1,7 +1,10 @@
 use super::*;
+use crate::wire::price::PriceTable;
 use crate::wire::provider::anthropic::Anthropic;
-use crate::wire::provider::RequestFacts;
-use crate::wire::usage::CacheWrite;
+use crate::wire::provider::{
+    PrefixCache, ProviderId, RequestFacts, RequestHead, ResponseUsage, ResponseView,
+};
+use crate::wire::usage::{BillingRates, CacheWrite, FIVE_MIN};
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::json;
 
@@ -831,3 +834,5 @@ fn calls_without_segments_are_skipped_by_anchor_and_refresh() {
         }
     );
 }
+
+mod implicit;
