@@ -211,10 +211,10 @@ fn scheduled_worker_id(id: &str) -> String {
 }
 
 fn hold_route(args: &str, line: &str, targets: &BTreeSet<String>) -> Route {
-    let filter = HoldFilter::parse(args).filter(|filter| match filter {
-        HoldFilter::Set(sources) => sources.iter().all(|source| targets.contains(source)),
-        _ => true,
-    });
+    let mut tokens = args.split_whitespace();
+    let several = tokens.clone().nth(1).is_some();
+    let listed = !several || tokens.all(|token| targets.contains(token));
+    let filter = HoldFilter::parse(args).filter(|_| listed);
     filter.map_or_else(|| Route::Send(line.to_string()), Route::Hold)
 }
 

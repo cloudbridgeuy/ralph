@@ -261,6 +261,17 @@ fn several_hold_tokens_route_locally_only_when_every_one_is_listed() {
 }
 
 #[test]
+fn repeated_hold_tokens_still_need_listed_targets() {
+    let targets: BTreeSet<String> = ["w1"].map(String::from).into();
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &targets);
+    assert_eq!(route("/hold hi hi"), Route::Send("/hold hi hi".into()));
+    assert_eq!(
+        route("/hold w1 w1"),
+        Route::Hold(HoldFilter::Source("w1".into()))
+    );
+}
+
+#[test]
 fn a_single_unknown_hold_token_still_arms_a_source() {
     assert_eq!(
         route_input("/hold ghost", 0, &EmptySubmit::Inbox, &BTreeSet::new()),
