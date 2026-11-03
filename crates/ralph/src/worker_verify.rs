@@ -7,9 +7,9 @@ use crate::{
     acp_worker, claude_headless_worker, codex_worker, opencode_worker, verified_agents, workers,
 };
 use ralph_core::worker::{
-    claude_required_checks, finished_probe, limit_failure, render_check, render_summary,
-    required_failure, resolve_claude_model, resolve_opencode_model, spec_passed, verified_entry,
-    verify_limit, CheckResult, Verdict, VerifiedAgent, VersionProbe,
+    claude_required_checks, finish_plan, finished_probe, limit_failure, render_check,
+    render_summary, required_failure, resolve_claude_model, resolve_opencode_model, spec_passed,
+    verified_entry, verify_limit, CheckResult, Verdict, VerifiedAgent, VersionProbe,
     CLAUDE_HEADLESS_REQUIRED_CHECKS, CODEX_REQUIRED_CHECKS, CURSOR_REQUIRED_CHECKS,
     DEFAULT_OPENCODE_MODEL, OPENCODE_REQUIRED_CHECKS,
 };
@@ -222,12 +222,27 @@ pub(crate) fn run(
         passed,
     };
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-    let (lines, result) = conclude(&outcome, &today, verified_agents::save);
+    let plan = drift
+        .as_ref()
+        .map_or_else(|| finish_plan(true, passed), |drift| drift.plan(passed));
+    if !plan.record_drift {
+        if let Some(drift) = &drift {
+            drift.await_watchdog();
+        }
+        return Err("the drift watchdog ended this run first".into());
+    }
+    let (lines, result) = conclude(&outcome, &today, |entry| {
+        if plan.save_verified {
+            verified_agents::save(entry)
+        } else {
+            Ok(())
+        }
+    });
     for line in lines {
         println!("{line}");
     }
     match &drift {
-        Some(drift) => drift.conclude(name, &results, passed),
+        Some(drift) => drift.record(name, &results, passed),
         None => record_manual(name, version.as_deref(), &results, passed),
     }
     Ok(result?)

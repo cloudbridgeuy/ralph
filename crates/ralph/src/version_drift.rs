@@ -6,12 +6,12 @@ use crate::worker_verify::version_probe;
 use ralph_core::worker::{
     check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
     daily_verify_version, drift_action, drift_alert, drift_entry, drift_watchdog_limit,
-    known_fail_warning, last_check_time, last_verified_version, lock_action,
+    finish_plan, known_fail_warning, last_check_time, last_verified_version, lock_action,
     opencode_probed_version, probe_text, probed_version, record_after_post, store_inbox,
     takeover_step, tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome,
-    HarnessId, LockAction, LockIdentity, TakeoverStep, VersionGate, VersionProbe, CLAUDE_COMMAND,
-    CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT, OPENCODE_COMMAND, OPENCODE_GATE,
-    TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
+    FinishPlan, HarnessId, LockAction, LockIdentity, TakeoverStep, VersionGate, VersionProbe,
+    CLAUDE_COMMAND, CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT, OPENCODE_COMMAND,
+    OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
 };
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -273,22 +273,22 @@ impl DriftRun {
         std::thread::spawn(move || {
             std::thread::sleep(drift_watchdog_limit());
             let results = [CheckResult::fail(TIME_LIMIT_CHECK, "verify ran too long")];
-            if run.finish(agent, &results, false) {
+            if run.plan(false).record_drift {
+                run.record(agent, &results, false);
                 end_own_group();
             }
         });
     }
 
-    pub(crate) fn conclude(&self, agent: &str, results: &[CheckResult], passed: bool) {
-        if !self.finish(agent, results, passed) {
-            std::thread::sleep(Duration::from_secs(10));
-        }
+    pub(crate) fn plan(&self, passed: bool) -> FinishPlan {
+        finish_plan(!self.done.swap(true, Ordering::SeqCst), passed)
     }
 
-    fn finish(&self, agent: &str, results: &[CheckResult], passed: bool) -> bool {
-        if self.done.swap(true, Ordering::SeqCst) {
-            return false;
-        }
+    pub(crate) fn await_watchdog(&self) {
+        std::thread::sleep(Duration::from_secs(10));
+    }
+
+    pub(crate) fn record(&self, agent: &str, results: &[CheckResult], passed: bool) {
         let entry = drift_entry(
             agent,
             &self.version,
@@ -301,7 +301,6 @@ impl DriftRun {
             verified_agents::save_drift(entry).ok();
         }
         release_lock(agent);
-        true
     }
 }
 

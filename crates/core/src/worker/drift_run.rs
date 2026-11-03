@@ -59,6 +59,19 @@ pub fn takeover_step(seen: LockIdentity, moved: LockIdentity) -> TakeoverStep {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FinishPlan {
+    pub save_verified: bool,
+    pub record_drift: bool,
+}
+
+pub fn finish_plan(claimed: bool, passed: bool) -> FinishPlan {
+    FinishPlan {
+        save_verified: claimed && passed,
+        record_drift: claimed,
+    }
+}
+
 pub fn record_after_post(outcome: &DriftOutcome, posted: bool) -> bool {
     match outcome {
         DriftOutcome::Passed => true,
@@ -203,6 +216,33 @@ mod tests {
         assert!(!record_after_post(&failed, false));
         assert!(record_after_post(&DriftOutcome::Passed, false));
         assert!(record_after_post(&DriftOutcome::Passed, true));
+    }
+
+    #[test]
+    fn only_the_run_that_claimed_the_outcome_writes_anything() {
+        assert_eq!(
+            finish_plan(true, true),
+            FinishPlan {
+                save_verified: true,
+                record_drift: true
+            }
+        );
+        assert_eq!(
+            finish_plan(true, false),
+            FinishPlan {
+                save_verified: false,
+                record_drift: true
+            }
+        );
+        for passed in [true, false] {
+            assert_eq!(
+                finish_plan(false, passed),
+                FinishPlan {
+                    save_verified: false,
+                    record_drift: false
+                }
+            );
+        }
     }
 
     #[test]
