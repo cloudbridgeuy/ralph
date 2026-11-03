@@ -1,7 +1,7 @@
 use super::acp::REPORT_TOOL;
 use super::{
-    Action, ActivityMark, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus,
-    ThreadSignal, TurnEnd, Turns, VersionGate, SERVER_NAME,
+    allowed_tools, Action, ActivityMark, BlockedContent, PermissionMode, PermissionOption, Report,
+    ReportStatus, ThreadSignal, TurnEnd, Turns, VersionGate, SERVER_NAME,
 };
 use crate::stream::{interrupt_line, result_is_error};
 use serde_json::{json, Value};
@@ -209,13 +209,25 @@ pub fn bind_started_turn(turns: &mut Turns, mut actions: Vec<Action>, seq: u64) 
     actions
 }
 
-pub fn claude_headless_args(
-    model: Option<&str>,
-    mcp_config: &str,
-    attachments: &Path,
-    mode: PermissionMode,
-    session: ClaudeSession,
-) -> Vec<String> {
+#[derive(Clone, Copy)]
+pub struct ClaudeHeadlessArgs<'a> {
+    pub model: Option<&'a str>,
+    pub mcp_config: &'a str,
+    pub attachments: &'a Path,
+    pub mode: PermissionMode,
+    pub session: ClaudeSession<'a>,
+    pub copied: &'a [String],
+}
+
+pub fn claude_headless_args(options: &ClaudeHeadlessArgs) -> Vec<String> {
+    let ClaudeHeadlessArgs {
+        model,
+        mcp_config,
+        attachments,
+        mode,
+        session,
+        copied,
+    } = *options;
     let native_mode = match mode {
         PermissionMode::Ask => "default",
         PermissionMode::Yolo => "auto",
@@ -233,11 +245,12 @@ pub fn claude_headless_args(
         "stdio",
         "--mcp-config",
         mcp_config,
+        "--strict-mcp-config",
         "--allowedTools",
     ]
     .map(String::from)
     .into();
-    args.push(own_tool_names());
+    args.push(allowed_tools(copied));
     args.push("--add-dir".to_string());
     args.push(attachments.display().to_string());
     if let Some(model) = model {
@@ -299,6 +312,7 @@ pub fn shutdown_steps(running: bool) -> &'static [ShutdownStep] {
 pub enum StartFault {
     OwnerWrite,
     RecordWrite,
+    SpawnFailed,
     InitFailed,
     NotAdopted,
 }
@@ -308,16 +322,23 @@ pub enum Leftover {
     StopChild,
     RemoveOwner,
     RemoveRecord,
+    RemoveConfig,
 }
 
 pub fn cleanup(fault: StartFault) -> &'static [Leftover] {
     match fault {
-        StartFault::OwnerWrite => &[Leftover::StopChild],
-        StartFault::RecordWrite => &[Leftover::StopChild, Leftover::RemoveOwner],
+        StartFault::SpawnFailed => &[Leftover::RemoveConfig],
+        StartFault::OwnerWrite => &[Leftover::StopChild, Leftover::RemoveConfig],
+        StartFault::RecordWrite => &[
+            Leftover::StopChild,
+            Leftover::RemoveOwner,
+            Leftover::RemoveConfig,
+        ],
         StartFault::InitFailed | StartFault::NotAdopted => &[
             Leftover::StopChild,
             Leftover::RemoveOwner,
             Leftover::RemoveRecord,
+            Leftover::RemoveConfig,
         ],
     }
 }
@@ -334,16 +355,6 @@ pub fn uuid_v4(mut bytes: [u8; 16]) -> String {
         &hex[16..20],
         &hex[20..32]
     )
-}
-
-fn own_tool_names() -> String {
-    let definitions = super::tools::tool_definitions();
-    let names = definitions.as_array().into_iter().flatten();
-    names
-        .filter_map(|tool| tool["name"].as_str())
-        .map(|name| format!("mcp__{SERVER_NAME}__{name}"))
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 pub fn resumed_session(expected: Option<&str>, found: String) -> Result<String, String> {
@@ -649,53 +660,75 @@ mod tests {
 
     #[test]
     fn args_run_prompt_less_stream_json_with_the_report_server() {
-        let args = claude_headless_args(
-            Some("haiku"),
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Ask,
-            ClaudeSession::New("sid"),
-        );
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: Some("haiku"),
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("sid"),
+            copied: &[],
+        });
         let joined = args.join(" ");
         assert!(joined
             .starts_with("-p --verbose --input-format stream-json --output-format stream-json"));
         assert!(joined.contains("--permission-mode default --permission-prompt-tool stdio"));
         assert!(!joined.contains("--permission-prompts"));
         assert!(joined.contains(
-            "--mcp-config {} --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
+            "--mcp-config {} --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
         ));
         assert!(!args.contains(&"--resume".into()));
-        let yolo = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Yolo,
-            ClaudeSession::New("sid"),
-        );
+        assert!(args.contains(&"--strict-mcp-config".into()));
+        let yolo = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Yolo,
+            session: ClaudeSession::New("sid"),
+            copied: &[],
+        });
         assert!(yolo
             .join(" ")
             .contains("--permission-mode auto --permission-prompt-tool stdio"));
         assert!(!yolo.contains(&"--model".into()));
-        let resumed = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Ask,
-            ClaudeSession::Resume("abc"),
-        );
+        let resumed = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::Resume("abc"),
+            copied: &[],
+        });
         assert!(resumed.join(" ").ends_with("--resume abc"));
         assert!(!resumed.contains(&"--session-id".into()));
+        assert!(resumed.contains(&"--strict-mcp-config".into()));
+    }
+
+    #[test]
+    fn args_allow_the_copied_servers_and_pass_the_config_path() {
+        let copied = ["mcptools".to_string(), "docs".to_string()];
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "/s/workers/A.json",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("sid"),
+            copied: &copied,
+        });
+        assert!(args.join(" ").contains(
+            "--mcp-config /s/workers/A.json --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__*,mcp__docs__* --add-dir /a"
+        ));
     }
 
     #[test]
     fn a_new_session_passes_its_id_and_never_resume() {
-        let args = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Ask,
-            ClaudeSession::New("11111111-2222-4333-8444-555555555555"),
-        );
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("11111111-2222-4333-8444-555555555555"),
+            copied: &[],
+        });
         assert!(args
             .join(" ")
             .ends_with("--session-id 11111111-2222-4333-8444-555555555555"));
@@ -737,15 +770,24 @@ mod tests {
 
     #[test]
     fn each_start_fault_cleans_exactly_what_it_left_behind() {
-        assert_eq!(cleanup(StartFault::OwnerWrite), [Leftover::StopChild]);
+        assert_eq!(cleanup(StartFault::SpawnFailed), [Leftover::RemoveConfig]);
+        assert_eq!(
+            cleanup(StartFault::OwnerWrite),
+            [Leftover::StopChild, Leftover::RemoveConfig]
+        );
         assert_eq!(
             cleanup(StartFault::RecordWrite),
-            [Leftover::StopChild, Leftover::RemoveOwner]
+            [
+                Leftover::StopChild,
+                Leftover::RemoveOwner,
+                Leftover::RemoveConfig
+            ]
         );
         let full = [
             Leftover::StopChild,
             Leftover::RemoveOwner,
             Leftover::RemoveRecord,
+            Leftover::RemoveConfig,
         ];
         assert_eq!(cleanup(StartFault::InitFailed), full);
         assert_eq!(cleanup(StartFault::NotAdopted), full);

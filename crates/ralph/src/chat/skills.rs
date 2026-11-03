@@ -98,7 +98,7 @@ pub(super) fn write_skill_plugin(skills: &[ChatSkill]) -> io::Result<Option<temp
     Ok(Some(plugin))
 }
 
-pub(super) fn read_claude_config(config_dir: Option<&Path>) -> serde_json::Value {
+pub(crate) fn read_claude_config(config_dir: Option<&Path>) -> serde_json::Value {
     let Some(path) = dirs::home_dir().map(|home| claude_json(config_dir, &home)) else {
         return serde_json::json!({});
     };

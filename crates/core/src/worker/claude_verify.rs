@@ -17,9 +17,11 @@ pub fn claude_required_checks(live: bool) -> &'static [&'static str] {
         CLAUDE_REQUIRED_CHECKS
     }
 }
-pub const CLAUDE_VERIFY_FLAGS: [&str; 5] = [
+pub const CLAUDE_VERIFY_FLAGS: [&str; 7] = [
     "--permission-mode",
     "--mcp-config",
+    "--strict-mcp-config",
+    "--allowedTools",
     "--settings",
     "--add-dir",
     "--append-system-prompt",
@@ -85,6 +87,7 @@ impl VerifyPaths {
             scheduled: false,
             shell,
             config_dir,
+            copied: &[],
         });
         let at = command
             .iter()
@@ -207,7 +210,7 @@ pub fn claude_permission_check(
 mod tests {
     use super::*;
 
-    const HELP: &str = "Options:\n  --add-dir <dirs>\n  --append-system-prompt <prompt>\n  --mcp-config <configs>\n  --permission-mode <mode>\n  --settings <file-or-json>\n  --model <model>\n";
+    const HELP: &str = "Options:\n  --add-dir <dirs>\n  --allowedTools <tools...>\n  --append-system-prompt <prompt>\n  --mcp-config <configs>\n  --permission-mode <mode>\n  --settings <file-or-json>\n  --strict-mcp-config\n  --model <model>\n";
 
     #[test]
     fn the_free_claude_checks_start_no_interactive_claude() {
@@ -228,6 +231,9 @@ mod tests {
     #[test]
     fn help_text_lists_every_flag_the_worker_passes() {
         assert!(missing_flags(HELP).is_empty());
+        for flag in ["--strict-mcp-config", "--allowedTools"] {
+            assert!(CLAUDE_VERIFY_FLAGS.contains(&flag), "{flag}");
+        }
         assert_eq!(flags_check(HELP).verdict, super::super::Verdict::Pass);
     }
 
@@ -317,6 +323,7 @@ mod tests {
             scheduled: false,
             shell: ClaudeShell::default(),
             config_dir: None,
+            copied: &[],
         };
         for command in [worker_launch(&args), super::super::worker_command(&args)] {
             assert!(command.iter().all(|word| word != "--setting-sources"));

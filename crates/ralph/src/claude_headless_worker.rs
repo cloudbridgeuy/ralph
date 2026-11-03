@@ -1,5 +1,6 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
+use crate::chat::read_claude_config;
 use crate::codex_worker::pipes::pipe_lines;
 use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;
@@ -9,6 +10,7 @@ use crate::cursor_owner::{
     write_file, write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
+use crate::private_file::write_worker_config;
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
@@ -19,16 +21,16 @@ use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, claude_mcp_config, cleanup, decode_claude_version, decode_line,
-    deny_line, gone_path, interrupt_lines, interrupted_end, permission_response,
-    prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
-    start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
-    uuid_v4, Action, ActivityState, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles,
-    HarnessId, HeadlessState, InterruptOutcome, Leftover, PermissionAnswer, PermissionMode,
-    SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns,
-    WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
-    CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR,
-    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR,
-    CLAUDE_HEADLESS_SPAWN_DIR,
+    deny_line, gone_path, import_servers, interrupt_lines, interrupted_end, join_start_warnings,
+    permission_response, prompt_failure_report, ready_path, reduce, request_stale, resumed_session,
+    shutdown_steps, start_steps, stuck_permission_report, task_prompt, turn_end_activity,
+    turn_lost_at_resume, uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs,
+    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
+    InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
+    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -255,7 +257,12 @@ fn session_record(
     }
 }
 
-fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Option<&mut Child>) {
+struct StartPaths<'a> {
+    files: &'a HandoffFiles,
+    config: &'a Path,
+}
+
+fn remove_leftovers(leftovers: &[Leftover], paths: &StartPaths, mut child: Option<&mut Child>) {
     for leftover in leftovers {
         match leftover {
             Leftover::StopChild => {
@@ -264,10 +271,13 @@ fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Opt
                 }
             }
             Leftover::RemoveOwner => {
-                fs::remove_file(&files.owner).ok();
+                fs::remove_file(&paths.files.owner).ok();
             }
             Leftover::RemoveRecord => {
-                fs::remove_file(&files.session).ok();
+                fs::remove_file(&paths.files.session).ok();
+            }
+            Leftover::RemoveConfig => {
+                fs::remove_file(paths.config).ok();
             }
         }
     }
@@ -275,7 +285,7 @@ fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Opt
 
 fn write_start_files(
     steps: &[StartStep],
-    files: &HandoffFiles,
+    paths: &StartPaths,
     record: &SessionRecord,
     group: u32,
     mut child: Option<&mut Child>,
@@ -284,16 +294,16 @@ fn write_start_files(
         let (fault, written) = match step {
             StartStep::WriteOwner => (
                 StartFault::OwnerWrite,
-                write_owner_record(&files.owner, group, "claude"),
+                write_owner_record(&paths.files.owner, group, "claude"),
             ),
             StartStep::WriteRecord => (
                 StartFault::RecordWrite,
-                write_file(&files.session, &record.render())
+                write_file(&paths.files.session, &record.render())
                     .map_err(|e| format!("could not write the session record: {e}")),
             ),
         };
         if let Err(message) = written {
-            remove_leftovers(cleanup(fault), files, child.as_deref_mut());
+            remove_leftovers(cleanup(fault), paths, child.as_deref_mut());
             return Err(message);
         }
     }
@@ -308,19 +318,14 @@ fn random_bytes() -> Result<[u8; 16], String> {
     Ok(bytes)
 }
 
-fn check_installed_version(warning: &Path) -> Result<(), String> {
+fn check_installed_version() -> Result<Option<String>, String> {
     let output = Command::new(CLAUDE_COMMAND)
         .arg("--version")
         .output()
         .map_err(|e| format!("could not run `{CLAUDE_COMMAND} --version`: {e}"))?;
     let text = String::from_utf8_lossy(&output.stdout);
     let found = decode_claude_version(&text).unwrap_or_default();
-    if let Some(message) =
-        check_agent_version(&CLAUDE_GATE, found, &crate::verified_agents::load())?
-    {
-        report_start_warning(message, Some(warning));
-    }
-    Ok(())
+    check_agent_version(&CLAUDE_GATE, found, &crate::verified_agents::load())
 }
 
 struct ClaudeWorker {
@@ -340,7 +345,7 @@ impl ClaudeWorker {
         resume: Option<&SessionRecord>,
         starting: &Mutex<HashMap<String, u32>>,
     ) -> Result<Self, String> {
-        check_installed_version(&files.warning)?;
+        let mut warnings: Vec<String> = check_installed_version()?.into_iter().collect();
         let store = request.inbox.parent().unwrap_or(Path::new("."));
         let server = acp_mcp_server(
             &request.exe,
@@ -349,7 +354,19 @@ impl ClaudeWorker {
             &files.owner,
             request.snapshots.then_some(request.worktree.as_path()),
         );
-        let mcp = claude_mcp_config(&server);
+        let config = AppConfig::load().unwrap_or_default();
+        let imported = import_servers(
+            &read_claude_config(config.claude.config_dir.as_deref()),
+            &config.chat.mcp_servers,
+        );
+        warnings.extend(imported.warnings);
+        if let Some(warning) = join_start_warnings(&warnings) {
+            report_start_warning(warning, Some(&files.warning));
+        }
+        let copied: Vec<String> = imported.servers.keys().cloned().collect();
+        let mcp_path =
+            write_worker_config(store, id, &imported.servers, &claude_mcp_config(&server))
+                .map_err(|e| format!("could not write the worker MCP config: {e}"))?;
         let attachments = store.join(ATTACHMENTS_DIR);
         let mode = resume
             .and_then(|record| record.permissions)
@@ -367,31 +384,38 @@ impl ClaudeWorker {
         let expected_session = match session {
             ClaudeSession::New(id) | ClaudeSession::Resume(id) => id.to_string(),
         };
-        let args = claude_headless_args(
-            request.model.as_deref(),
-            &mcp.to_string(),
-            &attachments,
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: request.model.as_deref(),
+            mcp_config: &mcp_path.to_string_lossy(),
+            attachments: &attachments,
             mode,
             session,
-        );
+            copied: &copied,
+        });
+        let paths = StartPaths {
+            files,
+            config: &mcp_path,
+        };
+        let inbox_root = fs::canonicalize(store).map_err(|e| {
+            remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
+            e.to_string()
+        })?;
         let mut command = Command::new(CLAUDE_COMMAND);
         command
             .args(args)
             .current_dir(&request.worktree)
-            .envs([ralph_core::worker::inbox_env(
-                &fs::canonicalize(store).map_err(|e| e.to_string())?,
-            )]);
-        let config_dir = AppConfig::load().ok().and_then(|config| {
-            configured_dir(
-                config.claude.config_dir.as_deref(),
-                dirs::home_dir().as_deref(),
-            )
-        });
+            .envs([ralph_core::worker::inbox_env(&inbox_root)]);
+        let config_dir = configured_dir(
+            config.claude.config_dir.as_deref(),
+            dirs::home_dir().as_deref(),
+        );
         if let Some(dir) = config_dir {
             command.env("CLAUDE_CONFIG_DIR", dir);
         }
-        let (mut child, stdin, stdout, stderr) =
-            spawn_piped(command).map_err(|e| format!("could not start `{CLAUDE_COMMAND}`: {e}"))?;
+        let (mut child, stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
+            remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
+            format!("could not start `{CLAUDE_COMMAND}`: {e}")
+        })?;
         locked(starting).insert(id.to_string(), child.id());
         let log = CappedLog::new(Some(store), id);
         drain_stderr(stderr, Arc::clone(&log));
@@ -435,7 +459,7 @@ impl ClaudeWorker {
         };
         write_start_files(
             start_steps(&session),
-            files,
+            &paths,
             record,
             child.id(),
             Some(&mut child),
@@ -466,7 +490,7 @@ impl ClaudeWorker {
         };
         let session = session.inspect_err(|_| {
             worker.terminate();
-            remove_leftovers(cleanup(StartFault::InitFailed), files, None);
+            remove_leftovers(cleanup(StartFault::InitFailed), &paths, None);
         })?;
         worker.session = session;
         Ok(worker)
@@ -631,7 +655,12 @@ impl ClaudeHeadlessHost {
         } else {
             drop(worker);
             fs::remove_file(ready_path(&self.store_dir, id)).ok();
-            remove_leftovers(cleanup(StartFault::NotAdopted), &files, None);
+            let config = worker_config_path(&self.store_dir, id);
+            let paths = StartPaths {
+                files: &files,
+                config: &config,
+            };
+            remove_leftovers(cleanup(StartFault::NotAdopted), &paths, None);
         }
     }
 
