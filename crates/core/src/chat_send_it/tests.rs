@@ -338,22 +338,51 @@ fn reports_move_on_wait_or_stop() {
 }
 
 #[test]
-fn exit_codes_settle_watch_and_check_steps_only() {
+fn each_watch_outcome_settles_a_check_as_met_or_failed() {
     let plan = plan();
     let line_3 = "[send-it 3/4] run the checks · exit: `cargo xtask lint` exits 0";
+    let passed = WatchOutcome::Exited(0);
     assert_eq!(
-        advance(&plan, at(1), Event::Exited(0)),
+        advance(&plan, at(1), Event::Watched(&passed)),
         (at(2), Next::Send(line_3.to_string()))
     );
     assert_eq!(
-        advance(&plan, at(2), Event::Exited(0)),
+        advance(&plan, at(2), Event::Watched(&passed)),
         (at(3), Next::Send(STEP_4.to_string()))
     );
+    for failed in [
+        WatchOutcome::Exited(1),
+        WatchOutcome::Signaled(9),
+        WatchOutcome::Stopped,
+        WatchOutcome::TimedOut(std::time::Duration::from_secs(30)),
+        WatchOutcome::WaitFailed("gone".to_string()),
+    ] {
+        assert_eq!(
+            advance(&plan, at(2), Event::Watched(&failed)),
+            (at(2), Next::Stop(StopReason::CheckFailed { step: 3 })),
+            "{failed:?}"
+        );
+    }
     assert_eq!(
-        advance(&plan, at(2), Event::Exited(1)),
-        (at(2), Next::Stop(StopReason::Unmet { step: 3 }))
+        advance(&plan, at(0), Event::Watched(&passed)),
+        (at(0), Next::Wait)
     );
-    assert_eq!(advance(&plan, at(0), Event::Exited(0)), (at(0), Next::Wait));
+}
+
+#[test]
+fn a_check_runs_as_a_plain_watch_named_for_its_step() {
+    assert_eq!(check_watch_id(2), "watch:send-it-3");
+    assert_eq!(
+        check_spec(2, "true"),
+        crate::watch::WatchSpec {
+            id: "watch:send-it-3".to_string(),
+            command: "true".to_string(),
+            follow_up: None,
+            kind: crate::watch::WatchKind::Normal,
+            timeout: None,
+            limit: None,
+        }
+    );
 }
 
 #[test]
@@ -394,6 +423,23 @@ fn new_stop_notices_name_the_step() {
     assert!(StopReason::JudgeRounds { step: 4 }
         .notice(&run)
         .contains("step 4 was still not met"));
+    for (reason, why) in [
+        (
+            StopReason::CheckFailed { step: 3 },
+            "step 3 check did not exit 0",
+        ),
+        (StopReason::Off, "the run plan is gone"),
+        (StopReason::PlanChanged, "the run plan changed"),
+        (StopReason::NoReply, "a turn ended without a reply"),
+        (StopReason::NeedsYou, "a schedule waits for your approval"),
+        (StopReason::TookOver, "you took over"),
+    ] {
+        let notice = reason.notice(&run);
+        assert!(
+            notice.starts_with(&format!("send-it off: {why}")),
+            "{notice}"
+        );
+    }
 }
 
 #[test]
@@ -550,5 +596,32 @@ fn the_propose_run_tool_requires_a_criterion_on_every_step() {
     assert_eq!(
         schema["properties"]["steps"]["items"]["required"],
         serde_json::json!(["do", "criterion"])
+    );
+}
+
+#[test]
+fn only_a_last_line_verdict_met_counts() {
+    assert!(parse_verdict("Looks good.\n\n**Verdict: MET**\n"));
+    assert!(parse_verdict("verdict: met"));
+    assert!(!parse_verdict("verdict: met\nmore text"));
+    assert!(!parse_verdict("verdict: unmet"));
+    assert!(!parse_verdict(""));
+}
+
+#[test]
+fn the_judge_prompt_asks_the_step_question_for_a_verdict_line() {
+    let prompt = judge_prompt(&plan(), at(3)).unwrap();
+    assert!(prompt.contains("[send-it 4/4]"), "{prompt}");
+    assert!(prompt.contains("are all findings resolved?"), "{prompt}");
+    assert!(prompt.contains("verdict: met"), "{prompt}");
+    assert!(prompt.contains("verdict: unmet"), "{prompt}");
+    assert_eq!(judge_prompt(&plan(), at(0)), None);
+}
+
+#[test]
+fn the_done_notice_counts_steps_turns_and_cost() {
+    assert_eq!(
+        done_notice(&plan(), &spent(7, 1.25)),
+        "send-it done: 4/4 steps in 7 turns, $1.25."
     );
 }

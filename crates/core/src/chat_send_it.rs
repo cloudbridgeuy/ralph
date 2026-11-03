@@ -1,5 +1,6 @@
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
+use crate::watch::{watch_id, WatchKind, WatchOutcome, WatchSpec};
 use crate::worker::{HarnessId, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -435,6 +436,12 @@ pub enum StopReason {
     Unmet { step: usize },
     WorkerFlagged,
     JudgeRounds { step: usize },
+    CheckFailed { step: usize },
+    Off,
+    PlanChanged,
+    NoReply,
+    NeedsYou,
+    TookOver,
 }
 
 impl StopReason {
@@ -447,6 +454,12 @@ impl StopReason {
             StopReason::JudgeRounds { step } => {
                 format!("step {step} was still not met after the last judge round")
             }
+            StopReason::CheckFailed { step } => format!("step {step} check did not exit 0"),
+            StopReason::Off => "the run plan is gone".to_string(),
+            StopReason::PlanChanged => "the run plan changed or lost its approval".to_string(),
+            StopReason::NoReply => "a turn ended without a reply".to_string(),
+            StopReason::NeedsYou => "a schedule waits for your approval".to_string(),
+            StopReason::TookOver => "you took over".to_string(),
         };
         format!("send-it off: {why}. {RESUME_HINT}")
     }
@@ -471,7 +484,7 @@ pub enum Event<'a> {
     Start,
     TurnEnded(&'a Run),
     Report(&'a Report),
-    Exited(i32),
+    Watched(&'a WatchOutcome),
     Verdict(bool),
 }
 
@@ -564,11 +577,17 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
                 unmet
             }
         }
-        (Event::Exited(code), Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. }) => {
-            if code == 0 {
+        (
+            Event::Watched(outcome),
+            Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. },
+        ) => {
+            if *outcome == WatchOutcome::Exited(0) {
                 step_met(plan, progress)
             } else {
-                unmet
+                (
+                    progress,
+                    Next::Stop(StopReason::CheckFailed { step: number }),
+                )
             }
         }
         (Event::Verdict(true), Criterion::Judge { .. }) => step_met(plan, progress),
@@ -591,6 +610,54 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
         }
         _ => (progress, Next::Wait),
     }
+}
+
+const CHECK_ID: &str = "send-it-";
+const VERDICT_MET: &str = "verdict: met";
+
+pub fn check_watch_id(step: usize) -> String {
+    watch_id(&format!("{CHECK_ID}{}", step + 1))
+}
+
+pub fn check_spec(step: usize, command: &str) -> WatchSpec {
+    WatchSpec {
+        id: check_watch_id(step),
+        command: command.to_string(),
+        follow_up: None,
+        kind: WatchKind::Normal,
+        timeout: None,
+        limit: None,
+    }
+}
+
+pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {
+    let step = plan.steps.get(progress.step)?;
+    let Criterion::Judge { question } = &step.criterion else {
+        return None;
+    };
+    Some(format!(
+        "{}\n/send-it judge: {question}\nAnswer from what this chat already shows and take no actions. End your reply with one line: `{VERDICT_MET}` or `verdict: unmet`.",
+        step_line(plan, progress.step, step)
+    ))
+}
+
+pub fn parse_verdict(reply: &str) -> bool {
+    reply
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .is_some_and(|line| {
+            line.trim_matches(|c: char| c.is_whitespace() || c == '*' || c == '`')
+                .eq_ignore_ascii_case(VERDICT_MET)
+        })
+}
+
+pub fn done_notice(plan: &RunPlan, run: &Run) -> String {
+    let steps = plan.steps.len();
+    format!(
+        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}.",
+        run.turns, run.spent_usd
+    )
 }
 
 pub fn blocked_alert(notice: &str, config: &AlertConfig) -> Option<Alert> {
