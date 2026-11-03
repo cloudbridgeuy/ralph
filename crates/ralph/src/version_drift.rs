@@ -8,13 +8,14 @@ use crate::worker_verify::version_probe;
 use ralph_core::worker::{
     check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
     daily_verify_version, drift_action, drift_alert, drift_entry, drift_watchdog_limit,
-    finish_plan, known_fail_warning, last_check_time, last_verified_version,
+    finish_plan, known_fail_warning, last_check_time, last_verified_version, lock_claim,
     opencode_probed_version, probe_text, probed_version, record_after_post, store_inbox,
     tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome, FinishPlan, HarnessId,
-    VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT,
-    OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
+    LockClaim, LockError, VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE,
+    CURSOR_AGENT, DAILY_CHECK_LIMIT, LOCK_CHECK, OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK,
+    VERSION_PROBE_LIMIT,
 };
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -169,10 +170,12 @@ pub(crate) fn verify_on_drift() -> bool {
     AppConfig::load().map_or(true, |config| config.workers.verify_on_drift)
 }
 
-fn acquire_lock(agent: &str) -> Option<File> {
+fn acquire_lock(agent: &str) -> Result<File, LockError> {
     let path = verified_agents::drift_lock_path(agent);
-    fs::create_dir_all(path.parent()?).ok()?;
-    check_path(&path).ok()?;
+    let io = |error: &dyn std::fmt::Display| LockError::Io(format!("{}: {error}", path.display()));
+    let parent = path.parent().ok_or_else(|| io(&"no parent directory"))?;
+    fs::create_dir_all(parent).map_err(|error| io(&error))?;
+    check_path(&path).map_err(|error| io(&error))?;
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -180,9 +183,12 @@ fn acquire_lock(agent: &str) -> Option<File> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(&path)
-        .ok()?;
-    file.try_lock().ok()?;
-    Some(file)
+        .map_err(|error| io(&error))?;
+    file.try_lock().map_err(|error| match error {
+        TryLockError::WouldBlock => LockError::WouldBlock,
+        TryLockError::Error(error) => io(&error),
+    })?;
+    Ok(file)
 }
 
 fn start_verify(agent: &str, found: &str, inbox: &Path) {
@@ -219,11 +225,22 @@ impl DriftRun {
     }
 
     pub(crate) fn claim(self, agent: &str) -> Option<Self> {
-        let lock = acquire_lock(agent)?;
-        Some(Self {
-            _lock: Some(Arc::new(lock)),
-            ..self
-        })
+        match acquire_lock(agent).map_err(|error| lock_claim(&error)) {
+            Ok(lock) => Some(Self {
+                _lock: Some(Arc::new(lock)),
+                ..self
+            }),
+            Err(LockClaim::Busy) => None,
+            Err(LockClaim::Broken(detail)) => {
+                self.record(
+                    agent,
+                    &[CheckResult::fail(LOCK_CHECK, detail)],
+                    false,
+                    false,
+                );
+                None
+            }
+        }
     }
 
     pub(crate) fn watch(&self, agent: &'static str) {
