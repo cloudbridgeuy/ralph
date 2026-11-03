@@ -599,6 +599,229 @@ fn the_propose_run_tool_requires_a_criterion_on_every_step() {
     );
 }
 
+fn approved(plan: RunPlan) -> RunFile {
+    RunFile {
+        approved: Some(plan_hash(&plan)),
+        plan,
+    }
+}
+
+fn driving(step: usize, awaiting: Awaiting, run: Run) -> Driving {
+    Driving {
+        hash: plan_hash(&plan()),
+        progress: at(step),
+        run,
+        awaiting,
+    }
+}
+
+fn ended(file: &RunFile) -> Ended<'_> {
+    Ended {
+        file: Some(file),
+        replied: true,
+        asked: false,
+        typed: false,
+        cost_usd: 0.5,
+        reply: "",
+        drained: &[],
+        unread: &[],
+        watched: None,
+    }
+}
+
+const LINE_2: &str = "[send-it 2/4] wait for CI · exit: watch `gh pr checks --watch` exits 0";
+
+#[test]
+fn only_an_approved_file_starts_a_run_at_step_one() {
+    let unapproved = RunFile {
+        plan: plan(),
+        approved: None,
+    };
+    assert_eq!(start_run(&unapproved), None);
+    assert_eq!(
+        start_run(&approved(plan())),
+        Some((
+            driving(0, Awaiting::Turn, Run::default()),
+            Next::Send(STEP_1.to_string())
+        ))
+    );
+}
+
+#[test]
+fn a_step_turn_counts_its_cost_and_waits_on_the_criterion() {
+    let file = approved(plan());
+    let ticked = tick(&driving(0, Awaiting::Turn, spent(1, 0.25)), &ended(&file));
+    assert_eq!(
+        ticked,
+        Ticked {
+            driving: driving(0, Awaiting::Report("E1".to_string()), spent(2, 0.75)),
+            next: Next::Hold("E1".to_string()),
+            met: None,
+        }
+    );
+    let check = tick(&driving(2, Awaiting::Turn, Run::default()), &ended(&file));
+    assert_eq!(check.next, Next::Check("cargo xtask lint".to_string()));
+    assert_eq!(
+        check.driving.awaiting,
+        Awaiting::Report("watch:send-it-3".to_string())
+    );
+    let judge = tick(&driving(3, Awaiting::Turn, Run::default()), &ended(&file));
+    assert_eq!(
+        (judge.next, judge.driving.awaiting),
+        (Next::Judge, Awaiting::Verdict)
+    );
+}
+
+#[test]
+fn a_missing_unapproved_or_changed_plan_stops_the_run_first() {
+    let base = approved(plan());
+    let mut edited = plan();
+    edited.goal = "ship GUZ-2".to_string();
+    let edited = approved(edited);
+    let unapproved = RunFile {
+        plan: plan(),
+        approved: None,
+    };
+    let state = driving(0, Awaiting::Turn, Run::default());
+    let flagged = [worker_report("E1", "question")];
+    for (file, reason) in [
+        (None, StopReason::Off),
+        (Some(&unapproved), StopReason::PlanChanged),
+        (Some(&edited), StopReason::PlanChanged),
+    ] {
+        let ended = Ended {
+            file,
+            replied: false,
+            unread: &flagged,
+            ..ended(&base)
+        };
+        assert_eq!(tick(&state, &ended).next, Next::Stop(reason));
+    }
+}
+
+#[test]
+fn a_failed_typed_asked_or_flagged_turn_stops_the_run() {
+    let file = approved(plan());
+    let state = driving(0, Awaiting::Turn, Run::default());
+    let stop = |change: fn(&mut Ended)| {
+        let mut ended = ended(&file);
+        change(&mut ended);
+        tick(&state, &ended).next
+    };
+    assert_eq!(stop(|e| e.replied = false), Next::Stop(StopReason::NoReply));
+    assert_eq!(stop(|e| e.typed = true), Next::Stop(StopReason::TookOver));
+    assert_eq!(stop(|e| e.asked = true), Next::Stop(StopReason::NeedsYou));
+    let flagged = [worker_report("X9", "blocked")];
+    let ended = Ended {
+        unread: &flagged,
+        ..ended(&file)
+    };
+    assert_eq!(
+        tick(&state, &ended).next,
+        Next::Stop(StopReason::WorkerFlagged)
+    );
+}
+
+#[test]
+fn a_drained_done_report_meets_the_step_and_others_keep_holding() {
+    let file = approved(plan());
+    let state = driving(0, Awaiting::Report("E1".to_string()), Run::default());
+    let done = [worker_report("X9", "done"), worker_report("E1", "done")];
+    let ticked = tick(
+        &state,
+        &Ended {
+            drained: &done,
+            ..ended(&file)
+        },
+    );
+    assert_eq!(ticked.next, Next::Send(LINE_2.to_string()));
+    assert_eq!(
+        ticked.met.as_deref(),
+        Some("send-it: step 1/4 met (worker E1 reports done)")
+    );
+    assert_eq!(
+        (ticked.driving.progress, ticked.driving.awaiting),
+        (at(1), Awaiting::Turn)
+    );
+    let other = [worker_report("X9", "done")];
+    let held = tick(
+        &state,
+        &Ended {
+            drained: &other,
+            ..ended(&file)
+        },
+    );
+    assert_eq!((held.next, held.met), (Next::Hold("E1".to_string()), None));
+}
+
+#[test]
+fn the_watched_outcome_settles_a_check_step() {
+    let file = approved(plan());
+    let state = driving(
+        2,
+        Awaiting::Report("watch:send-it-3".to_string()),
+        Run::default(),
+    );
+    let passed = WatchOutcome::Exited(0);
+    let failed = WatchOutcome::Exited(2);
+    for (watched, next) in [
+        (Some(&passed), Next::Send(STEP_4.to_string())),
+        (
+            Some(&failed),
+            Next::Stop(StopReason::CheckFailed { step: 3 }),
+        ),
+        (None, Next::Check("cargo xtask lint".to_string())),
+    ] {
+        let ended = Ended {
+            watched,
+            ..ended(&file)
+        };
+        assert_eq!(tick(&state, &ended).next, next);
+    }
+}
+
+#[test]
+fn caps_stop_before_a_send_but_not_before_the_finish() {
+    let file = approved(plan());
+    let done = [worker_report("E1", "done")];
+    let capped = tick(
+        &driving(0, Awaiting::Report("E1".to_string()), spent(29, 0.0)),
+        &Ended {
+            drained: &done,
+            ..ended(&file)
+        },
+    );
+    assert_eq!(capped.next, Next::Stop(StopReason::TurnCap));
+    let finished = tick(
+        &driving(3, Awaiting::Verdict, spent(29, 3.9)),
+        &Ended {
+            reply: "All resolved.\nverdict: met",
+            ..ended(&file)
+        },
+    );
+    assert_eq!(finished.next, Next::Done);
+    assert_eq!(
+        finished.met.as_deref(),
+        Some("send-it: step 4/4 met (judged: are all findings resolved?)")
+    );
+}
+
+#[test]
+fn an_unmet_or_missing_verdict_sends_the_step_again() {
+    let file = approved(plan());
+    for reply in ["verdict: unmet", "I think so."] {
+        let ticked = tick(
+            &driving(3, Awaiting::Verdict, Run::default()),
+            &Ended {
+                reply,
+                ..ended(&file)
+            },
+        );
+        assert_eq!(ticked.next, Next::Send(STEP_4.to_string()));
+        assert_eq!(ticked.driving.progress.judge_rounds, 1);
+    }
+}
+
 #[test]
 fn only_a_last_line_verdict_met_counts() {
     assert!(parse_verdict("Looks good.\n\n**Verdict: MET**\n"));
@@ -623,5 +846,13 @@ fn the_done_notice_counts_steps_turns_and_cost() {
     assert_eq!(
         done_notice(&plan(), &spent(7, 1.25)),
         "send-it done: 4/4 steps in 7 turns, $1.25."
+    );
+}
+
+#[test]
+fn the_running_line_shows_progress_against_the_caps() {
+    assert_eq!(
+        running_line(&plan(), &driving(1, Awaiting::Turn, spent(3, 0.5))),
+        "Running: step 2/4, 3 of 30 turns, $0.50 of $4.00."
     );
 }

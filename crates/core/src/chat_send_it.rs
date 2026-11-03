@@ -612,6 +612,40 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Awaiting {
+    Turn,
+    Verdict,
+    Report(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Driving {
+    pub hash: String,
+    pub progress: Progress,
+    pub run: Run,
+    pub awaiting: Awaiting,
+}
+
+pub struct Ended<'a> {
+    pub file: Option<&'a RunFile>,
+    pub replied: bool,
+    pub asked: bool,
+    pub typed: bool,
+    pub cost_usd: f64,
+    pub reply: &'a str,
+    pub drained: &'a [Report],
+    pub unread: &'a [Report],
+    pub watched: Option<&'a WatchOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ticked {
+    pub driving: Driving,
+    pub next: Next,
+    pub met: Option<String>,
+}
+
 const CHECK_ID: &str = "send-it-";
 const VERDICT_MET: &str = "verdict: met";
 
@@ -628,6 +662,125 @@ pub fn check_spec(step: usize, command: &str) -> WatchSpec {
         timeout: None,
         limit: None,
     }
+}
+
+fn awaiting(next: &Next, progress: Progress) -> Awaiting {
+    match next {
+        Next::Judge => Awaiting::Verdict,
+        Next::Hold(worker) => Awaiting::Report(worker.clone()),
+        Next::Watch(_) | Next::Check(_) => Awaiting::Report(check_watch_id(progress.step)),
+        _ => Awaiting::Turn,
+    }
+}
+
+pub fn start_run(file: &RunFile) -> Option<(Driving, Next)> {
+    if !file.is_approved() {
+        return None;
+    }
+    let (progress, next) = advance(&file.plan, Progress::default(), Event::Start);
+    let driving = Driving {
+        hash: plan_hash(&file.plan),
+        progress,
+        run: Run::default(),
+        awaiting: Awaiting::Turn,
+    };
+    Some((driving, next))
+}
+
+fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason> {
+    let file = ended.file.ok_or(StopReason::Off)?;
+    let stop = if !file.is_approved() || plan_hash(&file.plan) != hash {
+        Some(StopReason::PlanChanged)
+    } else if !ended.replied {
+        Some(StopReason::NoReply)
+    } else if ended.typed {
+        Some(StopReason::TookOver)
+    } else if ended.asked {
+        Some(StopReason::NeedsYou)
+    } else if worker_flagged(ended.unread, ended.drained) {
+        Some(StopReason::WorkerFlagged)
+    } else {
+        None
+    };
+    stop.map_or(Ok(file), Err)
+}
+
+fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
+    match awaiting {
+        Awaiting::Turn => Vec::new(),
+        Awaiting::Verdict => vec![Event::Verdict(parse_verdict(ended.reply))],
+        Awaiting::Report(source) => ended
+            .watched
+            .map(Event::Watched)
+            .into_iter()
+            .chain(
+                ended
+                    .drained
+                    .iter()
+                    .filter(|report| report.worker == *source)
+                    .map(Event::Report),
+            )
+            .collect(),
+    }
+}
+
+fn fold(plan: &RunPlan, progress: Progress, events: &[Event]) -> (Progress, Next) {
+    events
+        .iter()
+        .try_fold(progress, |progress, event| {
+            match advance(plan, progress, *event) {
+                (progress, Next::Wait) => Ok(progress),
+                decided => Err(decided),
+            }
+        })
+        .map_or_else(|decided| decided, |progress| (progress, Next::Wait))
+}
+
+pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
+    let run = Run {
+        turns: driving.run.turns + 1,
+        spent_usd: driving.run.spent_usd + ended.cost_usd,
+    };
+    let finish = |progress: Progress, next: Next, met: Option<String>| Ticked {
+        driving: Driving {
+            hash: driving.hash.clone(),
+            progress,
+            run: run.clone(),
+            awaiting: awaiting(&next, progress),
+        },
+        next,
+        met,
+    };
+    let file = match admitted(ended, &driving.hash) {
+        Ok(file) => file,
+        Err(reason) => return finish(driving.progress, Next::Stop(reason), None),
+    };
+    let plan = &file.plan;
+    let (progress, decided) = fold(plan, driving.progress, &events(&driving.awaiting, ended));
+    let met = (progress.step > driving.progress.step || decided == Next::Done)
+        .then(|| met_line(plan, driving.progress.step));
+    if matches!(decided, Next::Done | Next::Stop(_)) {
+        return finish(progress, decided, met);
+    }
+    let next = match advance(plan, progress, Event::TurnEnded(&run)).1 {
+        stop @ Next::Stop(_) => stop,
+        waiting if decided == Next::Wait => waiting,
+        _ => decided,
+    };
+    finish(progress, next, met)
+}
+
+fn met_line(plan: &RunPlan, step: usize) -> String {
+    let label = plan
+        .steps
+        .get(step)
+        .map(|step| step.criterion.label())
+        .unwrap_or_default();
+    format!(
+        "send-it: step {}/{} met ({label})",
+        step + 1,
+        plan.steps.len()
+    )
 }
 
 pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {
@@ -657,6 +810,19 @@ pub fn done_notice(plan: &RunPlan, run: &Run) -> String {
     format!(
         "send-it done: {steps}/{steps} steps in {} turns, ${:.2}.",
         run.turns, run.spent_usd
+    )
+}
+
+pub fn running_line(plan: &RunPlan, driving: &Driving) -> String {
+    let limits = granted_limits(plan);
+    format!(
+        "Running: step {}/{}, {} of {} turns, ${:.2} of ${:.2}.",
+        driving.progress.step + 1,
+        plan.steps.len(),
+        driving.run.turns,
+        limits.max_turns,
+        driving.run.spent_usd,
+        limits.max_usd
     )
 }
 
