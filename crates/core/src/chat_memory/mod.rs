@@ -34,11 +34,12 @@ pub use nap::{
 pub use range::{read_range, Mode, RangeRequest, Read};
 pub use search::{parse_search_args, search, SearchRequest};
 pub use tools::{
-    finish_call, handle_request, history_tool, parse_tool_call, tool_definitions, Outcome, Tool,
+    finish_call, handle_request, history_tool, parse_tool_call, tool_definitions, MemoryCall,
+    Outcome, Tool,
 };
 pub use tree::{
     cover, entries_to_shift, estimate_tokens, pending, split_view, tail_lines, verbatim_start,
-    ViewSplit,
+    view, ViewSplit,
 };
 pub use usage::{
     carry_metadata, encode_usage, reply_entries, trigger_entries, usage_record, view_stats,

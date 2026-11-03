@@ -1,7 +1,7 @@
 use crate::chat_cell::{bang, Bang};
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
-use crate::chat_memory::{history_tool, Tool};
+use crate::chat_memory::{history_tool, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
 use crate::chat_send_it::SendIt;
@@ -98,7 +98,7 @@ pub enum Route {
     Hold(HoldFilter),
     Nudge(NudgeCommand),
     SendIt(SendIt),
-    History(Result<Tool, String>),
+    History(Result<MemoryCall, String>),
     View(ViewArgs),
     Help,
     Config,

@@ -3,6 +3,7 @@ use crate::chat::keepalive::Stamp;
 use crate::chat::memory::{append_usage, usage_path, Store};
 use crate::chat::prompt::screen_columns;
 use crate::chat::suggestion::SuggestionSlot;
+use crate::chat::thread::{fork_view, Fork};
 use crate::highlight::ThemeConfig;
 use crate::invoke::{build_chat_command, with_chat_inbox, Isolation};
 use crate::private_file::write_private;
@@ -103,6 +104,7 @@ struct Launch {
 pub(super) struct Turn<'a> {
     pub(super) store: &'a Store,
     pub(super) store_dir: &'a Path,
+    pub(super) fork: Option<&'a Fork>,
     pub(super) mcp_args: &'a [String],
     pub(super) system_prompt_file: &'a Path,
     pub(super) permission_mode: &'a str,
@@ -415,6 +417,10 @@ impl Turn<'_> {
             entries.truncate(len);
         }
         let split = split_view(&entries, &tree, VIEW_LINES, self.recent_history_tokens);
+        let split = match self.fork {
+            Some(fork) => fork_view(fork, split)?,
+            None => split,
+        };
         let first_prompt = turn_prompt(
             &[split.middle.as_slice(), split.tail.as_slice()].concat(),
             sent,

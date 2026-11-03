@@ -98,6 +98,7 @@ pub struct Archive<B> {
     pub tree: IndexedTree<B>,
     pub stale: Stale,
     pub notes: Notes,
+    limit: usize,
 }
 
 impl<B: ByteSource> Archive<B> {
@@ -119,6 +120,7 @@ impl<B: ByteSource> Archive<B> {
                 tree: tree_how != Refresh::Fresh,
             },
             notes: Notes::default(),
+            limit: usize::MAX,
         })
     }
 
@@ -131,7 +133,11 @@ impl<B: ByteSource> Archive<B> {
     }
 
     pub fn count(&self) -> usize {
-        self.log_index.count()
+        self.log_index.count().min(self.limit)
+    }
+
+    pub fn limit_to(&mut self, end: usize) {
+        self.limit = end;
     }
 
     pub fn entries(&mut self, from: usize, to: usize) -> io::Result<Vec<Entry>> {
@@ -821,6 +827,16 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_limit_hides_entries_from_scans() {
+        let entries = mixed(5);
+        let mut archive = open_log(bytes(&entries));
+        archive.limit_to(3);
+        let mut seen = Vec::new();
+        assert_eq!(archive.scan_entries(2, |id, _| seen.push(id)).unwrap(), 3);
+        assert_eq!(seen, vec![0, 1, 2]);
     }
 
     #[test]
