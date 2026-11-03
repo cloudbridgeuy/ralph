@@ -22,13 +22,17 @@ pub(crate) fn check_path(path: &Path) -> io::Result<()> {
     }
 }
 
-pub(crate) fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> {
-    check_path(&path)?;
+fn open_private(path: &Path) -> io::Result<fs::File> {
     let mut options = OpenOptions::new();
     options.create(true).write(true).truncate(true);
     #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&path)?;
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    options.open(path)
+}
+
+pub(crate) fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> {
+    check_path(&path)?;
+    let mut file = open_private(&path)?;
     file.write_all(bytes)?;
     #[cfg(unix)]
     {
@@ -36,4 +40,34 @@ pub(crate) fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> 
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
+
+    #[test]
+    fn the_open_step_refuses_a_symlink_and_leaves_its_target_alone() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("target");
+        fs::write(&target, "keep").unwrap();
+        let link = dir.path().join("link");
+        symlink(&target, &link).unwrap();
+        assert!(open_private(&link).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep");
+    }
+
+    #[test]
+    fn a_private_write_creates_a_0600_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new().unwrap();
+        let path = write_private(dir.path().join("f"), b"x").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"x");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
 }
