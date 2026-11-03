@@ -8,6 +8,7 @@ use std::time::Duration;
 pub const DRIFT_REPORT_STATUS: &str = "warning";
 pub const NO_FAILING_CHECK: &str = "verify spec";
 pub const TIME_LIMIT_CHECK: &str = "time limit";
+pub const LOCK_CHECK: &str = "drift lock";
 
 pub const WATCHDOG_MARGIN: Duration = Duration::from_secs(30);
 
@@ -23,6 +24,25 @@ pub fn drift_lock_file(agent: &str) -> String {
 pub struct FinishPlan {
     pub save_verified: bool,
     pub record_drift: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockError {
+    WouldBlock,
+    Io(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LockClaim {
+    Busy,
+    Broken(String),
+}
+
+pub fn lock_claim(error: &LockError) -> LockClaim {
+    match error {
+        LockError::WouldBlock => LockClaim::Busy,
+        LockError::Io(detail) => LockClaim::Broken(detail.clone()),
+    }
 }
 
 pub fn finish_plan(claimed: bool, passed: bool) -> FinishPlan {
@@ -118,7 +138,7 @@ pub fn store_inbox(warning_file: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::verified_entry;
+    use crate::worker::{drift_action, record_outcome, verified_entry, DriftAction, DriftRecord};
 
     fn checks(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| name.to_string()).collect()
@@ -278,5 +298,33 @@ mod tests {
             Some(PathBuf::from("/s").join(INBOX_DIR))
         );
         assert_eq!(store_inbox(Path::new("GUZ-1.warning")), None);
+    }
+
+    #[test]
+    fn a_held_lock_is_busy() {
+        assert_eq!(lock_claim(&LockError::WouldBlock), LockClaim::Busy);
+    }
+
+    #[test]
+    fn any_other_lock_failure_is_broken_and_keeps_its_detail() {
+        assert_eq!(
+            lock_claim(&LockError::Io(
+                "/s/drift-codex.lock: is a symlink".to_string()
+            )),
+            LockClaim::Broken("/s/drift-codex.lock: is a symlink".to_string())
+        );
+    }
+
+    #[test]
+    fn a_recorded_lock_failure_is_a_known_fail_naming_the_lock() {
+        let results = [CheckResult::fail(LOCK_CHECK, "/s/drift-codex.lock: broken")];
+        let entry = drift_entry("codex", "0.170.0", &results, false, "t");
+        let drift = record_outcome(&DriftRecord::default(), entry);
+        assert_eq!(
+            drift_action("codex", "0.170.0", &VerifiedAgents::default(), &drift),
+            DriftAction::KnownFail {
+                checks: checks(&[LOCK_CHECK])
+            }
+        );
     }
 }
