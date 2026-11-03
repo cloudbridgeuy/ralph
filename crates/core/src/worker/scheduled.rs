@@ -91,6 +91,7 @@ mod tests {
             scheduled: false,
             shell: ClaudeShell::Zsh,
             config_dir: None,
+            copied: &[],
         }
     }
 
@@ -109,6 +110,9 @@ mod tests {
                 "auto",
                 "--mcp-config",
                 "/s/workers/A.json",
+                "--strict-mcp-config",
+                "--allowedTools",
+                "mcp__ralph-worker__report,mcp__ralph-worker__set_status",
                 "--settings",
                 "/s/workers/A.settings.json",
                 "--add-dir",

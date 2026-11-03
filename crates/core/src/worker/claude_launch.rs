@@ -46,6 +46,7 @@ pub struct ClaudeWorkerArgs<'a> {
     pub scheduled: bool,
     pub shell: ClaudeShell,
     pub config_dir: Option<&'a Path>,
+    pub copied: &'a [String],
 }
 
 pub fn worker_launch(args: &ClaudeWorkerArgs) -> Vec<String> {
@@ -73,6 +74,9 @@ pub fn worker_launch(args: &ClaudeWorkerArgs) -> Vec<String> {
             permission_mode,
             "--mcp-config",
             &args.mcp_config.to_string_lossy(),
+            "--strict-mcp-config",
+            "--allowedTools",
+            &allowed_tools(args.copied),
             "--settings",
             &args.settings.to_string_lossy(),
             "--add-dir",
@@ -114,6 +118,7 @@ mod tests {
             scheduled: false,
             shell: ClaudeShell::Zsh,
             config_dir: None,
+            copied: &[],
         }
     }
 
@@ -213,13 +218,16 @@ mod tests {
         let args = worker_command(&claude_args(None));
         assert_eq!(args[..2], ["zsh", "-lic"]);
         assert_eq!(
-            args[5..14],
+            args[5..17],
             [
                 "claude",
                 "--permission-mode",
                 "auto",
                 "--mcp-config",
                 "/s/workers/A.json",
+                "--strict-mcp-config",
+                "--allowedTools",
+                "mcp__ralph-worker__report,mcp__ralph-worker__set_status",
                 "--settings",
                 "/s/workers/A.settings.json",
                 "--add-dir",
@@ -248,6 +256,9 @@ mod tests {
                 "auto".to_string(),
                 "--mcp-config".to_string(),
                 "/s/workers/A.json".to_string(),
+                "--strict-mcp-config".to_string(),
+                "--allowedTools".to_string(),
+                "mcp__ralph-worker__report,mcp__ralph-worker__set_status".to_string(),
                 "--settings".to_string(),
                 "/s/workers/A.settings.json".to_string(),
                 "--add-dir".to_string(),
@@ -259,5 +270,37 @@ mod tests {
                 "Read your task from /s/workers/A.task/task.md".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn worker_command_allows_each_copied_server_before_a_flag() {
+        let copied = ["mcptools".to_string(), "docs".to_string()];
+        let args = worker_command(&ClaudeWorkerArgs {
+            copied: &copied,
+            ..claude_args(None)
+        });
+        let at = args.iter().position(|arg| arg == "--allowedTools").unwrap();
+        assert_eq!(
+            args[at + 1],
+            "mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__*,mcp__docs__*"
+        );
+        assert_eq!(args[at + 2], "--settings");
+        assert!(args[at + 2].starts_with("--"));
+    }
+
+    #[test]
+    fn worker_command_is_strict_right_after_the_mcp_config() {
+        let args = worker_command(&claude_args(None));
+        let at = args.iter().position(|arg| arg == "--mcp-config").unwrap();
+        assert_eq!(args[at + 1], "/s/workers/A.json");
+        assert_eq!(args[at + 2], "--strict-mcp-config");
+    }
+
+    #[test]
+    fn worker_command_never_puts_the_allowed_tools_before_the_task_pointer() {
+        let args = worker_command(&claude_args(Some("opus")));
+        let at = args.iter().position(|arg| arg == "--allowedTools").unwrap();
+        assert!(args[at + 2..].iter().any(|arg| arg.starts_with("--")));
+        assert!(!args.last().unwrap().starts_with("mcp__"));
     }
 }

@@ -4,6 +4,7 @@ use super::{
 };
 use crate::chat::cell::detach_from_terminal;
 use crate::chat::memory::usage_path;
+use crate::chat::read_claude_config;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::paths::absolute_from;
@@ -11,22 +12,24 @@ use crate::private_file::{check_path, write_private};
 use crate::subprocess::kill_process_group;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
+use ralph_core::chat::{select_servers, ImportedServers};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
-    fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, opencode_config,
-    project_slug, resolve_claude_model, resolve_claude_shell, resolve_codex_warning,
-    resolve_cursor_model, resolve_opencode_model, resolve_ticket, rollback_plan, rollback_report,
-    session_name, spawn_handoff, spawn_record_path, startup_state, task_dir_path, task_file_path,
-    trust_key, with_start_warning, worker_command, worker_config_path, worker_mcp_args,
-    worker_mcp_config, worktree_add_args, wt_switch_args, ClaudeShell, ClaudeWorkerArgs, Handoff,
-    HandoffFiles, HarnessId, OpencodeSpawn, Owner, Rollback, SpawnFootprint, SpawnRecord,
-    SpawnRequest, Startup, Ticket, TicketKeys, UsageSink, WorkerMarkers, WorktreeBase, WorktreeVia,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND, CURSOR_AGENT, FETCH_GRACE_SECS,
-    FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR, OPENCODE_CONFIG_FILE, STORE_OPTION,
-    WORKERS_DIR,
+    fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, merged_mcp_config,
+    missing_server_warning, opencode_config, project_slug, resolve_claude_model,
+    resolve_claude_shell, resolve_codex_warning, resolve_cursor_model, resolve_opencode_model,
+    resolve_ticket, rollback_plan, rollback_report, session_name, spawn_handoff, spawn_record_path,
+    startup_state, task_dir_path, task_file_path, trust_key, with_start_warning, worker_command,
+    worker_config_path, worker_mcp_args, worker_mcp_config, worktree_add_args, wt_switch_args,
+    ClaudeShell, ClaudeWorkerArgs, Handoff, HandoffFiles, HarnessId, OpencodeSpawn, Owner,
+    Rollback, SpawnFootprint, SpawnRecord, SpawnRequest, Startup, Ticket, TicketKeys, UsageSink,
+    WorkerMarkers, WorktreeBase, WorktreeVia, ATTACHMENTS_DIR, CLAUDE_COMMAND, CODEX_COMMAND,
+    CURSOR_AGENT, FETCH_GRACE_SECS, FETCH_TIMEOUT_SECS, HANDOFF_POLL, ID_OPTION, INBOX_DIR,
+    OPENCODE_CONFIG_FILE, STORE_OPTION, WORKERS_DIR,
 };
+use serde_json::{Map, Value};
 use std::fs;
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -155,11 +158,27 @@ impl Workers {
                 .map(|config| &config.tickets)
                 .unwrap_or(&TicketKeys::default()),
         );
-        let warnings = [
+        let imported = match (harness, config.as_ref()) {
+            (HarnessId::Claude, Ok(config)) => select_servers(
+                &read_claude_config(config.claude.config_dir.as_deref()),
+                &config.chat.mcp_servers,
+            ),
+            _ => ImportedServers {
+                servers: Map::new(),
+                missing: Vec::new(),
+            },
+        };
+        let mcp_warnings: Vec<String> = imported
+            .missing
+            .iter()
+            .map(|name| missing_server_warning(name))
+            .collect();
+        let mut warnings = vec![
             worktree_dir.warning.as_deref(),
             model_warning.as_deref(),
             shell_warning.as_deref(),
         ];
+        warnings.extend(mcp_warnings.iter().map(|warning| Some(warning.as_str())));
         let config_dir = config.as_ref().ok().and_then(|config| {
             configured_dir(
                 config.claude.config_dir.as_deref(),
@@ -175,6 +194,7 @@ impl Workers {
             scheduled,
             shell,
             config_dir,
+            servers: imported.servers,
             site: site.as_ref(),
             session: &session,
             ticket,
@@ -256,6 +276,7 @@ impl Workers {
             scheduled,
             shell,
             config_dir,
+            servers,
             worktree,
             site,
             session,
@@ -274,9 +295,10 @@ impl Workers {
             HarnessId::Claude => {
                 let settings = self.write_settings(id, &markers, *site)?;
                 let task_dir = self.write_task(id, task)?;
+                let copied: Vec<String> = servers.keys().cloned().collect();
                 worker_command(&ClaudeWorkerArgs {
                     store: &fs::canonicalize(&self.store_dir)?,
-                    mcp_config: &self.write_config(id, *site)?,
+                    mcp_config: &self.write_config(id, *site, servers)?,
                     settings: &settings,
                     permission_mode: &self.permission_mode,
                     attachments: &attachments,
@@ -285,6 +307,7 @@ impl Workers {
                     scheduled: *scheduled,
                     shell: *shell,
                     config_dir: config_dir.as_deref(),
+                    copied: &copied,
                 })
             }
             HarnessId::Opencode => {
@@ -523,18 +546,24 @@ impl Workers {
         Ok(dir)
     }
 
-    fn write_config(&self, id: &str, site: Option<&WorkerSite>) -> io::Result<PathBuf> {
-        let dir = self.store_dir.join(WORKERS_DIR);
-        fs::create_dir_all(&dir)?;
-        let path = dir.join(format!("{id}.json"));
-        let config = worker_mcp_config(
+    fn write_config(
+        &self,
+        id: &str,
+        site: Option<&WorkerSite>,
+        servers: &Map<String, Value>,
+    ) -> io::Result<PathBuf> {
+        let path = worker_config_path(&self.store_dir, id);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let own = worker_mcp_config(
             &self.exe,
             id,
             &self.store_dir.join(INBOX_DIR),
             site.map(|site| site.worktree.as_path()),
         );
-        fs::write(&path, config.to_string())?;
-        Ok(path)
+        let config = merged_mcp_config(servers, &own);
+        write_private(path, config.to_string().as_bytes())
     }
 }
 
@@ -546,6 +575,7 @@ struct Launch<'a> {
     scheduled: bool,
     shell: ClaudeShell,
     config_dir: Option<PathBuf>,
+    servers: Map<String, Value>,
     worktree: &'a Path,
     site: Option<&'a WorkerSite>,
     session: &'a str,
