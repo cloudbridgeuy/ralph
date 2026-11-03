@@ -300,7 +300,7 @@ impl DriftRun {
             std::thread::sleep(drift_watchdog_limit());
             let results = [CheckResult::fail(TIME_LIMIT_CHECK, "verify ran too long")];
             if run.plan(false).record_drift {
-                run.record(agent, &results, false);
+                run.record(agent, &results, false, false);
                 end_own_group();
             }
         });
@@ -314,7 +314,13 @@ impl DriftRun {
         std::thread::sleep(Duration::from_secs(10));
     }
 
-    pub(crate) fn record(&self, agent: &str, results: &[CheckResult], passed: bool) {
+    pub(crate) fn record(
+        &self,
+        agent: &str,
+        results: &[CheckResult],
+        passed: bool,
+        save_failed: bool,
+    ) {
         let entry = drift_entry(
             agent,
             &self.version,
@@ -323,7 +329,7 @@ impl DriftRun {
             &chrono::Utc::now().to_rfc3339(),
         );
         let posted = post_alert(agent, &entry, &self.inbox);
-        if record_after_post(&entry.outcome, posted) {
+        if record_after_post(&entry.outcome, posted, save_failed) {
             verified_agents::save_drift(entry).ok();
         }
         release_lock(agent, &self.token);
@@ -353,8 +359,9 @@ pub(crate) fn record_manual(
     version: Option<&str>,
     results: &[CheckResult],
     passed: bool,
+    save_failed: bool,
 ) {
-    if let Some(version) = version {
+    if let Some(version) = version.filter(|_| !save_failed) {
         let entry = drift_entry(
             agent,
             version,

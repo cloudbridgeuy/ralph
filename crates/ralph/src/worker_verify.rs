@@ -248,9 +248,10 @@ pub(crate) fn run(
     for line in lines {
         println!("{line}");
     }
+    let save_failed = passed && result.is_err();
     match &drift {
-        Some(drift) => drift.record(name, &results, passed),
-        None => record_manual(name, version.as_deref(), &results, passed),
+        Some(drift) => drift.record(name, &results, passed, save_failed),
+        None => record_manual(name, version.as_deref(), &results, passed, save_failed),
     }
     Ok(result?)
 }

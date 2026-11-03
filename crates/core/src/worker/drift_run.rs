@@ -107,9 +107,9 @@ pub fn finish_plan(claimed: bool, passed: bool) -> FinishPlan {
     }
 }
 
-pub fn record_after_post(outcome: &DriftOutcome, posted: bool) -> bool {
+pub fn record_after_post(outcome: &DriftOutcome, posted: bool, save_failed: bool) -> bool {
     match outcome {
-        DriftOutcome::Passed => true,
+        DriftOutcome::Passed => !save_failed,
         DriftOutcome::Failed { .. } => posted,
     }
 }
@@ -209,14 +209,16 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_is_recorded_only_after_its_alert_was_posted() {
+    fn a_failure_is_recorded_only_after_its_alert_posted_and_a_pass_only_after_its_save() {
         let failed = DriftOutcome::Failed {
             checks: checks(&["spawn"]),
         };
-        assert!(record_after_post(&failed, true));
-        assert!(!record_after_post(&failed, false));
-        assert!(record_after_post(&DriftOutcome::Passed, false));
-        assert!(record_after_post(&DriftOutcome::Passed, true));
+        assert!(record_after_post(&failed, true, false));
+        assert!(!record_after_post(&failed, false, false));
+        assert!(record_after_post(&DriftOutcome::Passed, false, false));
+        assert!(record_after_post(&DriftOutcome::Passed, true, false));
+        assert!(!record_after_post(&DriftOutcome::Passed, false, true));
+        assert!(!record_after_post(&DriftOutcome::Passed, true, true));
     }
 
     #[test]
