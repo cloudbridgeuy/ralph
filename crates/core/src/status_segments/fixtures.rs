@@ -1,6 +1,6 @@
 use super::*;
+use crate::chat_process::{ProcessCell, SessionCost};
 use crate::chat_status::{ScheduleState, WatchState, WorkerState};
-use crate::chat_thread::{SessionCost, ThreadCell};
 
 pub(super) fn status() -> Status {
     Status {
@@ -17,15 +17,15 @@ pub(super) fn status() -> Status {
         ],
         watches: Vec::new(),
         schedule: Vec::new(),
-        thread: None,
+        process: None,
         napping: false,
         queue: None,
         hold: None,
     }
 }
 
-pub(super) fn thread() -> ThreadCell {
-    ThreadCell {
+pub(super) fn process() -> ProcessCell {
+    ProcessCell {
         turn: 12,
         max_turns: 30,
         ctx_percent: Some(62),
@@ -41,9 +41,9 @@ pub(super) fn thread() -> ThreadCell {
     }
 }
 
-pub(super) fn with_thread() -> Status {
+pub(super) fn with_process() -> Status {
     Status {
-        thread: Some(thread()),
+        process: Some(process()),
         ..status()
     }
 }
@@ -60,7 +60,7 @@ pub(super) fn with_watches() -> Status {
                 left: None,
             },
         ],
-        ..with_thread()
+        ..with_process()
     }
 }
 

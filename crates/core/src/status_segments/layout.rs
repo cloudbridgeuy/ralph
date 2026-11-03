@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn bar_fills_the_full_width_in_every_separator_mode() {
         for separator in SEPARATORS {
-            for status in [status(), with_thread(), with_watches()] {
+            for status in [status(), with_process(), with_watches()] {
                 for width in 12..200 {
                     let spans = bar(&status, &context(), width, separator);
                     assert_eq!(text(&spans).width(), width, "{separator:?} {width}");
@@ -221,7 +221,7 @@ mod tests {
     fn bar_never_exceeds_width_even_below_the_mode_block() {
         for separator in SEPARATORS {
             for width in 0..200 {
-                let spans = bar(&with_thread(), &context(), width, separator);
+                let spans = bar(&with_process(), &context(), width, separator);
                 assert!(text(&spans).width() <= width);
             }
         }
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn layout_goes_compact_at_forty_columns_on_one_row() {
-        let status = with_thread();
+        let status = with_process();
         let shown = text(&bar(&status, &named_context(), 40, Separator::Block));
         assert_eq!(shown.width(), 40);
         assert!(shown.contains("📬 2") && !shown.contains("unread"));
@@ -273,7 +273,7 @@ mod tests {
                 count: 2,
                 held: false,
             }),
-            ..with_thread()
+            ..with_process()
         }
     }
 
@@ -302,7 +302,7 @@ mod tests {
                 Kind::Watches,
                 Kind::Workers,
                 Kind::Cost(Mode::Inbox),
-                Kind::Thread(Mode::Inbox),
+                Kind::Process(Mode::Inbox),
                 Kind::Mail(Mode::Inbox),
                 Kind::Queue(Mode::Inbox),
                 Kind::Name,
@@ -312,22 +312,22 @@ mod tests {
     }
 
     #[test]
-    fn layout_shrinks_the_thread_to_the_cache_form_before_dropping_it() {
+    fn layout_shrinks_the_process_to_the_cache_form_before_dropping_it() {
         let status = everything();
         let all = segments(&status, &context());
-        let thread = all
+        let process = all
             .iter()
-            .position(|s| matches!(s.kind, Kind::Thread(_)))
+            .position(|s| matches!(s.kind, Kind::Process(_)))
             .unwrap();
-        let last_form = all[thread].variants.len() - 1;
+        let last_form = all[process].variants.len() - 1;
         let widest_without_cost = (0..300)
             .rev()
             .find(|width| !kinds_at(&status, *width).contains(&Kind::Cost(Mode::Inbox)))
             .unwrap();
         let placed = layout(&all, widest_without_cost, Separator::Block);
-        let at = placed.iter().find(|p| p.segment == thread).unwrap();
+        let at = placed.iter().find(|p| p.segment == process).unwrap();
         assert_eq!(at.variant, last_form);
-        assert_eq!(all[thread].variants[last_form], "41m");
+        assert_eq!(all[process].variants[last_form], "41m");
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
     fn powerline_glyphs_appear_only_in_powerline_mode() {
         let glyphs = [LEFT_ARROW, RIGHT_ARROW, LEFT_THIN, RIGHT_THIN];
         let has = |separator| {
-            let shown = text(&bar(&with_thread(), &context(), 200, separator));
+            let shown = text(&bar(&with_process(), &context(), 200, separator));
             glyphs.iter().any(|glyph| shown.contains(glyph))
         };
         assert!(has(Separator::Powerline));
@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn mail_thread_and_cost_take_the_mode_colours() {
+    fn mail_process_and_cost_take_the_mode_colours() {
         let expected = [
             (Mode::Idle, Shade::ModeIdleBg, Shade::ModeIdleFg),
             (Mode::Hold, Shade::ModeHoldBg, Shade::ModeHoldFg),
@@ -398,7 +398,7 @@ mod tests {
                 Kind::Mail(mode),
                 Kind::Hold(mode),
                 Kind::Queue(mode),
-                Kind::Thread(mode),
+                Kind::Process(mode),
                 Kind::Cost(mode),
             ] {
                 assert_eq!((kind.bg(), kind.fg()), (bg, fg));
@@ -437,7 +437,7 @@ mod tests {
     fn only_mode_and_cost_segments_are_bold() {
         assert!(Kind::Mode(Mode::Idle).bold());
         assert!(Kind::Cost(Mode::Idle).bold());
-        assert!(!Kind::Thread(Mode::Idle).bold());
+        assert!(!Kind::Process(Mode::Idle).bold());
         assert!(!Kind::Name.bold());
     }
 

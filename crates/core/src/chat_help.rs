@@ -2,7 +2,7 @@
 //! without a model turn.
 
 use crate::chat::OLDER_VIEW_STEP;
-use crate::chat_thread::{thread_variants, ResetReason, ThreadCell, CACHE_TTL_SECS};
+use crate::chat_process::{process_variants, ProcessCell, ResetReason, CACHE_TTL_SECS};
 use crate::status_mode::Mode;
 use crate::status_segments::Kind;
 use serde_json::{json, Value};
@@ -148,7 +148,7 @@ impl Command {
                 ),
                 (
                     "/workers costs",
-                    "all-time token totals by harness and model from the global usage record, closed workers included; main is the chat thread with its keepalive pings, nap the memory summaries; RUNS counts chat processes, naps or worker sessions; USD is n/a where no price is recorded and the total ends in + when part is unknown; no turn",
+                    "all-time token totals by harness and model from the global usage record, closed workers included; main is the chat process with its keepalive pings, nap the memory summaries; RUNS counts chat processes, naps or worker sessions; USD is n/a where no price is recorded and the total ends in + when part is unknown; no turn",
                 ),
             ],
             Command::Hold => &[
@@ -331,7 +331,7 @@ pub const SEGMENTS: [Kind; 10] = [
     Kind::Workers,
     Kind::Watches,
     Kind::Schedule,
-    Kind::Thread(Mode::Idle),
+    Kind::Process(Mode::Idle),
     Kind::Cost(Mode::Idle),
 ];
 
@@ -363,7 +363,7 @@ fn segment_help(kind: Kind) -> (&'static str, &'static str) {
             "sched <id> <HH:MM>",
             "armed scheduled tasks: the one task and its time, N scheduled, or SN",
         ),
-        Kind::Thread(_) => ("thread cell", "the live claude process (below)"),
+        Kind::Process(_) => ("process cell", "the live claude process (below)"),
         Kind::Cost(_) => (
             "$4.12 (+0.31)",
             "session total over the claude processes since this chat started; the delta is the last turn's cost; nap cost is not included",
@@ -393,8 +393,8 @@ fn reset_help(reason: ResetReason) -> &'static str {
     }
 }
 
-/// The cell the thread legend shows, rendered by the status bar formatter.
-const EXAMPLE_THREAD: ThreadCell = ThreadCell {
+/// The cell the process legend shows, rendered by the status bar formatter.
+const EXAMPLE_PROCESS: ProcessCell = ProcessCell {
     turn: 12,
     max_turns: 30,
     ctx_percent: Some(62),
@@ -405,7 +405,7 @@ const EXAMPLE_THREAD: ThreadCell = ThreadCell {
     cost: None,
 };
 
-fn thread_parts() -> Vec<(String, String)> {
+fn process_parts() -> Vec<(String, String)> {
     vec![
         (
             "T12/30".into(),
@@ -570,21 +570,21 @@ pub fn help_text(width: usize) -> String {
         .map(|mode| (mode.label().to_string(), mode_help(*mode).to_string()))
         .collect();
     section(&mut out, "Mode block (first match wins)", modes, width);
-    let mut thread = thread_parts();
-    thread.extend(RESETS.iter().map(|reason| {
+    let mut process = process_parts();
+    process.extend(RESETS.iter().map(|reason| {
         (
             format!("↻ {}", reason.label()),
             format!("first turn after a reset: {}", reset_help(*reason)),
         )
     }));
-    let example = thread_variants(&EXAMPLE_THREAD)
+    let example = process_variants(&EXAMPLE_PROCESS)
         .into_iter()
         .next()
         .unwrap_or_default();
     section(
         &mut out,
-        &format!("Thread cell: {example} (shorter forms drop parts)"),
-        thread,
+        &format!("Process cell: {example} (shorter forms drop parts)"),
+        process,
         width,
     );
     out

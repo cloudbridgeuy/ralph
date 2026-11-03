@@ -20,10 +20,10 @@ use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_input::{input_lost_at_prompt, InputWatch};
 use ralph_core::chat_keepalive::lock_wait_continues;
 use ralph_core::chat_memory::entries_to_shift;
+use ralph_core::chat_process::{process_cell, process_usage, ProcessEnv, ProcessUsage, UsageTail};
 use ralph_core::chat_status::{
     latest_states, schedule_states, watch_states, worker_states, RunningWorker, Status,
 };
-use ralph_core::chat_thread::{thread_cell, thread_usage, ThreadEnv, ThreadUsage, UsageTail};
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::{fresh_reports, inbox_alert, AlertConfig};
 use ralph_core::program_status::{self, report_for, Phase};
@@ -68,8 +68,8 @@ pub(super) fn fresh_warnings(seen: &mut HashSet<String>, warnings: Vec<String>) 
 }
 
 #[derive(Default)]
-pub(super) struct ThreadMemo {
-    usage: Option<ThreadUsage>,
+pub(super) struct ProcessMemo {
+    usage: Option<ProcessUsage>,
     shift: Option<usize>,
 }
 
@@ -98,7 +98,7 @@ pub(super) struct Monitor {
     pub(super) last_ping: Stamp,
     pub(super) run: String,
     pub(super) reset_limits: ResetLimits,
-    pub(super) thread: Mutex<ThreadMemo>,
+    pub(super) process: Mutex<ProcessMemo>,
     pub(super) usage_tail: Mutex<UsageTail>,
     pub(super) term: Arc<TermStatus>,
     pub(super) phase: Mutex<Phase>,
@@ -279,17 +279,17 @@ impl Monitor {
         Some(entries_to_shift(&entries, self.recent_history_tokens))
     }
 
-    fn read_usage_rows(&self) -> Option<Option<ThreadUsage>> {
+    fn read_usage_rows(&self) -> Option<Option<ProcessUsage>> {
         let mut tail = locked(&self.usage_tail);
         let read = memory::read_usage_since(&memory::usage_path(), tail.clone(), &self.run);
         *tail = read.ok()?;
-        Some(thread_usage(&tail.rows))
+        Some(process_usage(&tail.rows))
     }
 
-    fn reload_thread(&self) {
+    fn reload_process(&self) {
         let usage = self.read_usage_rows();
         let shift = self.measure_shift();
-        let mut memo = locked(&self.thread);
+        let mut memo = locked(&self.process);
         if let Some(usage) = usage {
             memo.usage = usage;
         }
@@ -351,13 +351,13 @@ impl Monitor {
             .collect();
         let workers = worker_states(&running, &seen, &sent, active.as_ref(), &blocked);
         if with_memory {
-            self.reload_thread();
+            self.reload_process();
         }
-        let thread = {
-            let memo = locked(&self.thread);
-            thread_cell(
+        let process = {
+            let memo = locked(&self.process);
+            process_cell(
                 memo.usage.as_ref(),
-                &ThreadEnv {
+                &ProcessEnv {
                     now: chrono::Utc::now(),
                     last_ping: *locked(&self.last_ping),
                     live: self.live.load(Ordering::SeqCst),
@@ -376,7 +376,7 @@ impl Monitor {
                 chrono::Utc::now(),
                 *chrono::Local::now().offset(),
             ),
-            thread: Some(thread),
+            process: Some(process),
             napping: self.store.napping(),
             queue: None,
             hold: None,

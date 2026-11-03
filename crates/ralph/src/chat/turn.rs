@@ -27,8 +27,8 @@ use ralph_core::chat_memory::{
     carry_metadata, reply_entries, split_view, trigger_entries, usage_record, view_stats, CallKind,
     Trigger, ViewSplit,
 };
+use ralph_core::chat_process::ResetReason;
 use ralph_core::chat_skills::{expand_slash_command, ChatSkill};
-use ralph_core::chat_thread::ResetReason;
 use ralph_core::sanitize::strip_controls;
 use ralph_core::stream::IterationMetadata;
 use std::borrow::Cow;

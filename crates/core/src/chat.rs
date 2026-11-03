@@ -1,5 +1,5 @@
 use crate::chat_memory::SERVER_NAME;
-use crate::chat_thread::ResetReason;
+use crate::chat_process::ResetReason;
 use crate::stream::IterationCosts;
 use crate::worker::ATTACHMENTS_DIR;
 use serde_json::{json, Map, Value};

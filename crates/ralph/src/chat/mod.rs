@@ -47,7 +47,7 @@ use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::memory::Store;
 use crate::chat::monitor::{
-    ready_ids, watch_headless, watch_input, watch_status, Monitor, ThreadMemo,
+    ready_ids, watch_headless, watch_input, watch_status, Monitor, ProcessMemo,
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
@@ -97,6 +97,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
+use ralph_core::chat_process::{run_id, UsageTail};
 use ralph_core::chat_send_it::auto_line;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
@@ -104,7 +105,6 @@ use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, Suggestion, SuggestionRecord, TurnEnd,
 };
-use ralph_core::chat_thread::{run_id, UsageTail};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -397,7 +397,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         last_ping: Arc::clone(&last_ping),
         run: run.clone(),
         reset_limits,
-        thread: Mutex::new(ThreadMemo::default()),
+        process: Mutex::new(ProcessMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
         term: Arc::new(TermStatus::new(
             terminal_status,

@@ -40,8 +40,8 @@ fn lines(rows: &[String]) -> String {
     rows.iter().map(|row| format!("{row}\n")).collect()
 }
 
-fn usage(request_at: Option<DateTime<Utc>>) -> ThreadUsage {
-    ThreadUsage {
+fn usage(request_at: Option<DateTime<Utc>>) -> ProcessUsage {
+    ProcessUsage {
         process_turn: 12,
         context_tokens: Some(86_800),
         write_heavy: false,
@@ -51,8 +51,8 @@ fn usage(request_at: Option<DateTime<Utc>>) -> ThreadUsage {
     }
 }
 
-fn env(live: bool, shift: Option<usize>) -> ThreadEnv {
-    ThreadEnv {
+fn env(live: bool, shift: Option<usize>) -> ProcessEnv {
+    ProcessEnv {
         now: time(0),
         last_ping: None,
         live,
@@ -61,8 +61,8 @@ fn env(live: bool, shift: Option<usize>) -> ThreadEnv {
     }
 }
 
-fn cell() -> ThreadCell {
-    ThreadCell {
+fn cell() -> ProcessCell {
+    ProcessCell {
         turn: 12,
         max_turns: 30,
         ctx_percent: Some(62),
@@ -298,7 +298,7 @@ fn worker_rows_are_left_out_of_turns_rows_and_cost() {
     assert_eq!(rows.len(), 3);
     assert_eq!(session_cost(&rows).unwrap().total, 1.5);
     assert_eq!(
-        thread_usage(&session_rows(&text, RUN))
+        process_usage(&session_rows(&text, RUN))
             .unwrap()
             .cost
             .unwrap()
@@ -308,13 +308,13 @@ fn worker_rows_are_left_out_of_turns_rows_and_cost() {
 }
 
 #[test]
-fn thread_usage_reads_the_last_turn_not_the_last_ping() {
+fn process_usage_reads_the_last_turn_not_the_last_ping() {
     let text = lines(&[
         turn_line(1, 1, 1.0),
         turn_line(2, 2, 1.5),
         ping_line(3, 1.7),
     ]);
-    let usage = thread_usage(&session_rows(&text, RUN)).unwrap();
+    let usage = process_usage(&session_rows(&text, RUN)).unwrap();
     assert_eq!(usage.process_turn, 2);
     assert_eq!(usage.cost.unwrap().total, 1.7);
 }
@@ -448,7 +448,7 @@ fn a_ping_after_a_turn_counts_in_the_session_cost() {
         &first,
     );
     let tail = read_all(tail, FILE, &all);
-    let usage = thread_usage(&tail.rows).unwrap();
+    let usage = process_usage(&tail.rows).unwrap();
     assert_eq!(usage.cost.unwrap().total, 1.2);
 }
 
@@ -537,22 +537,22 @@ fn restart_write_is_off_without_tokens() {
 }
 
 #[test]
-fn thread_usage_reads_the_last_turn_of_this_session() {
+fn process_usage_reads_the_last_turn_of_this_session() {
     let last = format!(
         r#"{{"at":"{}","kind":"turn","cost_usd":2.0,"context_tokens":1000,"input_tokens":4,"cache_creation_input_tokens":600,"cache_read_input_tokens":100,"process_turn":1,"request_at":"{}","reset":"turns","run":"7-run"}}"#,
         time(5).to_rfc3339(),
         time(4).to_rfc3339()
     );
     let text = lines(&[turn_line(1, 4, 1.0), last]);
-    let data = thread_usage(&session_rows(&text, RUN)).unwrap();
+    let data = process_usage(&session_rows(&text, RUN)).unwrap();
     assert_eq!(data.process_turn, 1);
     assert_eq!(data.context_tokens, Some(1000));
     assert!(data.write_heavy);
     assert_eq!(data.request_at, Some(time(4)));
     assert_eq!(data.reset, Some(ResetReason::Turns));
     assert_eq!(data.cost.unwrap().total, 3.0);
-    assert_eq!(thread_usage(&session_rows(&text, "other")), None);
-    assert_eq!(thread_usage(&[]), None);
+    assert_eq!(process_usage(&session_rows(&text, "other")), None);
+    assert_eq!(process_usage(&[]), None);
 }
 
 #[test]
@@ -572,12 +572,12 @@ fn reset_reason_parses_every_lowercase_name() {
 }
 
 #[test]
-fn thread_cell_without_a_live_process_is_cold_at_turn_zero() {
-    let data = ThreadUsage {
+fn process_cell_without_a_live_process_is_cold_at_turn_zero() {
+    let data = ProcessUsage {
         reset: Some(ResetReason::Turns),
         ..usage(Some(time(0)))
     };
-    let cell = thread_cell(Some(&data), &env(false, Some(9)));
+    let cell = process_cell(Some(&data), &env(false, Some(9)));
     assert_eq!(
         (cell.turn, cell.ctx_percent, cell.cache_minutes, cell.reset),
         (0, None, None, None)
@@ -587,13 +587,13 @@ fn thread_cell_without_a_live_process_is_cold_at_turn_zero() {
 }
 
 #[test]
-fn thread_cell_for_a_live_process_carries_the_display_data() {
-    let data = ThreadUsage {
+fn process_cell_for_a_live_process_carries_the_display_data() {
+    let data = ProcessUsage {
         write_heavy: true,
         reset: Some(ResetReason::Tokens),
         ..usage(Some(time(-1800)))
     };
-    let cell = thread_cell(Some(&data), &env(true, None));
+    let cell = process_cell(Some(&data), &env(true, None));
     assert_eq!(
         (cell.turn, cell.ctx_percent, cell.cache_minutes),
         (12, Some(62), Some(30))
@@ -604,27 +604,27 @@ fn thread_cell_for_a_live_process_carries_the_display_data() {
 }
 
 #[test]
-fn thread_cell_without_usage_or_a_token_limit_has_no_context() {
-    let cell = thread_cell(None, &env(true, None));
+fn process_cell_without_usage_or_a_token_limit_has_no_context() {
+    let cell = process_cell(None, &env(true, None));
     assert_eq!(
         (cell.turn, cell.ctx_percent, cell.cache_minutes),
         (0, None, None)
     );
     let data = usage(Some(time(0)));
-    let unlimited = ThreadEnv {
+    let unlimited = ProcessEnv {
         limits: ResetLimits {
             turns: 30,
             tokens: 0,
         },
         ..env(true, None)
     };
-    assert_eq!(thread_cell(Some(&data), &unlimited).ctx_percent, None);
+    assert_eq!(process_cell(Some(&data), &unlimited).ctx_percent, None);
 }
 
 #[test]
-fn thread_variants_run_long_to_short() {
+fn process_variants_run_long_to_short() {
     assert_eq!(
-        thread_variants(&cell()),
+        process_variants(&cell()),
         [
             "T12/30 · ctx 62% · cache 41m! · shift ~9 msg",
             "T12/30 · 62% · 41m!",
@@ -635,14 +635,14 @@ fn thread_variants_run_long_to_short() {
 }
 
 #[test]
-fn thread_variants_drop_the_shift_and_the_mark_when_absent() {
-    let plain = ThreadCell {
+fn process_variants_drop_the_shift_and_the_mark_when_absent() {
+    let plain = ProcessCell {
         write_heavy: false,
         shift: None,
         ..cell()
     };
     assert_eq!(
-        thread_variants(&plain),
+        process_variants(&plain),
         [
             "T12/30 · ctx 62% · cache 41m",
             "T12/30 · 62% · 41m",
@@ -653,8 +653,8 @@ fn thread_variants_drop_the_shift_and_the_mark_when_absent() {
 }
 
 #[test]
-fn thread_variants_show_dashes_and_cold_without_a_process() {
-    let idle = ThreadCell {
+fn process_variants_show_dashes_and_cold_without_a_process() {
+    let idle = ProcessCell {
         turn: 0,
         ctx_percent: None,
         cache_minutes: None,
@@ -663,7 +663,7 @@ fn thread_variants_show_dashes_and_cold_without_a_process() {
         ..cell()
     };
     assert_eq!(
-        thread_variants(&idle),
+        process_variants(&idle),
         [
             "T0/30 · ctx – · cache cold",
             "T0/30 · – · cold",
@@ -680,12 +680,12 @@ fn reset_marks_prefix_only_the_two_long_forms() {
         (ResetReason::Turns, "↻ turns · "),
         (ResetReason::Restart, "↻ restart · "),
     ] {
-        let marked = ThreadCell {
+        let marked = ProcessCell {
             reset: Some(reason),
             shift: None,
             ..cell()
         };
-        let forms = thread_variants(&marked);
+        let forms = process_variants(&marked);
         assert_eq!(forms[0], format!("{mark}T12/30 · ctx 62% · cache 41m!"));
         assert_eq!(forms[1], format!("{mark}T12/30 · 62% · 41m!"));
         assert_eq!(forms[2], "12/30 62% 41m!");

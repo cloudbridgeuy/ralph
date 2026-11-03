@@ -9,8 +9,8 @@ use ralph_core::chat_memory::{
     retry_prompt, search, Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot,
     RangeRequest, Role, SearchRequest, Tool, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
+use ralph_core::chat_process::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::chat_suggestion::SuggestionRecord;
-use ralph_core::chat_thread::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};

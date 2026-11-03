@@ -57,7 +57,7 @@ pub struct SessionCost {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThreadUsage {
+pub struct ProcessUsage {
     pub process_turn: u64,
     pub context_tokens: Option<u64>,
     pub write_heavy: bool,
@@ -67,7 +67,7 @@ pub struct ThreadUsage {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ThreadEnv {
+pub struct ProcessEnv {
     pub now: DateTime<Utc>,
     pub last_ping: Option<DateTime<Utc>>,
     pub live: bool,
@@ -76,7 +76,7 @@ pub struct ThreadEnv {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ThreadCell {
+pub struct ProcessCell {
     pub turn: u64,
     pub max_turns: u64,
     pub ctx_percent: Option<u64>,
@@ -248,9 +248,9 @@ pub fn cache_left_minutes(
     (left > 0).then(|| left.div_ceil(60))
 }
 
-pub fn thread_usage(rows: &[UsageLine]) -> Option<ThreadUsage> {
+pub fn process_usage(rows: &[UsageLine]) -> Option<ProcessUsage> {
     let last = rows.iter().rfind(|row| row.kind == "turn")?;
-    Some(ThreadUsage {
+    Some(ProcessUsage {
         process_turn: last.process_turn.unwrap_or(0),
         context_tokens: last.context_tokens,
         write_heavy: restart_write(
@@ -264,9 +264,9 @@ pub fn thread_usage(rows: &[UsageLine]) -> Option<ThreadUsage> {
     })
 }
 
-pub fn thread_cell(usage: Option<&ThreadUsage>, env: &ThreadEnv) -> ThreadCell {
+pub fn process_cell(usage: Option<&ProcessUsage>, env: &ProcessEnv) -> ProcessCell {
     let live = usage.filter(|_| env.live);
-    ThreadCell {
+    ProcessCell {
         turn: live.map_or(0, |usage| usage.process_turn),
         max_turns: env.limits.turns,
         ctx_percent: live
@@ -282,12 +282,12 @@ pub fn thread_cell(usage: Option<&ThreadUsage>, env: &ThreadEnv) -> ThreadCell {
     }
 }
 
-fn percent_text(cell: &ThreadCell) -> String {
+fn percent_text(cell: &ProcessCell) -> String {
     cell.ctx_percent
         .map_or(MISSING.to_string(), |percent| format!("{percent}%"))
 }
 
-fn cache_text(cell: &ThreadCell) -> String {
+fn cache_text(cell: &ProcessCell) -> String {
     match cell.cache_minutes {
         Some(minutes) if cell.write_heavy => format!("{minutes}m!"),
         Some(minutes) => format!("{minutes}m"),
@@ -295,7 +295,7 @@ fn cache_text(cell: &ThreadCell) -> String {
     }
 }
 
-pub fn thread_variants(cell: &ThreadCell) -> Vec<String> {
+pub fn process_variants(cell: &ProcessCell) -> Vec<String> {
     let turns = format!("{}/{}", cell.turn, cell.max_turns);
     let percent = percent_text(cell);
     let cache = cache_text(cell);
