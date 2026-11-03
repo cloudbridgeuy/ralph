@@ -457,6 +457,7 @@ mod tests {
             replied: true,
             asked: false,
             typed: false,
+            queued: &[],
             cost_usd: 0.1,
             reply: "",
             drained: &[],

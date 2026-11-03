@@ -1,3 +1,4 @@
+use crate::chat_help::Command;
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::watch::{watch_id, WatchKind, WatchOutcome, WatchSpec};
@@ -408,7 +409,9 @@ pub fn propose_run_tool() -> Value {
 }
 
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
-const RESUME_HINT: &str = "Turn it on again with /send-it.";
+const RESTART_HINT: &str =
+    "To run it again from step 1, show the plan with /send-it status, then type /send-it go.";
+const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
@@ -447,6 +450,7 @@ pub enum StopReason {
 impl StopReason {
     pub fn notice(self, run: &Run) -> String {
         let why = match self {
+            StopReason::Off => return OFF_NOTICE.to_string(),
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Unmet { step } => format!("step {step} missed its exit criterion"),
@@ -455,13 +459,12 @@ impl StopReason {
                 format!("step {step} was still not met after the last judge round")
             }
             StopReason::CheckFailed { step } => format!("step {step} check did not exit 0"),
-            StopReason::Off => "the run plan is gone".to_string(),
             StopReason::PlanChanged => "the run plan changed or lost its approval".to_string(),
             StopReason::NoReply => "a turn ended without a reply".to_string(),
             StopReason::NeedsYou => "a schedule waits for your approval".to_string(),
             StopReason::TookOver => "you took over".to_string(),
         };
-        format!("send-it off: {why}. {RESUME_HINT}")
+        format!("send-it stopped: {why}. {RESTART_HINT}")
     }
 }
 
@@ -632,6 +635,7 @@ pub struct Ended<'a> {
     pub replied: bool,
     pub asked: bool,
     pub typed: bool,
+    pub queued: &'a [String],
     pub cost_usd: f64,
     pub reply: &'a str,
     pub drained: &'a [Report],
@@ -697,13 +701,20 @@ pub fn start_run(file: &RunFile) -> Option<(Driving, Next)> {
     Some((driving, next))
 }
 
+fn is_off(line: &str) -> bool {
+    Command::SendIt.args(line.trim()).map(parse_send_it_args) == Some(SendItCommand::Off)
+}
+
 fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason> {
-    let file = ended.file.ok_or(StopReason::Off)?;
+    let file = ended
+        .file
+        .filter(|_| !ended.queued.iter().any(|line| is_off(line)))
+        .ok_or(StopReason::Off)?;
     let stop = if !file.is_approved() || plan_hash(&file.plan) != hash {
         Some(StopReason::PlanChanged)
     } else if !ended.replied {
         Some(StopReason::NoReply)
-    } else if ended.typed {
+    } else if ended.typed || !ended.queued.is_empty() {
         Some(StopReason::TookOver)
     } else if ended.asked {
         Some(StopReason::NeedsYou)

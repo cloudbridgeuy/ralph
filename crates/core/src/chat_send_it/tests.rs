@@ -10,19 +10,38 @@ fn limits() -> Limits {
     }
 }
 
+const RESTART: &str =
+    "To run it again from step 1, show the plan with /send-it status, then type /send-it go.";
+
 #[test]
-fn stop_notices_say_how_to_turn_it_on_again() {
+fn a_stop_that_is_not_off_says_the_run_stopped_and_how_to_restart_it() {
     let run = Run::default();
-    for notice in [
-        StopReason::TurnCap.notice(&run),
-        StopReason::CostCap.notice(&run),
+    for reason in [
+        StopReason::TurnCap,
+        StopReason::CostCap,
+        StopReason::Unmet { step: 2 },
+        StopReason::WorkerFlagged,
+        StopReason::JudgeRounds { step: 2 },
+        StopReason::CheckFailed { step: 2 },
+        StopReason::PlanChanged,
+        StopReason::NoReply,
+        StopReason::NeedsYou,
+        StopReason::TookOver,
     ] {
-        assert!(notice.starts_with("send-it off: "), "{notice}");
-        assert!(
-            notice.ends_with("Turn it on again with /send-it."),
-            "{notice}"
-        );
+        let notice = reason.notice(&run);
+        assert!(notice.starts_with("send-it stopped: "), "{notice}");
+        assert!(notice.ends_with(RESTART), "{notice}");
+        assert!(!notice.contains("send-it off"), "{notice}");
+        assert!(!notice.contains("Turn it on again"), "{notice}");
     }
+}
+
+#[test]
+fn an_off_stop_says_the_plan_is_deleted() {
+    assert_eq!(
+        StopReason::Off.notice(&Run::default()),
+        "send-it off: the run stopped and its plan is deleted."
+    );
 }
 
 fn report(status: &str) -> Report {
@@ -415,7 +434,7 @@ fn new_stop_notices_name_the_step() {
     let run = Run::default();
     assert_eq!(
         StopReason::Unmet { step: 2 }.notice(&run),
-        "send-it off: step 2 missed its exit criterion. Turn it on again with /send-it."
+        format!("send-it stopped: step 2 missed its exit criterion. {RESTART}")
     );
     assert!(StopReason::WorkerFlagged
         .notice(&run)
@@ -428,7 +447,6 @@ fn new_stop_notices_name_the_step() {
             StopReason::CheckFailed { step: 3 },
             "step 3 check did not exit 0",
         ),
-        (StopReason::Off, "the run plan is gone"),
         (StopReason::PlanChanged, "the run plan changed"),
         (StopReason::NoReply, "a turn ended without a reply"),
         (StopReason::NeedsYou, "a schedule waits for your approval"),
@@ -436,7 +454,7 @@ fn new_stop_notices_name_the_step() {
     ] {
         let notice = reason.notice(&run);
         assert!(
-            notice.starts_with(&format!("send-it off: {why}")),
+            notice.starts_with(&format!("send-it stopped: {why}")),
             "{notice}"
         );
     }
@@ -621,6 +639,7 @@ fn ended(file: &RunFile) -> Ended<'_> {
         replied: true,
         asked: false,
         typed: false,
+        queued: &[],
         cost_usd: 0.5,
         reply: "",
         drained: &[],
@@ -861,4 +880,34 @@ fn the_running_line_shows_progress_against_the_caps() {
         running_line(&plan(), &driving(1, Awaiting::Turn, spent(3, 0.5))),
         "Running: step 2/4, 3 of 30 turns, $0.50 of $4.00."
     );
+}
+
+#[test]
+fn a_queued_send_it_off_stops_the_run_as_off_and_other_queued_text_as_took_over() {
+    let file = approved(plan());
+    let state = driving(0, Awaiting::Turn, Run::default());
+    let stop = |lines: &[&str], typed: bool| {
+        let queued: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+        let ended = Ended {
+            typed,
+            queued: &queued,
+            ..ended(&file)
+        };
+        tick(&state, &ended).next
+    };
+    for lines in [
+        &["/send-it off"][..],
+        &["  /send-it off  "],
+        &["hello", "/send-it off"],
+    ] {
+        assert_eq!(stop(lines, false), Next::Stop(StopReason::Off), "{lines:?}");
+    }
+    assert_eq!(stop(&["/send-it off"], true), Next::Stop(StopReason::Off));
+    for lines in [&["hello"][..], &["/send-it status"], &["/send-it offline"]] {
+        assert_eq!(
+            stop(lines, false),
+            Next::Stop(StopReason::TookOver),
+            "{lines:?}"
+        );
+    }
 }
