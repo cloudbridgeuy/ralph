@@ -410,3 +410,139 @@ fn the_blocked_frame_report_is_a_question_with_the_notice() {
         }
     );
 }
+
+fn plan_json() -> serde_json::Value {
+    serde_json::json!({
+        "goal": "ship GUZ-1",
+        "steps": [
+            {"do": "collect evidence", "criterion": {"kind": "worker_done", "worker": "E1"}},
+            {"do": "wait for CI", "criterion": {"kind": "watch_passes", "command": "gh pr checks --watch"}},
+            {"do": "run the checks", "criterion": {"kind": "check_passes", "command": "cargo xtask lint"}},
+            {"do": "address review", "criterion": {"kind": "judge", "question": "are all findings resolved?"}}
+        ],
+        "allowed": [{"kind": "spawn", "harness": "codex"}, {"kind": "merge"}, {"kind": "paid_run", "max_usd": 2.5}],
+        "grants": [{"kind": "turn_cap", "turns": 30}],
+        "caps": {"usd": 4.0}
+    })
+}
+
+fn plan() -> RunPlan {
+    parse_run(&plan_json(), limits()).unwrap()
+}
+
+#[test]
+fn a_run_plan_parses_with_typed_steps_actions_and_grants() {
+    let plan = plan();
+    assert_eq!(plan.goal, "ship GUZ-1");
+    assert_eq!(
+        plan.steps[0],
+        Step {
+            task: "collect evidence".to_string(),
+            criterion: Criterion::WorkerDone {
+                worker: "E1".to_string()
+            },
+        }
+    );
+    assert_eq!(
+        plan.allowed,
+        vec![
+            Action::Spawn {
+                harness: HarnessId::Codex
+            },
+            Action::Merge,
+            Action::PaidRun { max_usd: 2.5 }
+        ]
+    );
+    assert_eq!(plan.grants, vec![Grant::TurnCap { turns: 30 }]);
+}
+
+#[test]
+fn missing_caps_fall_back_to_the_defaults() {
+    let plan = plan();
+    assert_eq!(
+        plan.limits,
+        Limits {
+            max_turns: 3,
+            max_usd: 4.0
+        }
+    );
+    assert_eq!(plan.judge_rounds, DEFAULT_JUDGE_ROUNDS);
+}
+
+#[test]
+fn a_step_without_a_criterion_is_rejected_by_number() {
+    let mut args = plan_json();
+    args["steps"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("criterion");
+    let error = parse_run(&args, limits()).unwrap_err();
+    assert!(error.contains("Step 2 has no exit criterion"), "{error}");
+}
+
+#[test]
+fn an_empty_goal_no_steps_or_an_empty_step_are_rejected() {
+    for (field, value, expected) in [
+        ("goal", serde_json::json!("  "), "no goal"),
+        ("steps", serde_json::json!([]), "no steps"),
+        (
+            "steps",
+            serde_json::json!([{"do": " ", "criterion": {"kind": "judge", "question": "q"}}]),
+            "Step 1 is empty",
+        ),
+    ] {
+        let mut args = plan_json();
+        args[field] = value;
+        let error = parse_run(&args, limits()).unwrap_err();
+        assert!(error.contains(expected), "{field}: {error}");
+    }
+}
+
+#[test]
+fn zero_caps_and_unknown_kinds_are_rejected() {
+    for caps in [
+        serde_json::json!({"turns": 0}),
+        serde_json::json!({"usd": 0.0}),
+        serde_json::json!({"judge_rounds": 0}),
+    ] {
+        let mut args = plan_json();
+        args["caps"] = caps.clone();
+        let error = parse_run(&args, limits()).unwrap_err();
+        assert!(error.contains("caps must be positive"), "{caps}: {error}");
+    }
+    let mut args = plan_json();
+    args["allowed"] = serde_json::json!([{"kind": "deploy"}]);
+    let error = parse_run(&args, limits()).unwrap_err();
+    assert!(error.contains("deploy"), "{error}");
+}
+
+#[test]
+fn the_restatement_numbers_steps_and_keeps_grants_in_their_own_block() {
+    assert_eq!(
+        render_run(&plan()),
+        "Goal: ship GUZ-1\n\
+         Steps:\n  \
+           1. collect evidence\n     \
+              exit: worker E1 reports done\n  \
+           2. wait for CI\n     \
+              exit: watch `gh pr checks --watch` exits 0\n  \
+           3. run the checks\n     \
+              exit: `cargo xtask lint` exits 0\n  \
+           4. address review\n     \
+              exit: judged: are all findings resolved?\n\
+         Allowed: spawn codex workers, merge, paid runs up to $2.50\n\
+         Caps: 3 turns, $4.00, 2 judge rounds\n\
+         You pre-approve:\n  \
+           - raise the turn cap to 30"
+    );
+}
+
+#[test]
+fn a_restatement_without_grants_or_actions_says_so() {
+    let mut plan = plan();
+    plan.allowed.clear();
+    plan.grants.clear();
+    let text = render_run(&plan);
+    assert!(text.contains("\nAllowed: none\n"), "{text}");
+    assert!(text.ends_with("You pre-approve:\n  - nothing"), "{text}");
+}

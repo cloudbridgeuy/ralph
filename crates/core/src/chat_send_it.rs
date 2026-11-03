@@ -1,6 +1,198 @@
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
-use crate::worker::Report;
+use crate::worker::{HarnessId, Report};
+use serde::Deserialize;
+use serde_json::Value;
+
+pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Criterion {
+    WorkerDone { worker: String },
+    WatchPasses { command: String },
+    CheckPasses { command: String },
+    Judge { question: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Action {
+    Spawn { harness: HarnessId },
+    Reply,
+    Close,
+    Watch,
+    Merge,
+    Push,
+    Pr,
+    LinearWrite,
+    PaidRun { max_usd: f64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Grant {
+    TurnCap { turns: u32 },
+    CostCap { usd: f64 },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Step {
+    pub task: String,
+    pub criterion: Criterion,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunPlan {
+    pub goal: String,
+    pub steps: Vec<Step>,
+    pub allowed: Vec<Action>,
+    pub grants: Vec<Grant>,
+    pub limits: Limits,
+    pub judge_rounds: u32,
+}
+
+#[derive(Deserialize)]
+struct RawPlan {
+    goal: String,
+    steps: Vec<RawStep>,
+    #[serde(default)]
+    allowed: Vec<Action>,
+    #[serde(default)]
+    grants: Vec<Grant>,
+    #[serde(default)]
+    caps: RawCaps,
+}
+
+#[derive(Deserialize)]
+struct RawStep {
+    #[serde(rename = "do")]
+    task: String,
+    criterion: Option<Criterion>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawCaps {
+    turns: Option<u32>,
+    usd: Option<f64>,
+    judge_rounds: Option<u32>,
+}
+
+fn parse_step(number: usize, step: RawStep) -> Result<Step, String> {
+    let task = step.task.trim();
+    if task.is_empty() {
+        return Err(format!("Step {number} is empty. Say what the step does."));
+    }
+    let criterion = step.criterion.ok_or_else(|| {
+        format!("Step {number} has no exit criterion. Give each step a check ralph can measure.")
+    })?;
+    Ok(Step {
+        task: task.to_string(),
+        criterion,
+    })
+}
+
+pub fn parse_run(args: &Value, defaults: Limits) -> Result<RunPlan, String> {
+    let raw =
+        RawPlan::deserialize(args).map_err(|error| format!("Run plan is malformed: {error}."))?;
+    let goal = raw.goal.trim();
+    if goal.is_empty() {
+        return Err("Run plan has no goal. Say what the run delivers.".to_string());
+    }
+    if raw.steps.is_empty() {
+        return Err("Run plan has no steps. List the steps in order.".to_string());
+    }
+    let steps = raw
+        .steps
+        .into_iter()
+        .enumerate()
+        .map(|(index, step)| parse_step(index + 1, step))
+        .collect::<Result<Vec<_>, _>>()?;
+    let limits = Limits {
+        max_turns: raw.caps.turns.unwrap_or(defaults.max_turns),
+        max_usd: raw.caps.usd.unwrap_or(defaults.max_usd),
+    };
+    let judge_rounds = raw.caps.judge_rounds.unwrap_or(DEFAULT_JUDGE_ROUNDS);
+    if limits.max_turns == 0
+        || judge_rounds == 0
+        || limits.max_usd.is_nan()
+        || limits.max_usd <= 0.0
+    {
+        return Err("Run plan caps must be positive.".to_string());
+    }
+    Ok(RunPlan {
+        goal: goal.to_string(),
+        steps,
+        allowed: raw.allowed,
+        grants: raw.grants,
+        limits,
+        judge_rounds,
+    })
+}
+
+impl Criterion {
+    fn label(&self) -> String {
+        match self {
+            Criterion::WorkerDone { worker } => format!("worker {worker} reports done"),
+            Criterion::WatchPasses { command } => format!("watch `{command}` exits 0"),
+            Criterion::CheckPasses { command } => format!("`{command}` exits 0"),
+            Criterion::Judge { question } => format!("judged: {question}"),
+        }
+    }
+}
+
+impl Action {
+    fn label(&self) -> String {
+        match self {
+            Action::Spawn { harness } => format!("spawn {} workers", harness.as_str()),
+            Action::Reply => "reply to workers".to_string(),
+            Action::Close => "close workers".to_string(),
+            Action::Watch => "start watches".to_string(),
+            Action::Merge => "merge".to_string(),
+            Action::Push => "push".to_string(),
+            Action::Pr => "open PRs".to_string(),
+            Action::LinearWrite => "write to Linear".to_string(),
+            Action::PaidRun { max_usd } => format!("paid runs up to ${max_usd:.2}"),
+        }
+    }
+}
+
+impl Grant {
+    fn label(&self) -> String {
+        match self {
+            Grant::TurnCap { turns } => format!("raise the turn cap to {turns}"),
+            Grant::CostCap { usd } => format!("raise the cost cap to ${usd:.2}"),
+        }
+    }
+}
+
+pub fn render_run(plan: &RunPlan) -> String {
+    let mut lines = vec![format!("Goal: {}", plan.goal), "Steps:".to_string()];
+    for (index, step) in plan.steps.iter().enumerate() {
+        lines.push(format!("  {}. {}", index + 1, step.task));
+        lines.push(format!("     exit: {}", step.criterion.label()));
+    }
+    let allowed: Vec<String> = plan.allowed.iter().map(Action::label).collect();
+    lines.push(if allowed.is_empty() {
+        "Allowed: none".to_string()
+    } else {
+        format!("Allowed: {}", allowed.join(", "))
+    });
+    lines.push(format!(
+        "Caps: {} turns, ${:.2}, {} judge rounds",
+        plan.limits.max_turns, plan.limits.max_usd, plan.judge_rounds
+    ));
+    lines.push("You pre-approve:".to_string());
+    if plan.grants.is_empty() {
+        lines.push("  - nothing".to_string());
+    }
+    lines.extend(
+        plan.grants
+            .iter()
+            .map(|grant| format!("  - {}", grant.label())),
+    );
+    lines.join("\n")
+}
 
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
 const COUNTDOWN_PREFIX: &str = "send-it in ";
