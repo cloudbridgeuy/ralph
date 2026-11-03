@@ -4,6 +4,7 @@ use super::{
     CLAUDE_HEADLESS_HARNESS, CODEX_HARNESS, CURSOR_HARNESS, OPENCODE_HARNESS,
 };
 use crate::chat_status::WORKER_COSTS;
+use crate::chat_thread::refuse_thread_report;
 use crate::mcp::string_arg;
 use crate::schedule_request::parse_schedule_args;
 use crate::schedule_worker::{is_scheduled_worker_id, WORKER_ID_PREFIX};
@@ -146,6 +147,7 @@ fn ticket_arg(args: &Value) -> Result<Option<String>, String> {
 
 fn worker_id(args: &Value) -> Result<String, String> {
     let id = string_arg(args, "id")?;
+    refuse_thread_report(&id)?;
     if is_dashed_token(&id) {
         Ok(id)
     } else {
@@ -638,6 +640,21 @@ mod tests {
                 parse_command("reply", &json!({"id": id, "text": "t"})),
                 Some(Err(_))
             ));
+        }
+    }
+
+    #[test]
+    fn reply_and_close_refuse_a_merged_thread_report() {
+        let refusal = "thread:auth is a merged thread's digest, not a worker; there is nothing to reply to, nudge or close.";
+        for (name, args) in [
+            ("reply", json!({"id": "thread:auth", "text": "ok"})),
+            ("close_worker", json!({"id": "thread:auth"})),
+        ] {
+            assert_eq!(
+                parse_command(name, &args),
+                Some(Err(refusal.to_string())),
+                "{name}"
+            );
         }
     }
 }

@@ -83,6 +83,15 @@ fn groups_by_harness_and_model_with_main_and_nap_first() {
 }
 
 #[test]
+fn thread_merge_digests_count_as_nap() {
+    let mut merge = nap("claude-haiku-5-5", 0.02);
+    merge["kind"] = json!("merge");
+    let rows = rows_of(&jsonl(&[nap("claude-haiku-5-5", 0.01), merge]));
+    assert_eq!(rows.len(), 1);
+    assert!(close(find(&rows, "nap", "claude-haiku-5-5").usd, 0.03));
+}
+
+#[test]
 fn main_rows_split_by_model() {
     let mut opus = turn("r1", 1, 0.5);
     opus["model"] = json!("claude-opus-5-5");

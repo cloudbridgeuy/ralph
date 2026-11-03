@@ -22,7 +22,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `themes` | List available syntax highlighting themes |
 | `ask` | Send a single-shot prompt to the LLM ([details](context/ralph-ask.md)) |
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
-| `thread` | List or drop chat threads ([details](context/ralph-chat.md#threads)) |
+| `thread` | List, drop or merge chat threads ([details](context/ralph-chat.md#threads)) |
 | `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
 | `config` | Check `config.toml` for errors and unknown keys |
 | `worker` | Verify an installed worker agent against ralph's local spec ([details](context/headless-workers.md#verify-an-agent-version)) |
@@ -30,7 +30,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 
 `ralph chat --name <NAME>` sets the chat session name shown in the status bar and the terminal title. It overrides `[chat] name`; without both, the name is the git root or cwd folder name. The name is only a label: chats that share a store still share memory and workers, so use `--store` to separate them ([details](context/ralph-chat.md#session-name)).
 
-`ralph chat --thread <NAME>` creates or opens a thread: a side chat forked from the main chat, stored under `<store>/threads/<NAME>`. `ralph thread ls` lists threads and `ralph thread drop <NAME>` deletes one ([details](context/ralph-chat.md#threads)).
+`ralph chat --thread <NAME>` creates or opens a thread: a side chat forked from the main chat, stored under `<store>/threads/<NAME>`. `ralph thread ls` lists threads, `ralph thread drop <NAME>` deletes one, and `ralph thread merge <NAME>` squashes one into a digest in main's inbox and makes it read-only ([details](context/ralph-chat.md#threads)).
 
 `ralph chat --skip-summary` skips the startup recap of the previous session for one run; `[chat] resume_summary = false` turns it off for good ([details](context/ralph-chat.md#startup-recap)).
 

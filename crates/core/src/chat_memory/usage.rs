@@ -37,6 +37,7 @@ pub enum CallKind {
         turn_id: Option<u64>,
     },
     Ping,
+    Merge,
 }
 
 pub const VIEW_HEAD_BYTES: usize = 1024;

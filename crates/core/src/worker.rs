@@ -1,3 +1,4 @@
+use crate::chat_thread::THREAD_REPORT_PREFIX;
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
 use serde::{Deserialize, Serialize};
@@ -376,7 +377,10 @@ pub fn inbox_file_name(report: &Report, seq: u64) -> String {
 pub fn chat_message(reports: &[Report]) -> String {
     reports
         .iter()
-        .map(|r| format!("[worker {} · {}]\n{}", r.worker, r.status, r.text))
+        .map(|r| match r.worker.strip_prefix(THREAD_REPORT_PREFIX) {
+            Some(name) => format!("[thread {name} · {}]\n{}", r.status, r.text),
+            None => format!("[worker {} · {}]\n{}", r.worker, r.status, r.text),
+        })
         .collect::<Vec<_>>()
         .join("\n\n")
 }

@@ -105,7 +105,7 @@ use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
-use ralph_core::chat_thread::{in_scope, ThreadName};
+use ralph_core::chat_thread::{in_scope, merged_check, ThreadName};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -233,7 +233,10 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         .claim_chat()?
         .map_err(|holder| store_in_use_message(&store_root, holder))?;
     if let Some(name) = &args.thread {
-        thread::ensure(&thread::config_root(&store_dir), name)?;
+        merged_check(
+            name,
+            &thread::ensure(&thread::config_root(&store_dir), name)?,
+        )?;
     }
     let fork = thread::open_fork(&store_dir)?;
     let exe = std::env::current_exe()?;

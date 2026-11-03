@@ -174,8 +174,17 @@ pub struct ThreadArgs {
 pub enum ThreadCommand {
     #[command(about = "List the threads: name, fork point, message count, creation time.")]
     Ls,
-    #[command(about = "Delete a thread's folder. Refuses while a chat has the thread open.")]
+    #[command(
+        about = "Delete a thread's folder. Refuses while a chat or a worker uses it, or once it is merged."
+    )]
     Drop {
+        #[arg(value_parser = ThreadName::parse)]
+        name: ThreadName,
+    },
+    #[command(
+        about = "Squash a thread into main: one Haiku call writes a digest that reaches main's inbox; the thread stays read-only."
+    )]
+    Merge {
         #[arg(value_parser = ThreadName::parse)]
         name: ThreadName,
     },

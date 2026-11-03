@@ -337,56 +337,73 @@ fn execute_worker_stop_hook(args: WorkerStopHookArgs) -> Result<(), Box<dyn std:
 
 fn execute_chat_nap(args: ChatNapArgs) -> Result<(), Box<dyn std::error::Error>> {
     config::set_store_layer(&args.store);
-    let store_path = workers::usage_store(&args.store);
-    let store = chat::memory::Store::new(args.store);
+    let store = chat::memory::Store::new(args.store.clone());
+    store.nap(|prompt| {
+        run_curator(
+            prompt,
+            &Curator {
+                kind: ralph_core::chat_memory::CallKind::Nap,
+                store: &args.store,
+                run: args.run.clone(),
+                timeout: args.timeout,
+            },
+        )
+    })?;
+    Ok(())
+}
+
+pub(crate) struct Curator<'a> {
+    pub kind: ralph_core::chat_memory::CallKind,
+    pub store: &'a std::path::Path,
+    pub run: Option<String>,
+    pub timeout: u64,
+}
+
+pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, String> {
     let theme_config = highlight::ThemeConfig::from_config_and_env();
     let config_dir = config::AppConfig::load()
         .unwrap_or_default()
         .claude
         .config_dir;
-    store.nap(|prompt| {
-        let command =
-            invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
-        let stdin = invoke::prompt_stdin(prompt);
-        let result = backoff::retry_on_outage(
-            "chat memory nap",
-            || {
-                backoff::attempt_from(subprocess::invoke_subprocess_with_spinner_config(
-                    &subprocess::SpinnerSubprocessConfig {
-                        command: command.clone(),
-                        timeout_secs: Some(args.timeout),
-                        theme_config: theme_config.clone(),
-                        session_elapsed_ms: 0,
-                        verbose_tools: stream_processor::VerboseToolsConfig::new(),
-                        session_info: spinner::SpinnerSessionInfo {
-                            persona: Some("chat memory".into()),
-                        },
-                        gate: None,
-                        cancel: None,
-                        stdin: Some(stdin.clone()),
+    let command = invoke::build_memory_command(dirs::home_dir().as_deref(), config_dir.as_deref());
+    let stdin = invoke::prompt_stdin(prompt);
+    let result = backoff::retry_on_outage(
+        "chat memory curator",
+        || {
+            backoff::attempt_from(subprocess::invoke_subprocess_with_spinner_config(
+                &subprocess::SpinnerSubprocessConfig {
+                    command: command.clone(),
+                    timeout_secs: Some(curator.timeout),
+                    theme_config: theme_config.clone(),
+                    session_elapsed_ms: 0,
+                    verbose_tools: stream_processor::VerboseToolsConfig::new(),
+                    session_info: spinner::SpinnerSessionInfo {
+                        persona: Some("chat memory".into()),
                     },
-                ))
-            },
-            |delay| backoff::wait_unless(signal::is_terminated, delay),
-        )
-        .map_err(|e| e.to_string())?;
-        if let Some(mut record) = ralph_core::chat_memory::usage_record(
-            ralph_core::chat_memory::CallKind::Nap,
-            chrono::Utc::now().to_rfc3339(),
-            &result.stream_result.costs,
-            &result.stream_result.metadata,
-        ) {
-            record.run = args.run.clone();
-            record.store = Some(store_path.clone());
-            warn_if_err(
-                chat::memory::append_usage(&chat::memory::usage_path(), &record),
-                "Failed to record chat usage",
-            );
-        }
-        let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
-        ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
-    })?;
-    Ok(())
+                    gate: None,
+                    cancel: None,
+                    stdin: Some(stdin.clone()),
+                },
+            ))
+        },
+        |delay| backoff::wait_unless(signal::is_terminated, delay),
+    )
+    .map_err(|e| e.to_string())?;
+    if let Some(mut record) = ralph_core::chat_memory::usage_record(
+        curator.kind.clone(),
+        chrono::Utc::now().to_rfc3339(),
+        &result.stream_result.costs,
+        &result.stream_result.metadata,
+    ) {
+        record.run = curator.run.clone();
+        record.store = Some(workers::usage_store(curator.store));
+        warn_if_err(
+            chat::memory::append_usage(&chat::memory::usage_path(), &record),
+            "Failed to record chat usage",
+        );
+    }
+    let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
+    ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
 }
 
 #[cfg(test)]

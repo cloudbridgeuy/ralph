@@ -1,12 +1,17 @@
 use crate::chat::memory::Store;
-use crate::cli::{ThreadArgs, ThreadCommand};
+use crate::cli::{ThreadArgs, ThreadCommand, NAP_TIMEOUT_SECS};
 use crate::private_file::check_path;
+use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, running_workers};
-use ralph_core::chat_memory::{view, MemoryCall, ViewSplit};
+use crate::{run_curator, Curator};
+use ralph_core::chat::VIEW_LINES;
+use ralph_core::chat_memory::{view, CallKind, MemoryCall, ViewSplit};
 use ralph_core::chat_thread::{
-    fork_check, idle_check, thread_split, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES,
-    THREADS_DIR, THREAD_FILE,
+    digest_with, fork_check, idle_check, label_item, merge_prompt, merged_check, merged_report,
+    thread_split, Merged, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR,
+    THREAD_FILE,
 };
+use ralph_core::worker::{chat_message, INBOX_DIR};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -106,15 +111,32 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", if rows.is_empty() { "no threads" } else { &rows });
         }
         ThreadCommand::Drop { name } => {
-            let running: Vec<String> = running_workers(&canonical_store(thread_dir(&main, &name)))
-                .into_iter()
-                .map(|worker| worker.id)
-                .collect();
-            drop_thread(&main, &name, &running)?;
+            drop_thread(&main, &name, &running_ids(&main, &name))?;
             println!("dropped thread {name}");
+        }
+        ThreadCommand::Merge { name } => {
+            let dir = thread_dir(&main, &name);
+            let curator = Curator {
+                kind: CallKind::Merge,
+                store: &dir,
+                run: None,
+                timeout: NAP_TIMEOUT_SECS,
+            };
+            let running = running_ids(&main, &name);
+            let message = merge_thread(&main, &name, &running, &mut |prompt: &str| {
+                run_curator(prompt, &curator)
+            })?;
+            println!("merged thread {name} into main's inbox\n{message}");
         }
     }
     Ok(())
+}
+
+fn running_ids(main: &Path, name: &ThreadName) -> Vec<String> {
+    running_workers(&canonical_store(thread_dir(main, name)))
+        .into_iter()
+        .map(|worker| worker.id)
+        .collect()
 }
 
 fn read_meta(dir: &Path) -> io::Result<ThreadMeta> {
@@ -139,15 +161,73 @@ pub fn ensure(main: &Path, name: &ThreadName) -> io::Result<ThreadMeta> {
     let meta = ThreadMeta {
         base: Store::new(main.to_path_buf()).log_len()?,
         created: chrono::Utc::now().to_rfc3339(),
+        merged: None,
     };
     fs::create_dir_all(&dir)?;
+    write_meta(&dir, &meta)?;
+    Ok(meta)
+}
+
+fn write_meta(dir: &Path, meta: &ThreadMeta) -> io::Result<()> {
     let path = dir.join(THREAD_FILE);
     check_path(&path)?;
-    fs::write(
-        path,
-        serde_json::to_string(&meta).map_err(io::Error::other)?,
-    )?;
-    Ok(meta)
+    fs::write(path, serde_json::to_string(meta).map_err(io::Error::other)?)
+}
+
+pub fn merge_thread(
+    main: &Path,
+    name: &ThreadName,
+    running: &[String],
+    curate: &mut impl FnMut(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    let dir = thread_dir(main, name);
+    let meta = known_meta(&dir, name)?;
+    merged_check(name, &meta)?;
+    idle_check(name, running)?;
+    let _claim = claim_closed(&dir, name)?;
+    let failed = |e: io::Error| format!("could not merge thread {name}: {e}");
+    let (entries, tree) = Store::new(dir.clone()).load().map_err(failed)?;
+    let lines: Vec<String> = view(&entries, &tree, VIEW_LINES)
+        .iter()
+        .map(|line| label_item(line, name))
+        .collect();
+    let digest = digest_with(&merge_prompt(name, meta.base, &lines), name, curate)
+        .map_err(|e| format!("thread {name} was not merged: {e}"))?;
+    let at = chrono::Utc::now().to_rfc3339();
+    let report = merged_report(name, &digest, &at);
+    let merged = ThreadMeta {
+        merged: Some(Merged { at, digest }),
+        ..meta
+    };
+    write_meta(&dir, &merged).map_err(failed)?;
+    Inbox::new(main.join(INBOX_DIR))
+        .post(&report, 0)
+        .map_err(|e| {
+            format!(
+                "thread {name} is merged, but its digest did not reach main's inbox: {e}. The digest is in {}.",
+                dir.join(THREAD_FILE).display()
+            )
+        })?;
+    Ok(chat_message(&[report]))
+}
+
+fn known_meta(dir: &Path, name: &ThreadName) -> Result<ThreadMeta, String> {
+    if !dir.join(THREAD_FILE).is_file() {
+        return Err(format!("no thread {name}; `ralph thread ls` lists them."));
+    }
+    read_meta(dir).map_err(|e| format!("thread {name}: {e}"))
+}
+
+fn claim_closed(dir: &Path, name: &ThreadName) -> Result<fs::File, String> {
+    Store::new(dir.to_path_buf())
+        .claim_chat()
+        .map_err(|e| format!("could not claim thread {name}: {e}"))?
+        .map_err(|holder| {
+            let by = holder
+                .map(|pid| format!(" by pid {pid}"))
+                .unwrap_or_default();
+            format!("thread {name} is in use{by}; close its chat first.")
+        })
 }
 
 pub fn list(main: &Path) -> io::Result<String> {
@@ -166,8 +246,12 @@ pub fn list(main: &Path) -> io::Result<String> {
             continue;
         };
         let messages = Store::new(dir).log_len()?;
+        let merged = meta
+            .merged
+            .map(|merged| format!("  merged {}", merged.at))
+            .unwrap_or_default();
         rows.push(format!(
-            "{name}  forked at #{}  {messages} messages  {}",
+            "{name}  forked at #{}  {messages} messages  {}{merged}",
             meta.base, meta.created
         ));
     }
@@ -176,21 +260,10 @@ pub fn list(main: &Path) -> io::Result<String> {
 
 pub fn drop_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<(), String> {
     let dir = thread_dir(main, name);
-    if !dir.join(THREAD_FILE).is_file() {
-        return Err(format!("no thread {name}; `ralph thread ls` lists them."));
-    }
+    merged_check(name, &known_meta(&dir, name)?)?;
     idle_check(name, running)?;
-    let failed = |e: io::Error| format!("could not drop thread {name}: {e}");
-    let _claim = Store::new(dir.clone())
-        .claim_chat()
-        .map_err(failed)?
-        .map_err(|holder| {
-            let by = holder
-                .map(|pid| format!(" by pid {pid}"))
-                .unwrap_or_default();
-            format!("thread {name} is in use{by}; close its chat first.")
-        })?;
-    fs::remove_dir_all(&dir).map_err(failed)
+    let _claim = claim_closed(&dir, name)?;
+    fs::remove_dir_all(&dir).map_err(|e| format!("could not drop thread {name}: {e}"))
 }
 
 #[cfg(test)]
@@ -340,5 +413,59 @@ mod tests {
         assert!(!dir.exists());
         assert!(drop_thread(&main, &name("auth"), &[]).is_err());
         assert_eq!(list(&main).unwrap().lines().count(), 1);
+    }
+
+    fn digest(text: &'static str) -> impl FnMut(&str) -> Result<String, String> {
+        move |_| Ok(text.to_string())
+    }
+
+    #[test]
+    fn merge_posts_a_digest_to_main_and_freezes_the_thread() {
+        let (_root, main, dir) = forked();
+        let mut asked = Vec::new();
+        let printed = merge_thread(&main, &name("auth"), &[], &mut |prompt: &str| {
+            asked.push(prompt.to_string());
+            Ok("Picked a needle. #auth:0".to_string())
+        })
+        .unwrap();
+        assert_eq!(printed, "[thread auth · merged]\nPicked a needle. #auth:0");
+        assert!(asked[0].contains("forked from main at #2"), "{}", asked[0]);
+        assert!(asked[0].contains("\n#auth:0 user"), "{}", asked[0]);
+        let merged = read_meta(&dir).unwrap().merged.unwrap();
+        assert_eq!(merged.digest, "Picked a needle. #auth:0");
+        let inbox = Inbox::new(main.join(INBOX_DIR)).peek().unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].worker, "thread:auth");
+        assert_eq!(inbox[0].at, merged.at);
+        let rows = list(&main).unwrap();
+        assert!(rows.contains(&format!("  merged {}", merged.at)), "{rows}");
+        let frozen = "thread auth is merged into main and stays read-only";
+        let again = merge_thread(&main, &name("auth"), &[], &mut digest("x #auth:0"));
+        assert!(again.unwrap_err().starts_with(frozen));
+        assert!(drop_thread(&main, &name("auth"), &[])
+            .unwrap_err()
+            .starts_with(frozen));
+        assert!(dir.join(THREAD_FILE).is_file());
+        assert_eq!(Inbox::new(main.join(INBOX_DIR)).peek().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_merge_changes_nothing() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        let rejected = merge_thread(&main, &auth, &[], &mut digest("no cites"));
+        assert!(rejected.unwrap_err().contains("rejected 3 times"));
+        let busy = merge_thread(&main, &auth, &["w1".to_string()], &mut digest("x #auth:0"));
+        assert!(busy.unwrap_err().contains("running workers (w1)"));
+        let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
+        let open = merge_thread(&main, &auth, &[], &mut digest("x #auth:0"));
+        assert!(open.unwrap_err().contains("in use"));
+        held.unlock().unwrap();
+        std::mem::drop(held);
+        let unknown = merge_thread(&main, &name("nope"), &[], &mut digest("x #nope:0"));
+        assert!(unknown.unwrap_err().starts_with("no thread nope"));
+        assert_eq!(read_meta(&dir).unwrap().merged, None);
+        let inbox = Inbox::new(main.join(INBOX_DIR)).peek().unwrap_or_default();
+        assert!(inbox.is_empty());
     }
 }
