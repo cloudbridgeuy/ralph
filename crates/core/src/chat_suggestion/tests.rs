@@ -370,14 +370,6 @@ fn no_suggestion_means_nothing() {
 }
 
 #[test]
-fn the_auto_sent_outcome_serializes_as_autosent() {
-    assert_eq!(
-        serde_json::to_value(Outcome::AutoSent).unwrap(),
-        json!("autosent")
-    );
-}
-
-#[test]
 fn the_held_outcome_serializes_as_held() {
     assert_eq!(serde_json::to_value(Outcome::Held).unwrap(), json!("held"));
     assert_eq!(serde_json::to_string(&Outcome::Held).unwrap(), "\"held\"");
@@ -421,27 +413,6 @@ fn the_notice_names_a_set_or_anyone() {
     assert_eq!(
         auto_hold_notice(&HoldFilter::Any),
         "auto-hold: anyone · Ctrl-Q to type"
-    );
-}
-
-#[test]
-fn an_auto_sent_record_has_the_auto_sent_outcome_and_the_sent_line() {
-    let record = SuggestionRecord::auto_sent(
-        "2026-01-01T00:00:00+00:00".to_string(),
-        "7-t",
-        7,
-        "run the checks",
-    );
-    assert_eq!(
-        serde_json::to_value(&record).unwrap(),
-        json!({
-            "ts": "2026-01-01T00:00:00+00:00",
-            "run": "7-t",
-            "turn": 7,
-            "outcome": "autosent",
-            "suggestion": "run the checks",
-            "sent": "[send-it] run the checks"
-        })
     );
 }
 

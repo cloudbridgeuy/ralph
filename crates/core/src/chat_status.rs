@@ -4,7 +4,6 @@ use crate::chat_hold::HoldFilter;
 use crate::chat_memory::{history_tool, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
-use crate::chat_send_it::SendIt;
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -97,7 +96,7 @@ pub enum Route {
     WorkerCosts,
     Hold(HoldFilter),
     Nudge(NudgeCommand),
-    SendIt(SendIt),
+    SendIt,
     History(Result<MemoryCall, String>),
     View(ViewArgs),
     Help,
@@ -125,7 +124,7 @@ impl Route {
             | Route::DropInbox(_)
             | Route::Hold(_)
             | Route::Nudge(_)
-            | Route::SendIt(_)
+            | Route::SendIt
             | Route::View(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
@@ -170,7 +169,7 @@ pub fn route_input(
                 Command::Workers => workers_route(args, line),
                 Command::Hold => hold_route(args, line, hold_targets),
                 Command::Nudge => Route::Nudge(parse_nudge_args(args)),
-                Command::SendIt => send_it_route(args, line),
+                Command::SendIt => Route::SendIt,
                 Command::Config => Route::Config,
                 Command::View => Route::View(parse_view_args(args)),
                 Command::Read | Command::Search => {
@@ -228,10 +227,6 @@ fn hold_route(args: &str, line: &str, targets: &BTreeSet<String>) -> Route {
     let listed = !several || tokens.all(|token| targets.contains(token));
     let filter = HoldFilter::parse(args).filter(|_| listed);
     filter.map_or_else(|| Route::Send(line.to_string()), Route::Hold)
-}
-
-fn send_it_route(args: &str, line: &str) -> Route {
-    SendIt::parse(args).map_or_else(|| Route::Send(line.to_string()), Route::SendIt)
 }
 
 fn inbox_route(args: &str) -> Route {

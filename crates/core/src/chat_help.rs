@@ -161,13 +161,10 @@ impl Command {
                 "/nudge [<id> [text]]",
                 "send a worker a request for one line of progress with no model turn, then print what the worker did with it (busy, reported, taken, not started, no reaction after Ns); [text] replaces the default request; with no id it nudges the only running worker, or lists the running ids when there are several; refused while the worker waits on a permission request; while a turn runs it waits in the queue; Tab completes worker ids",
             )],
-            Command::SendIt => &[
-                (
-                    "/send-it",
-                    "turn on auto-send: after a countdown ([chat] send_it_seconds) ralph sends the suggested reply when its own rule finds a routine action (fix, checks, tests, reinstall, rebase, retry, lint, fmt, clippy) and no decision word; a decision reply (merge, push, PR, approve, Done, close, delete, a paid model, ...), a worker question or block, or a pending schedule waits for you and it stays on; any key during the countdown turns it off; it turns off at a turn or cost cap or a repeated reply; only a line typed at the prompt turns it on; again while on shows its state",
-                ),
-                ("/send-it off", "turn auto-send off"),
-            ],
+            Command::SendIt => &[(
+                "/send-it <instructions>",
+                "run an approved plan unattended: ralph restates the instructions as numbered steps, each with an exit criterion, plus the allowed actions and caps; for now it prints this usage and the default caps ([chat] send_it_max_turns, send_it_max_usd); starts no turn",
+            )],
             Command::Config => &[(
                 "/config",
                 "the config this chat resolved at start: warnings, source files and paths, set RALPH_* and editor or color variables, start flags, and every merged key with its source (default, global, store, env or flag); notes config files changed on disk since start; starts no turn",

@@ -24,7 +24,6 @@ mod recap;
 mod route;
 mod schedule;
 mod schedule_worker;
-mod send_it;
 mod skills;
 mod stall;
 pub(crate) use skills::{read_claude_config, SKILLS_ENV};
@@ -98,7 +97,7 @@ use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
-use ralph_core::chat_send_it::auto_line;
+use ralph_core::chat_send_it::usage as send_it_usage;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
@@ -358,7 +357,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         session: Arc::new(Mutex::new(None)),
         process_turns: AtomicU64::new(0),
         reset: Mutex::new(None),
-        last_cost_usd: Mutex::new(None),
         live: Arc::clone(&live),
         reset_limits,
         recent_history_tokens,
@@ -522,7 +520,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("EDITOR").ok().as_deref(),
     );
     let (empty_submit, empty_warning) = chat_config.empty_submit_setting();
-    let (send_it_settings, send_it_warnings) = chat_config.send_it_setting();
+    let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
     let late_warnings: Vec<String> = config_warning
         .into_iter()
         .chain(editor_warning)
@@ -607,8 +605,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
     let mut offered: Option<(String, u64)> = None;
-    let mut send_it = send_it::Shell::new(&send_it_settings, color);
-    let mut auto_turn: Option<String> = None;
     let mut carried: Vec<String> = Vec::new();
     let show_cells = |shown: &str| {
         let ctx = RenderContext::new(&agent_highlighter, color)
@@ -621,7 +617,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
-        let typed_at_prompt = pending.is_none();
         let route = match pending.take() {
             Some(route) => Some(route),
             None => {
@@ -696,12 +691,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                         )
                     );
                 }
-                let trigger = if auto_turn.is_some() {
-                    Trigger::SendIt
-                } else {
-                    Trigger::User
-                };
-                send_it.begin_turn();
                 monitor.set_phase(Phase::Cell);
                 let outcome = match cell::prepare(&message, cell_limits, &mut shell_state, color) {
                     Ok(prepared) => {
@@ -711,7 +700,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
                         let (result, queued) = snapshots.around(|| {
-                            keys.during(|| turn.run(trigger, std::slice::from_ref(&sent), &sent))
+                            keys.during(|| {
+                                turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
+                            })
                         });
                         queue = queued;
                         result?
@@ -723,7 +714,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Route::ReadInbox(selection) => {
                 monitor.set_phase(Phase::Turn);
                 let reports = monitor.drain(selection)?;
-                send_it.note_drained(&reports);
                 monitor.refresh(true);
                 let Some(unread) = inbox::read(selection, &reports, &inbox_display(color)) else {
                     monitor.set_phase(Phase::Prompt);
@@ -749,8 +739,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 continue;
             }
-            Route::SendIt(command) => {
-                send_it.command(command, typed_at_prompt);
+            Route::SendIt => {
+                println!("{}", send_it_usage(&send_it_limits));
                 continue;
             }
             local => {
@@ -767,10 +757,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             Phase::Prompt
         });
         monitor.refresh(true);
-        let turn_cost = turn.take_cost();
-        if let Some(auto) = auto_turn.take() {
-            send_it.record(&auto, turn_cost);
-        }
         if outcome == TurnOutcome::Exit {
             save_unsent(&mut editor, &unsent(&queue));
             editor.sync_history()?;
@@ -800,26 +786,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             suggestion,
             status: &monitor.status(),
         });
-        let offer = match &next {
-            Next::Prefill(Prefill::Suggestion(text)) => Some(text.as_str()),
-            _ => None,
-        };
-        if let Some(auto) = send_it.at_turn_end(offer, asked, &monitor) {
-            let line = auto_line(&auto);
-            warn_if_err(
-                store.append_suggestion(&SuggestionRecord::auto_sent(
-                    chrono::Utc::now().to_rfc3339(),
-                    &run,
-                    turn_number,
-                    &auto,
-                )),
-                "Failed to record suggestion outcome",
-            );
-            print!("{}", prompt.echo(&line));
-            pending = Some(Route::Send(line));
-            auto_turn = Some(auto);
-            continue;
-        }
         match next {
             Next::Hold(filter) => {
                 print!("{}", prompt.dim(&auto_hold_notice(&filter)));

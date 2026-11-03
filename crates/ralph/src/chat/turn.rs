@@ -117,7 +117,6 @@ pub(super) struct Turn<'a> {
     pub(super) session: Arc<Mutex<Option<Session>>>,
     pub(super) process_turns: AtomicU64,
     pub(super) reset: Mutex<Option<ResetReason>>,
-    pub(super) last_cost_usd: Mutex<Option<f64>>,
     pub(super) live: Arc<AtomicBool>,
     pub(super) reset_limits: ResetLimits,
     pub(super) recent_history_tokens: usize,
@@ -130,10 +129,6 @@ pub(super) struct Turn<'a> {
 }
 
 impl Turn<'_> {
-    pub(super) fn take_cost(&self) -> Option<f64> {
-        locked(&self.last_cost_usd).take()
-    }
-
     fn print_rule(&self) {
         self.gate
             .write_out(&rule(&rule_skin(self.theme_config.ui()), screen_columns()));
@@ -322,7 +317,6 @@ impl Turn<'_> {
         }
         self.print_rule();
         let costs = &result.stream_result.costs;
-        *locked(&self.last_cost_usd) = costs.cost_usd;
         let blocked = hit_blocking_limit(costs);
         match extract_response_text(&result.stream_result.output_blocks) {
             Some(reply) if result.exit_code == 0 && !blocked => {
