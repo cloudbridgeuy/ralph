@@ -161,6 +161,11 @@ warning for that version."
         #[arg(long, hide = true, value_name = "DIR", requires = "drift")]
         inbox: Option<PathBuf>,
     },
+    #[command(hide = true)]
+    DriftCheck {
+        #[arg(long, value_name = "DIR")]
+        inbox: PathBuf,
+    },
 }
 
 #[derive(clap::Args, Debug)]

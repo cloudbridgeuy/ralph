@@ -1,8 +1,8 @@
 use crate::json_file::{read_json, write_json};
 use crate::paths::config_dir;
 use ralph_core::worker::{
-    drift_lock_file, merge_verified, record_outcome, DriftEntry, DriftRecord, VerifiedAgent,
-    VerifiedAgents, DRIFT_FILE, VERIFIED_AGENTS_FILE,
+    drift_lock_file, merge_verified, record_outcome, stamp_check, DriftEntry, DriftRecord,
+    VerifiedAgent, VerifiedAgents, DRIFT_FILE, VERIFIED_AGENTS_FILE,
 };
 use std::fs;
 use std::io::ErrorKind;
@@ -42,6 +42,15 @@ pub(crate) fn save_drift(entry: DriftEntry) -> Result<(), String> {
     fs::create_dir_all(&dir)
         .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
     let value = serde_json::to_value(record_outcome(&load_drift(), entry))
+        .map_err(|error| format!("could not encode {DRIFT_FILE}: {error}"))?;
+    write_json(&dir.join(DRIFT_FILE), &value)
+}
+
+pub(crate) fn save_last_check(now: chrono::DateTime<chrono::Utc>) -> Result<(), String> {
+    let dir = config_dir();
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
+    let value = serde_json::to_value(stamp_check(&load_drift(), now))
         .map_err(|error| format!("could not encode {DRIFT_FILE}: {error}"))?;
     write_json(&dir.join(DRIFT_FILE), &value)
 }

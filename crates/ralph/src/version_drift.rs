@@ -4,11 +4,13 @@ use crate::verified_agents;
 use crate::worker_mcp::Inbox;
 use crate::worker_verify::version_probe;
 use ralph_core::worker::{
-    check_agent_version, check_version, drift_action, drift_alert, drift_entry, known_fail_warning,
-    last_verified_version, lock_action, opencode_probed_version, probe_text, store_inbox,
-    tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome, HarnessId, LockAction,
-    VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE, FREE_VERIFY_LIMIT,
-    OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
+    check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
+    daily_verify_version, drift_action, drift_alert, drift_entry, known_fail_warning,
+    last_check_time, last_verified_version, lock_action, opencode_probed_version, probe_text,
+    probed_version, store_inbox, tmux_claude_version, CheckResult, DriftAction, DriftEntry,
+    DriftOutcome, HarnessId, LockAction, VersionGate, VersionProbe, CLAUDE_COMMAND,
+    CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT, FREE_VERIFY_LIMIT, OPENCODE_COMMAND,
+    OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
 };
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
@@ -76,6 +78,73 @@ pub(crate) fn spawn_warning(harness: HarnessId, inbox: &Path) -> Option<String> 
     }
 }
 
+fn probed(harness: HarnessId) -> Result<String, String> {
+    match harness {
+        HarnessId::Claude => tmux_claude_version(&probe(CLAUDE_COMMAND)),
+        HarnessId::Opencode => opencode_probed_version(&probe(OPENCODE_COMMAND)),
+        HarnessId::Cursor => {
+            probed_version(&CURSOR_AGENT, &probe(CURSOR_AGENT.command)).map(str::to_string)
+        }
+        HarnessId::Codex | HarnessId::ClaudeHeadless => Err("not probed".to_string()),
+    }
+}
+
+pub(crate) fn run_daily(inbox: &Path) {
+    verified_agents::save_last_check(chrono::Utc::now()).ok();
+    std::thread::spawn(|| {
+        std::thread::sleep(DAILY_CHECK_LIMIT);
+        end_own_group();
+    });
+    for harness in daily_probe_plan() {
+        let Some(gate) = daily_gate(harness) else {
+            continue;
+        };
+        if let Some(found) = daily_verify_version(
+            gate,
+            probed(harness),
+            &verified_agents::load(),
+            &verified_agents::load_drift(),
+        ) {
+            start_verify(gate.agent, &found, inbox);
+        }
+    }
+}
+
+pub(crate) struct DailyTick {
+    enabled: bool,
+    last: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl DailyTick {
+    pub(crate) fn start() -> Self {
+        Self {
+            enabled: verify_on_drift(),
+            last: last_check_time(&verified_agents::load_drift()),
+        }
+    }
+
+    pub(crate) fn tick(&mut self, inbox: &Path) {
+        let now = chrono::Utc::now();
+        if daily_check_due(self.enabled, self.last, now) {
+            self.last = Some(now);
+            spawn_daily(inbox);
+        }
+    }
+}
+
+fn spawn_daily(inbox: &Path) {
+    std::env::current_exe()
+        .and_then(|exe| {
+            spawn_detached(
+                Command::new(exe)
+                    .args(["worker", "drift-check", "--inbox"])
+                    .arg(inbox)
+                    .process_group(0),
+            )
+        })
+        .ok();
+}
+
 fn on_drift(agent: &str, found: &str, inbox: &Path, warning: String) -> String {
     match drift_action(
         agent,
@@ -94,7 +163,7 @@ fn on_drift(agent: &str, found: &str, inbox: &Path, warning: String) -> String {
     }
 }
 
-fn verify_on_drift() -> bool {
+pub(crate) fn verify_on_drift() -> bool {
     AppConfig::load().map_or(true, |config| config.workers.verify_on_drift)
 }
 

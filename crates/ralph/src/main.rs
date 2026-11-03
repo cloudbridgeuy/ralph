@@ -127,6 +127,10 @@ fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
                 .zip(inbox)
                 .map(|(version, inbox)| DriftRun::new(version, inbox)),
         ),
+        WorkerCommand::DriftCheck { inbox } => {
+            version_drift::run_daily(&inbox);
+            Ok(())
+        }
     }
 }
 
