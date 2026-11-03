@@ -14,6 +14,10 @@ pub fn missing_server_warning(name: &str) -> String {
     format!("worker: MCP server \"{name}\" not found in ~/.claude.json; continuing without it")
 }
 
+pub fn join_start_warnings(warnings: &[String]) -> Option<String> {
+    (!warnings.is_empty()).then(|| warnings.join("; "))
+}
+
 pub fn allowed_tools(copied: &[String]) -> String {
     std::iter::once(own_tool_names())
         .chain(mcp_wildcards(copied))
@@ -78,5 +82,19 @@ mod tests {
             missing_server_warning("docs"),
             "worker: MCP server \"docs\" not found in ~/.claude.json; continuing without it"
         );
+    }
+
+    #[test]
+    fn start_warnings_are_all_kept_in_order() {
+        let warnings = vec!["first".to_string(), "second".to_string()];
+        assert_eq!(
+            join_start_warnings(&warnings),
+            Some("first; second".to_string())
+        );
+        assert_eq!(
+            join_start_warnings(&["only".to_string()]),
+            Some("only".into())
+        );
+        assert_eq!(join_start_warnings(&[]), None);
     }
 }

@@ -22,7 +22,7 @@ use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, claude_mcp_config, cleanup, decode_claude_version, decode_line,
-    deny_line, gone_path, interrupt_lines, interrupted_end, merged_mcp_config,
+    deny_line, gone_path, interrupt_lines, interrupted_end, join_start_warnings, merged_mcp_config,
     missing_server_warning, permission_response, prompt_failure_report, ready_path, reduce,
     request_stale, resumed_session, shutdown_steps, start_steps, stuck_permission_report,
     task_prompt, turn_end_activity, turn_lost_at_resume, uuid_v4, worker_config_path, Action,
@@ -322,19 +322,14 @@ fn write_worker_config(store: &Path, id: &str, config: &Value) -> Result<PathBuf
         .map_err(|e| format!("could not write the worker MCP config: {e}"))
 }
 
-fn check_installed_version(warning: &Path) -> Result<(), String> {
+fn check_installed_version() -> Result<Option<String>, String> {
     let output = Command::new(CLAUDE_COMMAND)
         .arg("--version")
         .output()
         .map_err(|e| format!("could not run `{CLAUDE_COMMAND} --version`: {e}"))?;
     let text = String::from_utf8_lossy(&output.stdout);
     let found = decode_claude_version(&text).unwrap_or_default();
-    if let Some(message) =
-        check_agent_version(&CLAUDE_GATE, found, &crate::verified_agents::load())?
-    {
-        report_start_warning(message, Some(warning));
-    }
-    Ok(())
+    check_agent_version(&CLAUDE_GATE, found, &crate::verified_agents::load())
 }
 
 struct ClaudeWorker {
@@ -354,7 +349,7 @@ impl ClaudeWorker {
         resume: Option<&SessionRecord>,
         starting: &Mutex<HashMap<String, u32>>,
     ) -> Result<Self, String> {
-        check_installed_version(&files.warning)?;
+        let mut warnings: Vec<String> = check_installed_version()?.into_iter().collect();
         let store = request.inbox.parent().unwrap_or(Path::new("."));
         let server = acp_mcp_server(
             &request.exe,
@@ -368,8 +363,14 @@ impl ClaudeWorker {
             &read_claude_config(config.claude.config_dir.as_deref()),
             &config.chat.mcp_servers,
         );
-        for name in &imported.missing {
-            report_start_warning(missing_server_warning(name), Some(&files.warning));
+        warnings.extend(
+            imported
+                .missing
+                .iter()
+                .map(|name| missing_server_warning(name)),
+        );
+        if let Some(warning) = join_start_warnings(&warnings) {
+            report_start_warning(warning, Some(&files.warning));
         }
         let copied: Vec<String> = imported.servers.keys().cloned().collect();
         let mcp = merged_mcp_config(&imported.servers, &claude_mcp_config(&server));
