@@ -7,7 +7,7 @@ use crate::subprocess::timed_output;
 use crate::transport::stdio::{spawn_piped, stop_child};
 use crate::watches::locked;
 use crate::worker_verify::{step, version_probe, Budget, Checks};
-use ralph_core::claude_leftovers::configured_dir;
+use ralph_core::claude_leftovers::{configured_dir, CLAUDE_CONFIG_DIR_ENV};
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, argv_check, cancel_check, claude_headless_args, claude_mcp_config,
@@ -237,7 +237,7 @@ fn claude_command(args: &[String], dir: &Path, config: &Result<AppConfig, String
         )
     });
     if let Some(dir) = config_dir {
-        command.env("CLAUDE_CONFIG_DIR", dir);
+        command.env(CLAUDE_CONFIG_DIR_ENV, dir);
     }
     command
 }

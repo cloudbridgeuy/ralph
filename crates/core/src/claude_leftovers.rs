@@ -26,12 +26,37 @@ pub fn spawned_claude_dir(
     home: &Path,
 ) -> PathBuf {
     configured_dir(config_dir, Some(home))
-        .or_else(|| {
-            inherited
-                .filter(|dir| !dir.as_os_str().is_empty())
-                .map(Path::to_path_buf)
-        })
+        .or_else(|| non_empty(inherited))
         .unwrap_or_else(|| home.join(".claude"))
+}
+
+fn non_empty(inherited: Option<&Path>) -> Option<PathBuf> {
+    inherited
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+}
+
+/// The transcript folder and `.claude.json` a spawned `claude` uses: the
+/// configured dir, else the `CLAUDE_CONFIG_DIR` it inherits, else the home paths.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ClaudeFiles {
+    pub dir: PathBuf,
+    pub json: PathBuf,
+}
+
+pub fn spawned_claude_files(
+    config_dir: Option<&Path>,
+    inherited: Option<&Path>,
+    home: &Path,
+) -> ClaudeFiles {
+    let json_dir = configured_dir(config_dir, Some(home)).or_else(|| non_empty(inherited));
+    ClaudeFiles {
+        dir: spawned_claude_dir(config_dir, inherited, home),
+        json: json_dir.map_or_else(
+            || home.join(CLAUDE_JSON_NAME),
+            |dir| dir.join(CLAUDE_JSON_NAME),
+        ),
+    }
 }
 
 pub fn claude_json(config_dir: Option<&Path>, home: &Path) -> PathBuf {
@@ -158,6 +183,33 @@ mod tests {
         let tilde = Some(Path::new("~/alt"));
         assert_eq!(claude_dir(tilde, home), Path::new("/h/alt"));
         assert_eq!(claude_json(tilde, home), Path::new("/h/alt/.claude.json"));
+    }
+
+    #[test]
+    fn spawned_claude_files_follow_an_inherited_config_dir() {
+        let home = Path::new("/h");
+        let env = Some(Path::new("/env/claude"));
+        assert_eq!(
+            spawned_claude_files(None, env, home),
+            ClaudeFiles {
+                dir: PathBuf::from("/env/claude"),
+                json: PathBuf::from("/env/claude/.claude.json"),
+            }
+        );
+        assert_eq!(
+            spawned_claude_files(Some(Path::new("/c/alt")), env, home),
+            ClaudeFiles {
+                dir: PathBuf::from("/c/alt"),
+                json: PathBuf::from("/c/alt/.claude.json"),
+            }
+        );
+        assert_eq!(
+            spawned_claude_files(None, None, home),
+            ClaudeFiles {
+                dir: PathBuf::from("/h/.claude"),
+                json: PathBuf::from("/h/.claude.json"),
+            }
+        );
     }
 
     fn state(kind: HarnessId) -> CloseState {

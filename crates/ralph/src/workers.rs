@@ -9,7 +9,9 @@ use crate::opencode_worker::{entry_ids, running_opencode_sessions};
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
 use ralph_core::chat_status::{store_workers, RunningWorker};
-use ralph_core::claude_leftovers::{cleans_claude_leftovers, trust_lock_path};
+use ralph_core::claude_leftovers::{
+    cleans_claude_leftovers, spawned_claude_files, trust_lock_path, CLAUDE_CONFIG_DIR_ENV,
+};
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     activity_path, base_branch, base_config_key, blocked_path, branch_name, capabilities,
@@ -370,15 +372,16 @@ impl Workers {
             dirs::home_dir()
                 .map(|home| {
                     let lock = trust_lock_path(dirs::data_dir().as_deref());
-                    cleanup_worktree_leftovers(
+                    let inherited = std::env::var_os(CLAUDE_CONFIG_DIR_ENV).map(PathBuf::from);
+                    let files = spawned_claude_files(
                         config
                             .as_ref()
                             .ok()
                             .and_then(|config| config.claude.config_dir.as_deref()),
+                        inherited.as_deref(),
                         &home,
-                        lock.as_deref(),
-                        &worktree,
-                    )
+                    );
+                    cleanup_worktree_leftovers(&files, lock.as_deref(), &worktree)
                 })
                 .unwrap_or_default()
         } else if cleans_cursor_leftovers(&state, &steps) {
