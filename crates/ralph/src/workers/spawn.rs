@@ -44,6 +44,29 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const STARTUP_POLL: Duration = Duration::from_millis(250);
 const FETCH_POLL: Duration = Duration::from_millis(100);
 
+struct ImportSource {
+    config_dir: Option<PathBuf>,
+    names: Vec<String>,
+}
+
+fn import_source<E>(harness: HarnessId, config: Result<&AppConfig, E>) -> Option<ImportSource> {
+    if harness != HarnessId::Claude {
+        return None;
+    }
+    let fallback;
+    let config = match config {
+        Ok(config) => config,
+        Err(_) => {
+            fallback = AppConfig::default();
+            &fallback
+        }
+    };
+    Some(ImportSource {
+        config_dir: config.claude.config_dir.clone(),
+        names: config.chat.mcp_servers.clone(),
+    })
+}
+
 impl Workers {
     pub fn spawn(&self, args: &SpawnArgs) -> io::Result<String> {
         let started = self.start(args);
@@ -158,12 +181,12 @@ impl Workers {
                 .map(|config| &config.tickets)
                 .unwrap_or(&TicketKeys::default()),
         );
-        let imported = match (harness, config.as_ref()) {
-            (HarnessId::Claude, Ok(config)) => select_servers(
-                &read_claude_config(config.claude.config_dir.as_deref()),
-                &config.chat.mcp_servers,
+        let imported = match import_source(harness, config.as_ref()) {
+            Some(source) => select_servers(
+                &read_claude_config(source.config_dir.as_deref()),
+                &source.names,
             ),
-            _ => ImportedServers {
+            None => ImportedServers {
                 servers: Map::new(),
                 missing: Vec::new(),
             },
@@ -779,4 +802,42 @@ fn ensure_worktree(
             base,
         )))?;
     Ok(WorktreeVia::Git { wt_error })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_config_load_falls_back_to_the_default_allow_list() {
+        let source = import_source(HarnessId::Claude, Err("bad toml")).unwrap();
+        assert_eq!(source.names, ["mcptools"]);
+        assert_eq!(source.config_dir, None);
+    }
+
+    #[test]
+    fn a_loaded_config_supplies_its_allow_list_and_config_dir() {
+        let config = AppConfig::parse_reporting_unknown(
+            "[chat]\nmcp_servers = [\"docs\"]\n[claude]\nconfig_dir = \"/alt\"\n",
+            "c",
+        )
+        .unwrap()
+        .0;
+        let source = import_source(HarnessId::Claude, Ok::<_, String>(&config)).unwrap();
+        assert_eq!(source.names, ["docs"]);
+        assert_eq!(source.config_dir, Some(PathBuf::from("/alt")));
+    }
+
+    #[test]
+    fn other_harnesses_import_nothing() {
+        let config = AppConfig::new();
+        for harness in [
+            HarnessId::ClaudeHeadless,
+            HarnessId::Codex,
+            HarnessId::Cursor,
+        ] {
+            assert!(import_source(harness, Ok::<_, String>(&config)).is_none());
+        }
+        assert!(import_source(HarnessId::Opencode, Err("x")).is_none());
+    }
 }
