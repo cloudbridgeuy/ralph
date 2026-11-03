@@ -21,8 +21,11 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::time::Duration;
+
+const WATCHDOG_WAIT: Duration = Duration::from_secs(10);
 
 pub(crate) fn probe(command: &str) -> VersionProbe {
     version_probe(timed_output(
@@ -210,7 +213,7 @@ pub(crate) struct DriftRun {
     inbox: PathBuf,
     _lock: Option<Arc<File>>,
     done: Arc<AtomicBool>,
-    watchdog: Arc<Mutex<Option<JoinHandle<()>>>>,
+    watchdog: Arc<Mutex<Option<Receiver<()>>>>,
 }
 
 impl DriftRun {
@@ -245,7 +248,9 @@ impl DriftRun {
 
     pub(crate) fn watch(&self, agent: &'static str) {
         let run = self.clone();
-        let handle = std::thread::spawn(move || {
+        let (finished, ended) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            let _finished = finished;
             std::thread::sleep(drift_watchdog_limit());
             let results = [CheckResult::fail(TIME_LIMIT_CHECK, "verify ran too long")];
             if run.plan(false).record_drift {
@@ -253,7 +258,7 @@ impl DriftRun {
                 end_own_group();
             }
         });
-        *locked(&self.watchdog) = Some(handle);
+        *locked(&self.watchdog) = Some(ended);
     }
 
     pub(crate) fn plan(&self, passed: bool) -> FinishPlan {
@@ -261,9 +266,9 @@ impl DriftRun {
     }
 
     pub(crate) fn await_watchdog(&self) {
-        let handle = locked(&self.watchdog).take();
-        if let Some(handle) = handle {
-            handle.join().ok();
+        let ended = locked(&self.watchdog).take();
+        if let Some(ended) = ended {
+            ended.recv_timeout(WATCHDOG_WAIT).ok();
         }
     }
 
