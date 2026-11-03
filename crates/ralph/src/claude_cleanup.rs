@@ -1,6 +1,6 @@
 use ralph_core::claude_leftovers::{
-    claude_dir, claude_json, remove_project_entry, transcript_dir_name, trust_swap_step,
-    trust_temp_name, TrustSwap,
+    remove_project_entry, transcript_dir_name, trust_swap_step, trust_temp_name, ClaudeFiles,
+    TrustSwap,
 };
 use std::fs;
 use std::io;
@@ -100,31 +100,33 @@ fn remove_trust_entry(
 }
 
 pub fn cleanup_worktree_leftovers(
-    config_dir: Option<&Path>,
-    home: &Path,
+    files: &ClaudeFiles,
     lock: Option<&Path>,
     worktree: &Path,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
-    if let Err(e) = remove_transcript_dir(&claude_dir(config_dir, home), worktree) {
+    if let Err(e) = remove_transcript_dir(&files.dir, worktree) {
         warnings.push(format!(
             "Could not remove the Claude transcript folder for {}: {e}.",
             worktree.display()
         ));
     }
-    match remove_trust_entry(&claude_json(config_dir, home), lock, worktree) {
+    match remove_trust_entry(&files.json, lock, worktree) {
         Ok(TrustOutcome::Removed | TrustOutcome::Unchanged) => {}
         Ok(TrustOutcome::Raced) => warnings.push(format!(
-            "Skipped removing the trust entry for {} from ~/.claude.json: the file changed while ralph worked.",
-            worktree.display()
+            "Skipped removing the trust entry for {} from {}: the file changed while ralph worked.",
+            worktree.display(),
+            files.json.display()
         )),
         Ok(TrustOutcome::NoLock) => warnings.push(format!(
-            "Skipped removing the trust entry for {} from ~/.claude.json: no per-user data folder for ralph's lock.",
-            worktree.display()
+            "Skipped removing the trust entry for {} from {}: no per-user data folder for ralph's lock.",
+            worktree.display(),
+            files.json.display()
         )),
         Err(e) => warnings.push(format!(
-            "Could not remove the trust entry for {} from ~/.claude.json: {e}.",
-            worktree.display()
+            "Could not remove the trust entry for {} from {}: {e}.",
+            worktree.display(),
+            files.json.display()
         )),
     }
     warnings
@@ -133,6 +135,11 @@ pub fn cleanup_worktree_leftovers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::claude_leftovers::spawned_claude_files;
+
+    fn files(home: &Path) -> ClaudeFiles {
+        spawned_claude_files(None, None, home, Path::new("/w/a"))
+    }
 
     fn home_with(config: Option<&str>) -> tempfile::TempDir {
         let home = tempfile::tempdir().unwrap();
@@ -149,8 +156,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("t.jsonl"), "x").unwrap();
         let warnings = cleanup_worktree_leftovers(
-            None,
-            home.path(),
+            &files(home.path()),
             Some(&home.path().join("data/ralph/lock")),
             Path::new("/w/a"),
         );
@@ -167,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn config_dir_moves_the_transcript_dir_and_trust_file() {
+    fn spawned_files_move_the_transcript_dir_and_trust_file() {
         let home = home_with(Some("{\"projects\":{\"/w/a\":{}}}"));
         let alt = home.path().join("alt");
         fs::create_dir_all(alt.join("projects/-w-a")).unwrap();
@@ -177,8 +183,8 @@ mod tests {
         )
         .unwrap();
         let lock = home.path().join("data/ralph/lock");
-        let warnings =
-            cleanup_worktree_leftovers(Some(&alt), home.path(), Some(&lock), Path::new("/w/a"));
+        let files = spawned_claude_files(None, Some(&alt), home.path(), Path::new("/w/a"));
+        let warnings = cleanup_worktree_leftovers(&files, Some(&lock), Path::new("/w/a"));
         assert!(warnings.is_empty());
         assert!(!alt.join("projects/-w-a").exists());
         let moved = fs::read_to_string(alt.join(".claude.json")).unwrap();
@@ -192,7 +198,7 @@ mod tests {
         let home = home_with(None);
         let lock = home.path().join("data/ralph/lock");
         assert!(
-            cleanup_worktree_leftovers(None, home.path(), Some(&lock), Path::new("/w/a"))
+            cleanup_worktree_leftovers(&files(home.path()), Some(&lock), Path::new("/w/a"))
                 .is_empty()
         );
         assert!(!lock.exists());
@@ -202,7 +208,7 @@ mod tests {
     fn missing_lock_dir_warns_and_keeps_file() {
         let text = "{\"projects\":{\"/w/a\":{}}}";
         let home = home_with(Some(text));
-        let warnings = cleanup_worktree_leftovers(None, home.path(), None, Path::new("/w/a"));
+        let warnings = cleanup_worktree_leftovers(&files(home.path()), None, Path::new("/w/a"));
         assert_eq!(warnings.len(), 1);
         assert_eq!(
             fs::read_to_string(home.path().join(".claude.json")).unwrap(),
@@ -215,8 +221,7 @@ mod tests {
         let text = "{\"projects\":{\"/w/b\":{}}}";
         let home = home_with(Some(text));
         assert!(cleanup_worktree_leftovers(
-            None,
-            home.path(),
+            &files(home.path()),
             Some(&home.path().join("data/ralph/lock")),
             Path::new("/w/a")
         )
@@ -231,8 +236,7 @@ mod tests {
     fn invalid_json_warns_and_keeps_file() {
         let home = home_with(Some("{nope"));
         let warnings = cleanup_worktree_leftovers(
-            None,
-            home.path(),
+            &files(home.path()),
             Some(&home.path().join("data/ralph/lock")),
             Path::new("/w/a"),
         );

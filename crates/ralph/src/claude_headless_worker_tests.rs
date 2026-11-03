@@ -464,3 +464,17 @@ fn a_record_after_close_writes_no_rows_even_without_the_seen_file() {
     run.shared.record_usage();
     assert_eq!(rows(&usage).len(), 1);
 }
+
+#[test]
+fn a_turn_end_leaves_close_free_to_record_later_messages() {
+    let mut run = run(PermissionMode::Ask, &[]);
+    let usage = with_usage(&mut run);
+    end_turn(&run);
+    let transcript = run.shared.usage.as_ref().unwrap().transcript.clone();
+    let second = TRANSCRIPT_LINE.replace("msg_011CggUooV9a78WEoGFHAqhN", "msg_2");
+    fs::write(&transcript, format!("{TRANSCRIPT_LINE}\n{second}")).unwrap();
+    let owner = run.dir.path().join("owner");
+    fs::write(&owner, "").unwrap();
+    release_owner(&run.shared, &owner);
+    assert_eq!(rows(&usage).len(), 2);
+}
