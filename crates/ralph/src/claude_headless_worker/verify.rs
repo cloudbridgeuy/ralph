@@ -226,17 +226,9 @@ fn verify_args(model: Option<&str>, dir: &Path, session: &str, exe: &Path) -> Ve
     args
 }
 
-fn claude_command(
-    exe: &Path,
-    dir: &Path,
-    session: &str,
-    config: &Result<AppConfig, String>,
-    model: Option<&str>,
-) -> Command {
+fn claude_command(args: &[String], dir: &Path, config: &Result<AppConfig, String>) -> Command {
     let mut command = Command::new(CLAUDE_COMMAND);
-    command
-        .args(verify_args(model, dir, session, exe))
-        .current_dir(dir);
+    command.args(args).current_dir(dir);
     let config_dir = config.as_ref().ok().and_then(|config| {
         configured_dir(
             config.claude.config_dir.as_deref(),
@@ -312,11 +304,12 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
         let exe = std::env::current_exe()
             .map_err(|error| format!("could not find the ralph executable: {error}"))?;
-        spawn_piped(claude_command(&exe, dir, &session, config, model))
-            .map(|spawned| (session, spawned))
+        let args = verify_args(model, dir, &session, &exe);
+        spawn_piped(claude_command(&args, dir, config))
+            .map(|spawned| (session, args, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });
-    let Some((session, (mut child, stdin, stdout, stderr))) =
+    let Some((session, args, (mut child, stdin, stdout, stderr))) =
         step(checks, spawn_name(kind), spawned, |_| {
             format!("`{CLAUDE_COMMAND}` started with the worker argv")
         })
@@ -340,7 +333,7 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
             } else {
                 Ok(true)
             };
-            checks.add(argv_check(running, &stderr.read(STDERR_LIMIT), exit));
+            checks.add(argv_check(running, &stderr.read(STDERR_LIMIT), exit, &args));
         }
         ClaudeSpawn::Turns => {
             if running {
@@ -399,6 +392,12 @@ mod tests {
             .position(|word| word == "--setting-sources")
             .unwrap();
         assert_eq!(args[at + 1], "project,local");
+    }
+
+    #[test]
+    fn verify_args_load_only_the_configured_mcp_servers() {
+        let args = verify_args(None, Path::new("/tmp/verify-dir"), "s1", &exe());
+        assert!(args.contains(&"--strict-mcp-config".to_string()));
     }
 
     #[test]

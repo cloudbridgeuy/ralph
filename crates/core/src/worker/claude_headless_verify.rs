@@ -242,7 +242,12 @@ pub enum StderrRead {
     Unfinished(String),
 }
 
-pub fn argv_check(running: bool, read: &StderrRead, exit: Result<bool, String>) -> CheckResult {
+pub fn argv_check(
+    running: bool,
+    read: &StderrRead,
+    exit: Result<bool, String>,
+    args: &[String],
+) -> CheckResult {
     let (StderrRead::Finished(stderr) | StderrRead::Unfinished(stderr)) = read;
     let detail = |text: &str| format!("{text}; stderr: {}", stderr.trim());
     if running
@@ -254,6 +259,9 @@ pub fn argv_check(running: bool, read: &StderrRead, exit: Result<bool, String>) 
             "argv",
             detail("the stderr read did not finish and already holds text"),
         );
+    }
+    if !args.iter().any(|arg| arg == "--strict-mcp-config") {
+        return CheckResult::fail("argv", detail("the worker argv lacks --strict-mcp-config"));
     }
     match (running, stderr_complaint(stderr), exit) {
         (false, _, _) => CheckResult::fail(
@@ -523,27 +531,64 @@ mod tests {
     #[test]
     fn argv_fails_on_an_early_exit_or_a_stderr_complaint() {
         let finished = |text: &str| StderrRead::Finished(text.to_string());
+        let args = strict_args();
         assert_eq!(
-            argv_check(false, &finished(""), Ok(true)).verdict,
+            argv_check(false, &finished(""), Ok(true), &args).verdict,
             Verdict::Fail
         );
-        let unknown = argv_check(true, &finished("error: unknown option '--x'\n"), Ok(true));
+        let unknown = argv_check(
+            true,
+            &finished("error: unknown option '--x'\n"),
+            Ok(true),
+            &args,
+        );
         assert_eq!(unknown.verdict, Verdict::Fail);
         assert_eq!(
-            argv_check(true, &finished(""), Ok(true)).verdict,
+            argv_check(true, &finished(""), Ok(true), &args).verdict,
             Verdict::Pass
         );
     }
 
+    fn strict_args() -> Vec<String> {
+        ["-p", "--mcp-config", "{}", "--strict-mcp-config"]
+            .map(String::from)
+            .into()
+    }
+
+    #[test]
+    fn argv_fails_when_the_worker_argv_lacks_strict_mcp_config() {
+        let lacking: Vec<String> = ["-p", "--mcp-config", "{}"].map(String::from).into();
+        let read = StderrRead::Finished(String::new());
+        let check = argv_check(true, &read, Ok(true), &lacking);
+        assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
+        assert!(
+            check.detail.contains("--strict-mcp-config"),
+            "{}",
+            check.detail
+        );
+        let check = argv_check(true, &read, Ok(true), &strict_args());
+        assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
+    }
+
     #[test]
     fn an_unfinished_empty_stderr_read_with_a_clean_exit_passes_argv() {
-        let check = argv_check(true, &StderrRead::Unfinished(String::new()), Ok(true));
+        let check = argv_check(
+            true,
+            &StderrRead::Unfinished(String::new()),
+            Ok(true),
+            &strict_args(),
+        );
         assert_eq!(check.verdict, Verdict::Pass, "{}", check.detail);
     }
 
     #[test]
     fn an_unfinished_stderr_read_with_text_does_not_pass_the_argv_check() {
-        let check = argv_check(true, &StderrRead::Unfinished("warming up".into()), Ok(true));
+        let check = argv_check(
+            true,
+            &StderrRead::Unfinished("warming up".into()),
+            Ok(true),
+            &strict_args(),
+        );
         assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
         assert!(check.detail.contains("warming up"), "{}", check.detail);
     }
@@ -551,7 +596,12 @@ mod tests {
     #[test]
     fn a_missing_exit_is_reported_even_when_the_stderr_read_is_unfinished() {
         let read = StderrRead::Unfinished("warming up".into());
-        let check = argv_check(true, &read, Err("claude did not exit within 10s".into()));
+        let check = argv_check(
+            true,
+            &read,
+            Err("claude did not exit within 10s".into()),
+            &strict_args(),
+        );
         assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
         assert!(check.detail.contains("did not exit"), "{}", check.detail);
     }

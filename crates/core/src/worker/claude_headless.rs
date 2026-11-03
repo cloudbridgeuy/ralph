@@ -233,6 +233,7 @@ pub fn claude_headless_args(
         "stdio",
         "--mcp-config",
         mcp_config,
+        "--strict-mcp-config",
         "--allowedTools",
     ]
     .map(String::from)
@@ -662,9 +663,10 @@ mod tests {
         assert!(joined.contains("--permission-mode default --permission-prompt-tool stdio"));
         assert!(!joined.contains("--permission-prompts"));
         assert!(joined.contains(
-            "--mcp-config {} --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
+            "--mcp-config {} --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status --add-dir /a --model haiku"
         ));
         assert!(!args.contains(&"--resume".into()));
+        assert!(args.contains(&"--strict-mcp-config".into()));
         let yolo = claude_headless_args(
             None,
             "{}",
@@ -685,6 +687,7 @@ mod tests {
         );
         assert!(resumed.join(" ").ends_with("--resume abc"));
         assert!(!resumed.contains(&"--session-id".into()));
+        assert!(resumed.contains(&"--strict-mcp-config".into()));
     }
 
     #[test]
