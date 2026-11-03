@@ -174,6 +174,10 @@ fn start_files(dir: &TempDir) -> (HandoffFiles, SessionRecord) {
     (files, record)
 }
 
+fn paths<'a>(files: &'a HandoffFiles, config: &'a Path) -> StartPaths<'a> {
+    StartPaths { files, config }
+}
+
 #[test]
 fn an_interrupt_denies_each_queued_permission_before_the_interrupt_line() {
     let second = ASK.replace(r#""request_id":"r1""#, r#""request_id":"r2""#);
@@ -193,8 +197,16 @@ fn an_interrupt_denies_each_queued_permission_before_the_interrupt_line() {
 fn a_new_session_writes_the_owner_and_the_record_before_turn_one() {
     let dir = TempDir::new().unwrap();
     let (files, record) = start_files(&dir);
+    let config = worker_config_path(dir.path(), "w");
     let steps = start_steps(&ClaudeSession::New("sid"));
-    write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
+    write_start_files(
+        steps,
+        &paths(&files, &config),
+        &record,
+        std::process::id(),
+        None,
+    )
+    .unwrap();
     assert!(files.owner.exists());
     assert_eq!(fs::read_to_string(&files.session).unwrap(), record.render());
 }
@@ -203,8 +215,16 @@ fn a_new_session_writes_the_owner_and_the_record_before_turn_one() {
 fn a_resume_writes_the_owner_and_leaves_the_record_alone() {
     let dir = TempDir::new().unwrap();
     let (files, record) = start_files(&dir);
+    let config = worker_config_path(dir.path(), "w");
     let steps = start_steps(&ClaudeSession::Resume("sid"));
-    write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
+    write_start_files(
+        steps,
+        &paths(&files, &config),
+        &record,
+        std::process::id(),
+        None,
+    )
+    .unwrap();
     assert!(files.owner.exists());
     assert!(!files.session.exists());
 }
@@ -213,24 +233,58 @@ fn a_resume_writes_the_owner_and_leaves_the_record_alone() {
 fn a_failed_record_write_removes_the_owner_file_and_reports_the_error() {
     let dir = TempDir::new().unwrap();
     let (files, record) = start_files(&dir);
+    let config = worker_config_path(dir.path(), "w");
     fs::write(dir.path().join(CLAUDE_HEADLESS_SESSION_DIR), "").unwrap();
     let steps = start_steps(&ClaudeSession::New("sid"));
-    let error = write_start_files(steps, &files, &record, std::process::id(), None).unwrap_err();
+    let error = write_start_files(
+        steps,
+        &paths(&files, &config),
+        &record,
+        std::process::id(),
+        None,
+    )
+    .unwrap_err();
     assert!(error.starts_with("could not write the session record"));
     assert!(!files.owner.exists());
     assert!(!files.session.exists());
 }
 
 #[test]
-fn init_failure_and_not_adopted_remove_the_owner_and_the_record() {
+fn a_failed_spawn_removes_only_the_worker_config() {
+    let dir = TempDir::new().unwrap();
+    let (files, _) = start_files(&dir);
+    let config = worker_config_path(dir.path(), "w");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "{}").unwrap();
+    remove_leftovers(
+        cleanup(StartFault::SpawnFailed),
+        &paths(&files, &config),
+        None,
+    );
+    assert!(!config.exists());
+}
+
+#[test]
+fn init_failure_and_not_adopted_remove_the_owner_the_record_and_the_config() {
     for fault in [StartFault::InitFailed, StartFault::NotAdopted] {
         let dir = TempDir::new().unwrap();
         let (files, record) = start_files(&dir);
+        let config = worker_config_path(dir.path(), "w");
         let steps = start_steps(&ClaudeSession::New("sid"));
-        write_start_files(steps, &files, &record, std::process::id(), None).unwrap();
-        remove_leftovers(cleanup(fault), &files, None);
+        write_start_files(
+            steps,
+            &paths(&files, &config),
+            &record,
+            std::process::id(),
+            None,
+        )
+        .unwrap();
+        fs::create_dir_all(config.parent().unwrap()).unwrap();
+        fs::write(&config, "{}").unwrap();
+        remove_leftovers(cleanup(fault), &paths(&files, &config), None);
         assert!(!files.owner.exists());
         assert!(!files.session.exists());
+        assert!(!config.exists());
     }
 }
 

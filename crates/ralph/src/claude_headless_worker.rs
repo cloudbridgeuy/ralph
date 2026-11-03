@@ -258,7 +258,12 @@ fn session_record(
     }
 }
 
-fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Option<&mut Child>) {
+struct StartPaths<'a> {
+    files: &'a HandoffFiles,
+    config: &'a Path,
+}
+
+fn remove_leftovers(leftovers: &[Leftover], paths: &StartPaths, mut child: Option<&mut Child>) {
     for leftover in leftovers {
         match leftover {
             Leftover::StopChild => {
@@ -267,10 +272,13 @@ fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Opt
                 }
             }
             Leftover::RemoveOwner => {
-                fs::remove_file(&files.owner).ok();
+                fs::remove_file(&paths.files.owner).ok();
             }
             Leftover::RemoveRecord => {
-                fs::remove_file(&files.session).ok();
+                fs::remove_file(&paths.files.session).ok();
+            }
+            Leftover::RemoveConfig => {
+                fs::remove_file(paths.config).ok();
             }
         }
     }
@@ -278,7 +286,7 @@ fn remove_leftovers(leftovers: &[Leftover], files: &HandoffFiles, mut child: Opt
 
 fn write_start_files(
     steps: &[StartStep],
-    files: &HandoffFiles,
+    paths: &StartPaths,
     record: &SessionRecord,
     group: u32,
     mut child: Option<&mut Child>,
@@ -287,16 +295,16 @@ fn write_start_files(
         let (fault, written) = match step {
             StartStep::WriteOwner => (
                 StartFault::OwnerWrite,
-                write_owner_record(&files.owner, group, "claude"),
+                write_owner_record(&paths.files.owner, group, "claude"),
             ),
             StartStep::WriteRecord => (
                 StartFault::RecordWrite,
-                write_file(&files.session, &record.render())
+                write_file(&paths.files.session, &record.render())
                     .map_err(|e| format!("could not write the session record: {e}")),
             ),
         };
         if let Err(message) = written {
-            remove_leftovers(cleanup(fault), files, child.as_deref_mut());
+            remove_leftovers(cleanup(fault), paths, child.as_deref_mut());
             return Err(message);
         }
     }
@@ -394,13 +402,19 @@ impl ClaudeWorker {
             session,
             copied: &copied,
         });
+        let paths = StartPaths {
+            files,
+            config: &mcp_path,
+        };
+        let inbox_root = fs::canonicalize(store).map_err(|e| {
+            remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
+            e.to_string()
+        })?;
         let mut command = Command::new(CLAUDE_COMMAND);
         command
             .args(args)
             .current_dir(&request.worktree)
-            .envs([ralph_core::worker::inbox_env(
-                &fs::canonicalize(store).map_err(|e| e.to_string())?,
-            )]);
+            .envs([ralph_core::worker::inbox_env(&inbox_root)]);
         let config_dir = configured_dir(
             config.claude.config_dir.as_deref(),
             dirs::home_dir().as_deref(),
@@ -408,8 +422,10 @@ impl ClaudeWorker {
         if let Some(dir) = config_dir {
             command.env("CLAUDE_CONFIG_DIR", dir);
         }
-        let (mut child, stdin, stdout, stderr) =
-            spawn_piped(command).map_err(|e| format!("could not start `{CLAUDE_COMMAND}`: {e}"))?;
+        let (mut child, stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
+            remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
+            format!("could not start `{CLAUDE_COMMAND}`: {e}")
+        })?;
         locked(starting).insert(id.to_string(), child.id());
         let log = CappedLog::new(Some(store), id);
         drain_stderr(stderr, Arc::clone(&log));
@@ -453,7 +469,7 @@ impl ClaudeWorker {
         };
         write_start_files(
             start_steps(&session),
-            files,
+            &paths,
             record,
             child.id(),
             Some(&mut child),
@@ -484,7 +500,7 @@ impl ClaudeWorker {
         };
         let session = session.inspect_err(|_| {
             worker.terminate();
-            remove_leftovers(cleanup(StartFault::InitFailed), files, None);
+            remove_leftovers(cleanup(StartFault::InitFailed), &paths, None);
         })?;
         worker.session = session;
         Ok(worker)
@@ -649,7 +665,12 @@ impl ClaudeHeadlessHost {
         } else {
             drop(worker);
             fs::remove_file(ready_path(&self.store_dir, id)).ok();
-            remove_leftovers(cleanup(StartFault::NotAdopted), &files, None);
+            let config = worker_config_path(&self.store_dir, id);
+            let paths = StartPaths {
+                files: &files,
+                config: &config,
+            };
+            remove_leftovers(cleanup(StartFault::NotAdopted), &paths, None);
         }
     }
 

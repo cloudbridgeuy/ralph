@@ -312,6 +312,7 @@ pub fn shutdown_steps(running: bool) -> &'static [ShutdownStep] {
 pub enum StartFault {
     OwnerWrite,
     RecordWrite,
+    SpawnFailed,
     InitFailed,
     NotAdopted,
 }
@@ -321,16 +322,23 @@ pub enum Leftover {
     StopChild,
     RemoveOwner,
     RemoveRecord,
+    RemoveConfig,
 }
 
 pub fn cleanup(fault: StartFault) -> &'static [Leftover] {
     match fault {
-        StartFault::OwnerWrite => &[Leftover::StopChild],
-        StartFault::RecordWrite => &[Leftover::StopChild, Leftover::RemoveOwner],
+        StartFault::SpawnFailed => &[Leftover::RemoveConfig],
+        StartFault::OwnerWrite => &[Leftover::StopChild, Leftover::RemoveConfig],
+        StartFault::RecordWrite => &[
+            Leftover::StopChild,
+            Leftover::RemoveOwner,
+            Leftover::RemoveConfig,
+        ],
         StartFault::InitFailed | StartFault::NotAdopted => &[
             Leftover::StopChild,
             Leftover::RemoveOwner,
             Leftover::RemoveRecord,
+            Leftover::RemoveConfig,
         ],
     }
 }
@@ -762,15 +770,24 @@ mod tests {
 
     #[test]
     fn each_start_fault_cleans_exactly_what_it_left_behind() {
-        assert_eq!(cleanup(StartFault::OwnerWrite), [Leftover::StopChild]);
+        assert_eq!(cleanup(StartFault::SpawnFailed), [Leftover::RemoveConfig]);
+        assert_eq!(
+            cleanup(StartFault::OwnerWrite),
+            [Leftover::StopChild, Leftover::RemoveConfig]
+        );
         assert_eq!(
             cleanup(StartFault::RecordWrite),
-            [Leftover::StopChild, Leftover::RemoveOwner]
+            [
+                Leftover::StopChild,
+                Leftover::RemoveOwner,
+                Leftover::RemoveConfig
+            ]
         );
         let full = [
             Leftover::StopChild,
             Leftover::RemoveOwner,
             Leftover::RemoveRecord,
+            Leftover::RemoveConfig,
         ];
         assert_eq!(cleanup(StartFault::InitFailed), full);
         assert_eq!(cleanup(StartFault::NotAdopted), full);
