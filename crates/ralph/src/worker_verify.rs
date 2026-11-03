@@ -171,6 +171,13 @@ pub(crate) fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let name = agent.name();
+    let drift = match drift {
+        Some(drift) => match drift.claim(name) {
+            Some(claimed) => Some(claimed),
+            None => return Ok(()),
+        },
+        None => None,
+    };
     println!("verifying {name} in {}", dir.path().display());
     if let Some(drift) = &drift {
         drift.watch(name);
