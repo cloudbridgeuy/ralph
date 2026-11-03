@@ -1,16 +1,20 @@
 use crate::chat::memory::Store;
 use crate::cli::{ThreadArgs, ThreadCommand, NAP_TIMEOUT_SECS};
 use crate::private_file::check_path;
+use crate::schedule_store::ScheduleStore;
+use crate::watch_store::WatchStore;
 use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, running_workers};
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallKind, MemoryCall, ViewSplit};
 use ralph_core::chat_thread::{
-    digest_with, fork_check, idle_check, label_item, merge_prompt, merged_check, merged_report,
-    open_check, pull_message, revive_check, thread_split, Merged, Parked, Scope, ThreadMeta,
-    ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
+    digest_with, drop_message, fork_check, guard_check, label_item, merge_prompt, merged_check,
+    merged_report, open_check, pull_message, revive_check, thread_split, Guarded, Live, Merged,
+    Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
 };
+use ralph_core::schedule_request::SCHEDULE_DIR;
+use ralph_core::watch_store::WATCHES_DIR;
 use ralph_core::worker::{chat_message, INBOX_DIR};
 use std::fs;
 use std::io;
@@ -111,8 +115,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", if rows.is_empty() { "no threads" } else { &rows });
         }
         ThreadCommand::Drop { name } => {
-            drop_thread(&main, &name, &running_ids(&main, &name))?;
-            println!("dropped thread {name}");
+            println!("{}", drop_thread(&main, &name, &running_ids(&main, &name))?);
         }
         ThreadCommand::Merge { name } => {
             let dir = thread_dir(&main, &name);
@@ -193,7 +196,7 @@ pub fn merge_thread(
     let dir = thread_dir(main, name);
     let meta = known_meta(&dir, name)?;
     merged_check(name, &meta)?;
-    idle_check(name, running)?;
+    guard_check(name, Guarded::Merge, live(&dir, running))?;
     let _claim = claim_closed(&dir, name)?;
     let failed = |e: io::Error| format!("could not merge thread {name}: {e}");
     let (entries, tree) = Store::new(dir.clone()).load().map_err(failed)?;
@@ -220,6 +223,15 @@ pub fn merge_thread(
             )
         })?;
     Ok(chat_message(&[report]))
+}
+
+fn live<'a>(dir: &Path, running: &'a [String]) -> Live<'a> {
+    let records = WatchStore::new(dir.join(WATCHES_DIR)).load_all().len()
+        + ScheduleStore::new(dir.join(SCHEDULE_DIR)).load_all().len();
+    Live {
+        workers: running,
+        records,
+    }
 }
 
 fn known_meta(dir: &Path, name: &ThreadName) -> Result<ThreadMeta, String> {
@@ -273,19 +285,21 @@ pub fn list(main: &Path) -> io::Result<String> {
     Ok(rows.join("\n"))
 }
 
-pub fn drop_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<(), String> {
+pub fn drop_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<String, String> {
     let dir = thread_dir(main, name);
     merged_check(name, &known_meta(&dir, name)?)?;
-    idle_check(name, running)?;
+    let live = live(&dir, running);
+    guard_check(name, Guarded::Drop, live)?;
     let _claim = claim_closed(&dir, name)?;
-    fs::remove_dir_all(&dir).map_err(|e| format!("could not drop thread {name}: {e}"))
+    fs::remove_dir_all(&dir).map_err(|e| format!("could not drop thread {name}: {e}"))?;
+    Ok(drop_message(name, live.records))
 }
 
 pub fn park_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<(), String> {
     let dir = thread_dir(main, name);
     let meta = known_meta(&dir, name)?;
     open_check(name, &meta)?;
-    idle_check(name, running)?;
+    guard_check(name, Guarded::Park, live(&dir, running))?;
     let _claim = claim_closed(&dir, name)?;
     let parked = Some(Parked {
         at: chrono::Utc::now().to_rfc3339(),
@@ -328,6 +342,9 @@ mod tests {
     use super::*;
     use crate::config::load_for_chat;
     use ralph_core::chat_memory::{parse_tool_call, Role};
+    use ralph_core::schedule::{Task, TaskKind, TaskStatus};
+    use ralph_core::watch::WatchKind;
+    use ralph_core::watch_store::SavedWatch;
     use serde_json::json;
     use std::fs;
 
@@ -591,6 +608,72 @@ mod tests {
         park_thread(&main, &name("spare"), &[]).unwrap();
         drop_thread(&main, &name("spare"), &[]).unwrap();
         assert!(!thread_dir(&main, &name("spare")).exists());
+    }
+
+    fn save_records(dir: &Path) {
+        WatchStore::new(dir.join(WATCHES_DIR))
+            .save(&SavedWatch {
+                id: "watch:w1".to_string(),
+                command: "sleep 600".to_string(),
+                follow_up: None,
+                kind: WatchKind::Persistent,
+                timeout_secs: None,
+                started_at: chrono::Utc::now(),
+                timeout_deadline: None,
+                wake_deadline: None,
+            })
+            .unwrap();
+        ScheduleStore::new(dir.join(SCHEDULE_DIR))
+            .save(&Task {
+                id: "t1".to_string(),
+                kind: TaskKind::Command {
+                    command: "true".to_string(),
+                },
+                follow_up: None,
+                at: chrono::Utc::now(),
+                timeout_secs: None,
+                status: TaskStatus::Pending,
+                late: false,
+                deadline: None,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn merge_refuses_saved_records_before_asking_the_curator() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        save_records(&dir);
+        let mut asked = 0;
+        let refused = merge_thread(&main, &auth, &[], &mut |_: &str| {
+            asked += 1;
+            Ok("x #auth:0".to_string())
+        });
+        assert_eq!(
+            refused.unwrap_err(),
+            "thread auth has 2 saved watches or schedules; stop them from thread auth's chat before merging."
+        );
+        assert_eq!(asked, 0);
+        assert_eq!(read_meta(&dir).unwrap().merged, None);
+        assert!(Inbox::new(main.join(INBOX_DIR))
+            .peek()
+            .unwrap_or_default()
+            .is_empty());
+    }
+
+    #[test]
+    fn park_keeps_saved_records_and_drop_reports_them() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        save_records(&dir);
+        park_thread(&main, &auth, &[]).unwrap();
+        revive_thread(&main, &auth).unwrap();
+        assert_eq!(live(&dir, &[]).records, 2);
+        assert_eq!(
+            drop_thread(&main, &auth, &[]).unwrap(),
+            "dropped thread auth and its 2 saved watches or schedules"
+        );
+        assert!(!dir.exists());
     }
 
     #[test]
