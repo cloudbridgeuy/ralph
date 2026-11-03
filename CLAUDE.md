@@ -15,7 +15,7 @@ ralph wraps `claude -p` with rich terminal rendering. Commands:
 
 - `ralph` / `ralph chat` - persistent chat with a compressed memory tree ([details](docs/context/ralph-chat.md))
 - `ralph chat history <read|zoom|recall|search> …` - print the chat memory as the model's tools see it; no model, no turn ([details](docs/context/ralph-chat.md#history-commands))
-- `ralph chat --thread <name>` / `ralph thread <ls|drop>` - named side chats forked from main ([details](docs/context/ralph-chat.md#threads))
+- `ralph chat --thread <name>` / `ralph thread <ls|drop|merge>` - named side chats forked from main ([details](docs/context/ralph-chat.md#threads))
 - `ralph ask` - single-shot prompt; nothing is stored ([details](docs/context/ralph-ask.md))
 - `ralph wire` - local proxy that records harness-to-provider traffic; `wire ls`/`wire show`/`wire sessions` inspect it ([details](docs/context/ralph-wire.md))
 - `ralph worker verify <cursor|codex|claude-headless|opencode|claude> [--live]` - check an installed worker agent against the local spec ([details](docs/context/headless-workers.md#verify-an-agent-version))

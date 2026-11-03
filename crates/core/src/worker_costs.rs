@@ -39,7 +39,7 @@ impl Source {
     fn of(line: &UsageLine) -> Option<Source> {
         match line.kind.as_str() {
             "turn" | "ping" => Some(Source::Main),
-            "nap" => Some(Source::Nap),
+            "nap" | "merge" => Some(Source::Nap),
             "worker" => Some(Source::Worker(
                 line.harness.clone().unwrap_or_else(|| UNKNOWN.to_string()),
             )),

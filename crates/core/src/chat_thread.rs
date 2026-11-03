@@ -1,4 +1,5 @@
-use crate::chat_memory::{Tool, ViewSplit};
+use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
+use crate::worker::Report;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -7,6 +8,10 @@ pub const THREADS_DIR: &str = "threads";
 pub const THREAD_FILE: &str = "thread.json";
 pub const MAIN_PREFIX_LINES: usize = 100;
 pub const MAX_NAME_CHARS: usize = 32;
+pub const THREAD_REPORT_PREFIX: &str = "thread:";
+pub const MERGED_STATUS: &str = "merged";
+pub const MAX_DIGEST_BYTES: usize = 2048;
+pub const MAX_MERGE_ATTEMPTS: usize = 3;
 const MAIN: &str = "main";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,6 +49,112 @@ impl fmt::Display for ThreadName {
 pub struct ThreadMeta {
     pub base: usize,
     pub created: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged: Option<Merged>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Merged {
+    pub at: String,
+    pub digest: String,
+}
+
+pub fn merged_check(name: &ThreadName, meta: &ThreadMeta) -> Result<(), String> {
+    match meta.merged {
+        None => Ok(()),
+        Some(_) => Err(format!(
+            "thread {name} is merged into main and stays read-only; `ralph chat --thread {name} history` still reads it."
+        )),
+    }
+}
+
+pub fn refuse_thread_report(id: &str) -> Result<(), String> {
+    if !id.starts_with(THREAD_REPORT_PREFIX) {
+        return Ok(());
+    }
+    Err(format!(
+        "{id} is a merged thread's digest, not a worker; there is nothing to reply to, nudge or close."
+    ))
+}
+
+pub fn merge_prompt(name: &ThreadName, base: usize, lines: &[String]) -> String {
+    format!(
+        "Write the merge digest of chat thread {name}, forked from main at #{base}. \
+         Main reads it once, as one inbox message, instead of the whole thread.\n\
+         Keep the decisions, results and open items; drop the chatter. \
+         Cite the thread ids behind each point as #{name}:a-b or #{name}:a.\n\
+         At most {MAX_DIGEST_BYTES} bytes of plain text. Return only the digest, with no preface.\n\n\
+         <thread>\n{}\n</thread>",
+        lines.join("\n")
+    )
+}
+
+fn cited_threads(text: &str) -> Vec<&str> {
+    text.split('#')
+        .skip(1)
+        .filter_map(|rest| {
+            let end = rest
+                .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+                .unwrap_or(rest.len());
+            rest[end..].starts_with(':').then(|| &rest[..end])
+        })
+        .filter(|prefix| !prefix.is_empty())
+        .collect()
+}
+
+pub fn check_digest(reply: &str, name: &ThreadName) -> Result<String, String> {
+    let digest = reply.trim();
+    if digest.is_empty() {
+        return Err("the digest is empty.".to_string());
+    }
+    if digest.len() > MAX_DIGEST_BYTES {
+        return Err(format!(
+            "the digest is {} bytes; the limit is {MAX_DIGEST_BYTES}.",
+            digest.len()
+        ));
+    }
+    let cited = cited_threads(digest);
+    if let Some(other) = cited.iter().find(|prefix| **prefix != name.as_str()) {
+        return Err(format!(
+            "the digest cites #{other}: ids; cite only #{name}: ids."
+        ));
+    }
+    if cited.is_empty() {
+        return Err(format!("the digest cites no #{name}: ids."));
+    }
+    Ok(digest.to_string())
+}
+
+pub fn digest_with(
+    prompt: &str,
+    name: &ThreadName,
+    curate: &mut impl FnMut(&str) -> Result<String, String>,
+) -> Result<String, String> {
+    let mut asked = prompt.to_string();
+    let mut last = String::new();
+    for _ in 0..MAX_MERGE_ATTEMPTS {
+        match check_digest(&curate(&asked)?, name) {
+            Ok(digest) => return Ok(digest),
+            Err(e) => {
+                asked = format!(
+                    "{prompt}\n\nYour previous digest was rejected:\n{e}\n\nReturn a corrected digest only."
+                );
+                last = e;
+            }
+        }
+    }
+    Err(format!(
+        "the digest was rejected {MAX_MERGE_ATTEMPTS} times; last: {last}"
+    ))
+}
+
+pub fn merged_report(name: &ThreadName, digest: &str, at: &str) -> Report {
+    Report {
+        worker: format!("{THREAD_REPORT_PREFIX}{name}"),
+        at: at.to_string(),
+        status: MERGED_STATUS.to_string(),
+        text: digest.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,13 +173,42 @@ pub fn split_scope(id: &str) -> Result<(Scope, &str), String> {
     }
 }
 
+fn scope_name(s: &str) -> Result<Scope, String> {
+    match s.trim() {
+        MAIN => Ok(Scope::Main),
+        s => ThreadName::parse(s).map(Scope::Thread),
+    }
+}
+
 pub fn scope_arg(args: &Value) -> Result<Scope, String> {
     match args.get("thread") {
         None | Some(Value::Null) => Ok(Scope::Own),
-        Some(Value::String(s)) if s.trim() == MAIN => Ok(Scope::Main),
-        Some(Value::String(s)) => ThreadName::parse(s.trim()).map(Scope::Thread),
+        Some(Value::String(s)) => scope_name(s),
         Some(_) => Err("'thread' must be a string.".to_string()),
     }
+}
+
+pub fn in_scope(call: MemoryCall, scope: &str) -> Result<MemoryCall, String> {
+    match call.tool {
+        Tool::Recall(_) | Tool::Search(_) => Ok(MemoryCall {
+            scope: scope_name(scope)?,
+            tool: call.tool,
+        }),
+        Tool::Zoom(_) | Tool::Read(_) => Err(
+            "--in only applies to recall and search; zoom and read take the thread in the id, as #name:3."
+                .to_string(),
+        ),
+    }
+}
+
+pub fn idle_check(name: &ThreadName, running: &[String]) -> Result<(), String> {
+    if running.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "thread {name} has running workers ({}); close them first.",
+        running.join(", ")
+    ))
 }
 
 pub fn label_item(item: &str, name: &ThreadName) -> String {
@@ -153,10 +293,157 @@ mod tests {
         let meta = ThreadMeta {
             base: 42,
             created: "2026-11-02T10:00:00Z".to_string(),
+            merged: None,
         };
         let text = serde_json::to_string(&meta).unwrap();
         assert_eq!(text, r#"{"base":42,"created":"2026-11-02T10:00:00Z"}"#);
         assert_eq!(serde_json::from_str::<ThreadMeta>(&text).unwrap(), meta);
+        let merged = ThreadMeta {
+            merged: Some(Merged {
+                at: "2026-11-03T10:00:00Z".to_string(),
+                digest: "Picked x. #auth:0".to_string(),
+            }),
+            ..meta
+        };
+        let text = serde_json::to_string(&merged).unwrap();
+        assert!(
+            text.ends_with(
+                r#""merged":{"at":"2026-11-03T10:00:00Z","digest":"Picked x. #auth:0"}}"#
+            ),
+            "{text}"
+        );
+        assert_eq!(serde_json::from_str::<ThreadMeta>(&text).unwrap(), merged);
+    }
+
+    fn merged_meta() -> ThreadMeta {
+        ThreadMeta {
+            base: 4,
+            created: "c".to_string(),
+            merged: Some(Merged {
+                at: "a".to_string(),
+                digest: "d".to_string(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_merged_thread_is_read_only() {
+        let open = ThreadMeta {
+            merged: None,
+            ..merged_meta()
+        };
+        assert!(merged_check(&name("auth"), &open).is_ok());
+        assert_eq!(
+            merged_check(&name("auth"), &merged_meta()).unwrap_err(),
+            "thread auth is merged into main and stays read-only; `ralph chat --thread auth history` still reads it."
+        );
+    }
+
+    #[test]
+    fn a_merged_thread_report_is_not_a_worker() {
+        assert!(refuse_thread_report("GUZ-1").is_ok());
+        assert!(refuse_thread_report("watch:w1").is_ok());
+        assert_eq!(
+            refuse_thread_report("thread:auth").unwrap_err(),
+            "thread:auth is a merged thread's digest, not a worker; there is nothing to reply to, nudge or close."
+        );
+    }
+
+    #[test]
+    fn the_merge_prompt_carries_the_rules_and_the_thread_view() {
+        let lines = vec![
+            "#auth:0-1 picked a name".to_string(),
+            "#auth:2 user x go".to_string(),
+        ];
+        let prompt = merge_prompt(&name("auth"), 64, &lines);
+        for part in [
+            "thread auth",
+            "forked from main at #64",
+            "#auth:a-b",
+            "2048 bytes",
+            "<thread>\n#auth:0-1 picked a name\n#auth:2 user x go\n</thread>",
+        ] {
+            assert!(prompt.contains(part), "{part}\n{prompt}");
+        }
+    }
+
+    #[test]
+    fn a_digest_is_short_and_cites_only_its_own_thread() {
+        let auth = name("auth");
+        assert_eq!(
+            check_digest("  Picked x. #auth:0-1\n", &auth).unwrap(),
+            "Picked x. #auth:0-1"
+        );
+        assert_eq!(
+            check_digest(" \n", &auth).unwrap_err(),
+            "the digest is empty."
+        );
+        let cite = " #auth:0";
+        let fits = format!("{}{cite}", "x".repeat(MAX_DIGEST_BYTES - cite.len()));
+        assert_eq!(check_digest(&fits, &auth).unwrap(), fits);
+        assert_eq!(
+            check_digest(&format!("x{fits}"), &auth).unwrap_err(),
+            "the digest is 2049 bytes; the limit is 2048."
+        );
+        assert_eq!(
+            check_digest("Picked x, see #5.", &auth).unwrap_err(),
+            "the digest cites no #auth: ids."
+        );
+        assert_eq!(
+            check_digest("Picked x #auth:0, as #b-side:3 said.", &auth).unwrap_err(),
+            "the digest cites #b-side: ids; cite only #auth: ids."
+        );
+        assert!(check_digest("Kept main #5 in mind. #auth:2", &auth).is_ok());
+    }
+
+    #[test]
+    fn a_digest_is_retried_then_given_up() {
+        let auth = name("auth");
+        let mut asked = Vec::new();
+        let mut replies = vec!["Picked x. #auth:0", ""];
+        let digest = digest_with("P", &auth, &mut |prompt: &str| {
+            asked.push(prompt.to_string());
+            Ok(replies.pop().unwrap().to_string())
+        })
+        .unwrap();
+        assert_eq!(digest, "Picked x. #auth:0");
+        assert_eq!(asked[0], "P");
+        assert_eq!(
+            asked[1],
+            "P\n\nYour previous digest was rejected:\nthe digest is empty.\n\nReturn a corrected digest only."
+        );
+        let mut calls = 0;
+        assert_eq!(
+            digest_with("P", &auth, &mut |_: &str| {
+                calls += 1;
+                Ok("no cites".to_string())
+            })
+            .unwrap_err(),
+            "the digest was rejected 3 times; last: the digest cites no #auth: ids."
+        );
+        assert_eq!(calls, MAX_MERGE_ATTEMPTS);
+        assert_eq!(
+            digest_with("P", &auth, &mut |_: &str| Err("exit 1".to_string())).unwrap_err(),
+            "exit 1"
+        );
+    }
+
+    #[test]
+    fn a_merged_report_reads_as_a_thread_message() {
+        let report = merged_report(&name("auth"), "Picked x. #auth:0", "2026-11-03T10:00:00Z");
+        assert_eq!(report.worker, "thread:auth");
+        assert_eq!(report.status, "merged");
+        assert_eq!(report.at, "2026-11-03T10:00:00Z");
+        let worker = Report {
+            worker: "GUZ-1".to_string(),
+            at: "t".to_string(),
+            status: "done".to_string(),
+            text: "ok".to_string(),
+        };
+        assert_eq!(
+            crate::worker::chat_message(&[report, worker]),
+            "[thread auth · merged]\nPicked x. #auth:0\n\n[worker GUZ-1 · done]\nok"
+        );
     }
 
     #[test]
@@ -180,6 +467,30 @@ mod tests {
             Scope::Thread(name("auth"))
         );
         assert!(scope_arg(&json!({"thread": 3})).is_err());
+    }
+
+    #[test]
+    fn history_in_sets_the_scope_of_recall_and_search_only() {
+        let call = |tool, args| crate::chat_memory::parse_tool_call(tool, &args).unwrap();
+        let recall = in_scope(call("recall", json!({"pattern": "x"})), "main").unwrap();
+        assert_eq!(recall.scope, Scope::Main);
+        assert_eq!(recall.tool, Tool::Recall("x".to_string()));
+        let search = in_scope(call("search", json!({"query": "x"})), "auth").unwrap();
+        assert_eq!(search.scope, Scope::Thread(name("auth")));
+        assert_eq!(
+            in_scope(call("zoom", json!({"id": "3"})), "main").unwrap_err(),
+            "--in only applies to recall and search; zoom and read take the thread in the id, as #name:3."
+        );
+        assert!(in_scope(call("recall", json!({"pattern": "x"})), "Bad").is_err());
+    }
+
+    #[test]
+    fn a_thread_with_running_workers_is_busy() {
+        assert!(idle_check(&name("auth"), &[]).is_ok());
+        assert_eq!(
+            idle_check(&name("auth"), &["w1".to_string(), "w2".to_string()]).unwrap_err(),
+            "thread auth has running workers (w1, w2); close them first."
+        );
     }
 
     #[test]

@@ -22,7 +22,9 @@ mod types;
 // Re-export public API
 pub use gate::OutputGate;
 pub use session::Session;
-pub use spinner::{invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig};
+pub use spinner::{
+    invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,
+};
 pub(crate) use timed::{timed_output, TimedOutput};
 pub use types::{StreamingSubprocessResult, SubprocessError};
 

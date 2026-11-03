@@ -60,16 +60,6 @@ fn write_to(gate: Option<&OutputGate>, stream: Stream, text: &str) {
     }
 }
 
-fn drain_stdout(readers: &Readers, processor: &mut StreamProcessor, gate: Option<&OutputGate>) {
-    while let Ok(line_result) = readers.line_rx.try_recv() {
-        if let Ok(line) = line_result {
-            if let Some(output) = processor.process_line(&line) {
-                write_to(gate, Stream::Stdout, &output);
-            }
-        }
-    }
-}
-
 fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Option<&OutputGate>) {
     while let Ok(line) = readers.stderr_rx.try_recv() {
         if show {
@@ -122,7 +112,13 @@ fn drain_stderr(readers: &Readers, captured: &mut String, show: bool, gate: Opti
 pub fn invoke_subprocess_with_spinner_config(
     config: &SpinnerSubprocessConfig,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
-    run_subprocess_with_spinner(config)
+    run_subprocess_with_spinner(config, Display::Shown)
+}
+
+pub fn invoke_subprocess_silent(
+    config: &SpinnerSubprocessConfig,
+) -> Result<StreamingSubprocessResult, SubprocessError> {
+    run_subprocess_with_spinner(config, Display::Silent)
 }
 
 pub(super) fn spawn_piped(command_text: &str, stdin: Stdio) -> io::Result<Child> {
@@ -275,8 +271,8 @@ impl Pump {
                 if line.contains("\"type\":\"user\"") && line.contains("\"type\":\"tool_result\"") {
                     self.pending_tool_count = self.pending_tool_count.saturating_sub(1);
                 }
-                if self.display == Display::Shown {
-                    if let Some(output) = self.processor.process_line(&line) {
+                if let Some(output) = self.processor.process_line(&line) {
+                    if self.display == Display::Shown {
                         self.stop_spinner();
                         write_to(self.gate.as_deref(), Stream::Stdout, &output);
                         self.last_output_time = Instant::now();
@@ -329,10 +325,12 @@ impl Pump {
     ) -> StreamingSubprocessResult {
         self.stop_spinner();
         let shown = self.display == Display::Shown;
-        if shown {
-            drain_stdout(readers, &mut self.processor, self.gate.as_deref());
-        } else {
-            readers.take_queued();
+        for line in readers.take_queued() {
+            if let Some(output) = self.processor.process_line(&line) {
+                if shown {
+                    write_to(self.gate.as_deref(), Stream::Stdout, &output);
+                }
+            }
         }
         drain_stderr(
             readers,
@@ -378,6 +376,7 @@ fn report_prompt_write(writer: Option<thread::JoinHandle<io::Result<()>>>) {
 
 fn run_subprocess_with_spinner(
     config: &SpinnerSubprocessConfig,
+    display: Display,
 ) -> Result<StreamingSubprocessResult, SubprocessError> {
     let stdin = match config.stdin {
         Some(_) => Stdio::piped(),
@@ -391,7 +390,7 @@ fn run_subprocess_with_spinner(
         _ => None,
     };
     let mut readers = Readers::start(&mut child)?;
-    let mut pump = Pump::start(config, Display::Shown)?;
+    let mut pump = Pump::start(config, display)?;
     let start = Instant::now();
 
     loop {

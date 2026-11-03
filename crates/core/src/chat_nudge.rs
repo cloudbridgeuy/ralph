@@ -1,5 +1,6 @@
 use crate::chat_hold::{command_args, word_completion, HoldCompletion};
 use crate::chat_status::Status;
+use crate::chat_thread::refuse_thread_report;
 
 const NUDGE: &str = "/nudge";
 const NUDGE_USAGE: &str = "Usage: /nudge <id> [text]";
@@ -42,6 +43,7 @@ pub fn resolve_nudge(
             return Err(format!("{NUDGE_USAGE}; running: {}", ids.join(", ")));
         }
     };
+    refuse_thread_report(&id)?;
     if blocked(&id) {
         return Err(blocked_refusal(&id));
     }

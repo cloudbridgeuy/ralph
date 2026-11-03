@@ -175,3 +175,11 @@ fn refusal_and_failure_lines_name_the_command() {
         "/nudge: worker GUZ-1 is not running"
     );
 }
+
+#[test]
+fn a_merged_thread_report_cannot_be_nudged() {
+    assert_eq!(
+        resolve(send("thread:auth", "hi"), &[]),
+        Err("thread:auth is a merged thread's digest, not a worker; there is nothing to reply to, nudge or close.".to_string())
+    );
+}
