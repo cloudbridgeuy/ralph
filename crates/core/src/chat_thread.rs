@@ -236,14 +236,64 @@ pub fn in_scope(call: MemoryCall, scope: &str) -> Result<MemoryCall, String> {
     }
 }
 
-pub fn idle_check(name: &ThreadName, running: &[String]) -> Result<(), String> {
-    if running.is_empty() {
-        return Ok(());
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Guarded {
+    Drop,
+    Merge,
+    Park,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Live<'a> {
+    pub workers: &'a [String],
+    pub records: usize,
+}
+
+pub fn guard_check(name: &ThreadName, verb: Guarded, live: Live) -> Result<(), String> {
+    if !live.workers.is_empty() {
+        return Err(format!(
+            "thread {name} has running workers ({}); close them from thread {name}'s chat first.",
+            live.workers.join(", ")
+        ));
     }
-    Err(format!(
-        "thread {name} has running workers ({}); close them first.",
-        running.join(", ")
-    ))
+    if verb == Guarded::Merge && live.records > 0 {
+        let them = if live.records == 1 { "it" } else { "them" };
+        return Err(format!(
+            "thread {name} has {}; stop {them} from thread {name}'s chat before merging.",
+            saved_records(live.records)
+        ));
+    }
+    Ok(())
+}
+
+pub fn drop_message(name: &ThreadName, records: usize) -> String {
+    match records {
+        0 => format!("dropped thread {name}"),
+        n => format!("dropped thread {name} and its {}", saved_records(n)),
+    }
+}
+
+pub fn ls_counts(workers: usize, unread: usize) -> String {
+    let mut counts = String::new();
+    if workers > 0 {
+        counts.push_str(&format!("  {}", counted(workers, "worker", "workers")));
+    }
+    if unread > 0 {
+        counts.push_str(&format!("  {unread} unread"));
+    }
+    counts
+}
+
+fn saved_records(count: usize) -> String {
+    counted(
+        count,
+        "saved watch or schedule",
+        "saved watches or schedules",
+    )
+}
+
+fn counted(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
 }
 
 pub fn label_item(item: &str, name: &ThreadName) -> String {
@@ -586,11 +636,59 @@ mod tests {
     }
 
     #[test]
-    fn a_thread_with_running_workers_is_busy() {
-        assert!(idle_check(&name("auth"), &[]).is_ok());
+    fn workers_guard_every_verb_and_saved_records_guard_only_merge() {
+        let auth = name("auth");
+        let workers = ["w1".to_string(), "w2".to_string()];
+        for verb in [Guarded::Drop, Guarded::Merge, Guarded::Park] {
+            let idle = Live {
+                workers: &[],
+                records: 0,
+            };
+            assert!(guard_check(&auth, verb, idle).is_ok());
+            let busy = Live {
+                workers: &workers,
+                records: 0,
+            };
+            assert_eq!(
+                guard_check(&auth, verb, busy).unwrap_err(),
+                "thread auth has running workers (w1, w2); close them from thread auth's chat first."
+            );
+        }
+        let saved = |records| Live {
+            workers: &[],
+            records,
+        };
+        assert!(guard_check(&auth, Guarded::Drop, saved(3)).is_ok());
+        assert!(guard_check(&auth, Guarded::Park, saved(3)).is_ok());
         assert_eq!(
-            idle_check(&name("auth"), &["w1".to_string(), "w2".to_string()]).unwrap_err(),
-            "thread auth has running workers (w1, w2); close them first."
+            guard_check(&auth, Guarded::Merge, saved(1)).unwrap_err(),
+            "thread auth has 1 saved watch or schedule; stop it from thread auth's chat before merging."
+        );
+        assert_eq!(
+            guard_check(&auth, Guarded::Merge, saved(2)).unwrap_err(),
+            "thread auth has 2 saved watches or schedules; stop them from thread auth's chat before merging."
+        );
+    }
+
+    #[test]
+    fn ls_counts_show_workers_and_unread_only_when_present() {
+        assert_eq!(ls_counts(0, 0), "");
+        assert_eq!(ls_counts(1, 0), "  1 worker");
+        assert_eq!(ls_counts(0, 1), "  1 unread");
+        assert_eq!(ls_counts(2, 3), "  2 workers  3 unread");
+    }
+
+    #[test]
+    fn a_drop_says_how_many_saved_records_went_with_it() {
+        let auth = name("auth");
+        assert_eq!(drop_message(&auth, 0), "dropped thread auth");
+        assert_eq!(
+            drop_message(&auth, 1),
+            "dropped thread auth and its 1 saved watch or schedule"
+        );
+        assert_eq!(
+            drop_message(&auth, 2),
+            "dropped thread auth and its 2 saved watches or schedules"
         );
     }
 
