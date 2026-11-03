@@ -43,6 +43,7 @@ pub mod directive;
 pub mod file_link;
 pub mod inbox;
 pub mod inbox_alert;
+pub mod inbox_post;
 pub mod kitty;
 pub mod kitty_image;
 pub mod mcp;
