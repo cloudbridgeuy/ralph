@@ -158,7 +158,11 @@ pub fn report_check(fold: &ClaudeFold, inbox: &[Report]) -> CheckResult {
     }
     match inbox {
         [] => CheckResult::fail("report", "the report call wrote no inbox file"),
-        [only] => CheckResult::pass("report", format!("inbox got a {} report", only.status)),
+        [only] if only.status == "done" => CheckResult::pass("report", "inbox got a done report"),
+        [only] => CheckResult::fail(
+            "report",
+            format!("the report was {}, expected done", only.status),
+        ),
         many => CheckResult::fail("report", format!("{} reports, expected 1", many.len())),
     }
 }
@@ -441,6 +445,19 @@ mod tests {
         let inbox = [inbox_report(), inbox_report()];
         let check = report_check_after(&[connected(), report_tool_use()], &inbox);
         assert_eq!(check, CheckResult::fail("report", "2 reports, expected 1"));
+    }
+
+    #[test]
+    fn report_fails_when_the_only_report_is_not_done() {
+        let blocked = Report {
+            status: "blocked".to_string(),
+            ..inbox_report()
+        };
+        let check = report_check_after(&[connected(), report_tool_use()], &[blocked]);
+        assert_eq!(
+            check,
+            CheckResult::fail("report", "the report was blocked, expected done")
+        );
     }
 
     #[test]
