@@ -2,25 +2,30 @@ use crate::config::AppConfig;
 use crate::private_file::check_path;
 use crate::subprocess::{kill_registered_groups, spawn_detached, timed_output};
 use crate::verified_agents;
+use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::worker_verify::version_probe;
 use ralph_core::worker::{
     check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
     daily_verify_version, drift_action, drift_alert, drift_entry, drift_watchdog_limit,
-    finish_plan, known_fail_warning, last_check_time, last_verified_version,
+    finish_plan, known_fail_warning, last_check_time, last_verified_version, lock_claim,
     opencode_probed_version, probe_text, probed_version, record_after_post, store_inbox,
     tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome, FinishPlan, HarnessId,
-    VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT,
-    OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
+    LockClaim, LockError, VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE,
+    CURSOR_AGENT, DAILY_CHECK_LIMIT, LOCK_CHECK, OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK,
+    VERSION_PROBE_LIMIT,
 };
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+const WATCHDOG_WAIT: Duration = Duration::from_secs(10);
 
 pub(crate) fn probe(command: &str) -> VersionProbe {
     version_probe(timed_output(
@@ -168,10 +173,12 @@ pub(crate) fn verify_on_drift() -> bool {
     AppConfig::load().map_or(true, |config| config.workers.verify_on_drift)
 }
 
-fn acquire_lock(agent: &str) -> Option<File> {
+fn acquire_lock(agent: &str) -> Result<File, LockError> {
     let path = verified_agents::drift_lock_path(agent);
-    fs::create_dir_all(path.parent()?).ok()?;
-    check_path(&path).ok()?;
+    let io = |error: &dyn std::fmt::Display| LockError::Io(format!("{}: {error}", path.display()));
+    let parent = path.parent().ok_or_else(|| io(&"no parent directory"))?;
+    fs::create_dir_all(parent).map_err(|error| io(&error))?;
+    check_path(&path).map_err(|error| LockError::Io(error.to_string()))?;
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -179,9 +186,12 @@ fn acquire_lock(agent: &str) -> Option<File> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(&path)
-        .ok()?;
-    file.try_lock().ok()?;
-    Some(file)
+        .map_err(|error| io(&error))?;
+    file.try_lock().map_err(|error| match error {
+        TryLockError::WouldBlock => LockError::WouldBlock,
+        TryLockError::Error(error) => io(&error),
+    })?;
+    Ok(file)
 }
 
 fn start_verify(agent: &str, found: &str, inbox: &Path) {
@@ -203,6 +213,7 @@ pub(crate) struct DriftRun {
     inbox: PathBuf,
     _lock: Option<Arc<File>>,
     done: Arc<AtomicBool>,
+    watchdog: Arc<Mutex<Option<Receiver<()>>>>,
 }
 
 impl DriftRun {
@@ -212,27 +223,42 @@ impl DriftRun {
             inbox,
             _lock: None,
             done: Arc::new(AtomicBool::new(false)),
+            watchdog: Arc::new(Mutex::new(None)),
         }
     }
 
     pub(crate) fn claim(self, agent: &str) -> Option<Self> {
-        let lock = acquire_lock(agent)?;
-        Some(Self {
-            _lock: Some(Arc::new(lock)),
-            ..self
-        })
+        match acquire_lock(agent).map_err(|error| lock_claim(&error)) {
+            Ok(lock) => Some(Self {
+                _lock: Some(Arc::new(lock)),
+                ..self
+            }),
+            Err(LockClaim::Busy) => None,
+            Err(LockClaim::Broken(detail)) => {
+                self.record(
+                    agent,
+                    &[CheckResult::fail(LOCK_CHECK, detail)],
+                    false,
+                    false,
+                );
+                None
+            }
+        }
     }
 
     pub(crate) fn watch(&self, agent: &'static str) {
         let run = self.clone();
+        let (finished, ended) = mpsc::channel::<()>();
         std::thread::spawn(move || {
+            let _finished = finished;
             std::thread::sleep(drift_watchdog_limit());
             let results = [CheckResult::fail(TIME_LIMIT_CHECK, "verify ran too long")];
             if run.plan(false).record_drift {
+                let _group = EndOwnGroup;
                 run.record(agent, &results, false, false);
-                end_own_group();
             }
         });
+        *locked(&self.watchdog) = Some(ended);
     }
 
     pub(crate) fn plan(&self, passed: bool) -> FinishPlan {
@@ -240,7 +266,10 @@ impl DriftRun {
     }
 
     pub(crate) fn await_watchdog(&self) {
-        std::thread::sleep(Duration::from_secs(10));
+        let ended = locked(&self.watchdog).take();
+        if let Some(ended) = ended {
+            ended.recv_timeout(WATCHDOG_WAIT).ok();
+        }
     }
 
     pub(crate) fn record(
@@ -273,13 +302,22 @@ fn post_alert(agent: &str, entry: &DriftEntry, inbox: &Path) -> bool {
     Inbox::new(inbox.to_path_buf()).post(&report, 0).is_ok()
 }
 
+struct EndOwnGroup;
+
+impl Drop for EndOwnGroup {
+    fn drop(&mut self) {
+        end_own_group();
+    }
+}
+
 fn end_own_group() {
     kill_registered_groups();
     let pid = std::process::id() as libc::pid_t;
     // Safety: getpgrp has no arguments and cannot fail.
     if unsafe { libc::getpgrp() } == pid {
-        // Safety: this process leads the group, so killpg reaches only this
-        // process and its children.
+        // Safety: this process leads the group, so killpg reaches this process
+        // and only the children that stayed in its group. Children in their
+        // own process group are reached only by kill_registered_groups above.
         unsafe { libc::killpg(pid, libc::SIGKILL) };
     }
     std::process::exit(1)
