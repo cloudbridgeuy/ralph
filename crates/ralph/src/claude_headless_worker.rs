@@ -107,7 +107,7 @@ impl Shared {
             transcript: &usage.transcript,
             harness: HarnessId::ClaudeHeadless,
         };
-        record_session_or_warn(&usage.target, &session, None);
+        record_session_or_warn(&usage.target, &session);
     }
 
     fn drive(&self, step: impl FnOnce(&mut Turns) -> Vec<Action>) {

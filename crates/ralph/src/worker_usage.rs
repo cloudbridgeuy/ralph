@@ -107,9 +107,9 @@ pub fn record_or_warn(target: &UsageTarget, payload: &str, turn_id: Option<u64>)
     );
 }
 
-pub fn record_session_or_warn(target: &UsageTarget, session: &UsageSession, turn_id: Option<u64>) {
+pub fn record_session_or_warn(target: &UsageTarget, session: &UsageSession) {
     warn_if_err(
-        record_session(target, session, turn_id),
+        record_session(target, session, None),
         "Failed to record worker usage",
     );
 }
