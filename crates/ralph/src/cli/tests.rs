@@ -313,3 +313,18 @@ fn test_cli_thread_park_and_revive_take_a_name() {
         assert!(Cli::try_parse_from(["ralph", "thread", verb, "Bad"]).is_err());
     }
 }
+
+#[test]
+fn test_cli_thread_pull_takes_a_name() {
+    let Some(Commands::Thread(thread)) = Cli::try_parse_from(["ralph", "thread", "pull", "auth"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected thread");
+    };
+    let ThreadCommand::Pull { name } = thread.command else {
+        panic!("expected pull");
+    };
+    assert_eq!(name.as_str(), "auth");
+    assert!(Cli::try_parse_from(["ralph", "thread", "pull", "Bad"]).is_err());
+}

@@ -200,6 +200,13 @@ pub enum ThreadCommand {
         #[arg(value_parser = ThreadName::parse)]
         name: ThreadName,
     },
+    #[command(
+        about = "Move a thread's fork point to main's current end; its next chat starts with main's newer messages. Refuses while its chat is open."
+    )]
+    Pull {
+        #[arg(value_parser = ThreadName::parse)]
+        name: ThreadName,
+    },
 }
 
 #[derive(clap::Args, Debug)]

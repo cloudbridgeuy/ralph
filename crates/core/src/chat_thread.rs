@@ -93,6 +93,16 @@ pub fn revive_check(name: &ThreadName, meta: &ThreadMeta) -> Result<(), String> 
     }
 }
 
+pub fn pull_message(name: &ThreadName, from: usize, to: usize) -> String {
+    match to.saturating_sub(from) {
+        0 => format!("thread {name} is already at main's end (#{to})."),
+        1 => format!("pulled thread {name}: fork point #{from} -> #{to}, 1 new main message."),
+        new => {
+            format!("pulled thread {name}: fork point #{from} -> #{to}, {new} new main messages.")
+        }
+    }
+}
+
 pub fn refuse_thread_report(id: &str) -> Result<(), String> {
     if !id.starts_with(THREAD_REPORT_PREFIX) {
         return Ok(());
@@ -410,6 +420,23 @@ mod tests {
         assert_eq!(
             merged_check(&name("auth"), &merged_meta()).unwrap_err(),
             "thread auth is merged into main and stays read-only; `ralph chat --thread auth history` still reads it."
+        );
+    }
+
+    #[test]
+    fn a_pull_says_how_far_the_fork_point_moved() {
+        let auth = name("auth");
+        assert_eq!(
+            pull_message(&auth, 2, 5),
+            "pulled thread auth: fork point #2 -> #5, 3 new main messages."
+        );
+        assert_eq!(
+            pull_message(&auth, 4, 5),
+            "pulled thread auth: fork point #4 -> #5, 1 new main message."
+        );
+        assert_eq!(
+            pull_message(&auth, 5, 5),
+            "thread auth is already at main's end (#5)."
         );
     }
 

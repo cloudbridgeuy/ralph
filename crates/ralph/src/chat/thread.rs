@@ -8,8 +8,8 @@ use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallKind, MemoryCall, ViewSplit};
 use ralph_core::chat_thread::{
     digest_with, fork_check, idle_check, label_item, merge_prompt, merged_check, merged_report,
-    open_check, revive_check, thread_split, Merged, Parked, Scope, ThreadMeta, ThreadName,
-    MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
+    open_check, pull_message, revive_check, thread_split, Merged, Parked, Scope, ThreadMeta,
+    ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
 };
 use ralph_core::worker::{chat_message, INBOX_DIR};
 use std::fs;
@@ -136,6 +136,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             revive_thread(&main, &name)?;
             println!("revived thread {name}");
         }
+        ThreadCommand::Pull { name } => println!("{}", pull_thread(&main, &name)?),
     }
     Ok(())
 }
@@ -306,6 +307,20 @@ pub fn revive_thread(main: &Path, name: &ThreadName) -> Result<(), String> {
         },
     )
     .map_err(|e| format!("could not revive thread {name}: {e}"))
+}
+
+pub fn pull_thread(main: &Path, name: &ThreadName) -> Result<String, String> {
+    let dir = thread_dir(main, name);
+    let meta = known_meta(&dir, name)?;
+    merged_check(name, &meta)?;
+    let _claim = claim_closed(&dir, name)?;
+    let failed = |e: io::Error| format!("could not pull thread {name}: {e}");
+    let end = Store::new(main.to_path_buf()).log_len().map_err(failed)?;
+    let message = pull_message(name, meta.base, end);
+    if end != meta.base {
+        write_meta(&dir, &ThreadMeta { base: end, ..meta }).map_err(failed)?;
+    }
+    Ok(message)
 }
 
 #[cfg(test)]
@@ -576,5 +591,43 @@ mod tests {
         park_thread(&main, &name("spare"), &[]).unwrap();
         drop_thread(&main, &name("spare"), &[]).unwrap();
         assert!(!thread_dir(&main, &name("spare")).exists());
+    }
+
+    #[test]
+    fn pull_moves_the_fork_point_to_main_end() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        let before = Memory::open(&dir).unwrap();
+        assert!(call(&before, "zoom", json!({"id": "2"})).is_err());
+        assert_eq!(
+            pull_thread(&main, &auth).unwrap(),
+            "pulled thread auth: fork point #2 -> #3, 1 new main message."
+        );
+        assert_eq!(read_meta(&dir).unwrap().base, 3);
+        let after = Memory::open(&dir).unwrap();
+        let zoomed = call(&after, "zoom", json!({"id": "2"})).unwrap();
+        assert!(zoomed.contains("main after fork needle"), "{zoomed}");
+        assert_eq!(
+            pull_thread(&main, &auth).unwrap(),
+            "thread auth is already at main's end (#3)."
+        );
+    }
+
+    #[test]
+    fn a_refused_pull_changes_nothing() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
+        assert!(pull_thread(&main, &auth).unwrap_err().contains("in use"));
+        held.unlock().unwrap();
+        std::mem::drop(held);
+        assert!(pull_thread(&main, &name("nope"))
+            .unwrap_err()
+            .starts_with("no thread nope"));
+        merge_thread(&main, &auth, &[], &mut digest("x #auth:0")).unwrap();
+        assert!(pull_thread(&main, &auth)
+            .unwrap_err()
+            .starts_with("thread auth is merged into main and stays read-only"));
+        assert_eq!(read_meta(&dir).unwrap().base, 2);
     }
 }
