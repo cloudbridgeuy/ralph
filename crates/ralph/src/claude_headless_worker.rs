@@ -10,7 +10,7 @@ use crate::cursor_owner::{
     write_file, write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
-use crate::private_file::write_private;
+use crate::private_file::write_worker_config;
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
@@ -22,16 +22,15 @@ use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, claude_mcp_config, cleanup, decode_claude_version, decode_line,
     deny_line, gone_path, import_servers, interrupt_lines, interrupted_end, join_start_warnings,
-    merged_mcp_config, permission_response, prompt_failure_report, ready_path, reduce,
-    request_stale, resumed_session, shutdown_steps, start_steps, stuck_permission_report,
-    task_prompt, turn_end_activity, turn_lost_at_resume, uuid_v4, worker_config_path, Action,
-    ActivityState, ClaudeHeadlessArgs, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles,
-    HarnessId, HeadlessState, InterruptOutcome, Leftover, PermissionAnswer, PermissionMode,
-    SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns,
-    WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
-    CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR,
-    CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR,
-    CLAUDE_HEADLESS_SPAWN_DIR,
+    permission_response, prompt_failure_report, ready_path, reduce, request_stale, resumed_session,
+    shutdown_steps, start_steps, stuck_permission_report, task_prompt, turn_end_activity,
+    turn_lost_at_resume, uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs,
+    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
+    InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
+    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -319,16 +318,6 @@ fn random_bytes() -> Result<[u8; 16], String> {
     Ok(bytes)
 }
 
-fn write_worker_config(store: &Path, id: &str, config: &Value) -> Result<PathBuf, String> {
-    let path = worker_config_path(store, id);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
-    }
-    write_private(path, config.to_string().as_bytes())
-        .map_err(|e| format!("could not write the worker MCP config: {e}"))
-}
-
 fn check_installed_version() -> Result<Option<String>, String> {
     let output = Command::new(CLAUDE_COMMAND)
         .arg("--version")
@@ -375,8 +364,9 @@ impl ClaudeWorker {
             report_start_warning(warning, Some(&files.warning));
         }
         let copied: Vec<String> = imported.servers.keys().cloned().collect();
-        let mcp = merged_mcp_config(&imported.servers, &claude_mcp_config(&server));
-        let mcp_path = write_worker_config(store, id, &mcp)?;
+        let mcp_path =
+            write_worker_config(store, id, &imported.servers, &claude_mcp_config(&server))
+                .map_err(|e| format!("could not write the worker MCP config: {e}"))?;
         let attachments = store.join(ATTACHMENTS_DIR);
         let mode = resume
             .and_then(|record| record.permissions)

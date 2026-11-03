@@ -8,7 +8,7 @@ use crate::chat::read_claude_config;
 use crate::config::AppConfig;
 use crate::cursor_owner::{now_secs, write_file};
 use crate::paths::absolute_from;
-use crate::private_file::{check_path, write_private};
+use crate::private_file::{check_path, write_private, write_worker_config};
 use crate::subprocess::kill_process_group;
 use crate::warn::warn_if_err;
 use crate::worker_changes::WorkerChanges;
@@ -17,7 +17,7 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
     fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, import_servers,
-    merged_mcp_config, opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
+    opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
     resolve_codex_warning, resolve_cursor_model, resolve_opencode_model, resolve_ticket,
     rollback_plan, rollback_report, session_name, spawn_handoff, spawn_record_path, startup_state,
     task_dir_path, task_file_path, trust_key, with_start_warning, worker_command,
@@ -574,18 +574,13 @@ impl Workers {
         site: Option<&WorkerSite>,
         servers: &Map<String, Value>,
     ) -> io::Result<PathBuf> {
-        let path = worker_config_path(&self.store_dir, id);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let own = worker_mcp_config(
             &self.exe,
             id,
             &self.store_dir.join(INBOX_DIR),
             site.map(|site| site.worktree.as_path()),
         );
-        let config = merged_mcp_config(servers, &own);
-        write_private(path, config.to_string().as_bytes())
+        write_worker_config(&self.store_dir, id, servers, &own)
     }
 }
 

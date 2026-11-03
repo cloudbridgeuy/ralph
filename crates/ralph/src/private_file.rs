@@ -1,3 +1,5 @@
+use ralph_core::worker::{merged_mcp_config, worker_config_path};
+use serde_json::{Map, Value};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 #[cfg(unix)]
@@ -40,6 +42,20 @@ pub(crate) fn write_private(path: PathBuf, bytes: &[u8]) -> io::Result<PathBuf> 
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok(path)
+}
+
+pub(crate) fn write_worker_config(
+    store: &Path,
+    id: &str,
+    imported: &Map<String, Value>,
+    own: &Value,
+) -> io::Result<PathBuf> {
+    let path = worker_config_path(store, id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let config = merged_mcp_config(imported, own);
+    write_private(path, config.to_string().as_bytes())
 }
 
 #[cfg(test)]
