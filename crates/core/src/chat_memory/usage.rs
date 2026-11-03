@@ -1,4 +1,4 @@
-use crate::chat_thread::ResetReason;
+use crate::chat_process::ResetReason;
 use crate::stream::{IterationCosts, IterationMetadata};
 use crate::wire::usage::{FIVE_MIN, ONE_HOUR};
 use crate::worker::ModelUsage;
@@ -664,9 +664,9 @@ mod tests {
         let old = r#"{"at":"t","kind":"turn","trigger":"user","input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2,"cost_usd":0.5,"duration_ms":4,"run":"r","process_turn":1}"#;
         let new = r#"{"at":"t","kind":"turn","trigger":"user","input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2,"cost_usd":0.5,"duration_ms":4,"run":"r","process_turn":2,"harness":"claude","model":"m","session_id":"s","cost_source":"harness"}"#;
         let text = format!("{old}\n{new}\n");
-        assert_eq!(crate::chat_thread::session_rows(&text, "r").len(), 2);
+        assert_eq!(crate::chat_process::session_rows(&text, "r").len(), 2);
         assert!(
-            crate::chat_thread::thread_usage(&crate::chat_thread::session_rows(&text, "r"))
+            crate::chat_process::process_usage(&crate::chat_process::session_rows(&text, "r"))
                 .is_some()
         );
     }

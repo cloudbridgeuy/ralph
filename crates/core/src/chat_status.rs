@@ -1,10 +1,10 @@
 use crate::chat_cell::{bang, Bang};
 use crate::chat_help::Command;
 use crate::chat_hold::HoldFilter;
-use crate::chat_memory::{history_tool, Tool};
+use crate::chat_memory::{history_tool, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
+use crate::chat_process::ProcessCell;
 use crate::chat_send_it::SendIt;
-use crate::chat_thread::ThreadCell;
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -75,7 +75,7 @@ pub struct Status {
     pub workers: Vec<WorkerState>,
     pub watches: Vec<WatchState>,
     pub schedule: Vec<ScheduleState>,
-    pub thread: Option<ThreadCell>,
+    pub process: Option<ProcessCell>,
     pub napping: bool,
     pub queue: Option<QueueCell>,
     pub hold: Option<HoldFilter>,
@@ -98,7 +98,7 @@ pub enum Route {
     Hold(HoldFilter),
     Nudge(NudgeCommand),
     SendIt(SendIt),
-    History(Result<Tool, String>),
+    History(Result<MemoryCall, String>),
     View(ViewArgs),
     Help,
     Config,

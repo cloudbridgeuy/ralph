@@ -94,7 +94,7 @@ fn security_notices(store: &Path) -> Vec<Notice> {
 static STORE_LAYER: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_store_layer(store: &Path) {
-    let _ = STORE_LAYER.set(store.to_path_buf());
+    let _ = STORE_LAYER.set(crate::chat::thread::config_root(store));
 }
 
 fn parse_error(path: &Path, source: toml::de::Error) -> ConfigError {

@@ -25,6 +25,7 @@ pub mod chat_keepalive;
 pub mod chat_memory;
 pub mod chat_name;
 pub mod chat_nudge;
+pub mod chat_process;
 pub mod chat_recap;
 pub mod chat_send_it;
 pub mod chat_skills;

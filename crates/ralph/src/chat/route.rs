@@ -1,11 +1,11 @@
 use crate::chat::config;
 use crate::chat::diff::{self, DiffContext};
 use crate::chat::inbox::{self, Display};
-use crate::chat::memory::Store;
 use crate::chat::monitor::Monitor;
 use crate::chat::nudge;
 use crate::chat::prompt::screen_columns;
 use crate::chat::schedule;
+use crate::chat::thread::Memory;
 use crate::chat::view;
 use crate::chat::watch;
 use crate::chat::workers;
@@ -67,14 +67,11 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),
-        Route::History(tool) => {
-            let store = Store::new(ctx.store.to_path_buf());
-            println!(
-                "{}",
-                tool.and_then(|tool| store.call(&tool))
-                    .unwrap_or_else(|e| e)
-            );
-        }
+        Route::History(call) => println!(
+            "{}",
+            call.and_then(|call| Memory::open(ctx.store)?.call(&call))
+                .unwrap_or_else(|e| e)
+        ),
         Route::Send(_)
         | Route::Shell(_)
         | Route::ReadInbox(_)

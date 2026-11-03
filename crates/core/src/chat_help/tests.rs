@@ -1,9 +1,9 @@
 use super::*;
 use crate::chat_hold::HoldFilter;
+use crate::chat_process::SessionCost;
 use crate::chat_status::{
     route_input, EmptySubmit, Route, ScheduleState, Status, WatchState, WorkerState,
 };
-use crate::chat_thread::SessionCost;
 use crate::status_mode::mode;
 use crate::status_queue::QueueCell;
 use crate::status_segments::{segments, Context};
@@ -24,15 +24,15 @@ macro_rules! assert_lists_every {
     }};
 }
 
-fn thread(reset: Option<ResetReason>) -> ThreadCell {
-    ThreadCell {
+fn process(reset: Option<ResetReason>) -> ProcessCell {
+    ProcessCell {
         reset,
         cost: Some(SessionCost {
             total: 4.12,
             delta: Some(0.31),
             missing: false,
         }),
-        ..EXAMPLE_THREAD
+        ..EXAMPLE_PROCESS
     }
 }
 
@@ -51,7 +51,7 @@ fn full_status() -> Status {
             id: "nightly".into(),
             time: "23:00".into(),
         }],
-        thread: Some(thread(None)),
+        process: Some(process(None)),
         napping: false,
         queue: Some(QueueCell {
             running: true,
@@ -255,10 +255,10 @@ fn every_mode_has_a_legend() {
 }
 
 #[test]
-fn thread_legend_covers_every_part_of_the_real_cell() {
+fn process_legend_covers_every_part_of_the_real_cell() {
     let text = help_text(160);
     for reset in [None].into_iter().chain(RESETS.map(Some)) {
-        let longest = thread_variants(&thread(reset)).remove(0);
+        let longest = process_variants(&process(reset)).remove(0);
         for part in longest.split(" · ") {
             let (part, rebuild) = part.strip_suffix('!').map_or((part, false), |p| (p, true));
             assert!(has_row(&text, part), "{part} has no legend row");

@@ -56,7 +56,7 @@ pub struct RangeRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RangePage {
-    pub text: String,
+    pub blocks: Vec<String>,
     pub next: Option<Cursor>,
 }
 
@@ -114,10 +114,14 @@ impl Cursor {
 }
 
 impl RangePage {
+    pub fn text(&self) -> String {
+        self.blocks.join("\n\n")
+    }
+
     pub fn render(&self) -> String {
         match &self.next {
-            Some(cursor) => format!("{}\n\nnext cursor: {}", self.text, cursor.encode()),
-            None => format!("{}\n\n(end of range)", self.text),
+            Some(cursor) => format!("{}\n\nnext cursor: {}", self.text(), cursor.encode()),
+            None => format!("{}\n\n(end of range)", self.text()),
         }
     }
 }
@@ -349,7 +353,7 @@ pub fn read_range(window: &Window, tree: &Tree, request: &RangeRequest) -> Resul
         break;
     }
     Ok(Read::Page(RangePage {
-        text: blocks.join("\n\n"),
+        blocks,
         next: (cursor.next < cursor.end).then_some(cursor),
     }))
 }
@@ -407,7 +411,7 @@ mod tests {
     }
 
     fn bodies(page: &RangePage) -> Vec<(String, String)> {
-        page.text
+        page.text()
             .split("\n\n#")
             .map(|b| {
                 let b = b.strip_prefix('#').unwrap_or(b);
@@ -477,7 +481,7 @@ mod tests {
         let page = read_full(&entries, &Tree::new(), &request(1, 2, 4096)).unwrap();
         assert_eq!(page.next, None);
         assert_eq!(
-            page.text,
+            page.text(),
             "#1 · assistant · 2026-01-01T00:00:01Z · 8 chars\nm1 xxxxx\n\n#2 · user · 2026-01-01T00:00:02Z · 8 chars\nm2 xxxxx"
         );
         assert!(page.render().ends_with("(end of range)"));
@@ -647,7 +651,7 @@ mod tests {
         for p in &all {
             assert!(!bodies(p)[0].1.is_empty());
         }
-        assert!(all[0].text.contains("chars 1-"));
+        assert!(all[0].text().contains("chars 1-"));
         let joined: String = all.iter().flat_map(bodies).map(|(_, t)| t).collect();
         assert_eq!(joined, entries[0].text);
     }
@@ -670,8 +674,7 @@ mod tests {
             let all = pages(&entries, &Tree::new(), request(0, 0, budget));
             let rebuilt: String = all
                 .iter()
-                .filter_map(|p| p.text.split_once('\n'))
-                .map(|(_, body)| body)
+                .filter_map(|p| p.text().split_once('\n').map(|(_, t)| t.to_string()))
                 .collect();
             assert_eq!(rebuilt, text, "budget {budget}");
         }
@@ -689,10 +692,10 @@ mod tests {
             cursor: Some(cursor),
             ..request(0, 99, 15)
         };
-        let mut text = first.text;
+        let mut text = first.text();
         loop {
             let page = read_full(&entries, &Tree::new(), &req).unwrap();
-            text.push_str(&page.text);
+            text.push_str(&page.text());
             match page.next {
                 Some(c) => req.cursor = Some(c),
                 None => break,

@@ -228,3 +228,53 @@ fn test_cli_upgrade_takes_check_and_force() {
     };
     assert!(upgrade.check && upgrade.force);
 }
+
+#[test]
+fn test_cli_chat_thread_takes_a_short_lowercase_name() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from(["ralph", "chat", "--thread", "auth"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected chat");
+    };
+    assert_eq!(chat.thread.map(|t| t.to_string()).as_deref(), Some("auth"));
+    for bad in ["Auth", "main", &"a".repeat(33)] {
+        assert!(
+            Cli::try_parse_from(["ralph", "chat", "--thread", bad]).is_err(),
+            "{bad}"
+        );
+    }
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from([
+        "ralph", "chat", "history", "zoom", "auth:0", "--thread", "auth",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected chat");
+    };
+    assert!(chat.thread.is_some());
+}
+
+#[test]
+fn test_cli_thread_ls_and_drop_take_a_store() {
+    let Some(Commands::Thread(thread)) = Cli::try_parse_from(["ralph", "thread", "ls"])
+        .unwrap()
+        .command
+    else {
+        panic!("expected thread");
+    };
+    assert!(matches!(thread.command, ThreadCommand::Ls));
+    let Some(Commands::Thread(thread)) =
+        Cli::try_parse_from(["ralph", "thread", "drop", "auth", "--store", "/s"])
+            .unwrap()
+            .command
+    else {
+        panic!("expected thread");
+    };
+    assert_eq!(thread.store, Some(std::path::PathBuf::from("/s")));
+    let ThreadCommand::Drop { name } = thread.command else {
+        panic!("expected drop");
+    };
+    assert_eq!(name.as_str(), "auth");
+    assert!(Cli::try_parse_from(["ralph", "thread", "drop", "Bad"]).is_err());
+}

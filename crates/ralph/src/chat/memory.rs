@@ -1,16 +1,18 @@
 use crate::chat::index_files::{
     open_archive, save_stale, sweep_index_temps, update_index, FileSource,
 };
+use crate::chat::thread::Reach;
 use crate::private_file::check_path;
 use crate::warn::warn;
 use ralph_core::chat_memory::{
     check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
     holder_pid, log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall,
-    retry_prompt, search, Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot,
-    RangeRequest, Role, SearchRequest, Tool, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    retry_prompt, search, Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, Role,
+    Tool, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
 };
+use ralph_core::chat_process::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::chat_suggestion::SuggestionRecord;
-use ralph_core::chat_thread::{absorb_usage, tail_read, FileStamp, UsageTail};
+use ralph_core::chat_thread::{label_item, label_lines};
 use ralph_core::worker::{parse_pending_turn, pending_turn_marker, PENDING_TURN_FILE};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -167,39 +169,41 @@ impl Store {
         Ok(answer)
     }
 
-    pub fn read(&self, request: &RangeRequest) -> io::Result<Result<String, String>> {
-        let page = self.with_archive(|archive| archive.read(request))?;
-        Ok(page.map(|page| page.render()))
-    }
-
     pub fn log_len(&self) -> io::Result<usize> {
         self.with_archive(|archive| Ok(archive.count()))
     }
 
-    pub fn zoom(&self, node: Node) -> io::Result<Result<String, String>> {
-        let lines = self.with_archive(|archive| archive.zoom(node))?;
-        Ok(lines.map(|lines| lines.join("\n")))
-    }
-
-    pub fn recall(&self, pattern: &str) -> io::Result<Result<String, String>> {
-        self.with_archive(|archive| {
-            let mut entries = Vec::new();
-            archive.scan_entries(RECALL_CHUNK_ENTRIES, |_, entry| entries.push(entry.clone()))?;
-            Ok(recall(&entries, pattern))
-        })
-    }
-
-    pub fn search(&self, request: &SearchRequest) -> io::Result<Result<String, String>> {
-        self.with_archive(|archive| search(archive, request))
-    }
-
-    pub fn call(&self, tool: &Tool) -> Result<String, String> {
-        let result = match tool {
-            Tool::Zoom(node) => self.zoom(*node),
-            Tool::Recall(pattern) => self.recall(pattern),
-            Tool::Read(request) => self.read(request),
-            Tool::Search(request) => self.search(request),
+    pub fn call(&self, tool: &Tool, reach: Reach) -> Result<String, String> {
+        let item = |text: &String| match reach.label {
+            Some(name) => label_item(text, name),
+            None => text.clone(),
         };
+        let lines = |text: String| match reach.label {
+            Some(name) => label_lines(&text, name),
+            None => text,
+        };
+        let result = self.with_archive(|archive| {
+            if let Some(end) = reach.limit {
+                archive.limit_to(end);
+            }
+            Ok(match tool {
+                Tool::Zoom(node) => archive
+                    .zoom(*node)?
+                    .map(|items| items.iter().map(item).collect::<Vec<_>>().join("\n")),
+                Tool::Read(request) => archive.read(request)?.map(|mut page| {
+                    page.blocks = page.blocks.iter().map(item).collect();
+                    page.render()
+                }),
+                Tool::Recall(pattern) => {
+                    let mut entries = Vec::new();
+                    archive.scan_entries(RECALL_CHUNK_ENTRIES, |_, entry| {
+                        entries.push(entry.clone())
+                    })?;
+                    recall(&entries, pattern).map(lines)
+                }
+                Tool::Search(request) => search(archive, request)?.map(lines),
+            })
+        });
         result.unwrap_or_else(|e| Err(format!("Could not read chat memory: {e}")))
     }
 
@@ -457,8 +461,8 @@ fn summarize(
 mod tests {
     use super::*;
     use ralph_core::chat_memory::{
-        parse_search_args, split_view, LogIndex, TreeIndex, FALLBACK_MARK, LOG_INDEX_FILE,
-        TREE_INDEX_FILE,
+        parse_search_args, split_view, LogIndex, RangeRequest, TreeIndex, FALLBACK_MARK,
+        LOG_INDEX_FILE, TREE_INDEX_FILE,
     };
 
     #[test]
@@ -576,7 +580,7 @@ mod tests {
 
     fn read_request(id: &str) -> RangeRequest {
         ralph_core::chat_memory::parse_tool_call("read", &serde_json::json!({ "id": id }))
-            .map(|tool| match tool {
+            .map(|call| match call.tool {
                 ralph_core::chat_memory::Tool::Read(request) => request,
                 _ => unreachable!(),
             })
@@ -622,7 +626,9 @@ mod tests {
         let texts: Vec<_> = entries.iter().map(|e| e.text.as_str()).collect();
         assert_eq!(texts, ["zero", "one"]);
         assert_eq!(stored_index(&store).unwrap().count(), 2);
-        let page = store.read(&read_request("0-1")).unwrap().unwrap();
+        let page = store
+            .call(&Tool::Read(read_request("0-1")), Reach::default())
+            .unwrap();
         assert!(page.contains("one"), "{page}");
     }
 
@@ -638,7 +644,9 @@ mod tests {
         log.write_all(b"not an entry needle\n").unwrap();
         store.append(Role::Assistant, "needle two").unwrap();
         store.append(Role::User, "needle three").unwrap();
-        let page = store.read(&read_request("0-3")).unwrap().unwrap();
+        let page = store
+            .call(&Tool::Read(read_request("0-3")), Reach::default())
+            .unwrap();
         assert!(
             page.contains("#1 · worker ·  · 15 chars\n[corrupt entry]"),
             "{page}"
@@ -647,9 +655,13 @@ mod tests {
             page.contains("needle two") && page.contains("needle three"),
             "{page}"
         );
-        let zoomed = store.zoom(Node::new(3, 4).unwrap()).unwrap().unwrap();
+        let zoomed = store
+            .call(&Tool::Zoom(Node::new(3, 4).unwrap()), Reach::default())
+            .unwrap();
         assert!(zoomed.starts_with("#3 user "), "{zoomed}");
-        let recalled = store.recall("needle").unwrap().unwrap();
+        let recalled = store
+            .call(&Tool::Recall("needle".to_string()), Reach::default())
+            .unwrap();
         let hits: Vec<_> = recalled.lines().filter(|l| l.starts_with('#')).collect();
         assert_eq!(hits.len(), 3, "{recalled}");
         assert!(
@@ -657,7 +669,9 @@ mod tests {
             "{recalled}"
         );
         let request = parse_search_args(&serde_json::json!({ "query": "needle corrupt" })).unwrap();
-        let found = store.search(&request).unwrap().unwrap();
+        let found = store
+            .call(&Tool::Search(request.clone()), Reach::default())
+            .unwrap();
         let ids: Vec<_> = found.lines().filter(|l| l.starts_with('#')).collect();
         assert_eq!(ids.len(), 3, "{found}");
         assert!(!found.contains("#1 "), "{found}");
@@ -722,11 +736,12 @@ mod tests {
         log.write_all(b"{\"role\":\"user\",\"at\":\"t\",\"text\":\"second\"}\n")
             .unwrap();
         assert_eq!(stored_index(&store).unwrap().count(), 1);
-        let page = store.read(&read_request("0-9")).unwrap().unwrap();
+        let page = store
+            .call(&Tool::Read(read_request("0-9")), Reach::default())
+            .unwrap();
         assert!(page.contains("first") && page.contains("second"));
         assert!(store
-            .zoom(Node::new(1, 2).unwrap())
-            .unwrap()
+            .call(&Tool::Zoom(Node::new(1, 2).unwrap()), Reach::default())
             .unwrap()
             .contains("second"));
         assert_eq!(stored_index(&store).unwrap().count(), 2);
@@ -742,9 +757,13 @@ mod tests {
         let mut index = stored_index(&store).unwrap();
         index.slots[1] += 2;
         fs::write(store.dir().join(LOG_INDEX_FILE), index.encode()).unwrap();
-        let zoomed = store.zoom(Node::new(1, 2).unwrap()).unwrap().unwrap();
+        let zoomed = store
+            .call(&Tool::Zoom(Node::new(1, 2).unwrap()), Reach::default())
+            .unwrap();
         assert!(zoomed.contains("one"), "{zoomed}");
-        let page = store.read(&read_request("0-2")).unwrap().unwrap();
+        let page = store
+            .call(&Tool::Read(read_request("0-2")), Reach::default())
+            .unwrap();
         assert!(page.contains("zero") && page.contains("two"), "{page}");
         let log = fs::read(store.dir().join("log.jsonl")).unwrap();
         let mut built = LogIndex::default();
@@ -756,11 +775,17 @@ mod tests {
     fn reads_without_a_log_report_beyond_the_chat() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().join("s"));
-        assert!(store.read(&read_request("0")).unwrap().is_err());
-        assert!(store.zoom(Node::new(0, 1).unwrap()).unwrap().is_err());
+        assert!(store
+            .call(&Tool::Read(read_request("0")), Reach::default())
+            .is_err());
+        assert!(store
+            .call(&Tool::Zoom(Node::new(0, 1).unwrap()), Reach::default())
+            .is_err());
         assert!(!store.dir().exists());
         fs::create_dir(store.dir()).unwrap();
-        assert!(store.read(&read_request("0")).unwrap().is_err());
+        assert!(store
+            .call(&Tool::Read(read_request("0")), Reach::default())
+            .is_err());
         let names: Vec<_> = fs::read_dir(store.dir())
             .unwrap()
             .map(|e| e.unwrap().file_name())
@@ -848,7 +873,9 @@ mod tests {
         let index = TreeIndex::decode(&bytes).unwrap();
         let tree = fs::read(store.dir().join("tree.jsonl")).unwrap();
         assert_eq!((index.count(), index.covered), (4, tree.len() as u64));
-        let zoomed = store.zoom(Node::new(0, 4).unwrap()).unwrap().unwrap();
+        let zoomed = store
+            .call(&Tool::Zoom(Node::new(0, 4).unwrap()), Reach::default())
+            .unwrap();
         assert!(
             zoomed.contains("sum2") && zoomed.contains("sum3"),
             "{zoomed}"
@@ -862,7 +889,9 @@ mod tests {
         let loser = encode_record(Node::new(0, 2).unwrap(), "loser").unwrap();
         fs::write(store.dir().join("tree.jsonl"), first + &loser).unwrap();
         fs::write(store.dir().join(TREE_INDEX_FILE), b"junk").unwrap();
-        let zoomed = store.zoom(Node::new(0, 4).unwrap()).unwrap().unwrap();
+        let zoomed = store
+            .call(&Tool::Zoom(Node::new(0, 4).unwrap()), Reach::default())
+            .unwrap();
         assert!(
             zoomed.contains("first") && !zoomed.contains("loser"),
             "{zoomed}"
@@ -870,7 +899,9 @@ mod tests {
         let saved = fs::read(store.dir().join(TREE_INDEX_FILE)).unwrap();
         assert_eq!(TreeIndex::decode(&saved).unwrap().count(), 2);
         fs::remove_file(store.dir().join(TREE_INDEX_FILE)).unwrap();
-        store.read(&read_request("0-3")).unwrap().unwrap();
+        store
+            .call(&Tool::Read(read_request("0-3")), Reach::default())
+            .unwrap();
         let again = fs::read(store.dir().join(TREE_INDEX_FILE)).unwrap();
         assert_eq!(again, saved);
     }

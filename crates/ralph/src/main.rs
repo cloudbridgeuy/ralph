@@ -79,6 +79,7 @@ fn main() -> ExitCode {
         command: None,
         store: None,
         name: None,
+        thread: None,
         recent_history_tokens: None,
         wrap_width: None,
         skills: Vec::new(),
@@ -92,6 +93,7 @@ fn main() -> ExitCode {
         Commands::Ask(args) => execute_ask(args),
         Commands::Chat(args) => chat::run(args),
         Commands::Wire(args) => wire::run(args),
+        Commands::Thread(args) => chat::thread::run(args),
         Commands::Config(args) => execute_config(args),
         Commands::Worker(args) => execute_worker(args),
         Commands::Upgrade(args) => upgrade::run(args),
@@ -263,10 +265,10 @@ fn resolve_ask_prompt(prompt_arg: Option<&str>) -> Result<String, Box<dyn std::e
 
 fn execute_chat_mcp(args: ChatMcpArgs) -> Result<(), Box<dyn std::error::Error>> {
     config::set_store_layer(&args.store);
-    let store = chat::memory::Store::new(args.store.clone());
+    let memory = chat::thread::Memory::open(&args.store)?;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
-    chat::mcp::run_stdio_server(&store, &args.socket, stdin.lock(), stdout.lock())?;
+    chat::mcp::run_stdio_server(&memory, &args.socket, stdin.lock(), stdout.lock())?;
     Ok(())
 }
 

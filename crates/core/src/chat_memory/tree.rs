@@ -162,7 +162,7 @@ fn mergeable_pair(tree: &Tree, nodes: &[Node], target: Node) -> Option<usize> {
     })
 }
 
-fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
+pub fn view(entries: &[Entry], tree: &Tree, budget: usize) -> Vec<String> {
     let mut nodes = cover(entries.len(), budget);
     while let Some(target) = split_target(entries, tree, &nodes) {
         if nodes.len() >= budget {

@@ -1,6 +1,6 @@
 use crate::chat::changes::run_changes;
-use crate::chat::memory::Store;
 use crate::chat::socket::forward;
+use crate::chat::thread::{config_root, Memory};
 use ralph_core::chat_help::config_help;
 use ralph_core::chat_memory::{finish_call, handle_request, Outcome};
 use ralph_core::chat_socket::SocketRequest;
@@ -10,7 +10,7 @@ use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 pub fn run_stdio_server(
-    store: &Store,
+    memory: &Memory,
     socket: &Path,
     input: impl BufRead,
     mut output: impl Write,
@@ -30,11 +30,11 @@ pub fn run_stdio_server(
         let response = match handle_request(&request) {
             Outcome::Silent => continue,
             Outcome::Respond(v) => v,
-            Outcome::Call { id, tool } => finish_call(id, store.call(&tool)),
+            Outcome::Call { id, call } => finish_call(id, memory.call(&call)),
             Outcome::Changes { id, request } => {
                 let result = std::env::current_dir()
                     .map_err(|e| format!("Could not read the working directory: {e}"))
-                    .and_then(|cwd| run_changes(store.dir(), &cwd, &request));
+                    .and_then(|cwd| run_changes(memory.dir(), &cwd, &request));
                 match result {
                     Ok(text) => tool_result(id, &text, false),
                     Err(message) => tool_result(id, &message, true),
@@ -44,7 +44,7 @@ pub fn run_stdio_server(
                 id,
                 config_help(
                     &crate::config::config_path(),
-                    Some(store.dir()),
+                    Some(&config_root(memory.dir())),
                     section.as_deref(),
                 ),
             ),
@@ -64,10 +64,13 @@ pub fn run_stdio_server(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::memory::Store;
+    use crate::chat::thread::Reach;
 
     fn run(store: &Store, socket: &Path, input: &str) -> Vec<Value> {
         let mut out = Vec::new();
-        run_stdio_server(store, socket, input.as_bytes(), &mut out).unwrap();
+        let memory = Memory::open(store.dir()).unwrap();
+        run_stdio_server(&memory, socket, input.as_bytes(), &mut out).unwrap();
         String::from_utf8(out)
             .unwrap()
             .lines()
@@ -211,9 +214,15 @@ mod tests {
             ("recall", serde_json::json!({"pattern": "ship"})),
             ("search", serde_json::json!({"query": "GUZ-709"})),
         ] {
-            let tool = ralph_core::chat_memory::parse_tool_call(name, &args).unwrap();
+            let parsed = ralph_core::chat_memory::parse_tool_call(name, &args).unwrap();
             let served = text_of(&run(&store, &socket, &call(name, args))[0]);
-            assert_eq!(store.call(&tool).unwrap_or_else(|e| e), served, "{name}");
+            assert_eq!(
+                store
+                    .call(&parsed.tool, Reach::default())
+                    .unwrap_or_else(|e| e),
+                served,
+                "{name}"
+            );
         }
     }
 }

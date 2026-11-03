@@ -1,9 +1,10 @@
 use super::index_files::open_archive;
 use super::memory::Store;
 use super::monitor::fresh_warnings;
+use super::thread::Reach;
 use ralph_core::chat_memory::{
-    encode_entry, nap_step, pending, Entry, Mode, NapStep, NewEntry, Node, RangeRequest, Tree,
-    CORRUPT_TEXT,
+    encode_entry, nap_step, pending, Entry, Mode, NapStep, NewEntry, Node, RangeRequest, Tool,
+    Tree, CORRUPT_TEXT,
 };
 use std::collections::HashSet;
 use std::fs;
@@ -110,7 +111,9 @@ fn a_bad_line_over_the_chunk_size_keeps_ids_and_later_entries() {
         warnings[0]
     );
     assert!(warnings[0].len() < 1_000, "{}", warnings[0].len());
-    let page = store.read(&raw(0, 3)).unwrap().unwrap();
+    let page = store
+        .call(&Tool::Read(raw(0, 3)), Reach::default())
+        .unwrap();
     assert!(
         page.contains("#2 · worker ·  · 15 chars\n[corrupt entry]"),
         "{page}"
@@ -137,7 +140,9 @@ fn a_log_that_is_one_bad_line_loads_as_one_placeholder() {
         "{}",
         warnings[0]
     );
-    let page = store.read(&raw(0, 1)).unwrap().unwrap();
+    let page = store
+        .call(&Tool::Read(raw(0, 1)), Reach::default())
+        .unwrap();
     assert!(
         page.contains("#0 · worker ·  · 15 chars\n[corrupt entry]"),
         "{page}"

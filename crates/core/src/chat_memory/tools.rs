@@ -5,6 +5,7 @@ use crate::changes::{changes_tool_definition, parse_changes_args, ChangeRequest,
 use crate::chat_help::{config_topic, help_tool, help_topic};
 use crate::chat_socket::is_socket_tool;
 use crate::chat_suggestion::suggest_reply_tool;
+use crate::chat_thread::{scope_arg, split_scope, Scope};
 use crate::mcp::{dispatch, string_arg, tool_result, Dispatch};
 use crate::worker::command_definitions;
 use serde_json::{json, Value};
@@ -17,13 +18,19 @@ pub enum Tool {
     Search(SearchRequest),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryCall {
+    pub scope: Scope,
+    pub tool: Tool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     Silent,
     Respond(Value),
     Call {
         id: Value,
-        tool: Tool,
+        call: MemoryCall,
     },
     Socket {
         id: Value,
@@ -54,11 +61,11 @@ fn memory_tool_definitions() -> Value {
     json!([
         {
             "name": "zoom",
-            "description": "Open one node of the chat memory. A block id like 4-7 shows its two halves; a single index like 5 shows the raw message. Copy ids from the memory view.",
+            "description": "Open one node of the chat memory. A block id like 4-7 shows its two halves; a single index like 5 shows the raw message. Copy ids from the memory view. In a thread, its own ids carry the thread name (auth:4-7); ids without a prefix are the main chat before the fork.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Node id such as 16-31 or 5."}
+                    "id": {"type": "string", "description": "Node id such as 16-31, 5, or auth:5 for thread auth."}
                 },
                 "required": ["id"]
             }
@@ -69,7 +76,8 @@ fn memory_tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Regular expression to search for."}
+                    "pattern": {"type": "string", "description": "Regular expression to search for."},
+                    "thread": {"type": "string", "description": "Search main or a named thread instead of this chat's own messages."}
                 },
                 "required": ["pattern"]
             }
@@ -80,7 +88,7 @@ fn memory_tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Inclusive range such as 16-40, or one index such as 5."},
+                    "id": {"type": "string", "description": "Inclusive range such as 16-40, or one index such as 5. Prefix a thread name (auth:16-40) for a thread's messages."},
                     "mode": {"type": "string", "enum": ["raw", "summary"], "description": "raw (default) or summary."},
                     "budget": {"type": "integer", "description": "Page size in tokens, 1 to 16384. Default 4096."},
                     "cursor": {"type": "string", "description": "The `next cursor:` value from the previous page."}
@@ -99,7 +107,8 @@ fn memory_tool_definitions() -> Value {
                     "since": {"type": "string", "description": "Earliest time: an RFC 3339 timestamp or a date like 2026-10-20."},
                     "until": {"type": "string", "description": "Latest time: an RFC 3339 timestamp or a date like 2026-10-20 (the whole day counts)."},
                     "limit": {"type": "integer", "description": "Hits per page, 1 to 50. Default 20."},
-                    "cursor": {"type": "string", "description": "The `next cursor:` value from the previous page."}
+                    "cursor": {"type": "string", "description": "The `next cursor:` value from the previous page."},
+                    "thread": {"type": "string", "description": "Search main or a named thread instead of this chat's own messages."}
                 },
                 "required": ["query"]
             }
@@ -113,17 +122,29 @@ fn memory_tool_definitions() -> Value {
     ])
 }
 
-pub fn parse_tool_call(name: &str, args: &Value) -> Result<Tool, String> {
-    match name {
-        "zoom" => Node::parse(string_arg(args, "id")?.trim()).map(Tool::Zoom),
-        "recall" => Ok(Tool::Recall(string_arg(args, "pattern")?)),
-        "read" => parse_read_args(args).map(Tool::Read),
-        "search" => parse_search_args(args).map(Tool::Search),
-        other => Err(format!("Unknown tool '{other}'.")),
-    }
+pub fn parse_tool_call(name: &str, args: &Value) -> Result<MemoryCall, String> {
+    let id = || string_arg(args, "id");
+    let (scope, tool) = match name {
+        "zoom" => {
+            let id = id()?;
+            let (scope, rest) = split_scope(&id)?;
+            (scope, Node::parse(rest).map(Tool::Zoom)?)
+        }
+        "read" => {
+            let id = id()?;
+            let (scope, rest) = split_scope(&id)?;
+            let mut args = args.clone();
+            args["id"] = json!(rest);
+            (scope, parse_read_args(&args).map(Tool::Read)?)
+        }
+        "recall" => (scope_arg(args)?, Tool::Recall(string_arg(args, "pattern")?)),
+        "search" => (scope_arg(args)?, parse_search_args(args).map(Tool::Search)?),
+        other => return Err(format!("Unknown tool '{other}'.")),
+    };
+    Ok(MemoryCall { scope, tool })
 }
 
-pub fn history_tool(name: &str, words: &str, cursor: Option<&str>) -> Result<Tool, String> {
+pub fn history_tool(name: &str, words: &str, cursor: Option<&str>) -> Result<MemoryCall, String> {
     let words = words.trim();
     let args = match name {
         "read" => {
@@ -165,7 +186,7 @@ pub fn handle_request(request: &Value) -> Outcome {
             Err(message) => Outcome::Respond(tool_result(id, &message, true)),
         },
         Dispatch::Call { id, name, args } => match parse_tool_call(&name, &args) {
-            Ok(tool) => Outcome::Call { id, tool },
+            Ok(call) => Outcome::Call { id, call },
             Err(message) => Outcome::Respond(tool_result(id, &message, true)),
         },
     }
@@ -211,7 +232,7 @@ mod tests {
 
     fn finish(entries: &[Entry], tree: &Tree, name: &str, args: Value) -> Value {
         match call(name, args) {
-            Outcome::Call { id, tool } => finish_call(id, run(entries, tree, &tool)),
+            Outcome::Call { id, call } => finish_call(id, run(entries, tree, &call.tool)),
             Outcome::Respond(v) => v,
             Outcome::Silent
             | Outcome::Socket { .. }
@@ -352,15 +373,39 @@ mod tests {
 
     #[test]
     fn search_call_parses_or_reports_a_tool_error() {
-        let Outcome::Call { tool, .. } = call("search", json!({"query": "GUZ-709", "limit": 5}))
+        let Outcome::Call { call: parsed, .. } =
+            call("search", json!({"query": "GUZ-709", "limit": 5}))
         else {
             panic!("expected call")
         };
-        assert!(matches!(tool, Tool::Search(_)));
+        assert!(matches!(parsed.tool, Tool::Search(_)));
         let Outcome::Respond(v) = call("search", json!({"query": "x", "since": "soon"})) else {
             panic!("expected respond")
         };
         assert_eq!(v["result"]["isError"], true);
+    }
+
+    #[test]
+    fn ids_and_the_thread_argument_carry_a_scope() {
+        use crate::chat_thread::{Scope, ThreadName};
+        let auth = Scope::Thread(ThreadName::parse("auth").unwrap());
+        let scoped = |name: &str, args: Value| parse_tool_call(name, &args).unwrap();
+        let zoom = scoped("zoom", json!({"id": "#auth:4-7"}));
+        assert_eq!(zoom.scope, auth);
+        assert_eq!(zoom.tool, Tool::Zoom(Node::new(4, 8).unwrap()));
+        let read = scoped("read", json!({"id": "auth:2-3"}));
+        assert!(matches!(
+            read.tool,
+            Tool::Read(RangeRequest { from: 2, to: 3, .. })
+        ));
+        assert_eq!(read.scope, auth);
+        assert_eq!(scoped("zoom", json!({"id": "5"})).scope, Scope::Main);
+        assert_eq!(scoped("recall", json!({"pattern": "x"})).scope, Scope::Own);
+        assert_eq!(
+            scoped("search", json!({"query": "x", "thread": "main"})).scope,
+            Scope::Main
+        );
+        assert!(parse_tool_call("zoom", &json!({"id": "Bad:1"})).is_err());
     }
 
     #[test]

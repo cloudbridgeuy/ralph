@@ -1,12 +1,12 @@
 use super::*;
+use crate::chat_process::{cost_variants, process_variants};
 use crate::chat_status::ScheduleState;
-use crate::chat_thread::{cost_variants, thread_variants};
 
 pub(super) const MODE_PRIORITY: u8 = 0;
 const NAME_PRIORITY: u8 = 1;
 const QUEUE_PRIORITY: u8 = 2;
 const MAIL_PRIORITY: u8 = 3;
-const THREAD_PRIORITY: u8 = 4;
+const PROCESS_PRIORITY: u8 = 4;
 const COST_PRIORITY: u8 = 5;
 const WORKERS_PRIORITY: u8 = 6;
 const WATCHES_PRIORITY: u8 = 7;
@@ -135,16 +135,16 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
             schedule_variants(&status.schedule),
         )
     });
-    let thread = status.thread.as_ref().map(|cell| {
+    let process = status.process.as_ref().map(|cell| {
         Segment::new(
             Side::Right,
-            Kind::Thread(current),
-            THREAD_PRIORITY,
-            thread_variants(cell),
+            Kind::Process(current),
+            PROCESS_PRIORITY,
+            process_variants(cell),
         )
     });
     let cost = status
-        .thread
+        .process
         .as_ref()
         .and_then(|cell| cell.cost.as_ref())
         .map(|cost| {
@@ -164,7 +164,7 @@ pub fn segments(status: &Status, context: &Context) -> Vec<Segment> {
         workers,
         watches,
         schedule,
-        thread,
+        process,
         cost,
     ]
     .into_iter()
@@ -177,13 +177,13 @@ mod tests {
     use super::super::fixtures::*;
     use super::*;
     use crate::chat_hold::HoldFilter;
-    use crate::chat_thread::ThreadCell;
+    use crate::chat_process::ProcessCell;
     use crate::status_queue::QueueCell;
 
     #[test]
     fn full_width_shows_every_segment_in_long_form() {
         let all = text(&bar(
-            &with_thread(),
+            &with_process(),
             &named_context(),
             200,
             Separator::Block,
@@ -254,7 +254,7 @@ mod tests {
     fn zero_unread_has_no_mail_segment_at_any_width() {
         let status = Status {
             unread: 0,
-            ..with_thread()
+            ..with_process()
         };
         for width in 0..200 {
             assert!(!line(&status, width).contains("📬"));
@@ -290,9 +290,9 @@ mod tests {
     #[test]
     fn cost_is_absent_without_a_session_cost() {
         let status = Status {
-            thread: Some(ThreadCell {
+            process: Some(ProcessCell {
                 cost: None,
-                ..thread()
+                ..process()
             }),
             ..status()
         };
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn segment_kinds_run_in_display_order_on_the_right() {
-        let all = segments(&with_thread(), &context());
+        let all = segments(&with_process(), &context());
         let right: Vec<Kind> = all
             .iter()
             .filter(|s| s.side == Side::Right)
@@ -313,7 +313,7 @@ mod tests {
             right,
             [
                 Kind::Workers,
-                Kind::Thread(Mode::Inbox),
+                Kind::Process(Mode::Inbox),
                 Kind::Cost(Mode::Inbox)
             ]
         );
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn name_sits_right_after_the_mode_segment() {
-        let status = with_thread();
+        let status = with_process();
         let all = segments(&status, &named_context());
         assert_eq!(all[0].kind, Kind::Mode(Mode::Inbox));
         assert_eq!(all[1].kind, Kind::Name);

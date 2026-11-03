@@ -34,6 +34,7 @@ mod statusbar;
 mod suggestion;
 mod term_status;
 pub(crate) mod terminal;
+pub(crate) mod thread;
 mod turn;
 mod view;
 mod watch;
@@ -47,7 +48,7 @@ use crate::chat::inbox::Display;
 use crate::chat::keys::Keys;
 use crate::chat::memory::Store;
 use crate::chat::monitor::{
-    ready_ids, watch_headless, watch_input, watch_status, Monitor, ThreadMemo,
+    ready_ids, watch_headless, watch_input, watch_status, Monitor, ProcessMemo,
 };
 use crate::chat::prompt::{next_route, ChatPrompt, Submitted};
 use crate::chat::queue::{
@@ -64,6 +65,7 @@ use crate::chat::socket::{ChatSocket, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
+use crate::chat::thread::Memory;
 use crate::chat::turn::{draft_after, Turn, TurnOutcome};
 use crate::chat::workers::tool_report;
 use crate::chat::workers_remote::RemoteStatus;
@@ -96,6 +98,7 @@ use ralph_core::chat_edit_mode::resolve_edit_mode;
 use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
+use ralph_core::chat_process::{run_id, UsageTail};
 use ralph_core::chat_send_it::auto_line;
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
@@ -103,7 +106,7 @@ use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
-use ralph_core::chat_thread::{run_id, UsageTail};
+use ralph_core::chat_thread::ThreadName;
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -150,17 +153,24 @@ fn store_dir(flag: Option<PathBuf>) -> io::Result<PathBuf> {
     )
 }
 
+fn chat_dir(flag: Option<PathBuf>, thread: Option<&ThreadName>) -> io::Result<PathBuf> {
+    let main = store_dir(flag)?;
+    Ok(match thread {
+        Some(name) => thread::thread_dir(&main, name),
+        None => main,
+    })
+}
+
 fn print_history(
-    store: Option<PathBuf>,
+    store_dir: &Path,
     history: &HistoryArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let store_dir = store_dir(store)?;
     let text = history_tool(
         history.tool.name(),
         &history.words.join(" "),
         history.cursor.as_deref(),
     )
-    .and_then(|tool| Store::new(store_dir).call(&tool))?;
+    .and_then(|call| Memory::open(store_dir)?.call(&call))?;
     println!("{text}");
     Ok(())
 }
@@ -206,12 +216,12 @@ fn load_custom_prompt(files: &PromptFiles) -> (CustomPrompt, Vec<String>) {
 
 pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ChatCommand::History(history)) = args.command {
-        return print_history(args.store, &history);
+        return print_history(&chat_dir(args.store, args.thread.as_ref())?, &history);
     }
     warn_if_err(signal::init(), "Failed to initialize signal handler");
     signal::ignore_sigttou();
     let flags = config::flag_settings(&args);
-    let store_dir = store_dir(args.store)?;
+    let store_dir = chat_dir(args.store, args.thread.as_ref())?;
     std::fs::create_dir_all(store_dir.join(ATTACHMENTS_DIR))?;
     let store_root = canonical_store(store_dir.clone());
     crate::config::set_store_layer(&store_root);
@@ -219,10 +229,14 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let _chat = store
         .claim_chat()?
         .map_err(|holder| store_in_use_message(&store_root, holder))?;
+    if let Some(name) = &args.thread {
+        thread::ensure(&thread::config_root(&store_dir), name)?;
+    }
+    let fork = thread::open_fork(&store_dir)?;
     let exe = std::env::current_exe()?;
     let cwd = std::env::current_dir()?;
     let global_config = absolute_from(&config_path(), &cwd);
-    let store_config = store_root.join("config.toml");
+    let store_config = thread::config_root(&store_root).join("config.toml");
     let loaded = load_for_chat(&global_config, &store_config);
     let config = loaded.config;
     let permission_mode = config.chat_permission_mode(
@@ -325,6 +339,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let turn = Turn {
         store: &store,
         store_dir: &store_dir,
+        fork: fork.as_ref(),
         mcp_args: &mcp_args,
         system_prompt_file: &system_prompt_file,
         permission_mode: &permission_mode,
@@ -396,7 +411,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         last_ping: Arc::clone(&last_ping),
         run: run.clone(),
         reset_limits,
-        thread: Mutex::new(ThreadMemo::default()),
+        process: Mutex::new(ProcessMemo::default()),
         usage_tail: Mutex::new(UsageTail::starting_at(&usage_stamp)),
         term: Arc::new(TermStatus::new(
             terminal_status,
@@ -406,7 +421,9 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         hold: Mutex::new(None),
     });
     let session_name = name::session_name(
-        args.name.as_deref(),
+        args.name
+            .as_deref()
+            .or(args.thread.as_ref().map(ThreadName::as_str)),
         chat_config.name.as_deref(),
         &cwd,
         name::resolved_home().as_deref(),

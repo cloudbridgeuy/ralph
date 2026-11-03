@@ -4,6 +4,7 @@
 //! It provides the main CLI struct and all subcommand definitions.
 
 use clap::{Parser, Subcommand};
+use ralph_core::chat_thread::ThreadName;
 use std::path::PathBuf;
 
 #[cfg(test)]
@@ -59,6 +60,13 @@ stored in plaintext. Export the printed base URL variable before starting the \
 harness; ralph never sets it."
     )]
     Wire(WireArgs),
+
+    #[command(
+        about = "List or drop chat threads.",
+        long_about = "A thread is a named side chat forked from the main chat: `ralph chat --thread <NAME>` \
+creates or opens it under <store>/threads/<NAME>. These subcommands work without starting a chat."
+    )]
+    Thread(ThreadArgs),
 
     #[command(
         about = "Inspect ralph's config file.",
@@ -150,6 +158,26 @@ warning for that version."
         agent: VerifyAgent,
         #[arg(long, help = "Also run the checks that send prompts to the model")]
         live: bool,
+    },
+}
+
+#[derive(clap::Args, Debug)]
+pub struct ThreadArgs {
+    #[command(subcommand)]
+    pub command: ThreadCommand,
+
+    #[arg(long, value_name = "DIR", global = true)]
+    pub store: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ThreadCommand {
+    #[command(about = "List the threads: name, fork point, message count, creation time.")]
+    Ls,
+    #[command(about = "Delete a thread's folder. Refuses while a chat has the thread open.")]
+    Drop {
+        #[arg(value_parser = ThreadName::parse)]
+        name: ThreadName,
     },
 }
 
@@ -360,6 +388,9 @@ pub struct ChatArgs {
 
     #[arg(long, value_name = "NAME")]
     pub name: Option<String>,
+
+    #[arg(long, value_name = "NAME", global = true, value_parser = ThreadName::parse)]
+    pub thread: Option<ThreadName>,
 
     #[arg(long, value_name = "TOKENS")]
     pub recent_history_tokens: Option<usize>,
