@@ -5,6 +5,7 @@
 
 use clap::{Parser, Subcommand};
 use ralph_core::chat_thread::ThreadName;
+use ralph_core::inbox_post::validate_source;
 use std::path::PathBuf;
 
 #[cfg(test)]
@@ -67,6 +68,12 @@ harness; ralph never sets it."
 creates or opens it under <store>/threads/<NAME>. These subcommands work without starting a chat."
     )]
     Thread(ThreadArgs),
+
+    #[command(
+        about = "Deliver a report from an outside program to a chat inbox.",
+        long_about = "Subcommands write to a chat store's inbox without starting a chat."
+    )]
+    Inbox(InboxArgs),
 
     #[command(
         about = "Inspect ralph's config file.",
@@ -174,6 +181,34 @@ warning for that version."
         #[arg(long, value_name = "DIR")]
         inbox: PathBuf,
     },
+}
+
+#[derive(clap::Args, Debug)]
+pub struct InboxArgs {
+    #[command(subcommand)]
+    pub command: InboxCommand,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum InboxCommand {
+    #[command(
+        about = "Post a text report to a chat store's inbox as external:<SOURCE>.",
+        long_about = "Reads the text of the report from FILE, or from stdin when FILE is `-`, and writes it to <STORE>/inbox. \
+The text must be UTF-8, not empty, and at most 65536 bytes; ralph never truncates. The store must be an existing chat store \
+(a folder with log.jsonl or LOCK); nothing is created. A running chat shows the report as unread; a closed chat shows it at the next start."
+    )]
+    Post {
+        #[arg(long, value_name = "DIR")]
+        store: PathBuf,
+        #[arg(long, value_name = "SOURCE", value_parser = parse_source)]
+        from: String,
+        #[arg(value_name = "FILE|-")]
+        input: PathBuf,
+    },
+}
+
+fn parse_source(s: &str) -> Result<String, String> {
+    validate_source(s).map(|()| s.to_string())
 }
 
 #[derive(clap::Args, Debug)]

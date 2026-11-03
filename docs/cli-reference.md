@@ -24,6 +24,7 @@ The command is optional: bare `ralph` runs `ralph chat`.
 | `chat` | Chat with a persistent, compressed memory; default when no command is given ([details](context/ralph-chat.md)) |
 | `thread` | List, drop, merge, park or revive chat threads ([details](context/ralph-chat.md#threads)) |
 | `wire` | Record harness-to-provider traffic through a local proxy ([details](context/ralph-wire.md)) |
+| `inbox` | Post a report from an outside program to a chat inbox ([details](context/ralph-chat.md#external-reports)) |
 | `config` | Check `config.toml` for errors and unknown keys |
 | `worker` | Verify an installed worker agent against ralph's local spec ([details](context/headless-workers.md#verify-an-agent-version)) |
 | `upgrade` | Install the latest GitHub release over the running binary ([details](context/release-process.md#upgrade-an-install)) |
@@ -164,6 +165,24 @@ ralph worker verify <cursor|codex|claude-headless|opencode|claude> [--live]
 Runs the installed worker agent in a fresh temporary directory and prints `PASS`, `FAIL` or `UNKNOWN` per check, then a summary line that says whether `--live` ran. For `claude-headless`, `claude` and `opencode` the summary also names the model, chosen from `[claude] model` or `[opencode] model` as `ralph worker spawn` does (claude's default model, or the opencode default, when unset). Exit code is 0 when every blocking check passes and 1 otherwise. A full pass records the agent version in `verified-agents.json` in the config directory (honours `RALPH_CONFIG_DIR`), which stops the "differs from the tested" warning for that version.
 
 Without `--live` no prompt is sent and no model is called. `--live` adds one reply, one permission round-trip and one cancel, which use model calls. For `claude` it also adds the interactive session start, because starting claude makes a model call. A failed or unknown cancel is printed but never fails the spec. See [Headless workers](context/headless-workers.md#verify-an-agent-version) for the checks.
+
+---
+
+## ralph inbox
+
+```bash
+ralph inbox post --store <DIR> --from <SOURCE> <FILE|->
+```
+
+Delivers a text report to a chat inbox, so a script or CI job can reach the person. The report arrives as `external:<SOURCE>` with status `report`. Nothing is stored in the chat log and no model runs.
+
+| Argument | Effect |
+|----------|--------|
+| `--store <DIR>` | Required. The chat store, relative to the current directory. It must exist and hold `log.jsonl` or `LOCK`; ralph never creates a store |
+| `--from <SOURCE>` | Required. 1 to 32 lowercase letters, digits or dashes, not starting with a dash. ralph adds `external:`; a value with `:` is refused |
+| `<FILE\|->` | The report text: a file path, or `-` for stdin |
+
+The text must be UTF-8, not empty (blank text counts as empty) and at most 65536 bytes. Larger input is refused, never truncated. ralph reads at most 65537 bytes. On success it prints `Posted a report from external:<SOURCE> to <store>`. Exit code is 1 for a bad store, a bad source, unreadable, non-UTF-8, empty or oversized input, or a failed write. See [External reports](context/ralph-chat.md#external-reports).
 
 ---
 
