@@ -83,15 +83,23 @@ struct HeadlessUsage {
     target: UsageTarget,
     session_id: String,
     transcript: PathBuf,
-    lock: Mutex<()>,
+    finished: Mutex<bool>,
 }
 
 impl Shared {
     fn record_usage(&self) {
+        self.record_usage_then(false);
+    }
+
+    fn record_usage_then(&self, finish: bool) {
         let Some(usage) = &self.usage else {
             return;
         };
-        let _one_at_a_time = locked(&usage.lock);
+        let mut finished = locked(&usage.finished);
+        if *finished {
+            return;
+        }
+        *finished = finish;
         let session = UsageSession {
             session_id: &usage.session_id,
             transcript: &usage.transcript,
@@ -284,7 +292,7 @@ fn headless_usage(
         },
         session_id: session_id.to_string(),
         transcript: claude_transcript_path(&claude_dir, &cwd, session_id),
-        lock: Mutex::default(),
+        finished: Mutex::default(),
     })
 }
 
@@ -569,7 +577,7 @@ impl ClaudeWorker {
 }
 
 fn release_owner(shared: &Shared, owner: &Path) {
-    shared.record_usage();
+    shared.record_usage_then(true);
     fs::remove_file(owner).ok();
 }
 

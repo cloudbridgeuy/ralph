@@ -393,7 +393,7 @@ fn with_usage(run: &mut Run) -> PathBuf {
         },
         session_id: "s1".into(),
         transcript,
-        lock: Mutex::default(),
+        finished: Mutex::default(),
     });
     store.join("usage.jsonl")
 }
@@ -450,5 +450,17 @@ fn close_records_usage_before_it_frees_the_owner_file() {
     let owner = run.shared.usage.as_ref().unwrap().transcript.clone();
     release_owner(&run.shared, &owner);
     assert!(!owner.exists());
+    assert_eq!(rows(&usage).len(), 1);
+}
+
+#[test]
+fn a_record_after_close_writes_no_rows_even_without_the_seen_file() {
+    let mut run = run(PermissionMode::Ask, &[]);
+    let usage = with_usage(&mut run);
+    let owner = run.dir.path().join("owner");
+    fs::write(&owner, "").unwrap();
+    release_owner(&run.shared, &owner);
+    fs::remove_file(run.dir.path().join("w.usage-seen")).unwrap();
+    run.shared.record_usage();
     assert_eq!(rows(&usage).len(), 1);
 }
