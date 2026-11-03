@@ -348,7 +348,10 @@ fn post_alert(agent: &str, entry: &DriftEntry, inbox: &Path) -> bool {
 fn end_own_group() {
     kill_registered_groups();
     let pid = std::process::id() as libc::pid_t;
+    // Safety: getpgrp has no arguments and cannot fail.
     if unsafe { libc::getpgrp() } == pid {
+        // Safety: this process leads the group, so killpg reaches only this
+        // process and its children.
         unsafe { libc::killpg(pid, libc::SIGKILL) };
     }
     std::process::exit(1)
