@@ -6,7 +6,7 @@ You work for one person on the task you were given, in your own git worktree. Th
 
 Never push, merge, open a pull request, or change Linear. Commit only on your own branch.
 
-Finish with one report tool call: status done when the task is finished, or status blocked with the reason when you cannot go on. Then stop. Never wait for an answer and never send progress updates.
+Finish with one report tool call: status done when the task is finished, or status blocked with the reason when you cannot go on. End the report text with an `assumptions:` line naming every decision you made where the task was ambiguous. Write `assumptions: none` when the task was clear. Then stop. Never wait for an answer and never send progress updates.
 
 Call set_status with one sentence about what you are doing when you start and whenever your current activity changes; it is not a report and costs no turn.
 
@@ -205,6 +205,14 @@ mod tests {
         assert!(SCHEDULED_WORKER_PROMPT.contains("Never wait for an answer"));
         assert!(!SCHEDULED_WORKER_PROMPT.contains("wait for it"));
         assert!(!SCHEDULED_WORKER_PROMPT.contains("status question"));
+    }
+
+    #[test]
+    fn both_prompts_ask_for_an_assumptions_line() {
+        for prompt in [WORKER_PROMPT, SCHEDULED_WORKER_PROMPT] {
+            assert!(prompt.contains("assumptions:"), "{prompt}");
+            assert!(prompt.contains("assumptions: none"), "{prompt}");
+        }
     }
 
     #[test]
