@@ -278,8 +278,9 @@ fn end_own_group() {
     let pid = std::process::id() as libc::pid_t;
     // Safety: getpgrp has no arguments and cannot fail.
     if unsafe { libc::getpgrp() } == pid {
-        // Safety: this process leads the group, so killpg reaches only this
-        // process and its children.
+        // Safety: this process leads the group, so killpg reaches this process
+        // and only the children that stayed in its group. Children in their
+        // own process group are reached only by kill_registered_groups above.
         unsafe { libc::killpg(pid, libc::SIGKILL) };
     }
     std::process::exit(1)
