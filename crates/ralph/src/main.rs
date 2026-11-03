@@ -51,6 +51,7 @@ pub mod subprocess;
 mod transport;
 mod verified_agents;
 mod version;
+mod version_drift;
 pub mod warn;
 mod watch_requests;
 mod watch_store;

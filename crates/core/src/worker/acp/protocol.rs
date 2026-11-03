@@ -1,4 +1,4 @@
-use crate::worker::{verify_hint, VerifiedAgents, SERVER_NAME};
+use crate::worker::SERVER_NAME;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::time::Duration;
@@ -65,42 +65,6 @@ pub fn probed_version<'a>(agent: &AcpAgent, probe: &'a VersionProbe) -> Result<&
             VERSION_PROBE_LIMIT.as_secs()
         )),
         VersionProbe::Failed(error) => Err(format!("could not run `{command} --version`: {error}")),
-    }
-}
-
-pub fn probe_warning(
-    agent: &AcpAgent,
-    probe: &VersionProbe,
-    verified: &VerifiedAgents,
-) -> Option<String> {
-    match probe {
-        VersionProbe::Exited(output)
-        | VersionProbe::ExitedWithError(output)
-        | VersionProbe::Unreadable(output) => version_warning(agent, output, verified),
-        VersionProbe::TimedOut | VersionProbe::Failed(_) => None,
-    }
-}
-
-pub fn version_warning(
-    agent: &AcpAgent,
-    output: &str,
-    verified: &VerifiedAgents,
-) -> Option<String> {
-    let AcpAgent {
-        name,
-        tested_version,
-        ..
-    } = agent;
-    match parse_agent_version(output) {
-        Some(version) if version == *tested_version || verified.is_verified(name, version) => None,
-        Some(other) => Some(format!(
-            "{name} agent {other} differs from the tested {tested_version}; the {name} worker may misbehave; {}",
-            verify_hint(name)
-        )),
-        None => Some(format!(
-            "could not read the {name} agent version from '{}'; tested with {tested_version}.",
-            output.trim()
-        )),
     }
 }
 
@@ -180,7 +144,6 @@ pub fn cursor_model_rejection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::verified_entry;
 
     #[test]
     fn cursor_model_rejection_prefers_the_agent_data_message() {
@@ -253,25 +216,6 @@ mod tests {
     }
 
     #[test]
-    fn the_spawn_warning_reads_whatever_a_finished_probe_printed() {
-        let none = VerifiedAgents::default();
-        let warn = |probe| probe_warning(&CURSOR_AGENT, &probe, &none);
-        assert_eq!(
-            warn(finished_probe(false, b"error: not logged in\n".to_vec())),
-            Some(
-                "could not read the cursor agent version from 'error: not logged in'; tested with 2026.10.14."
-                    .to_string()
-            )
-        );
-        assert!(warn(finished_probe(true, b"\xff2026".to_vec()))
-            .unwrap()
-            .starts_with("could not read the cursor agent version"));
-        assert_eq!(warn(finished_probe(true, b"2026.10.14-abc".to_vec())), None);
-        assert_eq!(warn(VersionProbe::TimedOut), None);
-        assert_eq!(warn(VersionProbe::Failed("No such file".into())), None);
-    }
-
-    #[test]
     fn version_output_edge_cases() {
         assert_eq!(
             parse_agent_version("\n  2026.10.14-0f9edde extra\n"),
@@ -281,36 +225,6 @@ mod tests {
         assert_eq!(parse_agent_version("  \n\t"), None);
         assert_eq!(parse_agent_version("-0f9edde"), None);
         assert_eq!(parse_agent_version("v2026.10.14"), None);
-    }
-
-    #[test]
-    fn version_warning_only_when_the_version_differs() {
-        let none = VerifiedAgents::default();
-        assert_eq!(
-            version_warning(&CURSOR_AGENT, "2026.10.14-0f9edde", &none),
-            None
-        );
-        let warning = version_warning(&CURSOR_AGENT, "2026.11.01-abc", &none).unwrap();
-        assert!(warning.contains("2026.11.01"));
-        assert!(warning.ends_with("run `ralph worker verify cursor` to check this version."));
-        assert!(version_warning(&CURSOR_AGENT, "???", &none)
-            .unwrap()
-            .contains("could not read"));
-    }
-
-    #[test]
-    fn a_verified_version_is_silent_for_its_agent_only() {
-        let verified = VerifiedAgents::default().record(verified_entry(
-            "cursor",
-            "2026.11.01",
-            false,
-            "2026-11-02",
-        ));
-        assert_eq!(
-            version_warning(&CURSOR_AGENT, "2026.11.01-abc", &verified),
-            None
-        );
-        assert!(version_warning(&CURSOR_AGENT, "2026.11.02-abc", &verified).is_some());
     }
 
     #[test]

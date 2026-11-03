@@ -1,4 +1,4 @@
-use crate::worker::{verify_hint, VerifiedAgents};
+use crate::worker::{verify_hint, VerifiedAgents, CLAUDE_GATE, CURSOR_AGENT};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +26,33 @@ pub struct VersionGate {
     pub protocol: &'static str,
     pub verifiable: bool,
 }
+
+pub const CURSOR_GATE: VersionGate = VersionGate {
+    agent: "cursor",
+    package: "Cursor agent",
+    min: (2026, 10),
+    probed: CURSOR_AGENT.tested_version,
+    protocol: "ACP",
+    verifiable: true,
+};
+
+pub const OPENCODE_GATE: VersionGate = VersionGate {
+    agent: "opencode",
+    package: "opencode",
+    min: (0, 0),
+    probed: "2.2.5",
+    protocol: "HTTP",
+    verifiable: true,
+};
+
+pub const CLAUDE_TMUX_GATE: VersionGate = VersionGate {
+    agent: "claude",
+    package: "Claude Code",
+    min: (0, 0),
+    probed: CLAUDE_GATE.probed,
+    protocol: "tmux",
+    verifiable: true,
+};
 
 pub fn check_agent_version(
     gate: &VersionGate,
@@ -60,6 +87,14 @@ pub fn check_agent_version(
         ))),
         _ => Ok(None),
     }
+}
+
+pub fn soft_version_warning(
+    gate: &VersionGate,
+    found: &str,
+    verified: &VerifiedAgents,
+) -> Option<String> {
+    check_agent_version(gate, found, verified).unwrap_or_else(Some)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -284,5 +319,82 @@ mod tests {
             .unwrap()
             .is_some());
         assert!(check_agent_version(&gate, "1.5", &none).is_err());
+    }
+
+    fn soft_gate() -> VersionGate {
+        VersionGate {
+            agent: "x",
+            package: "X",
+            min: (1, 2),
+            probed: "1.4.0",
+            protocol: "p",
+            verifiable: true,
+        }
+    }
+
+    #[test]
+    fn a_soft_gate_never_fails_it_only_warns() {
+        let none = VerifiedAgents::default();
+        let gate = soft_gate();
+        assert_eq!(soft_version_warning(&gate, "1.3.9", &none), None);
+        let old = soft_version_warning(&gate, "1.1.0", &none).unwrap();
+        assert!(old.contains("too old"), "{old}");
+        let newer = soft_version_warning(&gate, "1.5.0", &none).unwrap();
+        assert!(newer.contains("newer than the probed 1.4.0"), "{newer}");
+        assert!(newer.ends_with("run `ralph worker verify x` to check this version."));
+        let unreadable = soft_version_warning(&gate, "garbage", &none).unwrap();
+        assert!(unreadable.contains("could not read"), "{unreadable}");
+    }
+
+    #[test]
+    fn a_verify_pass_silences_the_soft_warning_for_that_version_only() {
+        let verified =
+            VerifiedAgents::default().record(verified_entry("x", "1.5.0", false, "2026-11-03"));
+        let gate = soft_gate();
+        assert_eq!(soft_version_warning(&gate, "1.5.0", &verified), None);
+        assert!(soft_version_warning(&gate, "1.5.1", &verified).is_some());
+    }
+
+    #[test]
+    fn the_cursor_gate_warns_on_a_new_version_until_verified() {
+        let none = VerifiedAgents::default();
+        assert_eq!(
+            soft_version_warning(&CURSOR_GATE, CURSOR_AGENT.tested_version, &none),
+            None
+        );
+        let warning = soft_version_warning(&CURSOR_GATE, "2026.11.01", &none).unwrap();
+        assert!(warning.contains("2026.11.01"), "{warning}");
+        let verified = VerifiedAgents::default().record(verified_entry(
+            "cursor",
+            "2026.11.01",
+            false,
+            "2026-11-03",
+        ));
+        assert_eq!(
+            soft_version_warning(&CURSOR_GATE, "2026.11.01", &verified),
+            None
+        );
+    }
+
+    #[test]
+    fn the_opencode_and_tmux_claude_gates_warn_on_unverified_newer_versions() {
+        let none = VerifiedAgents::default();
+        for (gate, probed, newer) in [
+            (&OPENCODE_GATE, "2.2.5", "2.3.0"),
+            (&CLAUDE_TMUX_GATE, "2.1.314", "2.2.0"),
+        ] {
+            assert_eq!(soft_version_warning(gate, probed, &none), None);
+            let warning = soft_version_warning(gate, newer, &none).unwrap();
+            assert!(warning.contains(newer), "{warning}");
+            assert!(warning.contains(gate.agent), "{warning}");
+            let verified =
+                VerifiedAgents::default().record(verified_entry(gate.agent, newer, false, "d"));
+            assert_eq!(soft_version_warning(gate, newer, &verified), None);
+        }
+        assert_eq!(soft_version_warning(&OPENCODE_GATE, "1.0.0", &none), None);
+        assert_eq!(
+            soft_version_warning(&CLAUDE_TMUX_GATE, "1.0.0", &none),
+            None
+        );
     }
 }

@@ -7,7 +7,6 @@ use crate::cursor_owner::{
 };
 use crate::subprocess::{exited_unreaped, signal_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
-use crate::verified_agents;
 use crate::warn::warn;
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
@@ -30,12 +29,12 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
     check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
-    probe_warning, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
+    probed_version, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
     session_error, session_saved, stop_problem, sweeps_permissions, task_prompt, turn_outcome,
     AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect,
     HeadlessState, HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue,
     Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand,
-    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE,
     CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
     CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
@@ -554,7 +553,11 @@ fn exit_reason(status: ExitStatus) -> String {
 }
 
 fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
-    probe_warning(agent, &agent_version_probe(agent), &verified_agents::load())
+    let probe = agent_version_probe(agent);
+    crate::version_drift::soft_warning(
+        &CURSOR_GATE,
+        probed_version(agent, &probe).map(str::to_string),
+    )
 }
 
 async fn initialize(

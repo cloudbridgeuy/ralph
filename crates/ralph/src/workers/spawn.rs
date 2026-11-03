@@ -172,6 +172,7 @@ impl Workers {
                 ),
             ),
         };
+        let version_warning = crate::version_drift::spawn_warning(harness);
         let ticket = resolve_ticket(
             id,
             ticket,
@@ -194,6 +195,7 @@ impl Workers {
             worktree_dir.warning.as_deref(),
             model_warning.as_deref(),
             shell_warning.as_deref(),
+            version_warning.as_deref(),
         ];
         warnings.extend(
             imported

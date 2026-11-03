@@ -19,18 +19,18 @@ use crate::workers::headless::{HeadlessHost, Heartbeat};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
-    acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
-    claude_headless_args, claude_mcp_config, cleanup, decode_claude_version, decode_line,
-    deny_line, gone_path, import_servers, interrupt_lines, interrupted_end, join_start_warnings,
-    permission_response, prompt_failure_report, ready_path, reduce, request_stale, resumed_session,
-    shutdown_steps, start_steps, stuck_permission_report, task_prompt, turn_end_activity,
-    turn_lost_at_resume, uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs,
-    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
-    InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
-    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
-    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
-    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
-    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
+    acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_headless_args,
+    claude_mcp_config, cleanup, decode_claude_version, decode_line, deny_line, gone_path,
+    import_servers, interrupt_lines, interrupted_end, join_start_warnings, permission_response,
+    prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
+    start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
+    uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs, ClaudeLine,
+    ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, InterruptOutcome,
+    Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep, SpawnRequest,
+    StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
+    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
+    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
+    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -319,13 +319,9 @@ fn random_bytes() -> Result<[u8; 16], String> {
 }
 
 fn check_installed_version() -> Result<Option<String>, String> {
-    let output = Command::new(CLAUDE_COMMAND)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("could not run `{CLAUDE_COMMAND} --version`: {e}"))?;
-    let text = String::from_utf8_lossy(&output.stdout);
+    let text = crate::version_drift::probe_output(CLAUDE_COMMAND)?;
     let found = decode_claude_version(&text).unwrap_or_default();
-    check_agent_version(&CLAUDE_GATE, found, &crate::verified_agents::load())
+    crate::version_drift::gate(&CLAUDE_GATE, found)
 }
 
 struct ClaudeWorker {
