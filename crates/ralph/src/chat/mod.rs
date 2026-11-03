@@ -27,6 +27,7 @@ mod schedule_worker;
 mod skills;
 mod stall;
 pub(crate) use skills::{read_claude_config, SKILLS_ENV};
+mod send_it;
 mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
@@ -55,11 +56,12 @@ use crate::chat::queue::{
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
+use crate::chat::send_it::SendIt;
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
 use crate::chat::snapshots::TurnSnapshots;
-use crate::chat::socket::{ChatSocket, SocketGuard};
+use crate::chat::socket::{ChatSocket, Shared, SocketGuard};
 use crate::chat::statusbar::StatusBar;
 use crate::chat::suggestion::{SuggestionHighlighter, SuggestionSlot};
 use crate::chat::term_status::{ClearOnDrop, TermStatus};
@@ -447,15 +449,19 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             )
         }
     };
+    let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
     chat_socket.serve(
-        Store::new(store_dir.clone()),
-        Workers::new(
-            store_dir.clone(),
-            exe.clone(),
-            permission_mode.clone(),
-            args.worktree_dir.clone(),
-        ),
-        suggestions.clone(),
+        Shared {
+            store: Store::new(store_dir.clone()),
+            workers: Workers::new(
+                store_dir.clone(),
+                exe.clone(),
+                permission_mode.clone(),
+                args.worktree_dir.clone(),
+            ),
+            suggestions: suggestions.clone(),
+            send_it: SendIt::new(&store_dir, send_it_limits),
+        },
         roster,
     );
     let _close = monitor.watches.close_guard();
@@ -520,7 +526,6 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         std::env::var("EDITOR").ok().as_deref(),
     );
     let (empty_submit, empty_warning) = chat_config.empty_submit_setting();
-    let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
     let late_warnings: Vec<String> = config_warning
         .into_iter()
         .chain(editor_warning)

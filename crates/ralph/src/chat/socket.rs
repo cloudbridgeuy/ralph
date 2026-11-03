@@ -1,4 +1,5 @@
 use crate::chat::memory::Store;
+use crate::chat::send_it::SendIt;
 use crate::chat::suggestion::SuggestionSlot;
 use crate::cursor_owner::process_start;
 use crate::schedule_store::ScheduleStore;
@@ -30,11 +31,19 @@ use std::thread;
 use std::time::Duration;
 
 const SUGGEST_REPLY: &str = "suggest_reply";
+const PROPOSE_RUN: &str = "propose_run";
 type Roster = Box<dyn Fn() -> String + Send + Sync>;
 const WORKERS: &str = "workers";
 const REQUEST_LIMIT_BYTES: u64 = 1 << 20;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const ACCEPT_RETRY: Duration = Duration::from_millis(50);
+
+pub(crate) struct Shared {
+    pub(crate) store: Store,
+    pub(crate) workers: Workers,
+    pub(crate) suggestions: SuggestionSlot,
+    pub(crate) send_it: SendIt,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct SocketFiles {
@@ -130,14 +139,8 @@ impl ChatSocket {
         &self.files
     }
 
-    pub(crate) fn serve(
-        self,
-        store: Store,
-        workers: Workers,
-        suggestions: SuggestionSlot,
-        roster: impl Fn() -> String + Send + Sync + 'static,
-    ) {
-        let shared = Arc::new((store, workers, suggestions, Box::new(roster) as Roster));
+    pub(crate) fn serve(self, shared: Shared, roster: impl Fn() -> String + Send + Sync + 'static) {
+        let shared = Arc::new((shared, Box::new(roster) as Roster));
         thread::spawn(move || {
             for connection in self.listener.incoming() {
                 match connection {
@@ -198,11 +201,7 @@ fn decide_fate(files: &SocketFiles, pid: u32, decide: fn(SocketFacts) -> SocketF
     })
 }
 
-fn handle_connection(
-    stream: &UnixStream,
-    shared: &(Store, Workers, SuggestionSlot, Roster),
-) -> io::Result<()> {
-    let (store, workers, suggestions, roster) = shared;
+fn handle_connection(stream: &UnixStream, (shared, roster): &(Shared, Roster)) -> io::Result<()> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let mut line = String::new();
     BufReader::new(stream.take(REQUEST_LIMIT_BYTES)).read_line(&mut line)?;
@@ -211,7 +210,15 @@ fn handle_connection(
             text: roster(),
             is_error: false,
         },
-        Ok(request) => respond(store, workers, suggestions, &request),
+        Ok(request) if request.tool == PROPOSE_RUN => {
+            to_response(shared.send_it.propose(&request.args))
+        }
+        Ok(request) => respond(
+            &shared.store,
+            &shared.workers,
+            &shared.suggestions,
+            &request,
+        ),
         Err(text) => SocketResponse {
             text,
             is_error: true,
@@ -294,7 +301,11 @@ pub(crate) fn respond(
     suggestions: &SuggestionSlot,
     request: &SocketRequest,
 ) -> SocketResponse {
-    match run_command(store, workers, suggestions, request) {
+    to_response(run_command(store, workers, suggestions, request))
+}
+
+fn to_response(result: Result<String, String>) -> SocketResponse {
+    match result {
         Ok(text) => SocketResponse {
             text,
             is_error: false,
@@ -337,10 +348,26 @@ pub(crate) fn forward(socket: &Path, request: &SocketRequest) -> Result<SocketRe
 mod tests {
     use super::*;
     use ralph_core::chat_memory::Trigger;
+    use ralph_core::chat_send_it::Limits;
     use serde_json::{json, Value};
 
     fn workers() -> Workers {
         Workers::new("/s".into(), "/bin/ralph".into(), "auto".into(), None)
+    }
+
+    fn shared(dir: &Path) -> Shared {
+        Shared {
+            store: Store::new(dir.to_path_buf()),
+            workers: workers(),
+            suggestions: SuggestionSlot::default(),
+            send_it: SendIt::new(
+                dir,
+                Limits {
+                    max_turns: 3,
+                    max_usd: 1.0,
+                },
+            ),
+        }
     }
 
     fn request(tool: &str, args: Value) -> SocketRequest {
@@ -573,12 +600,7 @@ mod tests {
         assert_eq!(sidecar_mode, 0o600);
         let store = Store::new(dir.path().to_path_buf());
         store.set_pending_turn(Trigger::User).unwrap();
-        socket.serve(
-            Store::new(dir.path().to_path_buf()),
-            workers(),
-            SuggestionSlot::default(),
-            String::new,
-        );
+        socket.serve(shared(dir.path()), String::new);
         let response = forward(&path, &request("watch", watch_args())).unwrap();
         assert!(!response.is_error);
         assert_eq!(watch_requests::take_all(dir.path()).len(), 1);
@@ -594,15 +616,24 @@ mod tests {
         let socket = ChatSocket::bind(dir.path()).unwrap();
         let path = socket.path().to_path_buf();
         let files = socket.files().clone();
-        socket.serve(
-            Store::new(dir.path().to_path_buf()),
-            workers(),
-            SuggestionSlot::default(),
-            || "stub roster".to_string(),
-        );
+        socket.serve(shared(dir.path()), || "stub roster".to_string());
         let response = forward(&path, &request("workers", json!({}))).unwrap();
         assert!(!response.is_error);
         assert_eq!(response.text, "stub roster");
+        files.remove();
+    }
+
+    #[test]
+    fn bound_socket_stores_a_proposed_run_without_a_pending_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = ChatSocket::bind(dir.path()).unwrap();
+        let path = socket.path().to_path_buf();
+        let files = socket.files().clone();
+        socket.serve(shared(dir.path()), String::new);
+        let plan = json!({"goal": "g", "steps": [{"do": "x", "criterion": {"kind": "judge", "question": "done?"}}]});
+        let response = forward(&path, &request("propose_run", plan)).unwrap();
+        assert!(!response.is_error, "{}", response.text);
+        assert!(dir.path().join("send-it/run.toml").exists());
         files.remove();
     }
 
