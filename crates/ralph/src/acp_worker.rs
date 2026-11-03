@@ -5,7 +5,7 @@ use crate::cursor_owner::{
     now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_file_atomic,
     write_interrupt_result, write_owner_record,
 };
-use crate::subprocess::{exited_unreaped, signal_group};
+use crate::subprocess::{exited_unreaped, signal_group, unregister_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::warn::warn;
 use crate::watches::locked;
@@ -471,6 +471,7 @@ impl AcpWorker {
         signal_group(&self.child);
         if let Ok(Some(status)) = self.child.try_wait() {
             self.exit_seen = true;
+            unregister_group(self.child.id());
             if !self.closing.load(Ordering::SeqCst) {
                 self.permissions
                     .heartbeat
