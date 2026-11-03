@@ -10,13 +10,16 @@ use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
-    argv_check, cancel_check, claude_headless_args, claude_probed_version, claude_verify_spawns,
-    fold_claude_line, init_check, permission_check, prompt_check, uuid_v4, ClaudeFold, ClaudePlan,
-    ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, StderrRead, CLAUDE_COMMAND,
-    CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT, VERSION_PROBE_LIMIT,
+    acp_mcp_server, argv_check, cancel_check, claude_headless_args, claude_mcp_config,
+    claude_probed_version, claude_verify_spawns, fold_claude_line, init_check, mcp_check,
+    parse_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeFold,
+    ClaudePlan, ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, StderrRead,
+    CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT,
+    CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
 };
+use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
@@ -27,7 +30,7 @@ const EXIT_LIMIT: Duration = Duration::from_secs(10);
 const TURN_LIMIT: Duration = Duration::from_secs(120);
 const STDERR_LIMIT: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(50);
-const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
+const VERIFY_ID: &str = "verify";
 const REPLY_PROMPT: &str = "Reply with the single word: ok";
 const CANCEL_PROMPT: &str = "Write the numbers from 1 to 500, one per line, with no other text.";
 
@@ -78,16 +81,23 @@ fn run_turn(wire: &Wire, text: &str, plan: ClaudePlan) -> ClaudeFold {
     fold
 }
 
-fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks, budget: Budget) {
+fn live_checks(wire: &Wire, expected_session: &str, dir: &Path, checks: &Checks, budget: Budget) {
     if !budget.allows(checks, "prompt/reply") {
         return;
     }
     let plain = run_turn(wire, REPLY_PROMPT, ClaudePlan::Plain);
     checks.add(init_check(plain.session.as_deref(), expected_session));
+    checks.add(mcp_check(&plain));
     checks.add(prompt_check(&plain.summary, CLAUDE_ENDED));
     if plain.summary.stop.is_err() {
         return;
     }
+    if !budget.allows(checks, "report") {
+        return;
+    }
+    let mut reported = run_turn(wire, CLAUDE_REPORT_PROMPT, ClaudePlan::Plain);
+    reported.mcp = plain.mcp.clone();
+    checks.add(report_check(&reported, &read_inbox(dir)));
     if !budget.allows(checks, "permission") {
         return;
     }
@@ -102,6 +112,36 @@ fn live_checks(wire: &Wire, expected_session: &str, checks: &Checks, budget: Bud
     }
     let cancelled = run_turn(wire, CANCEL_PROMPT, ClaudePlan::Cancel);
     checks.add(cancel_check(&cancelled.summary, CLAUDE_INTERRUPTED));
+}
+
+fn inbox_dir(dir: &Path) -> PathBuf {
+    dir.join("inbox")
+}
+
+fn owner_file(dir: &Path) -> PathBuf {
+    dir.join("owner")
+}
+
+fn prepare_inbox(dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(inbox_dir(dir))
+        .and_then(|()| fs::write(owner_file(dir), ""))
+        .map_err(|error| format!("could not prepare the verify inbox: {error}"))
+}
+
+fn read_inbox(dir: &Path) -> Vec<ralph_core::worker::Report> {
+    let Ok(entries) = fs::read_dir(inbox_dir(dir)) else {
+        return Vec::new();
+    };
+    let texts: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.ends_with(".json") && !name.starts_with('.')
+        })
+        .filter_map(|entry| fs::read_to_string(entry.path()).ok())
+        .collect();
+    parse_reports(&texts)
 }
 
 struct StderrReader {
@@ -161,10 +201,15 @@ fn wait_exit(child: &mut Child) -> Result<bool, String> {
     }
 }
 
-fn verify_args(model: Option<&str>, dir: &Path, session: &str) -> Vec<String> {
+fn verify_mcp_config(exe: &Path, dir: &Path) -> String {
+    let server = acp_mcp_server(exe, VERIFY_ID, &inbox_dir(dir), &owner_file(dir), None);
+    claude_mcp_config(&server).to_string()
+}
+
+fn verify_args(model: Option<&str>, dir: &Path, session: &str, exe: &Path) -> Vec<String> {
     let mut args = claude_headless_args(
         model,
-        EMPTY_MCP,
+        &verify_mcp_config(exe, dir),
         dir,
         PermissionMode::Ask,
         ClaudeSession::New(session),
@@ -174,6 +219,7 @@ fn verify_args(model: Option<&str>, dir: &Path, session: &str) -> Vec<String> {
 }
 
 fn claude_command(
+    exe: &Path,
     dir: &Path,
     session: &str,
     config: &Result<AppConfig, String>,
@@ -181,7 +227,7 @@ fn claude_command(
 ) -> Command {
     let mut command = Command::new(CLAUDE_COMMAND);
     command
-        .args(verify_args(model, dir, session))
+        .args(verify_args(model, dir, session, exe))
         .current_dir(dir);
     let config_dir = config.as_ref().ok().and_then(|config| {
         configured_dir(
@@ -213,6 +259,10 @@ pub(crate) fn verify(
         claude_probed_version(&probe),
         |version| format!("{version} (probed {})", CLAUDE_GATE.probed),
     )?;
+    if let Err(message) = prepare_inbox(dir) {
+        checks.add(CheckResult::fail("spawn", message));
+        return Some(version);
+    }
     let scope = SpawnScope {
         dir,
         config,
@@ -252,7 +302,9 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
         budget,
     } = *scope;
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
-        spawn_piped(claude_command(dir, &session, config, model))
+        let exe = std::env::current_exe()
+            .map_err(|error| format!("could not find the ralph executable: {error}"))?;
+        spawn_piped(claude_command(&exe, dir, &session, config, model))
             .map(|spawned| (session, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });
@@ -284,7 +336,7 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
         }
         ClaudeSpawn::Turns => {
             if running {
-                live_checks(&wire, &session, checks, budget);
+                live_checks(&wire, &session, dir, checks, budget);
             }
             locked(&wire.stdin).take();
         }
@@ -297,20 +349,43 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
 mod tests {
     use super::*;
 
+    fn exe() -> PathBuf {
+        PathBuf::from("/usr/bin/ralph")
+    }
+
     #[test]
     fn verify_args_carry_the_configured_model() {
         let dir = Path::new("/tmp/verify-dir");
-        let with = verify_args(Some("claude-haiku-5-5"), dir, "s1");
+        let with = verify_args(Some("claude-haiku-5-5"), dir, "s1", &exe());
         let at = with.iter().position(|word| word == "--model").unwrap();
         assert_eq!(with[at + 1], "claude-haiku-5-5");
-        assert!(verify_args(None, dir, "s1")
+        assert!(verify_args(None, dir, "s1", &exe())
             .iter()
             .all(|word| word != "--model"));
     }
 
     #[test]
+    fn verify_args_load_the_ralph_worker_server_with_a_temporary_inbox() {
+        let args = verify_args(None, Path::new("/tmp/verify-dir"), "s1", &exe());
+        let at = args.iter().position(|word| word == "--mcp-config").unwrap();
+        let config: serde_json::Value = serde_json::from_str(&args[at + 1]).unwrap();
+        let server_args = config["mcpServers"]["ralph-worker"]["args"]
+            .as_array()
+            .unwrap();
+        let words: Vec<&str> = server_args.iter().filter_map(|w| w.as_str()).collect();
+        assert_eq!(words[0], "worker-mcp");
+        assert!(words.windows(2).any(|pair| pair == ["--id", "verify"]));
+        assert!(words
+            .windows(2)
+            .any(|pair| pair == ["--inbox", "/tmp/verify-dir/inbox"]));
+        assert!(words
+            .windows(2)
+            .any(|pair| pair == ["--owner", "/tmp/verify-dir/owner"]));
+    }
+
+    #[test]
     fn verify_args_isolate_user_settings() {
-        let args = verify_args(None, Path::new("/tmp/verify-dir"), "s1");
+        let args = verify_args(None, Path::new("/tmp/verify-dir"), "s1", &exe());
         let at = args
             .iter()
             .position(|word| word == "--setting-sources")
@@ -322,7 +397,7 @@ mod tests {
     fn worker_args_do_not_restrict_setting_sources() {
         let args = claude_headless_args(
             None,
-            EMPTY_MCP,
+            "{}",
             Path::new("/tmp/verify-dir"),
             PermissionMode::Ask,
             ClaudeSession::New("s1"),

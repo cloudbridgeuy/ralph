@@ -12,6 +12,7 @@ pub const CLAUDE_HEADLESS_REQUIRED_CHECKS: &[&str] = &["version", "spawn", "argv
 pub const CLAUDE_ENDED: &str = "end_turn";
 pub const CLAUDE_INTERRUPTED: &str = "cancelled";
 const VERIFY_INTERRUPT_ID: &str = "verify-interrupt";
+pub const CLAUDE_REPORT_PROMPT: &str = "Call the mcp__ralph-worker__report tool one time with status done and text verify. Do not use other tools. Then reply ok.";
 pub const CLAUDE_PERMISSION_PROMPT: &str =
     "Run the shell command `touch verify-permission.txt` and reply with ok.";
 
@@ -157,6 +158,13 @@ pub fn report_check(fold: &ClaudeFold, inbox: &[Report]) -> CheckResult {
         [only] => CheckResult::pass("report", format!("inbox got a {} report", only.status)),
         many => CheckResult::fail("report", format!("{} reports, expected 1", many.len())),
     }
+}
+
+pub fn parse_reports(texts: &[String]) -> Vec<Report> {
+    texts
+        .iter()
+        .filter_map(|text| serde_json::from_str(text).ok())
+        .collect()
 }
 
 pub fn init_check(session: Option<&str>, expected: &str) -> CheckResult {
@@ -499,6 +507,28 @@ mod tests {
         let check = argv_check(true, &read, Err("claude did not exit within 10s".into()));
         assert_eq!(check.verdict, Verdict::Fail, "{}", check.detail);
         assert!(check.detail.contains("did not exit"), "{}", check.detail);
+    }
+
+    #[test]
+    fn the_report_prompt_names_the_tool_status_and_text() {
+        assert!(CLAUDE_REPORT_PROMPT.contains("mcp__ralph-worker__report"));
+        assert!(CLAUDE_REPORT_PROMPT.contains("status done and text verify"));
+    }
+
+    #[test]
+    fn parse_reports_keeps_valid_reports_and_skips_the_rest() {
+        let valid = r#"{"worker":"verify","at":"t","status":"done","text":"verify"}"#;
+        let found = parse_reports(&[valid.to_string(), "not json".to_string(), "{}".to_string()]);
+        assert_eq!(
+            found,
+            vec![Report {
+                worker: "verify".into(),
+                at: "t".into(),
+                status: "done".into(),
+                text: "verify".into(),
+            }]
+        );
+        assert!(parse_reports(&[]).is_empty());
     }
 
     #[test]
