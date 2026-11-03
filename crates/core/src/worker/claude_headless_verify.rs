@@ -147,6 +147,9 @@ pub fn report_check(fold: &ClaudeFold, inbox: &[Report]) -> CheckResult {
     if !matches!(fold.mcp, Some(Ok(()))) {
         return unknown("report", "skipped: ralph-worker not connected");
     }
+    if let Err(error) = &fold.summary.stop {
+        return CheckResult::fail("report", format!("the report turn failed: {error}"));
+    }
     if fold.summary.permissions.iter().any(|ask| ask.tool == tool) {
         return CheckResult::fail("report", "claude asked permission for the report tool");
     }
@@ -379,6 +382,7 @@ mod tests {
     fn report_check_after(lines: &[Value], inbox: &[Report]) -> CheckResult {
         let mut fold = ClaudeFold::default();
         feed(&mut fold, ClaudePlan::Plain, lines);
+        feed(&mut fold, ClaudePlan::Plain, &[result(false)]);
         report_check(&fold, inbox)
     }
 
@@ -388,6 +392,21 @@ mod tests {
         assert_eq!(check.verdict, Verdict::Unknown);
         assert_eq!(check.detail, "skipped: ralph-worker not connected");
         assert_eq!(check.name, "report");
+    }
+
+    #[test]
+    fn report_fails_when_the_turn_did_not_end_cleanly() {
+        let mut fold = ClaudeFold::default();
+        feed(
+            &mut fold,
+            ClaudePlan::Plain,
+            &[connected(), report_tool_use()],
+        );
+        let check = report_check(&fold, &[inbox_report()]);
+        assert_eq!(
+            check,
+            CheckResult::fail("report", "the report turn failed: the turn did not finish")
+        );
     }
 
     #[test]

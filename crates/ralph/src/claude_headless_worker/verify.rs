@@ -98,6 +98,9 @@ fn live_checks(wire: &Wire, expected_session: &str, dir: &Path, checks: &Checks,
     let mut reported = run_turn(wire, CLAUDE_REPORT_PROMPT, ClaudePlan::Plain);
     reported.mcp = plain.mcp.clone();
     checks.add(report_check(&reported, &read_inbox(dir)));
+    if reported.summary.stop.is_err() {
+        return;
+    }
     if !budget.allows(checks, "permission") {
         return;
     }
