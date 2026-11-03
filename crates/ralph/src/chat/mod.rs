@@ -739,7 +739,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 continue;
             }
-            Route::SendIt => {
+            Route::SendIt(_) => {
                 println!("{}", send_it_usage(&send_it_limits));
                 continue;
             }
