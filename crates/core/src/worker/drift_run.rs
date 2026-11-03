@@ -9,6 +9,12 @@ pub const DRIFT_REPORT_STATUS: &str = "warning";
 pub const NO_FAILING_CHECK: &str = "verify spec";
 pub const TIME_LIMIT_CHECK: &str = "time limit";
 
+pub const WATCHDOG_MARGIN: Duration = Duration::from_secs(30);
+
+pub fn drift_watchdog_limit() -> Duration {
+    FREE_VERIFY_LIMIT + WATCHDOG_MARGIN
+}
+
 pub fn drift_lock_limit() -> Duration {
     FREE_VERIFY_LIMIT * 2
 }
@@ -115,6 +121,15 @@ mod tests {
 
     fn checks(names: &[&str]) -> Vec<String> {
         names.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn the_watchdog_outlasts_the_verify_budget_and_the_stale_lock_outlasts_the_watchdog() {
+        assert_eq!(
+            drift_watchdog_limit(),
+            FREE_VERIFY_LIMIT + Duration::from_secs(30)
+        );
+        assert!(drift_lock_limit() > drift_watchdog_limit());
     }
 
     #[test]

@@ -5,12 +5,12 @@ use crate::worker_mcp::Inbox;
 use crate::worker_verify::version_probe;
 use ralph_core::worker::{
     check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
-    daily_verify_version, drift_action, drift_alert, drift_entry, known_fail_warning,
-    last_check_time, last_verified_version, lock_action, opencode_probed_version, probe_text,
-    probed_version, store_inbox, tmux_claude_version, CheckResult, DriftAction, DriftEntry,
-    DriftOutcome, HarnessId, LockAction, VersionGate, VersionProbe, CLAUDE_COMMAND,
-    CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT, FREE_VERIFY_LIMIT, OPENCODE_COMMAND,
-    OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
+    daily_verify_version, drift_action, drift_alert, drift_entry, drift_watchdog_limit,
+    known_fail_warning, last_check_time, last_verified_version, lock_action,
+    opencode_probed_version, probe_text, probed_version, store_inbox, tmux_claude_version,
+    CheckResult, DriftAction, DriftEntry, DriftOutcome, HarnessId, LockAction, VersionGate,
+    VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT,
+    OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
 };
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
@@ -231,7 +231,7 @@ impl DriftRun {
     pub(crate) fn watch(&self, agent: &'static str) {
         let run = self.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(FREE_VERIFY_LIMIT);
+            std::thread::sleep(drift_watchdog_limit());
             let results = [CheckResult::fail(TIME_LIMIT_CHECK, "verify ran too long")];
             if run.finish(agent, &results, false) {
                 end_own_group();
