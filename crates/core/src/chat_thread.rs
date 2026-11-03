@@ -221,8 +221,13 @@ mod tests {
             fork_check(&Tool::Zoom(Node::new(8, 9).unwrap()), 8).unwrap_err(),
             "#8 is after this thread's fork point (#8); pull to see it."
         );
-        assert!(fork_check(&Tool::Zoom(Node::new(0, 16).unwrap()), 8).is_err());
-        assert!(fork_check(&read(5, 9), 8).is_err());
+        let first_after = "#8 is after this thread's fork point (#8); pull to see it.";
+        assert_eq!(
+            fork_check(&Tool::Zoom(Node::new(0, 16).unwrap()), 8).unwrap_err(),
+            first_after
+        );
+        assert_eq!(fork_check(&read(5, 9), 8).unwrap_err(), first_after);
+        assert_eq!(fork_check(&read(0, 8), 8).unwrap_err(), first_after);
     }
 
     #[test]
