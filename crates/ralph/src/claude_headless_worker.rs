@@ -18,7 +18,9 @@ use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::worker_usage::{record_session_or_warn, UsageSession, UsageTarget};
 use crate::workers::headless::{HeadlessHost, Heartbeat};
-use ralph_core::claude_leftovers::{claude_dir, claude_transcript_path, configured_dir};
+use ralph_core::claude_leftovers::{
+    claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
+};
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_headless_args,
@@ -281,7 +283,12 @@ fn headless_usage(
     session_id: &str,
 ) -> Option<HeadlessUsage> {
     let home = dirs::home_dir()?;
-    let claude_dir = claude_dir(config.claude.config_dir.as_deref(), &home);
+    let inherited = std::env::var_os(CLAUDE_CONFIG_DIR_ENV).map(PathBuf::from);
+    let claude_dir = spawned_claude_dir(
+        config.claude.config_dir.as_deref(),
+        inherited.as_deref(),
+        &home,
+    );
     let cwd = request.worktree.to_string_lossy();
     Some(HeadlessUsage {
         target: UsageTarget {
@@ -464,7 +471,7 @@ impl ClaudeWorker {
             dirs::home_dir().as_deref(),
         );
         if let Some(dir) = config_dir {
-            command.env("CLAUDE_CONFIG_DIR", dir);
+            command.env(CLAUDE_CONFIG_DIR_ENV, dir);
         }
         let (mut child, stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
             remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);

@@ -10,6 +10,7 @@ const TRUST_SWAP_ATTEMPTS: usize = 3;
 const TRUST_LOCK_NAME: &str = "claude-json.lock";
 
 const CLAUDE_JSON_NAME: &str = ".claude.json";
+pub const CLAUDE_CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 pub fn configured_dir(config_dir: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
     config_dir.map(|dir| expand_home(dir, home))
@@ -17,6 +18,20 @@ pub fn configured_dir(config_dir: Option<&Path>, home: Option<&Path>) -> Option<
 
 pub fn claude_dir(config_dir: Option<&Path>, home: &Path) -> PathBuf {
     configured_dir(config_dir, Some(home)).unwrap_or_else(|| home.join(".claude"))
+}
+
+pub fn spawned_claude_dir(
+    config_dir: Option<&Path>,
+    inherited: Option<&Path>,
+    home: &Path,
+) -> PathBuf {
+    configured_dir(config_dir, Some(home))
+        .or_else(|| {
+            inherited
+                .filter(|dir| !dir.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or_else(|| home.join(".claude"))
 }
 
 pub fn claude_json(config_dir: Option<&Path>, home: &Path) -> PathBuf {
@@ -185,6 +200,28 @@ mod tests {
     fn close_without_worktree_removal_is_not_cleaned() {
         let steps = [CloseStep::DeleteBranch, CloseStep::ClearMarkers];
         assert!(!cleans_claude_leftovers(&state(HarnessId::Claude), &steps));
+    }
+
+    #[test]
+    fn spawned_claude_dir_prefers_config_then_inherited_env_then_home() {
+        let home = Path::new("/h");
+        let env = Some(Path::new("/env/claude"));
+        assert_eq!(
+            spawned_claude_dir(Some(Path::new("~/cfg")), env, home),
+            Path::new("/h/cfg")
+        );
+        assert_eq!(
+            spawned_claude_dir(None, env, home),
+            Path::new("/env/claude")
+        );
+        assert_eq!(
+            spawned_claude_dir(None, Some(Path::new("")), home),
+            Path::new("/h/.claude")
+        );
+        assert_eq!(
+            spawned_claude_dir(None, None, home),
+            Path::new("/h/.claude")
+        );
     }
 
     #[test]
