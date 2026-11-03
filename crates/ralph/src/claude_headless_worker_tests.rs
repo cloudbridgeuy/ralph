@@ -79,6 +79,7 @@ fn run_after(mode: PermissionMode, setup: impl FnOnce(&Shared), lines: &[&str]) 
         results: store.join("interrupt-result"),
         expected_session: None,
         turn_seq: AtomicU64::new(0),
+        usage: None,
     };
     setup(&shared);
     let (tx, rx) = mpsc::channel();
@@ -375,4 +376,79 @@ fn an_interrupt_for_a_worker_without_a_process_writes_gone() {
             .as_deref(),
         Some("gone")
     );
+}
+
+const TRANSCRIPT_LINE: &str = r#"{"type":"assistant","message":{"id":"msg_011CggUooV9a78WEoGFHAqhN","model":"claude-haiku-5-5","stop_reason":"end_turn","usage":{"input_tokens":2,"cache_creation_input_tokens":5149,"cache_read_input_tokens":2810,"output_tokens":1371,"output_tokens_details":{"thinking_tokens":1168},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":5149,"ephemeral_5m_input_tokens":0},"inference_geo":"global","iterations":[{"input_tokens":2,"output_tokens":1371,"cache_read_input_tokens":2810,"cache_creation_input_tokens":5149,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":5149},"type":"message"}],"speed":"standard","fallback_credit":null}}}"#;
+
+fn with_usage(run: &mut Run) -> PathBuf {
+    let store = run.dir.path();
+    let transcript = store.join("s1.jsonl");
+    fs::write(&transcript, TRANSCRIPT_LINE).unwrap();
+    run.shared.usage = Some(HeadlessUsage {
+        target: UsageTarget {
+            worker: "w".into(),
+            seen: store.join("w.usage-seen"),
+            store: Some(store.to_path_buf()),
+            usage: store.join("usage.jsonl"),
+        },
+        session_id: "s1".into(),
+        transcript,
+        lock: Mutex::default(),
+    });
+    store.join("usage.jsonl")
+}
+
+fn rows(usage: &Path) -> Vec<Value> {
+    fs::read_to_string(usage)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+fn a_turn_end_records_the_transcript_as_one_claude_headless_row() {
+    let mut run = run(PermissionMode::Ask, &[]);
+    let usage = with_usage(&mut run);
+    end_turn(&run);
+    end_turn(&run);
+    let rows = rows(&usage);
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row["kind"], "worker");
+    assert_eq!(row["worker_id"], "w");
+    assert_eq!(row["harness"], "claude-headless");
+    assert_eq!(row["model"], "claude-haiku-5-5");
+    assert_eq!(row["session_id"], "s1");
+    assert_eq!(row["input_tokens"], 2);
+    assert_eq!(row["cache_read_input_tokens"], 2810);
+    assert_eq!(row["cache_creation_input_tokens"], 5149);
+    assert_eq!(row["cache_write_1h"], 5149);
+    assert_eq!(row["output_tokens"], 1371);
+    assert_eq!(row["reasoning_tokens"], 1168);
+    assert!(row["cost_usd"].is_null());
+    assert!(row["turn_id"].is_null());
+    assert!(row.get("cost_source").is_none());
+}
+
+#[test]
+fn claude_exit_records_the_rows_not_yet_seen() {
+    let mut run = run(PermissionMode::Ask, &[]);
+    let usage = with_usage(&mut run);
+    let (lines, rx) = mpsc::channel::<String>();
+    drop(lines);
+    run.shared.read(rx, None);
+    assert_eq!(rows(&usage).len(), 1);
+}
+
+#[test]
+fn close_records_usage_before_it_frees_the_owner_file() {
+    let mut run = run(PermissionMode::Ask, &[]);
+    let usage = with_usage(&mut run);
+    // The owner file doubles as the transcript: freeing the owner first
+    // would leave nothing to record, so a row proves the order.
+    let owner = run.shared.usage.as_ref().unwrap().transcript.clone();
+    release_owner(&run.shared, &owner);
+    assert!(!owner.exists());
+    assert_eq!(rows(&usage).len(), 1);
 }

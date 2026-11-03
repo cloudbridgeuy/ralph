@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 const PROJECTS_KEY: &str = "projects";
+const PROJECTS_DIR: &str = "projects";
 const MAX_DIR_NAME_LEN: usize = 200;
 const TRUST_SWAP_ATTEMPTS: usize = 3;
 const TRUST_LOCK_NAME: &str = "claude-json.lock";
@@ -48,6 +49,13 @@ pub fn transcript_dir_name(path: &str) -> String {
         &name[..MAX_DIR_NAME_LEN],
         base36(path_hash(path).unsigned_abs())
     )
+}
+
+pub fn claude_transcript_path(claude_dir: &Path, cwd: &str, session_id: &str) -> PathBuf {
+    claude_dir
+        .join(PROJECTS_DIR)
+        .join(transcript_dir_name(cwd))
+        .join(format!("{session_id}.jsonl"))
 }
 
 fn path_hash(path: &str) -> i32 {
@@ -177,6 +185,14 @@ mod tests {
     fn close_without_worktree_removal_is_not_cleaned() {
         let steps = [CloseStep::DeleteBranch, CloseStep::ClearMarkers];
         assert!(!cleans_claude_leftovers(&state(HarnessId::Claude), &steps));
+    }
+
+    #[test]
+    fn claude_transcript_path_is_the_session_file_in_the_mangled_project_dir() {
+        assert_eq!(
+            claude_transcript_path(Path::new("/h/.claude"), "/w/a.b", "s1"),
+            Path::new("/h/.claude/projects/-w-a-b/s1.jsonl")
+        );
     }
 
     #[test]
