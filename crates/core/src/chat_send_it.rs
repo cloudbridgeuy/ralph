@@ -367,6 +367,9 @@ pub enum StopReason {
     TurnCap,
     CostCap,
     Repeated,
+    Unmet { step: usize },
+    WorkerFlagged,
+    JudgeRounds { step: usize },
 }
 
 impl StopReason {
@@ -375,6 +378,11 @@ impl StopReason {
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Repeated => "the same reply came up again".to_string(),
+            StopReason::Unmet { step } => format!("step {step} missed its exit criterion"),
+            StopReason::WorkerFlagged => "a worker asked a question or is blocked".to_string(),
+            StopReason::JudgeRounds { step } => {
+                format!("step {step} was still not met after the last judge round")
+            }
         };
         format!("send-it off: {why}. {RESUME_HINT}")
     }
@@ -436,11 +444,145 @@ pub fn decide(run: &Run, limits: &Limits, facts: &Facts) -> Decision {
     }
 }
 
+fn flagged(report: &Report) -> bool {
+    FLAGGED_STATUSES.contains(&report.status.as_str())
+}
+
 pub fn worker_flagged(unread: &[Report], drained: &[Report]) -> bool {
-    unread
+    unread.iter().chain(drained).any(flagged)
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Progress {
+    pub step: usize,
+    pub judge_rounds: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Event<'a> {
+    Start,
+    TurnEnded(&'a Run),
+    Report(&'a Report),
+    Exited(i32),
+    Verdict(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Next {
+    Send(String),
+    Hold(String),
+    Watch(String),
+    Check(String),
+    Judge,
+    Wait,
+    Stop(StopReason),
+    Done,
+}
+
+fn granted_limits(plan: &RunPlan) -> Limits {
+    plan.grants
         .iter()
-        .chain(drained)
-        .any(|report| FLAGGED_STATUSES.contains(&report.status.as_str()))
+        .fold(plan.limits, |limits, grant| match grant {
+            Grant::TurnCap { turns } => Limits {
+                max_turns: *turns,
+                ..limits
+            },
+            Grant::CostCap { usd } => Limits {
+                max_usd: *usd,
+                ..limits
+            },
+        })
+}
+
+fn step_line(plan: &RunPlan, index: usize, step: &Step) -> String {
+    format!(
+        "[send-it {}/{}] {} · exit: {}",
+        index + 1,
+        plan.steps.len(),
+        step.task,
+        step.criterion.label()
+    )
+}
+
+fn wait_on(criterion: &Criterion) -> Next {
+    match criterion {
+        Criterion::WorkerDone { worker } => Next::Hold(worker.clone()),
+        Criterion::WatchPasses { command } => Next::Watch(command.clone()),
+        Criterion::CheckPasses { command } => Next::Check(command.clone()),
+        Criterion::Judge { .. } => Next::Judge,
+    }
+}
+
+fn step_met(plan: &RunPlan, progress: Progress) -> (Progress, Next) {
+    let index = progress.step + 1;
+    match plan.steps.get(index) {
+        Some(step) => (
+            Progress {
+                step: index,
+                judge_rounds: 0,
+            },
+            Next::Send(step_line(plan, index, step)),
+        ),
+        None => (progress, Next::Done),
+    }
+}
+
+pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, Next) {
+    let Some(step) = plan.steps.get(progress.step) else {
+        return (progress, Next::Done);
+    };
+    let number = progress.step + 1;
+    let unmet = (progress, Next::Stop(StopReason::Unmet { step: number }));
+    match (event, &step.criterion) {
+        (Event::Start, _) => (progress, Next::Send(step_line(plan, progress.step, step))),
+        (Event::TurnEnded(run), criterion) => {
+            let limits = granted_limits(plan);
+            let next = if run.turns >= limits.max_turns {
+                Next::Stop(StopReason::TurnCap)
+            } else if run.spent_usd >= limits.max_usd {
+                Next::Stop(StopReason::CostCap)
+            } else {
+                wait_on(criterion)
+            };
+            (progress, next)
+        }
+        (Event::Report(report), _) if flagged(report) => {
+            (progress, Next::Stop(StopReason::WorkerFlagged))
+        }
+        (Event::Report(report), Criterion::WorkerDone { worker }) if report.worker == *worker => {
+            if report.status == "done" {
+                step_met(plan, progress)
+            } else {
+                unmet
+            }
+        }
+        (Event::Exited(code), Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. }) => {
+            if code == 0 {
+                step_met(plan, progress)
+            } else {
+                unmet
+            }
+        }
+        (Event::Verdict(true), Criterion::Judge { .. }) => step_met(plan, progress),
+        (Event::Verdict(false), Criterion::Judge { .. }) => {
+            let judge_rounds = progress.judge_rounds + 1;
+            if judge_rounds >= plan.judge_rounds {
+                (
+                    progress,
+                    Next::Stop(StopReason::JudgeRounds { step: number }),
+                )
+            } else {
+                (
+                    Progress {
+                        judge_rounds,
+                        ..progress
+                    },
+                    Next::Send(step_line(plan, progress.step, step)),
+                )
+            }
+        }
+        _ => (progress, Next::Wait),
+    }
 }
 
 pub fn remaining_seconds(elapsed_ms: u64, total_seconds: u64) -> u64 {

@@ -546,3 +546,161 @@ fn a_restatement_without_grants_or_actions_says_so() {
     assert!(text.contains("\nAllowed: none\n"), "{text}");
     assert!(text.ends_with("You pre-approve:\n  - nothing"), "{text}");
 }
+
+fn at(step: usize) -> Progress {
+    Progress {
+        step,
+        judge_rounds: 0,
+    }
+}
+
+fn worker_report(worker: &str, status: &str) -> Report {
+    Report {
+        worker: worker.to_string(),
+        status: status.to_string(),
+        ..report(status)
+    }
+}
+
+fn spent(turns: u32, spent_usd: f64) -> Run {
+    Run {
+        turns,
+        spent_usd,
+        ..Run::default()
+    }
+}
+
+const STEP_1: &str = "[send-it 1/4] collect evidence · exit: worker E1 reports done";
+const STEP_4: &str = "[send-it 4/4] address review · exit: judged: are all findings resolved?";
+
+#[test]
+fn start_sends_the_first_step_with_its_criterion() {
+    assert_eq!(
+        advance(&plan(), Progress::default(), Event::Start),
+        (at(0), Next::Send(STEP_1.to_string()))
+    );
+}
+
+#[test]
+fn a_turn_end_waits_on_the_step_criterion() {
+    let run = spent(1, 0.5);
+    for (step, next) in [
+        (0, Next::Hold("E1".to_string())),
+        (1, Next::Watch("gh pr checks --watch".to_string())),
+        (2, Next::Check("cargo xtask lint".to_string())),
+        (3, Next::Judge),
+    ] {
+        assert_eq!(
+            advance(&plan(), at(step), Event::TurnEnded(&run)),
+            (at(step), next)
+        );
+    }
+}
+
+#[test]
+fn caps_stop_at_a_turn_end_and_grants_lift_them() {
+    let plan = plan();
+    for (run, next) in [
+        (spent(3, 0.5), Next::Hold("E1".to_string())),
+        (spent(30, 0.5), Next::Stop(StopReason::TurnCap)),
+        (spent(1, 4.0), Next::Stop(StopReason::CostCap)),
+    ] {
+        assert_eq!(advance(&plan, at(0), Event::TurnEnded(&run)).1, next);
+    }
+    let mut granted = plan.clone();
+    granted.grants = vec![Grant::CostCap { usd: 10.0 }];
+    assert_eq!(
+        advance(&granted, at(0), Event::TurnEnded(&spent(1, 4.0))).1,
+        Next::Hold("E1".to_string())
+    );
+    assert_eq!(
+        advance(&granted, at(0), Event::TurnEnded(&spent(3, 1.0))).1,
+        Next::Stop(StopReason::TurnCap)
+    );
+}
+
+#[test]
+fn reports_move_on_wait_or_stop() {
+    let plan = plan();
+    let line_2 = "[send-it 2/4] wait for CI · exit: watch `gh pr checks --watch` exits 0";
+    for (report, expected) in [
+        (
+            worker_report("E1", "done"),
+            (at(1), Next::Send(line_2.to_string())),
+        ),
+        (worker_report("X9", "done"), (at(0), Next::Wait)),
+        (
+            worker_report("X9", "question"),
+            (at(0), Next::Stop(StopReason::WorkerFlagged)),
+        ),
+        (
+            worker_report("E1", "blocked"),
+            (at(0), Next::Stop(StopReason::WorkerFlagged)),
+        ),
+        (
+            worker_report("E1", "exited"),
+            (at(0), Next::Stop(StopReason::Unmet { step: 1 })),
+        ),
+    ] {
+        assert_eq!(advance(&plan, at(0), Event::Report(&report)), expected);
+    }
+}
+
+#[test]
+fn exit_codes_settle_watch_and_check_steps_only() {
+    let plan = plan();
+    let line_3 = "[send-it 3/4] run the checks · exit: `cargo xtask lint` exits 0";
+    assert_eq!(
+        advance(&plan, at(1), Event::Exited(0)),
+        (at(2), Next::Send(line_3.to_string()))
+    );
+    assert_eq!(
+        advance(&plan, at(2), Event::Exited(0)),
+        (at(3), Next::Send(STEP_4.to_string()))
+    );
+    assert_eq!(
+        advance(&plan, at(2), Event::Exited(1)),
+        (at(2), Next::Stop(StopReason::Unmet { step: 3 }))
+    );
+    assert_eq!(advance(&plan, at(0), Event::Exited(0)), (at(0), Next::Wait));
+}
+
+#[test]
+fn verdicts_finish_retry_then_stop_after_the_judge_rounds() {
+    let plan = plan();
+    assert_eq!(
+        advance(&plan, at(3), Event::Verdict(true)),
+        (at(3), Next::Done)
+    );
+    let retried = Progress {
+        step: 3,
+        judge_rounds: 1,
+    };
+    assert_eq!(
+        advance(&plan, at(3), Event::Verdict(false)),
+        (retried, Next::Send(STEP_4.to_string()))
+    );
+    assert_eq!(
+        advance(&plan, retried, Event::Verdict(false)),
+        (retried, Next::Stop(StopReason::JudgeRounds { step: 4 }))
+    );
+    assert_eq!(
+        advance(&plan, at(0), Event::Verdict(true)),
+        (at(0), Next::Wait)
+    );
+}
+
+#[test]
+fn new_stop_notices_name_the_step() {
+    let run = Run::default();
+    assert_eq!(
+        StopReason::Unmet { step: 2 }.notice(&run),
+        "send-it off: step 2 missed its exit criterion. Turn it on again with /send-it."
+    );
+    assert!(StopReason::WorkerFlagged
+        .notice(&run)
+        .contains("a worker asked a question"));
+    assert!(StopReason::JudgeRounds { step: 4 }
+        .notice(&run)
+        .contains("step 4 was still not met"));
+}
