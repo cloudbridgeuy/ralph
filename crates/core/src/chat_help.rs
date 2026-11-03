@@ -176,7 +176,7 @@ impl Command {
                 ),
                 (
                     "/send-it go",
-                    "approve the plan whose hash is on screen; counts only when typed at the prompt; starts no turn",
+                    "approve the plan whose hash is on screen and run it unattended; counts only when typed at the prompt; the run stops at a cap, a failure, a decision for you, or a plan change",
                 ),
                 (
                     "/send-it off",

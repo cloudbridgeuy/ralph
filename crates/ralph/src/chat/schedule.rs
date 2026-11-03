@@ -121,7 +121,7 @@ pub(super) fn fire_due(store: &ScheduleStore, watches: &Watches, inbox: &Inbox) 
             continue;
         };
         match watches.start(spec) {
-            Ok(()) => warn_if_err(
+            Ok(_) => warn_if_err(
                 store.save(&Task {
                     status: TaskStatus::Running,
                     ..task.clone()

@@ -677,9 +677,19 @@ pub fn start_run(file: &RunFile) -> Option<(Driving, Next)> {
     if !file.is_approved() {
         return None;
     }
-    let (progress, next) = advance(&file.plan, Progress::default(), Event::Start);
+    let hash = plan_hash(&file.plan);
+    let (progress, next) = match advance(&file.plan, Progress::default(), Event::Start) {
+        (progress, Next::Send(line)) => (
+            progress,
+            Next::Send(format!(
+                "send-it run {hash} is approved. Work the current step only, and take only the allowed actions; ralph checks each exit criterion and sends the next step.\n\n{}\n\n{line}",
+                render_run(&file.plan)
+            )),
+        ),
+        started => started,
+    };
     let driving = Driving {
-        hash: plan_hash(&file.plan),
+        hash,
         progress,
         run: Run::default(),
         awaiting: Awaiting::Turn,

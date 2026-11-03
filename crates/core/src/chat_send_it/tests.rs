@@ -638,13 +638,19 @@ fn only_an_approved_file_starts_a_run_at_step_one() {
         approved: None,
     };
     assert_eq!(start_run(&unapproved), None);
-    assert_eq!(
-        start_run(&approved(plan())),
-        Some((
-            driving(0, Awaiting::Turn, Run::default()),
-            Next::Send(STEP_1.to_string())
-        ))
+    let (state, next) = start_run(&approved(plan())).unwrap();
+    assert_eq!(state, driving(0, Awaiting::Turn, Run::default()));
+    let Next::Send(brief) = next else {
+        panic!("{next:?}")
+    };
+    let hash = plan_hash(&plan());
+    assert!(
+        brief.starts_with(&format!("send-it run {hash} is approved.")),
+        "{brief}"
     );
+    assert!(brief.contains(&render_run(&plan())), "{brief}");
+    assert!(brief.contains("only the allowed actions"), "{brief}");
+    assert!(brief.ends_with(STEP_1), "{brief}");
 }
 
 #[test]

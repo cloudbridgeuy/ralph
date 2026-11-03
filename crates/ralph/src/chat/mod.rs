@@ -57,7 +57,7 @@ use crate::chat::queue::{
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
-use crate::chat::send_it::SendIt;
+use crate::chat::send_it::{took_over, Active, SendIt};
 use crate::chat::skills::{
     env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
@@ -100,7 +100,7 @@ use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
-use ralph_core::chat_send_it::{propose_prompt, usage as send_it_usage, SendItCommand};
+use ralph_core::chat_send_it::{propose_prompt, usage as send_it_usage, Ended, SendItCommand};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
@@ -369,6 +369,8 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         suggestions: suggestions.clone(),
         last_turn_end: Arc::clone(&last_turn_end),
         identity: Arc::default(),
+        last_cost_usd: Mutex::new(None),
+        last_reply: Mutex::new(None),
     };
     let snapshots = TurnSnapshots::open(
         snapshots_enabled(Some(config.changes.enabled)),
@@ -612,6 +614,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
     let mut shown_plan: Option<String> = None;
+    let mut sending: Option<Active> = None;
     let mut offered: Option<(String, u64)> = None;
     let mut carried: Vec<String> = Vec::new();
     let show_cells = |shown: &str| {
@@ -659,6 +662,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             break;
         };
         let mut queue = Queue::default();
+        let mut drained = Vec::new();
         let (outcome, draft) = match route {
             Route::Ignore => continue,
             Route::Shell(line) => {
@@ -708,10 +712,13 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                         }
                         let sent = prepared.sent;
                         monitor.set_phase(Phase::Turn);
+                        let trigger = if sending.is_some() {
+                            Trigger::SendIt
+                        } else {
+                            Trigger::User
+                        };
                         let (result, queued) = snapshots.around(|| {
-                            keys.during(|| {
-                                turn.run(Trigger::User, std::slice::from_ref(&sent), &sent)
-                            })
+                            keys.during(|| turn.run(trigger, std::slice::from_ref(&sent), &sent))
                         });
                         queue = queued;
                         result?
@@ -732,6 +739,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     keys.during(|| turn.run(Trigger::Worker, &unread.logged, &unread.message))
                 });
                 queue = queued;
+                drained = reports;
                 (result?, None)
             }
             Route::Hold(filter) => {
@@ -743,7 +751,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                     Held::Item(position) => {
                         pending = Some(Route::ReadInbox(Selection::At(position)));
                     }
-                    Held::Left => monitor.set_phase(Phase::Prompt),
+                    Held::Left => {
+                        monitor.set_phase(Phase::Prompt);
+                        if let Some(active) = sending.take() {
+                            took_over(&active, &monitor);
+                        }
+                    }
                     Held::Quit => break,
                 }
                 continue;
@@ -771,7 +784,12 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             Route::SendIt(SendItCommand::Go) => {
-                println!("{}", send_it.go(shown_plan.as_deref(), typed_at_prompt));
+                let (text, started) = send_it.go(shown_plan.as_deref(), typed_at_prompt);
+                println!("{text}");
+                if let Some(started) = started {
+                    let driven = send_it.dispatch(started, &monitor);
+                    (sending, pending) = (driven.active, driven.route);
+                }
                 continue;
             }
             Route::SendIt(SendItCommand::Off) => {
@@ -809,6 +827,27 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         let asked = approve_proposed(&schedule_store, watch_timeout);
+        if let Some(active) = sending.take() {
+            let unread = monitor.inbox.peek().unwrap_or_default();
+            let reply = turn.take_reply().unwrap_or_default();
+            let ended = Ended {
+                file: None,
+                replied: outcome == TurnOutcome::Replied,
+                asked,
+                typed: queue.held || !queue.entries.is_empty() || !queue.typed.is_empty(),
+                cost_usd: turn.take_cost().unwrap_or_default(),
+                reply: &reply,
+                drained: &drained,
+                unread: &unread,
+                watched: None,
+            };
+            let driven = send_it.dispatch(send_it.tick(&active, ended), &monitor);
+            sending = driven.active;
+            if driven.route.is_some() {
+                pending = driven.route;
+                continue;
+            }
+        }
         let suggestion = suggestions.take();
         let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {
