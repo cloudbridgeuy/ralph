@@ -1,5 +1,4 @@
 use super::*;
-use crate::chat_status::WorkerState;
 use crate::inbox_alert::UnknownFocus;
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::Report;
@@ -11,130 +10,137 @@ fn limits() -> Limits {
     }
 }
 
-fn facts(text: &str, step: Option<Step>) -> Facts<'_> {
+fn facts(text: &str) -> Facts<'_> {
     Facts {
         text,
-        step,
         worker_flagged: false,
         schedule_pending: false,
     }
 }
 
-fn decide_with(run: &Run, text: &str, step: Option<Step>) -> Decision {
-    decide(run, &limits(), &facts(text, step))
+fn decide_with(run: &Run, text: &str) -> Decision {
+    decide(run, &limits(), &facts(text))
+}
+
+const FIX_ROUND: &str = "go 1172: full fix, blocked_alert follows the Rex gate, failing test first, new commit, four checks, reinstall";
+
+#[test]
+fn a_real_fix_round_counts_down_with_no_step_tag() {
+    let run = Run::default();
+    assert_eq!(decide_with(&run, FIX_ROUND), Decision::Countdown);
 }
 
 #[test]
-fn step_names_round_trip() {
-    for step in Step::ALL {
-        assert_eq!(Step::parse(step.as_str()), Some(step));
-    }
-    assert_eq!(Step::parse("nope"), None);
-    assert_eq!(Step::FixRound.as_str(), "fix_round");
-    assert_eq!(Step::DoneCleanup.as_str(), "done_cleanup");
-}
-
-#[test]
-fn vetoes_push_and_merge_words() {
-    for text in [
-        "pushed",
-        "PRs",
-        "PR",
-        "force-push it",
-        "open a pull request",
-        "Abandon GUZ-1",
-        "merge it",
-        "pull requests are ready",
+fn real_decision_replies_wait_on_the_person() {
+    let run = Run::default();
+    for (text, word) in [
+        ("go merge 1172", "merge"),
+        (
+            "go: reset local main to origin/main dropping our 27b9664, keep worker/GUZ-1176, run the checks, reinstall, rerun the case B repro",
+            "reset",
+        ),
+        (
+            "go: mark 1175 Done after CI, close the worker, delete /tmp/guz1175",
+            "mark",
+        ),
+        ("go: close the 1202 worker", "close"),
+        ("I quit the A4 test chat; delete the rest", "i"),
+        (
+            "go 792 live check 1-6 in tmux on /tmp/guz792, Haiku for the test chat (stop if first call isn't Haiku), ≤6 turns, Ctrl-C via send-keys, stop on first FAIL, keep raw logs",
+            "haiku",
+        ),
+        ("go 1191 plan-first", "plan"),
+        ("open a pull request", "pull request"),
+        ("ok, LGTM!", "lgtm"),
+        ("Done", "done"),
     ] {
-        assert!(vetoed_text(text), "{text}");
+        assert_eq!(
+            decide_with(&run, text),
+            Decision::Manual(ManualReason::Decision(word)),
+            "{text}"
+        );
     }
 }
 
 #[test]
-fn vetoes_approval_words() {
-    for text in [
-        "approve",
-        "Approved",
-        "approves it",
-        "approving now",
-        "needs approval",
-        "LGTM",
-        "ok, lgtm!",
-    ] {
-        assert!(vetoed_text(text), "{text}");
-    }
-}
-
-#[test]
-fn approval_lookalikes_are_not_vetoed() {
-    for text in ["approvals", "disapprove", "approx", "lgtmx"] {
-        assert!(!vetoed_text(text), "{text}");
-    }
-}
-
-#[test]
-fn allows_lookalike_words() {
-    for text in [
-        "pushover",
-        "emerge",
-        "prefix the line",
-        "submerge",
-        "pull the logs",
-    ] {
-        assert!(!vetoed_text(text), "{text}");
-    }
-}
-
-#[test]
-fn veto_beats_a_routine_step() {
-    let run = Run::new("GUZ-1");
+fn a_reply_with_no_routine_action_waits_on_the_person() {
+    let run = Run::default();
     assert_eq!(
         decide_with(
             &run,
-            "go fast-forward main to abc and push",
-            Some(Step::FixRound)
-        ),
-        Decision::Manual(ManualReason::VetoWord)
+            "go 1166 live check steps 1-5 on /tmp/guz1166 only, restore the chmod, stop on first FAIL, keep raw logs"),
+        Decision::Manual(ManualReason::NotRoutine)
     );
 }
 
 #[test]
-fn fast_forward_alone_is_not_vetoed() {
-    assert!(!vetoed_text("fast-forward main"));
+fn routine_words_count_as_whole_tokens_only() {
+    for text in [
+        "run the checks",
+        "fix the typo",
+        "rebase on main",
+        "retry the tests",
+        "cargo fmt and clippy",
+        "lint it",
+        "reinstall",
+    ] {
+        assert_eq!(text_reason(text), None, "{text}");
+    }
+    for text in [
+        "prefix the line",
+        "checksum it",
+        "contest",
+        "pushover",
+        "emerge",
+    ] {
+        assert_eq!(text_reason(text), Some(ManualReason::NotRoutine), "{text}");
+    }
+}
+
+#[test]
+fn decision_words_match_in_any_case_and_form() {
+    for (text, word) in [
+        ("fix it and PUSHED", "pushed"),
+        ("fix, then PRs", "prs"),
+        ("fix it, approving now", "approving"),
+        ("fix it, needs approval", "approval"),
+        ("fix it then force-push", "force"),
+        ("fix it, then delete /tmp/guz1175", "delete"),
+        ("fix it, pull requests are ready", "pull request"),
+    ] {
+        assert_eq!(
+            text_reason(text),
+            Some(ManualReason::Decision(word)),
+            "{text}"
+        );
+    }
+    assert_eq!(text_reason("fix the approvals list"), None);
+    assert_eq!(text_reason("fix it and pull the logs"), None);
 }
 
 #[test]
 fn slash_text_is_manual() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     assert_eq!(
-        decide_with(&run, "/hold w1", Some(Step::FixRound)),
+        decide_with(&run, "/hold w1"),
         Decision::Manual(ManualReason::SlashCommand)
     );
     assert_eq!(
-        decide_with(&run, "/hold w1 w2", Some(Step::FixRound)),
+        decide_with(&run, "/hold w1 w2"),
         Decision::Manual(ManualReason::SlashCommand)
-    );
-}
-
-#[test]
-fn missing_step_is_manual() {
-    let run = Run::new("GUZ-1");
-    assert_eq!(
-        decide_with(&run, "go on", None),
-        Decision::Manual(ManualReason::NoStep)
     );
 }
 
 #[test]
 fn worker_flag_and_schedule_are_manual() {
-    let run = Run::new("GUZ-1");
-    let mut flagged = facts("go on", Some(Step::Checks));
+    let run = Run::default();
+    let mut flagged = facts(FIX_ROUND);
     flagged.worker_flagged = true;
     assert_eq!(
         decide(&run, &limits(), &flagged),
         Decision::Manual(ManualReason::WorkerFlagged)
     );
-    let mut pending = facts("go on", Some(Step::Checks));
+    let mut pending = facts(FIX_ROUND);
     pending.schedule_pending = true;
     assert_eq!(
         decide(&run, &limits(), &pending),
@@ -144,87 +150,91 @@ fn worker_flag_and_schedule_are_manual() {
 
 #[test]
 fn caps_stop_the_run() {
-    let mut run = Run::new("GUZ-1");
+    let mut run = Run::default();
     for index in 0..3 {
-        run.record(Step::FixRound, &format!("go {index}"), None);
+        run.record(&format!("go {index}"), None);
     }
     assert_eq!(
-        decide_with(&run, "go on", Some(Step::FixRound)),
+        decide_with(&run, "fix it"),
         Decision::Stop(StopReason::TurnCap)
     );
-    let mut spent = Run::new("GUZ-1");
-    spent.record(Step::FixRound, "go", Some(1.0));
+    let mut spent = Run::default();
+    spent.record("go", Some(1.0));
     assert_eq!(
-        decide_with(&spent, "go on", Some(Step::FixRound)),
+        decide_with(&spent, "fix it"),
         Decision::Stop(StopReason::CostCap)
     );
 }
 
 #[test]
-fn repeat_of_same_step_and_text_stops() {
-    let mut run = Run::new("GUZ-1");
-    run.record(Step::FixRound, "  Run  the checks ", None);
+fn a_repeated_text_stops() {
+    let mut run = Run::default();
+    run.record("  Run  the checks ", None);
     assert_eq!(
-        decide_with(&run, "run the CHECKS", Some(Step::FixRound)),
+        decide_with(&run, "run the CHECKS"),
         Decision::Stop(StopReason::Repeated)
     );
-    assert_eq!(
-        decide_with(&run, "run the checks", Some(Step::Checks)),
-        Decision::Countdown
-    );
+    assert_eq!(decide_with(&run, "run the tests"), Decision::Countdown);
 }
 
 #[test]
 fn clean_fix_round_counts_down() {
-    let run = Run::new("GUZ-1");
+    let run = Run::default();
     assert_eq!(
-        decide_with(&run, "start the next fix round", Some(Step::FixRound)),
+        decide_with(&run, "start the next fix round"),
         Decision::Countdown
     );
 }
 
 #[test]
 fn record_accumulates_and_ignores_missing_cost() {
-    let mut run = Run::new("GUZ-1");
-    run.record(Step::Checks, "Go   ON", Some(0.5));
-    run.record(Step::Reinstall, "again", None);
-    run.record(Step::Reinstall, "more", Some(0.25));
+    let mut run = Run::default();
+    run.record("Go   ON", Some(0.5));
+    run.record("again", None);
+    run.record("more", Some(0.25));
     assert_eq!(run.turns, 3);
     assert!((run.spent_usd - 0.75).abs() < 1e-9);
-    assert_eq!(run.sent[0], (Step::Checks, "go on".to_string()));
+    assert_eq!(run.sent[0], "go on".to_string());
 }
 
 #[test]
-fn notices_point_back_to_the_ticket() {
-    let run = Run::new("GUZ-9");
-    for notice in [
-        ManualReason::NoStep.notice(&run),
-        ManualReason::SlashCommand.notice(&run),
-        ManualReason::VetoWord.notice(&run),
-        ManualReason::WorkerFlagged.notice(&run),
-        ManualReason::SchedulePending.notice(&run),
-        StopReason::TurnCap.notice(&run),
-        StopReason::CostCap.notice(&run),
-        StopReason::Repeated.notice(&run),
+fn a_manual_reply_waits_and_names_why() {
+    for (reason, why) in [
+        (ManualReason::SlashCommand, "a slash command"),
+        (ManualReason::Decision("merge"), "a decision (merge)"),
+        (ManualReason::NotRoutine, "no routine action"),
+        (ManualReason::WorkerFlagged, "a worker question or block"),
+        (ManualReason::SchedulePending, "a pending schedule"),
     ] {
-        assert!(notice.ends_with("/send-it GUZ-9"), "{notice}");
+        assert_eq!(reason.notice(), format!("send-it waits on you: {why}."));
     }
 }
 
 #[test]
-fn send_it_args_parse_to_arm_off_or_status() {
-    assert_eq!(SendIt::parse(""), Some(SendIt::Status));
-    assert_eq!(SendIt::parse("  "), Some(SendIt::Status));
+fn stop_notices_say_how_to_turn_it_on_again() {
+    let run = Run::default();
+    for notice in [
+        StopReason::TurnCap.notice(&run),
+        StopReason::CostCap.notice(&run),
+        StopReason::Repeated.notice(&run),
+    ] {
+        assert!(notice.starts_with("send-it off: "), "{notice}");
+        assert!(
+            notice.ends_with("Turn it on again with /send-it."),
+            "{notice}"
+        );
+    }
+}
+
+#[test]
+fn send_it_args_parse_to_on_or_off() {
+    assert_eq!(SendIt::parse(""), Some(SendIt::On));
+    assert_eq!(SendIt::parse("  "), Some(SendIt::On));
     assert_eq!(SendIt::parse(" off "), Some(SendIt::Off));
-    assert_eq!(
-        SendIt::parse("GUZ-1162"),
-        Some(SendIt::Arm("GUZ-1162".to_string()))
-    );
-    assert_eq!(SendIt::parse("GUZ-1 now"), None);
-    assert_eq!(SendIt::parse("off now"), None);
     assert_eq!(SendIt::parse("OFF"), Some(SendIt::Off));
     assert_eq!(SendIt::parse(" Off "), Some(SendIt::Off));
-    assert_eq!(SendIt::parse("OFF now"), None);
+    assert_eq!(SendIt::parse("GUZ-1162"), None);
+    assert_eq!(SendIt::parse("off now"), None);
 }
 
 fn report(status: &str) -> Report {
@@ -315,13 +325,13 @@ fn limits_for_text() -> Limits {
 }
 
 #[test]
-fn the_status_text_names_ticket_turns_spend_and_caps() {
-    let mut run = Run::new("GUZ-9");
-    run.record(Step::Checks, "run the checks", Some(0.5));
+fn the_status_text_names_turns_spend_and_caps() {
+    let mut run = Run::default();
+    run.record("run the checks", Some(0.5));
     let text = status_text(Some(&run), &limits_for_text(), 10);
     assert_eq!(
         text,
-        "send-it armed for GUZ-9: 1 of 15 turns, $0.50 of $5.00. Countdown: 10s."
+        "send-it on: 1 of 15 turns, $0.50 of $5.00. Countdown: 10s."
     );
 }
 
@@ -329,57 +339,20 @@ fn the_status_text_names_ticket_turns_spend_and_caps() {
 fn the_status_text_when_off_says_so() {
     assert_eq!(
         status_text(None, &limits_for_text(), 10),
-        "send-it is off. Arm it with /send-it <ticket>."
+        "send-it is off. Turn it on with /send-it."
     );
 }
 
 #[test]
-fn the_cancel_and_terminal_notices_end_with_the_resume_hint() {
-    let run = Run::new("GUZ-9");
+fn the_cancel_and_terminal_notices_say_how_to_turn_it_on_again() {
     assert_eq!(
-        cancel_notice(&run),
-        "send-it cancelled by a key press. Resume with /send-it GUZ-9"
+        cancel_notice(),
+        "send-it cancelled by a key press. Turn it on again with /send-it."
     );
-    assert!(no_terminal_notice(&run).ends_with("Resume with /send-it GUZ-9"));
     assert_eq!(
-        closed_notice(&run),
-        "send-it off: worker GUZ-9 is no longer listed."
+        no_terminal_notice(),
+        "send-it off: the countdown needs a terminal. Turn it on again with /send-it."
     );
-}
-
-fn status_with(workers: &[&str]) -> Status {
-    Status {
-        workers: workers
-            .iter()
-            .map(|id| WorkerState {
-                id: (*id).to_string(),
-                state: "idle".to_string(),
-            })
-            .collect(),
-        ..Status::default()
-    }
-}
-
-#[test]
-fn a_ticket_matching_a_hold_target_is_tracked() {
-    assert!(tracks_worker("GUZ-1", &status_with(&["GUZ-1"])));
-    assert!(!tracks_worker("GUZ-2", &status_with(&["GUZ-1"])));
-}
-
-#[test]
-fn ticket_matching_ignores_case() {
-    assert!(tracks_worker("guz-1", &status_with(&["GUZ-1"])));
-    assert!(tracks_worker("GUZ-1", &status_with(&["guz-1"])));
-    assert!(!tracks_worker("guz-2", &status_with(&["GUZ-1"])));
-    assert!(!worker_closed(true, "guz-1", &status_with(&["GUZ-1"])));
-    assert!(worker_closed(true, "guz-1", &status_with(&[])));
-}
-
-#[test]
-fn a_tracked_ticket_closes_when_it_is_no_longer_listed() {
-    assert!(worker_closed(true, "GUZ-1", &status_with(&[])));
-    assert!(!worker_closed(true, "GUZ-1", &status_with(&["GUZ-1"])));
-    assert!(!worker_closed(false, "GUZ-1", &status_with(&[])));
 }
 
 #[test]

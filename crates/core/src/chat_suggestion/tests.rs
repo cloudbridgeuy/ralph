@@ -4,11 +4,7 @@ use crate::inbox::Entry;
 use crate::worker::Report;
 
 fn parse(text: &str) -> Result<String, String> {
-    parse_suggestion(&json!({"text": text})).map(|suggestion| suggestion.text)
-}
-
-fn parse_step(step: Value) -> Result<Suggestion, String> {
-    parse_suggestion(&json!({"text": "go on", "step": step}))
+    parse_suggestion(&json!({"text": text}))
 }
 
 #[test]
@@ -66,7 +62,6 @@ fn tool_schema_names_the_tool_and_requires_text() {
     assert!(description.contains(
         "exactly `/hold [<target> ...]` naming listed targets can start that hold at once"
     ));
-    assert!(description.contains("approval, merge, push, abandon get none"));
 }
 
 fn some(text: &str) -> Option<String> {
@@ -375,50 +370,6 @@ fn no_suggestion_means_nothing() {
 }
 
 #[test]
-fn a_known_step_is_parsed() {
-    let suggestion = parse_step(json!("fix_round")).unwrap();
-    assert_eq!(suggestion.step, Some(Step::FixRound));
-    assert_eq!(suggestion.text, "go on");
-}
-
-#[test]
-fn no_step_or_a_null_step_means_none() {
-    assert_eq!(
-        parse_suggestion(&json!({"text": "go on"})).unwrap().step,
-        None
-    );
-    assert_eq!(parse_step(Value::Null).unwrap().step, None);
-}
-
-#[test]
-fn an_unknown_or_non_string_step_lists_the_allowed_values() {
-    for bad in [json!("push"), json!(3)] {
-        let error = parse_step(bad).unwrap_err();
-        for step in Step::ALL {
-            assert!(error.contains(step.as_str()), "{error}");
-        }
-    }
-}
-
-#[test]
-fn the_schema_offers_the_step_enum_as_optional() {
-    let tool = suggest_reply_tool();
-    assert_eq!(
-        tool["inputSchema"]["properties"]["step"]["enum"],
-        json!([
-            "fix_round",
-            "live_check",
-            "checks",
-            "reinstall",
-            "done_cleanup"
-        ])
-    );
-    assert_eq!(tool["inputSchema"]["required"], json!(["text"]));
-    let description = tool["description"].as_str().unwrap();
-    assert!(description.contains("/send-it"));
-}
-
-#[test]
 fn the_auto_sent_outcome_serializes_as_autosent() {
     assert_eq!(
         serde_json::to_value(Outcome::AutoSent).unwrap(),
@@ -492,4 +443,15 @@ fn an_auto_sent_record_has_the_auto_sent_outcome_and_the_sent_line() {
             "sent": "[send-it] run the checks"
         })
     );
+}
+
+#[test]
+fn the_schema_takes_only_the_text() {
+    let tool = suggest_reply_tool();
+    assert_eq!(
+        tool["inputSchema"]["properties"].as_object().unwrap().len(),
+        1
+    );
+    assert_eq!(tool["inputSchema"]["required"], json!(["text"]));
+    assert!(!tool["description"].as_str().unwrap().contains("step"));
 }

@@ -114,8 +114,12 @@ fn lists_hold_every_variant() {
 #[test]
 fn the_send_it_rows_show_both_forms() {
     let text = help_text(160);
-    assert!(text.contains("/send-it <ticket>"));
     assert!(text.contains("/send-it off"));
+    assert!(!text.contains("/send-it <ticket>"));
+    assert!(!text.contains("suggests /send-it"));
+    let wide = help_text(2_000);
+    assert!(wide.contains("any key during the countdown turns it off"));
+    assert!(!wide.contains("cancels one send"));
 }
 
 #[test]

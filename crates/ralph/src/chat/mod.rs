@@ -55,7 +55,6 @@ use crate::chat::queue::{
 };
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
-use crate::chat::send_it::{Auto, Offer};
 use crate::chat::skills::{
     env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
     write_skill_plugin,
@@ -102,7 +101,7 @@ use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{
-    auto_hold_notice, turn_end, Next, Prefill, Suggestion, SuggestionRecord, TurnEnd,
+    auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
 use ralph_core::chat_thread::{run_id, UsageTail};
 use ralph_core::claude_leftovers::claude_dir;
@@ -586,7 +585,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut pending: Option<Route> = None;
     let mut offered: Option<(String, u64)> = None;
     let mut send_it = send_it::Shell::new(&send_it_settings, color);
-    let mut auto_turn: Option<Auto> = None;
+    let mut auto_turn: Option<String> = None;
     let mut carried: Vec<String> = Vec::new();
     let show_cells = |shown: &str| {
         let ctx = RenderContext::new(&agent_highlighter, color)
@@ -728,7 +727,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
             Route::SendIt(command) => {
-                send_it.command(command, typed_at_prompt, &monitor.status());
+                send_it.command(command, typed_at_prompt);
                 continue;
             }
             local => {
@@ -755,9 +754,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             break;
         }
         let asked = approve_proposed(&schedule_store, watch_timeout);
-        let taken = suggestions.take();
-        let step = taken.as_ref().and_then(|taken| taken.step);
-        let suggestion = taken.map(|taken| taken.text);
+        let suggestion = suggestions.take();
         let typed = std::mem::take(&mut queue.typed);
         let (draft, suggestion) = match decide(outcome, queue) {
             Decision::Send { text, rest } => {
@@ -781,17 +778,17 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
             status: &monitor.status(),
         });
         let offer = match &next {
-            Next::Prefill(Prefill::Suggestion(text)) => Some(Offer { text, step }),
+            Next::Prefill(Prefill::Suggestion(text)) => Some(text.as_str()),
             _ => None,
         };
-        if let Some(auto) = send_it.at_turn_end(offer.as_ref(), asked, &monitor) {
-            let line = auto_line(&auto.text);
+        if let Some(auto) = send_it.at_turn_end(offer, asked, &monitor) {
+            let line = auto_line(&auto);
             warn_if_err(
                 store.append_suggestion(&SuggestionRecord::auto_sent(
                     chrono::Utc::now().to_rfc3339(),
                     &run,
                     turn_number,
-                    &auto.text,
+                    &auto,
                 )),
                 "Failed to record suggestion outcome",
             );
@@ -821,7 +818,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 editor.run_edit_commands(&[EditCommand::InsertString(text.clone())]);
                 if let Prefill::Suggestion(text) = fill {
                     offered = Some((text.clone(), turn_number));
-                    shown.set(Suggestion { text, step: None });
+                    shown.set(text);
                 }
             }
             Next::Nothing => {}
