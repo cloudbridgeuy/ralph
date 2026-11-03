@@ -158,6 +158,21 @@ warning for that version."
         agent: VerifyAgent,
         #[arg(long, help = "Also run the checks that send prompts to the model")]
         live: bool,
+        #[arg(
+            long,
+            hide = true,
+            value_name = "VERSION",
+            requires = "inbox",
+            conflicts_with = "live"
+        )]
+        drift: Option<String>,
+        #[arg(long, hide = true, value_name = "DIR", requires = "drift")]
+        inbox: Option<PathBuf>,
+    },
+    #[command(hide = true)]
+    DriftCheck {
+        #[arg(long, value_name = "DIR")]
+        inbox: PathBuf,
     },
 }
 

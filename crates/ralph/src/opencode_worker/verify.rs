@@ -2,7 +2,7 @@ use super::{
     free_port, open_log, post_prompt, random_password, read_lines, Feed, Server, EVENTS_PATH,
     MESSAGE_LIMIT,
 };
-use crate::subprocess::timed_output;
+use crate::subprocess::{register_group, timed_output};
 use crate::transport::http::HttpSse;
 use crate::worker_verify::{step, version_probe, Budget, Checks};
 use ralph_core::worker::{
@@ -46,6 +46,7 @@ fn launch(dir: &Path) -> Result<Server, String> {
         .process_group(0)
         .spawn()
         .map_err(|error| spawn_failure(program, &error))?;
+    register_group(child.id());
     let mut server = Server {
         child,
         api: HttpSse::new(port, &password),

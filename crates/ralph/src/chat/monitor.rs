@@ -9,6 +9,7 @@ use crate::inbox_alert;
 use crate::schedule_store::ScheduleStore;
 use crate::signal;
 use crate::subprocess::Session;
+use crate::version_drift::DailyTick;
 use crate::warn::{warn, warn_if_err};
 use crate::watch_requests;
 use crate::watches::{locked, Watches};
@@ -31,7 +32,8 @@ use ralph_core::schedule_worker::new_scheduled_reports;
 use ralph_core::worker::{
     activity_path, blocked_path, gone_acknowledged, gone_path, group_alerts, liveness,
     marker_state, ready_path, rearm, reduce, render_gone, sent_path, unreported_path,
-    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, HANDOFF_POLL, READY_DIR,
+    vanished_claude, waiting_path, ActivityMark, HarnessId, Report, Scope, HANDOFF_POLL, INBOX_DIR,
+    READY_DIR,
 };
 use ralph_core::worker_check::{
     check_every_polls, last_reports, plan, reported_since_nudge, CheckAction, WorkerObservation,
@@ -393,9 +395,12 @@ pub(super) fn watch_status(monitor: Arc<Monitor>, repaint: impl Fn() + Send + 's
             .worker_check_secs
             .map(|secs| check_every_polls(secs, POLL));
         let mut tick: u64 = 0;
+        let mut daily = DailyTick::start();
+        let inbox_dir = monitor.store_dir.join(INBOX_DIR);
         loop {
             std::thread::sleep(POLL);
             tick += 1;
+            daily.tick(&inbox_dir);
             watch_requests::start_queued(&monitor.watches, &monitor.inbox, &monitor.store_dir);
             fire_due(&monitor.schedule, &monitor.watches, &monitor.inbox);
             tick_workers(&monitor);

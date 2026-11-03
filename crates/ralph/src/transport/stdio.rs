@@ -1,4 +1,5 @@
 use crate::cursor_owner::{signal_group, TERM_GRACE, TERM_POLL};
+use crate::subprocess::{register_group, unregister_group};
 use std::io;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
@@ -14,6 +15,7 @@ pub(crate) fn spawn_piped(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
+    register_group(child.id());
     match child
         .stdin
         .take()
@@ -38,6 +40,7 @@ pub(crate) fn stop_groups(groups: &[u32], grace: Duration, mut alive: impl FnMut
     }
     for group in groups {
         signal_group(*group, "KILL");
+        unregister_group(*group);
     }
 }
 

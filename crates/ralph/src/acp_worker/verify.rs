@@ -1,11 +1,9 @@
 use super::*;
-use crate::subprocess::timed_output;
-use crate::worker_verify::{step, version_probe, Checks};
+use crate::worker_verify::{step, Checks};
 use ralph_core::worker::{
     cancel_check, cursor_verify_leftover, cursor_verify_project, permission_check, probed_version,
     prompt_check, BlockedContent, CheckResult, PermissionSetup, TurnSummary, VersionProbe,
     ACP_PROTOCOL_VERSION, AUTH_REQUIRED_CODE, CURSOR_HOOKS_FILE, CURSOR_VERIFY_HOOKS,
-    VERSION_PROBE_LIMIT,
 };
 use std::sync::atomic::AtomicUsize;
 
@@ -209,10 +207,7 @@ async fn run_checks(
 }
 
 pub(super) fn agent_version_probe(agent: &AcpAgent) -> VersionProbe {
-    version_probe(timed_output(
-        Command::new(agent.command).arg("--version"),
-        VERSION_PROBE_LIMIT,
-    ))
+    crate::version_drift::probe(agent.command)
 }
 
 fn watchdog(group: u32, deadline: Duration) -> mpsc::Sender<()> {

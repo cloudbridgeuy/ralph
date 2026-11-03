@@ -5,9 +5,8 @@ use crate::cursor_owner::{
     now_secs, report_start_warning, sweep_owner, take_answer, write_file, write_file_atomic,
     write_interrupt_result, write_owner_record,
 };
-use crate::subprocess::{exited_unreaped, signal_group};
+use crate::subprocess::{exited_unreaped, signal_group, unregister_group};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
-use crate::verified_agents;
 use crate::warn::warn;
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
@@ -30,12 +29,12 @@ use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auth_method, auto_allow_option, cancels_turn, capabilities,
     check_protocol, decide, decode_update, describe, encode, gone_path, permission_content,
-    probe_warning, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
+    probed_version, prompt_failure_report, ready_path, reduce, request_stale, resume_decision,
     session_error, session_saved, stop_problem, sweeps_permissions, task_prompt, turn_outcome,
     AcpAgent, AcpCall, BlockedContent, Capabilities, HandoffFiles, HarnessId, HeadlessEffect,
     HeadlessState, HeadlessWorker, Inbound, Marker, PermissionAnswer, PermissionMode, PromptQueue,
     Resume, Scope, SessionRecord, SpawnRequest, Step, TurnEnd, TurnOutcome, WorkerCommand,
-    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR,
+    WorkerEvent, WorkerMarkers, CURSOR_AGENT, CURSOR_ANSWER_DIR, CURSOR_CLOSE_DIR, CURSOR_GATE,
     CURSOR_INTERRUPT_DIR, CURSOR_INTERRUPT_RESULT_DIR, CURSOR_OWNER_DIR, CURSOR_PROMPT_DIR,
     CURSOR_SESSION_DIR, CURSOR_SPAWN_DIR, REPORT_REMINDER,
 };
@@ -214,7 +213,7 @@ impl AcpWorker {
             starting,
             warning: warning_file,
         } = slot;
-        if let Some(warning) = agent_version_warning(&agent) {
+        if let Some(warning) = agent_version_warning(&agent, &request.inbox) {
             report_start_warning(warning, warning_file);
         }
         let mut command = Command::new(agent.command);
@@ -472,6 +471,7 @@ impl AcpWorker {
         signal_group(&self.child);
         if let Ok(Some(status)) = self.child.try_wait() {
             self.exit_seen = true;
+            unregister_group(self.child.id());
             if !self.closing.load(Ordering::SeqCst) {
                 self.permissions
                     .heartbeat
@@ -553,8 +553,13 @@ fn exit_reason(status: ExitStatus) -> String {
     format!("{} acp exited ({status})", CURSOR_AGENT.command)
 }
 
-fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
-    probe_warning(agent, &agent_version_probe(agent), &verified_agents::load())
+fn agent_version_warning(agent: &AcpAgent, inbox: &Path) -> Option<String> {
+    let probe = agent_version_probe(agent);
+    crate::version_drift::soft_warning(
+        &CURSOR_GATE,
+        probed_version(agent, &probe).map(str::to_string),
+        inbox,
+    )
 }
 
 async fn initialize(

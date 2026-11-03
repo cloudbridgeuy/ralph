@@ -13,7 +13,9 @@ mod claude_launch;
 mod claude_verify;
 mod codex;
 mod cursor_model;
+mod daily_drift;
 mod delivery;
+mod drift_run;
 mod files;
 mod guard;
 mod headless;
@@ -38,6 +40,7 @@ mod transcript_usage;
 mod turn_activity;
 mod turn_gate;
 mod verify;
+mod version_gate;
 mod worktree;
 pub use acp::*;
 pub use claude_headless::*;
@@ -50,7 +53,9 @@ pub use cursor_model::{
     restore_json_keys, select_cursor_model, AdvertisedCursorModel, CursorDefaultCrash,
     CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
 };
+pub use daily_drift::*;
 pub use delivery::*;
+pub use drift_run::*;
 pub use files::*;
 pub use guard::*;
 pub use headless::*;
@@ -75,6 +80,7 @@ pub use transcript_usage::*;
 pub use turn_activity::*;
 pub use turn_gate::*;
 pub use verify::*;
+pub use version_gate::*;
 pub use worktree::*;
 
 pub const SERVER_NAME: &str = "ralph-worker";

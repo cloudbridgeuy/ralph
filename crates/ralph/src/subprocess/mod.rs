@@ -13,6 +13,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 
 mod gate;
+mod groups;
 mod session;
 mod spinner;
 mod timed;
@@ -21,6 +22,7 @@ mod types;
 
 // Re-export public API
 pub use gate::OutputGate;
+pub(crate) use groups::{kill_registered_groups, register_group, unregister_group, Registered};
 pub use session::Session;
 pub use spinner::{
     invoke_subprocess_silent, invoke_subprocess_with_spinner_config, SpinnerSubprocessConfig,

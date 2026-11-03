@@ -51,6 +51,7 @@ pub mod subprocess;
 mod transport;
 mod verified_agents;
 mod version;
+mod version_drift;
 pub mod warn;
 mod watch_requests;
 mod watch_store;
@@ -70,6 +71,7 @@ use cli::{
 use invoke::InvocationConfig;
 use std::process::ExitCode;
 use stream_processor::VerboseToolsConfig;
+use version_drift::DriftRun;
 use warn::{warn, warn_if_err};
 
 fn main() -> ExitCode {
@@ -115,7 +117,22 @@ fn main() -> ExitCode {
 
 fn execute_worker(args: WorkerArgs) -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
-        WorkerCommand::Verify { agent, live } => worker_verify::run(agent, live),
+        WorkerCommand::Verify {
+            agent,
+            live,
+            drift,
+            inbox,
+        } => worker_verify::run(
+            agent,
+            live,
+            drift
+                .zip(inbox)
+                .map(|(version, inbox)| DriftRun::new(version, inbox)),
+        ),
+        WorkerCommand::DriftCheck { inbox } => {
+            version_drift::run_daily(&inbox);
+            Ok(())
+        }
     }
 }
 

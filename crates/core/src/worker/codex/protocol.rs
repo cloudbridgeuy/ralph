@@ -1,4 +1,6 @@
-use crate::worker::{verify_hint, Selection, SessionRecord, VerifiedAgents, SERVER_NAME};
+use crate::worker::{
+    check_agent_version, Selection, SessionRecord, VerifiedAgents, VersionGate, SERVER_NAME,
+};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -119,28 +121,6 @@ pub fn decode_version(initialize: &Value) -> Option<String> {
     Some(version.to_string())
 }
 
-fn parse_version(version: &str) -> Option<(u64, u64)> {
-    let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    parts
-        .next()?
-        .split('-')
-        .next()?
-        .parse::<u64>()
-        .ok()
-        .map(|_| (major, minor))
-}
-
-pub struct VersionGate {
-    pub agent: &'static str,
-    pub package: &'static str,
-    pub min: (u64, u64),
-    pub probed: &'static str,
-    pub protocol: &'static str,
-    pub verifiable: bool,
-}
-
 const CODEX_GATE: VersionGate = VersionGate {
     agent: "codex",
     package: "codex-cli",
@@ -152,41 +132,6 @@ const CODEX_GATE: VersionGate = VersionGate {
 
 pub fn check_version(found: &str, verified: &VerifiedAgents) -> Result<Option<String>, String> {
     check_agent_version(&CODEX_GATE, found, verified)
-}
-
-pub fn check_agent_version(
-    gate: &VersionGate,
-    found: &str,
-    verified: &VerifiedAgents,
-) -> Result<Option<String>, String> {
-    let VersionGate {
-        agent,
-        package,
-        min,
-        probed,
-        protocol,
-        verifiable,
-    } = gate;
-    let parsed = parse_version(found)
-        .ok_or_else(|| format!("could not read the {agent} version from `{found}`"))?;
-    let probed_pair = parse_version(probed).unwrap_or(*min);
-    match (parsed.cmp(min), parsed.cmp(&probed_pair)) {
-        (std::cmp::Ordering::Less, _) => Err(format!(
-            "{agent} {found} is too old; needs {package} >= {}.{} (probed {probed})",
-            min.0, min.1
-        )),
-        (_, std::cmp::Ordering::Greater) if *verifiable && verified.is_verified(agent, found) => {
-            Ok(None)
-        }
-        (_, std::cmp::Ordering::Greater) if *verifiable => Ok(Some(format!(
-            "{agent} {found} is newer than the probed {probed}; the {protocol} protocol may differ; {}",
-            verify_hint(agent)
-        ))),
-        (_, std::cmp::Ordering::Greater) => Ok(Some(format!(
-            "{agent} {found} is newer than the probed {probed}; the {protocol} protocol may differ."
-        ))),
-        _ => Ok(None),
-    }
 }
 
 pub fn version_detail(version: &str, warning: Option<&str>) -> String {
