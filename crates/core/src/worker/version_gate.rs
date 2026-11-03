@@ -89,14 +89,6 @@ pub fn check_agent_version(
     }
 }
 
-pub fn soft_version_warning(
-    gate: &VersionGate,
-    found: &str,
-    verified: &VerifiedAgents,
-) -> Option<String> {
-    check_agent_version(gate, found, verified).unwrap_or_else(Some)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DriftOutcome {
     Passed,
@@ -170,6 +162,14 @@ pub fn drift_check_due(last: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool 
 
 #[cfg(test)]
 mod tests {
+
+    fn soft_version_warning(
+        gate: &VersionGate,
+        found: &str,
+        verified: &VerifiedAgents,
+    ) -> Option<String> {
+        check_agent_version(gate, found, verified).unwrap_or_else(Some)
+    }
     use super::*;
     use crate::worker::verified_entry;
 
