@@ -24,20 +24,24 @@ pub fn spawned_claude_dir(
     config_dir: Option<&Path>,
     inherited: Option<&Path>,
     home: &Path,
+    worktree: &Path,
 ) -> PathBuf {
     configured_dir(config_dir, Some(home))
-        .or_else(|| non_empty(inherited))
+        .or_else(|| inherited.map(|dir| worktree.join(dir)))
         .unwrap_or_else(|| home.join(".claude"))
 }
 
-fn non_empty(inherited: Option<&Path>) -> Option<PathBuf> {
+/// claude joins `CLAUDE_CONFIG_DIR` without resolving it, so a relative value
+/// starts at its cwd, the worktree; `Path::join` keeps an absolute one.
+fn non_empty_in(inherited: Option<&Path>, worktree: &Path) -> Option<PathBuf> {
     inherited
         .filter(|dir| !dir.as_os_str().is_empty())
-        .map(Path::to_path_buf)
+        .map(|dir| worktree.join(dir))
 }
 
 /// The transcript folder and `.claude.json` a spawned `claude` uses: the
 /// configured dir, else the `CLAUDE_CONFIG_DIR` it inherits, else the home paths.
+/// As in claude, an empty value moves the folder (`??`) but not the file (`||`).
 #[derive(Debug, PartialEq, Eq)]
 pub struct ClaudeFiles {
     pub dir: PathBuf,
@@ -48,10 +52,12 @@ pub fn spawned_claude_files(
     config_dir: Option<&Path>,
     inherited: Option<&Path>,
     home: &Path,
+    worktree: &Path,
 ) -> ClaudeFiles {
-    let json_dir = configured_dir(config_dir, Some(home)).or_else(|| non_empty(inherited));
+    let json_dir =
+        configured_dir(config_dir, Some(home)).or_else(|| non_empty_in(inherited, worktree));
     ClaudeFiles {
-        dir: spawned_claude_dir(config_dir, inherited, home),
+        dir: spawned_claude_dir(config_dir, inherited, home, worktree),
         json: json_dir.map_or_else(
             || home.join(CLAUDE_JSON_NAME),
             |dir| dir.join(CLAUDE_JSON_NAME),
@@ -187,26 +193,57 @@ mod tests {
 
     #[test]
     fn spawned_claude_files_follow_an_inherited_config_dir() {
-        let home = Path::new("/h");
+        let (home, wt) = (Path::new("/h"), Path::new("/w/a"));
         let env = Some(Path::new("/env/claude"));
         assert_eq!(
-            spawned_claude_files(None, env, home),
+            spawned_claude_files(None, env, home, wt),
             ClaudeFiles {
                 dir: PathBuf::from("/env/claude"),
                 json: PathBuf::from("/env/claude/.claude.json"),
             }
         );
         assert_eq!(
-            spawned_claude_files(Some(Path::new("/c/alt")), env, home),
+            spawned_claude_files(Some(Path::new("/c/alt")), env, home, wt),
             ClaudeFiles {
                 dir: PathBuf::from("/c/alt"),
                 json: PathBuf::from("/c/alt/.claude.json"),
             }
         );
         assert_eq!(
-            spawned_claude_files(None, None, home),
+            spawned_claude_files(None, None, home, wt),
             ClaudeFiles {
                 dir: PathBuf::from("/h/.claude"),
+                json: PathBuf::from("/h/.claude.json"),
+            }
+        );
+    }
+
+    #[test]
+    fn a_relative_inherited_config_dir_starts_at_the_worktree() {
+        let (home, wt) = (Path::new("/h"), Path::new("/w/a"));
+        assert_eq!(
+            spawned_claude_files(None, Some(Path::new("cfg")), home, wt),
+            ClaudeFiles {
+                dir: PathBuf::from("/w/a/cfg"),
+                json: PathBuf::from("/w/a/cfg/.claude.json"),
+            }
+        );
+        // claude does not expand `~` in CLAUDE_CONFIG_DIR.
+        assert_eq!(
+            spawned_claude_files(None, Some(Path::new("~/cfg")), home, wt).dir,
+            Path::new("/w/a/~/cfg")
+        );
+    }
+
+    #[test]
+    fn an_empty_inherited_config_dir_keeps_transcripts_in_the_worktree_and_json_at_home() {
+        // claude reads `CLAUDE_CONFIG_DIR ?? ~/.claude` for the folder and
+        // `CLAUDE_CONFIG_DIR || home` for `.claude.json`.
+        let (home, wt) = (Path::new("/h"), Path::new("/w/a"));
+        assert_eq!(
+            spawned_claude_files(None, Some(Path::new("")), home, wt),
+            ClaudeFiles {
+                dir: PathBuf::from("/w/a"),
                 json: PathBuf::from("/h/.claude.json"),
             }
         );
@@ -256,22 +293,22 @@ mod tests {
 
     #[test]
     fn spawned_claude_dir_prefers_config_then_inherited_env_then_home() {
-        let home = Path::new("/h");
+        let (home, wt) = (Path::new("/h"), Path::new("/w/a"));
         let env = Some(Path::new("/env/claude"));
         assert_eq!(
-            spawned_claude_dir(Some(Path::new("~/cfg")), env, home),
+            spawned_claude_dir(Some(Path::new("~/cfg")), env, home, wt),
             Path::new("/h/cfg")
         );
         assert_eq!(
-            spawned_claude_dir(None, env, home),
+            spawned_claude_dir(None, env, home, wt),
             Path::new("/env/claude")
         );
         assert_eq!(
-            spawned_claude_dir(None, Some(Path::new("")), home),
-            Path::new("/h/.claude")
+            spawned_claude_dir(None, Some(Path::new("")), home, wt),
+            Path::new("/w/a")
         );
         assert_eq!(
-            spawned_claude_dir(None, None, home),
+            spawned_claude_dir(None, None, home, wt),
             Path::new("/h/.claude")
         );
     }

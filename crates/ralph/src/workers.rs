@@ -380,6 +380,7 @@ impl Workers {
                             .and_then(|config| config.claude.config_dir.as_deref()),
                         inherited.as_deref(),
                         &home,
+                        &worktree,
                     );
                     cleanup_worktree_leftovers(&files, lock.as_deref(), &worktree)
                 })

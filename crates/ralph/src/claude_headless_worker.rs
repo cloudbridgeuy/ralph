@@ -282,12 +282,12 @@ fn headless_usage(
     config: &AppConfig,
     session_id: &str,
 ) -> Option<HeadlessUsage> {
-    let home = dirs::home_dir()?;
     let inherited = std::env::var_os(CLAUDE_CONFIG_DIR_ENV).map(PathBuf::from);
     let claude_dir = spawned_claude_dir(
         config.claude.config_dir.as_deref(),
         inherited.as_deref(),
-        &home,
+        &dirs::home_dir()?,
+        &request.worktree,
     );
     let cwd = request.worktree.to_string_lossy();
     Some(HeadlessUsage {

@@ -138,7 +138,7 @@ mod tests {
     use ralph_core::claude_leftovers::spawned_claude_files;
 
     fn files(home: &Path) -> ClaudeFiles {
-        spawned_claude_files(None, None, home)
+        spawned_claude_files(None, None, home, Path::new("/w/a"))
     }
 
     fn home_with(config: Option<&str>) -> tempfile::TempDir {
@@ -183,7 +183,7 @@ mod tests {
         )
         .unwrap();
         let lock = home.path().join("data/ralph/lock");
-        let files = spawned_claude_files(None, Some(&alt), home.path());
+        let files = spawned_claude_files(None, Some(&alt), home.path(), Path::new("/w/a"));
         let warnings = cleanup_worktree_leftovers(&files, Some(&lock), Path::new("/w/a"));
         assert!(warnings.is_empty());
         assert!(!alt.join("projects/-w-a").exists());
