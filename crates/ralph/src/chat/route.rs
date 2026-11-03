@@ -5,7 +5,7 @@ use crate::chat::monitor::Monitor;
 use crate::chat::nudge;
 use crate::chat::prompt::screen_columns;
 use crate::chat::schedule;
-use crate::chat::thread::Memory;
+use crate::chat::thread::{self, Memory};
 use crate::chat::view;
 use crate::chat::watch;
 use crate::chat::workers;
@@ -64,6 +64,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         Route::Workers(id) => workers::run(ctx.monitor, id.as_deref(), ctx.display, ctx.remote),
         Route::Nudge(command) => nudge::run(command, ctx.monitor),
         Route::WorkerCosts => workers::costs(ctx.display, ctx.prices),
+        Route::Fork(command) => println!("{}", thread::fork(ctx.store, command)),
         Route::Help => print!("{}", help_with_store(screen_columns(), ctx.store)),
         Route::Config => config::print(ctx.config),
         Route::View(args) => view::run(&args, ctx.display),

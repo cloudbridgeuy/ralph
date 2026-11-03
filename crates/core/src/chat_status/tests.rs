@@ -826,6 +826,24 @@ fn send_it_never_runs_mid_turn() {
 }
 
 #[test]
+fn route_input_parses_fork_and_fork_waits_for_the_turn() {
+    let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
+    let auth = crate::chat_thread::ThreadName::parse("auth").unwrap();
+    assert_eq!(
+        route("/fork auth"),
+        Route::Fork(ForkCommand::Open(auth.clone()))
+    );
+    assert_eq!(
+        route("/fork"),
+        Route::Fork(ForkCommand::Usage(
+            crate::chat_thread::FORK_USAGE.to_string()
+        ))
+    );
+    assert_eq!(route("/forkauth"), Route::Send("/forkauth".into()));
+    assert!(!Route::Fork(ForkCommand::Open(auth)).runs_mid_turn());
+}
+
+#[test]
 fn route_input_parses_view_commands() {
     let route = |line: &str| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
     assert_eq!(route("/view"), Route::View(ViewArgs::Usage));

@@ -1,5 +1,5 @@
 use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
-use crate::worker::Report;
+use crate::worker::{shell_quote, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -13,6 +13,9 @@ pub const MERGED_STATUS: &str = "merged";
 pub const MAX_DIGEST_BYTES: usize = 2048;
 pub const MAX_MERGE_ATTEMPTS: usize = 3;
 const MAIN: &str = "main";
+pub const FORK_USAGE: &str =
+    "usage: /fork <name> opens thread <name> in a new Rex block next to this chat.";
+pub const FORK_IN_THREAD: &str = "threads fork from main; run /fork in main's chat.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ThreadName(String);
@@ -270,6 +273,77 @@ pub fn drop_message(name: &ThreadName, records: usize) -> String {
     match records {
         0 => format!("dropped thread {name}"),
         n => format!("dropped thread {name} and its {}", saved_records(n)),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForkCommand {
+    Open(ThreadName),
+    Usage(String),
+}
+
+pub fn parse_fork_args(args: &str) -> ForkCommand {
+    let mut words = args.split_whitespace();
+    match (words.next(), words.next()) {
+        (Some(word), None) => match ThreadName::parse(word) {
+            Ok(name) => ForkCommand::Open(name),
+            Err(e) => ForkCommand::Usage(format!("{e}\n{FORK_USAGE}")),
+        },
+        _ => ForkCommand::Usage(FORK_USAGE.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ForkSpawn<'a> {
+    pub name: &'a ThreadName,
+    pub exe: &'a str,
+    pub main: &'a str,
+    pub cwd: &'a str,
+    pub block: Option<&'a str>,
+    pub config_dir: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForkLaunch {
+    Rex(Vec<String>),
+    Manual(String),
+}
+
+pub fn fork_launch(spawn: ForkSpawn) -> ForkLaunch {
+    let config = spawn
+        .config_dir
+        .map(|dir| ["env".to_string(), format!("RALPH_CONFIG_DIR={dir}")]);
+    let chat = [
+        spawn.exe,
+        "chat",
+        "--thread",
+        spawn.name.as_str(),
+        "--store",
+        spawn.main,
+    ]
+    .map(str::to_string);
+    let command: Vec<String> = config.into_iter().flatten().chain(chat).collect();
+    match spawn.block.filter(|block| !block.is_empty()) {
+        Some(block) => {
+            let label = format!("thread {}", spawn.name);
+            let split = [
+                "split", "-b", block, "--label", &label, "-c", spawn.cwd, "--",
+            ];
+            ForkLaunch::Rex(
+                split
+                    .map(str::to_string)
+                    .into_iter()
+                    .chain(command)
+                    .collect(),
+            )
+        }
+        None => {
+            let quoted: Vec<String> = command.iter().map(|word| shell_quote(word)).collect();
+            ForkLaunch::Manual(format!(
+                "not in a Rex block, so /fork opens nothing; run this in another terminal:\n  {}",
+                quoted.join(" ")
+            ))
+        }
     }
 }
 
@@ -676,6 +750,87 @@ mod tests {
         assert_eq!(ls_counts(1, 0), "  1 worker");
         assert_eq!(ls_counts(0, 1), "  1 unread");
         assert_eq!(ls_counts(2, 3), "  2 workers  3 unread");
+    }
+
+    #[test]
+    fn fork_args_take_one_thread_name() {
+        assert_eq!(parse_fork_args(" auth "), ForkCommand::Open(name("auth")));
+        assert_eq!(
+            parse_fork_args(""),
+            ForkCommand::Usage(FORK_USAGE.to_string())
+        );
+        assert_eq!(
+            parse_fork_args("auth fix"),
+            ForkCommand::Usage(FORK_USAGE.to_string())
+        );
+        for bad in ["Bad", "main"] {
+            let ForkCommand::Usage(text) = parse_fork_args(bad) else {
+                panic!("{bad} opened");
+            };
+            assert!(text.ends_with(FORK_USAGE), "{text}");
+            assert!(text.len() > FORK_USAGE.len(), "{text}");
+        }
+    }
+
+    fn spawn<'a>(auth: &'a ThreadName, block: Option<&'a str>) -> ForkSpawn<'a> {
+        ForkSpawn {
+            name: auth,
+            exe: "/bin/ralph",
+            main: "/s/chat",
+            cwd: "/repo",
+            block,
+            config_dir: None,
+        }
+    }
+
+    #[test]
+    fn fork_splits_a_rex_block_running_the_thread_on_the_main_store() {
+        let auth = name("auth");
+        let words = |argv: &[&str]| -> Vec<String> { argv.iter().map(|w| w.to_string()).collect() };
+        assert_eq!(
+            fork_launch(spawn(&auth, Some("block:1"))),
+            ForkLaunch::Rex(words(&[
+                "split",
+                "-b",
+                "block:1",
+                "--label",
+                "thread auth",
+                "-c",
+                "/repo",
+                "--",
+                "/bin/ralph",
+                "chat",
+                "--thread",
+                "auth",
+                "--store",
+                "/s/chat",
+            ]))
+        );
+        let configured = ForkSpawn {
+            config_dir: Some("/cfg"),
+            ..spawn(&auth, Some("block:1"))
+        };
+        let ForkLaunch::Rex(argv) = fork_launch(configured) else {
+            panic!("expected rex");
+        };
+        assert_eq!(
+            argv[8..11],
+            words(&["env", "RALPH_CONFIG_DIR=/cfg", "/bin/ralph"])
+        );
+    }
+
+    #[test]
+    fn fork_outside_rex_prints_the_command_to_run() {
+        let auth = name("auth");
+        for block in [None, Some("")] {
+            assert_eq!(
+                fork_launch(spawn(&auth, block)),
+                ForkLaunch::Manual(
+                    "not in a Rex block, so /fork opens nothing; run this in another terminal:\n  '/bin/ralph' 'chat' '--thread' 'auth' '--store' '/s/chat'"
+                        .to_string()
+                )
+            );
+        }
     }
 
     #[test]
