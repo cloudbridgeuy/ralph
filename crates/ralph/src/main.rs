@@ -370,7 +370,7 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
     let result = backoff::retry_on_outage(
         "chat memory curator",
         || {
-            backoff::attempt_from(subprocess::invoke_subprocess_with_spinner_config(
+            backoff::attempt_from(subprocess::invoke_subprocess_silent(
                 &subprocess::SpinnerSubprocessConfig {
                     command: command.clone(),
                     timeout_secs: Some(curator.timeout),
