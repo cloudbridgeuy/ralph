@@ -58,18 +58,16 @@ pub fn spawned_claude_files(
         configured_dir(config_dir, Some(home)).or_else(|| non_empty_in(inherited, worktree));
     ClaudeFiles {
         dir: spawned_claude_dir(config_dir, inherited, home, worktree),
-        json: json_dir.map_or_else(
-            || home.join(CLAUDE_JSON_NAME),
-            |dir| dir.join(CLAUDE_JSON_NAME),
-        ),
+        json: json_in(json_dir.as_deref(), home),
     }
 }
 
 pub fn claude_json(config_dir: Option<&Path>, home: &Path) -> PathBuf {
-    configured_dir(config_dir, Some(home)).map_or_else(
-        || home.join(CLAUDE_JSON_NAME),
-        |dir| dir.join(CLAUDE_JSON_NAME),
-    )
+    json_in(configured_dir(config_dir, Some(home)).as_deref(), home)
+}
+
+fn json_in(dir: Option<&Path>, home: &Path) -> PathBuf {
+    dir.unwrap_or(home).join(CLAUDE_JSON_NAME)
 }
 
 pub fn cleans_claude_leftovers(state: &CloseState, steps: &[CloseStep]) -> bool {
