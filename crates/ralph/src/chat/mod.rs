@@ -105,7 +105,7 @@ use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
 use ralph_core::chat_suggestion::{
     auto_hold_notice, turn_end, Next, Prefill, SuggestionRecord, TurnEnd,
 };
-use ralph_core::chat_thread::ThreadName;
+use ralph_core::chat_thread::{in_scope, ThreadName};
 use ralph_core::claude_leftovers::claude_dir;
 use ralph_core::inbox::Selection;
 use ralph_core::inbox_alert::AlertConfig;
@@ -169,6 +169,10 @@ fn print_history(
         &history.words.join(" "),
         history.cursor.as_deref(),
     )
+    .and_then(|call| match &history.scope {
+        Some(scope) => in_scope(call, scope),
+        None => Ok(call),
+    })
     .and_then(|call| Memory::open(store_dir)?.call(&call))?;
     println!("{text}");
     Ok(())

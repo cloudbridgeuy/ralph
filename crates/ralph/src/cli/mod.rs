@@ -446,6 +446,13 @@ pub struct HistoryArgs {
         help = "The `next cursor:` value from the last read or search page"
     )]
     pub cursor: Option<String>,
+
+    #[arg(
+        long = "in",
+        value_name = "THREAD",
+        help = "Recall or search in main or a named thread instead of this chat"
+    )]
+    pub scope: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

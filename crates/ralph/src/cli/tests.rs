@@ -189,6 +189,22 @@ fn test_cli_stop_hook_takes_usage_with_usage_seen() {
 }
 
 #[test]
+fn test_cli_chat_history_takes_a_scope() {
+    let Some(Commands::Chat(chat)) = Cli::try_parse_from([
+        "ralph", "chat", "--thread", "t1", "history", "recall", "x", "--in", "main",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!("expected chat");
+    };
+    let Some(ChatCommand::History(history)) = chat.command else {
+        panic!("expected chat history");
+    };
+    assert_eq!(history.scope.as_deref(), Some("main"));
+}
+
+#[test]
 fn test_cli_chat_history_takes_a_tool_words_cursor_and_store() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from([
         "ralph", "chat", "history", "search", "rate", "limit", "--cursor", "c1", "--store", "/s",
@@ -205,6 +221,7 @@ fn test_cli_chat_history_takes_a_tool_words_cursor_and_store() {
     assert_eq!(history.tool, HistoryTool::Search);
     assert_eq!(history.words, ["rate", "limit"]);
     assert_eq!(history.cursor.as_deref(), Some("c1"));
+    assert_eq!(history.scope, None);
     let Some(Commands::Chat(chat)) =
         Cli::try_parse_from(["ralph", "chat", "--store", "/s", "history", "zoom", "4-7"])
             .unwrap()

@@ -1,10 +1,11 @@
 use crate::chat::memory::Store;
 use crate::cli::{ThreadArgs, ThreadCommand};
 use crate::private_file::check_path;
+use crate::workers::{canonical_store, running_workers};
 use ralph_core::chat_memory::{view, MemoryCall, ViewSplit};
 use ralph_core::chat_thread::{
-    fork_check, thread_split, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR,
-    THREAD_FILE,
+    fork_check, idle_check, thread_split, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES,
+    THREADS_DIR, THREAD_FILE,
 };
 use std::fs;
 use std::io;
@@ -105,7 +106,11 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", if rows.is_empty() { "no threads" } else { &rows });
         }
         ThreadCommand::Drop { name } => {
-            drop_thread(&main, &name)?;
+            let running: Vec<String> = running_workers(&canonical_store(thread_dir(&main, &name)))
+                .into_iter()
+                .map(|worker| worker.id)
+                .collect();
+            drop_thread(&main, &name, &running)?;
             println!("dropped thread {name}");
         }
     }
@@ -169,11 +174,12 @@ pub fn list(main: &Path) -> io::Result<String> {
     Ok(rows.join("\n"))
 }
 
-pub fn drop_thread(main: &Path, name: &ThreadName) -> Result<(), String> {
+pub fn drop_thread(main: &Path, name: &ThreadName, running: &[String]) -> Result<(), String> {
     let dir = thread_dir(main, name);
     if !dir.join(THREAD_FILE).is_file() {
         return Err(format!("no thread {name}; `ralph thread ls` lists them."));
     }
+    idle_check(name, running)?;
     let failed = |e: io::Error| format!("could not drop thread {name}: {e}");
     let _claim = Store::new(dir.clone())
         .claim_chat()
@@ -320,15 +326,19 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["auth", "b-side"], "{rows}");
         assert!(rows.contains("forked at #2"), "{rows}");
+        assert!(drop_thread(&main, &name("auth"), &["w1".to_string()])
+            .unwrap_err()
+            .contains("running workers (w1)"));
+        assert!(dir.join(THREAD_FILE).is_file());
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
-        assert!(drop_thread(&main, &name("auth"))
+        assert!(drop_thread(&main, &name("auth"), &[])
             .unwrap_err()
             .contains("in use"));
         held.unlock().unwrap();
         std::mem::drop(held);
-        drop_thread(&main, &name("auth")).unwrap();
+        drop_thread(&main, &name("auth"), &[]).unwrap();
         assert!(!dir.exists());
-        assert!(drop_thread(&main, &name("auth")).is_err());
+        assert!(drop_thread(&main, &name("auth"), &[]).is_err());
         assert_eq!(list(&main).unwrap().lines().count(), 1);
     }
 }

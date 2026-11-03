@@ -1,4 +1,4 @@
-use crate::chat_memory::{Tool, ViewSplit};
+use crate::chat_memory::{MemoryCall, Tool, ViewSplit};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
@@ -62,13 +62,42 @@ pub fn split_scope(id: &str) -> Result<(Scope, &str), String> {
     }
 }
 
+fn scope_name(s: &str) -> Result<Scope, String> {
+    match s.trim() {
+        MAIN => Ok(Scope::Main),
+        s => ThreadName::parse(s).map(Scope::Thread),
+    }
+}
+
 pub fn scope_arg(args: &Value) -> Result<Scope, String> {
     match args.get("thread") {
         None | Some(Value::Null) => Ok(Scope::Own),
-        Some(Value::String(s)) if s.trim() == MAIN => Ok(Scope::Main),
-        Some(Value::String(s)) => ThreadName::parse(s.trim()).map(Scope::Thread),
+        Some(Value::String(s)) => scope_name(s),
         Some(_) => Err("'thread' must be a string.".to_string()),
     }
+}
+
+pub fn in_scope(call: MemoryCall, scope: &str) -> Result<MemoryCall, String> {
+    match call.tool {
+        Tool::Recall(_) | Tool::Search(_) => Ok(MemoryCall {
+            scope: scope_name(scope)?,
+            tool: call.tool,
+        }),
+        Tool::Zoom(_) | Tool::Read(_) => Err(
+            "--in only applies to recall and search; zoom and read take the thread in the id, as #name:3."
+                .to_string(),
+        ),
+    }
+}
+
+pub fn idle_check(name: &ThreadName, running: &[String]) -> Result<(), String> {
+    if running.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "thread {name} has running workers ({}); close them first.",
+        running.join(", ")
+    ))
 }
 
 pub fn label_item(item: &str, name: &ThreadName) -> String {
@@ -180,6 +209,30 @@ mod tests {
             Scope::Thread(name("auth"))
         );
         assert!(scope_arg(&json!({"thread": 3})).is_err());
+    }
+
+    #[test]
+    fn history_in_sets_the_scope_of_recall_and_search_only() {
+        let call = |tool, args| crate::chat_memory::parse_tool_call(tool, &args).unwrap();
+        let recall = in_scope(call("recall", json!({"pattern": "x"})), "main").unwrap();
+        assert_eq!(recall.scope, Scope::Main);
+        assert_eq!(recall.tool, Tool::Recall("x".to_string()));
+        let search = in_scope(call("search", json!({"query": "x"})), "auth").unwrap();
+        assert_eq!(search.scope, Scope::Thread(name("auth")));
+        assert_eq!(
+            in_scope(call("zoom", json!({"id": "3"})), "main").unwrap_err(),
+            "--in only applies to recall and search; zoom and read take the thread in the id, as #name:3."
+        );
+        assert!(in_scope(call("recall", json!({"pattern": "x"})), "Bad").is_err());
+    }
+
+    #[test]
+    fn a_thread_with_running_workers_is_busy() {
+        assert!(idle_check(&name("auth"), &[]).is_ok());
+        assert_eq!(
+            idle_check(&name("auth"), &["w1".to_string(), "w2".to_string()]).unwrap_err(),
+            "thread auth has running workers (w1, w2); close them first."
+        );
     }
 
     #[test]
