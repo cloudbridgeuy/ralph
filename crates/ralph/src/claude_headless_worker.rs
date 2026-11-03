@@ -16,14 +16,13 @@ use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
-use ralph_core::chat::select_servers;
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, claude_mcp_config, cleanup, decode_claude_version, decode_line,
-    deny_line, gone_path, interrupt_lines, interrupted_end, join_start_warnings, merged_mcp_config,
-    missing_server_warning, permission_response, prompt_failure_report, ready_path, reduce,
+    deny_line, gone_path, import_servers, interrupt_lines, interrupted_end, join_start_warnings,
+    merged_mcp_config, permission_response, prompt_failure_report, ready_path, reduce,
     request_stale, resumed_session, shutdown_steps, start_steps, stuck_permission_report,
     task_prompt, turn_end_activity, turn_lost_at_resume, uuid_v4, worker_config_path, Action,
     ActivityState, ClaudeHeadlessArgs, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles,
@@ -359,16 +358,11 @@ impl ClaudeWorker {
             request.snapshots.then_some(request.worktree.as_path()),
         );
         let config = AppConfig::load().unwrap_or_default();
-        let imported = select_servers(
+        let imported = import_servers(
             &read_claude_config(config.claude.config_dir.as_deref()),
             &config.chat.mcp_servers,
         );
-        warnings.extend(
-            imported
-                .missing
-                .iter()
-                .map(|name| missing_server_warning(name)),
-        );
+        warnings.extend(imported.warnings);
         if let Some(warning) = join_start_warnings(&warnings) {
             report_start_warning(warning, Some(&files.warning));
         }

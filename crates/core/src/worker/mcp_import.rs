@@ -1,5 +1,6 @@
 use super::SERVER_NAME;
-use crate::chat::mcp_wildcards;
+use crate::chat::{mcp_wildcards, select_servers};
+use crate::chat_memory::SERVER_NAME as CHAT_SERVER_NAME;
 use serde_json::{json, Map, Value};
 
 pub fn merged_mcp_config(imported: &Map<String, Value>, own: &Value) -> Value {
@@ -10,7 +11,37 @@ pub fn merged_mcp_config(imported: &Map<String, Value>, own: &Value) -> Value {
     json!({ "mcpServers": servers })
 }
 
-pub fn missing_server_warning(name: &str) -> String {
+pub struct WorkerImport {
+    pub servers: Map<String, Value>,
+    pub warnings: Vec<String>,
+}
+
+pub fn import_servers(claude_config: &Value, names: &[String]) -> WorkerImport {
+    let (reserved, rest): (Vec<&String>, Vec<&String>) = names
+        .iter()
+        .partition(|name| *name == SERVER_NAME || *name == CHAT_SERVER_NAME);
+    let rest: Vec<String> = rest.into_iter().cloned().collect();
+    let imported = select_servers(claude_config, &rest);
+    WorkerImport {
+        servers: imported.servers,
+        warnings: reserved
+            .iter()
+            .map(|name| reserved_server_warning(name))
+            .chain(
+                imported
+                    .missing
+                    .iter()
+                    .map(|name| missing_server_warning(name)),
+            )
+            .collect(),
+    }
+}
+
+fn reserved_server_warning(name: &str) -> String {
+    format!("worker: MCP server \"{name}\" is reserved by ralph; continuing without it")
+}
+
+fn missing_server_warning(name: &str) -> String {
     format!("worker: MCP server \"{name}\" not found in ~/.claude.json; continuing without it")
 }
 
@@ -96,5 +127,46 @@ mod tests {
             Some("only".into())
         );
         assert_eq!(join_start_warnings(&[]), None);
+    }
+
+    fn claude_config() -> Value {
+        json!({"mcpServers": {
+            "docs": {"command": "d"},
+            "ralph-worker": {"command": "evil"},
+            "ralph-chat": {"command": "evil"}
+        }})
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|name| name.to_string()).collect()
+    }
+
+    #[test]
+    fn the_worker_own_name_is_never_imported() {
+        let imported = import_servers(&claude_config(), &names(&["docs", "ralph-worker"]));
+        assert_eq!(
+            imported.servers.keys().collect::<Vec<_>>(),
+            vec![&"docs".to_string()]
+        );
+        assert_eq!(
+            imported.warnings,
+            ["worker: MCP server \"ralph-worker\" is reserved by ralph; continuing without it"]
+        );
+    }
+
+    #[test]
+    fn the_chat_own_name_is_reserved_not_missing() {
+        let imported = import_servers(&claude_config(), &names(&["ralph-chat"]));
+        assert!(imported.servers.is_empty());
+        assert_eq!(
+            imported.warnings,
+            ["worker: MCP server \"ralph-chat\" is reserved by ralph; continuing without it"]
+        );
+    }
+
+    #[test]
+    fn an_absent_name_still_warns_as_not_found() {
+        let imported = import_servers(&claude_config(), &names(&["nope"]));
+        assert_eq!(imported.warnings, [missing_server_warning("nope")]);
     }
 }
