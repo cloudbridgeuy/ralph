@@ -12,8 +12,8 @@ use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, argv_check, cancel_check, claude_headless_args, claude_mcp_config,
     claude_probed_version, claude_verify_spawns, fold_claude_line, init_check, mcp_check,
-    parse_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeFold,
-    ClaudePlan, ClaudeSession, ClaudeSpawn, PermissionMode, PermissionSetup, StderrRead,
+    new_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeFold,
+    ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode, PermissionSetup, StderrRead,
     CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT,
     CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
 };
@@ -95,9 +95,13 @@ fn live_checks(wire: &Wire, expected_session: &str, dir: &Path, checks: &Checks,
     if !budget.allows(checks, "report") {
         return;
     }
+    let before = read_inbox(dir);
     let mut reported = run_turn(wire, CLAUDE_REPORT_PROMPT, ClaudePlan::Plain);
     reported.mcp = plain.mcp.clone();
-    checks.add(report_check(&reported, &read_inbox(dir)));
+    checks.add(report_check(
+        &reported,
+        &new_reports(&before, &read_inbox(dir)),
+    ));
     if reported.summary.stop.is_err() {
         return;
     }
@@ -131,20 +135,21 @@ fn prepare_inbox(dir: &Path) -> Result<(), String> {
         .map_err(|error| format!("could not prepare the verify inbox: {error}"))
 }
 
-fn read_inbox(dir: &Path) -> Vec<ralph_core::worker::Report> {
+fn read_inbox(dir: &Path) -> Vec<InboxFile> {
     let Ok(entries) = fs::read_dir(inbox_dir(dir)) else {
         return Vec::new();
     };
-    let texts: Vec<String> = entries
+    entries
         .filter_map(Result::ok)
-        .filter(|entry| {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            name.ends_with(".json") && !name.starts_with('.')
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".json") || name.starts_with('.') {
+                return None;
+            }
+            let text = fs::read_to_string(entry.path()).ok()?;
+            Some((name, text))
         })
-        .filter_map(|entry| fs::read_to_string(entry.path()).ok())
-        .collect();
-    parse_reports(&texts)
+        .collect()
 }
 
 struct StderrReader {

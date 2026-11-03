@@ -167,7 +167,18 @@ pub fn report_check(fold: &ClaudeFold, inbox: &[Report]) -> CheckResult {
     }
 }
 
-pub fn parse_reports(texts: &[String]) -> Vec<Report> {
+pub type InboxFile = (String, String);
+
+pub fn new_reports(before: &[InboxFile], after: &[InboxFile]) -> Vec<Report> {
+    let texts: Vec<String> = after
+        .iter()
+        .filter(|(name, _)| !before.iter().any(|(seen, _)| seen == name))
+        .map(|(_, text)| text.clone())
+        .collect();
+    parse_reports(&texts)
+}
+
+fn parse_reports(texts: &[String]) -> Vec<Report> {
     texts
         .iter()
         .filter_map(|text| serde_json::from_str(text).ok())
@@ -565,6 +576,34 @@ mod tests {
             }]
         );
         assert!(parse_reports(&[]).is_empty());
+    }
+
+    fn file(name: &str, status: &str) -> InboxFile {
+        (
+            name.to_string(),
+            format!(r#"{{"worker":"w","at":"t","status":"{status}","text":"verify"}}"#),
+        )
+    }
+
+    #[test]
+    fn new_reports_ignores_files_present_before_the_turn() {
+        let before = [file("a.json", "done")];
+        assert!(new_reports(&before, &before).is_empty());
+    }
+
+    #[test]
+    fn new_reports_keeps_only_files_added_after_the_turn() {
+        let before = [file("a.json", "blocked")];
+        let after = [file("a.json", "blocked"), file("b.json", "done")];
+        let found = new_reports(&before, &after);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].status, "done");
+    }
+
+    #[test]
+    fn new_reports_skips_unparsable_new_files() {
+        let after = [("c.json".to_string(), "not json".to_string())];
+        assert!(new_reports(&[], &after).is_empty());
     }
 
     #[test]
