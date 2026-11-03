@@ -161,10 +161,28 @@ impl Command {
                 "/nudge [<id> [text]]",
                 "send a worker a request for one line of progress with no model turn, then print what the worker did with it (busy, reported, taken, not started, no reaction after Ns); [text] replaces the default request; with no id it nudges the only running worker, or lists the running ids when there are several; refused while the worker waits on a permission request; while a turn runs it waits in the queue; Tab completes worker ids",
             )],
-            Command::SendIt => &[(
-                "/send-it <instructions>",
-                "run an approved plan unattended: ralph restates the instructions as numbered steps, each with an exit criterion, plus the allowed actions and caps; for now it prints this usage and the default caps ([chat] send_it_max_turns, send_it_max_usd); starts no turn",
-            )],
+            Command::SendIt => &[
+                (
+                    "/send-it <instructions>",
+                    "propose a run plan: the model restates the instructions as numbered steps, each with an exit criterion, plus the allowed actions, grants and caps, and stores it; ralph shows the plan and its hash; refused while an approved run is active; bare /send-it prints the usage and default caps ([chat] send_it_max_turns, send_it_max_usd)",
+                ),
+                (
+                    "/send-it status",
+                    "show the stored plan, its hash and whether it is approved; starts no turn",
+                ),
+                (
+                    "/send-it edit",
+                    "open the plan in the editor; any edit clears the approval; starts no turn",
+                ),
+                (
+                    "/send-it go",
+                    "approve the plan whose hash is on screen; counts only when typed at the prompt; starts no turn",
+                ),
+                (
+                    "/send-it off",
+                    "delete the plan and its approval; starts no turn",
+                ),
+            ],
             Command::Config => &[(
                 "/config",
                 "the config this chat resolved at start: warnings, source files and paths, set RALPH_* and editor or color variables, start flags, and every merged key with its source (default, global, store, env or flag); notes config files changed on disk since start; starts no turn",

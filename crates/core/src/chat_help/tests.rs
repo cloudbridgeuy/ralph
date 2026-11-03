@@ -112,11 +112,18 @@ fn lists_hold_every_variant() {
 }
 
 #[test]
-fn the_send_it_row_shows_the_instructions_form_only() {
+fn the_send_it_rows_cover_propose_status_edit_go_and_off() {
     let wide = help_text(2_000);
-    assert!(wide.contains("/send-it <instructions>"));
-    assert!(wide.contains("exit criterion"));
-    assert!(!wide.contains("/send-it off"));
+    for form in [
+        "/send-it <instructions>",
+        "/send-it status",
+        "/send-it edit",
+        "/send-it go",
+        "/send-it off",
+    ] {
+        assert!(wide.contains(form), "{form}");
+    }
+    assert!(wide.contains("typed at the prompt"));
     assert!(!wide.contains("countdown"));
 }
 

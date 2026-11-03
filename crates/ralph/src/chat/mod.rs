@@ -99,7 +99,7 @@ use ralph_core::chat_hold::hold_targets;
 use ralph_core::chat_keepalive::resolve_keepalive_hours;
 use ralph_core::chat_memory::{history_tool, store_in_use_message, Trigger};
 use ralph_core::chat_process::{run_id, UsageTail};
-use ralph_core::chat_send_it::usage as send_it_usage;
+use ralph_core::chat_send_it::{propose_prompt, usage as send_it_usage, SendItCommand};
 use ralph_core::chat_skills::{build_plugin_args, resolve_skills, SkillSources};
 use ralph_core::chat_socket::system_prompt_path;
 use ralph_core::chat_status::{orphan_hint, route_input, Route, Status};
@@ -450,6 +450,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let (send_it_limits, send_it_warnings) = chat_config.send_it_setting();
+    let send_it = SendIt::new(&store_dir, send_it_limits);
     chat_socket.serve(
         Shared {
             store: Store::new(store_dir.clone()),
@@ -460,7 +461,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 args.worktree_dir.clone(),
             ),
             suggestions: suggestions.clone(),
-            send_it: SendIt::new(&store_dir, send_it_limits),
+            send_it: send_it.clone(),
         },
         roster,
     );
@@ -609,6 +610,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let schedule_store = monitor.schedule.clone();
     approve_proposed(&schedule_store, watch_timeout);
     let mut pending: Option<Route> = None;
+    let mut shown_plan: Option<String> = None;
     let mut offered: Option<(String, u64)> = None;
     let mut carried: Vec<String> = Vec::new();
     let show_cells = |shown: &str| {
@@ -622,6 +624,7 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     loop {
         warn_if_err(editor.sync_history(), "Failed to save chat history");
+        let typed_at_prompt = pending.is_none();
         let route = match pending.take() {
             Some(route) => Some(route),
             None => {
@@ -744,8 +747,45 @@ pub fn run(args: ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
                 continue;
             }
-            Route::SendIt(_) => {
+            Route::SendIt(SendItCommand::Propose(text)) => {
+                if let Some(refusal) = send_it.refusal() {
+                    println!("{refusal}");
+                    continue;
+                }
+                let before = send_it.current_hash();
+                let sent = propose_prompt(&text);
+                monitor.set_phase(Phase::Turn);
+                let (result, queued) = snapshots.around(|| {
+                    keys.during(|| turn.run(Trigger::User, std::slice::from_ref(&sent), &sent))
+                });
+                queue = queued;
+                let outcome = result?;
+                let screen = send_it.proposed(before);
+                println!("{}", screen.text);
+                shown_plan = screen.shown;
+                (outcome, None)
+            }
+            Route::SendIt(SendItCommand::Usage) => {
                 println!("{}", send_it_usage(&send_it_limits));
+                continue;
+            }
+            Route::SendIt(SendItCommand::Go) => {
+                println!("{}", send_it.go(shown_plan.as_deref(), typed_at_prompt));
+                continue;
+            }
+            Route::SendIt(SendItCommand::Off) => {
+                shown_plan = None;
+                println!("{}", send_it.off());
+                continue;
+            }
+            Route::SendIt(command @ (SendItCommand::Status | SendItCommand::Edit)) => {
+                let screen = if command == SendItCommand::Edit {
+                    send_it.edit(&prompt.editor)
+                } else {
+                    send_it.status()
+                };
+                println!("{}", screen.text);
+                shown_plan = screen.shown;
                 continue;
             }
             local => {
