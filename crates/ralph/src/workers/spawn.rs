@@ -172,7 +172,8 @@ impl Workers {
                 ),
             ),
         };
-        let version_warning = crate::version_drift::spawn_warning(harness);
+        let version_warning =
+            crate::version_drift::spawn_warning(harness, &self.store_dir.join(INBOX_DIR));
         let ticket = resolve_ticket(
             id,
             ticket,

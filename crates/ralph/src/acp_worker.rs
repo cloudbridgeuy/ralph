@@ -213,7 +213,7 @@ impl AcpWorker {
             starting,
             warning: warning_file,
         } = slot;
-        if let Some(warning) = agent_version_warning(&agent) {
+        if let Some(warning) = agent_version_warning(&agent, &request.inbox) {
             report_start_warning(warning, warning_file);
         }
         let mut command = Command::new(agent.command);
@@ -552,11 +552,12 @@ fn exit_reason(status: ExitStatus) -> String {
     format!("{} acp exited ({status})", CURSOR_AGENT.command)
 }
 
-fn agent_version_warning(agent: &AcpAgent) -> Option<String> {
+fn agent_version_warning(agent: &AcpAgent, inbox: &Path) -> Option<String> {
     let probe = agent_version_probe(agent);
     crate::version_drift::soft_warning(
         &CURSOR_GATE,
         probed_version(agent, &probe).map(str::to_string),
+        inbox,
     )
 }
 

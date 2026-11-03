@@ -1,6 +1,7 @@
 use crate::cli::VerifyAgent;
 use crate::config::AppConfig;
 use crate::subprocess::TimedOutput;
+use crate::version_drift::{record_manual, DriftRun};
 use crate::watches::locked;
 use crate::{
     acp_worker, claude_headless_worker, codex_worker, opencode_worker, verified_agents, workers,
@@ -163,10 +164,17 @@ fn conclude(
     }
 }
 
-pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn run(
+    agent: VerifyAgent,
+    live: bool,
+    drift: Option<DriftRun>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let name = agent.name();
     println!("verifying {name} in {}", dir.path().display());
+    if let Some(drift) = &drift {
+        drift.watch(name);
+    }
     let checks = Checks::default();
     let config = AppConfig::load().map_err(|error| error.to_string());
     let (model, warning) = resolved_model(agent, &config);
@@ -204,17 +212,23 @@ pub(crate) fn run(agent: VerifyAgent, live: bool) -> Result<(), Box<dyn std::err
         checks.add(failure);
     }
     let label = model_label(agent, model.as_deref());
+    let results = checks.results();
+    let passed = spec_passed(&results, version.as_deref(), required);
     let outcome = Outcome {
         name,
         version: version.as_deref(),
         model: label.as_deref(),
         live,
-        passed: spec_passed(&checks.results(), version.as_deref(), required),
+        passed,
     };
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let (lines, result) = conclude(&outcome, &today, verified_agents::save);
     for line in lines {
         println!("{line}");
+    }
+    match &drift {
+        Some(drift) => drift.conclude(name, &results, passed),
+        None => record_manual(name, version.as_deref(), &results, passed),
     }
     Ok(result?)
 }
@@ -348,5 +362,20 @@ mod tests {
             assert!(Cli::try_parse_from(["ralph", "worker", "verify", agent]).is_ok());
         }
         assert!(Cli::try_parse_from(["ralph", "worker", "verify", "tmux"]).is_err());
+    }
+
+    #[test]
+    fn the_hidden_drift_flags_come_as_a_pair_and_never_with_live() {
+        let parse = |extra: &[&str]| {
+            let mut args = vec!["ralph", "worker", "verify", "codex"];
+            args.extend_from_slice(extra);
+            Cli::try_parse_from(args).is_ok()
+        };
+        assert!(parse(&["--drift", "0.170.0", "--inbox", "/s/inbox"]));
+        assert!(!parse(&["--drift", "0.170.0"]));
+        assert!(!parse(&["--inbox", "/s/inbox"]));
+        assert!(!parse(&[
+            "--live", "--drift", "0.170.0", "--inbox", "/s/inbox"
+        ]));
     }
 }

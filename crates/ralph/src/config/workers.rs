@@ -27,6 +27,8 @@ pub struct WorkersSection {
     pub lookup_timeout_ms: u64,
     #[serde(default = "default_cache_secs")]
     pub cache_secs: u64,
+    #[serde(default = "super::default_true")]
+    pub verify_on_drift: bool,
 }
 
 impl Default for WorkersSection {
@@ -36,6 +38,7 @@ impl Default for WorkersSection {
             pr_provider: PrProvider::default(),
             lookup_timeout_ms: default_lookup_timeout_ms(),
             cache_secs: default_cache_secs(),
+            verify_on_drift: true,
         }
     }
 }
@@ -64,6 +67,7 @@ mod tests {
             pr_provider: PrProvider::Github,
             lookup_timeout_ms: 5000,
             cache_secs: 60,
+            verify_on_drift: true,
         };
         assert_eq!(AppConfig::new().workers, expected);
         let empty: AppConfig = toml::from_str("[workers]\n").unwrap();
@@ -83,8 +87,11 @@ mod tests {
                 pr_provider: PrProvider::None,
                 lookup_timeout_ms: 250,
                 cache_secs: 1,
+                verify_on_drift: true,
             }
         );
+        let off: AppConfig = toml::from_str("[workers]\nverify_on_drift = false\n").unwrap();
+        assert!(!off.workers.verify_on_drift);
         let github: AppConfig = toml::from_str("[workers]\npr_provider = \"github\"\n").unwrap();
         assert_eq!(github.workers.pr_provider, PrProvider::Github);
     }

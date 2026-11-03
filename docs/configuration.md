@@ -427,6 +427,7 @@ jira = ["VP20", "KODA"]
 | `pr_provider` | `"github"` | `github` looks up the PR with `gh`. `none` turns PR lookups off and the PR cell shows `-` |
 | `lookup_timeout_ms` | `5000` | Kill one lookup, with its child processes, after this many milliseconds. The cell shows `?`. Minimum `1` |
 | `cache_secs` | `60` | Show a result for this many seconds, failures too. After that the cell shows `…` until a new lookup ends. Minimum `1` |
+| `verify_on_drift` | `true` | When a spawn sees an installed harness version that is newer than the probed one and not verified, run the free `ralph worker verify <harness>` in a background process (90 s limit, never `--live`). A pass is recorded quietly. A fail posts one inbox alert per harness and version. `false` turns the background run off. See [Version drift](context/headless-workers.md#version-drift) |
 
 ```toml
 [workers]

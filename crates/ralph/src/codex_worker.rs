@@ -9,7 +9,6 @@ use crate::cursor_owner::{
 use crate::permission_queue::{host_process_token, PermissionQueue};
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
-use crate::verified_agents;
 use crate::warn::{notice, warn};
 use crate::watches::locked;
 use crate::worker_changes::WorkerChanges;
@@ -227,7 +226,7 @@ fn handshake(
         .map_err(Stop::message)?;
     let version = decode_version(&init)
         .ok_or("could not read the codex version from its initialize reply")?;
-    if let Some(warning) = check_version(&version, &verified_agents::load())? {
+    if let Some(warning) = crate::version_drift::codex_gate(&version, warning_file)? {
         report_start_warning(warning, warning_file);
     }
     check_login(&wire.call(ACCOUNT_READ, json!({}), deadline)?)?;

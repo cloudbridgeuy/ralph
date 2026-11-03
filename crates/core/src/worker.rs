@@ -13,6 +13,7 @@ mod claude_verify;
 mod codex;
 mod cursor_model;
 mod delivery;
+mod drift_run;
 mod files;
 mod guard;
 mod headless;
@@ -51,6 +52,7 @@ pub use cursor_model::{
     CursorDefaultSnapshot, RepairedCursorDefault, CURSOR_ACP_DEFAULT_KEYS, CURSOR_CLI_DEFAULT_KEYS,
 };
 pub use delivery::*;
+pub use drift_run::*;
 pub use files::*;
 pub use guard::*;
 pub use headless::*;

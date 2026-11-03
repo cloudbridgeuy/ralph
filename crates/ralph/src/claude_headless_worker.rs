@@ -318,10 +318,10 @@ fn random_bytes() -> Result<[u8; 16], String> {
     Ok(bytes)
 }
 
-fn check_installed_version() -> Result<Option<String>, String> {
+fn check_installed_version(inbox: &Path) -> Result<Option<String>, String> {
     let text = crate::version_drift::probe_output(CLAUDE_COMMAND)?;
     let found = decode_claude_version(&text).unwrap_or_default();
-    crate::version_drift::gate(&CLAUDE_GATE, found)
+    crate::version_drift::gate(&CLAUDE_GATE, found, inbox)
 }
 
 struct ClaudeWorker {
@@ -341,7 +341,9 @@ impl ClaudeWorker {
         resume: Option<&SessionRecord>,
         starting: &Mutex<HashMap<String, u32>>,
     ) -> Result<Self, String> {
-        let mut warnings: Vec<String> = check_installed_version()?.into_iter().collect();
+        let mut warnings: Vec<String> = check_installed_version(&request.inbox)?
+            .into_iter()
+            .collect();
         let store = request.inbox.parent().unwrap_or(Path::new("."));
         let server = acp_mcp_server(
             &request.exe,
