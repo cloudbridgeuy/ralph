@@ -7,11 +7,11 @@ use ralph_core::worker::{
     check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
     daily_verify_version, drift_action, drift_alert, drift_entry, drift_watchdog_limit,
     known_fail_warning, last_check_time, last_verified_version, lock_action,
-    opencode_probed_version, probe_text, probed_version, store_inbox, takeover_step,
-    tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome, HarnessId, LockAction,
-    LockIdentity, TakeoverStep, VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE,
-    CURSOR_AGENT, DAILY_CHECK_LIMIT, OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK,
-    VERSION_PROBE_LIMIT,
+    opencode_probed_version, probe_text, probed_version, record_after_post, store_inbox,
+    takeover_step, tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome,
+    HarnessId, LockAction, LockIdentity, TakeoverStep, VersionGate, VersionProbe, CLAUDE_COMMAND,
+    CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT, OPENCODE_COMMAND, OPENCODE_GATE,
+    TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
 };
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -296,19 +296,22 @@ impl DriftRun {
             passed,
             &chrono::Utc::now().to_rfc3339(),
         );
-        post_alert(agent, &entry, &self.inbox);
-        verified_agents::save_drift(entry).ok();
+        let posted = post_alert(agent, &entry, &self.inbox);
+        if record_after_post(&entry.outcome, posted) {
+            verified_agents::save_drift(entry).ok();
+        }
         release_lock(agent);
         true
     }
 }
 
-fn post_alert(agent: &str, entry: &DriftEntry, inbox: &Path) {
-    if let DriftOutcome::Failed { checks } = &entry.outcome {
-        let old = last_verified_version(&verified_agents::load(), agent);
-        let report = drift_alert(agent, old.as_deref(), &entry.version, checks, &entry.at);
-        Inbox::new(inbox.to_path_buf()).post(&report, 0).ok();
-    }
+fn post_alert(agent: &str, entry: &DriftEntry, inbox: &Path) -> bool {
+    let DriftOutcome::Failed { checks } = &entry.outcome else {
+        return false;
+    };
+    let old = last_verified_version(&verified_agents::load(), agent);
+    let report = drift_alert(agent, old.as_deref(), &entry.version, checks, &entry.at);
+    Inbox::new(inbox.to_path_buf()).post(&report, 0).is_ok()
 }
 
 fn end_own_group() {

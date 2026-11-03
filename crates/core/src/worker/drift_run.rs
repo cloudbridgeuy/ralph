@@ -59,6 +59,13 @@ pub fn takeover_step(seen: LockIdentity, moved: LockIdentity) -> TakeoverStep {
     }
 }
 
+pub fn record_after_post(outcome: &DriftOutcome, posted: bool) -> bool {
+    match outcome {
+        DriftOutcome::Passed => true,
+        DriftOutcome::Failed { .. } => posted,
+    }
+}
+
 pub fn failing_checks(results: &[CheckResult], passed: bool) -> Vec<String> {
     let failed: Vec<String> = results
         .iter()
@@ -185,6 +192,17 @@ mod tests {
             ),
             TakeoverStep::Restore
         );
+    }
+
+    #[test]
+    fn a_failure_is_recorded_only_after_its_alert_was_posted() {
+        let failed = DriftOutcome::Failed {
+            checks: checks(&["spawn"]),
+        };
+        assert!(record_after_post(&failed, true));
+        assert!(!record_after_post(&failed, false));
+        assert!(record_after_post(&DriftOutcome::Passed, false));
+        assert!(record_after_post(&DriftOutcome::Passed, true));
     }
 
     #[test]
