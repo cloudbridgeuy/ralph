@@ -51,6 +51,8 @@ pub struct ThreadMeta {
     pub created: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merged: Option<Merged>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parked: Option<Parked>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,12 +61,45 @@ pub struct Merged {
     pub digest: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Parked {
+    pub at: String,
+}
+
 pub fn merged_check(name: &ThreadName, meta: &ThreadMeta) -> Result<(), String> {
     match meta.merged {
         None => Ok(()),
         Some(_) => Err(format!(
             "thread {name} is merged into main and stays read-only; `ralph chat --thread {name} history` still reads it."
         )),
+    }
+}
+
+pub fn open_check(name: &ThreadName, meta: &ThreadMeta) -> Result<(), String> {
+    merged_check(name, meta)?;
+    match meta.parked {
+        None => Ok(()),
+        Some(_) => Err(format!(
+            "thread {name} is parked; `ralph thread revive {name}` opens it again."
+        )),
+    }
+}
+
+pub fn revive_check(name: &ThreadName, meta: &ThreadMeta) -> Result<(), String> {
+    merged_check(name, meta)?;
+    match meta.parked {
+        Some(_) => Ok(()),
+        None => Err(format!("thread {name} is not parked.")),
+    }
+}
+
+pub fn pull_message(name: &ThreadName, from: usize, to: usize) -> String {
+    match to.saturating_sub(from) {
+        0 => format!("thread {name} is already at main's end (#{to})."),
+        1 => format!("pulled thread {name}: fork point #{from} -> #{to}, 1 new main message."),
+        new => {
+            format!("pulled thread {name}: fork point #{from} -> #{to}, {new} new main messages.")
+        }
     }
 }
 
@@ -294,6 +329,7 @@ mod tests {
             base: 42,
             created: "2026-11-02T10:00:00Z".to_string(),
             merged: None,
+            parked: None,
         };
         let text = serde_json::to_string(&meta).unwrap();
         assert_eq!(text, r#"{"base":42,"created":"2026-11-02T10:00:00Z"}"#);
@@ -303,7 +339,7 @@ mod tests {
                 at: "2026-11-03T10:00:00Z".to_string(),
                 digest: "Picked x. #auth:0".to_string(),
             }),
-            ..meta
+            ..meta.clone()
         };
         let text = serde_json::to_string(&merged).unwrap();
         assert!(
@@ -313,6 +349,18 @@ mod tests {
             "{text}"
         );
         assert_eq!(serde_json::from_str::<ThreadMeta>(&text).unwrap(), merged);
+        let parked = ThreadMeta {
+            parked: Some(Parked {
+                at: "2026-11-04T10:00:00Z".to_string(),
+            }),
+            ..meta
+        };
+        let text = serde_json::to_string(&parked).unwrap();
+        assert_eq!(
+            text,
+            r#"{"base":42,"created":"2026-11-02T10:00:00Z","parked":{"at":"2026-11-04T10:00:00Z"}}"#
+        );
+        assert_eq!(serde_json::from_str::<ThreadMeta>(&text).unwrap(), parked);
     }
 
     fn merged_meta() -> ThreadMeta {
@@ -323,7 +371,43 @@ mod tests {
                 at: "a".to_string(),
                 digest: "d".to_string(),
             }),
+            parked: None,
         }
+    }
+
+    fn parked_meta() -> ThreadMeta {
+        ThreadMeta {
+            merged: None,
+            parked: Some(Parked {
+                at: "p".to_string(),
+            }),
+            ..merged_meta()
+        }
+    }
+
+    #[test]
+    fn a_parked_thread_does_not_open_until_revived() {
+        let live = ThreadMeta {
+            parked: None,
+            ..parked_meta()
+        };
+        let auth = name("auth");
+        assert!(open_check(&auth, &live).is_ok());
+        assert_eq!(
+            open_check(&auth, &parked_meta()).unwrap_err(),
+            "thread auth is parked; `ralph thread revive auth` opens it again."
+        );
+        assert!(open_check(&auth, &merged_meta())
+            .unwrap_err()
+            .starts_with("thread auth is merged"));
+        assert!(revive_check(&auth, &parked_meta()).is_ok());
+        assert_eq!(
+            revive_check(&auth, &live).unwrap_err(),
+            "thread auth is not parked."
+        );
+        assert!(revive_check(&auth, &merged_meta())
+            .unwrap_err()
+            .starts_with("thread auth is merged"));
     }
 
     #[test]
@@ -336,6 +420,23 @@ mod tests {
         assert_eq!(
             merged_check(&name("auth"), &merged_meta()).unwrap_err(),
             "thread auth is merged into main and stays read-only; `ralph chat --thread auth history` still reads it."
+        );
+    }
+
+    #[test]
+    fn a_pull_says_how_far_the_fork_point_moved() {
+        let auth = name("auth");
+        assert_eq!(
+            pull_message(&auth, 2, 5),
+            "pulled thread auth: fork point #2 -> #5, 3 new main messages."
+        );
+        assert_eq!(
+            pull_message(&auth, 4, 5),
+            "pulled thread auth: fork point #4 -> #5, 1 new main message."
+        );
+        assert_eq!(
+            pull_message(&auth, 5, 5),
+            "thread auth is already at main's end (#5)."
         );
     }
 
