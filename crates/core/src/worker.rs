@@ -37,6 +37,7 @@ mod transcript_usage;
 mod turn_activity;
 mod turn_gate;
 mod verify;
+mod version_gate;
 mod worktree;
 pub use acp::*;
 pub use claude_headless::*;
@@ -74,6 +75,7 @@ pub use transcript_usage::*;
 pub use turn_activity::*;
 pub use turn_gate::*;
 pub use verify::*;
+pub use version_gate::*;
 pub use worktree::*;
 
 pub const SERVER_NAME: &str = "ralph-worker";
