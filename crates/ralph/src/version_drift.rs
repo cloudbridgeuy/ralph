@@ -178,7 +178,7 @@ fn acquire_lock(agent: &str) -> Result<File, LockError> {
     let io = |error: &dyn std::fmt::Display| LockError::Io(format!("{}: {error}", path.display()));
     let parent = path.parent().ok_or_else(|| io(&"no parent directory"))?;
     fs::create_dir_all(parent).map_err(|error| io(&error))?;
-    check_path(&path).map_err(|error| io(&error))?;
+    check_path(&path).map_err(|error| LockError::Io(error.to_string()))?;
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
