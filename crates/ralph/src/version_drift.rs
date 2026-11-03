@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::private_file::check_path;
 use crate::subprocess::{kill_registered_groups, spawn_detached, timed_output};
 use crate::verified_agents;
 use crate::worker_mcp::Inbox;
@@ -6,15 +7,13 @@ use crate::worker_verify::version_probe;
 use ralph_core::worker::{
     check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
     daily_verify_version, drift_action, drift_alert, drift_entry, drift_watchdog_limit,
-    finish_plan, format_lock, known_fail_warning, last_check_time, last_verified_version,
-    lock_decision, opencode_probed_version, owns_lock, parse_lock, probe_text, probed_version,
-    record_after_post, store_inbox, takeover_step, tmux_claude_version, CheckResult, DriftAction,
-    DriftEntry, DriftOutcome, FinishPlan, HarnessId, LockDecision, LockOwner, TakeoverStep,
+    finish_plan, known_fail_warning, last_check_time, last_verified_version,
+    opencode_probed_version, probe_text, probed_version, record_after_post, store_inbox,
+    tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome, FinishPlan, HarnessId,
     VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT,
     OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
 };
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -169,94 +168,20 @@ pub(crate) fn verify_on_drift() -> bool {
     AppConfig::load().map_or(true, |config| config.workers.verify_on_drift)
 }
 
-fn unique_name() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    format!("{}-{nanos:x}", std::process::id())
-}
-
-fn sibling(path: &Path, suffix: &str) -> PathBuf {
-    let mut name = path.as_os_str().to_os_string();
-    name.push(format!(".{suffix}"));
-    PathBuf::from(name)
-}
-
-fn write_new_lock(path: &Path, token: &str) -> bool {
-    let owner = LockOwner {
-        pid: std::process::id(),
-        token: token.to_string(),
-    };
-    let staged = sibling(path, &unique_name());
-    let written = path
-        .parent()
-        .is_some_and(|dir| fs::create_dir_all(dir).is_ok())
-        && OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&staged)
-            .and_then(|mut file| file.write_all(format_lock(&owner).as_bytes()))
-            .is_ok();
-    let linked = written && fs::hard_link(&staged, path).is_ok();
-    fs::remove_file(&staged).ok();
-    linked
-}
-
-fn process_alive(pid: u32) -> bool {
-    let pid = pid as libc::pid_t;
-    // Safety: kill with signal 0 only checks that the process exists. The pid
-    // is positive because parse_lock rejects 0 and values above i32::MAX.
-    let found = unsafe { libc::kill(pid, 0) };
-    found == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-fn take_over(path: &Path, expected: Option<&str>, token: &str) -> bool {
-    let moved = sibling(path, &unique_name());
-    if fs::rename(path, &moved).is_err() {
-        return write_new_lock(path, token);
-    }
-    let found = fs::read_to_string(&moved)
-        .ok()
-        .and_then(|text| parse_lock(&text))
-        .map(|owner| owner.token);
-    match takeover_step(expected, found.as_deref()) {
-        TakeoverStep::Remove => {
-            fs::remove_file(&moved).ok();
-            write_new_lock(path, token)
-        }
-        TakeoverStep::Restore => {
-            if fs::hard_link(&moved, path).is_ok() {
-                fs::remove_file(&moved).ok();
-            }
-            false
-        }
-    }
-}
-
-fn acquire_lock(agent: &str, token: &str) -> bool {
+fn acquire_lock(agent: &str) -> Option<File> {
     let path = verified_agents::drift_lock_path(agent);
-    let age = fs::metadata(&path)
-        .ok()
-        .and_then(|meta| meta.modified().ok())
-        .and_then(|modified| modified.elapsed().ok());
-    let owner = fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| parse_lock(&text));
-    let alive = owner.as_ref().is_some_and(|owner| process_alive(owner.pid));
-    match lock_decision(age, owner.as_ref(), alive) {
-        LockDecision::Busy => false,
-        LockDecision::Acquire => write_new_lock(&path, token),
-        LockDecision::TakeOver { expected } => take_over(&path, expected.as_deref(), token),
-    }
-}
-
-fn release_lock(agent: &str, token: &str) {
-    let path = verified_agents::drift_lock_path(agent);
-    let held = fs::read_to_string(&path).is_ok_and(|text| owns_lock(token, &text));
-    if held {
-        fs::remove_file(&path).ok();
-    }
+    fs::create_dir_all(path.parent()?).ok()?;
+    check_path(&path).ok()?;
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .ok()?;
+    file.try_lock().ok()?;
+    Some(file)
 }
 
 fn start_verify(agent: &str, found: &str, inbox: &Path) {
@@ -276,7 +201,7 @@ fn start_verify(agent: &str, found: &str, inbox: &Path) {
 pub(crate) struct DriftRun {
     version: String,
     inbox: PathBuf,
-    token: String,
+    _lock: Option<Arc<File>>,
     done: Arc<AtomicBool>,
 }
 
@@ -285,13 +210,17 @@ impl DriftRun {
         Self {
             version,
             inbox,
-            token: unique_name(),
+            _lock: None,
             done: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub(crate) fn claim(self, agent: &str) -> Option<Self> {
-        acquire_lock(agent, &self.token).then_some(self)
+        let lock = acquire_lock(agent)?;
+        Some(Self {
+            _lock: Some(Arc::new(lock)),
+            ..self
+        })
     }
 
     pub(crate) fn watch(&self, agent: &'static str) {
@@ -332,7 +261,6 @@ impl DriftRun {
         if record_after_post(&entry.outcome, posted, save_failed) {
             verified_agents::save_drift(entry).ok();
         }
-        release_lock(agent, &self.token);
     }
 }
 

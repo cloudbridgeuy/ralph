@@ -15,83 +15,8 @@ pub fn drift_watchdog_limit() -> Duration {
     FREE_VERIFY_LIMIT + WATCHDOG_MARGIN
 }
 
-pub fn drift_lock_limit() -> Duration {
-    FREE_VERIFY_LIMIT * 2
-}
-
 pub fn drift_lock_file(agent: &str) -> String {
     format!("drift-{agent}.lock")
-}
-
-pub const LOCK_PID_REUSE_LIMIT: Duration = Duration::from_secs(3600);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LockOwner {
-    pub pid: u32,
-    pub token: String,
-}
-
-pub fn format_lock(owner: &LockOwner) -> String {
-    format!("{} {}", owner.pid, owner.token)
-}
-
-pub fn parse_lock(text: &str) -> Option<LockOwner> {
-    let mut fields = text.split_whitespace();
-    let pid: u32 = fields.next()?.parse().ok()?;
-    let token = fields.next()?;
-    if fields.next().is_some() || pid == 0 || i32::try_from(pid).is_err() {
-        return None;
-    }
-    Some(LockOwner {
-        pid,
-        token: token.to_string(),
-    })
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LockDecision {
-    Acquire,
-    Busy,
-    TakeOver { expected: Option<String> },
-}
-
-pub fn lock_decision(
-    age: Option<Duration>,
-    owner: Option<&LockOwner>,
-    owner_alive: bool,
-) -> LockDecision {
-    let Some(age) = age else {
-        return LockDecision::Acquire;
-    };
-    let expected = owner.map(|owner| owner.token.clone());
-    let stale = match owner {
-        Some(_) if owner_alive => age > LOCK_PID_REUSE_LIMIT,
-        Some(_) => true,
-        None => age >= drift_lock_limit(),
-    };
-    if stale {
-        LockDecision::TakeOver { expected }
-    } else {
-        LockDecision::Busy
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TakeoverStep {
-    Remove,
-    Restore,
-}
-
-pub fn takeover_step(expected: Option<&str>, moved: Option<&str>) -> TakeoverStep {
-    if expected == moved {
-        TakeoverStep::Remove
-    } else {
-        TakeoverStep::Restore
-    }
-}
-
-pub fn owns_lock(token: &str, content: &str) -> bool {
-    parse_lock(content).is_some_and(|owner| owner.token == token)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,12 +125,11 @@ mod tests {
     }
 
     #[test]
-    fn the_watchdog_outlasts_the_verify_budget_and_the_stale_lock_outlasts_the_watchdog() {
+    fn the_watchdog_outlasts_the_verify_budget() {
         assert_eq!(
             drift_watchdog_limit(),
             FREE_VERIFY_LIMIT + Duration::from_secs(30)
         );
-        assert!(drift_lock_limit() > drift_watchdog_limit());
     }
 
     #[test]
@@ -251,107 +175,6 @@ mod tests {
     #[test]
     fn the_lock_file_is_named_per_agent() {
         assert_eq!(drift_lock_file("codex"), "drift-codex.lock");
-    }
-
-    fn owner(pid: u32, token: &str) -> LockOwner {
-        LockOwner {
-            pid,
-            token: token.to_string(),
-        }
-    }
-
-    #[test]
-    fn a_lock_holds_the_owner_pid_and_token_and_reads_back() {
-        assert_eq!(format_lock(&owner(42, "ab-cd")), "42 ab-cd");
-        assert_eq!(parse_lock("42 ab-cd"), Some(owner(42, "ab-cd")));
-        assert_eq!(parse_lock("42 ab-cd\n"), Some(owner(42, "ab-cd")));
-    }
-
-    #[test]
-    fn a_garbled_lock_has_no_owner() {
-        for text in [
-            "",
-            "42",
-            "x ab",
-            "0 ab",
-            "2147483648 ab",
-            "-3 ab",
-            "42 ",
-            "42 a b",
-        ] {
-            assert_eq!(parse_lock(text), None, "{text:?}");
-        }
-    }
-
-    #[test]
-    fn no_lock_is_taken() {
-        assert_eq!(lock_decision(None, None, false), LockDecision::Acquire);
-    }
-
-    #[test]
-    fn a_live_owner_is_never_taken_over_by_age_alone_until_the_pid_reuse_limit() {
-        let live = owner(7, "t");
-        for secs in [0, 179, 180, 3600] {
-            assert_eq!(
-                lock_decision(Some(Duration::from_secs(secs)), Some(&live), true),
-                LockDecision::Busy,
-                "{secs}"
-            );
-        }
-        assert_eq!(
-            lock_decision(
-                Some(LOCK_PID_REUSE_LIMIT + Duration::from_secs(1)),
-                Some(&live),
-                true
-            ),
-            LockDecision::TakeOver {
-                expected: Some("t".to_string())
-            }
-        );
-    }
-
-    #[test]
-    fn a_dead_owner_is_taken_over_at_any_age_and_names_the_token_it_read() {
-        assert_eq!(
-            lock_decision(Some(Duration::from_secs(1)), Some(&owner(7, "t")), false),
-            LockDecision::TakeOver {
-                expected: Some("t".to_string())
-            }
-        );
-    }
-
-    #[test]
-    fn an_unreadable_owner_is_taken_over_only_when_the_lock_is_stale() {
-        assert_eq!(
-            lock_decision(
-                Some(drift_lock_limit() - Duration::from_secs(1)),
-                None,
-                false
-            ),
-            LockDecision::Busy
-        );
-        assert_eq!(
-            lock_decision(Some(drift_lock_limit()), None, false),
-            LockDecision::TakeOver { expected: None }
-        );
-        assert_eq!(drift_lock_limit(), Duration::from_secs(180));
-    }
-
-    #[test]
-    fn a_moved_lock_is_removed_only_when_it_holds_the_token_that_was_read() {
-        assert_eq!(takeover_step(Some("a"), Some("a")), TakeoverStep::Remove);
-        assert_eq!(takeover_step(None, None), TakeoverStep::Remove);
-        assert_eq!(takeover_step(Some("a"), Some("b")), TakeoverStep::Restore);
-        assert_eq!(takeover_step(Some("a"), None), TakeoverStep::Restore);
-        assert_eq!(takeover_step(None, Some("b")), TakeoverStep::Restore);
-    }
-
-    #[test]
-    fn a_run_releases_only_a_lock_that_holds_its_own_token() {
-        assert!(owns_lock("t", "42 t"));
-        assert!(!owns_lock("t", "42 other"));
-        assert!(!owns_lock("t", ""));
-        assert!(!owns_lock("t", "garbled"));
     }
 
     #[test]
