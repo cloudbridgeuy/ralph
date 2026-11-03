@@ -188,6 +188,18 @@ pub enum ThreadCommand {
         #[arg(value_parser = ThreadName::parse)]
         name: ThreadName,
     },
+    #[command(
+        about = "Park a thread: it refuses to open, so its watches and schedules pause, until revive. Refuses while a chat or a worker uses it."
+    )]
+    Park {
+        #[arg(value_parser = ThreadName::parse)]
+        name: ThreadName,
+    },
+    #[command(about = "Revive a parked thread, so it opens again.")]
+    Revive {
+        #[arg(value_parser = ThreadName::parse)]
+        name: ThreadName,
+    },
 }
 
 #[derive(clap::Args, Debug)]

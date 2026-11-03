@@ -295,3 +295,21 @@ fn test_cli_thread_ls_and_drop_take_a_store() {
     assert_eq!(name.as_str(), "auth");
     assert!(Cli::try_parse_from(["ralph", "thread", "drop", "Bad"]).is_err());
 }
+
+#[test]
+fn test_cli_thread_park_and_revive_take_a_name() {
+    for (verb, park) in [("park", true), ("revive", false)] {
+        let Some(Commands::Thread(thread)) = Cli::try_parse_from(["ralph", "thread", verb, "auth"])
+            .unwrap()
+            .command
+        else {
+            panic!("expected thread");
+        };
+        let name = match (thread.command, park) {
+            (ThreadCommand::Park { name }, true) | (ThreadCommand::Revive { name }, false) => name,
+            (other, _) => panic!("{verb} parsed as {other:?}"),
+        };
+        assert_eq!(name.as_str(), "auth");
+        assert!(Cli::try_parse_from(["ralph", "thread", verb, "Bad"]).is_err());
+    }
+}
