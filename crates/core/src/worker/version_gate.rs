@@ -138,7 +138,11 @@ pub fn drift_action(
         }) => DriftAction::KnownFail {
             checks: checks.clone(),
         },
-        _ => DriftAction::Verify,
+        Some(DriftEntry {
+            outcome: DriftOutcome::Passed,
+            ..
+        }) => DriftAction::None,
+        None => DriftAction::Verify,
     }
 }
 
@@ -240,13 +244,17 @@ mod tests {
     }
 
     #[test]
-    fn a_recorded_pass_that_is_not_verified_needs_a_verify() {
+    fn a_recorded_pass_that_is_not_verified_starts_no_second_verify() {
         let drift = record_outcome(
             &DriftRecord::default(),
             entry("codex", "0.170.0", DriftOutcome::Passed),
         );
         assert_eq!(
             drift_action("codex", "0.170.0", &VerifiedAgents::default(), &drift),
+            DriftAction::None
+        );
+        assert_eq!(
+            drift_action("codex", "0.171.0", &VerifiedAgents::default(), &drift),
             DriftAction::Verify
         );
     }
