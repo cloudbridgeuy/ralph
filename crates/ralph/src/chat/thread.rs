@@ -1,3 +1,4 @@
+use crate::chat::claim::ChatClaim;
 use crate::chat::memory::Store;
 use crate::cli::{ThreadArgs, ThreadCommand, NAP_TIMEOUT_SECS};
 use crate::private_file::check_path;
@@ -242,7 +243,7 @@ fn known_meta(dir: &Path, name: &ThreadName) -> Result<ThreadMeta, String> {
     read_meta(dir).map_err(|e| format!("thread {name}: {e}"))
 }
 
-fn claim_closed(dir: &Path, name: &ThreadName) -> Result<fs::File, String> {
+fn claim_closed(dir: &Path, name: &ThreadName) -> Result<ChatClaim, String> {
     Store::new(dir.to_path_buf())
         .claim_chat()
         .map_err(|e| format!("could not claim thread {name}: {e}"))?
@@ -485,7 +486,6 @@ mod tests {
         assert!(drop_thread(&main, &name("auth"), &[])
             .unwrap_err()
             .contains("in use"));
-        held.unlock().unwrap();
         std::mem::drop(held);
         drop_thread(&main, &name("auth"), &[]).unwrap();
         assert!(!dir.exists());
@@ -538,7 +538,6 @@ mod tests {
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
         let open = merge_thread(&main, &auth, &[], &mut digest("x #auth:0"));
         assert!(open.unwrap_err().contains("in use"));
-        held.unlock().unwrap();
         std::mem::drop(held);
         let unknown = merge_thread(&main, &name("nope"), &[], &mut digest("x #nope:0"));
         assert!(unknown.unwrap_err().starts_with("no thread nope"));
@@ -577,7 +576,6 @@ mod tests {
         assert!(park_thread(&main, &auth, &[])
             .unwrap_err()
             .contains("in use"));
-        held.unlock().unwrap();
         std::mem::drop(held);
         let unknown = park_thread(&main, &name("nope"), &[]);
         assert!(unknown.unwrap_err().starts_with("no thread nope"));
@@ -729,7 +727,6 @@ mod tests {
         let auth = name("auth");
         let held = Store::new(dir.clone()).claim_chat().unwrap().unwrap();
         assert!(pull_thread(&main, &auth).unwrap_err().contains("in use"));
-        held.unlock().unwrap();
         std::mem::drop(held);
         assert!(pull_thread(&main, &name("nope"))
             .unwrap_err()

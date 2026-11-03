@@ -1,3 +1,4 @@
+use crate::chat::claim::ChatClaim;
 use crate::chat::index_files::{
     open_archive, save_stale, sweep_index_temps, update_index, FileSource,
 };
@@ -222,7 +223,7 @@ impl Store {
             .open(path)
     }
 
-    pub fn claim_chat(&self) -> io::Result<Result<File, Option<u32>>> {
+    pub fn claim_chat(&self) -> io::Result<Result<ChatClaim, Option<u32>>> {
         fs::create_dir_all(&self.dir)?;
         let path = self.dir.join("CHAT");
         check_path(&path)?;
@@ -236,7 +237,7 @@ impl Store {
             Ok(()) => {
                 file.set_len(0)?;
                 write!(file, "{}", std::process::id())?;
-                Ok(Ok(file))
+                Ok(Ok(ChatClaim(file)))
             }
             Err(TryLockError::WouldBlock) => {
                 let mut contents = String::new();
@@ -482,8 +483,6 @@ mod tests {
         assert!(lock.try_lock().is_ok());
         let nap = store.open_nap_lock().unwrap();
         assert!(nap.try_lock().is_ok());
-        // A sibling test's fork can hold a dup of the CHAT fd until exec, so drop alone may not release the flock; unlock releases it for the whole open file description.
-        guard.unlock().unwrap();
         drop(guard);
         assert!(store.claim_chat().unwrap().is_ok());
     }

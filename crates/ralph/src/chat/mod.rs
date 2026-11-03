@@ -2,6 +2,7 @@ mod bounded;
 pub(crate) mod cell;
 mod changes;
 mod check;
+mod claim;
 mod config;
 #[cfg(test)]
 mod corrupt_tests;
