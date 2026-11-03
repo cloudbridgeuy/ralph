@@ -1,5 +1,6 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
+use crate::chat::read_claude_config;
 use crate::codex_worker::pipes::pipe_lines;
 use crate::codex_worker::report_exit;
 use crate::codex_worker::resume::Resumed;
@@ -9,20 +10,23 @@ use crate::cursor_owner::{
     write_file, write_interrupt_result, write_owner_record,
 };
 use crate::permission_queue::{host_process_token, PermissionQueue};
+use crate::private_file::write_private;
 use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::workers::headless::{HeadlessHost, Heartbeat};
+use ralph_core::chat::select_servers;
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, check_agent_version,
     claude_headless_args, claude_mcp_config, cleanup, decode_claude_version, decode_line,
-    deny_line, gone_path, interrupt_lines, interrupted_end, permission_response,
-    prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
-    start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
-    uuid_v4, Action, ActivityState, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles,
+    deny_line, gone_path, interrupt_lines, interrupted_end, merged_mcp_config,
+    missing_server_warning, permission_response, prompt_failure_report, ready_path, reduce,
+    request_stale, resumed_session, shutdown_steps, start_steps, stuck_permission_report,
+    task_prompt, turn_end_activity, turn_lost_at_resume, uuid_v4, worker_config_path, Action,
+    ActivityState, ClaudeHeadlessArgs, ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles,
     HarnessId, HeadlessState, InterruptOutcome, Leftover, PermissionAnswer, PermissionMode,
     SessionRecord, ShutdownStep, SpawnRequest, StartFault, StartStep, ThreadSignal, Turns,
     WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE,
@@ -308,6 +312,16 @@ fn random_bytes() -> Result<[u8; 16], String> {
     Ok(bytes)
 }
 
+fn write_worker_config(store: &Path, id: &str, config: &Value) -> Result<PathBuf, String> {
+    let path = worker_config_path(store, id);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+    }
+    write_private(path, config.to_string().as_bytes())
+        .map_err(|e| format!("could not write the worker MCP config: {e}"))
+}
+
 fn check_installed_version(warning: &Path) -> Result<(), String> {
     let output = Command::new(CLAUDE_COMMAND)
         .arg("--version")
@@ -349,7 +363,17 @@ impl ClaudeWorker {
             &files.owner,
             request.snapshots.then_some(request.worktree.as_path()),
         );
-        let mcp = claude_mcp_config(&server);
+        let config = AppConfig::load().unwrap_or_default();
+        let imported = select_servers(
+            &read_claude_config(config.claude.config_dir.as_deref()),
+            &config.chat.mcp_servers,
+        );
+        for name in &imported.missing {
+            report_start_warning(missing_server_warning(name), Some(&files.warning));
+        }
+        let copied: Vec<String> = imported.servers.keys().cloned().collect();
+        let mcp = merged_mcp_config(&imported.servers, &claude_mcp_config(&server));
+        let mcp_path = write_worker_config(store, id, &mcp)?;
         let attachments = store.join(ATTACHMENTS_DIR);
         let mode = resume
             .and_then(|record| record.permissions)
@@ -367,13 +391,14 @@ impl ClaudeWorker {
         let expected_session = match session {
             ClaudeSession::New(id) | ClaudeSession::Resume(id) => id.to_string(),
         };
-        let args = claude_headless_args(
-            request.model.as_deref(),
-            &mcp.to_string(),
-            &attachments,
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: request.model.as_deref(),
+            mcp_config: &mcp_path.to_string_lossy(),
+            attachments: &attachments,
             mode,
             session,
-        );
+            copied: &copied,
+        });
         let mut command = Command::new(CLAUDE_COMMAND);
         command
             .args(args)
@@ -381,12 +406,10 @@ impl ClaudeWorker {
             .envs([ralph_core::worker::inbox_env(
                 &fs::canonicalize(store).map_err(|e| e.to_string())?,
             )]);
-        let config_dir = AppConfig::load().ok().and_then(|config| {
-            configured_dir(
-                config.claude.config_dir.as_deref(),
-                dirs::home_dir().as_deref(),
-            )
-        });
+        let config_dir = configured_dir(
+            config.claude.config_dir.as_deref(),
+            dirs::home_dir().as_deref(),
+        );
         if let Some(dir) = config_dir {
             command.env("CLAUDE_CONFIG_DIR", dir);
         }

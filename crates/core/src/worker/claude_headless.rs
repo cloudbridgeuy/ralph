@@ -3,8 +3,9 @@ use super::{
     Action, ActivityMark, BlockedContent, PermissionMode, PermissionOption, Report, ReportStatus,
     ThreadSignal, TurnEnd, Turns, VersionGate, SERVER_NAME,
 };
+use crate::chat::mcp_wildcards;
 use crate::stream::{interrupt_line, result_is_error};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::path::Path;
 
 pub const CLAUDE_COMMAND: &str = "claude";
@@ -209,13 +210,25 @@ pub fn bind_started_turn(turns: &mut Turns, mut actions: Vec<Action>, seq: u64) 
     actions
 }
 
-pub fn claude_headless_args(
-    model: Option<&str>,
-    mcp_config: &str,
-    attachments: &Path,
-    mode: PermissionMode,
-    session: ClaudeSession,
-) -> Vec<String> {
+#[derive(Clone, Copy)]
+pub struct ClaudeHeadlessArgs<'a> {
+    pub model: Option<&'a str>,
+    pub mcp_config: &'a str,
+    pub attachments: &'a Path,
+    pub mode: PermissionMode,
+    pub session: ClaudeSession<'a>,
+    pub copied: &'a [String],
+}
+
+pub fn claude_headless_args(options: &ClaudeHeadlessArgs) -> Vec<String> {
+    let ClaudeHeadlessArgs {
+        model,
+        mcp_config,
+        attachments,
+        mode,
+        session,
+        copied,
+    } = *options;
     let native_mode = match mode {
         PermissionMode::Ask => "default",
         PermissionMode::Yolo => "auto",
@@ -238,7 +251,7 @@ pub fn claude_headless_args(
     ]
     .map(String::from)
     .into();
-    args.push(own_tool_names());
+    args.push(allowed_tools(copied));
     args.push("--add-dir".to_string());
     args.push(attachments.display().to_string());
     if let Some(model) = model {
@@ -335,6 +348,25 @@ pub fn uuid_v4(mut bytes: [u8; 16]) -> String {
         &hex[16..20],
         &hex[20..32]
     )
+}
+
+pub fn merged_mcp_config(imported: &Map<String, Value>, own: &Value) -> Value {
+    let mut servers = imported.clone();
+    for (name, server) in own["mcpServers"].as_object().into_iter().flatten() {
+        servers.insert(name.clone(), server.clone());
+    }
+    json!({ "mcpServers": servers })
+}
+
+pub fn missing_server_warning(name: &str) -> String {
+    format!("worker: MCP server \"{name}\" not found in ~/.claude.json; continuing without it")
+}
+
+fn allowed_tools(copied: &[String]) -> String {
+    std::iter::once(own_tool_names())
+        .chain(mcp_wildcards(copied))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn own_tool_names() -> String {
@@ -650,13 +682,14 @@ mod tests {
 
     #[test]
     fn args_run_prompt_less_stream_json_with_the_report_server() {
-        let args = claude_headless_args(
-            Some("haiku"),
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Ask,
-            ClaudeSession::New("sid"),
-        );
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: Some("haiku"),
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("sid"),
+            copied: &[],
+        });
         let joined = args.join(" ");
         assert!(joined
             .starts_with("-p --verbose --input-format stream-json --output-format stream-json"));
@@ -667,38 +700,102 @@ mod tests {
         ));
         assert!(!args.contains(&"--resume".into()));
         assert!(args.contains(&"--strict-mcp-config".into()));
-        let yolo = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Yolo,
-            ClaudeSession::New("sid"),
-        );
+        let yolo = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Yolo,
+            session: ClaudeSession::New("sid"),
+            copied: &[],
+        });
         assert!(yolo
             .join(" ")
             .contains("--permission-mode auto --permission-prompt-tool stdio"));
         assert!(!yolo.contains(&"--model".into()));
-        let resumed = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Ask,
-            ClaudeSession::Resume("abc"),
-        );
+        let resumed = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::Resume("abc"),
+            copied: &[],
+        });
         assert!(resumed.join(" ").ends_with("--resume abc"));
         assert!(!resumed.contains(&"--session-id".into()));
         assert!(resumed.contains(&"--strict-mcp-config".into()));
     }
 
     #[test]
-    fn a_new_session_passes_its_id_and_never_resume() {
-        let args = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/a"),
-            PermissionMode::Ask,
-            ClaudeSession::New("11111111-2222-4333-8444-555555555555"),
+    fn args_allow_the_copied_servers_and_pass_the_config_path() {
+        let copied = ["mcptools".to_string(), "docs".to_string()];
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "/s/workers/A.json",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("sid"),
+            copied: &copied,
+        });
+        assert!(args.join(" ").contains(
+            "--mcp-config /s/workers/A.json --strict-mcp-config --allowedTools mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__mcptools__*,mcp__docs__* --add-dir /a"
+        ));
+    }
+
+    #[test]
+    fn allowed_tools_are_the_own_tools_plus_one_wildcard_per_copied_server() {
+        assert_eq!(
+            allowed_tools(&["x".to_string()]),
+            "mcp__ralph-worker__report,mcp__ralph-worker__set_status,mcp__x__*"
         );
+        assert_eq!(
+            allowed_tools(&[]),
+            "mcp__ralph-worker__report,mcp__ralph-worker__set_status"
+        );
+    }
+
+    #[test]
+    fn the_merged_config_holds_imports_and_the_own_server() {
+        let mut imported = Map::new();
+        imported.insert("mcptools".into(), json!({"command": "m"}));
+        let own = json!({"mcpServers": {"ralph-worker": {"command": "r"}}});
+        let merged = merged_mcp_config(&imported, &own);
+        assert_eq!(merged["mcpServers"]["mcptools"], json!({"command": "m"}));
+        assert_eq!(
+            merged["mcpServers"]["ralph-worker"],
+            json!({"command": "r"})
+        );
+    }
+
+    #[test]
+    fn the_own_server_wins_a_name_clash() {
+        let mut imported = Map::new();
+        imported.insert("ralph-worker".into(), json!({"command": "evil"}));
+        let own = json!({"mcpServers": {"ralph-worker": {"command": "r"}}});
+        let merged = merged_mcp_config(&imported, &own);
+        assert_eq!(
+            merged["mcpServers"]["ralph-worker"],
+            json!({"command": "r"})
+        );
+    }
+
+    #[test]
+    fn the_missing_server_warning_names_the_server() {
+        assert_eq!(
+            missing_server_warning("docs"),
+            "worker: MCP server \"docs\" not found in ~/.claude.json; continuing without it"
+        );
+    }
+
+    #[test]
+    fn a_new_session_passes_its_id_and_never_resume() {
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/a"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("11111111-2222-4333-8444-555555555555"),
+            copied: &[],
+        });
         assert!(args
             .join(" ")
             .ends_with("--session-id 11111111-2222-4333-8444-555555555555"));

@@ -13,9 +13,9 @@ use ralph_core::worker::{
     acp_mcp_server, argv_check, cancel_check, claude_headless_args, claude_mcp_config,
     claude_probed_version, claude_verify_spawns, fold_claude_line, init_check, mcp_check,
     new_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeFold,
-    ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode, PermissionSetup, StderrRead,
-    CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT,
-    CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
+    ClaudeHeadlessArgs, ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode,
+    PermissionSetup, StderrRead, CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED,
+    CLAUDE_PERMISSION_PROMPT, CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::fs;
 use std::io::{Read, Write};
@@ -215,13 +215,14 @@ fn verify_mcp_config(exe: &Path, dir: &Path) -> String {
 }
 
 fn verify_args(model: Option<&str>, dir: &Path, session: &str, exe: &Path) -> Vec<String> {
-    let mut args = claude_headless_args(
+    let mut args = claude_headless_args(&ClaudeHeadlessArgs {
         model,
-        &verify_mcp_config(exe, dir),
-        dir,
-        PermissionMode::Ask,
-        ClaudeSession::New(session),
-    );
+        mcp_config: &verify_mcp_config(exe, dir),
+        attachments: dir,
+        mode: PermissionMode::Ask,
+        session: ClaudeSession::New(session),
+        copied: &[],
+    });
     args.extend(["--setting-sources".to_string(), "project,local".to_string()]);
     args
 }
@@ -402,13 +403,14 @@ mod tests {
 
     #[test]
     fn worker_args_do_not_restrict_setting_sources() {
-        let args = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/tmp/verify-dir"),
-            PermissionMode::Ask,
-            ClaudeSession::New("s1"),
-        );
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/tmp/verify-dir"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("s1"),
+            copied: &[],
+        });
         assert!(args.iter().all(|word| word != "--setting-sources"));
     }
 }

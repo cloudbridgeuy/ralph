@@ -210,14 +210,21 @@ pub fn build_mcp_args(config_path: &Path, config: &Value) -> Vec<String> {
     ]
 }
 
-fn allowed_tools(config: &Value) -> String {
-    config["mcpServers"]
-        .as_object()
+pub fn mcp_wildcards<'a>(names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+    names
         .into_iter()
-        .flat_map(Map::keys)
         .map(|name| format!("mcp__{name}__*"))
-        .collect::<Vec<_>>()
-        .join(",")
+        .collect()
+}
+
+fn allowed_tools(config: &Value) -> String {
+    mcp_wildcards(
+        config["mcpServers"]
+            .as_object()
+            .into_iter()
+            .flat_map(Map::keys),
+    )
+    .join(",")
 }
 
 pub fn build_nap_args(store: &Path, run: &str) -> Vec<OsString> {
@@ -677,6 +684,13 @@ mod tests {
                 "--strict-mcp-config"
             ]
         );
+    }
+
+    #[test]
+    fn wildcards_name_every_server_once() {
+        let names = ["a".to_string(), "b".to_string()];
+        assert_eq!(mcp_wildcards(&names), ["mcp__a__*", "mcp__b__*"]);
+        assert!(mcp_wildcards(&[]).is_empty());
     }
 
     #[test]
