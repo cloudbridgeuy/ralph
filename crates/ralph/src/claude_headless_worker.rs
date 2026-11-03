@@ -1,5 +1,6 @@
 use crate::acp_log::{drain_stderr, CappedLog, LoggedWrite};
 use crate::acp_worker::{apply_effect, push_event, Events};
+use crate::chat::memory::usage_path;
 use crate::chat::read_claude_config;
 use crate::codex_worker::pipes::pipe_lines;
 use crate::codex_worker::report_exit;
@@ -15,8 +16,11 @@ use crate::process_tree::{snapshot_tree, sweep_tree};
 use crate::transport::stdio::{spawn_piped, stop_child, stop_groups};
 use crate::watches::locked;
 use crate::worker_mcp::Inbox;
+use crate::worker_usage::{record_session_or_warn, UsageSession, UsageTarget};
 use crate::workers::headless::{HeadlessHost, Heartbeat};
-use ralph_core::claude_leftovers::configured_dir;
+use ralph_core::claude_leftovers::{
+    claude_transcript_path, configured_dir, spawned_claude_dir, CLAUDE_CONFIG_DIR_ENV,
+};
 use ralph_core::stream::user_line;
 use ralph_core::worker::{
     acp_mcp_server, activity_path, auto_answer, bind_started_turn, claude_headless_args,
@@ -24,13 +28,13 @@ use ralph_core::worker::{
     import_servers, interrupt_lines, interrupted_end, join_start_warnings, permission_response,
     prompt_failure_report, ready_path, reduce, request_stale, resumed_session, shutdown_steps,
     start_steps, stuck_permission_report, task_prompt, turn_end_activity, turn_lost_at_resume,
-    uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs, ClaudeLine,
-    ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState, InterruptOutcome,
-    Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep, SpawnRequest,
-    StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers, ATTACHMENTS_DIR,
-    CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR, CLAUDE_HEADLESS_CLOSE_DIR,
-    CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR, CLAUDE_HEADLESS_PROMPT_DIR,
-    CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
+    usage_seen_path, uuid_v4, worker_config_path, Action, ActivityState, ClaudeHeadlessArgs,
+    ClaudeLine, ClaudePermission, ClaudeSession, HandoffFiles, HarnessId, HeadlessState,
+    InterruptOutcome, Leftover, PermissionAnswer, PermissionMode, SessionRecord, ShutdownStep,
+    SpawnRequest, StartFault, StartStep, ThreadSignal, Turns, WorkerEvent, WorkerMarkers,
+    ATTACHMENTS_DIR, CLAUDE_COMMAND, CLAUDE_GATE, CLAUDE_HEADLESS_ANSWER_DIR,
+    CLAUDE_HEADLESS_CLOSE_DIR, CLAUDE_HEADLESS_INTERRUPT_DIR, CLAUDE_HEADLESS_OWNER_DIR,
+    CLAUDE_HEADLESS_PROMPT_DIR, CLAUDE_HEADLESS_SESSION_DIR, CLAUDE_HEADLESS_SPAWN_DIR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -74,9 +78,38 @@ struct Shared {
     turn_seq: AtomicU64,
     closing: AtomicBool,
     exited: AtomicBool,
+    usage: Option<HeadlessUsage>,
+}
+
+struct HeadlessUsage {
+    target: UsageTarget,
+    session_id: String,
+    transcript: PathBuf,
+    finished: Mutex<bool>,
 }
 
 impl Shared {
+    fn record_usage(&self) {
+        self.record_usage_then(false);
+    }
+
+    fn record_usage_then(&self, finish: bool) {
+        let Some(usage) = &self.usage else {
+            return;
+        };
+        let mut finished = locked(&usage.finished);
+        if *finished {
+            return;
+        }
+        *finished = finish;
+        let session = UsageSession {
+            session_id: &usage.session_id,
+            transcript: &usage.transcript,
+            harness: HarnessId::ClaudeHeadless,
+        };
+        record_session_or_warn(&usage.target, &session);
+    }
+
     fn drive(&self, step: impl FnOnce(&mut Turns) -> Vec<Action>) {
         let mut turns = locked(&self.turns);
         let actions = step(&mut turns);
@@ -168,6 +201,7 @@ impl Shared {
                         WorkerEvent::TurnEnded(end) => {
                             self.permissions.accept_again();
                             self.heartbeat.set_state(turn_end_activity(end));
+                            self.record_usage();
                         }
                         _ => {}
                     }
@@ -230,6 +264,7 @@ impl Shared {
                 .ok();
         }
         self.drive(Turns::process_gone);
+        self.record_usage();
         report_exit(
             &self.heartbeat,
             &self.events,
@@ -238,6 +273,34 @@ impl Shared {
             "claude exited",
         );
     }
+}
+
+fn headless_usage(
+    id: &str,
+    store: &Path,
+    request: &SpawnRequest,
+    config: &AppConfig,
+    session_id: &str,
+) -> Option<HeadlessUsage> {
+    let home = dirs::home_dir()?;
+    let inherited = std::env::var_os(CLAUDE_CONFIG_DIR_ENV).map(PathBuf::from);
+    let claude_dir = spawned_claude_dir(
+        config.claude.config_dir.as_deref(),
+        inherited.as_deref(),
+        &home,
+    );
+    let cwd = request.worktree.to_string_lossy();
+    Some(HeadlessUsage {
+        target: UsageTarget {
+            worker: id.to_string(),
+            seen: usage_seen_path(store, id),
+            store: Some(store.to_path_buf()),
+            usage: usage_path(),
+        },
+        session_id: session_id.to_string(),
+        transcript: claude_transcript_path(&claude_dir, &cwd, session_id),
+        finished: Mutex::default(),
+    })
 }
 
 fn session_record(
@@ -408,7 +471,7 @@ impl ClaudeWorker {
             dirs::home_dir().as_deref(),
         );
         if let Some(dir) = config_dir {
-            command.env("CLAUDE_CONFIG_DIR", dir);
+            command.env(CLAUDE_CONFIG_DIR_ENV, dir);
         }
         let (mut child, stdin, stdout, stderr) = spawn_piped(command).map_err(|e| {
             remove_leftovers(cleanup(StartFault::SpawnFailed), &paths, None);
@@ -446,6 +509,7 @@ impl ClaudeWorker {
             turn_seq: AtomicU64::new(0),
             closing: AtomicBool::new(false),
             exited: AtomicBool::new(false),
+            usage: headless_usage(id, store, request, &config, &expected_session),
         });
         let fresh;
         let record = match resume {
@@ -515,8 +579,13 @@ impl ClaudeWorker {
         self.finished.recv_timeout(SHUTDOWN_GRACE).ok();
         stop_child(&mut self.child);
         sweep_tree(&tree);
-        fs::remove_file(&self.owner).ok();
+        release_owner(&self.shared, &self.owner);
     }
+}
+
+fn release_owner(shared: &Shared, owner: &Path) {
+    shared.record_usage_then(true);
+    fs::remove_file(owner).ok();
 }
 
 impl Drop for ClaudeWorker {

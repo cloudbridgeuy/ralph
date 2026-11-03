@@ -1,7 +1,7 @@
 use crate::chat::memory::append_usage;
 use crate::warn::warn_if_err;
 use ralph_core::chat_memory::{worker_usage_record, CallKind};
-use ralph_core::worker::{parse_stop_session, subagents_dir, transcript_usage};
+use ralph_core::worker::{parse_stop_session, subagents_dir, transcript_usage, HarnessId};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -43,11 +43,30 @@ fn subagent_lines(dir: &Path) -> io::Result<String> {
     Ok(text)
 }
 
+pub struct UsageSession<'a> {
+    pub session_id: &'a str,
+    pub transcript: &'a Path,
+    pub harness: HarnessId,
+}
+
 fn record(target: &UsageTarget, payload: &str, turn_id: Option<u64>) -> io::Result<()> {
     let session = parse_stop_session(payload).map_err(io::Error::other)?;
-    let mut lines = read_or_empty(&session.transcript_path)?;
+    let session = UsageSession {
+        session_id: &session.session_id,
+        transcript: &session.transcript_path,
+        harness: HarnessId::Claude,
+    };
+    record_session(target, &session, turn_id)
+}
+
+fn record_session(
+    target: &UsageTarget,
+    session: &UsageSession,
+    turn_id: Option<u64>,
+) -> io::Result<()> {
+    let mut lines = read_or_empty(session.transcript)?;
     lines.push('\n');
-    lines.push_str(&subagent_lines(&subagents_dir(&session.transcript_path))?);
+    lines.push_str(&subagent_lines(&subagents_dir(session.transcript))?);
     let seen: HashSet<String> = read_or_empty(&target.seen)?
         .lines()
         .map(str::to_string)
@@ -59,8 +78,9 @@ fn record(target: &UsageTarget, payload: &str, turn_id: Option<u64>) -> io::Resu
             worker_id: target.worker.clone(),
             turn_id,
         };
-        let session_id = Some(session.session_id.clone());
-        let mut usage = worker_usage_record(kind, at.clone(), session_id, "claude", row);
+        let session_id = Some(session.session_id.to_string());
+        let harness = session.harness.as_str();
+        let mut usage = worker_usage_record(kind, at.clone(), session_id, harness, row);
         usage.store = target
             .store
             .as_ref()
@@ -83,6 +103,13 @@ fn record(target: &UsageTarget, payload: &str, turn_id: Option<u64>) -> io::Resu
 pub fn record_or_warn(target: &UsageTarget, payload: &str, turn_id: Option<u64>) {
     warn_if_err(
         record(target, payload, turn_id),
+        "Failed to record worker usage",
+    );
+}
+
+pub fn record_session_or_warn(target: &UsageTarget, session: &UsageSession) {
+    warn_if_err(
+        record_session(target, session, None),
         "Failed to record worker usage",
     );
 }
