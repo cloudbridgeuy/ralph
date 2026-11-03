@@ -13,7 +13,7 @@ A running list of things workers and smoke tests leave behind outside the repo. 
 
 See [ralph chat](ralph-chat.md#mcp-tools) for close steps and safety checks, and [Headless workers](headless-workers.md) for hosting kinds, compatibility and chat-owned host shutdown.
 
-Ralph itself never reads these transcript folders.
+Ralph reads these transcripts only to write worker usage rows (GUZ-1258, `worker_usage::record_session`), never to clean up: a tmux `Claude` worker reads the `transcript_path` its Stop hook reports (`worker_mcp::run_stop_hook`), and a `ClaudeHeadless` worker reads `<claude dir>/projects/<mangled path>/<session_id>.jsonl` at each turn end, at claude exit and at close, before close removes the folder (see [Headless workers](headless-workers.md)).
 
 ## Kinds
 
