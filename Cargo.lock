@@ -1635,6 +1635,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tar",
+ "toml",
  "unicode-width 0.2.2",
  "zune-core",
  "zune-jpeg",

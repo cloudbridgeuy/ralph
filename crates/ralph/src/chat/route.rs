@@ -76,7 +76,7 @@ pub fn run_local(route: Route, ctx: &LocalRoute, refresh: impl Fn()) -> io::Resu
         | Route::Shell(_)
         | Route::ReadInbox(_)
         | Route::Hold(_)
-        | Route::SendIt
+        | Route::SendIt(_)
         | Route::Ignore => {}
     }
     Ok(())

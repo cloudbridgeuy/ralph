@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const SOCKET_TOOLS: [&str; 7] = [
+const SOCKET_TOOLS: [&str; 8] = [
     "workers",
     "spawn_worker",
     "reply",
@@ -11,6 +11,7 @@ const SOCKET_TOOLS: [&str; 7] = [
     "watch",
     "schedule",
     "suggest_reply",
+    "propose_run",
 ];
 const SOCKET_PREFIX: &str = "chat-";
 const SOCKET_FILE: &str = "chat.sock";
@@ -167,6 +168,7 @@ mod tests {
             "watch",
             "schedule",
             "suggest_reply",
+            "propose_run",
         ] {
             assert!(is_socket_tool(name));
         }

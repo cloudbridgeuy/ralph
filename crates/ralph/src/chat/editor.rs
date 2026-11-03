@@ -274,21 +274,26 @@ fn edit_text(
     argv: &[String],
     prefill: &str,
 ) -> io::Result<()> {
+    let path = store_dir.join(EDITOR_FILE);
+    std::fs::write(&path, prefill)?;
+    open_in_editor(argv, &path)?;
+    let draft = draft_below_separator(&std::fs::read_to_string(&path)?);
+    if !draft.is_empty() {
+        editor.run_edit_commands(&[EditCommand::Clear, EditCommand::InsertString(draft)]);
+    }
+    Ok(())
+}
+
+pub(super) fn open_in_editor(argv: &[String], path: &Path) -> io::Result<()> {
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| io::Error::other("editor command is empty"))?;
-    let path = store_dir.join(EDITOR_FILE);
-    std::fs::write(&path, prefill)?;
     let mut command = Command::new(program);
-    command.args(args).arg(&path);
+    command.args(args).arg(path);
     default_sigttou_in(&mut command);
     let status = command.status()?;
     if !status.success() {
         return Err(io::Error::other(format!("editor exited with {status}")));
-    }
-    let draft = draft_below_separator(&std::fs::read_to_string(&path)?);
-    if !draft.is_empty() {
-        editor.run_edit_commands(&[EditCommand::Clear, EditCommand::InsertString(draft)]);
     }
     Ok(())
 }

@@ -1,12 +1,13 @@
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
 use crate::worker::{HarnessId, Report};
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 pub const DEFAULT_JUDGE_ROUNDS: u32 = 2;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Criterion {
     WorkerDone { worker: String },
@@ -15,7 +16,7 @@ pub enum Criterion {
     Judge { question: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
     Spawn { harness: HarnessId },
@@ -29,7 +30,7 @@ pub enum Action {
     PaidRun { max_usd: f64 },
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Grant {
     TurnCap { turns: u32 },
@@ -52,7 +53,7 @@ pub struct RunPlan {
     pub judge_rounds: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct RawPlan {
     goal: String,
     steps: Vec<RawStep>,
@@ -64,18 +65,45 @@ struct RawPlan {
     caps: RawCaps,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct RawStep {
     #[serde(rename = "do")]
     task: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     criterion: Option<Criterion>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default)]
 struct RawCaps {
+    #[serde(skip_serializing_if = "Option::is_none")]
     turns: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     judge_rounds: Option<u32>,
+}
+
+impl From<&RunPlan> for RawPlan {
+    fn from(plan: &RunPlan) -> Self {
+        RawPlan {
+            goal: plan.goal.clone(),
+            steps: plan
+                .steps
+                .iter()
+                .map(|step| RawStep {
+                    task: step.task.clone(),
+                    criterion: Some(step.criterion.clone()),
+                })
+                .collect(),
+            allowed: plan.allowed.clone(),
+            grants: plan.grants.clone(),
+            caps: RawCaps {
+                turns: Some(plan.limits.max_turns),
+                usd: Some(plan.limits.max_usd),
+                judge_rounds: Some(plan.judge_rounds),
+            },
+        }
+    }
 }
 
 fn parse_step(number: usize, step: RawStep) -> Result<Step, String> {
@@ -192,6 +220,190 @@ pub fn render_run(plan: &RunPlan) -> String {
             .map(|grant| format!("  - {}", grant.label())),
     );
     lines.join("\n")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendItCommand {
+    Usage,
+    Propose(String),
+    Edit,
+    Go,
+    Status,
+    Off,
+}
+
+pub fn parse_send_it_args(args: &str) -> SendItCommand {
+    match args.trim() {
+        "" => SendItCommand::Usage,
+        "edit" => SendItCommand::Edit,
+        "go" => SendItCommand::Go,
+        "status" => SendItCommand::Status,
+        "off" => SendItCommand::Off,
+        text => SendItCommand::Propose(text.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunFile {
+    pub plan: RunPlan,
+    pub approved: Option<String>,
+}
+
+const APPROVED_KEY: &str = "approved";
+const HASH_BYTES: usize = 6;
+
+pub fn plan_hash(plan: &RunPlan) -> String {
+    let canonical = serde_json::to_string(&RawPlan::from(plan)).unwrap_or_default();
+    Sha256::digest(canonical.as_bytes())
+        .iter()
+        .take(HASH_BYTES)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+impl RunFile {
+    pub fn is_approved(&self) -> bool {
+        self.approved.as_deref() == Some(plan_hash(&self.plan).as_str())
+    }
+}
+
+pub fn read_run(text: &str, defaults: Limits) -> Result<RunFile, String> {
+    let malformed = |error: String| format!("run.toml is malformed: {}", error.trim());
+    let table: toml::Table = toml::from_str(text).map_err(|e| malformed(e.to_string()))?;
+    let value = serde_json::to_value(table).map_err(|e| malformed(e.to_string()))?;
+    Ok(RunFile {
+        plan: parse_run(&value, defaults)?,
+        approved: value
+            .get(APPROVED_KEY)
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    })
+}
+
+pub fn write_run(file: &RunFile) -> Result<String, String> {
+    let unwritable = |error: String| format!("Could not write run.toml: {error}");
+    let mut value =
+        serde_json::to_value(RawPlan::from(&file.plan)).map_err(|e| unwritable(e.to_string()))?;
+    if let (Some(fields), Some(hash)) = (value.as_object_mut(), &file.approved) {
+        fields.insert(APPROVED_KEY.to_string(), Value::String(hash.clone()));
+    }
+    toml::to_string(&value).map_err(|e| unwritable(e.to_string()))
+}
+
+pub fn approve(
+    file: &RunFile,
+    shown: Option<&str>,
+    typed_at_prompt: bool,
+) -> Result<RunFile, String> {
+    let hash = plan_hash(&file.plan);
+    if !typed_at_prompt {
+        return Err("/send-it go counts only when you type it at the prompt.".to_string());
+    }
+    if shown != Some(hash.as_str()) {
+        return Err(format!(
+            "Plan {hash} is not the plan on screen. Show it with /send-it status, then type /send-it go."
+        ));
+    }
+    Ok(RunFile {
+        plan: file.plan.clone(),
+        approved: Some(hash),
+    })
+}
+
+pub fn render_status(file: &RunFile) -> String {
+    let hash = plan_hash(&file.plan);
+    let state = if file.is_approved() {
+        format!("Plan {hash}: approved.")
+    } else {
+        format!("Plan {hash}: not approved. Type /send-it go to approve this plan.")
+    };
+    format!("{}\n{state}", render_run(&file.plan))
+}
+
+pub fn propose_refusal(existing: Option<&RunFile>) -> Option<String> {
+    existing.filter(|file| file.is_approved()).map(|file| {
+        format!(
+            "Plan {} is approved and active. Stop it with /send-it off first.",
+            plan_hash(&file.plan)
+        )
+    })
+}
+
+pub fn propose_prompt(text: &str) -> String {
+    format!(
+        "/send-it: restate these instructions as a run plan. Call `propose_run` once with the plan, then stop. Do not start the work: ralph shows the plan and the person approves it with /send-it go.\n\n{text}"
+    )
+}
+
+pub fn propose_run_tool() -> Value {
+    json!({
+        "name": "propose_run",
+        "description": "Store the run plan for a /send-it request. Call it only for a /send-it request, once, and do not start the work. Give every step an exit criterion ralph can measure. ralph shows the plan; the person approves it by typing /send-it go.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "goal": {"type": "string", "description": "What the run delivers."},
+                "steps": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "do": {"type": "string", "description": "What the step does."},
+                            "criterion": {
+                                "type": "object",
+                                "description": "Exit check. worker_done needs worker; watch_passes and check_passes need a command that exits 0; judge needs a question.",
+                                "properties": {
+                                    "kind": {"type": "string", "enum": ["worker_done", "watch_passes", "check_passes", "judge"]},
+                                    "worker": {"type": "string"},
+                                    "command": {"type": "string"},
+                                    "question": {"type": "string"}
+                                },
+                                "required": ["kind"]
+                            }
+                        },
+                        "required": ["do", "criterion"]
+                    }
+                },
+                "allowed": {
+                    "type": "array",
+                    "description": "Actions the run may take. spawn needs harness; paid_run needs max_usd.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["spawn", "reply", "close", "watch", "merge", "push", "pr", "linear_write", "paid_run"]},
+                            "harness": {"type": "string"},
+                            "max_usd": {"type": "number"}
+                        },
+                        "required": ["kind"]
+                    }
+                },
+                "grants": {
+                    "type": "array",
+                    "description": "Limits the person pre-approves. turn_cap needs turns; cost_cap needs usd.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["turn_cap", "cost_cap"]},
+                            "turns": {"type": "integer"},
+                            "usd": {"type": "number"}
+                        },
+                        "required": ["kind"]
+                    }
+                },
+                "caps": {
+                    "type": "object",
+                    "description": "Omit to take the configured defaults.",
+                    "properties": {
+                        "turns": {"type": "integer", "minimum": 1},
+                        "usd": {"type": "number", "exclusiveMinimum": 0},
+                        "judge_rounds": {"type": "integer", "minimum": 1}
+                    }
+                }
+            },
+            "required": ["goal", "steps"]
+        }
+    })
 }
 
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];

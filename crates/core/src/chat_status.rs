@@ -4,6 +4,7 @@ use crate::chat_hold::HoldFilter;
 use crate::chat_memory::{history_tool, MemoryCall};
 use crate::chat_nudge::{parse_nudge_args, NudgeCommand};
 use crate::chat_process::ProcessCell;
+use crate::chat_send_it::{parse_send_it_args, SendItCommand};
 use crate::chat_view::{parse_view_args, ViewArgs};
 use crate::diff_command::{parse_diff_args, DiffArgs};
 use crate::inbox::{Position, Selection};
@@ -96,7 +97,7 @@ pub enum Route {
     WorkerCosts,
     Hold(HoldFilter),
     Nudge(NudgeCommand),
-    SendIt,
+    SendIt(SendItCommand),
     History(Result<MemoryCall, String>),
     View(ViewArgs),
     Help,
@@ -124,7 +125,7 @@ impl Route {
             | Route::DropInbox(_)
             | Route::Hold(_)
             | Route::Nudge(_)
-            | Route::SendIt
+            | Route::SendIt(_)
             | Route::View(_)
             | Route::Watch(WatchCommand::Start(_) | WatchCommand::Stop(_))
             | Route::Schedule(ScheduleCommand::Cancel(_))
@@ -169,7 +170,7 @@ pub fn route_input(
                 Command::Workers => workers_route(args, line),
                 Command::Hold => hold_route(args, line, hold_targets),
                 Command::Nudge => Route::Nudge(parse_nudge_args(args)),
-                Command::SendIt => Route::SendIt,
+                Command::SendIt => Route::SendIt(parse_send_it_args(args)),
                 Command::Config => Route::Config,
                 Command::View => Route::View(parse_view_args(args)),
                 Command::Read | Command::Search => {

@@ -803,20 +803,26 @@ fn history_commands_run_mid_turn() {
 #[test]
 fn route_input_parses_send_it_commands() {
     let route = |line| route_input(line, 0, &EmptySubmit::Inbox, &BTreeSet::new());
-    for line in [
-        "/send-it",
-        "  /send-it  ",
-        "/send-it off",
-        "/send-it ship GUZ-1162",
+    for (line, command) in [
+        ("/send-it", SendItCommand::Usage),
+        ("  /send-it  ", SendItCommand::Usage),
+        ("/send-it off", SendItCommand::Off),
+        ("/send-it go", SendItCommand::Go),
+        (
+            "/send-it ship GUZ-1162",
+            SendItCommand::Propose("ship GUZ-1162".into()),
+        ),
     ] {
-        assert_eq!(route(line), Route::SendIt, "{line}");
+        assert_eq!(route(line), Route::SendIt(command), "{line}");
     }
     assert_eq!(route("/send-itx"), Route::Send("/send-itx".into()));
 }
 
 #[test]
 fn send_it_never_runs_mid_turn() {
-    assert!(!Route::SendIt.runs_mid_turn());
+    for command in [SendItCommand::Status, SendItCommand::Go] {
+        assert!(!Route::SendIt(command).runs_mid_turn());
+    }
 }
 
 #[test]
