@@ -9,9 +9,10 @@ use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
 use ralph_core::chat_memory::{view, CallKind, MemoryCall, ViewSplit};
 use ralph_core::chat_thread::{
-    digest_with, drop_message, fork_check, guard_check, label_item, merge_prompt, merged_check,
-    merged_report, open_check, pull_message, revive_check, thread_split, Guarded, Live, Merged,
-    Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR, THREAD_FILE,
+    digest_with, drop_message, fork_check, guard_check, label_item, ls_counts, merge_prompt,
+    merged_check, merged_report, open_check, pull_message, revive_check, thread_split, Guarded,
+    Live, Merged, Parked, Scope, ThreadMeta, ThreadName, MAIN_PREFIX_LINES, THREADS_DIR,
+    THREAD_FILE,
 };
 use ralph_core::schedule_request::SCHEDULE_DIR;
 use ralph_core::watch_store::WATCHES_DIR;
@@ -111,7 +112,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
     let main = super::store_dir(args.store)?;
     match args.command {
         ThreadCommand::Ls => {
-            let rows = list(&main)?;
+            let rows = list(&main, &|name| running_ids(&main, name).len())?;
             println!("{}", if rows.is_empty() { "no threads" } else { &rows });
         }
         ThreadCommand::Drop { name } => {
@@ -253,7 +254,7 @@ fn claim_closed(dir: &Path, name: &ThreadName) -> Result<fs::File, String> {
         })
 }
 
-pub fn list(main: &Path) -> io::Result<String> {
+pub fn list(main: &Path, workers: &dyn Fn(&ThreadName) -> usize) -> io::Result<String> {
     let entries = match fs::read_dir(main.join(THREADS_DIR)) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(String::new()),
         entries => entries?,
@@ -268,7 +269,9 @@ pub fn list(main: &Path) -> io::Result<String> {
         let Ok(meta) = read_meta(&dir) else {
             continue;
         };
-        let messages = Store::new(dir).log_len()?;
+        let messages = Store::new(dir.clone()).log_len()?;
+        let unread = Inbox::new(dir.join(INBOX_DIR)).unread_count()?;
+        let counts = ls_counts(workers(&name), unread);
         let merged = meta
             .merged
             .map(|merged| format!("  merged {}", merged.at))
@@ -278,7 +281,7 @@ pub fn list(main: &Path) -> io::Result<String> {
             .map(|parked| format!("  parked {}", parked.at))
             .unwrap_or_default();
         rows.push(format!(
-            "{name}  forked at #{}  {messages} messages  {}{merged}{parked}",
+            "{name}  forked at #{}  {messages} messages  {}{merged}{parked}{counts}",
             meta.base, meta.created
         ));
     }
@@ -342,6 +345,7 @@ mod tests {
     use super::*;
     use crate::config::load_for_chat;
     use ralph_core::chat_memory::{parse_tool_call, Role};
+    use ralph_core::inbox::Selection;
     use ralph_core::schedule::{Task, TaskKind, TaskStatus};
     use ralph_core::watch::WatchKind;
     use ralph_core::watch_store::SavedWatch;
@@ -466,7 +470,7 @@ mod tests {
     fn ls_lists_threads_and_drop_refuses_an_open_one() {
         let (_root, main, dir) = forked();
         ensure(&main, &name("b-side")).unwrap();
-        let rows = list(&main).unwrap();
+        let rows = list(&main, &|_| 0).unwrap();
         let names: Vec<&str> = rows
             .lines()
             .filter_map(|l| l.split_whitespace().next())
@@ -486,7 +490,7 @@ mod tests {
         drop_thread(&main, &name("auth"), &[]).unwrap();
         assert!(!dir.exists());
         assert!(drop_thread(&main, &name("auth"), &[]).is_err());
-        assert_eq!(list(&main).unwrap().lines().count(), 1);
+        assert_eq!(list(&main, &|_| 0).unwrap().lines().count(), 1);
     }
 
     fn digest(text: &'static str) -> impl FnMut(&str) -> Result<String, String> {
@@ -511,7 +515,7 @@ mod tests {
         assert_eq!(inbox.len(), 1);
         assert_eq!(inbox[0].worker, "thread:auth");
         assert_eq!(inbox[0].at, merged.at);
-        let rows = list(&main).unwrap();
+        let rows = list(&main, &|_| 0).unwrap();
         assert!(rows.contains(&format!("  merged {}", merged.at)), "{rows}");
         let frozen = "thread auth is merged into main and stays read-only";
         let again = merge_thread(&main, &name("auth"), &[], &mut digest("x #auth:0"));
@@ -549,7 +553,7 @@ mod tests {
         let auth = name("auth");
         park_thread(&main, &auth, &[]).unwrap();
         let parked = read_meta(&dir).unwrap().parked.unwrap();
-        let rows = list(&main).unwrap();
+        let rows = list(&main, &|_| 0).unwrap();
         assert!(rows.ends_with(&format!("  parked {}", parked.at)), "{rows}");
         assert_eq!(
             park_thread(&main, &auth, &[]).unwrap_err(),
@@ -674,6 +678,29 @@ mod tests {
             "dropped thread auth and its 2 saved watches or schedules"
         );
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn ls_counts_workers_and_unread_without_touching_the_inbox() {
+        let (_root, main, dir) = forked();
+        let auth = name("auth");
+        let inbox = Inbox::new(dir.join(INBOX_DIR));
+        inbox.post(&merged_report(&auth, "a", "t1"), 0).unwrap();
+        let files = || fs::read_dir(dir.join(INBOX_DIR)).unwrap().count();
+        let rows = list(&main, &|_| 2).unwrap();
+        assert!(rows.ends_with("  2 workers  1 unread"), "{rows}");
+        assert_eq!(files(), 1);
+        assert!(!dir.join("inbox.json").exists());
+        assert_eq!(inbox.peek().unwrap().len(), 1);
+        inbox.post(&merged_report(&auth, "b", "t2"), 1).unwrap();
+        let rows = list(&main, &|_| 1).unwrap();
+        assert!(rows.ends_with("  1 worker  2 unread"), "{rows}");
+        assert_eq!(inbox.drain(Selection::All).unwrap().len(), 2);
+        let rows = list(&main, &|_| 0).unwrap();
+        assert!(
+            !rows.contains("worker") && !rows.contains("unread"),
+            "{rows}"
+        );
     }
 
     #[test]

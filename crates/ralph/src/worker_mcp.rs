@@ -152,6 +152,10 @@ impl Inbox {
         self.sync(|ledger| (ledger.reports(), false))
     }
 
+    pub fn unread_count(&self) -> io::Result<usize> {
+        Ok(self.load_ledger()?.reports().len() + self.pending()?.len())
+    }
+
     pub fn drain(&self, selection: Selection) -> io::Result<Vec<Report>> {
         self.sync(|ledger| {
             let reports = ledger.take(selection);
