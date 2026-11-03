@@ -2,6 +2,7 @@ use crate::config::AppConfig;
 use crate::private_file::check_path;
 use crate::subprocess::{kill_registered_groups, spawn_detached, timed_output};
 use crate::verified_agents;
+use crate::watches::locked;
 use crate::worker_mcp::Inbox;
 use crate::worker_verify::version_probe;
 use ralph_core::worker::{
@@ -19,8 +20,8 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 pub(crate) fn probe(command: &str) -> VersionProbe {
     version_probe(timed_output(
@@ -203,6 +204,7 @@ pub(crate) struct DriftRun {
     inbox: PathBuf,
     _lock: Option<Arc<File>>,
     done: Arc<AtomicBool>,
+    watchdog: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 impl DriftRun {
@@ -212,6 +214,7 @@ impl DriftRun {
             inbox,
             _lock: None,
             done: Arc::new(AtomicBool::new(false)),
+            watchdog: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -225,7 +228,7 @@ impl DriftRun {
 
     pub(crate) fn watch(&self, agent: &'static str) {
         let run = self.clone();
-        std::thread::spawn(move || {
+        let handle = std::thread::spawn(move || {
             std::thread::sleep(drift_watchdog_limit());
             let results = [CheckResult::fail(TIME_LIMIT_CHECK, "verify ran too long")];
             if run.plan(false).record_drift {
@@ -233,6 +236,7 @@ impl DriftRun {
                 end_own_group();
             }
         });
+        *locked(&self.watchdog) = Some(handle);
     }
 
     pub(crate) fn plan(&self, passed: bool) -> FinishPlan {
@@ -240,7 +244,10 @@ impl DriftRun {
     }
 
     pub(crate) fn await_watchdog(&self) {
-        std::thread::sleep(Duration::from_secs(10));
+        let handle = locked(&self.watchdog).take();
+        if let Some(handle) = handle {
+            handle.join().ok();
+        }
     }
 
     pub(crate) fn record(
