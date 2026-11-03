@@ -13,9 +13,9 @@ use ralph_core::worker::{
     acp_mcp_server, argv_check, cancel_check, claude_headless_args, claude_mcp_config,
     claude_probed_version, claude_verify_spawns, fold_claude_line, init_check, mcp_check,
     new_reports, permission_check, prompt_check, report_check, uuid_v4, CheckResult, ClaudeFold,
-    ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode, PermissionSetup, StderrRead,
-    CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED, CLAUDE_PERMISSION_PROMPT,
-    CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
+    ClaudeHeadlessArgs, ClaudePlan, ClaudeSession, ClaudeSpawn, InboxFile, PermissionMode,
+    PermissionSetup, StderrRead, CLAUDE_COMMAND, CLAUDE_ENDED, CLAUDE_GATE, CLAUDE_INTERRUPTED,
+    CLAUDE_PERMISSION_PROMPT, CLAUDE_REPORT_PROMPT, VERSION_PROBE_LIMIT,
 };
 use std::fs;
 use std::io::{Read, Write};
@@ -215,28 +215,21 @@ fn verify_mcp_config(exe: &Path, dir: &Path) -> String {
 }
 
 fn verify_args(model: Option<&str>, dir: &Path, session: &str, exe: &Path) -> Vec<String> {
-    let mut args = claude_headless_args(
+    let mut args = claude_headless_args(&ClaudeHeadlessArgs {
         model,
-        &verify_mcp_config(exe, dir),
-        dir,
-        PermissionMode::Ask,
-        ClaudeSession::New(session),
-    );
+        mcp_config: &verify_mcp_config(exe, dir),
+        attachments: dir,
+        mode: PermissionMode::Ask,
+        session: ClaudeSession::New(session),
+        copied: &[],
+    });
     args.extend(["--setting-sources".to_string(), "project,local".to_string()]);
     args
 }
 
-fn claude_command(
-    exe: &Path,
-    dir: &Path,
-    session: &str,
-    config: &Result<AppConfig, String>,
-    model: Option<&str>,
-) -> Command {
+fn claude_command(args: &[String], dir: &Path, config: &Result<AppConfig, String>) -> Command {
     let mut command = Command::new(CLAUDE_COMMAND);
-    command
-        .args(verify_args(model, dir, session, exe))
-        .current_dir(dir);
+    command.args(args).current_dir(dir);
     let config_dir = config.as_ref().ok().and_then(|config| {
         configured_dir(
             config.claude.config_dir.as_deref(),
@@ -312,11 +305,12 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
     let spawned = random_bytes().map(uuid_v4).and_then(|session| {
         let exe = std::env::current_exe()
             .map_err(|error| format!("could not find the ralph executable: {error}"))?;
-        spawn_piped(claude_command(&exe, dir, &session, config, model))
-            .map(|spawned| (session, spawned))
+        let args = verify_args(model, dir, &session, &exe);
+        spawn_piped(claude_command(&args, dir, config))
+            .map(|spawned| (session, args, spawned))
             .map_err(|error| format!("could not start `{CLAUDE_COMMAND}`: {error}"))
     });
-    let Some((session, (mut child, stdin, stdout, stderr))) =
+    let Some((session, args, (mut child, stdin, stdout, stderr))) =
         step(checks, spawn_name(kind), spawned, |_| {
             format!("`{CLAUDE_COMMAND}` started with the worker argv")
         })
@@ -340,7 +334,7 @@ fn run_spawn(kind: ClaudeSpawn, scope: &SpawnScope, checks: &Checks) -> bool {
             } else {
                 Ok(true)
             };
-            checks.add(argv_check(running, &stderr.read(STDERR_LIMIT), exit));
+            checks.add(argv_check(running, &stderr.read(STDERR_LIMIT), exit, &args));
         }
         ClaudeSpawn::Turns => {
             if running {
@@ -402,14 +396,21 @@ mod tests {
     }
 
     #[test]
+    fn verify_args_load_only_the_configured_mcp_servers() {
+        let args = verify_args(None, Path::new("/tmp/verify-dir"), "s1", &exe());
+        assert!(args.contains(&"--strict-mcp-config".to_string()));
+    }
+
+    #[test]
     fn worker_args_do_not_restrict_setting_sources() {
-        let args = claude_headless_args(
-            None,
-            "{}",
-            Path::new("/tmp/verify-dir"),
-            PermissionMode::Ask,
-            ClaudeSession::New("s1"),
-        );
+        let args = claude_headless_args(&ClaudeHeadlessArgs {
+            model: None,
+            mcp_config: "{}",
+            attachments: Path::new("/tmp/verify-dir"),
+            mode: PermissionMode::Ask,
+            session: ClaudeSession::New("s1"),
+            copied: &[],
+        });
         assert!(args.iter().all(|word| word != "--setting-sources"));
     }
 }

@@ -7,6 +7,10 @@ pub fn task_dir_path(store: &Path, id: &str) -> PathBuf {
     store.join(WORKERS_DIR).join(format!("{id}.task"))
 }
 
+pub fn worker_config_path(store: &Path, id: &str) -> PathBuf {
+    store.join(WORKERS_DIR).join(format!("{id}.json"))
+}
+
 pub fn task_file_path(task_dir: &Path) -> PathBuf {
     task_dir.join(TASK_FILE)
 }
@@ -19,7 +23,7 @@ pub fn task_pointer(task_dir: &Path) -> String {
 }
 
 pub fn close_remove_paths(store: &Path, id: &str) -> Vec<PathBuf> {
-    vec![task_dir_path(store, id)]
+    vec![task_dir_path(store, id), worker_config_path(store, id)]
 }
 
 #[cfg(test)]
@@ -51,10 +55,21 @@ mod tests {
     }
 
     #[test]
-    fn close_removes_the_task_dir() {
+    fn the_worker_config_sits_beside_the_worker_files() {
+        assert_eq!(
+            worker_config_path(Path::new("/s"), "A"),
+            PathBuf::from("/s/workers/A.json")
+        );
+    }
+
+    #[test]
+    fn close_removes_the_task_dir_and_the_config() {
         assert_eq!(
             close_remove_paths(Path::new("/s"), "A"),
-            vec![PathBuf::from("/s/workers/A.task")]
+            vec![
+                PathBuf::from("/s/workers/A.task"),
+                PathBuf::from("/s/workers/A.json")
+            ]
         );
     }
 }

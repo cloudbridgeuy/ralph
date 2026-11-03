@@ -27,7 +27,7 @@ mod schedule_worker;
 mod send_it;
 mod skills;
 mod stall;
-pub(crate) use skills::SKILLS_ENV;
+pub(crate) use skills::{read_claude_config, SKILLS_ENV};
 mod snapshots;
 pub(crate) mod socket;
 mod statusbar;
@@ -57,8 +57,7 @@ use crate::chat::queue::{
 use crate::chat::route::{run_local, LocalRoute};
 use crate::chat::schedule::{approve_proposed, restore_schedule};
 use crate::chat::skills::{
-    env_skills, link_skills, read_claude_config, usable_skills, write_mcp_config,
-    write_skill_plugin,
+    env_skills, link_skills, usable_skills, write_mcp_config, write_skill_plugin,
 };
 use crate::chat::snapshots::TurnSnapshots;
 use crate::chat::socket::{ChatSocket, SocketGuard};
