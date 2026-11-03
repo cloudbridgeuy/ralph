@@ -109,7 +109,7 @@ pub const CURSOR_REQUIRED_CHECKS: &[&str] = &["initialize", "session/new"];
 pub const CODEX_REQUIRED_CHECKS: &[&str] = &["initialize", "initialized", "thread/start"];
 
 pub const FREE_VERIFY_LIMIT: Duration = Duration::from_secs(90);
-pub const LIVE_VERIFY_LIMIT: Duration = Duration::from_secs(420);
+pub const LIVE_VERIFY_LIMIT: Duration = Duration::from_secs(540);
 
 pub fn verify_limit(live: bool) -> Duration {
     if live {
@@ -445,7 +445,7 @@ mod tests {
     #[test]
     fn the_live_limit_is_named_in_the_failure() {
         let failure = limit_failure("session/read", Duration::ZERO, verify_limit(true)).unwrap();
-        assert!(failure.detail.contains("420s"), "{}", failure.detail);
+        assert!(failure.detail.contains("540s"), "{}", failure.detail);
         assert_eq!(verify_limit(false), Duration::from_secs(90));
     }
 

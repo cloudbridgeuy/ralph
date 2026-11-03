@@ -147,7 +147,7 @@ pub fn auto_answer(mode: PermissionMode, ask: &ClaudePermission) -> Option<Strin
     }
 }
 
-fn init_status(init: &Value) -> Result<String, String> {
+pub(super) fn init_status(init: &Value) -> Result<String, String> {
     let session = init["session_id"]
         .as_str()
         .filter(|id| !id.is_empty())
@@ -166,7 +166,7 @@ fn init_status(init: &Value) -> Result<String, String> {
     }
 }
 
-fn calls_report(assistant: &Value) -> bool {
+pub(super) fn calls_report(assistant: &Value) -> bool {
     let report = format!("mcp__{SERVER_NAME}__{REPORT_TOOL}");
     assistant["message"]["content"]
         .as_array()
