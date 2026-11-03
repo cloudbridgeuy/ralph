@@ -1,4 +1,5 @@
 use crate::chat_thread::THREAD_REPORT_PREFIX;
+use crate::inbox_post::EXTERNAL_REPORT_PREFIX;
 use crate::schedule_request::ScheduleRequest;
 use crate::watch_request::WatchRequest;
 use serde::{Deserialize, Serialize};
@@ -383,9 +384,14 @@ pub fn inbox_file_name(report: &Report, seq: u64) -> String {
 pub fn chat_message(reports: &[Report]) -> String {
     reports
         .iter()
-        .map(|r| match r.worker.strip_prefix(THREAD_REPORT_PREFIX) {
-            Some(name) => format!("[thread {name} · {}]\n{}", r.status, r.text),
-            None => format!("[worker {} · {}]\n{}", r.worker, r.status, r.text),
+        .map(|r| {
+            if let Some(name) = r.worker.strip_prefix(THREAD_REPORT_PREFIX) {
+                format!("[thread {name} · {}]\n{}", r.status, r.text)
+            } else if let Some(source) = r.worker.strip_prefix(EXTERNAL_REPORT_PREFIX) {
+                format!("[external {source} · {}]\n{}", r.status, r.text)
+            } else {
+                format!("[worker {} · {}]\n{}", r.worker, r.status, r.text)
+            }
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -702,6 +708,12 @@ mod tests {
             chat_message(&reports),
             "[worker A · done]\none\n\n[worker B · blocked]\ntwo"
         );
+    }
+
+    #[test]
+    fn chat_message_frames_external_reports_by_source() {
+        let reports = [report("external:ci", "report", "all green")];
+        assert_eq!(chat_message(&reports), "[external ci · report]\nall green");
     }
 
     #[test]
