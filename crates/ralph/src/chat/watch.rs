@@ -15,7 +15,7 @@ pub fn run(command: WatchCommand, watches: &Watches) {
 fn start_watch(start: StartWatch, watches: &Watches) {
     let plan = plan_start(start, &watches.used_ids());
     match watches.start(plan.spec) {
-        Ok(()) => println!("{}", plan.confirmation),
+        Ok(_) => println!("{}", plan.confirmation),
         Err(e) => println!("{e}"),
     }
 }

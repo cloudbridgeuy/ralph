@@ -1,8 +1,14 @@
 use crate::chat::editor::open_in_editor;
+use crate::chat::monitor::Monitor;
+use crate::inbox_alert;
+use crate::watches::{locked, OutcomeSlot};
+use ralph_core::chat_hold::HoldFilter;
 use ralph_core::chat_send_it::{
-    approve, parse_run, plan_hash, propose_refusal, read_run, render_status, write_run, Limits,
-    RunFile,
+    approve, blocked_alert, blocked_report, check_spec, done_notice, judge_prompt, parse_run,
+    plan_hash, propose_refusal, read_run, render_status, running_line, start_run, tick, write_run,
+    Driving, Ended, Limits, Next, RunFile, StopReason, Ticked,
 };
+use ralph_core::chat_status::Route;
 use serde_json::Value;
 use std::fs;
 use std::io;
@@ -33,6 +39,46 @@ impl Screen {
             shown: None,
         }
     }
+}
+
+pub(super) struct Active {
+    driving: Driving,
+    watched: Option<OutcomeSlot>,
+}
+
+pub(super) struct Driven {
+    pub(super) active: Option<Active>,
+    pub(super) route: Option<Route>,
+}
+
+impl Driven {
+    fn keep(driving: Driving, route: Route, watched: Option<OutcomeSlot>) -> Self {
+        Self {
+            active: Some(Active { driving, watched }),
+            route: Some(route),
+        }
+    }
+
+    fn ended() -> Self {
+        Self {
+            active: None,
+            route: None,
+        }
+    }
+}
+
+fn stopped(reason: StopReason, driving: &Driving, monitor: &Monitor) -> Driven {
+    let notice = reason.notice(&driving.run);
+    println!("{notice}");
+    if let Some(alert) = blocked_alert(&notice, &monitor.alert) {
+        inbox_alert::deliver(&alert);
+    }
+    monitor.term.send(&blocked_report(&notice));
+    Driven::ended()
+}
+
+pub(super) fn took_over(active: &Active, monitor: &Monitor) {
+    stopped(StopReason::TookOver, &active.driving, monitor);
 }
 
 impl SendIt {
@@ -107,17 +153,93 @@ impl SendIt {
         }
     }
 
-    pub(crate) fn go(&self, shown: Option<&str>, typed_at_prompt: bool) -> String {
+    pub(crate) fn go(
+        &self,
+        shown: Option<&str>,
+        typed_at_prompt: bool,
+    ) -> (String, Option<Ticked>) {
         let file = match self.load() {
             Ok(Some(file)) => file,
-            Ok(None) => return NO_RUN.to_string(),
-            Err(text) => return text,
+            Ok(None) => return (NO_RUN.to_string(), None),
+            Err(text) => return (text, None),
         };
         let approved = approve(&file, shown, typed_at_prompt)
             .and_then(|approved| self.save(&approved).map(|()| approved));
         match approved {
-            Ok(approved) => format!("Plan {} approved.", plan_hash(&approved.plan)),
-            Err(text) => text,
+            Ok(approved) => (
+                format!("Plan {} approved. Running it.", plan_hash(&approved.plan)),
+                start_run(&approved).map(|(driving, next)| Ticked {
+                    driving,
+                    next,
+                    met: None,
+                }),
+            ),
+            Err(text) => (text, None),
+        }
+    }
+
+    pub(super) fn tick(&self, active: &Active, ended: Ended) -> Ticked {
+        let file = self.load().ok().flatten();
+        let watched = active
+            .watched
+            .as_ref()
+            .and_then(|slot| locked(slot).clone());
+        tick(
+            &active.driving,
+            &Ended {
+                file: file.as_ref(),
+                watched: watched.as_ref(),
+                ..ended
+            },
+        )
+    }
+
+    pub(super) fn dispatch(&self, ticked: Ticked, monitor: &Monitor) -> Driven {
+        if let Some(met) = &ticked.met {
+            println!("{met}");
+        }
+        let plan = self.load().ok().flatten().map(|file| file.plan);
+        let driving = ticked.driving;
+        match ticked.next {
+            Next::Send(line) => {
+                if let Some(plan) = &plan {
+                    println!("{}", running_line(plan, &driving));
+                }
+                println!("{line}");
+                Driven::keep(driving, Route::Send(line), None)
+            }
+            Next::Judge => match plan.and_then(|plan| judge_prompt(&plan, driving.progress)) {
+                Some(prompt) => {
+                    println!("{prompt}");
+                    Driven::keep(driving, Route::Send(prompt), None)
+                }
+                None => stopped(StopReason::PlanChanged, &driving, monitor),
+            },
+            Next::Hold(worker) => {
+                Driven::keep(driving, Route::Hold(HoldFilter::Source(worker)), None)
+            }
+            Next::Watch(command) | Next::Check(command) => {
+                let spec = check_spec(driving.progress.step, &command);
+                let id = spec.id.clone();
+                match monitor.watches.start(spec) {
+                    Ok(slot) => {
+                        Driven::keep(driving, Route::Hold(HoldFilter::Source(id)), Some(slot))
+                    }
+                    Err(error) => {
+                        println!("{error}");
+                        let step = driving.progress.step + 1;
+                        stopped(StopReason::CheckFailed { step }, &driving, monitor)
+                    }
+                }
+            }
+            Next::Stop(reason) => stopped(reason, &driving, monitor),
+            Next::Done => {
+                if let Some(plan) = &plan {
+                    println!("{}", done_notice(plan, &driving.run));
+                }
+                Driven::ended()
+            }
+            Next::Wait => Driven::ended(),
         }
     }
 
@@ -162,7 +284,9 @@ impl SendIt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ralph_core::watch::WatchOutcome;
     use serde_json::json;
+    use std::sync::Mutex;
 
     const LIMITS: Limits = Limits {
         max_turns: 3,
@@ -241,8 +365,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (send_it, hash) = proposed(dir.path());
         assert_eq!(
-            send_it.go(Some(&hash), true),
-            format!("Plan {hash} approved.")
+            send_it.go(Some(&hash), true).0,
+            format!("Plan {hash} approved. Running it.")
         );
         let refused = send_it.propose(&plan_args()).unwrap_err();
         assert!(refused.contains("approved and active"), "{refused}");
@@ -256,8 +380,9 @@ mod tests {
         let (send_it, hash) = proposed(dir.path());
         assert!(send_it
             .go(Some(&hash), false)
+            .0
             .contains("type it at the prompt"));
-        assert!(send_it.go(None, true).contains("/send-it status"));
+        assert!(send_it.go(None, true).0.contains("/send-it status"));
         assert!(send_it
             .status()
             .text
@@ -299,7 +424,7 @@ mod tests {
         };
         assert_eq!(send_it.status(), none);
         assert_eq!(send_it.clear_approval(), none);
-        assert_eq!(send_it.go(Some("x"), true), NO_RUN);
+        assert_eq!(send_it.go(Some("x"), true), (NO_RUN.to_string(), None));
         assert_eq!(send_it.off(), NO_RUN);
         assert!(NO_RUN.starts_with("No send-it run."));
     }
@@ -312,5 +437,85 @@ mod tests {
         let (send_it, hash) = proposed(dir.path());
         assert_eq!(send_it.proposed(Some(hash.clone())).text, NOT_PROPOSED);
         assert_eq!(send_it.proposed(None).shown, Some(hash));
+    }
+
+    const STEP_1: &str = "[send-it 1/1] run the checks · exit: `cargo xtask lint` exits 0";
+
+    fn started(dir: &Path) -> (SendIt, Active) {
+        let (send_it, hash) = proposed(dir);
+        let ticked = send_it.go(Some(&hash), true).1.unwrap();
+        let active = Active {
+            driving: ticked.driving,
+            watched: None,
+        };
+        (send_it, active)
+    }
+
+    fn ended() -> Ended<'static> {
+        Ended {
+            file: None,
+            replied: true,
+            asked: false,
+            typed: false,
+            queued: &[],
+            cost_usd: 0.1,
+            reply: "",
+            drained: &[],
+            unread: &[],
+            watched: None,
+        }
+    }
+
+    #[test]
+    fn go_starts_only_the_approved_plan_at_step_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, hash) = proposed(dir.path());
+        assert!(send_it.go(None, true).1.is_none());
+        let ticked = send_it.go(Some(&hash), true).1.unwrap();
+        let Next::Send(brief) = ticked.next else {
+            panic!("{:?}", ticked.next)
+        };
+        assert!(brief.ends_with(STEP_1), "{brief}");
+        assert!(brief.starts_with("send-it run "), "{brief}");
+    }
+
+    #[test]
+    fn every_tick_reads_the_plan_file_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, active) = started(dir.path());
+        assert_eq!(
+            send_it.tick(&active, ended()).next,
+            Next::Check("cargo xtask lint".to_string())
+        );
+        send_it.clear_approval();
+        assert_eq!(
+            send_it.tick(&active, ended()).next,
+            Next::Stop(StopReason::PlanChanged)
+        );
+        send_it.off();
+        assert_eq!(
+            send_it.tick(&active, ended()).next,
+            Next::Stop(StopReason::Off)
+        );
+    }
+
+    #[test]
+    fn a_tick_takes_the_outcome_the_watch_left_in_its_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let (send_it, active) = started(dir.path());
+        let waiting = send_it.tick(&active, ended()).driving;
+        for (outcome, next) in [
+            (WatchOutcome::Exited(0), Next::Done),
+            (
+                WatchOutcome::Exited(1),
+                Next::Stop(StopReason::CheckFailed { step: 1 }),
+            ),
+        ] {
+            let active = Active {
+                driving: waiting.clone(),
+                watched: Some(OutcomeSlot::new(Mutex::new(Some(outcome)))),
+            };
+            assert_eq!(send_it.tick(&active, ended()).next, next);
+        }
     }
 }

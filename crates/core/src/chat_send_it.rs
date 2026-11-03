@@ -1,5 +1,7 @@
+use crate::chat_help::Command;
 use crate::inbox_alert::{Alert, AlertConfig};
 use crate::program_status::{Kind, Report as ProgramReport, State};
+use crate::watch::{watch_id, WatchKind, WatchOutcome, WatchSpec};
 use crate::worker::{HarnessId, Report};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -407,7 +409,9 @@ pub fn propose_run_tool() -> Value {
 }
 
 const FLAGGED_STATUSES: [&str; 2] = ["question", "blocked"];
-const RESUME_HINT: &str = "Turn it on again with /send-it.";
+const RESTART_HINT: &str =
+    "To run it again from step 1, show the plan with /send-it status, then type /send-it go.";
+const OFF_NOTICE: &str = "send-it off: the run stopped and its plan is deleted.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Limits {
@@ -435,11 +439,18 @@ pub enum StopReason {
     Unmet { step: usize },
     WorkerFlagged,
     JudgeRounds { step: usize },
+    CheckFailed { step: usize },
+    Off,
+    PlanChanged,
+    NoReply,
+    NeedsYou,
+    TookOver,
 }
 
 impl StopReason {
     pub fn notice(self, run: &Run) -> String {
         let why = match self {
+            StopReason::Off => return OFF_NOTICE.to_string(),
             StopReason::TurnCap => format!("turn cap reached after {} turns", run.turns),
             StopReason::CostCap => format!("cost cap reached at ${:.2}", run.spent_usd),
             StopReason::Unmet { step } => format!("step {step} missed its exit criterion"),
@@ -447,8 +458,13 @@ impl StopReason {
             StopReason::JudgeRounds { step } => {
                 format!("step {step} was still not met after the last judge round")
             }
+            StopReason::CheckFailed { step } => format!("step {step} check did not exit 0"),
+            StopReason::PlanChanged => "the run plan changed or lost its approval".to_string(),
+            StopReason::NoReply => "a turn ended without a reply".to_string(),
+            StopReason::NeedsYou => "a schedule waits for your approval".to_string(),
+            StopReason::TookOver => "you took over".to_string(),
         };
-        format!("send-it off: {why}. {RESUME_HINT}")
+        format!("send-it stopped: {why}. {RESTART_HINT}")
     }
 }
 
@@ -471,7 +487,7 @@ pub enum Event<'a> {
     Start,
     TurnEnded(&'a Run),
     Report(&'a Report),
-    Exited(i32),
+    Watched(&'a WatchOutcome),
     Verdict(bool),
 }
 
@@ -564,11 +580,17 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
                 unmet
             }
         }
-        (Event::Exited(code), Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. }) => {
-            if code == 0 {
+        (
+            Event::Watched(outcome),
+            Criterion::WatchPasses { .. } | Criterion::CheckPasses { .. },
+        ) => {
+            if *outcome == WatchOutcome::Exited(0) {
                 step_met(plan, progress)
             } else {
-                unmet
+                (
+                    progress,
+                    Next::Stop(StopReason::CheckFailed { step: number }),
+                )
             }
         }
         (Event::Verdict(true), Criterion::Judge { .. }) => step_met(plan, progress),
@@ -591,6 +613,238 @@ pub fn advance(plan: &RunPlan, progress: Progress, event: Event) -> (Progress, N
         }
         _ => (progress, Next::Wait),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Awaiting {
+    Turn,
+    Verdict,
+    Report(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Driving {
+    pub hash: String,
+    pub progress: Progress,
+    pub run: Run,
+    pub awaiting: Awaiting,
+}
+
+pub struct Ended<'a> {
+    pub file: Option<&'a RunFile>,
+    pub replied: bool,
+    pub asked: bool,
+    pub typed: bool,
+    pub queued: &'a [String],
+    pub cost_usd: f64,
+    pub reply: &'a str,
+    pub drained: &'a [Report],
+    pub unread: &'a [Report],
+    pub watched: Option<&'a WatchOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ticked {
+    pub driving: Driving,
+    pub next: Next,
+    pub met: Option<String>,
+}
+
+const CHECK_ID: &str = "send-it-";
+const VERDICT_MET: &str = "verdict: met";
+
+pub fn check_watch_id(step: usize) -> String {
+    watch_id(&format!("{CHECK_ID}{}", step + 1))
+}
+
+pub fn check_spec(step: usize, command: &str) -> WatchSpec {
+    WatchSpec {
+        id: check_watch_id(step),
+        command: command.to_string(),
+        follow_up: None,
+        kind: WatchKind::Normal,
+        timeout: None,
+        limit: None,
+    }
+}
+
+fn awaiting(next: &Next, progress: Progress) -> Awaiting {
+    match next {
+        Next::Judge => Awaiting::Verdict,
+        Next::Hold(worker) => Awaiting::Report(worker.clone()),
+        Next::Watch(_) | Next::Check(_) => Awaiting::Report(check_watch_id(progress.step)),
+        _ => Awaiting::Turn,
+    }
+}
+
+pub fn start_run(file: &RunFile) -> Option<(Driving, Next)> {
+    if !file.is_approved() {
+        return None;
+    }
+    let hash = plan_hash(&file.plan);
+    let (progress, next) = match advance(&file.plan, Progress::default(), Event::Start) {
+        (progress, Next::Send(line)) => (
+            progress,
+            Next::Send(format!(
+                "send-it run {hash} is approved. Work the current step only, and take only the allowed actions; ralph checks each exit criterion and sends the next step.\n\n{}\n\n{line}",
+                render_run(&file.plan)
+            )),
+        ),
+        started => started,
+    };
+    let driving = Driving {
+        hash,
+        progress,
+        run: Run::default(),
+        awaiting: Awaiting::Turn,
+    };
+    Some((driving, next))
+}
+
+fn is_off(line: &str) -> bool {
+    Command::SendIt.args(line.trim()).map(parse_send_it_args) == Some(SendItCommand::Off)
+}
+
+fn admitted<'a>(ended: &Ended<'a>, hash: &str) -> Result<&'a RunFile, StopReason> {
+    let file = ended
+        .file
+        .filter(|_| !ended.queued.iter().any(|line| is_off(line)))
+        .ok_or(StopReason::Off)?;
+    let stop = if !file.is_approved() || plan_hash(&file.plan) != hash {
+        Some(StopReason::PlanChanged)
+    } else if !ended.replied {
+        Some(StopReason::NoReply)
+    } else if ended.typed || !ended.queued.is_empty() {
+        Some(StopReason::TookOver)
+    } else if ended.asked {
+        Some(StopReason::NeedsYou)
+    } else if worker_flagged(ended.unread, ended.drained) {
+        Some(StopReason::WorkerFlagged)
+    } else {
+        None
+    };
+    stop.map_or(Ok(file), Err)
+}
+
+fn events<'a>(awaiting: &Awaiting, ended: &Ended<'a>) -> Vec<Event<'a>> {
+    match awaiting {
+        Awaiting::Turn => Vec::new(),
+        Awaiting::Verdict => vec![Event::Verdict(parse_verdict(ended.reply))],
+        Awaiting::Report(source) => ended
+            .watched
+            .map(Event::Watched)
+            .into_iter()
+            .chain(
+                ended
+                    .drained
+                    .iter()
+                    .filter(|report| report.worker == *source)
+                    .map(Event::Report),
+            )
+            .collect(),
+    }
+}
+
+fn fold(plan: &RunPlan, progress: Progress, events: &[Event]) -> (Progress, Next) {
+    events
+        .iter()
+        .try_fold(progress, |progress, event| {
+            match advance(plan, progress, *event) {
+                (progress, Next::Wait) => Ok(progress),
+                decided => Err(decided),
+            }
+        })
+        .map_or_else(|decided| decided, |progress| (progress, Next::Wait))
+}
+
+pub fn tick(driving: &Driving, ended: &Ended) -> Ticked {
+    let run = Run {
+        turns: driving.run.turns + 1,
+        spent_usd: driving.run.spent_usd + ended.cost_usd,
+    };
+    let finish = |progress: Progress, next: Next, met: Option<String>| Ticked {
+        driving: Driving {
+            hash: driving.hash.clone(),
+            progress,
+            run: run.clone(),
+            awaiting: awaiting(&next, progress),
+        },
+        next,
+        met,
+    };
+    let file = match admitted(ended, &driving.hash) {
+        Ok(file) => file,
+        Err(reason) => return finish(driving.progress, Next::Stop(reason), None),
+    };
+    let plan = &file.plan;
+    let (progress, decided) = fold(plan, driving.progress, &events(&driving.awaiting, ended));
+    let met = (progress.step > driving.progress.step || decided == Next::Done)
+        .then(|| met_line(plan, driving.progress.step));
+    if matches!(decided, Next::Done | Next::Stop(_)) {
+        return finish(progress, decided, met);
+    }
+    let next = match advance(plan, progress, Event::TurnEnded(&run)).1 {
+        stop @ Next::Stop(_) => stop,
+        waiting if decided == Next::Wait => waiting,
+        _ => decided,
+    };
+    finish(progress, next, met)
+}
+
+fn met_line(plan: &RunPlan, step: usize) -> String {
+    let label = plan
+        .steps
+        .get(step)
+        .map(|step| step.criterion.label())
+        .unwrap_or_default();
+    format!(
+        "send-it: step {}/{} met ({label})",
+        step + 1,
+        plan.steps.len()
+    )
+}
+
+pub fn judge_prompt(plan: &RunPlan, progress: Progress) -> Option<String> {
+    let step = plan.steps.get(progress.step)?;
+    let Criterion::Judge { question } = &step.criterion else {
+        return None;
+    };
+    Some(format!(
+        "{}\n/send-it judge: {question}\nAnswer from what this chat already shows and take no actions. End your reply with one line: `{VERDICT_MET}` or `verdict: unmet`.",
+        step_line(plan, progress.step, step)
+    ))
+}
+
+pub fn parse_verdict(reply: &str) -> bool {
+    reply
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .is_some_and(|line| {
+            line.trim_matches(|c: char| c.is_whitespace() || c == '*' || c == '`')
+                .eq_ignore_ascii_case(VERDICT_MET)
+        })
+}
+
+pub fn done_notice(plan: &RunPlan, run: &Run) -> String {
+    let steps = plan.steps.len();
+    format!(
+        "send-it done: {steps}/{steps} steps in {} turns, ${:.2}.",
+        run.turns, run.spent_usd
+    )
+}
+
+pub fn running_line(plan: &RunPlan, driving: &Driving) -> String {
+    let limits = granted_limits(plan);
+    format!(
+        "Running: step {}/{}, {} of {} turns, ${:.2} of ${:.2}.",
+        driving.progress.step + 1,
+        plan.steps.len(),
+        driving.run.turns,
+        limits.max_turns,
+        driving.run.spent_usd,
+        limits.max_usd
+    )
 }
 
 pub fn blocked_alert(notice: &str, config: &AlertConfig) -> Option<Alert> {

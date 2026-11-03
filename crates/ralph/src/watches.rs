@@ -29,6 +29,7 @@ pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 type StopSlot = Arc<Mutex<Option<StopReason>>>;
+pub type OutcomeSlot = Arc<Mutex<Option<WatchOutcome>>>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WatchError {
@@ -69,6 +70,7 @@ struct Waiter {
     drained: Receiver<()>,
     stop: StopSlot,
     store: WatchStore,
+    outcome: OutcomeSlot,
 }
 
 fn request_stop(slot: &StopSlot, reason: StopReason) {
@@ -124,6 +126,7 @@ impl Waiter {
                 &locked(&self.tail),
                 &chrono::Utc::now().to_rfc3339(),
             );
+            *locked(&self.outcome) = Some(outcome);
             warn_if_err(
                 inbox.post(&report, 0),
                 format!("posting watch {}", self.spec.id),
@@ -158,7 +161,7 @@ impl Watches {
         }
     }
 
-    pub fn start(&self, spec: WatchSpec) -> Result<(), WatchError> {
+    pub fn start(&self, spec: WatchSpec) -> Result<OutcomeSlot, WatchError> {
         let spec = spec.with_default_timeout(self.default_timeout);
         let saved = (spec.kind == WatchKind::Persistent)
             .then(|| SavedWatch::new(&spec, chrono::Utc::now()));
@@ -196,7 +199,11 @@ impl Watches {
         self.store.remove(&spec.id);
     }
 
-    fn launch(&self, spec: WatchSpec, fresh: Option<&SavedWatch>) -> Result<(), WatchError> {
+    fn launch(
+        &self,
+        spec: WatchSpec,
+        fresh: Option<&SavedWatch>,
+    ) -> Result<OutcomeSlot, WatchError> {
         let mut active = locked(&self.active);
         if active.contains_key(&spec.id) {
             return Err(WatchError::Duplicate(spec.id));
@@ -214,7 +221,9 @@ impl Watches {
         let reader_tail = Arc::clone(&tail);
         thread::spawn(move || capture(pipe, &reader_tail, &drained_tx));
         let stop: StopSlot = Arc::new(Mutex::new(None));
+        let outcome = OutcomeSlot::default();
         let waiter = Waiter {
+            outcome: Arc::clone(&outcome),
             spec: spec.clone(),
             child,
             tail,
@@ -245,7 +254,7 @@ impl Watches {
                 waiter: handle,
             },
         );
-        Ok(())
+        Ok(outcome)
     }
 
     pub fn list(&self) -> Vec<SavedWatch> {
