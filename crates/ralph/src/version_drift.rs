@@ -7,13 +7,14 @@ use ralph_core::worker::{
     check_agent_version, check_version, daily_check_due, daily_gate, daily_probe_plan,
     daily_verify_version, drift_action, drift_alert, drift_entry, drift_watchdog_limit,
     known_fail_warning, last_check_time, last_verified_version, lock_action,
-    opencode_probed_version, probe_text, probed_version, store_inbox, tmux_claude_version,
-    CheckResult, DriftAction, DriftEntry, DriftOutcome, HarnessId, LockAction, VersionGate,
-    VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE, CURSOR_AGENT, DAILY_CHECK_LIMIT,
-    OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK, VERSION_PROBE_LIMIT,
+    opencode_probed_version, probe_text, probed_version, store_inbox, takeover_step,
+    tmux_claude_version, CheckResult, DriftAction, DriftEntry, DriftOutcome, HarnessId, LockAction,
+    LockIdentity, TakeoverStep, VersionGate, VersionProbe, CLAUDE_COMMAND, CLAUDE_TMUX_GATE,
+    CURSOR_AGENT, DAILY_CHECK_LIMIT, OPENCODE_COMMAND, OPENCODE_GATE, TIME_LIMIT_CHECK,
+    VERSION_PROBE_LIMIT,
 };
 use std::fs::{self, OpenOptions};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -178,16 +179,55 @@ fn create_lock(path: &Path) -> bool {
             .is_ok()
 }
 
+fn lock_identity(meta: &fs::Metadata) -> LockIdentity {
+    LockIdentity {
+        inode: meta.ino(),
+        modified_secs: meta.mtime(),
+        modified_nanos: meta.mtime_nsec(),
+    }
+}
+
+fn unique_lock_name(path: &Path) -> PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let mut name = path.as_os_str().to_os_string();
+    name.push(format!(".{}.{nanos}", std::process::id()));
+    PathBuf::from(name)
+}
+
+fn take_over_stale_lock(path: &Path, seen: LockIdentity) -> bool {
+    let moved_path = unique_lock_name(path);
+    if fs::rename(path, &moved_path).is_err() {
+        return create_lock(path);
+    }
+    let step = fs::metadata(&moved_path)
+        .map(|meta| takeover_step(seen, lock_identity(&meta)))
+        .unwrap_or(TakeoverStep::Restore);
+    match step {
+        TakeoverStep::Remove => {
+            fs::remove_file(&moved_path).ok();
+            create_lock(path)
+        }
+        TakeoverStep::Restore => {
+            fs::hard_link(&moved_path, path).ok();
+            fs::remove_file(&moved_path).ok();
+            false
+        }
+    }
+}
+
 fn acquire_lock(agent: &str) -> bool {
     let path = verified_agents::drift_lock_path(agent);
-    let age = fs::metadata(&path)
-        .and_then(|meta| meta.modified())
-        .ok()
+    let meta = fs::metadata(&path).ok();
+    let age = meta
+        .as_ref()
+        .and_then(|meta| meta.modified().ok())
         .and_then(|modified| modified.elapsed().ok());
-    match lock_action(age) {
-        LockAction::Busy => false,
-        LockAction::Acquire => create_lock(&path),
-        LockAction::Replace => fs::remove_file(&path).is_ok() && create_lock(&path),
+    match (lock_action(age), meta) {
+        (LockAction::Busy, _) => false,
+        (LockAction::Replace, Some(meta)) => take_over_stale_lock(&path, lock_identity(&meta)),
+        (LockAction::Acquire | LockAction::Replace, _) => create_lock(&path),
     }
 }
 

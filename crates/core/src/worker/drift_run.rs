@@ -38,6 +38,27 @@ pub fn lock_action(age: Option<Duration>) -> LockAction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockIdentity {
+    pub inode: u64,
+    pub modified_secs: i64,
+    pub modified_nanos: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TakeoverStep {
+    Remove,
+    Restore,
+}
+
+pub fn takeover_step(seen: LockIdentity, moved: LockIdentity) -> TakeoverStep {
+    if seen == moved {
+        TakeoverStep::Remove
+    } else {
+        TakeoverStep::Restore
+    }
+}
+
 pub fn failing_checks(results: &[CheckResult], passed: bool) -> Vec<String> {
     let failed: Vec<String> = results
         .iter()
@@ -130,6 +151,40 @@ mod tests {
             FREE_VERIFY_LIMIT + Duration::from_secs(30)
         );
         assert!(drift_lock_limit() > drift_watchdog_limit());
+    }
+
+    #[test]
+    fn a_moved_lock_is_removed_only_when_it_is_the_stale_one_that_was_read() {
+        let seen = LockIdentity {
+            inode: 7,
+            modified_secs: 100,
+            modified_nanos: 5,
+        };
+        assert_eq!(takeover_step(seen, seen), TakeoverStep::Remove);
+        assert_eq!(
+            takeover_step(seen, LockIdentity { inode: 8, ..seen }),
+            TakeoverStep::Restore
+        );
+        assert_eq!(
+            takeover_step(
+                seen,
+                LockIdentity {
+                    modified_secs: 101,
+                    ..seen
+                }
+            ),
+            TakeoverStep::Restore
+        );
+        assert_eq!(
+            takeover_step(
+                seen,
+                LockIdentity {
+                    modified_nanos: 6,
+                    ..seen
+                }
+            ),
+            TakeoverStep::Restore
+        );
     }
 
     #[test]
