@@ -1,4 +1,4 @@
-use super::kill_process_group;
+use super::{kill_process_group, Registered};
 use std::io::{self, Read};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -29,6 +29,7 @@ pub(crate) fn timed_output(command: &mut Command, limit: Duration) -> TimedOutpu
         Ok(child) => child,
         Err(error) => return TimedOutput::Failed(error.to_string()),
     };
+    let _registered = Registered::new(child.id());
     let Some(mut stdout) = child.stdout.take() else {
         kill_process_group(&mut child);
         return TimedOutput::Failed("no stdout".to_string());

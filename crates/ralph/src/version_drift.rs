@@ -1,5 +1,5 @@
 use crate::config::AppConfig;
-use crate::subprocess::{spawn_detached, timed_output};
+use crate::subprocess::{kill_registered_groups, spawn_detached, timed_output};
 use crate::verified_agents;
 use crate::worker_mcp::Inbox;
 use crate::worker_verify::version_probe;
@@ -272,6 +272,7 @@ fn post_alert(agent: &str, entry: &DriftEntry, inbox: &Path) {
 }
 
 fn end_own_group() {
+    kill_registered_groups();
     let pid = std::process::id() as libc::pid_t;
     if unsafe { libc::getpgrp() } == pid {
         unsafe { libc::killpg(pid, libc::SIGKILL) };
