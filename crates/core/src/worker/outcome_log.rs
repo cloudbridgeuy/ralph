@@ -14,6 +14,39 @@ pub fn workers_log_path(store: &Path) -> PathBuf {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkPhase {
+    Plan,
+    Build,
+    Fix,
+    LiveCheck,
+}
+
+impl WorkPhase {
+    pub const ALL: [WorkPhase; 4] = [
+        WorkPhase::Plan,
+        WorkPhase::Build,
+        WorkPhase::Fix,
+        WorkPhase::LiveCheck,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WorkPhase::Plan => "plan",
+            WorkPhase::Build => "build",
+            WorkPhase::Fix => "fix",
+            WorkPhase::LiveCheck => "live-check",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<WorkPhase> {
+        WorkPhase::ALL
+            .into_iter()
+            .find(|phase| phase.as_str() == text)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum CloseOutcome {
     Landed,
@@ -53,6 +86,7 @@ pub struct SpawnFacts<'a> {
     pub model: Option<&'a str>,
     pub base_sha: Option<&'a str>,
     pub scheduled: bool,
+    pub phase: Option<WorkPhase>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -93,6 +127,7 @@ enum LifecycleKind {
         model: Option<String>,
         base_sha: Option<String>,
         scheduled: bool,
+        phase: Option<WorkPhase>,
     },
     Close {
         outcome: CloseOutcome,
@@ -146,6 +181,7 @@ pub fn spawn_event(facts: &SpawnFacts) -> LifecycleEvent {
             model: facts.model.map(str::to_string),
             base_sha: facts.base_sha.map(str::to_string),
             scheduled: facts.scheduled,
+            phase: facts.phase,
         },
     )
 }
@@ -232,6 +268,7 @@ mod tests {
             model: Some("opus"),
             base_sha: Some("abc123"),
             scheduled: false,
+            phase: Some(WorkPhase::LiveCheck),
         }
     }
 
@@ -277,9 +314,21 @@ mod tests {
                 "harness": "claude-headless",
                 "model": "opus",
                 "base_sha": "abc123",
-                "scheduled": false
+                "scheduled": false,
+                "phase": "live-check"
             })
         );
+    }
+
+    #[test]
+    fn phase_parses_only_the_four_names() {
+        let parsed: Vec<_> = ["plan", "build", "fix", "live-check"]
+            .map(WorkPhase::parse)
+            .into();
+        assert_eq!(parsed, WorkPhase::ALL.map(Some));
+        for bad in ["live check", "Plan", "", "review"] {
+            assert_eq!(WorkPhase::parse(bad), None, "{bad}");
+        }
     }
 
     #[test]
@@ -289,10 +338,11 @@ mod tests {
             tracker: None,
             model: None,
             base_sha: None,
+            phase: None,
             ..spawn()
         };
         let value = row(&spawn_event(&facts));
-        for field in ["ticket", "tracker", "model", "base_sha"] {
+        for field in ["ticket", "tracker", "model", "base_sha", "phase"] {
             assert_eq!(value[field], Value::Null, "{field}");
         }
     }

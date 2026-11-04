@@ -254,6 +254,7 @@ fn run_command(
             harness,
             model,
             ticket,
+            phase,
         } => workers.spawn(&SpawnArgs {
             id,
             task,
@@ -261,6 +262,7 @@ fn run_command(
             model: model.as_deref(),
             ticket: ticket.as_deref(),
             scheduled: false,
+            phase: *phase,
         }),
         Command::Reply {
             id,

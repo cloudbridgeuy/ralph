@@ -60,6 +60,7 @@ mod tests {
             harness: HarnessId::Claude,
             model: None,
             ticket: None,
+            phase: None,
         }
     }
 

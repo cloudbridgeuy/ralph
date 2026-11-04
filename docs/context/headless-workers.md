@@ -246,12 +246,13 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 
 | event   | fields                                                                                           |
 | ------- | ------------------------------------------------------------------------------------------------ |
-| `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`              |
+| `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`, `phase` (`plan`, `build`, `fix`, `live-check`) |
 | `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `merged_sha` (`null`), `ci` (`null`) |
 | `reply` | `harness`, `interrupt`, `via_permission`, `text_bytes`                                           |
 | `report` | `status` (`done`, `blocked`, `question`), `text_bytes`, `seq`                                   |
 
 - `spawn` is written after the launch succeeds, so a spawn that fails and rolls back has no row. Rows are ordered by `at`, not by position in the file: a fast worker can append a report row before its own spawn row. `base_sha` is the tip of the worker branch when the worktree is ready.
+- `phase` is the optional `phase` argument of `spawn_worker`, recorded at spawn and never inferred later. It is `null` when the argument is missing, and always `null` for a scheduled worker. Any other value is refused. Rows written before `phase` existed lack the field: read it as `null`. The close row has no `phase`: join on `store` and `worker_id`.
 - `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
 - `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
 - `dirty` is `null` when the worktree is gone.
@@ -291,4 +292,10 @@ Spawn rows with the harness and model:
 
 ```sh
 jq -c 'select(.event == "spawn") | [.worker_id, .harness, .model]' <store>/analytics/workers.jsonl
+```
+
+Spawn rows per phase (jq):
+
+```sh
+jq -s '[.[] | select(.event == "spawn")] | group_by(.phase) | map({phase: .[0].phase, n: length})' <store>/analytics/workers.jsonl
 ```
