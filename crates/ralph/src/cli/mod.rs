@@ -619,6 +619,12 @@ pub struct WorkerStopHookArgs {
     pub worktree: Option<std::path::PathBuf>,
 }
 
+impl WorkerStopHookArgs {
+    pub fn layer_store(&self) -> Option<&std::path::Path> {
+        self.config_store.as_deref().or(self.store.as_deref())
+    }
+}
+
 #[derive(clap::Args, Debug)]
 pub struct ChatNapArgs {
     #[arg(long, value_name = "DIR")]

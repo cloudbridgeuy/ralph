@@ -827,6 +827,28 @@ mod tests {
     }
 
     #[test]
+    fn settings_pass_the_written_store_path_as_config_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let workers = Workers::new(link.clone(), "/bin/ralph".into(), "auto".into(), None);
+        let markers = WorkerMarkers::new(&workers.store_dir, "A");
+        let site = WorkerSite {
+            store: workers.store_dir.clone(),
+            id: "A".into(),
+            worktree: dir.path().join("w"),
+        };
+        let path = workers.write_settings("A", &markers, Some(&site)).unwrap();
+        let settings: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(command.contains(&format!("--config-store '{}'", link.display())));
+    }
+
+    #[test]
     fn other_harnesses_import_nothing() {
         let config = AppConfig::new();
         for harness in [
