@@ -105,6 +105,19 @@ impl Workers {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
             })?;
         }
+        if steps != [CloseStep::ClearMarkers] {
+            outcome_log::record(&self.store_dir, id, |key| {
+                close_event(&CloseFacts {
+                    key,
+                    abandon,
+                    force,
+                    foreign_owner,
+                    commit_count: unmerged_commits.and_then(|count| u64::try_from(count).ok()),
+                    dirty: dirty_worktree,
+                    spawn_at,
+                })
+            });
+        }
         if let Some(changes) = &changes {
             warn_if_err(changes.clear(), "Failed to clear worker snapshots");
         }
@@ -121,17 +134,6 @@ impl Workers {
                 |text, warning| format!("{text} {warning}"),
             ));
         }
-        outcome_log::record(&self.store_dir, id, |key| {
-            close_event(&CloseFacts {
-                key,
-                abandon,
-                force,
-                foreign_owner,
-                commit_count: unmerged_commits.and_then(|count| u64::try_from(count).ok()),
-                dirty: dirty_worktree,
-                spawn_at,
-            })
-        });
         let note = if opencode {
             " Evicted its opencode location."
         } else {
