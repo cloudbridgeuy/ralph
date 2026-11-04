@@ -609,6 +609,9 @@ pub struct WorkerStopHookArgs {
     #[arg(long, value_name = "DIR", requires_all = ["id", "worktree"])]
     pub store: Option<std::path::PathBuf>,
 
+    #[arg(long, value_name = "DIR", requires = "store")]
+    pub config_store: Option<std::path::PathBuf>,
+
     #[arg(long, value_name = "WORKER")]
     pub id: Option<String>,
 

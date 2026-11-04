@@ -44,6 +44,7 @@ pub(crate) use verify::verify;
 #[derive(Clone)]
 pub struct Workers {
     store_dir: PathBuf,
+    written_store: PathBuf,
     exe: PathBuf,
     permission_mode: String,
     worktree_dir: Option<String>,
@@ -75,7 +76,8 @@ impl Workers {
         worktree_dir: Option<String>,
     ) -> Self {
         Self {
-            store_dir: canonical_store(store_dir),
+            store_dir: canonical_store(store_dir.clone()),
+            written_store: store_dir,
             exe,
             permission_mode,
             worktree_dir,

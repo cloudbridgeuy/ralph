@@ -189,6 +189,19 @@ fn test_cli_stop_hook_takes_usage_with_usage_seen() {
 }
 
 #[test]
+fn test_cli_stop_hook_config_store_is_optional_beside_store() {
+    let site = ["--store", "/s", "--id", "A", "--worktree", "/w"];
+    let with = stop_hook_args(&[site.as_slice(), &["--config-store", "/link/s"]].concat()).unwrap();
+    assert_eq!(with.config_store, Some(std::path::PathBuf::from("/link/s")));
+    assert_eq!(stop_hook_args(&site).unwrap().config_store, None);
+}
+
+#[test]
+fn test_cli_stop_hook_config_store_requires_store() {
+    assert!(stop_hook_args(&["--config-store", "/link/s"]).is_err());
+}
+
+#[test]
 fn test_cli_chat_history_takes_a_scope() {
     let Some(Commands::Chat(chat)) = Cli::try_parse_from([
         "ralph", "chat", "--thread", "t1", "history", "recall", "x", "--in", "main",

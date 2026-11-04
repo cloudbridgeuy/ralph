@@ -13,6 +13,7 @@ fn stop_hook_command(
     markers: &WorkerMarkers,
     site: Option<&WorkerSite>,
     usage: &UsageSink,
+    config_store: Option<&Path>,
 ) -> String {
     let mut words = vec![
         shell_quote(&exe.to_string_lossy()),
@@ -35,6 +36,10 @@ fn stop_hook_command(
             .flat_map(WorkerSite::args)
             .map(|arg| shell_quote(&arg)),
     );
+    if let Some(path) = config_store.filter(|_| site.is_some()) {
+        words.push("--config-store".to_string());
+        words.push(shell_quote(&path.to_string_lossy()));
+    }
     words.join(" ")
 }
 
@@ -69,6 +74,16 @@ pub fn claude_worker_settings(
     site: Option<&WorkerSite>,
     usage: &UsageSink,
 ) -> Value {
+    claude_worker_settings_with_config(exe, markers, site, usage, None)
+}
+
+pub fn claude_worker_settings_with_config(
+    exe: &Path,
+    markers: &WorkerMarkers,
+    site: Option<&WorkerSite>,
+    usage: &UsageSink,
+    config_store: Option<&Path>,
+) -> Value {
     let quote = |path: &Path| shell_quote(&path.to_string_lossy());
     let clear_blocked = format!("rm -f {}", quote(&markers.blocked));
     let idle = format!(
@@ -90,7 +105,7 @@ pub fn claude_worker_settings(
             }],
             "Stop": [{
                 "hooks": [
-                    command_hook(stop_hook_command(exe, markers, site, usage)),
+                    command_hook(stop_hook_command(exe, markers, site, usage, config_store)),
                     command_hook(clear_blocked)
                 ]
             }],
@@ -233,6 +248,44 @@ mod tests {
             hook_command(&settings, "Stop"),
             "'/bin/ralph' worker-stop-hook --reported '/s/reported/A' --unreported '/s/unreported/A' --activity '/s/activity/A' --worker 'A' --usage '/u/usage.jsonl' --usage-seen '/s/workers/A.usage-seen'"
         );
+    }
+
+    #[test]
+    fn stop_hook_passes_the_written_store_as_config_store_when_given() {
+        let settings = claude_worker_settings_with_config(
+            Path::new("/bin/ralph"),
+            &markers(),
+            Some(&site()),
+            &sink(),
+            Some(Path::new("/link/s")),
+        );
+        let command = hook_command(&settings, "Stop");
+        assert!(command.contains("'--store' '/s'"));
+        assert!(command.contains(" --config-store '/link/s'"));
+    }
+
+    #[test]
+    fn stop_hook_omits_config_store_when_none() {
+        let settings = claude_worker_settings_with_config(
+            Path::new("/bin/ralph"),
+            &markers(),
+            Some(&site()),
+            &sink(),
+            None,
+        );
+        assert!(!hook_command(&settings, "Stop").contains("--config-store"));
+    }
+
+    #[test]
+    fn stop_hook_omits_config_store_without_a_site() {
+        let settings = claude_worker_settings_with_config(
+            Path::new("/bin/ralph"),
+            &markers(),
+            None,
+            &sink(),
+            Some(Path::new("/link/s")),
+        );
+        assert!(!hook_command(&settings, "Stop").contains("--config-store"));
     }
 
     #[test]

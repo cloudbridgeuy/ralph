@@ -15,9 +15,9 @@ use crate::worker_changes::WorkerChanges;
 use ralph_core::claude_leftovers::configured_dir;
 use ralph_core::snapshot::{snapshots_enabled, WorkerSite};
 use ralph_core::worker::{
-    branch_name, claude_worker_settings, close_clear_paths, encode_spawn_record, exclude_lines,
-    fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text, import_servers,
-    opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
+    branch_name, claude_worker_settings_with_config, close_clear_paths, encode_spawn_record,
+    exclude_lines, fetch_env, fetch_origin_args, fetch_ssh_command, fetch_timeout_text,
+    import_servers, opencode_config, project_slug, resolve_claude_model, resolve_claude_shell,
     resolve_codex_warning, resolve_cursor_model, resolve_opencode_model, resolve_ticket,
     rollback_plan, rollback_report, session_name, spawn_handoff, spawn_record_path, startup_state,
     task_dir_path, task_file_path, trust_key, with_start_warning, worker_command,
@@ -541,7 +541,7 @@ impl Workers {
         let path = dir.join(format!("{id}.settings.json"));
         fs::write(
             &path,
-            claude_worker_settings(
+            claude_worker_settings_with_config(
                 &self.exe,
                 markers,
                 site,
@@ -550,6 +550,7 @@ impl Workers {
                     worker: id,
                     usage: &usage,
                 },
+                Some(&self.written_store),
             )
             .to_string(),
         )?;
