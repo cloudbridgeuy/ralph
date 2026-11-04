@@ -1,6 +1,7 @@
-use crate::chat::memory::{append_usage, usage_path};
+use crate::chat::memory::usage_path;
+use crate::ledger;
 use crate::warn::warn_if_err;
-use ralph_core::chat_memory::{worker_usage_record, CallKind};
+use ralph_core::chat_memory::{worker_usage_record, CallSite};
 use ralph_core::worker::{decode_usage_event, ModelUsage, TurnUsage};
 use serde_json::Value;
 use std::io;
@@ -69,17 +70,18 @@ impl CodexUsage {
     ) -> io::Result<()> {
         let at = chrono::Utc::now().to_rfc3339();
         for row in rows {
-            let kind = CallKind::Worker {
+            let kind = CallSite::Worker {
                 worker_id: self.worker.clone(),
                 turn_id,
             };
-            let mut usage =
-                worker_usage_record(kind, at.clone(), Some(thread.to_string()), HARNESS, row);
-            usage.store = self
-                .store
-                .as_ref()
-                .map(|store| store.to_string_lossy().into_owned());
-            append_usage(usage_file, &usage)?;
+            let usage =
+                worker_usage_record(kind, at.clone(), Some(thread.to_string()), HARNESS, row)
+                    .with_store(
+                        self.store
+                            .as_ref()
+                            .map(|store| store.to_string_lossy().into_owned()),
+                    );
+            ledger::record(usage_file, &usage)?;
         }
         Ok(())
     }

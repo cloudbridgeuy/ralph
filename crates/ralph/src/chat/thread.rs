@@ -8,7 +8,7 @@ use crate::worker_mcp::Inbox;
 use crate::workers::{canonical_store, running_workers};
 use crate::{run_curator, Curator};
 use ralph_core::chat::VIEW_LINES;
-use ralph_core::chat_memory::{view, CallKind, Entry, MemoryCall, Tree, ViewSplit};
+use ralph_core::chat_memory::{view, CallSite, Entry, MemoryCall, Tree, ViewSplit};
 use ralph_core::chat_thread::{
     digest_with, drop_message, fork_check, fork_launch, guard_check, label_item, ls_counts,
     merge_prompt, merged_check, merged_report, open_check, pull_message, rebase_block,
@@ -130,7 +130,7 @@ pub fn run(args: ThreadArgs) -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let dir = thread_dir(&main, &name);
             let curator = Curator {
-                kind: CallKind::Merge,
+                kind: CallSite::Merge,
                 store: &dir,
                 run: None,
                 timeout: NAP_TIMEOUT_SECS,

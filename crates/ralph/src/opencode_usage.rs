@@ -1,6 +1,7 @@
-use crate::chat::memory::{append_usage, usage_path};
+use crate::chat::memory::usage_path;
+use crate::ledger;
 use crate::warn::warn_if_err;
-use ralph_core::chat_memory::CallKind;
+use ralph_core::chat_memory::CallSite;
 use ralph_core::worker::{opencode_usage_record, OpencodeModelUsage};
 use std::io;
 use std::path::Path;
@@ -22,13 +23,13 @@ pub fn record_opencode_usage(turn: &OpencodeTurn, rows: &[OpencodeModelUsage]) {
 fn append(turn: &OpencodeTurn, rows: &[OpencodeModelUsage], usage_file: &Path) -> io::Result<()> {
     let at = chrono::Utc::now().to_rfc3339();
     for spend in rows {
-        let kind = CallKind::Worker {
+        let kind = CallSite::Worker {
             worker_id: turn.worker.to_string(),
             turn_id: turn.turn_id,
         };
-        let mut usage = opencode_usage_record(kind, at.clone(), turn.session_id, spend);
-        usage.store = turn.store.map(|store| store.to_string_lossy().into_owned());
-        append_usage(usage_file, &usage)?;
+        let usage = opencode_usage_record(kind, at.clone(), turn.session_id, spend)
+            .with_store(turn.store.map(|store| store.to_string_lossy().into_owned()));
+        ledger::record(usage_file, &usage)?;
     }
     Ok(())
 }

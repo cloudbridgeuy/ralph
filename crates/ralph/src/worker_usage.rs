@@ -1,6 +1,6 @@
-use crate::chat::memory::append_usage;
+use crate::ledger;
 use crate::warn::warn_if_err;
-use ralph_core::chat_memory::{worker_usage_record, CallKind};
+use ralph_core::chat_memory::{worker_usage_record, CallSite};
 use ralph_core::worker::{parse_stop_session, subagents_dir, transcript_usage, HarnessId};
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -74,18 +74,19 @@ fn record_session(
     let found = transcript_usage(&lines, &seen);
     let at = chrono::Utc::now().to_rfc3339();
     for row in &found.rows {
-        let kind = CallKind::Worker {
+        let kind = CallSite::Worker {
             worker_id: target.worker.clone(),
             turn_id,
         };
         let session_id = Some(session.session_id.to_string());
         let harness = session.harness.as_str();
-        let mut usage = worker_usage_record(kind, at.clone(), session_id, harness, row);
-        usage.store = target
-            .store
-            .as_ref()
-            .map(|store| store.to_string_lossy().into_owned());
-        append_usage(&target.usage, &usage)?;
+        let usage = worker_usage_record(kind, at.clone(), session_id, harness, row).with_store(
+            target
+                .store
+                .as_ref()
+                .map(|store| store.to_string_lossy().into_owned()),
+        );
+        ledger::record(&target.usage, &usage)?;
     }
     if found.recorded.is_empty() {
         return Ok(());

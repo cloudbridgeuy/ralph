@@ -6,10 +6,10 @@ use crate::chat::thread::Reach;
 use crate::private_file::check_path;
 use crate::warn::warn;
 use ralph_core::chat_memory::{
-    check_summary, commit_decision, encode_entry, encode_record, encode_usage, fallback_summary,
-    holder_pid, log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall,
-    retry_prompt, search, Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, Role,
-    Tool, Tree, Trigger, UsageRecord, MAX_NAP_ATTEMPTS,
+    check_summary, commit_decision, encode_entry, encode_record, fallback_summary, holder_pid,
+    log_tail, nap_source, nap_step, parse_log, parse_tree, pending, recall, retry_prompt, search,
+    Archive, Commit, Entry, LogTail, NapStep, NewEntry, Node, NodeSlot, Role, Tool, Tree, Trigger,
+    MAX_NAP_ATTEMPTS,
 };
 use ralph_core::chat_process::{absorb_usage, tail_read, FileStamp, UsageTail};
 use ralph_core::chat_suggestion::SuggestionRecord;
@@ -68,16 +68,6 @@ pub fn read_usage_since(path: &Path, tail: UsageTail, run: &str) -> io::Result<U
 pub fn load_usage(path: &Path) -> io::Result<String> {
     let bytes = read_optional(path)?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
-}
-
-pub fn append_usage(path: &Path, record: &UsageRecord) -> io::Result<()> {
-    let line = encode_usage(record).map_err(io::Error::other)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    check_path(path)?;
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-    file.write_all(line.as_bytes())
 }
 
 pub struct Store {

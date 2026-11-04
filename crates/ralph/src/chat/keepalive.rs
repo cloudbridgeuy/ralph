@@ -1,4 +1,5 @@
-use crate::chat::memory::{append_usage, usage_path};
+use crate::chat::memory::usage_path;
+use crate::ledger;
 use crate::subprocess::{Session, StreamingSubprocessResult};
 use crate::warn::warn_if_err;
 use crate::watches::locked;
@@ -7,7 +8,7 @@ use ralph_core::chat_keepalive::{
     keepalive_action, keeps_after, keeps_for_turn, ping_follow_up, Keepalive, KeepaliveInput,
     PingFollowUp, KEEPALIVE_PING_PROMPT,
 };
-use ralph_core::chat_memory::{usage_record, CallKind};
+use ralph_core::chat_memory::{usage_record, CallSite};
 use ralph_core::stream::IterationMetadata;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -98,19 +99,20 @@ impl KeepaliveWatch {
 
     fn record(&self, result: &StreamingSubprocessResult) {
         let identity = locked(&self.identity).clone();
-        let Some(mut record) = usage_record(
-            CallKind::Ping,
+        let Some(record) = usage_record(
+            CallSite::Ping,
             Utc::now().to_rfc3339(),
             &result.stream_result.costs,
             &identity,
         ) else {
             return;
         };
-        record.request_at = result.request_at.map(|at| at.to_rfc3339());
-        record.run = Some(self.run.clone());
-        record.store = Some(self.store.clone());
+        let record = record
+            .with_request_at(result.request_at.map(|at| at.to_rfc3339()))
+            .with_run(Some(self.run.clone()))
+            .with_store(Some(self.store.clone()));
         warn_if_err(
-            append_usage(&usage_path(), &record),
+            ledger::record(&usage_path(), &record),
             "Failed to record keepalive ping usage",
         );
     }

@@ -1,5 +1,5 @@
 use super::ServerEvent;
-use crate::chat_memory::{worker_usage_record, CallKind, UsageRecord};
+use crate::chat_memory::{worker_usage_record, CallSite, LedgerRow};
 use crate::wire::usage::{CacheTier, CacheWrite, Usage};
 use crate::worker::{ModelUsage, OPENCODE_HARNESS};
 use crate::worker_costs::long_prompt_call;
@@ -138,11 +138,11 @@ impl OpencodeTurnUsage {
 }
 
 pub fn opencode_usage_record(
-    kind: CallKind,
+    kind: CallSite,
     at: String,
     session_id: &str,
     spend: &OpencodeModelUsage,
-) -> UsageRecord {
+) -> LedgerRow {
     worker_usage_record(
         kind,
         at,
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn record_maps_every_field() {
         let rows = observed(&[STARTED, ENDED, FAILED_WITH_TOKENS]).take();
-        let kind = CallKind::Worker {
+        let kind = CallSite::Worker {
             worker_id: "w1".into(),
             turn_id: Some(2),
         };
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn record_without_cost_leaves_it_empty() {
         let rows = observed(&[STARTED, ENDED]).take();
-        let kind = CallKind::Worker {
+        let kind = CallSite::Worker {
             worker_id: "w1".into(),
             turn_id: None,
         };

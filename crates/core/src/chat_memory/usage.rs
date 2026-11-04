@@ -27,7 +27,7 @@ pub fn reply_entries(reply: &str) -> Vec<(super::Role, String)> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
-pub enum CallKind {
+pub enum CallSite {
     Turn {
         trigger: Trigger,
     },
@@ -38,6 +38,29 @@ pub enum CallKind {
     },
     Ping,
     Merge,
+    Ask,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LedgerRole {
+    Main,
+    Nap,
+    Merge,
+    Worker,
+    Ask,
+}
+
+impl CallSite {
+    pub fn role(&self) -> LedgerRole {
+        match self {
+            CallSite::Turn { .. } | CallSite::Ping => LedgerRole::Main,
+            CallSite::Nap => LedgerRole::Nap,
+            CallSite::Merge => LedgerRole::Merge,
+            CallSite::Worker { .. } => LedgerRole::Worker,
+            CallSite::Ask => LedgerRole::Ask,
+        }
+    }
 }
 
 pub const VIEW_HEAD_BYTES: usize = 1024;
@@ -93,58 +116,82 @@ pub fn carry_metadata(
 }
 
 #[derive(Debug, Serialize)]
-pub struct UsageRecord {
-    pub at: String,
+pub struct LedgerRow {
+    at: String,
     #[serde(flatten)]
-    pub kind: CallKind,
-    pub input_tokens: u64,
-    pub cache_creation_input_tokens: u64,
-    pub cache_read_input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost_usd: Option<f64>,
-    pub duration_ms: Option<u64>,
+    kind: CallSite,
+    role: LedgerRole,
+    input_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    output_tokens: u64,
+    cost_usd: Option<f64>,
+    duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context_tokens: Option<u64>,
+    context_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub process_turn: Option<u64>,
+    process_turn: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_at: Option<String>,
+    request_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reset: Option<ResetReason>,
+    reset: Option<ResetReason>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub run: Option<String>,
+    run: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub store: Option<String>,
+    store: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
+    harness: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
+    session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cost_source: Option<CostSource>,
+    cost_source: Option<CostSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_write_5m: Option<u64>,
+    cache_write_5m: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cache_write_1h: Option<u64>,
+    cache_write_1h: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub long_prompt: Option<bool>,
+    long_prompt: Option<bool>,
     #[serde(flatten)]
-    pub view: Option<ViewStats>,
+    view: Option<ViewStats>,
 }
 
-impl UsageRecord {
-    pub fn with_view(self, view: ViewStats) -> UsageRecord {
-        UsageRecord {
+impl LedgerRow {
+    pub fn with_process_turn(self, process_turn: u64) -> LedgerRow {
+        LedgerRow {
+            process_turn: Some(process_turn),
+            ..self
+        }
+    }
+
+    pub fn with_request_at(self, request_at: Option<String>) -> LedgerRow {
+        LedgerRow { request_at, ..self }
+    }
+
+    pub fn with_reset(self, reset: Option<ResetReason>) -> LedgerRow {
+        LedgerRow { reset, ..self }
+    }
+
+    pub fn with_run(self, run: Option<String>) -> LedgerRow {
+        LedgerRow { run, ..self }
+    }
+
+    pub fn with_store(self, store: Option<String>) -> LedgerRow {
+        LedgerRow { store, ..self }
+    }
+
+    pub fn with_view(self, view: ViewStats) -> LedgerRow {
+        LedgerRow {
             view: Some(view),
             ..self
         }
     }
 
-    pub fn with_harness_cost(self, cost_usd: Option<f64>) -> UsageRecord {
-        UsageRecord {
+    pub fn with_harness_cost(self, cost_usd: Option<f64>) -> LedgerRow {
+        LedgerRow {
             cost_usd,
             cost_source: cost_usd.map(|_| CostSource::Harness),
             ..self
@@ -153,14 +200,15 @@ impl UsageRecord {
 }
 
 pub fn usage_record(
-    kind: CallKind,
+    kind: CallSite,
     at: String,
     costs: &IterationCosts,
     metadata: &IterationMetadata,
-) -> Option<UsageRecord> {
+) -> Option<LedgerRow> {
     let usage = costs.usage.as_ref()?;
-    Some(UsageRecord {
+    Some(LedgerRow {
         at,
+        role: kind.role(),
         kind,
         input_tokens: usage.input_tokens,
         cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
@@ -187,12 +235,12 @@ pub fn usage_record(
 }
 
 pub fn worker_usage_record(
-    kind: CallKind,
+    kind: CallSite,
     at: String,
     session_id: Option<String>,
     harness: &str,
     row: &ModelUsage,
-) -> UsageRecord {
+) -> LedgerRow {
     let usage = &row.usage;
     let written = |tier| {
         usage
@@ -201,8 +249,9 @@ pub fn worker_usage_record(
             .find(|write| write.tier == tier)
             .map(|write| write.tokens)
     };
-    UsageRecord {
+    LedgerRow {
         at,
+        role: kind.role(),
         kind,
         input_tokens: usage.input_uncached,
         cache_creation_input_tokens: usage.cache_writes.iter().map(|write| write.tokens).sum(),
@@ -228,7 +277,7 @@ pub fn worker_usage_record(
     }
 }
 
-pub fn encode_usage(record: &UsageRecord) -> Result<String, String> {
+pub fn encode_usage(record: &LedgerRow) -> Result<String, String> {
     let mut line = serde_json::to_string(record).map_err(|e| e.to_string())?;
     line.push('\n');
     Ok(line)
@@ -277,7 +326,7 @@ mod tests {
             },
             long_prompt: true,
         };
-        let kind = CallKind::Worker {
+        let kind = CallSite::Worker {
             worker_id: "w1".into(),
             turn_id: Some(2),
         };
@@ -321,7 +370,7 @@ mod tests {
             },
             long_prompt: false,
         };
-        let kind = CallKind::Worker {
+        let kind = CallSite::Worker {
             worker_id: "w1".into(),
             turn_id: None,
         };
@@ -331,7 +380,7 @@ mod tests {
         assert_eq!(worker["long_prompt"], false);
         let main = serde_json::to_value(
             usage_record(
-                CallKind::Nap,
+                CallSite::Nap,
                 "t".into(),
                 &costs(Some(1)),
                 &IterationMetadata::new(),
@@ -378,7 +427,7 @@ mod tests {
     #[test]
     fn usage_record_maps_all_fields() {
         let record = usage_record(
-            CallKind::Nap,
+            CallSite::Nap,
             "t".into(),
             &costs(Some(7)),
             &IterationMetadata::new(),
@@ -399,7 +448,7 @@ mod tests {
     #[test]
     fn usage_record_zero_fills_missing_cache_fields() {
         assert!(usage_record(
-            CallKind::Turn {
+            CallSite::Turn {
                 trigger: Trigger::User
             },
             "t".into(),
@@ -408,7 +457,7 @@ mod tests {
         )
         .is_none());
         let record = usage_record(
-            CallKind::Turn {
+            CallSite::Turn {
                 trigger: Trigger::User,
             },
             "t".into(),
@@ -427,7 +476,7 @@ mod tests {
 
     #[test]
     fn context_tokens_serialized_only_when_present() {
-        let kind = CallKind::Nap;
+        let kind = CallSite::Nap;
         let mut with = costs(None);
         with.context_tokens = Some(42);
         let value =
@@ -441,7 +490,7 @@ mod tests {
     #[test]
     fn encode_usage_is_one_json_line() {
         let record = usage_record(
-            CallKind::Turn {
+            CallSite::Turn {
                 trigger: Trigger::User,
             },
             "t".into(),
@@ -458,8 +507,8 @@ mod tests {
 
     #[test]
     fn encode_usage_includes_store_only_when_set() {
-        let mut record = usage_record(
-            CallKind::Nap,
+        let record = usage_record(
+            CallSite::Nap,
             "t".into(),
             &costs(None),
             &IterationMetadata::new(),
@@ -467,14 +516,14 @@ mod tests {
         .unwrap();
         let bare: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert!(bare.get("store").is_none());
-        record.store = Some("/chat store".into());
+        let record = record.with_store(Some("/chat store".into()));
         let set: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert_eq!(set["store"], "/chat store");
     }
 
     #[test]
     fn worker_turn_record_has_trigger() {
-        let kind = CallKind::Turn {
+        let kind = CallSite::Turn {
             trigger: Trigger::Worker,
         };
         let record =
@@ -489,7 +538,7 @@ mod tests {
     #[test]
     fn nap_record_has_no_trigger() {
         let record = usage_record(
-            CallKind::Nap,
+            CallSite::Nap,
             "t".into(),
             &costs(None),
             &IterationMetadata::new(),
@@ -504,7 +553,7 @@ mod tests {
     fn ping_record_carries_model_session_and_harness() {
         let value = line(
             usage_record(
-                CallKind::Ping,
+                CallSite::Ping,
                 "t".into(),
                 &costs(None),
                 &seen(Some("m"), Some("s")),
@@ -530,15 +579,16 @@ mod tests {
 
     #[test]
     fn ping_record_has_the_ping_kind_run_and_request_time() {
-        let mut record = usage_record(
-            CallKind::Ping,
+        let record = usage_record(
+            CallSite::Ping,
             "t".into(),
             &costs(None),
             &IterationMetadata::new(),
         )
         .unwrap();
-        record.run = Some("r".into());
-        record.request_at = Some("q".into());
+        let record = record
+            .with_run(Some("r".into()))
+            .with_request_at(Some("q".into()));
         let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
         assert_eq!(value["kind"], "ping");
         assert_eq!(
@@ -553,7 +603,7 @@ mod tests {
         let lines = vec!["#0-1 a".to_string(), "#2 b".to_string()];
         let stats = view_stats(&lines);
         assert_eq!((stats.view_bytes, stats.view_lines), (11, 2));
-        let kind = CallKind::Turn {
+        let kind = CallSite::Turn {
             trigger: Trigger::User,
         };
         let record = usage_record(kind, "t".into(), &costs(None), &IterationMetadata::new())
@@ -565,7 +615,7 @@ mod tests {
         assert_eq!(value["view_head_hash"], stats.view_head_hash.as_str());
         assert_eq!(value["view_hash"].as_str().map(str::len), Some(16));
         let nap = usage_record(
-            CallKind::Nap,
+            CallSite::Nap,
             "t".into(),
             &costs(None),
             &IterationMetadata::new(),
@@ -577,8 +627,8 @@ mod tests {
 
     #[test]
     fn thread_fields_are_serialized_only_when_present() {
-        let mut record = usage_record(
-            CallKind::Turn {
+        let record = usage_record(
+            CallSite::Turn {
                 trigger: Trigger::User,
             },
             "t".into(),
@@ -588,7 +638,7 @@ mod tests {
         .unwrap();
         let value = line(
             usage_record(
-                CallKind::Nap,
+                CallSite::Nap,
                 "t".into(),
                 &costs(None),
                 &IterationMetadata::new(),
@@ -598,11 +648,13 @@ mod tests {
         for key in ["process_turn", "request_at", "reset", "run"] {
             assert!(value.get(key).is_none(), "{key}");
         }
-        record.process_turn = Some(3);
-        record.request_at = Some("2026-01-02T03:04:05+00:00".into());
-        record.reset = Some(ResetReason::Restart);
-        record.run = Some("7-t".into());
-        let value = line(record);
+        let value = line(
+            record
+                .with_process_turn(3)
+                .with_request_at(Some("2026-01-02T03:04:05+00:00".into()))
+                .with_reset(Some(ResetReason::Restart))
+                .with_run(Some("7-t".into())),
+        );
         assert_eq!(value["run"], "7-t");
         assert_eq!(value["process_turn"], 3);
         assert_eq!(value["request_at"], "2026-01-02T03:04:05+00:00");
@@ -619,13 +671,13 @@ mod tests {
     #[test]
     fn identity_fields_serialize_only_when_present() {
         let bare =
-            line(usage_record(CallKind::Nap, "t".into(), &costs(None), &seen(None, None)).unwrap());
+            line(usage_record(CallSite::Nap, "t".into(), &costs(None), &seen(None, None)).unwrap());
         assert_eq!(bare["harness"], "claude");
         assert_eq!(bare["cost_source"], "harness");
         assert!(bare.get("model").is_none() && bare.get("session_id").is_none());
         let full = line(
             usage_record(
-                CallKind::Nap,
+                CallSite::Nap,
                 "t".into(),
                 &costs(None),
                 &seen(Some("m"), Some("s")),
@@ -643,7 +695,7 @@ mod tests {
         let mut no_cost = costs(None);
         no_cost.cost_usd = None;
         let value =
-            line(usage_record(CallKind::Nap, "t".into(), &no_cost, &seen(None, None)).unwrap());
+            line(usage_record(CallSite::Nap, "t".into(), &no_cost, &seen(None, None)).unwrap());
         assert!(value.get("cost_source").is_none());
         assert!(value["cost_usd"].is_null());
     }
@@ -672,8 +724,35 @@ mod tests {
         );
     }
 
-    fn line(record: UsageRecord) -> Value {
+    fn line(record: LedgerRow) -> Value {
         serde_json::from_str(&encode_usage(&record).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn every_call_site_serializes_its_role() {
+        let worker = CallSite::Worker {
+            worker_id: "w".into(),
+            turn_id: None,
+        };
+        let turn = CallSite::Turn {
+            trigger: Trigger::User,
+        };
+        let cases = [
+            (turn, "turn", "main"),
+            (CallSite::Ping, "ping", "main"),
+            (CallSite::Nap, "nap", "nap"),
+            (CallSite::Merge, "merge", "merge"),
+            (worker, "worker", "worker"),
+            (CallSite::Ask, "ask", "ask"),
+        ];
+        for (site, kind, role) in cases {
+            let value =
+                line(usage_record(site, "t".into(), &costs(None), &seen(None, None)).unwrap());
+            assert_eq!(
+                (&value["kind"], &value["role"]),
+                (&kind.into(), &role.into())
+            );
+        }
     }
 
     #[test]
