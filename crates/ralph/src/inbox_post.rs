@@ -184,7 +184,7 @@ mod tests {
             "t",
         )
         .unwrap_err();
-        assert!(err.contains("control characters"), "{err}");
+        assert!(err.contains("U+001B"), "{err}");
         assert!(posted(dir.path()).is_empty());
     }
 }
