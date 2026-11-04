@@ -1,6 +1,7 @@
 use super::kind::HarnessId;
 use super::ticket::Tracker;
 use super::tools::ReportStatus;
+use crate::workers_view::Diff;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -98,6 +99,7 @@ pub struct CloseFacts<'a> {
     pub commit_count: Option<u64>,
     pub dirty: Option<bool>,
     pub spawn_at: Option<u64>,
+    pub diff: Option<&'a Diff>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -135,6 +137,9 @@ enum LifecycleKind {
         dirty: Option<bool>,
         duration_s: Option<u64>,
         spawn_at: Option<String>,
+        files: Option<u64>,
+        insertions: Option<u64>,
+        deletions: Option<u64>,
         merged_sha: Option<String>,
         ci: Option<String>,
     },
@@ -199,13 +204,16 @@ pub fn close_event(facts: &CloseFacts) -> LifecycleEvent {
                 .spawn_at
                 .and_then(|secs| DateTime::from_timestamp(i64::try_from(secs).ok()?, 0))
                 .map(|moment| moment.to_rfc3339_opts(SecondsFormat::Secs, true)),
+            files: facts.diff.map(|diff| to_u64(diff.files)),
+            insertions: facts.diff.map(|diff| to_u64(diff.added)),
+            deletions: facts.diff.map(|diff| to_u64(diff.deleted)),
             merged_sha: None,
             ci: None,
         },
     )
 }
 
-fn byte_count(len: usize) -> u64 {
+fn to_u64(len: usize) -> u64 {
     u64::try_from(len).unwrap_or(u64::MAX)
 }
 
@@ -220,7 +228,7 @@ pub fn reply_event(facts: &ReplyFacts) -> LifecycleEvent {
             harness: facts.harness.as_str().to_string(),
             interrupt: facts.interrupt,
             via_permission: facts.via_permission,
-            text_bytes: byte_count(facts.text_bytes),
+            text_bytes: to_u64(facts.text_bytes),
         },
     )
 }
@@ -230,7 +238,7 @@ pub fn report_event(facts: &ReportFacts) -> LifecycleEvent {
         &facts.key,
         LifecycleKind::Report {
             status: facts.status.as_str().to_string(),
-            text_bytes: byte_count(facts.text_bytes),
+            text_bytes: to_u64(facts.text_bytes),
             seq: facts.seq,
         },
     )
@@ -281,6 +289,12 @@ mod tests {
             commit_count: Some(3),
             dirty: Some(false),
             spawn_at: Some(1_700_000_000),
+            diff: Some(&Diff {
+                added: 12,
+                deleted: 4,
+                files: 2,
+                untracked: 0,
+            }),
         }
     }
 
@@ -362,6 +376,9 @@ mod tests {
                 "dirty": false,
                 "duration_s": 100,
                 "spawn_at": "2023-11-14T22:13:20Z",
+                "files": 2,
+                "insertions": 12,
+                "deletions": 4,
                 "merged_sha": null,
                 "ci": null
             })
@@ -374,11 +391,20 @@ mod tests {
             commit_count: None,
             dirty: None,
             spawn_at: None,
+            diff: None,
             ..close()
         };
         let value = row(&close_event(&facts));
-        for field in ["commit_count", "dirty", "duration_s", "spawn_at"] {
-            assert_eq!(value[field], Value::Null, "{field}");
+        for field in [
+            "commit_count",
+            "dirty",
+            "duration_s",
+            "spawn_at",
+            "files",
+            "insertions",
+            "deletions",
+        ] {
+            assert_eq!(value.get(field), Some(&Value::Null), "{field}");
         }
     }
 

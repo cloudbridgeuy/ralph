@@ -17,10 +17,21 @@ use ralph_core::worker::{
     decode_spawn_record, project_slug, spawn_record_path, CloseFacts, CloseState, CloseStep,
     HandoffFiles, HarnessId, Owner, OPENCODE_CONFIG_FILE,
 };
+use ralph_core::workers_view::{parse_numstat, Diff};
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+fn branch_diff(repo: &Path, base: &str, branch: &str) -> Option<Diff> {
+    let range = format!("{base}...{branch}");
+    let output = run(Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--numstat", &range]))
+    .ok()?;
+    Some(parse_numstat(&String::from_utf8_lossy(&output.stdout)))
+}
 
 impl Workers {
     pub fn close(&self, id: &str, abandon: bool, force: bool) -> io::Result<String> {
@@ -61,6 +72,7 @@ impl Workers {
         } else {
             None
         };
+        let diff = unmerged_commits.and_then(|_| branch_diff(&repo, &base.branch, &branch));
         let kind = if HandoffFiles::cursor(&self.store_dir, id).owner.exists() {
             HarnessId::Cursor
         } else if self.codex_running(id) {
@@ -115,6 +127,7 @@ impl Workers {
                     commit_count: unmerged_commits.and_then(|count| u64::try_from(count).ok()),
                     dirty: dirty_worktree,
                     spawn_at,
+                    diff: diff.as_ref(),
                 })
             });
         }

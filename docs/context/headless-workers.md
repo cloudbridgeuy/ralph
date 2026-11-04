@@ -247,7 +247,7 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 | event   | fields                                                                                           |
 | ------- | ------------------------------------------------------------------------------------------------ |
 | `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`, `phase` (`plan`, `build`, `fix`, `live-check`) |
-| `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `merged_sha` (`null`), `ci` (`null`) |
+| `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `files`, `insertions`, `deletions`, `merged_sha` (`null`), `ci` (`null`) |
 | `reply` | `harness`, `interrupt`, `via_permission`, `text_bytes`                                           |
 | `report` | `status` (`done`, `blocked`, `question`), `text_bytes`, `seq`                                   |
 
@@ -256,6 +256,7 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 - `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
 - `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
 - `dirty` is `null` when the worktree is gone.
+- `files`, `insertions` and `deletions` come from one `git diff --numstat <base>...<branch>` run at close, before the branch is deleted: the committed range only. Uncommitted and untracked changes are not counted. A binary file counts as one file and 0 lines. All three are `null` when the branch is gone or git fails. They are `0` only when the branch has no changed files. The close row of an older release lacks them: read them as `null`. There is no polling: the diff runs once per close.
 - `duration_s` is the close time minus `spawn_at`, the time in the spawn record. Both are `null` when the record is missing or unreadable.
 - `reply` is written after the send succeeds, by `Workers::reply` (`/reply`, `reply_worker`). A nudge writes no row. `harness` is the running harness, `claude` for a tmux worker. `via_permission` is true when the reply answered a permission request, by request id or because the worker awaited one; an interrupt is never a permission answer.
 - `report` is written by the worker MCP server after it posts the report to the inbox. `seq` is the report number in that server process. A report posted by another program (`ralph inbox post`, a thread or version warning) writes no row.
@@ -299,3 +300,26 @@ Spawn rows per phase (jq):
 ```sh
 jq -s '[.[] | select(.event == "spawn")] | group_by(.phase) | map({phase: .[0].phase, n: length})' <store>/analytics/workers.jsonl
 ```
+
+Diff size per phase of the last close of each worker (DuckDB):
+
+```sql
+WITH last_close AS (
+  SELECT *
+  FROM read_json_auto('<store>/analytics/workers.jsonl')
+  WHERE event = 'close'
+  QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
+),
+spawns AS (
+  SELECT *
+  FROM read_json_auto('<store>/analytics/workers.jsonl')
+  WHERE event = 'spawn'
+  QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
+)
+SELECT s.phase, count(*) AS closes, sum(c.files) AS files, sum(c.insertions) AS insertions, sum(c.deletions) AS deletions
+FROM last_close c
+JOIN spawns s ON s.store = c.store AND s.worker_id = c.worker_id
+GROUP BY ALL;
+```
+
+The join takes the latest spawn of each worker id, so a reused id counts once. `phase` is `NULL` for a spawn row written before `phase` existed and for a scheduled worker.
