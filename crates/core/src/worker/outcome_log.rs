@@ -65,6 +65,15 @@ fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcom
     }
 }
 
+/// Turn-end snapshots after the spawn snapshot (turn 0), or `None` when the
+/// worker has no turn snapshots.
+pub fn turn_count(harness: HarnessId, turn_ids: &[u64]) -> Option<u64> {
+    if harness == HarnessId::ClaudeHeadless {
+        return None;
+    }
+    turn_ids.iter().max().copied()
+}
+
 fn duration_secs(spawn_at: Option<u64>, closed_at: u64) -> Option<u64> {
     spawn_at
         .filter(|spawned| *spawned > 0)
@@ -100,6 +109,7 @@ pub struct CloseFacts<'a> {
     pub dirty: Option<bool>,
     pub spawn_at: Option<u64>,
     pub diff: Option<&'a Diff>,
+    pub turns: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -140,6 +150,7 @@ enum LifecycleKind {
         files: Option<u64>,
         insertions: Option<u64>,
         deletions: Option<u64>,
+        turns: Option<u64>,
         merged_sha: Option<String>,
         ci: Option<String>,
     },
@@ -207,6 +218,7 @@ pub fn close_event(facts: &CloseFacts) -> LifecycleEvent {
             files: facts.diff.map(|diff| to_u64(diff.files)),
             insertions: facts.diff.map(|diff| to_u64(diff.added)),
             deletions: facts.diff.map(|diff| to_u64(diff.deleted)),
+            turns: facts.turns,
             merged_sha: None,
             ci: None,
         },
@@ -289,6 +301,7 @@ mod tests {
             commit_count: Some(3),
             dirty: Some(false),
             spawn_at: Some(1_700_000_000),
+            turns: Some(5),
             diff: Some(&Diff {
                 added: 12,
                 deleted: 4,
@@ -379,6 +392,7 @@ mod tests {
                 "files": 2,
                 "insertions": 12,
                 "deletions": 4,
+                "turns": 5,
                 "merged_sha": null,
                 "ci": null
             })
@@ -392,6 +406,7 @@ mod tests {
             dirty: None,
             spawn_at: None,
             diff: None,
+            turns: None,
             ..close()
         };
         let value = row(&close_event(&facts));
@@ -403,9 +418,24 @@ mod tests {
             "files",
             "insertions",
             "deletions",
+            "turns",
         ] {
             assert_eq!(value.get(field), Some(&Value::Null), "{field}");
         }
+    }
+
+    #[test]
+    fn the_turn_count_is_the_highest_snapshot_id() {
+        assert_eq!(turn_count(HarnessId::Claude, &[0]), Some(0));
+        assert_eq!(turn_count(HarnessId::Claude, &[0, 1, 2, 3]), Some(3));
+        assert_eq!(turn_count(HarnessId::Codex, &[12, 13, 14]), Some(14));
+    }
+
+    #[test]
+    fn the_turn_count_is_null_without_snapshots_or_for_claude_headless() {
+        assert_eq!(turn_count(HarnessId::Claude, &[]), None);
+        assert_eq!(turn_count(HarnessId::ClaudeHeadless, &[0]), None);
+        assert_eq!(turn_count(HarnessId::ClaudeHeadless, &[0, 1]), None);
     }
 
     #[test]

@@ -14,8 +14,8 @@ use ralph_core::claude_leftovers::{
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
     base_branch, branch_name, close_clear_paths, close_event, close_plan, close_remove_paths,
-    decode_spawn_record, project_slug, spawn_record_path, CloseFacts, CloseState, CloseStep,
-    HandoffFiles, HarnessId, Owner, OPENCODE_CONFIG_FILE,
+    decode_spawn_record, project_slug, spawn_record_path, turn_count, CloseFacts, CloseState,
+    CloseStep, HandoffFiles, HarnessId, Owner, OPENCODE_CONFIG_FILE,
 };
 use ralph_core::workers_view::{parse_numstat, Diff};
 use std::fs;
@@ -112,6 +112,10 @@ impl Workers {
             .map(|record| record.at);
         let real_worktree = fs::canonicalize(&worktree).unwrap_or_else(|_| worktree.clone());
         let changes = WorkerChanges::open(&self.site(id, &worktree));
+        let turns = changes
+            .as_ref()
+            .and_then(|changes| changes.turns().ok())
+            .and_then(|ids| turn_count(kind, &ids));
         for step in &steps {
             self.close_step(step, &repo, &worktree, id).map_err(|e| {
                 io::Error::other(format!("closing worker {id} stopped at {step:?}: {e}"))
@@ -128,6 +132,7 @@ impl Workers {
                     dirty: dirty_worktree,
                     spawn_at,
                     diff: diff.as_ref(),
+                    turns,
                 })
             });
         }

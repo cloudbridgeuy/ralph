@@ -247,7 +247,7 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 | event   | fields                                                                                           |
 | ------- | ------------------------------------------------------------------------------------------------ |
 | `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`, `phase` (`plan`, `build`, `fix`, `live-check`) |
-| `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `files`, `insertions`, `deletions`, `merged_sha` (`null`), `ci` (`null`) |
+| `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `files`, `insertions`, `deletions`, `turns`, `merged_sha` (`null`), `ci` (`null`) |
 | `reply` | `harness`, `interrupt`, `via_permission`, `text_bytes`                                           |
 | `report` | `status` (`done`, `blocked`, `question`), `text_bytes`, `seq`                                   |
 
@@ -256,6 +256,7 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 - `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
 - `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
 - `dirty` is `null` when the worktree is gone.
+- `turns` is the highest turn snapshot id of the worker at close. The spawn snapshot is turn 0, so the id equals the number of snapshots taken after spawn, one per turn boundary: the Stop hook of a claude worker (a Stop that the report check blocks counts again), the turn start of a codex worker. It is `0` for a worker that never finished a turn. It is `null` when snapshots are off or unreadable, and always `null` for a `claude-headless` worker, which takes no snapshots. A turn running at close may or may not be counted. The id survives pruning of old snapshots. Rows of an older release lack it: read it as `null`.
 - `files`, `insertions` and `deletions` come from one `git diff --numstat <base>...<branch>` run at close, before the branch is deleted: the committed range only. Uncommitted and untracked changes are not counted. A binary file counts as one file and 0 lines. All three are `null` when the branch is gone or git fails. They are `0` only when the branch has no changed files. The close row of an older release lacks them: read them as `null`. There is no polling: the diff runs once per close.
 - `duration_s` is the close time minus `spawn_at`, the time in the spawn record. Both are `null` when the record is missing or unreadable.
 - `reply` is written after the send succeeds, by `Workers::reply` (`/reply`, `reply_worker`). A nudge writes no row. `harness` is the running harness, `claude` for a tmux worker. `via_permission` is true when the reply answered a permission request, by request id or because the worker awaited one; an interrupt is never a permission answer.
@@ -323,3 +324,12 @@ GROUP BY ALL;
 ```
 
 The join takes the latest spawn of each worker id, so a reused id counts once. `phase` is `NULL` for a spawn row written before `phase` existed and for a scheduled worker.
+
+Turns and diff size per close (DuckDB):
+
+```sql
+SELECT worker_id, turns, files, insertions, deletions
+FROM read_json_auto('<store>/analytics/workers.jsonl')
+WHERE event = 'close' AND turns IS NOT NULL
+ORDER BY turns DESC;
+```
