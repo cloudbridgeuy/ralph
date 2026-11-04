@@ -31,6 +31,7 @@ pub mod markdown;
 mod mermaid_guard;
 mod opencode_usage;
 mod opencode_worker;
+mod outcome_log;
 pub mod paths;
 mod permission_queue;
 mod private_file;

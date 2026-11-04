@@ -12,8 +12,9 @@ use ralph_core::claude_leftovers::{
 };
 use ralph_core::cursor_leftovers::cleans_cursor_leftovers;
 use ralph_core::worker::{
-    base_branch, branch_name, close_clear_paths, close_plan, close_remove_paths, project_slug,
-    CloseState, CloseStep, HandoffFiles, HarnessId, OPENCODE_CONFIG_FILE,
+    base_branch, branch_name, close_clear_paths, close_event, close_plan, close_remove_paths,
+    decode_spawn_record, project_slug, spawn_record_path, CloseFacts, CloseState, CloseStep,
+    HandoffFiles, HarnessId, Owner, OPENCODE_CONFIG_FILE,
 };
 use std::fs;
 use std::io;
@@ -25,6 +26,7 @@ impl Workers {
         let repo = repo_root()?;
         self.refuse_busy_headless(id, true)?;
         let owner = self.owner(&project_slug(&repo), id);
+        let foreign_owner = matches!(owner, Owner::Foreign(_));
         let config = AppConfig::load().map_err(|e| e.to_string());
         let (worktree, worktree_dir) =
             locate_worktree(&repo, id, self.worktree_dir.as_deref(), config.as_ref())?;
@@ -91,6 +93,10 @@ impl Workers {
         };
         let steps = close_plan(&state, abandon, force)
             .map_err(|refusal| io::Error::other(with_warning(refusal)))?;
+        let spawn_at = fs::read_to_string(spawn_record_path(&self.store_dir, id))
+            .ok()
+            .and_then(|raw| decode_spawn_record(&raw))
+            .map(|record| record.at);
         let real_worktree = fs::canonicalize(&worktree).unwrap_or_else(|_| worktree.clone());
         let changes = WorkerChanges::open(&self.site(id, &worktree));
         for step in &steps {
@@ -114,6 +120,17 @@ impl Workers {
                 |text, warning| format!("{text} {warning}"),
             ));
         }
+        self.record_lifecycle(id, |key| {
+            close_event(&CloseFacts {
+                key,
+                abandon,
+                force,
+                foreign_owner,
+                commit_count: unmerged_commits.and_then(|count| u64::try_from(count).ok()),
+                dirty: dirty_worktree,
+                spawn_at,
+            })
+        });
         let note = if opencode {
             " Evicted its opencode location."
         } else {

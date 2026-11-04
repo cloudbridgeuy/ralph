@@ -4,6 +4,7 @@ use crate::cursor_owner::{
     write_file,
 };
 use crate::opencode_worker::{entry_ids, running_opencode_sessions};
+use crate::outcome_log;
 use crate::warn::warn_if_err;
 use ralph_core::chat_status::{store_workers, RunningWorker};
 use ralph_core::worker::{
@@ -16,6 +17,7 @@ use ralph_core::worker::{
     Probe, Support, Sweep, TaggedSession, WorktreeDir, HANDOFF_POLL, HANDOFF_TIMEOUT,
     OPENCODE_OWNER_DIR, REPLY_CONFIRM, SESSION_FORMAT, WORKTREE_DIR_ENV,
 };
+use ralph_core::worker::{LifecycleEvent, LogKey};
 use ralph_core::worker_check::pane_busy;
 use std::collections::HashSet;
 use std::fs;
@@ -87,6 +89,19 @@ impl Workers {
             );
         }
         sent
+    }
+
+    fn record_lifecycle(&self, id: &str, build: impl FnOnce(LogKey<'_>) -> LifecycleEvent) {
+        let store = usage_store(&self.store_dir);
+        let event = build(LogKey {
+            store: &store,
+            worker_id: id,
+            at: chrono::Utc::now(),
+        });
+        warn_if_err(
+            outcome_log::append(&self.store_dir, &event),
+            format!("logging the lifecycle of worker {id}"),
+        );
     }
 
     pub fn reply(

@@ -237,3 +237,44 @@ A 1 s poll of `activity/<id>` measured the longest silence while a worker was `r
 | opencode | Tool-free turn after resume | 6 s |
 
 Neither harness sends activity while a tool call runs, so silence equals the tool's run time. The 300 s default stays: it is above every observed silence outside tool calls (132 s at most) by more than 2x, and a tool call longer than 300 s costs one `check` message per episode.
+
+## Worker lifecycle log
+
+Each worker spawn and close appends one line to `<store>/analytics/workers.jsonl`. The store is the canonical store path, the same string as `store` in `usage.jsonl` rows. The file holds no cost, tokens or session id; join on `store` and `worker_id` to read them from `usage.jsonl`. Every line is one JSON object written with one `write_all` on an `O_APPEND` file (`outcome_log::append`), with no lock. A reader must skip a torn last line. A write failure only warns and never fails the spawn or close. The pure builders and the encoder are `crates/core/src/worker/outcome_log.rs`. Unknown values are `null`, never `0`.
+
+Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `event`.
+
+| event   | fields                                                                                           |
+| ------- | ------------------------------------------------------------------------------------------------ |
+| `spawn` | `ticket`, `tracker` (`linear`, `jira`), `harness`, `model`, `base_sha`, `scheduled`              |
+| `close` | `outcome`, `commit_count`, `dirty`, `duration_s`, `spawn_at`, `merged_sha` (`null`), `ci` (`null`) |
+
+- `spawn` is written after the spawn record, so a spawn that fails later still has a row. `base_sha` is the tip of the worker branch when the worktree is ready.
+- `outcome` is `abandoned` when the close used the abandon flag, `forced` when the close used force on a worker of another chat, and `landed` otherwise.
+- `commit_count` is the count of commits on the worker branch that are not on the base branch. It is `null` when the branch is gone.
+- `dirty` is `null` when the worktree is gone.
+- `duration_s` is the close time minus `spawn_at`, the time in the spawn record. Both are `null` when the record is missing or unreadable.
+- A close that only removes leftover markers writes no row.
+
+Last close of each worker, with its cost (DuckDB):
+
+```sql
+SELECT w.worker_id, w.outcome, w.duration_s, sum(u.cost_usd) AS cost_usd
+FROM read_json_auto('<store>/analytics/workers.jsonl') w
+LEFT JOIN read_json_auto('<config dir>/usage.jsonl') u
+  ON u.store = w.store AND u.worker_id = w.worker_id AND u.kind = 'worker'
+WHERE w.event = 'close'
+GROUP BY ALL;
+```
+
+Closes per outcome (jq):
+
+```sh
+jq -s '[.[] | select(.event == "close")] | group_by(.outcome) | map({outcome: .[0].outcome, n: length})' <store>/analytics/workers.jsonl
+```
+
+Spawn rows with the harness and model:
+
+```sh
+jq -c 'select(.event == "spawn") | [.worker_id, .harness, .model]' <store>/analytics/workers.jsonl
+```
