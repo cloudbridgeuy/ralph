@@ -26,6 +26,7 @@ use super::events::{ResultEvent, StreamEvent, Usage};
 ///             output_tokens: 2971,
 ///             cache_read_input_tokens: Some(107476),
 ///             cache_creation_input_tokens: Some(12504),
+///             ..Default::default()
 ///         }),
 ///         session_id: None,
 ///         num_turns: Some(3),
@@ -100,6 +101,7 @@ impl ResultEvent {
     ///         output_tokens: 1500,
     ///         cache_read_input_tokens: Some(10000),
     ///         cache_creation_input_tokens: None,
+    ///         ..Default::default()
     ///     }),
     ///     session_id: None,
     ///     num_turns: None,
@@ -168,6 +170,7 @@ impl ResultEvent {
 ///             output_tokens: 200,
 ///             cache_read_input_tokens: None,
 ///             cache_creation_input_tokens: None,
+///             ..Default::default()
 ///         }),
 ///         session_id: None,
 ///         num_turns: None,

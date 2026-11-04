@@ -279,8 +279,8 @@ fn cost_row(
     let harness = |line: &UsageLine| Usd::of(line.cost_usd);
     let (runs, usd, harness_usd) = match source {
         Source::Main => {
-            let (runs, usd) = main_runs(lines);
-            (runs, usd, usd)
+            let (runs, harness_usd) = main_runs(lines);
+            (runs, summed(lines, priced), harness_usd)
         }
         Source::Nap | Source::Ask => (lines.len(), summed(lines, priced), summed(lines, &harness)),
         Source::Worker(_) => (

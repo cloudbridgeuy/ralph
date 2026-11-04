@@ -22,6 +22,7 @@ fn test_result_event_extract_costs_full() {
             output_tokens: 2971,
             cache_read_input_tokens: Some(107476),
             cache_creation_input_tokens: Some(12504),
+            ..Default::default()
         }),
         session_id: Some("session-123".to_string()),
         num_turns: Some(3),
@@ -126,6 +127,7 @@ fn test_extract_costs_from_events_with_result() {
                 output_tokens: 200,
                 cache_read_input_tokens: None,
                 cache_creation_input_tokens: None,
+                ..Default::default()
             }),
             session_id: None,
             num_turns: None,
@@ -261,6 +263,7 @@ fn test_iteration_costs_serialization_round_trip() {
             output_tokens: 2971,
             cache_read_input_tokens: Some(107476),
             cache_creation_input_tokens: Some(12504),
+            ..Default::default()
         }),
         context_tokens: None,
         terminal_reason: None,
@@ -330,6 +333,7 @@ fn test_extract_costs_result_at_end() {
                 output_tokens: 5000,
                 cache_read_input_tokens: Some(50000),
                 cache_creation_input_tokens: None,
+                ..Default::default()
             }),
             session_id: None,
             num_turns: Some(5),
@@ -395,6 +399,7 @@ fn test_context_tokens_uses_last_assistant_usage_not_result_usage() {
             output_tokens: 1,
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
+            ..Default::default()
         }),
         session_id: None,
         num_turns: None,

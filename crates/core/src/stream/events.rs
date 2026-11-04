@@ -213,6 +213,26 @@ pub struct Usage {
     /// Number of tokens written to cache (prompt caching).
     #[serde(default)]
     pub cache_creation_input_tokens: Option<u64>,
+
+    #[serde(default)]
+    pub cache_creation: Option<CacheCreation>,
+
+    #[serde(default)]
+    pub output_tokens_details: Option<OutputTokensDetails>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CacheCreation {
+    #[serde(default)]
+    pub ephemeral_5m_input_tokens: u64,
+    #[serde(default)]
+    pub ephemeral_1h_input_tokens: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct OutputTokensDetails {
+    #[serde(default)]
+    pub thinking_tokens: Option<u64>,
 }
 
 impl Usage {

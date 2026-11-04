@@ -226,9 +226,18 @@ pub fn usage_record(
         model: metadata.model.clone(),
         session_id: metadata.session_id.clone(),
         cost_source: costs.cost_usd.map(|_| CostSource::Harness),
-        reasoning_tokens: None,
-        cache_write_5m: None,
-        cache_write_1h: None,
+        reasoning_tokens: usage
+            .output_tokens_details
+            .as_ref()
+            .and_then(|details| details.thinking_tokens),
+        cache_write_5m: usage
+            .cache_creation
+            .as_ref()
+            .map(|tiers| tiers.ephemeral_5m_input_tokens),
+        cache_write_1h: usage
+            .cache_creation
+            .as_ref()
+            .map(|tiers| tiers.ephemeral_1h_input_tokens),
         long_prompt: None,
         view: None,
     })
@@ -296,6 +305,7 @@ mod tests {
                 output_tokens: 2,
                 cache_read_input_tokens: cache,
                 cache_creation_input_tokens: cache.map(|c| c + 1),
+                ..Default::default()
             }),
             context_tokens: None,
             terminal_reason: None,
@@ -422,6 +432,25 @@ mod tests {
             reply_entries("r"),
             vec![(crate::chat_memory::Role::Assistant, "r".into())]
         );
+    }
+
+    #[test]
+    fn usage_record_keeps_the_cache_tiers_and_thinking_of_a_result_line() {
+        let line = r#"{"type":"result","subtype":"success","total_cost_usd":0.0024732699999999996,"duration_ms":4404,"session_id":"47488cc1","usage":{"input_tokens":2,"cache_creation_input_tokens":10086,"cache_read_input_tokens":6887,"output_tokens":774,"output_tokens_details":{"thinking_tokens":565},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":10086,"ephemeral_5m_input_tokens":0},"inference_geo":"global","speed":"standard"}}"#;
+        let result: crate::stream::ResultEvent = serde_json::from_str(line).unwrap();
+        let record = usage_record(
+            CallSite::Nap,
+            "t".into(),
+            &result.extract_costs(),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(value["cache_creation_input_tokens"], 10086);
+        assert_eq!(value["cache_write_5m"], 0);
+        assert_eq!(value["cache_write_1h"], 10086);
+        assert_eq!(value["reasoning_tokens"], 565);
+        assert_eq!(value["output_tokens"], 774);
     }
 
     #[test]
