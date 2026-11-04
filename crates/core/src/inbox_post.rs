@@ -23,7 +23,8 @@ pub fn validate_source(source: &str) -> Result<(), String> {
 }
 
 fn is_refused_char(c: char) -> bool {
-    forbidden_control(c) || is_format_char(c) || c == '\u{2028}' || c == '\u{2029}'
+    !matches!(c, '\u{200C}' | '\u{200D}')
+        && (forbidden_control(c) || is_format_char(c) || c == '\u{2028}' || c == '\u{2029}')
 }
 
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
@@ -189,13 +190,7 @@ mod tests {
 
     #[test]
     fn report_refuses_bidi_and_zero_width_format_characters() {
-        for bad in [
-            "a\u{202e}b",
-            "a\u{2066}b",
-            "a\u{2069}b",
-            "a\u{200b}b",
-            "a\u{200d}b",
-        ] {
+        for bad in ["a\u{202e}b", "a\u{2066}b", "a\u{2069}b", "a\u{200b}b"] {
             assert_eq!(
                 external_report("ci", "t", bad.as_bytes()).unwrap_err(),
                 "The report contains control characters.",
@@ -218,5 +213,13 @@ mod tests {
             external_report("ci", "t", b"\xEF\xBB\xBF").unwrap_err(),
             "The report is empty."
         );
+    }
+
+    #[test]
+    fn report_accepts_joiners() {
+        for ok in ["👨\u{200d}👩\u{200d}👧", "a\u{200c}b"] {
+            let r = external_report("ci", "t", ok.as_bytes()).unwrap();
+            assert_eq!(r.text, ok);
+        }
     }
 }
