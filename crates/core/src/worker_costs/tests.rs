@@ -88,7 +88,10 @@ fn thread_merge_digests_count_as_nap() {
     merge["kind"] = json!("merge");
     let rows = rows_of(&jsonl(&[nap("claude-haiku-5-5", 0.01), merge]));
     assert_eq!(rows.len(), 1);
-    assert!(close(find(&rows, "nap", "claude-haiku-5-5").usd, 0.03));
+    assert!(close(
+        find(&rows, "nap", "claude-haiku-5-5").harness_usd,
+        0.03
+    ));
 }
 
 #[test]
@@ -98,8 +101,11 @@ fn ask_rows_show_as_ask() {
     let rows = rows_of(&jsonl(&[nap("claude-haiku-5-5", 0.01), ask.clone(), ask]));
     let row = find(&rows, "ask", "claude-haiku-5-5");
     assert_eq!(row.runs, Some(2));
-    assert!(close(row.usd, 0.08));
-    assert!(close(find(&rows, "nap", "claude-haiku-5-5").usd, 0.01));
+    assert!(close(row.harness_usd, 0.08));
+    assert!(close(
+        find(&rows, "nap", "claude-haiku-5-5").harness_usd,
+        0.01
+    ));
 }
 
 #[test]
@@ -229,6 +235,26 @@ fn haiku_usd(row: Value) -> f64 {
 }
 
 #[test]
+fn a_harness_cost_is_a_cross_check_and_usd_is_the_list_price_estimate() {
+    let mut row = haiku_row(300_000, Some(false));
+    row["kind"] = json!("nap");
+    row["cost_usd"] = json!(0.5);
+    let rows = rows_of(&jsonl(&[row]));
+    let nap = find(&rows, "nap", "claude-haiku-5-5");
+    assert_eq!(nap.usd.text(), "~0.03");
+    assert_eq!(nap.harness_usd.text(), "0.50");
+}
+
+#[test]
+fn reasoning_tokens_are_part_of_output_and_not_priced_again() {
+    let mut plain = haiku_row(0, Some(false));
+    plain["output_tokens"] = json!(1_000_000);
+    let mut reasoned = plain.clone();
+    reasoned["reasoning_tokens"] = json!(400_000);
+    assert!((haiku_usd(plain) - haiku_usd(reasoned)).abs() < 1e-12);
+}
+
+#[test]
 fn a_short_flag_prices_a_large_summed_row_at_the_base_tier() {
     assert!((haiku_usd(haiku_row(300_000, Some(false))) - 0.03).abs() < 1e-9);
 }
@@ -317,7 +343,7 @@ fn codex_cache_writes_without_a_tier_price_at_the_30m_rate() {
     let rows = rows_of(&jsonl(&[row, codex("gpt-6.1-sol")]));
     let usd = find(&rows, "codex", "gpt-6.1-sol").usd;
     assert!(close(usd, 16.9));
-    assert_eq!(usd.text(), "16.90");
+    assert_eq!(usd.text(), "~16.90");
 }
 
 #[test]
@@ -337,7 +363,7 @@ fn a_gpt_override_without_a_30m_price_keeps_the_plus() {
     row["cache_creation_input_tokens"] = json!(10);
     let usage = jsonl(&[row]);
     let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
-    assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "1.00+");
+    assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "~1.00+");
 }
 
 #[test]
@@ -366,7 +392,7 @@ fn nap_runs_count_rows_and_sum_cost() {
     ]));
     let nap = find(&rows, "nap", "claude-haiku-5-5");
     assert_eq!(nap.runs, Some(2));
-    assert_eq!(nap.usd.text(), "0.03");
+    assert_eq!(nap.harness_usd.text(), "0.03");
 }
 
 #[test]
@@ -386,15 +412,15 @@ fn table_totals_main_and_computed_worker_cost() {
     assert!(lines[0].starts_with("| HARNESS | MODEL | RUNS |"));
     assert_eq!(
         lines[2],
-        "| main | unknown | 1 | 10 | 5 | 1.0k | 100 | – | – | – | 1.50 |"
+        "| main | unknown | 1 | 10 | 5 | 1.0k | 100 | – | – | – | 1.50 | 1.50 |"
     );
     assert_eq!(
         lines[3],
-        "| claude | claude-opus-5-5 | 1 | 3 | 30.0k | 400 | 50 | 20 | 30 | – | 0.60 |"
+        "| claude | claude-opus-5-5 | 1 | 3 | 30.0k | 400 | 50 | 20 | 30 | – | ~0.60 | n/a |"
     );
     assert_eq!(
         lines[4],
-        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20 | 30 | – | 2.10 |"
+        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20 | 30 | – | ~2.10 | 1.50+ |"
     );
 }
 
