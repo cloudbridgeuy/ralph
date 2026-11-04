@@ -237,6 +237,11 @@ pub enum ThreadCommand {
     Merge {
         #[arg(value_parser = ThreadName::parse)]
         name: ThreadName,
+        #[arg(
+            long,
+            help = "Post the thread's labelled memory view (100 lines, at most 64 KB) to main's inbox instead of a Haiku digest; no model call."
+        )]
+        rebase: bool,
     },
     #[command(
         about = "Park a thread: it refuses to open, so its watches and schedules pause, until revive. Refuses while a chat or a worker uses it."
