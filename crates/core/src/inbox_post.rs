@@ -1,4 +1,5 @@
 use crate::chat_thread::MAX_NAME_CHARS;
+use crate::sanitize::forbidden_control;
 use crate::worker::Report;
 
 pub const EXTERNAL_REPORT_PREFIX: &str = "external:";
@@ -20,8 +21,8 @@ pub fn validate_source(source: &str) -> Result<(), String> {
     }
 }
 
-fn is_forbidden_control(c: char) -> bool {
-    (c.is_control() && c != '\n' && c != '\t') || c == '\u{2028}' || c == '\u{2029}'
+fn is_refused_char(c: char) -> bool {
+    forbidden_control(c) || c == '\u{2028}' || c == '\u{2029}'
 }
 
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
@@ -33,7 +34,7 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "The report is not valid UTF-8 text.".to_string())?;
     let text = text.replace("\r\n", "\n");
-    if text.chars().any(is_forbidden_control) {
+    if text.chars().any(is_refused_char) {
         return Err("The report contains control characters.".to_string());
     }
     if text.trim().is_empty() {
