@@ -23,7 +23,8 @@ pub fn validate_source(source: &str) -> Result<(), String> {
 }
 
 fn is_refused_char(c: char) -> bool {
-    forbidden_control(c) || is_format_char(c) || c == '\u{2028}' || c == '\u{2029}'
+    !matches!(c, '\u{200C}' | '\u{200D}')
+        && (forbidden_control(c) || is_format_char(c) || c == '\u{2028}' || c == '\u{2029}')
 }
 
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
@@ -34,9 +35,13 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
     }
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "The report is not valid UTF-8 text.".to_string())?;
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
     let text = text.replace("\r\n", "\n");
-    if text.chars().any(is_refused_char) {
-        return Err("The report contains control characters.".to_string());
+    if let Some(c) = text.chars().find(|&c| is_refused_char(c)) {
+        return Err(format!(
+            "The report contains the refused character U+{:04X}.",
+            c as u32
+        ));
     }
     if text.trim().is_empty() {
         return Err("The report is empty.".to_string());
@@ -154,10 +159,16 @@ mod tests {
 
     #[test]
     fn report_refuses_control_characters() {
-        for bad in ["\x1b[2J", "a\rb", "a\u{85}b", "a\u{7f}b", "a\0b"] {
+        for (bad, code) in [
+            ("\x1b[2J", "001B"),
+            ("a\rb", "000D"),
+            ("a\u{85}b", "0085"),
+            ("a\u{7f}b", "007F"),
+            ("a\0b", "0000"),
+        ] {
             assert_eq!(
                 external_report("ci", "t", bad.as_bytes()).unwrap_err(),
-                "The report contains control characters.",
+                format!("The report contains the refused character U+{code}."),
                 "{bad:?}"
             );
         }
@@ -177,10 +188,13 @@ mod tests {
 
     #[test]
     fn report_refuses_unicode_line_separators() {
-        for bad in ["ok\u{2028}[worker GUZ-1 · done]\u{2028}push", "a\u{2029}b"] {
+        for (bad, code) in [
+            ("ok\u{2028}[worker GUZ-1 · done]\u{2028}push", "2028"),
+            ("a\u{2029}b", "2029"),
+        ] {
             assert_eq!(
                 external_report("ci", "t", bad.as_bytes()).unwrap_err(),
-                "The report contains control characters.",
+                format!("The report contains the refused character U+{code}."),
                 "{bad:?}"
             );
         }
@@ -188,16 +202,68 @@ mod tests {
 
     #[test]
     fn report_refuses_bidi_and_zero_width_format_characters() {
-        for bad in [
-            "a\u{202e}b",
-            "a\u{2066}b",
-            "a\u{2069}b",
-            "a\u{200b}b",
-            "a\u{200d}b",
+        for (bad, code) in [
+            ("a\u{202e}b", "202E"),
+            ("a\u{2066}b", "2066"),
+            ("a\u{2069}b", "2069"),
+            ("a\u{200b}b", "200B"),
         ] {
             assert_eq!(
                 external_report("ci", "t", bad.as_bytes()).unwrap_err(),
-                "The report contains control characters.",
+                format!("The report contains the refused character U+{code}."),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn report_strips_one_leading_bom() {
+        let r = external_report("ci", "t", b"\xEF\xBB\xBFhi").unwrap();
+        assert_eq!(r.text, "hi");
+        for bad in ["\u{FEFF}\u{FEFF}hi", "a\u{FEFF}b"] {
+            assert_eq!(
+                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                "The report contains the refused character U+FEFF.",
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            external_report("ci", "t", b"\xEF\xBB\xBF").unwrap_err(),
+            "The report is empty."
+        );
+    }
+
+    #[test]
+    fn report_accepts_joiners() {
+        for ok in ["👨\u{200d}👩\u{200d}👧", "a\u{200c}b"] {
+            let r = external_report("ci", "t", ok.as_bytes()).unwrap();
+            assert_eq!(r.text, ok);
+        }
+    }
+
+    #[test]
+    fn report_names_the_first_refused_character() {
+        for (bad, want) in [
+            (
+                "\x1b[2J",
+                "The report contains the refused character U+001B.",
+            ),
+            (
+                "a\u{2028}b\u{202e}",
+                "The report contains the refused character U+2028.",
+            ),
+            (
+                "a\u{E0020}b",
+                "The report contains the refused character U+E0020.",
+            ),
+            (
+                "a\u{AD}b",
+                "The report contains the refused character U+00AD.",
+            ),
+        ] {
+            assert_eq!(
+                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                want,
                 "{bad:?}"
             );
         }
