@@ -20,6 +20,10 @@ pub fn validate_source(source: &str) -> Result<(), String> {
     }
 }
 
+fn is_forbidden_control(c: char) -> bool {
+    c.is_control() && c != '\n' && c != '\t'
+}
+
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
     if bytes.len() > MAX_TEXT_BYTES {
         return Err(format!(
@@ -28,10 +32,14 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
     }
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "The report is not valid UTF-8 text.".to_string())?;
+    let text = text.replace("\r\n", "\n");
+    if text.chars().any(is_forbidden_control) {
+        return Err("The report contains control characters.".to_string());
+    }
     if text.trim().is_empty() {
         return Err("The report is empty.".to_string());
     }
-    Ok(text.to_string())
+    Ok(text)
 }
 
 pub fn mark_untrusted(text: &str) -> String {
@@ -140,5 +148,28 @@ mod tests {
         assert_eq!(mark_untrusted("a\n\nb"), "| a\n|\n| b");
         assert_eq!(mark_untrusted("one"), "| one");
         assert_eq!(mark_untrusted("a\n"), "| a");
+    }
+
+    #[test]
+    fn report_refuses_control_characters() {
+        for bad in ["\x1b[2J", "a\rb", "a\u{85}b", "a\u{7f}b", "a\0b"] {
+            assert_eq!(
+                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                "The report contains control characters.",
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn report_turns_crlf_into_lf() {
+        let r = external_report("ci", "t", b"a\r\nb").unwrap();
+        assert_eq!(r.text, "a\nb");
+    }
+
+    #[test]
+    fn report_keeps_tabs_and_newlines() {
+        let r = external_report("ci", "t", b"a\tb\nc").unwrap();
+        assert_eq!(r.text, "a\tb\nc");
     }
 }

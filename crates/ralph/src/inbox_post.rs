@@ -172,4 +172,19 @@ mod tests {
         post(dir.path(), "ci", Path::new("-"), &mut &b"x"[..], "t").unwrap();
         assert_eq!(posted(dir.path()).len(), 1);
     }
+
+    #[test]
+    fn a_report_with_control_characters_is_refused_and_writes_nothing() {
+        let dir = store();
+        let err = post(
+            dir.path(),
+            "ci",
+            Path::new("-"),
+            &mut &b"\x1b[2Jhi"[..],
+            "t",
+        )
+        .unwrap_err();
+        assert!(err.contains("control characters"), "{err}");
+        assert!(posted(dir.path()).is_empty());
+    }
 }
