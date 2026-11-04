@@ -91,6 +91,12 @@ impl Workers {
         sent
     }
 
+    pub fn send_reply(&self, id: &str, text: &str) -> io::Result<String> {
+        let delivered = self.deliver(id, text, false);
+        let sent = self.mark_sent(id, delivered)?;
+        Ok(self.finish_reply(id, sent))
+    }
+
     pub fn reply(
         &self,
         id: &str,
@@ -118,10 +124,14 @@ impl Workers {
                 text_bytes: text.len(),
             })
         });
-        Ok(match sent.watch {
+        Ok(self.finish_reply(id, sent))
+    }
+
+    fn finish_reply(&self, id: &str, sent: Sent) -> String {
+        match sent.watch {
             Some(watch) => self.confirm(id, &watch),
             None => sent.line,
-        })
+        }
     }
 
     fn confirm(&self, id: &str, watch: &Watch) -> String {
@@ -854,5 +864,19 @@ mod tests {
         host.join().unwrap();
         assert_eq!(only(&files.interrupt).unwrap(), "stop");
         assert!(sent_path(dir.path(), "A").exists());
+    }
+
+    #[test]
+    fn only_a_reply_writes_a_log_row_and_a_nudge_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let workers = workers_in(dir.path());
+        write_file(&HandoffFiles::opencode(dir.path(), "A").owner, "").unwrap();
+        let log = ralph_core::worker::workers_log_path(dir.path());
+        workers.send_reply("A", "hello").unwrap();
+        assert!(!log.exists());
+        workers.reply("A", "hello", false, None).unwrap();
+        let text = fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        assert!(text.contains("\"event\":\"reply\""));
     }
 }

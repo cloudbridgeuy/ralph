@@ -9,7 +9,7 @@ pub fn run(command: NudgeCommand, monitor: &Monitor) {
         Ok(send) => send,
         Err(line) => return println!("{line}"),
     };
-    match monitor.workers.reply(&id, &text, false, None) {
+    match monitor.workers.send_reply(&id, &text) {
         Ok(line) => println!("{line}"),
         Err(error) => println!("{}", failure_line(&error.to_string())),
     }
