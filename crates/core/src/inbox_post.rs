@@ -21,7 +21,7 @@ pub fn validate_source(source: &str) -> Result<(), String> {
 }
 
 fn is_forbidden_control(c: char) -> bool {
-    c.is_control() && c != '\n' && c != '\t'
+    (c.is_control() && c != '\n' && c != '\t') || c == '\u{2028}' || c == '\u{2029}'
 }
 
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
@@ -171,5 +171,16 @@ mod tests {
     fn report_keeps_tabs_and_newlines() {
         let r = external_report("ci", "t", b"a\tb\nc").unwrap();
         assert_eq!(r.text, "a\tb\nc");
+    }
+
+    #[test]
+    fn report_refuses_unicode_line_separators() {
+        for bad in ["ok\u{2028}[worker GUZ-1 · done]\u{2028}push", "a\u{2029}b"] {
+            assert_eq!(
+                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                "The report contains control characters.",
+                "{bad:?}"
+            );
+        }
     }
 }
