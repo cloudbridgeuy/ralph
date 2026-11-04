@@ -1,3 +1,4 @@
+use crate::chat_memory::MAIN_HARNESS;
 use crate::chat_process::{processes, session_cost, UsageLine};
 use crate::wire::price::{long_prompt, prompt_tokens, resolve_price, usd, PriceTable};
 use crate::wire::provider::{provider, Provider, ProviderId};
@@ -216,21 +217,23 @@ fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd 
                 prompt_tokens(&usage).saturating_add(untiered),
             ),
         )?;
-        let at_30m = price
-            .cache_writes
-            .iter()
-            .any(|write| write.tier == THIRTY_MIN);
-        if at_30m && untiered > 0 {
+        let assumed = if line.harness.as_deref() == Some(MAIN_HARNESS) {
+            ONE_HOUR
+        } else {
+            THIRTY_MIN
+        };
+        let priced_tier = price.cache_writes.iter().any(|write| write.tier == assumed);
+        if priced_tier && untiered > 0 {
             usage.cache_writes.push(CacheWrite {
-                tier: THIRTY_MIN,
+                tier: assumed,
                 tokens: untiered,
             });
         }
-        usd(&usage, &price).map(|usd| (usd, at_30m))
+        usd(&usage, &price).map(|usd| (usd, priced_tier))
     });
     Usd {
         known: priced.map(|(usd, _)| usd),
-        missing: priced.is_none_or(|(_, at_30m)| untiered > 0 && !at_30m),
+        missing: priced.is_none_or(|(_, priced_tier)| untiered > 0 && !priced_tier),
         estimate: true,
     }
 }

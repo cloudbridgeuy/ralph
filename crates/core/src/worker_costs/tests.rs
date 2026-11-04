@@ -225,13 +225,26 @@ fn a_provider_prefixed_opencode_row_with_no_cost_shows_no_price() {
 }
 
 #[test]
-fn a_cache_write_tier_gap_prices_the_rest() {
+fn a_claude_cache_write_tier_gap_prices_at_the_1h_rate() {
     let mut gap = worker("GUZ-1", "s1", "claude-opus-5-5");
     gap["cache_creation_input_tokens"] = json!(60);
     let rows = rows_of(&jsonl(&[gap]));
     let usd = find(&rows, "claude", "claude-opus-5-5").usd;
-    assert!(close(usd, 0.000572));
-    assert!(usd.missing);
+    assert!(close(usd, 0.000652));
+    assert_eq!(usd.text(), "~0.00");
+}
+
+#[test]
+fn claude_cache_writes_without_a_tier_price_like_1h_writes() {
+    let mut untiered = nap("claude-haiku-5-5", 0.0);
+    untiered["cache_creation_input_tokens"] = json!(1_000_000);
+    let mut tiered = untiered.clone();
+    tiered["kind"] = json!("ask");
+    tiered["cache_write_1h"] = json!(1_000_000);
+    let rows = rows_of(&jsonl(&[untiered, tiered]));
+    let nap = find(&rows, "nap", "claude-haiku-5-5").usd;
+    assert_eq!(nap, find(&rows, "ask", "claude-haiku-5-5").usd);
+    assert!(!nap.text().ends_with('+'));
 }
 
 fn haiku_row(input: u64, flag: Option<bool>) -> Value {

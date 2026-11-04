@@ -97,7 +97,7 @@ pub enum CostSource {
     Harness,
 }
 
-const MAIN_HARNESS: &str = "claude";
+pub(crate) const MAIN_HARNESS: &str = "claude";
 
 pub fn carry_metadata(
     previous: &IterationMetadata,
