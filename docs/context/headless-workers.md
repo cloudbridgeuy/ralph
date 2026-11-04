@@ -264,12 +264,14 @@ Common fields: `v` (`1`), `at` (RFC 3339, UTC, seconds), `store`, `worker_id`, `
 - `text_bytes` is the UTF-8 byte length of the text. The row holds no text. For a report it counts the text as posted, with the attached change summary when there is one.
 - A close that only removes leftover markers writes no row.
 
+Each DuckDB query reads the whole file to infer its columns (`sample_size = -1`). Without it DuckDB infers from the first rows only, and a query on `phase`, `turns`, `files`, `insertions` or `deletions` fails with a binder error when the log starts with rows from an older release. To read several stores at once, pass a list of paths and add `union_by_name = true`.
+
 Last close of each worker, with the cost of that run (DuckDB):
 
 ```sql
 WITH last_close AS (
   SELECT *
-  FROM read_json_auto('<store>/analytics/workers.jsonl')
+  FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
   WHERE event = 'close'
   QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
 )
@@ -307,13 +309,13 @@ Diff size per phase of the last close of each worker (DuckDB):
 ```sql
 WITH last_close AS (
   SELECT *
-  FROM read_json_auto('<store>/analytics/workers.jsonl')
+  FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
   WHERE event = 'close'
   QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
 ),
 spawns AS (
   SELECT *
-  FROM read_json_auto('<store>/analytics/workers.jsonl')
+  FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
   WHERE event = 'spawn'
   QUALIFY row_number() OVER (PARTITION BY store, worker_id ORDER BY at DESC) = 1
 )
@@ -329,7 +331,7 @@ Turns and diff size per close (DuckDB):
 
 ```sql
 SELECT worker_id, turns, files, insertions, deletions
-FROM read_json_auto('<store>/analytics/workers.jsonl')
+FROM read_json_auto('<store>/analytics/workers.jsonl', sample_size = -1)
 WHERE event = 'close' AND turns IS NOT NULL
 ORDER BY turns DESC;
 ```
