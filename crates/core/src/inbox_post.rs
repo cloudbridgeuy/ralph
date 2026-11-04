@@ -221,8 +221,9 @@ mod tests {
         let r = external_report("ci", "t", b"\xEF\xBB\xBFhi").unwrap();
         assert_eq!(r.text, "hi");
         for bad in ["\u{FEFF}\u{FEFF}hi", "a\u{FEFF}b"] {
-            assert!(
-                external_report("ci", "t", bad.as_bytes()).is_err(),
+            assert_eq!(
+                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                "The report contains the refused character U+FEFF.",
                 "{bad:?}"
             );
         }
@@ -250,6 +251,14 @@ mod tests {
             (
                 "a\u{2028}b\u{202e}",
                 "The report contains the refused character U+2028.",
+            ),
+            (
+                "a\u{E0020}b",
+                "The report contains the refused character U+E0020.",
+            ),
+            (
+                "a\u{AD}b",
+                "The report contains the refused character U+00AD.",
             ),
         ] {
             assert_eq!(
