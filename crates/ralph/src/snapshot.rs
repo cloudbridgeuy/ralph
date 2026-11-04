@@ -8,10 +8,10 @@ use ralph_core::changes::{
 use ralph_core::snapshot::{
     append_lexically, commit_tree_args, delete_payload, delete_refs_args, exclude_base, gc_args,
     identity_env, index_env, index_lock_path, index_path, index_steps, init_args, list_prefix_args,
-    next_turn, not_excludable_message, parse_snapshot_base, parse_turns, refs_to_prune, side_dir,
-    snapshot_excludes, snapshot_lock_expired, snapshot_lock_path, snapshot_message,
-    update_ref_args, IndexStep, SnapshotBase, CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS,
-    SNAPSHOT_LOCK_POLL,
+    next_turn, not_excludable_message, parse_snapshot_base, parse_turns, refs_to_prune,
+    repo_root_store_message, side_dir, snapshot_excludes, snapshot_lock_expired,
+    snapshot_lock_path, snapshot_message, update_ref_args, IndexStep, SnapshotBase,
+    CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS, SNAPSHOT_LOCK_POLL,
 };
 use ralph_core::worker::{base_branch, project_slug};
 use std::ffi::OsString;
@@ -140,9 +140,9 @@ fn canonical_or_planned(path: &Path, base: &Path) -> PathBuf {
         .unwrap_or(full)
 }
 
-fn excludes_for_store(repo: &Path, store: &Path, side: &Path) -> Vec<String> {
+fn excludes_for_store(repo: &Path, store: &Path, side: &Path, slug: &str) -> Vec<String> {
     match exclude_base(store, std::env::current_dir().ok()) {
-        Some(base) => excludes_for(repo, store, side, &base),
+        Some(base) => excludes_for(repo, store, side, slug, &base),
         None => {
             warn_once(
                 "snapshot-store-relative-no-cwd",
@@ -156,30 +156,39 @@ fn excludes_for_store(repo: &Path, store: &Path, side: &Path) -> Vec<String> {
     }
 }
 
-fn excludes_for(repo: &Path, store: &Path, side: &Path, base: &Path) -> Vec<String> {
+fn excludes_for(repo: &Path, store: &Path, side: &Path, slug: &str, base: &Path) -> Vec<String> {
     let repo = canonical_or_planned(repo, base);
-    let store = config_root(&canonical_or_planned(store, base));
+    let written = base.join(store);
+    let mapped = config_root(&written);
+    let (main_store, is_thread) = if mapped == written {
+        let resolved = canonical_or_planned(store, base);
+        let main = config_root(&resolved);
+        let is_thread = main != resolved;
+        (main, is_thread)
+    } else {
+        (mapped, true)
+    };
+    let store = canonical_or_planned(&main_store, base);
+    let main_side = canonical_or_planned(&side_dir(&main_store, slug), base);
     if store == repo {
         warn_once(
             "snapshot-store-is-repo-root",
-            format!(
-                "the ralph store {} is the repo root; snapshots skip only its snapshots folder",
-                store.display()
-            ),
+            repo_root_store_message(&store, is_thread),
         );
     }
     let side = canonical_or_planned(side, base);
     if let Some(message) = not_excludable_message(&repo, &store, &side) {
         warn_once("snapshot-store-not-excludable", message);
     }
-    snapshot_excludes(&repo, &store, &side)
+    snapshot_excludes(&repo, &store, &side, &main_side)
 }
 
 impl Snapshotter {
     pub fn open(store: &Path, cwd: &Path, owner: &str) -> Option<Self> {
         let repo = repo_of(cwd)?;
-        let side = side_dir(store, &project_slug(&repo));
-        let excludes = excludes_for_store(&repo, store, &side);
+        let slug = project_slug(&repo);
+        let side = side_dir(store, &slug);
+        let excludes = excludes_for_store(&repo, store, &side, &slug);
         Some(Self {
             repo,
             side,
@@ -190,8 +199,9 @@ impl Snapshotter {
 
     pub fn open_worktree(store: &Path, worktree: &Path, owner: &str) -> Option<Self> {
         let repo = repo_of(worktree)?;
-        let side = side_dir(store, &project_slug(&main_repo_of(worktree)?));
-        let excludes = excludes_for_store(&repo, store, &side);
+        let slug = project_slug(&main_repo_of(worktree)?);
+        let side = side_dir(store, &slug);
+        let excludes = excludes_for_store(&repo, store, &side, &slug);
         Some(Self {
             repo,
             side,
@@ -462,6 +472,23 @@ mod tests {
         assert_eq!(empty[empty.len() - 2..], ["read-tree", "--empty"]);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_thread_store_still_excludes_the_main_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let repo = root.join("repo");
+        let main = repo.join(".ralph");
+        let outside = root.join("outside");
+        fs::create_dir_all(main.join("threads")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let thread_store = main.join("threads").join("t");
+        std::os::unix::fs::symlink(&outside, &thread_store).unwrap();
+        let side = side_dir(&thread_store, "slug");
+        let excludes = excludes_for(&repo, &thread_store, &side, "slug", Path::new("/"));
+        assert!(excludes.contains(&":(exclude,literal,top).ralph".to_string()));
+    }
+
     #[test]
     fn a_missing_tail_is_re_appended_to_the_canonical_existing_ancestor() {
         let dir = tempfile::tempdir().unwrap();
@@ -483,7 +510,7 @@ mod tests {
         let store = home.join("link").join("..").join(".ralph");
         let repo = root.join("repo");
         let side = root.join("elsewhere");
-        let excludes = excludes_for(&repo, &store, &side, Path::new("/"));
+        let excludes = excludes_for(&repo, &store, &side, "slug", Path::new("/"));
         assert_eq!(excludes, [":(exclude,literal,top).ralph"]);
     }
 
@@ -508,7 +535,7 @@ mod tests {
         let store = repo.join(".ralph");
         let side = side_dir(&store, "slug");
         assert_eq!(
-            excludes_for(&repo, &store, &side, dir.path()),
+            excludes_for(&repo, &store, &side, "slug", dir.path()),
             [":(exclude,literal,top).ralph"]
         );
     }
@@ -521,7 +548,7 @@ mod tests {
         let store = repo.join(".ralph").join("threads").join("foo");
         let side = side_dir(&store, "slug");
         assert_eq!(
-            excludes_for(&repo, &store, &side, dir.path()),
+            excludes_for(&repo, &store, &side, "slug", dir.path()),
             [":(exclude,literal,top).ralph"]
         );
     }
@@ -536,9 +563,48 @@ mod tests {
         std::os::unix::fs::symlink(repo.join("real"), &link).unwrap();
         let side = side_dir(&link, "slug");
         assert_eq!(
-            excludes_for(&repo, &link, &side, dir.path()),
+            excludes_for(&repo, &link, &side, "slug", dir.path()),
             [":(exclude,literal,top)real"]
         );
+    }
+
+    #[test]
+    fn a_dot_dotted_thread_store_excludes_the_main_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let store = repo
+            .join(".ralph")
+            .join("threads")
+            .join("x")
+            .join("..")
+            .join("t");
+        let side = side_dir(&store, "slug");
+        assert_eq!(
+            excludes_for(&repo, &store, &side, "slug", dir.path()),
+            [":(exclude,literal,top).ralph"]
+        );
+    }
+
+    #[test]
+    fn a_thread_store_under_a_repo_root_main_store_excludes_both_side_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let store = repo.join("threads").join("t");
+        let side = side_dir(&store, "slug");
+        let excludes = excludes_for(&repo, &store, &side, "slug", dir.path());
+        let thread_side = side.strip_prefix(&repo).unwrap().display().to_string();
+        let main_side = side_dir(&repo, "slug")
+            .strip_prefix(&repo)
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(excludes.contains(&format!(":(exclude,literal,top){thread_side}")));
+        assert!(excludes.contains(&format!(":(exclude,literal,top){main_side}")));
+        assert!(excludes
+            .iter()
+            .all(|e| e != ":(exclude,literal,top)" && e != ":(exclude,literal,top)."));
     }
 
     #[test]
@@ -548,7 +614,7 @@ mod tests {
         fs::create_dir_all(&repo).unwrap();
         let side = side_dir(Path::new(".ralph"), "slug");
         assert_eq!(
-            excludes_for(&repo, Path::new(".ralph"), &side, &repo),
+            excludes_for(&repo, Path::new(".ralph"), &side, "slug", &repo),
             [":(exclude,literal,top).ralph"]
         );
     }
@@ -561,7 +627,7 @@ mod tests {
         let store = repo.join("x").join("..").join("y").join(".ralph");
         let side = side_dir(&store, "slug");
         assert_eq!(
-            excludes_for(&repo, &store, &side, dir.path()),
+            excludes_for(&repo, &store, &side, "slug", dir.path()),
             [":(exclude,literal,top)y/.ralph"]
         );
     }
