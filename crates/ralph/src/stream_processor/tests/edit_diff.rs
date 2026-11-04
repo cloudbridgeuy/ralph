@@ -240,3 +240,20 @@ fn test_edit_tool_result_with_unified_diff_format() {
         out
     );
 }
+
+#[test]
+fn hidden_tool_output_leaves_no_pending_invocations_or_snapshots() {
+    let mut processor = StreamProcessor::with_options(false, false);
+
+    processor.process_line(
+        r#"{"type":"assistant","message":{"id":"msg_1","content":[{"type":"tool_use","id":"edit_1","name":"Edit","input":{"file_path":"/file1.rs","old_string":"a","new_string":"b"}},{"type":"tool_use","id":"write_1","name":"Write","input":{"file_path":"/file2.rs","content":"x"}},{"type":"tool_use","id":"nb_1","name":"NotebookEdit","input":{"notebook_path":"/nb.ipynb","cell_number":0,"new_source":"y"}}]}}"#,
+    );
+    processor.process_line(
+        r#"{"type":"user","message":{"id":"user_1","content":[{"type":"tool_result","tool_use_id":"edit_1","content":"ok","is_error":false},{"type":"tool_result","tool_use_id":"write_1","content":"ok","is_error":false},{"type":"tool_result","tool_use_id":"nb_1","content":"ok","is_error":false}]}}"#,
+    );
+
+    assert!(processor.pending_invocations.is_empty());
+    assert!(processor.pending_edit_snapshots.is_empty());
+    assert!(processor.pending_write_snapshots.is_empty());
+    assert!(processor.pending_notebook_snapshots.is_empty());
+}

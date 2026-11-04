@@ -98,11 +98,12 @@ impl StreamProcessor {
                 }
 
                 for invocation in &tool_invocations {
-                    // Track pending invocations for special result formatting
+                    if !self.show_tool_invocations {
+                        continue;
+                    }
                     self.pending_invocations
                         .insert(invocation.id.clone(), invocation.clone());
 
-                    // Capture file content before Edit tool executes
                     if invocation.name == "Edit" {
                         if let Some(snapshot) = capture_edit_snapshot(invocation) {
                             self.pending_edit_snapshots
@@ -110,7 +111,6 @@ impl StreamProcessor {
                         }
                     }
 
-                    // Capture file content before Write tool executes
                     if invocation.name == "Write" {
                         if let Some(snapshot) = capture_write_snapshot(invocation) {
                             self.pending_write_snapshots
@@ -118,7 +118,6 @@ impl StreamProcessor {
                         }
                     }
 
-                    // Capture cell content before NotebookEdit tool executes
                     if invocation.name == "NotebookEdit" {
                         if let Some(snapshot) = capture_notebook_snapshot(invocation) {
                             self.pending_notebook_snapshots
@@ -126,13 +125,10 @@ impl StreamProcessor {
                         }
                     }
 
-                    if self.show_tool_invocations {
-                        let formatted = tool_display::format_tool_invocation(self, invocation);
-                        output_parts.push(formatted);
-                        // Accumulate tool invocation block
-                        let block = build_tool_invocation_block(invocation);
-                        self.output_blocks.push(block);
-                    }
+                    let formatted = tool_display::format_tool_invocation(self, invocation);
+                    output_parts.push(formatted);
+                    let block = build_tool_invocation_block(invocation);
+                    self.output_blocks.push(block);
                 }
 
                 // Extract text from this event
