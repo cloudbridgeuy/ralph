@@ -34,6 +34,19 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
     Ok(text.to_string())
 }
 
+pub fn mark_untrusted(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            if line.is_empty() {
+                "|".to_string()
+            } else {
+                format!("| {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn external_report(source: &str, at: &str, bytes: &[u8]) -> Result<Report, String> {
     validate_source(source)?;
     Ok(Report {
@@ -120,5 +133,12 @@ mod tests {
         assert!(check_store(true, true, true).is_ok());
         assert!(check_store(true, false, false).is_err());
         assert!(check_store(false, true, true).is_err());
+    }
+
+    #[test]
+    fn mark_untrusted_prefixes_every_line() {
+        assert_eq!(mark_untrusted("a\n\nb"), "| a\n|\n| b");
+        assert_eq!(mark_untrusted("one"), "| one");
+        assert_eq!(mark_untrusted("a\n"), "| a");
     }
 }
