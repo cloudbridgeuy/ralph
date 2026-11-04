@@ -254,13 +254,21 @@ pub fn append_lexically(resolved: &Path, tail: &Path) -> PathBuf {
     normalize_lexically(&resolved.join(tail))
 }
 
-pub fn snapshot_excludes(repo: &Path, store: &Path, side: &Path) -> Vec<String> {
+pub fn snapshot_excludes(repo: &Path, store: &Path, side: &Path, main_side: &Path) -> Vec<String> {
     let store_exclude = exclude_pathspec(repo, store);
-    let side_covered = store_exclude.is_some() && side.starts_with(store);
-    let side_exclude = (!side_covered)
-        .then(|| exclude_pathspec(repo, side))
-        .flatten();
-    store_exclude.into_iter().chain(side_exclude).collect()
+    let mut excludes: Vec<String> = store_exclude.iter().cloned().collect();
+    for dir in [side, main_side] {
+        let covered = store_exclude.is_some() && dir.starts_with(store);
+        if covered {
+            continue;
+        }
+        if let Some(pathspec) = exclude_pathspec(repo, dir) {
+            if !excludes.contains(&pathspec) {
+                excludes.push(pathspec);
+            }
+        }
+    }
+    excludes
 }
 
 pub fn index_steps(has_head: bool) -> Vec<IndexStep> {
@@ -689,7 +697,8 @@ mod tests {
 
     fn excludes_for(repo: &str, store: &str) -> Vec<String> {
         let store = Path::new(store);
-        snapshot_excludes(Path::new(repo), store, &side_dir(store, "slug"))
+        let side = side_dir(store, "slug");
+        snapshot_excludes(Path::new(repo), store, &side, &side)
     }
 
     #[test]
@@ -738,9 +747,68 @@ mod tests {
     fn excludes_the_side_dir_when_only_it_is_inside_the_repo() {
         let side = Path::new("/r/side/slug.git");
         assert_eq!(
-            snapshot_excludes(Path::new("/r"), Path::new("/elsewhere"), side),
+            snapshot_excludes(Path::new("/r"), Path::new("/elsewhere"), side, side),
             [":(exclude,literal,top)side/slug.git"]
         );
+    }
+
+    fn thread_excludes(repo: &str, store: &str, side: &str, main_side: &str) -> Vec<String> {
+        snapshot_excludes(
+            Path::new(repo),
+            Path::new(store),
+            Path::new(side),
+            Path::new(main_side),
+        )
+    }
+
+    #[test]
+    fn a_thread_under_a_repo_root_store_also_excludes_the_main_side_dir() {
+        assert_eq!(
+            thread_excludes(
+                "/r",
+                "/r",
+                "/r/threads/t/snapshots/s.git",
+                "/r/snapshots/s.git"
+            ),
+            [
+                ":(exclude,literal,top)threads/t/snapshots/s.git",
+                ":(exclude,literal,top)snapshots/s.git",
+            ]
+        );
+    }
+
+    #[test]
+    fn an_equal_main_side_dir_is_listed_once() {
+        assert_eq!(
+            thread_excludes("/r", "/r", "/r/snapshots/s.git", "/r/snapshots/s.git"),
+            [":(exclude,literal,top)snapshots/s.git"]
+        );
+    }
+
+    #[test]
+    fn a_main_side_dir_under_the_store_exclude_is_not_listed() {
+        assert_eq!(
+            thread_excludes(
+                "/r",
+                "/r/.ralph",
+                "/r/.ralph/threads/t/s.git",
+                "/r/.ralph/s.git"
+            ),
+            [":(exclude,literal,top).ralph"]
+        );
+    }
+
+    #[test]
+    fn a_main_side_dir_outside_the_repo_is_not_listed() {
+        assert_eq!(
+            thread_excludes("/r", "/r", "/r/threads/t/s.git", "/elsewhere/s.git"),
+            [":(exclude,literal,top)threads/t/s.git"]
+        );
+    }
+
+    #[test]
+    fn the_repo_root_is_never_excluded_as_a_main_side_dir() {
+        assert!(thread_excludes("/r", "/r", "/elsewhere/s.git", "/r").is_empty());
     }
 
     #[test]
