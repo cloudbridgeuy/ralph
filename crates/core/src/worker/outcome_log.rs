@@ -78,7 +78,10 @@ pub fn spawn_base_sha(
 /// The git range of a worker's own commits, `<base_sha>..<branch>`; None unless base_sha is a valid hex id.
 pub fn diff_range(base_sha: Option<&str>, branch: &str) -> Option<String> {
     base_sha
-        .filter(|sha| (7..=40).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit()))
+        .filter(|sha| {
+            ((7..=40).contains(&sha.len()) || sha.len() == 64)
+                && sha.bytes().all(|b| b.is_ascii_hexdigit())
+        })
         .map(|sha| format!("{sha}..{branch}"))
 }
 
@@ -455,11 +458,22 @@ mod tests {
     }
 
     #[test]
-    fn the_diff_range_refuses_a_base_sha_that_is_not_7_to_40_hex() {
+    fn the_diff_range_accepts_a_64_hex_sha256_id() {
+        let full = "b".repeat(64);
+        assert_eq!(
+            diff_range(Some(&full), "worker/GUZ-1"),
+            Some(format!("{full}..worker/GUZ-1"))
+        );
+    }
+
+    #[test]
+    fn the_diff_range_refuses_a_base_sha_that_is_not_7_to_40_or_64_hex() {
         for bad in [
             "--output=/tmp/x",
             "abc123",
             &"a".repeat(41),
+            &"a".repeat(63),
+            &"a".repeat(65),
             "xyz1234",
             "abc 1234",
         ] {
