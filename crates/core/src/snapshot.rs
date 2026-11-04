@@ -206,11 +206,23 @@ fn exclude_pathspec(repo: &Path, path: &Path) -> Option<String> {
     (!parts.is_empty()).then(|| format!(":(exclude,literal,top){}", parts.join("/")))
 }
 
-pub fn inside_without_pathspec(repo: &Path, path: &Path) -> bool {
+fn inside_without_pathspec(repo: &Path, path: &Path) -> bool {
     let inside = path
         .strip_prefix(repo)
         .is_ok_and(|rest| rest.components().next().is_some());
     inside && exclude_pathspec(repo, path).is_none()
+}
+
+pub fn not_excludable_message(repo: &Path, store: &Path, side: &Path) -> Option<String> {
+    [("ralph store", store), ("snapshot repo folder", side)]
+        .into_iter()
+        .find(|(_, path)| inside_without_pathspec(repo, path))
+        .map(|(label, path)| {
+            format!(
+                "the {label} {} is inside the repo but its path is not valid UTF-8; snapshots will include it",
+                path.display()
+            )
+        })
 }
 
 fn normalize_lexically(path: &Path) -> PathBuf {
@@ -743,6 +755,30 @@ mod tests {
         let odd = Path::new("/r").join(std::ffi::OsStr::from_bytes(b"s\xff"));
         assert!(inside_without_pathspec(Path::new("/r"), &odd));
         assert!(!inside_without_pathspec(Path::new("/r"), Path::new("/r/s")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_not_excludable_message_names_the_path_that_failed() {
+        use std::os::unix::ffi::OsStrExt;
+        let odd = Path::new("/r").join(std::ffi::OsStr::from_bytes(b"s\xff"));
+        let repo = Path::new("/r");
+        let ok_store = Path::new("/r/s");
+        let ok_side = Path::new("/r/s/snapshots/x.git");
+        let on_store = not_excludable_message(repo, &odd, ok_side).unwrap();
+        assert!(on_store.contains("ralph store"), "{on_store}");
+        assert!(on_store.contains(&odd.display().to_string()), "{on_store}");
+        let on_side = not_excludable_message(repo, ok_store, &odd).unwrap();
+        assert!(on_side.contains("snapshot repo folder"), "{on_side}");
+        assert!(on_side.contains(&odd.display().to_string()), "{on_side}");
+        assert!(!on_side.contains("/r/s,"), "{on_side}");
+    }
+
+    #[test]
+    fn the_not_excludable_message_is_absent_when_both_paths_have_pathspecs() {
+        let repo = Path::new("/r");
+        assert!(not_excludable_message(repo, Path::new("/r/s"), Path::new("/r/s/x.git")).is_none());
+        assert!(not_excludable_message(repo, Path::new("/o"), Path::new("/o/x.git")).is_none());
     }
 
     #[test]

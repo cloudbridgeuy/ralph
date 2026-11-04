@@ -7,11 +7,11 @@ use ralph_core::changes::{
 };
 use ralph_core::snapshot::{
     append_lexically, commit_tree_args, delete_payload, delete_refs_args, exclude_base, gc_args,
-    identity_env, index_env, index_lock_path, index_path, index_steps, init_args,
-    inside_without_pathspec, list_prefix_args, next_turn, parse_snapshot_base, parse_turns,
-    refs_to_prune, side_dir, snapshot_excludes, snapshot_lock_expired, snapshot_lock_path,
-    snapshot_message, update_ref_args, IndexStep, SnapshotBase, CHAT_REF_PREFIX, HEAD_CHECK_ARGS,
-    KEEP_TURNS, SNAPSHOT_LOCK_POLL,
+    identity_env, index_env, index_lock_path, index_path, index_steps, init_args, list_prefix_args,
+    next_turn, not_excludable_message, parse_snapshot_base, parse_turns, refs_to_prune, side_dir,
+    snapshot_excludes, snapshot_lock_expired, snapshot_lock_path, snapshot_message,
+    update_ref_args, IndexStep, SnapshotBase, CHAT_REF_PREFIX, HEAD_CHECK_ARGS, KEEP_TURNS,
+    SNAPSHOT_LOCK_POLL,
 };
 use ralph_core::worker::{base_branch, project_slug};
 use std::ffi::OsString;
@@ -169,14 +169,8 @@ fn excludes_for(repo: &Path, store: &Path, side: &Path, base: &Path) -> Vec<Stri
         );
     }
     let side = canonical_or_planned(side, base);
-    if inside_without_pathspec(&repo, &store) || inside_without_pathspec(&repo, &side) {
-        warn_once(
-            "snapshot-store-not-excludable",
-            format!(
-                "the ralph store {} is inside the repo but its path is not valid UTF-8; snapshots will include it",
-                store.display()
-            ),
-        );
+    if let Some(message) = not_excludable_message(&repo, &store, &side) {
+        warn_once("snapshot-store-not-excludable", message);
     }
     snapshot_excludes(&repo, &store, &side)
 }
