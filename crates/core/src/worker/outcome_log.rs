@@ -65,6 +65,7 @@ fn close_outcome(abandon: bool, force: bool, foreign_owner: bool) -> CloseOutcom
     }
 }
 
+/// New branch -> tip; existing branch -> merge-base, never the tip; None on failure.
 pub fn spawn_base_sha(
     created_branch: bool,
     tip: Option<&str>,
@@ -74,6 +75,7 @@ pub fn spawn_base_sha(
     chosen.filter(|sha| !sha.is_empty()).map(str::to_string)
 }
 
+/// The git range of a worker's own commits, `<base_sha>..<branch>`; None unless base_sha is a valid hex id.
 pub fn diff_range(base_sha: Option<&str>, branch: &str) -> Option<String> {
     base_sha
         .filter(|sha| (7..=40).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit()))
