@@ -4,6 +4,10 @@ use super::events::StreamEvent;
 
 /// Result of parsing a single line of stream-json output.
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "one parsed line lives at a time; boxing every event costs an allocation per line"
+)]
 pub enum ParsedLine {
     /// Successfully parsed stream event.
     Event(StreamEvent),

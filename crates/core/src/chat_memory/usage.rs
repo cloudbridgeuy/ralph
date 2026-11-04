@@ -1,8 +1,9 @@
 use crate::chat_process::ResetReason;
-use crate::stream::{IterationCosts, IterationMetadata};
+use crate::stream::{IterationCosts, IterationMetadata, ModelTotals};
 use crate::wire::usage::{FIVE_MIN, ONE_HOUR};
 use crate::worker::ModelUsage;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -39,6 +40,7 @@ pub enum CallSite {
     Ping,
     Merge,
     Ask,
+    Subagent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -49,6 +51,7 @@ pub enum LedgerRole {
     Merge,
     Worker,
     Ask,
+    Subagent,
 }
 
 impl CallSite {
@@ -59,6 +62,7 @@ impl CallSite {
             CallSite::Merge => LedgerRole::Merge,
             CallSite::Worker { .. } => LedgerRole::Worker,
             CallSite::Ask => LedgerRole::Ask,
+            CallSite::Subagent => LedgerRole::Subagent,
         }
     }
 }
@@ -97,7 +101,7 @@ pub enum CostSource {
     Harness,
 }
 
-const MAIN_HARNESS: &str = "claude";
+pub(crate) const MAIN_HARNESS: &str = "claude";
 
 pub fn carry_metadata(
     previous: &IterationMetadata,
@@ -226,9 +230,18 @@ pub fn usage_record(
         model: metadata.model.clone(),
         session_id: metadata.session_id.clone(),
         cost_source: costs.cost_usd.map(|_| CostSource::Harness),
-        reasoning_tokens: None,
-        cache_write_5m: None,
-        cache_write_1h: None,
+        reasoning_tokens: usage
+            .output_tokens_details
+            .as_ref()
+            .and_then(|details| details.thinking_tokens),
+        cache_write_5m: usage
+            .cache_creation
+            .as_ref()
+            .map(|tiers| tiers.ephemeral_5m_input_tokens),
+        cache_write_1h: usage
+            .cache_creation
+            .as_ref()
+            .map(|tiers| tiers.ephemeral_1h_input_tokens),
         long_prompt: None,
         view: None,
     })
@@ -277,6 +290,83 @@ pub fn worker_usage_record(
     }
 }
 
+pub fn model_usage_since(
+    previous: &BTreeMap<String, ModelTotals>,
+    current: &BTreeMap<String, ModelTotals>,
+) -> BTreeMap<String, ModelTotals> {
+    current
+        .iter()
+        .map(|(model, now)| {
+            let before = previous.get(model).cloned().unwrap_or_default();
+            (model.clone(), now.saturating_sub(&before))
+        })
+        .collect()
+}
+
+fn subagent_usage(totals: &ModelTotals) -> crate::wire::usage::Usage {
+    use crate::wire::usage::{CacheTier, CacheWrite, Usage};
+    let untiered = totals
+        .cache_creation_input_tokens
+        .saturating_sub(totals.cache_write_5m + totals.cache_write_1h);
+    let writes = [
+        (FIVE_MIN, totals.cache_write_5m),
+        (ONE_HOUR, totals.cache_write_1h),
+        (CacheTier::Unspecified, untiered),
+    ];
+    Usage {
+        input_uncached: totals.input_tokens,
+        cache_read: totals.cache_read_input_tokens,
+        cache_writes: writes
+            .into_iter()
+            .filter(|(tier, tokens)| *tokens > 0 || *tier != CacheTier::Unspecified)
+            .map(|(tier, tokens)| CacheWrite { tier, tokens })
+            .collect(),
+        output: totals.output_tokens,
+        reasoning: Some(totals.thinking_tokens),
+        other: Vec::new(),
+    }
+}
+
+pub fn subagent_records(
+    at: &str,
+    costs: &IterationCosts,
+    metadata: &IterationMetadata,
+) -> Vec<LedgerRow> {
+    let main_loop = costs
+        .usage
+        .as_ref()
+        .map(ModelTotals::from)
+        .unwrap_or_default();
+    costs
+        .model_usage
+        .iter()
+        .map(
+            |(model, totals)| match metadata.model.as_deref() == Some(model) {
+                true => (model, totals.saturating_sub(&main_loop)),
+                false => (model, totals.clone()),
+            },
+        )
+        .filter(|(_, left)| *left != ModelTotals::default())
+        .map(|(model, left)| {
+            let row = ModelUsage {
+                model: model.clone(),
+                usage: subagent_usage(&left),
+                long_prompt: false,
+            };
+            LedgerRow {
+                long_prompt: None,
+                ..worker_usage_record(
+                    CallSite::Subagent,
+                    at.to_string(),
+                    metadata.session_id.clone(),
+                    MAIN_HARNESS,
+                    &row,
+                )
+            }
+        })
+        .collect()
+}
+
 pub fn encode_usage(record: &LedgerRow) -> Result<String, String> {
     let mut line = serde_json::to_string(record).map_err(|e| e.to_string())?;
     line.push('\n');
@@ -296,9 +386,11 @@ mod tests {
                 output_tokens: 2,
                 cache_read_input_tokens: cache,
                 cache_creation_input_tokens: cache.map(|c| c + 1),
+                ..Default::default()
             }),
             context_tokens: None,
             terminal_reason: None,
+            model_usage: Default::default(),
         }
     }
 
@@ -422,6 +514,25 @@ mod tests {
             reply_entries("r"),
             vec![(crate::chat_memory::Role::Assistant, "r".into())]
         );
+    }
+
+    #[test]
+    fn usage_record_keeps_the_cache_tiers_and_thinking_of_a_result_line() {
+        let line = r#"{"type":"result","subtype":"success","total_cost_usd":0.0024732699999999996,"duration_ms":4404,"session_id":"47488cc1","usage":{"input_tokens":2,"cache_creation_input_tokens":10086,"cache_read_input_tokens":6887,"output_tokens":774,"output_tokens_details":{"thinking_tokens":565},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":10086,"ephemeral_5m_input_tokens":0},"inference_geo":"global","speed":"standard"}}"#;
+        let result: crate::stream::ResultEvent = serde_json::from_str(line).unwrap();
+        let record = usage_record(
+            CallSite::Nap,
+            "t".into(),
+            &result.extract_costs(),
+            &IterationMetadata::new(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&encode_usage(&record).unwrap()).unwrap();
+        assert_eq!(value["cache_creation_input_tokens"], 10086);
+        assert_eq!(value["cache_write_5m"], 0);
+        assert_eq!(value["cache_write_1h"], 10086);
+        assert_eq!(value["reasoning_tokens"], 565);
+        assert_eq!(value["output_tokens"], 774);
     }
 
     #[test]
@@ -773,6 +884,100 @@ mod tests {
         assert_eq!(value["cost_usd"], 0.5);
         assert_eq!(value["cache_read_input_tokens"], 7);
         assert!(value.get("store").is_none() && value.get("run").is_none());
+    }
+
+    const PROBE_RESULT: &str = r#"{"duration_api_ms":6231,"session_id":"6511c6e3-9bce-4fd1-8ef5-b9649e689525","total_cost_usd":0.03760039,"usage":{"input_tokens":4,"cache_creation_input_tokens":11211,"cache_read_input_tokens":23129,"output_tokens":635,"output_tokens_details":{"thinking_tokens":509},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":11211,"ephemeral_5m_input_tokens":0},"inference_geo":"global","speed":"standard","fallback_credit":null},"modelUsage":{"claude-haiku-5-5":{"inputTokens":4,"outputTokens":635,"cacheReadInputTokens":23129,"cacheCreationInputTokens":11211,"costUSD":0.0027913900000000004,"thinkingTokens":509,"cacheCreationEphemeral5mInputTokens":0,"cacheCreationEphemeral1hInputTokens":11211},"claude-sonnet-5-5":{"inputTokens":2,"outputTokens":52,"cacheReadInputTokens":0,"cacheCreationInputTokens":13714,"costUSD":0.034809,"thinkingTokens":0,"cacheCreationEphemeral5mInputTokens":13714,"cacheCreationEphemeral1hInputTokens":0}},"terminal_reason":"completed","is_error":false,"num_turns":2,"subtype":"success","type":"result","duration_ms":6446}"#;
+
+    fn probe() -> (IterationCosts, IterationMetadata) {
+        let event: crate::stream::ResultEvent = serde_json::from_str(PROBE_RESULT).unwrap();
+        (
+            event.extract_costs(),
+            seen(Some("claude-haiku-5-5"), Some("6511c6e3")),
+        )
+    }
+
+    #[test]
+    fn a_task_subagent_gets_its_own_row_and_the_main_loop_none() {
+        let (costs, metadata) = probe();
+        let rows: Vec<Value> = subagent_records("t", &costs, &metadata)
+            .into_iter()
+            .map(line)
+            .collect();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(
+            (&row["kind"], &row["role"]),
+            (&"subagent".into(), &"subagent".into())
+        );
+        assert_eq!(
+            (&row["model"], &row["harness"]),
+            (&"claude-sonnet-5-5".into(), &"claude".into())
+        );
+        assert_eq!(row["session_id"], "6511c6e3");
+        assert_eq!(
+            [
+                row["input_tokens"].clone(),
+                row["output_tokens"].clone(),
+                row["cache_read_input_tokens"].clone(),
+                row["cache_creation_input_tokens"].clone()
+            ],
+            [2, 52, 0, 13714].map(Value::from)
+        );
+        assert_eq!(
+            (&row["cache_write_5m"], &row["cache_write_1h"]),
+            (&13714.into(), &0.into())
+        );
+        assert!(row["cost_usd"].is_null() && row.get("long_prompt").is_none());
+    }
+
+    #[test]
+    fn main_model_usage_beyond_the_main_loop_is_a_subagent_row() {
+        let (mut costs, metadata) = probe();
+        let haiku = costs.model_usage.get_mut("claude-haiku-5-5").unwrap();
+        haiku.output_tokens += 10;
+        haiku.cache_write_5m += 7;
+        haiku.cache_creation_input_tokens += 7;
+        let rows: Vec<Value> = subagent_records("t", &costs, &metadata)
+            .into_iter()
+            .map(line)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        let haiku = &rows[0];
+        assert_eq!(haiku["model"], "claude-haiku-5-5");
+        assert_eq!(
+            (&haiku["output_tokens"], &haiku["input_tokens"]),
+            (&10.into(), &0.into())
+        );
+        assert_eq!(
+            (&haiku["cache_write_5m"], &haiku["cache_write_1h"]),
+            (&7.into(), &0.into())
+        );
+    }
+
+    #[test]
+    fn model_usage_since_subtracts_the_previous_running_total() {
+        let (costs, _) = probe();
+        let mut later = costs.model_usage.clone();
+        later.get_mut("claude-sonnet-5-5").unwrap().output_tokens += 5;
+        later.insert(
+            "claude-opus-5-5".into(),
+            ModelTotals {
+                input_tokens: 3,
+                ..ModelTotals::default()
+            },
+        );
+        let since = model_usage_since(&costs.model_usage, &later);
+        assert_eq!(since.len(), 3);
+        assert_eq!(
+            since["claude-sonnet-5-5"],
+            ModelTotals {
+                output_tokens: 5,
+                ..ModelTotals::default()
+            }
+        );
+        assert_eq!(since["claude-haiku-5-5"], ModelTotals::default());
+        assert_eq!(since["claude-opus-5-5"].input_tokens, 3);
+        assert_eq!(model_usage_since(&BTreeMap::new(), &later), later);
     }
 
     #[test]

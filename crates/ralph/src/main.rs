@@ -200,9 +200,10 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let result = invoke::invoke(config)?;
     let costs = &result.stream_result.costs;
+    let at = chrono::Utc::now().to_rfc3339();
     if let Some(record) = ralph_core::chat_memory::usage_record(
         ralph_core::chat_memory::CallSite::Ask,
-        chrono::Utc::now().to_rfc3339(),
+        at.clone(),
         costs,
         &result.stream_result.metadata,
     ) {
@@ -214,6 +215,13 @@ fn execute_ask(args: AskArgs) -> Result<(), Box<dyn std::error::Error>> {
             "Failed to record ask usage",
         );
     }
+    warn_if_err(
+        ledger::record_all(
+            &chat::memory::usage_path(),
+            ralph_core::chat_memory::subagent_records(&at, costs, &result.stream_result.metadata),
+        ),
+        "Failed to record ask subagent usage",
+    );
     startup::display_ask_summary(
         &startup::AskSummary {
             success: result.exit_code == 0,
@@ -424,9 +432,10 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
         |delay| backoff::wait_unless(signal::is_terminated, delay),
     )
     .map_err(|e| e.to_string())?;
+    let at = chrono::Utc::now().to_rfc3339();
     if let Some(record) = ralph_core::chat_memory::usage_record(
         curator.kind.clone(),
-        chrono::Utc::now().to_rfc3339(),
+        at.clone(),
         &result.stream_result.costs,
         &result.stream_result.metadata,
     ) {
@@ -438,6 +447,20 @@ pub(crate) fn run_curator(prompt: &str, curator: &Curator) -> Result<String, Str
             "Failed to record chat usage",
         );
     }
+    let subagents = ralph_core::chat_memory::subagent_records(
+        &at,
+        &result.stream_result.costs,
+        &result.stream_result.metadata,
+    )
+    .into_iter()
+    .map(|row| {
+        row.with_run(curator.run.clone())
+            .with_store(Some(workers::usage_store(curator.store)))
+    });
+    warn_if_err(
+        ledger::record_all(&chat::memory::usage_path(), subagents),
+        "Failed to record chat subagent usage",
+    );
     let response = stream_processor::extract_response_text(&result.stream_result.output_blocks);
     ralph_core::chat_memory::nap_summary(result.exit_code, response.as_deref())
 }

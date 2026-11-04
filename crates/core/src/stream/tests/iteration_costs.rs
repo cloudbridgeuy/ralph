@@ -22,11 +22,13 @@ fn test_result_event_extract_costs_full() {
             output_tokens: 2971,
             cache_read_input_tokens: Some(107476),
             cache_creation_input_tokens: Some(12504),
+            ..Default::default()
         }),
         session_id: Some("session-123".to_string()),
         num_turns: Some(3),
         result: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     };
 
     let costs = event.extract_costs();
@@ -54,6 +56,7 @@ fn test_result_event_extract_costs_uses_alternative_cost_field() {
         num_turns: None,
         result: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     };
 
     let costs = event.extract_costs();
@@ -76,6 +79,7 @@ fn test_result_event_extract_costs_prefers_total_cost_usd() {
         num_turns: None,
         result: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     };
 
     let costs = event.extract_costs();
@@ -95,6 +99,7 @@ fn test_result_event_extract_costs_empty() {
         num_turns: None,
         result: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     };
 
     let costs = event.extract_costs();
@@ -126,11 +131,13 @@ fn test_extract_costs_from_events_with_result() {
                 output_tokens: 200,
                 cache_read_input_tokens: None,
                 cache_creation_input_tokens: None,
+                ..Default::default()
             }),
             session_id: None,
             num_turns: None,
             result: None,
             terminal_reason: None,
+            model_usage: Default::default(),
         }),
     ];
 
@@ -188,6 +195,7 @@ fn test_extract_costs_from_events_multiple_results_takes_first() {
             num_turns: None,
             result: None,
             terminal_reason: None,
+            model_usage: Default::default(),
         }),
         StreamEvent::Result(ResultEvent {
             subtype: None,
@@ -200,6 +208,7 @@ fn test_extract_costs_from_events_multiple_results_takes_first() {
             num_turns: None,
             result: None,
             terminal_reason: None,
+            model_usage: Default::default(),
         }),
     ];
 
@@ -223,6 +232,7 @@ fn test_extract_costs_from_events_or_default_with_result() {
         num_turns: None,
         result: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     })];
 
     let costs = extract_costs_from_events_or_default(&events);
@@ -261,9 +271,11 @@ fn test_iteration_costs_serialization_round_trip() {
             output_tokens: 2971,
             cache_read_input_tokens: Some(107476),
             cache_creation_input_tokens: Some(12504),
+            ..Default::default()
         }),
         context_tokens: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     };
 
     let json = serde_json::to_string(&costs).unwrap();
@@ -279,6 +291,7 @@ fn test_iteration_costs_empty_fields_skip_serialization() {
         usage: None,
         context_tokens: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     };
 
     let json = serde_json::to_string(&costs).unwrap();
@@ -330,11 +343,13 @@ fn test_extract_costs_result_at_end() {
                 output_tokens: 5000,
                 cache_read_input_tokens: Some(50000),
                 cache_creation_input_tokens: None,
+                ..Default::default()
             }),
             session_id: None,
             num_turns: Some(5),
             result: None,
             terminal_reason: None,
+            model_usage: Default::default(),
         }),
     ];
 
@@ -395,11 +410,13 @@ fn test_context_tokens_uses_last_assistant_usage_not_result_usage() {
             output_tokens: 1,
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
+            ..Default::default()
         }),
         session_id: None,
         num_turns: None,
         result: None,
         terminal_reason: None,
+        model_usage: Default::default(),
     }));
     let costs = extract_costs_from_events(&events).unwrap();
     assert_eq!(costs.context_tokens, Some(20));

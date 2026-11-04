@@ -1,3 +1,4 @@
+use crate::chat_memory::MAIN_HARNESS;
 use crate::chat_process::{processes, session_cost, UsageLine};
 use crate::wire::price::{long_prompt, prompt_tokens, resolve_price, usd, PriceTable};
 use crate::wire::provider::{provider, Provider, ProviderId};
@@ -14,7 +15,7 @@ pub const NO_USAGE: &str = "No usage recorded.";
 const UNKNOWN: &str = "unknown";
 const MISSING: &str = "–";
 const NO_PRICE: &str = "n/a";
-const HEADERS: [&str; 11] = [
+const HEADERS: [&str; 12] = [
     "HARNESS",
     "MODEL",
     "RUNS",
@@ -26,6 +27,7 @@ const HEADERS: [&str; 11] = [
     "1H",
     "REASONING",
     "USD",
+    "HARNESS USD",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -33,6 +35,7 @@ enum Source {
     Main,
     Nap,
     Ask,
+    Subagent,
     Worker(String),
 }
 
@@ -42,6 +45,7 @@ impl Source {
             "turn" | "ping" => Some(Source::Main),
             "nap" | "merge" => Some(Source::Nap),
             "ask" => Some(Source::Ask),
+            "subagent" => Some(Source::Subagent),
             "worker" => Some(Source::Worker(
                 line.harness.clone().unwrap_or_else(|| UNKNOWN.to_string()),
             )),
@@ -54,6 +58,7 @@ impl Source {
             Source::Main => "main",
             Source::Nap => "nap",
             Source::Ask => "ask",
+            Source::Subagent => "subagent",
             Source::Worker(harness) => harness,
         }
     }
@@ -104,6 +109,7 @@ impl Tokens {
 struct Usd {
     known: Option<f64>,
     missing: bool,
+    estimate: bool,
 }
 
 impl Usd {
@@ -111,6 +117,7 @@ impl Usd {
         Usd {
             known: cost,
             missing: cost.is_none(),
+            estimate: false,
         }
     }
 
@@ -123,14 +130,16 @@ impl Usd {
                 .or(self.known)
                 .or(other.known),
             missing: self.missing || other.missing,
+            estimate: self.estimate || other.estimate,
         }
     }
 
     fn text(self) -> String {
+        let mark = if self.estimate { "~" } else { "" };
         match (self.known, self.missing) {
             (None, _) => NO_PRICE.to_string(),
-            (Some(usd), true) => format!("{usd:.2}+"),
-            (Some(usd), false) => format!("{usd:.2}"),
+            (Some(usd), true) => format!("{mark}{usd:.2}+"),
+            (Some(usd), false) => format!("{mark}{usd:.2}"),
         }
     }
 }
@@ -142,6 +151,7 @@ struct CostRow {
     runs: Option<usize>,
     tokens: Tokens,
     usd: Usd,
+    harness_usd: Usd,
 }
 
 fn untiered_writes(line: &UsageLine) -> u64 {
@@ -210,32 +220,29 @@ fn computed_usd(line: &UsageLine, pricing: &Pricing, table: &PriceTable) -> Usd 
                 prompt_tokens(&usage).saturating_add(untiered),
             ),
         )?;
-        let at_30m = price
-            .cache_writes
-            .iter()
-            .any(|write| write.tier == THIRTY_MIN);
-        if at_30m && untiered > 0 {
+        let assumed = if line.harness.as_deref() == Some(MAIN_HARNESS) {
+            ONE_HOUR
+        } else {
+            THIRTY_MIN
+        };
+        let priced_tier = price.cache_writes.iter().any(|write| write.tier == assumed);
+        if priced_tier && untiered > 0 {
             usage.cache_writes.push(CacheWrite {
-                tier: THIRTY_MIN,
+                tier: assumed,
                 tokens: untiered,
             });
         }
-        usd(&usage, &price).map(|usd| (usd, at_30m))
+        usd(&usage, &price).map(|usd| (usd, priced_tier))
     });
     Usd {
         known: priced.map(|(usd, _)| usd),
-        missing: priced.is_none_or(|(_, at_30m)| untiered > 0 && !at_30m),
+        missing: priced.is_none_or(|(_, priced_tier)| untiered > 0 && !priced_tier),
+        estimate: true,
     }
 }
 
 fn summed(lines: &[UsageLine], priced: &dyn Fn(&UsageLine) -> Usd) -> Usd {
-    lines
-        .iter()
-        .map(|line| {
-            line.cost_usd
-                .map_or_else(|| priced(line), |cost| Usd::of(Some(cost)))
-        })
-        .fold(Usd::default(), Usd::plus)
+    lines.iter().map(priced).fold(Usd::default(), Usd::plus)
 }
 
 fn main_runs(lines: &[UsageLine]) -> (usize, Usd) {
@@ -253,6 +260,7 @@ fn main_runs(lines: &[UsageLine]) -> (usize, Usd) {
                 |cost| Usd {
                     known: Some(cost.total),
                     missing: cost.missing,
+                    estimate: false,
                 },
             )
         })
@@ -274,10 +282,20 @@ fn cost_row(
     lines: &[UsageLine],
     priced: &dyn Fn(&UsageLine) -> Usd,
 ) -> CostRow {
-    let (runs, usd) = match source {
-        Source::Main => main_runs(lines),
-        Source::Nap | Source::Ask => (lines.len(), summed(lines, priced)),
-        Source::Worker(_) => (worker_runs(lines), summed(lines, priced)),
+    let harness = |line: &UsageLine| Usd::of(line.cost_usd);
+    let (runs, usd, harness_usd) = match source {
+        Source::Main => {
+            let (runs, harness_usd) = main_runs(lines);
+            (runs, summed(lines, priced), harness_usd)
+        }
+        Source::Nap | Source::Ask | Source::Subagent => {
+            (lines.len(), summed(lines, priced), summed(lines, &harness))
+        }
+        Source::Worker(_) => (
+            worker_runs(lines),
+            summed(lines, priced),
+            summed(lines, &harness),
+        ),
     };
     CostRow {
         harness: source.label().to_string(),
@@ -288,6 +306,7 @@ fn cost_row(
             .map(Tokens::of)
             .fold(Tokens::default(), Tokens::plus),
         usd,
+        harness_usd,
     }
 }
 
@@ -349,6 +368,10 @@ fn total_row(rows: &[CostRow]) -> CostRow {
             .iter()
             .map(|row| row.usd)
             .fold(Usd::default(), Usd::plus),
+        harness_usd: rows
+            .iter()
+            .map(|row| row.harness_usd)
+            .fold(Usd::default(), Usd::plus),
     }
 }
 
@@ -365,7 +388,7 @@ fn maybe(n: Option<u64>) -> String {
     n.map_or(MISSING.to_string(), count)
 }
 
-fn cells(row: &CostRow) -> [String; 11] {
+fn cells(row: &CostRow) -> [String; 12] {
     let tokens = row.tokens;
     [
         row.harness.clone(),
@@ -379,6 +402,7 @@ fn cells(row: &CostRow) -> [String; 11] {
         maybe(tokens.write_1h),
         maybe(tokens.reasoning),
         row.usd.text(),
+        row.harness_usd.text(),
     ]
 }
 

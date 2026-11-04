@@ -41,9 +41,11 @@ pub use tree::{
     cover, entries_to_shift, estimate_tokens, pending, split_view, tail_lines, verbatim_start,
     view, ViewSplit,
 };
+pub(crate) use usage::MAIN_HARNESS;
 pub use usage::{
-    carry_metadata, encode_usage, reply_entries, trigger_entries, usage_record, view_stats,
-    worker_usage_record, CallSite, LedgerRole, LedgerRow, Trigger,
+    carry_metadata, encode_usage, model_usage_since, reply_entries, subagent_records,
+    trigger_entries, usage_record, view_stats, worker_usage_record, CallSite, LedgerRole,
+    LedgerRow, Trigger,
 };
 
 pub const SUMMARY_BYTES: usize = 512;

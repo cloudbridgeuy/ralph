@@ -4,7 +4,9 @@ use super::types::{
 };
 use super::{exited_unreaped, signal_group};
 use crate::signal;
-use ralph_core::stream::{interrupt_line, result_is_error, user_line};
+use ralph_core::chat_memory::model_usage_since;
+use ralph_core::stream::{interrupt_line, result_is_error, user_line, ModelTotals};
+use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::process::{Child, ChildStdin, ExitStatus, Stdio};
 use std::sync::atomic::Ordering;
@@ -63,6 +65,7 @@ pub struct Session {
     alive: bool,
     reaped: bool,
     config: SpinnerSubprocessConfig,
+    model_usage: BTreeMap<String, ModelTotals>,
 }
 
 impl Session {
@@ -77,6 +80,7 @@ impl Session {
             alive: true,
             reaped: false,
             config: config.clone(),
+            model_usage: BTreeMap::new(),
         })
     }
 
@@ -147,6 +151,34 @@ impl Session {
     }
 
     fn drive(
+        &mut self,
+        prompt: &str,
+        display: Display,
+        timeout: Option<Duration>,
+        interrupts: Interrupts,
+    ) -> Result<StreamingSubprocessResult, SubprocessError> {
+        let mut result = self.exchange(prompt, display, timeout, interrupts);
+        match &mut result {
+            Ok(done) => self.advance_model_usage(done),
+            Err(
+                SubprocessError::Timeout { partial_result, .. }
+                | SubprocessError::Interrupted { partial_result },
+            ) => self.advance_model_usage(partial_result),
+            Err(_) => {}
+        }
+        result
+    }
+
+    fn advance_model_usage(&mut self, run: &mut StreamingSubprocessResult) {
+        let running = std::mem::take(&mut run.stream_result.costs.model_usage);
+        if running.is_empty() {
+            return;
+        }
+        run.stream_result.costs.model_usage = model_usage_since(&self.model_usage, &running);
+        self.model_usage = running;
+    }
+
+    fn exchange(
         &mut self,
         prompt: &str,
         display: Display,

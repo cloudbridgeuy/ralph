@@ -1,8 +1,9 @@
 //! Cost and usage extraction from result events.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use super::events::{ResultEvent, StreamEvent, Usage};
+use super::events::{ModelTotals, ResultEvent, StreamEvent, Usage};
 
 /// Cost and usage statistics extracted from a result event.
 ///
@@ -26,11 +27,13 @@ use super::events::{ResultEvent, StreamEvent, Usage};
 ///             output_tokens: 2971,
 ///             cache_read_input_tokens: Some(107476),
 ///             cache_creation_input_tokens: Some(12504),
+///             ..Default::default()
 ///         }),
 ///         session_id: None,
 ///         num_turns: Some(3),
 ///         result: None,
 ///         terminal_reason: None,
+///         model_usage: Default::default(),
 ///     }),
 /// ];
 ///
@@ -63,6 +66,9 @@ pub struct IterationCosts {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_reason: Option<String>,
+
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_usage: BTreeMap<String, ModelTotals>,
 }
 
 impl IterationCosts {
@@ -100,11 +106,13 @@ impl ResultEvent {
     ///         output_tokens: 1500,
     ///         cache_read_input_tokens: Some(10000),
     ///         cache_creation_input_tokens: None,
+    ///         ..Default::default()
     ///     }),
     ///     session_id: None,
     ///     num_turns: None,
     ///     result: None,
     ///     terminal_reason: None,
+    ///     model_usage: Default::default(),
     /// };
     ///
     /// let costs = event.extract_costs();
@@ -122,6 +130,7 @@ impl ResultEvent {
             usage: self.usage.clone(),
             context_tokens: None,
             terminal_reason: self.terminal_reason.clone(),
+            model_usage: self.model_usage.clone(),
         }
     }
 }
@@ -168,11 +177,13 @@ impl ResultEvent {
 ///             output_tokens: 200,
 ///             cache_read_input_tokens: None,
 ///             cache_creation_input_tokens: None,
+///             ..Default::default()
 ///         }),
 ///         session_id: None,
 ///         num_turns: None,
 ///         result: None,
 ///         terminal_reason: None,
+///         model_usage: Default::default(),
 ///     }),
 /// ];
 ///

@@ -88,7 +88,10 @@ fn thread_merge_digests_count_as_nap() {
     merge["kind"] = json!("merge");
     let rows = rows_of(&jsonl(&[nap("claude-haiku-5-5", 0.01), merge]));
     assert_eq!(rows.len(), 1);
-    assert!(close(find(&rows, "nap", "claude-haiku-5-5").usd, 0.03));
+    assert!(close(
+        find(&rows, "nap", "claude-haiku-5-5").harness_usd,
+        0.03
+    ));
 }
 
 #[test]
@@ -98,8 +101,26 @@ fn ask_rows_show_as_ask() {
     let rows = rows_of(&jsonl(&[nap("claude-haiku-5-5", 0.01), ask.clone(), ask]));
     let row = find(&rows, "ask", "claude-haiku-5-5");
     assert_eq!(row.runs, Some(2));
-    assert!(close(row.usd, 0.08));
-    assert!(close(find(&rows, "nap", "claude-haiku-5-5").usd, 0.01));
+    assert!(close(row.harness_usd, 0.08));
+    assert!(close(
+        find(&rows, "nap", "claude-haiku-5-5").harness_usd,
+        0.01
+    ));
+}
+
+#[test]
+fn main_usd_is_the_list_price_and_the_running_total_is_the_harness_cost() {
+    let mut main = turn("r1", 1, 9.0);
+    main["model"] = json!("claude-haiku-5-5");
+    main["cache_write_1h"] = json!(100);
+    let mut same_tokens = main.clone();
+    same_tokens["kind"] = json!("nap");
+    let rows = rows_of(&jsonl(&[main, same_tokens]));
+    let main = find(&rows, "main", "claude-haiku-5-5");
+    let nap = find(&rows, "nap", "claude-haiku-5-5");
+    assert!(close(main.harness_usd, 9.0));
+    assert_eq!(main.usd, nap.usd);
+    assert!(main.usd.estimate && !main.usd.missing);
 }
 
 #[test]
@@ -107,8 +128,11 @@ fn main_rows_split_by_model() {
     let mut opus = turn("r1", 1, 0.5);
     opus["model"] = json!("claude-opus-5-5");
     let rows = rows_of(&jsonl(&[opus, turn("r2", 1, 0.25)]));
-    assert!(close(find(&rows, "main", "claude-opus-5-5").usd, 0.5));
-    assert!(close(find(&rows, "main", "unknown").usd, 0.25));
+    assert!(close(
+        find(&rows, "main", "claude-opus-5-5").harness_usd,
+        0.5
+    ));
+    assert!(close(find(&rows, "main", "unknown").harness_usd, 0.25));
 }
 
 #[test]
@@ -120,8 +144,8 @@ fn main_cost_takes_the_last_running_total_per_run() {
     ]));
     let main = find(&rows, "main", "unknown");
     assert_eq!(main.runs, Some(2));
-    assert!(close(main.usd, 0.5));
-    assert!(!main.usd.missing);
+    assert!(close(main.harness_usd, 0.5));
+    assert!(!main.harness_usd.missing);
 }
 
 #[test]
@@ -129,8 +153,8 @@ fn main_cost_marks_a_run_with_an_uncosted_process() {
     let bare = json!({"kind": "turn", "run": "r1", "process_turn": 1});
     let rows = rows_of(&jsonl(&[turn("r1", 1, 0.1), bare]));
     let main = find(&rows, "main", "unknown");
-    assert!(close(main.usd, 0.1));
-    assert!(main.usd.missing);
+    assert!(close(main.harness_usd, 0.1));
+    assert!(main.harness_usd.missing);
 }
 
 #[test]
@@ -143,7 +167,7 @@ fn main_cost_sums_every_process_of_a_run() {
     ]));
     let main = find(&rows, "main", "unknown");
     assert_eq!(main.runs, Some(1));
-    assert!(close(main.usd, 0.45));
+    assert!(close(main.harness_usd, 0.45));
 }
 
 #[test]
@@ -154,7 +178,7 @@ fn pings_count_toward_the_main_cost() {
     });
     let rows = rows_of(&jsonl(&[turn("r1", 1, 0.3), ping]));
     let main = find(&rows, "main", "unknown");
-    assert!(close(main.usd, 0.4));
+    assert!(close(main.harness_usd, 0.4));
     assert_eq!(main.tokens.cache_read, 1009);
 }
 
@@ -201,13 +225,26 @@ fn a_provider_prefixed_opencode_row_with_no_cost_shows_no_price() {
 }
 
 #[test]
-fn a_cache_write_tier_gap_prices_the_rest() {
+fn a_claude_cache_write_tier_gap_prices_at_the_1h_rate() {
     let mut gap = worker("GUZ-1", "s1", "claude-opus-5-5");
     gap["cache_creation_input_tokens"] = json!(60);
     let rows = rows_of(&jsonl(&[gap]));
     let usd = find(&rows, "claude", "claude-opus-5-5").usd;
-    assert!(close(usd, 0.000572));
-    assert!(usd.missing);
+    assert!(close(usd, 0.000652));
+    assert_eq!(usd.text(), "~0.00");
+}
+
+#[test]
+fn claude_cache_writes_without_a_tier_price_like_1h_writes() {
+    let mut untiered = nap("claude-haiku-5-5", 0.0);
+    untiered["cache_creation_input_tokens"] = json!(1_000_000);
+    let mut tiered = untiered.clone();
+    tiered["kind"] = json!("ask");
+    tiered["cache_write_1h"] = json!(1_000_000);
+    let rows = rows_of(&jsonl(&[untiered, tiered]));
+    let nap = find(&rows, "nap", "claude-haiku-5-5").usd;
+    assert_eq!(nap, find(&rows, "ask", "claude-haiku-5-5").usd);
+    assert!(!nap.text().ends_with('+'));
 }
 
 fn haiku_row(input: u64, flag: Option<bool>) -> Value {
@@ -226,6 +263,26 @@ fn haiku_row(input: u64, flag: Option<bool>) -> Value {
 fn haiku_usd(row: Value) -> f64 {
     let rows = rows_of(&jsonl(&[row]));
     find(&rows, "claude", "claude-haiku-5-5").usd.known.unwrap()
+}
+
+#[test]
+fn a_harness_cost_is_a_cross_check_and_usd_is_the_list_price_estimate() {
+    let mut row = haiku_row(300_000, Some(false));
+    row["kind"] = json!("nap");
+    row["cost_usd"] = json!(0.5);
+    let rows = rows_of(&jsonl(&[row]));
+    let nap = find(&rows, "nap", "claude-haiku-5-5");
+    assert_eq!(nap.usd.text(), "~0.03");
+    assert_eq!(nap.harness_usd.text(), "0.50");
+}
+
+#[test]
+fn reasoning_tokens_are_part_of_output_and_not_priced_again() {
+    let mut plain = haiku_row(0, Some(false));
+    plain["output_tokens"] = json!(1_000_000);
+    let mut reasoned = plain.clone();
+    reasoned["reasoning_tokens"] = json!(400_000);
+    assert!((haiku_usd(plain) - haiku_usd(reasoned)).abs() < 1e-12);
 }
 
 #[test]
@@ -317,7 +374,7 @@ fn codex_cache_writes_without_a_tier_price_at_the_30m_rate() {
     let rows = rows_of(&jsonl(&[row, codex("gpt-6.1-sol")]));
     let usd = find(&rows, "codex", "gpt-6.1-sol").usd;
     assert!(close(usd, 16.9));
-    assert_eq!(usd.text(), "16.90");
+    assert_eq!(usd.text(), "~16.90");
 }
 
 #[test]
@@ -337,7 +394,7 @@ fn a_gpt_override_without_a_30m_price_keeps_the_plus() {
     row["cache_creation_input_tokens"] = json!(10);
     let usage = jsonl(&[row]);
     let rows = with_pricing(&overrides, |pricing| cost_rows(&usage, pricing));
-    assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "1.00+");
+    assert_eq!(find(&rows, "codex", "gpt-6.1-sol").usd.text(), "~1.00+");
 }
 
 #[test]
@@ -366,7 +423,7 @@ fn nap_runs_count_rows_and_sum_cost() {
     ]));
     let nap = find(&rows, "nap", "claude-haiku-5-5");
     assert_eq!(nap.runs, Some(2));
-    assert_eq!(nap.usd.text(), "0.03");
+    assert_eq!(nap.harness_usd.text(), "0.03");
 }
 
 #[test]
@@ -380,21 +437,23 @@ fn skips_unknown_kinds_and_bad_lines() {
 fn table_totals_main_and_computed_worker_cost() {
     let mut heavy = worker("GUZ-1", "s1", "claude-opus-5-5");
     heavy["output_tokens"] = json!(30_000);
-    let view = view_of(&jsonl(&[turn("r1", 1, 1.5), heavy]));
+    let mut main = with_model(turn("r1", 1, 1.5), "claude-opus-5-5");
+    main["cache_write_1h"] = json!(100);
+    let view = view_of(&jsonl(&[main, heavy]));
     let lines: Vec<&str> = view.lines().collect();
     assert_eq!(lines.len(), 5);
     assert!(lines[0].starts_with("| HARNESS | MODEL | RUNS |"));
     assert_eq!(
         lines[2],
-        "| main | unknown | 1 | 10 | 5 | 1.0k | 100 | – | – | – | 1.50 |"
+        "| main | claude-opus-5-5 | 1 | 10 | 5 | 1.0k | 100 | – | 100 | – | ~0.00 | 1.50 |"
     );
     assert_eq!(
         lines[3],
-        "| claude | claude-opus-5-5 | 1 | 3 | 30.0k | 400 | 50 | 20 | 30 | – | 0.60 |"
+        "| claude | claude-opus-5-5 | 1 | 3 | 30.0k | 400 | 50 | 20 | 30 | – | ~0.60 | n/a |"
     );
     assert_eq!(
         lines[4],
-        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20 | 30 | – | 2.10 |"
+        "| total |  |  | 13 | 30.0k | 1.4k | 150 | 20 | 130 | – | ~0.60 | 1.50+ |"
     );
 }
 
@@ -421,8 +480,8 @@ fn one_run_with_a_late_model_counts_once() {
     assert_eq!(mains.len(), 1);
     assert_eq!(mains[0].model, "claude-opus-5-5");
     assert_eq!(mains[0].runs, Some(1));
-    assert!(close(mains[0].usd, 0.5));
-    assert!(close(total_row(&rows).usd, 0.5));
+    assert!(close(mains[0].harness_usd, 0.5));
+    assert!(close(total_row(&rows).harness_usd, 0.5));
 }
 
 #[test]
@@ -437,9 +496,9 @@ fn relaunched_processes_cost_in_their_own_model_group() {
     let sonnet = find(&rows, "main", "claude-sonnet-5-5");
     assert_eq!(opus.runs, Some(1));
     assert_eq!(sonnet.runs, Some(1));
-    assert!(close(opus.usd, 0.4));
-    assert!(close(sonnet.usd, 0.15));
-    assert!(close(total_row(&rows).usd, 0.55));
+    assert!(close(opus.harness_usd, 0.4));
+    assert!(close(sonnet.harness_usd, 0.15));
+    assert!(close(total_row(&rows).harness_usd, 0.55));
 }
 
 #[test]
