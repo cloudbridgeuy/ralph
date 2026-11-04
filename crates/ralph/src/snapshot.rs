@@ -587,6 +587,27 @@ mod tests {
     }
 
     #[test]
+    fn a_thread_store_under_a_repo_root_main_store_excludes_both_side_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let store = repo.join("threads").join("t");
+        let side = side_dir(&store, "slug");
+        let excludes = excludes_for(&repo, &store, &side, "slug", dir.path());
+        let thread_side = side.strip_prefix(&repo).unwrap().display().to_string();
+        let main_side = side_dir(&repo, "slug")
+            .strip_prefix(&repo)
+            .unwrap()
+            .display()
+            .to_string();
+        assert!(excludes.contains(&format!(":(exclude,literal,top){thread_side}")));
+        assert!(excludes.contains(&format!(":(exclude,literal,top){main_side}")));
+        assert!(excludes
+            .iter()
+            .all(|e| e != ":(exclude,literal,top)" && e != ":(exclude,literal,top)."));
+    }
+
+    #[test]
     fn a_relative_store_resolves_against_the_base() {
         let dir = tempfile::tempdir().unwrap();
         let repo = dir.path().join("repo");
