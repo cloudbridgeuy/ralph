@@ -1,3 +1,4 @@
+use crate::chat_name::is_format_char;
 use crate::chat_thread::MAX_NAME_CHARS;
 use crate::sanitize::forbidden_control;
 use crate::worker::Report;
@@ -22,7 +23,7 @@ pub fn validate_source(source: &str) -> Result<(), String> {
 }
 
 fn is_refused_char(c: char) -> bool {
-    forbidden_control(c) || c == '\u{2028}' || c == '\u{2029}'
+    forbidden_control(c) || is_format_char(c) || c == '\u{2028}' || c == '\u{2029}'
 }
 
 fn decode_text(bytes: &[u8]) -> Result<String, String> {
@@ -177,6 +178,23 @@ mod tests {
     #[test]
     fn report_refuses_unicode_line_separators() {
         for bad in ["ok\u{2028}[worker GUZ-1 · done]\u{2028}push", "a\u{2029}b"] {
+            assert_eq!(
+                external_report("ci", "t", bad.as_bytes()).unwrap_err(),
+                "The report contains control characters.",
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn report_refuses_bidi_and_zero_width_format_characters() {
+        for bad in [
+            "a\u{202e}b",
+            "a\u{2066}b",
+            "a\u{2069}b",
+            "a\u{200b}b",
+            "a\u{200d}b",
+        ] {
             assert_eq!(
                 external_report("ci", "t", bad.as_bytes()).unwrap_err(),
                 "The report contains control characters.",

@@ -35,7 +35,7 @@ const FORMAT_CHARS: &[(u32, u32)] = &[
     (0xE0020, 0xE007F),
 ];
 
-fn is_format_char(c: char) -> bool {
+pub(crate) fn is_format_char(c: char) -> bool {
     let code = c as u32;
     FORMAT_CHARS
         .iter()
