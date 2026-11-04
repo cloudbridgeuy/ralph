@@ -34,6 +34,7 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
     }
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "The report is not valid UTF-8 text.".to_string())?;
+    let text = text.strip_prefix('\u{FEFF}').unwrap_or(text);
     let text = text.replace("\r\n", "\n");
     if text.chars().any(is_refused_char) {
         return Err("The report contains control characters.".to_string());
@@ -201,5 +202,21 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn report_strips_one_leading_bom() {
+        let r = external_report("ci", "t", b"\xEF\xBB\xBFhi").unwrap();
+        assert_eq!(r.text, "hi");
+        for bad in ["\u{FEFF}\u{FEFF}hi", "a\u{FEFF}b"] {
+            assert!(
+                external_report("ci", "t", bad.as_bytes()).is_err(),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            external_report("ci", "t", b"\xEF\xBB\xBF").unwrap_err(),
+            "The report is empty."
+        );
     }
 }
